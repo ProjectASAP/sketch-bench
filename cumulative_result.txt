@@ -1,0 +1,593 @@
+=============================
+RUST Imitation of DPDK
+=============================
+
+===================================================================================================
+Max Packet: 100_000_000
+===================================================================================================
+$ for i in {1..5}; do sudo ./target/release/examples/nitro_bench ~/data/*.pcap; done
+Allocating memory for up to 100000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 18650269 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      15.822197 s
+Throughput: 6.32 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      0.711925 s
+Throughput: 140.46 Mops/sec
+
+Allocating memory for up to 100000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 18650269 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      15.230895 s
+Throughput: 6.57 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      0.707683 s
+Throughput: 141.31 Mops/sec
+
+Allocating memory for up to 100000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 18650269 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      15.260668 s
+Throughput: 6.55 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      0.706737 s
+Throughput: 141.50 Mops/sec
+
+Allocating memory for up to 100000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 18650269 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      14.921262 s
+Throughput: 6.70 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      0.709704 s
+Throughput: 140.90 Mops/sec
+
+Allocating memory for up to 100000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 18650269 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      14.568315 s
+Throughput: 6.86 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      0.706474 s
+Throughput: 141.55 Mops/sec
+
+===================================================================================================
+Max Packet: 500_000_000
+===================================================================================================
+$ for i in {1..5}; do sudo ./target/release/examples/nitro_bench ~/data/*.pcap; done
+Allocating memory for up to 500000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 29015669 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap" ... Added 29585609 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap" ... Added 29142759 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap" ... Added 28000688 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap" ... Added 29163671 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap" ... Added 27857142 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap" ... Added 27883687 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap" ... Added 29654051 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap" ... Added 28687204 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap" ... Added 28751028 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap" ... Added 5946182 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap" ... Added 28837092 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131300.UTC.anon.pcap" ... Added 28871386 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131400.UTC.anon.pcap" ... Added 27654652 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131500.UTC.anon.pcap" ... Added 28598827 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131558.UTC.anon.pcap" ... Added 779706 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131600.UTC.anon.pcap" ... Added 10220916 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      71.814684 s
+Throughput: 6.96 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      3.489037 s
+Throughput: 143.31 Mops/sec
+
+Allocating memory for up to 500000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 29015669 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap" ... Added 29585609 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap" ... Added 29142759 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap" ... Added 28000688 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap" ... Added 29163671 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap" ... Added 27857142 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap" ... Added 27883687 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap" ... Added 29654051 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap" ... Added 28687204 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap" ... Added 28751028 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap" ... Added 5946182 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap" ... Added 28837092 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131300.UTC.anon.pcap" ... Added 28871386 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131400.UTC.anon.pcap" ... Added 27654652 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131500.UTC.anon.pcap" ... Added 28598827 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131558.UTC.anon.pcap" ... Added 779706 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131600.UTC.anon.pcap" ... Added 10220916 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      75.074079 s
+Throughput: 6.66 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      3.519735 s
+Throughput: 142.06 Mops/sec
+
+Allocating memory for up to 500000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 29015669 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap" ... Added 29585609 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap" ... Added 29142759 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap" ... Added 28000688 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap" ... Added 29163671 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap" ... Added 27857142 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap" ... Added 27883687 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap" ... Added 29654051 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap" ... Added 28687204 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap" ... Added 28751028 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap" ... Added 5946182 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap" ... Added 28837092 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131300.UTC.anon.pcap" ... Added 28871386 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131400.UTC.anon.pcap" ... Added 27654652 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131500.UTC.anon.pcap" ... Added 28598827 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131558.UTC.anon.pcap" ... Added 779706 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131600.UTC.anon.pcap" ... Added 10220916 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      71.871229 s
+Throughput: 6.96 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      3.628591 s
+Throughput: 137.79 Mops/sec
+
+Allocating memory for up to 500000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 29015669 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap" ... Added 29585609 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap" ... Added 29142759 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap" ... Added 28000688 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap" ... Added 29163671 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap" ... Added 27857142 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap" ... Added 27883687 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap" ... Added 29654051 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap" ... Added 28687204 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap" ... Added 28751028 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap" ... Added 5946182 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap" ... Added 28837092 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131300.UTC.anon.pcap" ... Added 28871386 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131400.UTC.anon.pcap" ... Added 27654652 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131500.UTC.anon.pcap" ... Added 28598827 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131558.UTC.anon.pcap" ... Added 779706 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131600.UTC.anon.pcap" ... Added 10220916 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      73.159856 s
+Throughput: 6.83 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      3.688952 s
+Throughput: 135.54 Mops/sec
+
+Allocating memory for up to 500000000 packets...
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap" ... Added 23780771 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap" ... Added 28831187 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap" ... Added 28737773 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap" ... Added 29015669 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap" ... Added 29585609 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap" ... Added 29142759 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap" ... Added 28000688 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap" ... Added 29163671 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap" ... Added 27857142 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap" ... Added 27883687 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap" ... Added 29654051 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap" ... Added 28687204 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap" ... Added 28751028 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap" ... Added 5946182 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap" ... Added 28837092 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131300.UTC.anon.pcap" ... Added 28871386 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131400.UTC.anon.pcap" ... Added 27654652 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131500.UTC.anon.pcap" ... Added 28598827 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131558.UTC.anon.pcap" ... Added 779706 packets.
+Reading "/users/yuanyc/data/equinix-nyc.dirA.20190117-131600.UTC.anon.pcap" ... Added 10220916 packets.
+Reached MAX_PKTS limit.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      76.726881 s
+Throughput: 6.52 Mops/sec
+
+--- Test: Nitro Sampling (0.01) (Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      3.566877 s
+Throughput: 140.18 Mops/sec
+
+=============================
+C DPDK Function Directly
+=============================
+
+===================================================================================================
+Max Packet: 100_000_000
+===================================================================================================
+$ for i in {1..5}; do sudo ./bench_sketch_multi ./data/*.pcap; done
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 100000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 33932778 packets.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      12.840546 s
+Throughput: 7.79 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      1.767557 s
+Throughput: 56.58 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 100000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 33932778 packets.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      12.873536 s
+Throughput: 7.77 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      1.738736 s
+Throughput: 57.51 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 100000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 33932778 packets.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      12.895456 s
+Throughput: 7.75 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      1.764949 s
+Throughput: 56.66 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 100000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 33932778 packets.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      12.838218 s
+Throughput: 7.79 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      1.728338 s
+Throughput: 57.86 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 100000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 33932778 packets.
+
+Total Loaded: 100000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 100000000 packets
+Time:      12.869831 s
+Throughput: 7.77 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 100000000 packets
+Time:      1.771709 s
+Throughput: 56.44 Mops/sec
+
+===================================================================================================
+Max Packet: 500_000_000
+===================================================================================================
+$ for i in {1..5}; do sudo ./bench_sketch_multi ./data/*.pcap; done
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 500000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 35994903 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap ... Added 36375528 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap ... Added 36892281 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap ... Added 38481755 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap ... Added 37892409 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap ... Added 39089293 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap ... Added 37725856 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap ... Added 37367775 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap ... Added 39900563 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap ... Added 38673230 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap ... Added 38801348 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap ... Added 8046393 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap ... Added 8691444 packets.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      64.108325 s
+Throughput: 7.80 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      8.522489 s
+Throughput: 58.67 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 500000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 35994903 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap ... Added 36375528 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap ... Added 36892281 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap ... Added 38481755 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap ... Added 37892409 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap ... Added 39089293 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap ... Added 37725856 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap ... Added 37367775 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap ... Added 39900563 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap ... Added 38673230 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap ... Added 38801348 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap ... Added 8046393 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap ... Added 8691444 packets.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      64.133794 s
+Throughput: 7.80 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      8.621350 s
+Throughput: 58.00 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 500000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 35994903 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap ... Added 36375528 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap ... Added 36892281 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap ... Added 38481755 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap ... Added 37892409 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap ... Added 39089293 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap ... Added 37725856 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap ... Added 37367775 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap ... Added 39900563 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap ... Added 38673230 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap ... Added 38801348 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap ... Added 8046393 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap ... Added 8691444 packets.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      64.159880 s
+Throughput: 7.79 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      8.424059 s
+Throughput: 59.35 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 500000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 35994903 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap ... Added 36375528 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap ... Added 36892281 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap ... Added 38481755 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap ... Added 37892409 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap ... Added 39089293 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap ... Added 37725856 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap ... Added 37367775 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap ... Added 39900563 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap ... Added 38673230 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap ... Added 38801348 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap ... Added 8046393 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap ... Added 8691444 packets.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      64.144803 s
+Throughput: 7.79 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      8.739810 s
+Throughput: 57.21 Mops/sec
+
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 2
+EAL: Static memory layout is selected, amount of reserved memory can be adjusted with -m or --socket-mem
+EAL: Detected shared linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+TELEMETRY: No legacy callbacks, legacy socket not created
+Allocating memory for up to 500000000 packets...
+Reading ./data/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap ... Added 29922873 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130000.UTC.anon.pcap ... Added 36144349 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130100.UTC.anon.pcap ... Added 35994903 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130200.UTC.anon.pcap ... Added 36375528 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130300.UTC.anon.pcap ... Added 36892281 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130400.UTC.anon.pcap ... Added 38481755 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130500.UTC.anon.pcap ... Added 37892409 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130600.UTC.anon.pcap ... Added 39089293 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130700.UTC.anon.pcap ... Added 37725856 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130800.UTC.anon.pcap ... Added 37367775 packets.
+Reading ./data/equinix-nyc.dirA.20190117-130900.UTC.anon.pcap ... Added 39900563 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131000.UTC.anon.pcap ... Added 38673230 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131100.UTC.anon.pcap ... Added 38801348 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131147.UTC.anon.pcap ... Added 8046393 packets.
+Reading ./data/equinix-nyc.dirA.20190117-131200.UTC.anon.pcap ... Added 8691444 packets.
+
+Total Loaded: 500000000 packets.
+
+--- Test: Full Sampling (1.0) (Internal Sample Rate: 1.0000) ---
+Processed: 500000000 packets
+Time:      64.165053 s
+Throughput: 7.79 Mops/sec
+
+--- Test: Sampling (0.01) (Internal Sample Rate: 0.0100) ---
+Processed: 500000000 packets
+Time:      8.445650 s
+Throughput: 59.20 Mops/sec

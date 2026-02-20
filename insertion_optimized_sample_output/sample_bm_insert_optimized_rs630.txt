@@ -1,0 +1,140 @@
+$ cmake-build-release/bm_insert --benchmark_out="results/bm_insert.json" --benchmark_min_time=10s
+2025-11-20T07:51:00-07:00
+Running cmake-build-release/bm_insert
+Run on (32 X 3600 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x16)
+  L1 Instruction 32 KiB (x16)
+  L2 Unified 256 KiB (x16)
+  L3 Unified 20480 KiB (x2)
+Load Average: 0.70, 0.27, 0.11
+***WARNING*** CPU scaling is enabled, the benchmark real time measurements may be noisy and will incur extra overhead.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                                                Time             CPU   Iterations bytes_per_second  item_size items_per_second
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+BM_Insert<datasketches::SpaceSaving<int16_t>, int16_t>                            22535943 ns     22535316 ns          621      84.6382Mi/s          2       44.3748M/s
+BM_Insert<datasketches::SpaceSaving<int32_t>, int32_t>                            28116388 ns     28115728 ns          498      135.678Mi/s          4       35.5673M/s
+BM_Insert<datasketches::SpaceSaving<int64_t>, int64_t>                            22905795 ns     22905236 ns          611      333.085Mi/s          8       43.6581M/s
+BM_Insert<datasketches::SpaceSaving<__int128_t>, __int128_t>                      29685806 ns     29684740 ns          472      514.028Mi/s         16       33.6873M/s
+BM_Insert<datasketches::SpaceSaving<float>, float>                                36408093 ns     36407332 ns          385      104.778Mi/s          4        27.467M/s
+BM_Insert<datasketches::SpaceSaving<double>, double>                              31313412 ns     31312707 ns          447      243.652Mi/s          8       31.9359M/s
+BM_Insert<datasketches::SpaceSaving<std::string>, std::string>                   151712161 ns    151703333 ns           92      2.00749Gi/s        327       6.59181M/s
+BM_Insert<naive::SpaceSaving<int16_t>, int16_t>                                   98159908 ns     98158074 ns          146      19.4314Mi/s          2       10.1876M/s
+BM_Insert<naive::SpaceSaving<int32_t>, int32_t>                                   97534553 ns     97532873 ns          142      39.1119Mi/s          4        10.253M/s
+BM_Insert<naive::SpaceSaving<int64_t>, int64_t>                                   95424592 ns     95422753 ns          147      79.9536Mi/s          8       10.4797M/s
+BM_Insert<naive::SpaceSaving<__int128_t>, __int128_t>                            116255213 ns    116252027 ns          122      131.256Mi/s         16         8.602M/s
+BM_Insert<naive::SpaceSaving<float>, float>                                      140900192 ns    140898002 ns           99      27.0742Mi/s          4       7.09733M/s
+BM_Insert<naive::SpaceSaving<double>, double>                                    113221291 ns    113219036 ns          124      67.3861Mi/s          8       8.83244M/s
+BM_Insert<naive::SpaceSaving<std::string>, std::string>                          302507109 ns    302495339 ns           46      1.00677Gi/s        327       3.30584M/s
+BM_Insert<map::SpaceSaving<int16_t>, int16_t>                                    226128579 ns    226124354 ns           62      8.43495Mi/s          2       4.42235M/s
+BM_Insert<map::SpaceSaving<int32_t>, int32_t>                                    225357162 ns    225353214 ns           62      16.9276Mi/s          4       4.43748M/s
+BM_Insert<map::SpaceSaving<int64_t>, int64_t>                                    230347703 ns    230342884 ns           61      33.1219Mi/s          8       4.34135M/s
+BM_Insert<map::SpaceSaving<__int128_t>, __int128_t>                              231370939 ns    231365476 ns           60       65.951Mi/s         16       4.32217M/s
+BM_Insert<map::SpaceSaving<float>, float>                                        283853695 ns    283848468 ns           49      13.4392Mi/s          4       3.52301M/s
+BM_Insert<map::SpaceSaving<double>, double>                                      274872189 ns    274867198 ns           51      27.7567Mi/s          8       3.63812M/s
+BM_Insert<map::SpaceSaving<std::string>, std::string>                            374110489 ns    374094237 ns           37      833.617Mi/s        327       2.67312M/s
+BM_Insert<heap::SpaceSaving<int16_t>, int16_t>                                    35953535 ns     35952860 ns          389      53.0514Mi/s          2       27.8142M/s
+BM_Insert<heap::SpaceSaving<int32_t>, int32_t>                                    36253311 ns     36252676 ns          385      105.225Mi/s          4       27.5842M/s
+BM_Insert<heap::SpaceSaving<int64_t>, int64_t>                                    36748088 ns     36747347 ns          380      207.618Mi/s          8       27.2128M/s
+BM_Insert<heap::SpaceSaving<__int128_t>, __int128_t>                              52845496 ns     52844122 ns          264      288.751Mi/s         16       18.9236M/s
+BM_Insert<heap::SpaceSaving<float>, float>                                        80064741 ns     80063453 ns          175      47.6459Mi/s          4       12.4901M/s
+BM_Insert<heap::SpaceSaving<double>, double>                                      50603205 ns     50602077 ns          276      150.772Mi/s          8        19.762M/s
+BM_Insert<heap::SpaceSaving<std::string>, std::string>                           397824023 ns    397805331 ns           36       783.93Mi/s        327       2.51379M/s
+BM_Insert<final::SpaceSaving<int16_t>, int16_t>                                   16279932 ns     16279639 ns          924      117.162Mi/s          2       61.4264M/s
+BM_Insert<final::SpaceSaving<int32_t>, int32_t>                                   16056218 ns     16055903 ns          871      237.588Mi/s          4       62.2824M/s
+BM_Insert<final::SpaceSaving<int64_t>, int64_t>                                   19736810 ns     19736468 ns          706      386.563Mi/s          8       50.6676M/s
+BM_Insert<final::SpaceSaving<__int128_t>, __int128_t>                             30483733 ns     30483296 ns          459      500.562Mi/s         16       32.8049M/s
+BM_Insert<final::SpaceSaving<float>, float>                                       15834828 ns     15834556 ns          881       240.91Mi/s          4        63.153M/s
+BM_Insert<final::SpaceSaving<double>, double>                                     22336962 ns     22336486 ns          627      341.566Mi/s          8       44.7698M/s
+BM_Insert<final::SpaceSaving<std::string>, std::string>                          116998065 ns    116995704 ns          119      2.60302Gi/s        327       8.54732M/s
+BM_Insert<datasketches::CountMinSketch<int16_t>, int16_t>                         81083060 ns     81082501 ns          173      23.5236Mi/s          2       12.3331M/s
+BM_Insert<datasketches::CountMinSketch<int32_t>, int32_t>                         83539417 ns     83538638 ns          168      45.6639Mi/s          4       11.9705M/s
+BM_Insert<datasketches::CountMinSketch<int64_t>, int64_t>                         81469293 ns     81468617 ns          172      93.6483Mi/s          8       12.2747M/s
+BM_Insert<datasketches::CountMinSketch<__int128_t>, __int128_t>                   90930651 ns     90929322 ns          154      167.809Mi/s         16       10.9976M/s
+BM_Insert<datasketches::CountMinSketch<float>, float>                             80982467 ns     80981661 ns          173      47.1057Mi/s          4       12.3485M/s
+BM_Insert<datasketches::CountMinSketch<double>, double>                           80369138 ns     80368206 ns          174      94.9305Mi/s          8       12.4427M/s
+BM_Insert<datasketches::CountMinSketch<std::string>, std::string>                102612542 ns    102609926 ns          137      2.96796Gi/s        327       9.74565M/s
+BM_Insert<naive::CountSketch<int16_t>, int16_t>                                   69182963 ns     69182446 ns          203      27.5698Mi/s          2       14.4545M/s
+BM_Insert<naive::CountSketch<int32_t>, int32_t>                                   69656116 ns     69655552 ns          201      54.7652Mi/s          4       14.3564M/s
+BM_Insert<naive::CountSketch<int64_t>, int64_t>                                   69831477 ns     69830550 ns          200      109.256Mi/s          8       14.3204M/s
+BM_Insert<naive::CountSketch<__int128_t>, __int128_t>                             76205847 ns     76204656 ns          183      200.234Mi/s         16       13.1226M/s
+BM_Insert<naive::CountSketch<float>, float>                                       70775198 ns     70774430 ns          198      53.8994Mi/s          4       14.1294M/s
+BM_Insert<naive::CountSketch<double>, double>                                     69766206 ns     69765120 ns          201      109.358Mi/s          8       14.3338M/s
+BM_Insert<naive::CountSketch<std::string>, std::string>                          334017746 ns    334008959 ns           42      933.662Mi/s        327       2.99393M/s
+BM_Insert<fastrange::CountSketch<int16_t>, int16_t>                               56758281 ns     56757703 ns          247      33.6051Mi/s          2       17.6188M/s
+BM_Insert<fastrange::CountSketch<int32_t>, int32_t>                               55527979 ns     55527173 ns          252      68.6996Mi/s          4       18.0092M/s
+BM_Insert<fastrange::CountSketch<int64_t>, int64_t>                               57521624 ns     57520720 ns          243      132.637Mi/s          8        17.385M/s
+BM_Insert<fastrange::CountSketch<__int128_t>, __int128_t>                         66079390 ns     66078370 ns          212       230.92Mi/s         16       15.1335M/s
+BM_Insert<fastrange::CountSketch<float>, float>                                   60498108 ns     60497465 ns          231      63.0555Mi/s          4       16.5296M/s
+BM_Insert<fastrange::CountSketch<double>, double>                                 59971793 ns     59970814 ns          234      127.218Mi/s          8       16.6748M/s
+BM_Insert<fastrange::CountSketch<std::string>, std::string>                      305807343 ns    305797170 ns           46       1019.8Mi/s        327       3.27014M/s
+BM_Insert<fixed_size::CountSketch<int16_t>, int16_t>                              26241239 ns     26240784 ns          534      72.6864Mi/s          2       38.1086M/s
+BM_Insert<fixed_size::CountSketch<int32_t>, int32_t>                              26236098 ns     26235666 ns          533      145.401Mi/s          4       38.1161M/s
+BM_Insert<fixed_size::CountSketch<int64_t>, int64_t>                              30972249 ns     30971661 ns          451      246.335Mi/s          8       32.2876M/s
+BM_Insert<fixed_size::CountSketch<__int128_t>, __int128_t>                        33150429 ns     33149682 ns          422        460.3Mi/s         16       30.1662M/s
+BM_Insert<fixed_size::CountSketch<float>, float>                                  25736656 ns     25736209 ns          544      148.223Mi/s          4       38.8558M/s
+BM_Insert<fixed_size::CountSketch<double>, double>                                31228936 ns     31228284 ns          448       244.31Mi/s          8       32.0223M/s
+BM_Insert<fixed_size::CountSketch<std::string>, std::string>                     303895287 ns    303884595 ns           46      1.00216Gi/s        327       3.29072M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<int16_t>, int16_t>                   9698484 ns      9698292 ns         1443      196.669Mi/s          2       103.111M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<int32_t>, int32_t>                   9718041 ns      9717884 ns         1441      392.544Mi/s          4       102.903M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<int64_t>, int64_t>                   9763244 ns      9763053 ns         1434      781.456Mi/s          8       102.427M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<__int128_t>, __int128_t>            13074187 ns     13073800 ns         1070      1.13977Gi/s         16       76.4889M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<float>, float>                       9720758 ns      9720582 ns         1440      392.435Mi/s          4       102.874M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<double>, double>                     9766147 ns      9765909 ns         1434      781.227Mi/s          8       102.397M/s
+BM_Insert<final_no_murmur_unroll::CountSketch<std::string>, std::string>          70469585 ns     70466915 ns          199      4.32178Gi/s        327       14.1911M/s
+BM_Insert<final::CountSketch<int16_t>, int16_t>                                    9698717 ns      9698585 ns         1443      196.663Mi/s          2       103.108M/s
+BM_Insert<final::CountSketch<int32_t>, int32_t>                                    9716298 ns      9716147 ns         1440      392.614Mi/s          4       102.921M/s
+BM_Insert<final::CountSketch<int64_t>, int64_t>                                    9764095 ns      9763928 ns         1434      781.386Mi/s          8       102.418M/s
+BM_Insert<final::CountSketch<__int128_t>, __int128_t>                             13071150 ns     13070793 ns         1070      1.14004Gi/s         16       76.5065M/s
+BM_Insert<final::CountSketch<float>, float>                                        9561078 ns      9560880 ns         1464       398.99Mi/s          4       104.593M/s
+BM_Insert<final::CountSketch<double>, double>                                     10230414 ns     10230210 ns         1368      745.771Mi/s          8       97.7497M/s
+BM_Insert<final::CountSketch<std::string>, std::string>                           70551981 ns     70549203 ns          198      4.31674Gi/s        327       14.1745M/s
+BM_Insert<naive::KarninLangLiberty<int16_t>, int16_t>                           5187458685 ns   5187383410 ns            3      376.514Ki/s          2       192.775k/s
+BM_Insert<naive::KarninLangLiberty<int32_t>, int32_t>                           5182819627 ns   5182749016 ns            3      753.702Ki/s          4       192.948k/s
+BM_Insert<naive::KarninLangLiberty<int64_t>, int64_t>                           5187668879 ns   5187564963 ns            3      1.47071Mi/s          8       192.769k/s
+BM_Insert<naive::KarninLangLiberty<__int128_t>, __int128_t>                     5205715020 ns   5205626590 ns            3      2.93121Mi/s         16         192.1k/s
+BM_Insert<naive::KarninLangLiberty<float>, float>                               5184683278 ns   5184615350 ns            3      753.431Ki/s          4       192.878k/s
+BM_Insert<naive::KarninLangLiberty<double>, double>                             5185912775 ns   5185820328 ns            3       1.4712Mi/s          8       192.834k/s
+BM_Insert<naive::KarninLangLiberty<std::string>, std::string>                   5235958881 ns   5235848689 ns            3      59.5608Mi/s        327       190.991k/s
+BM_Insert<datasketches::KarninLangLiberty<int16_t>, int16_t>                      28996231 ns     28995717 ns          483      65.7804Mi/s          2       34.4879M/s
+BM_Insert<datasketches::KarninLangLiberty<int32_t>, int32_t>                      29070400 ns     29069798 ns          485      131.225Mi/s          4          34.4M/s
+BM_Insert<datasketches::KarninLangLiberty<int64_t>, int64_t>                      29282813 ns     29282235 ns          478      260.547Mi/s          8       34.1504M/s
+BM_Insert<datasketches::KarninLangLiberty<__int128_t>, __int128_t>                33250284 ns     33249459 ns          421      458.918Mi/s         16       30.0757M/s
+BM_Insert<datasketches::KarninLangLiberty<float>, float>                          32191348 ns     32190860 ns          435      118.502Mi/s          4       31.0647M/s
+BM_Insert<datasketches::KarninLangLiberty<double>, double>                        31287644 ns     31287018 ns          450      243.852Mi/s          8       31.9621M/s
+BM_Insert<datasketches::KarninLangLiberty<std::string>, std::string>             155772662 ns    155765244 ns           90      1.95514Gi/s        327       6.41992M/s
+BM_Insert<no_min_max::KarninLangLiberty<int16_t>, int16_t>                        27914554 ns     27914047 ns          501      68.3293Mi/s          2       35.8243M/s
+BM_Insert<no_min_max::KarninLangLiberty<int32_t>, int32_t>                        28995430 ns     28994683 ns          483      131.565Mi/s          4       34.4891M/s
+BM_Insert<no_min_max::KarninLangLiberty<int64_t>, int64_t>                        27792954 ns     27792369 ns          504      274.514Mi/s          8       35.9811M/s
+BM_Insert<no_min_max::KarninLangLiberty<__int128_t>, __int128_t>                  32091070 ns     32090269 ns          436      475.496Mi/s         16       31.1621M/s
+BM_Insert<no_min_max::KarninLangLiberty<float>, float>                            30986313 ns     30985855 ns          452      123.111Mi/s          4       32.2728M/s
+BM_Insert<no_min_max::KarninLangLiberty<double>, double>                          30903348 ns     30902595 ns          454      246.885Mi/s          8       32.3597M/s
+BM_Insert<no_min_max::KarninLangLiberty<std::string>, std::string>               150888591 ns    150882339 ns           93      2.01841Gi/s        327       6.62768M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<int16_t>, int16_t>           26247452 ns     26247128 ns          532      72.6688Mi/s          2       38.0994M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<int32_t>, int32_t>           27440509 ns     27440105 ns          508      139.019Mi/s          4        36.443M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<int64_t>, int64_t>           26427478 ns     26427157 ns          530      288.695Mi/s          8       37.8399M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<__int128_t>, __int128_t>     32201593 ns     32200898 ns          435      473.862Mi/s         16        31.055M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<float>, float>               29681501 ns     29681067 ns          471      128.523Mi/s          4       33.6915M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<double>, double>             29165376 ns     29164899 ns          480      261.595Mi/s          8       34.2878M/s
+BM_Insert<no_self_move_protection::KarninLangLiberty<std::string>, std::string>  150964370 ns    150959007 ns           93      2.01739Gi/s        327       6.62431M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<int16_t>, int16_t>           25475802 ns     25475361 ns          550      74.8703Mi/s          2       39.2536M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<int32_t>, int32_t>           26094408 ns     26094054 ns          537       146.19Mi/s          4       38.3229M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<int64_t>, int64_t>           25564023 ns     25563608 ns          548      298.447Mi/s          8       39.1181M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<__int128_t>, __int128_t>     30901458 ns     30900855 ns          453      493.798Mi/s         16       32.3616M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<float>, float>               27665552 ns     27665204 ns          506      137.888Mi/s          4       36.1465M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<double>, double>             27277586 ns     27277087 ns          513        279.7Mi/s          8       36.6608M/s
+BM_Insert<cached_level_capacities::KarninLangLiberty<std::string>, std::string>  148933934 ns    148928774 ns           94      2.04489Gi/s        327       6.71462M/s
+BM_Insert<pcg_random::KarninLangLiberty<int16_t>, int16_t>                        24302114 ns     24301717 ns          576      78.4862Mi/s          2       41.1494M/s
+BM_Insert<pcg_random::KarninLangLiberty<int32_t>, int32_t>                        25763469 ns     25763114 ns          544      148.068Mi/s          4       38.8152M/s
+BM_Insert<pcg_random::KarninLangLiberty<int64_t>, int64_t>                        24348209 ns     24347796 ns          575      313.351Mi/s          8       41.0715M/s
+BM_Insert<pcg_random::KarninLangLiberty<__int128_t>, __int128_t>                  30078847 ns     30078218 ns          465      507.304Mi/s         16       33.2467M/s
+BM_Insert<pcg_random::KarninLangLiberty<float>, float>                            26748749 ns     26748413 ns          523      142.614Mi/s          4       37.3854M/s
+BM_Insert<pcg_random::KarninLangLiberty<double>, double>                          26791083 ns     26790562 ns          523      284.779Mi/s          8       37.3266M/s
+BM_Insert<pcg_random::KarninLangLiberty<std::string>, std::string>               147288181 ns    147283643 ns           95      2.06773Gi/s        327       6.78962M/s
+BM_Insert<final::KarninLangLiberty<int16_t>, int16_t>                             23890724 ns     23890422 ns          586      79.8374Mi/s          2       41.8578M/s
+BM_Insert<final::KarninLangLiberty<int32_t>, int32_t>                             25177910 ns     25177639 ns          557      151.511Mi/s          4       39.7178M/s
+BM_Insert<final::KarninLangLiberty<int64_t>, int64_t>                             23850534 ns     23850097 ns          587      319.889Mi/s          8       41.9286M/s
+BM_Insert<final::KarninLangLiberty<__int128_t>, __int128_t>                       29846297 ns     29845667 ns          469      511.256Mi/s         16       33.5057M/s
+BM_Insert<final::KarninLangLiberty<float>, float>                                 26427217 ns     26426880 ns          530      144.349Mi/s          4       37.8403M/s
+BM_Insert<final::KarninLangLiberty<double>, double>                               26695898 ns     26695476 ns          525      285.794Mi/s          8       37.4595M/s
+BM_Insert<final::KarninLangLiberty<std::string>, std::string>                    147588161 ns    147583579 ns           95      2.06353Gi/s        327       6.77582M/s

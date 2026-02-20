@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sketch Benchmarks Viewer (LEGACY - DEPRECATED)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+  ⚠️  DEPRECATED - DO NOT USE THIS FILE ⚠️
+
+  This is a legacy monolithic version kept for backup purposes only.
+
+  Please use index.html instead, which uses the modern modular architecture:
+  - index.html (clean HTML)
+  - css/styles.css (separated styles)
+  - js/*.js (modular JavaScript)
+
+  This file will be removed in a future version.
+  -->
+  <style>
+    .legacy-warning {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #dc2626;
+      color: white;
+      padding: 12px 20px;
+      text-align: center;
+      font-weight: bold;
+      z-index: 9999;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .legacy-warning a {
+      color: #fef3c7;
+      text-decoration: underline;
+    }
+  </style>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px 0 64px;
+      background: #0f172a;
+      color: #e5e7eb;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      max-width: 1620px;
+      width: 100%;
+      padding: 40px 28px 72px;
+    }
+
+    .card {
+      background: #020617;
+      border-radius: 20px;
+      padding: 34px 32px 34px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.95);
+      border: 1px solid #1f2937;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      margin: 0 0 4px 0;
+      letter-spacing: 0.03em;
+    }
+
+    .subtitle {
+      font-size: 1.05rem;
+      color: #9ca3af;
+      margin-bottom: 24px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 18px;
+      padding: 16px 16px;
+      border-radius: 14px;
+      background: radial-gradient(circle at top left, #0f172a, #020617);
+      border: 1px solid #111827;
+    }
+
+    label {
+      font-size: 0.95rem;
+      color: #9ca3af;
+    }
+
+    input[type="file"] {
+      font-size: 0.95rem;
+      color: #e5e7eb;
+    }
+
+    select {
+      font-size: 0.95rem;
+      padding: 8px 10px;
+      color: #e5e7eb;
+      background: #0b1223;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+    }
+
+    .status {
+      font-size: 0.9rem;
+      color: #9ca3af;
+    }
+
+    .status strong {
+      color: #e5e7eb;
+    }
+
+    .table-wrapper {
+      margin-top: 16px;
+      border-radius: 12px;
+      border: 1px solid #111827;
+      background: #020617;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      padding: 12px;
+    }
+
+    .tables-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .table-card {
+      border: 1px solid #111827;
+      border-radius: 10px;
+      background: #0b1223;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      overflow: hidden;
+    }
+
+    .table-card table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.95rem;
+    }
+
+    thead th {
+      background: #0f172a;
+      border-bottom: 1px solid #1f2937;
+      padding: 8px 10px;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;      /* header must stay on a single line */
+      overflow: hidden;
+      text-overflow: ellipsis;  /* show "..." when the header is extremely long */
+    }
+
+    td {
+      border-bottom: 1px solid #0b1120;
+      padding: 6px 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #0c1325;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #0a0f1f;
+    }
+
+    tbody tr:hover {
+      background: #111a30;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: rgba(15,23,42,0.75);
+      font-size: 0.78rem;
+      color: #9ca3af;
+    }
+
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15);
+    }
+
+    .empty-state {
+      margin-top: 20px;
+      font-size: 0.9rem;
+      color: #6b7280;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .dataset-block {
+      margin-top: 18px;
+      padding: 14px 12px;
+      border-radius: 14px;
+      border: 1px solid #0f172a;
+      background: rgba(8,12,24,0.7);
+    }
+
+    .dataset-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 0 4px 10px 4px;
+      border-bottom: 1px solid #111827;
+    }
+
+    .dataset-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #e5e7eb;
+      letter-spacing: 0.01em;
+    }
+
+    .dataset-meta {
+      font-size: 0.85rem;
+      color: #9ca3af;
+    }
+
+    .dataset-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .drop-zone {
+      margin-top: 18px;
+      padding: 28px;
+      border: 2px dashed #1f2937;
+      border-radius: 16px;
+      background: rgba(12,19,37,0.55);
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease;
+    }
+
+    .clear-btn {
+      margin-left: 10px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid #1f2937;
+      background: #111827;
+      color: #e5e7eb;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+
+    .clear-btn:hover {
+      background: #1f2937;
+      border-color: #2563eb;
+    }
+
+    .drop-zone:hover {
+      border-color: #2563eb;
+      background: rgba(37,99,235,0.06);
+    }
+
+    .drop-zone.dragover {
+      border-color: #22c55e;
+      background: rgba(34,197,94,0.08);
+    }
+
+    .drop-zone strong {
+      display: block;
+      font-size: 1.1rem;
+      color: #e5e7eb;
+      margin-bottom: 6px;
+    }
+
+    .drop-zone span {
+      font-size: 0.95rem;
+      color: #9ca3af;
+    }
+
+    .add-more {
+      margin-top: 20px;
+    }
+
+    .add-more-label {
+      font-size: 0.98rem;
+      color: #e5e7eb;
+      margin-bottom: 10px;
+    }
+
+    .add-more-zone {
+      margin-top: 0;
+      border-style: dashed;
+      border-color: #1f2937;
+      background: rgba(10,15,31,0.65);
+    }
+
+    @media (max-width: 640px) {
+      h1 {
+        font-size: 1.4rem;
+      }
+      .card {
+        padding: 16px;
+      }
+      .controls {
+        padding: 10px 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="legacy-warning">
+    ⚠️ DEPRECATED: This is a legacy version. Please use <a href="index.html">index.html</a> instead for the modern modular version.
+  </div>
+  <div class="container" style="margin-top: 60px;">
+    <div class="card">
+      <h1>Sketch Benchmarks</h1>
+      <div class="subtitle">
+        Automatically loads CSV files from the data directory. You can also upload additional files manually.
+      </div>
+
+      <div class="controls">
+        <div>
+          <label for="csvInput">Single CSV file</label><br>
+          <input type="file" id="csvInput" accept=".csv,text/csv">
+        </div>
+        <div class="status" id="status">
+          <span class="pill">
+            <span class="pill-dot"></span>
+            Waiting for CSV…
+          </span>
+        </div>
+        <!-- clear all button -->
+        <button id="clearBtn" class="clear-btn" type="button">
+          Clear all
+        </button>
+      </div>
+
+      <div class="drop-zone" id="dropZone">
+        <strong>Drop CSV file here</strong>
+        <span>or click to browse</span>
+      </div>
+
+      <div id="tableContainer">
+        <div class="empty-state">
+          No data loaded yet. Choose a CSV file above to see your sketch benchmark results.
+        </div>
+      </div>
+
+      <div class="add-more hidden" id="addMoreSection">
+        <div class="add-more-label">Add more files to display</div>
+        <div class="drop-zone add-more-zone" id="addMoreZone">
+          <strong>Drop another CSV here</strong>
+          <span>or click to browse</span>
+        </div>
+      </div>
+      <input type="file" id="addMoreInput" accept=".csv,text/csv" class="hidden">
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('csvInput');
+    const statusEl = document.getElementById('status');
+    const tableContainer = document.getElementById('tableContainer');
+    const dropZone = document.getElementById('dropZone');
+    const addMoreSection = document.getElementById('addMoreSection');
+    const addMoreZone = document.getElementById('addMoreZone');
+    const addMoreInput = document.getElementById('addMoreInput');
+    const clearBtn = document.getElementById('clearBtn');
+
+    // stores all datasets currently displayed
+    let datasets = [];
+
+    // Helper: update status pill
+    function setStatus(html) {
+      statusEl.innerHTML = html;
+    }
+
+    // =====================================================================
+    // 1) Upload a single CSV via file input
+    // =====================================================================
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      loadCsvFile(file);
+    });
+
+    // =====================================================================
+    // 2) Drag & drop onto the main drop-zone
+    // =====================================================================
+    ['dragenter', 'dragover'].forEach(evt =>
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('dragover');
+      })
+    );
+
+    ['dragleave', 'drop'].forEach(evt =>
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('dragover');
+      })
+    );
+
+    dropZone.addEventListener('drop', (event) => {
+      const file = event.dataTransfer?.files?.[0];
+      if (file) {
+        loadCsvFile(file);
+      }
+    });
+
+    // click on the drop-zone opens the file picker
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    // =====================================================================
+    // 3) Add more files (append) via second drop-zone or click
+    // =====================================================================
+    ['dragenter', 'dragover'].forEach(evt =>
+      addMoreZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        addMoreZone.classList.add('dragover');
+      })
+    );
+
+    ['dragleave', 'drop'].forEach(evt =>
+      addMoreZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        addMoreZone.classList.remove('dragover');
+      })
+    );
+
+    addMoreZone.addEventListener('drop', (event) => {
+      const file = event.dataTransfer?.files?.[0];
+      if (file) {
+        loadCsvFile(file, { append: true });
+      }
+    });
+
+    addMoreZone.addEventListener('click', () => addMoreInput.click());
+    addMoreInput.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (file) loadCsvFile(file, { append: true });
+      addMoreInput.value = '';
+    });
+
+    // =====================================================================
+    // Utility: load a CSV file and render it
+    // =====================================================================
+    function loadCsvFile(file, { append = false } = {}) {
+      if (!file) return;
+
+      setStatus(`<span class="pill"><span class="pill-dot"></span>Loading <strong>${file.name}</strong>…</span>`);
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target.result;
+          const { headers, rows } = parseCSV(text);
+          if (append) {
+            datasets.push({ headers, rows, name: file.name });
+            setStatus(`<span class="pill"><span class="pill-dot"></span>Loaded extra <strong>${file.name}</strong> · <strong>${rows.length}</strong> rows</span>`);
+          } else {
+            datasets = [{ headers, rows, name: file.name }];
+            setStatus(`<span class="pill"><span class="pill-dot"></span>Loaded <strong>${file.name}</strong> · <strong>${rows.length}</strong> rows</span>`);
+            dropZone.classList.add('hidden'); // hide main drop-zone after first load
+          }
+          renderDatasets();
+        } catch (err) {
+          console.error(err);
+          setStatus(`<span class="pill" style="border-color:#7f1d1d;color:#fecaca;">
+            <span class="pill-dot" style="background:#ef4444;box-shadow:0 0 0 4px rgba(248,113,113,0.15);"></span>
+            Failed to parse CSV
+          </span>`);
+          tableContainer.innerHTML = `<div class="empty-state">Error parsing CSV: ${err.message}</div>`;
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Reset / clear all datasets and UI
+    clearBtn.addEventListener('click', () => {
+      datasets = [];
+      tableContainer.innerHTML = `
+        <div class="empty-state">
+          No data loaded yet. Choose a CSV file above to see your sketch benchmark results.
+        </div>
+      `;
+      setStatus(`<span class="pill"><span class="pill-dot"></span>Waiting for CSV…</span>`);
+      dropZone.classList.remove('hidden');
+      addMoreSection.classList.add('hidden');
+      fileInput.value = '';
+      addMoreInput.value = '';
+    });
+
+    // =====================================================================
+    // Simple CSV parser
+    // =====================================================================
+    function parseCSV(text) {
+      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+      if (lines.length === 0) {
+        throw new Error('CSV file is empty');
+      }
+
+      const headers = splitCSVLine(lines[0]);
+      const rows = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        const values = splitCSVLine(line);
+
+        if (values.every(v => v.trim() === '')) continue;
+
+        const row = {};
+        for (let j = 0; j < headers.length; j++) {
+          row[headers[j]] = values[j] !== undefined ? values[j].trim() : '';
+        }
+        rows.push(row);
+      }
+
+      return { headers, rows };
+    }
+
+    function splitCSVLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          result.push(current);
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      result.push(current);
+      return result.map(v => v.replace(/^"(.*)"$/, '$1'));
+    }
+
+    // =====================================================================
+    // Render table(s): split columns into multiple vertical tables (no horiz scroll)
+    // =====================================================================
+
+    // Group headers into multiple groups (each group = one table-card)
+    // based on an estimated text width so that headers stay on a single line.
+    function groupHeadersByWidth(headers) {
+      const groups = [];
+      let currentGroup = [];
+      let currentWidth = 0;
+
+      // Rough estimate: 1 character ~ 9px, plus 40px padding per column
+      const CHAR_WIDTH = 9;
+      const BASE_PADDING = 40;
+
+      // Maximum width for a table-card (must match CSS minmax width)
+      const CARD_WIDTH_LIMIT = 480; // px
+
+      for (const h of headers) {
+        const estWidth = h.length * CHAR_WIDTH + BASE_PADDING;
+
+        // If this column alone is wider than the card, clamp it to card width
+        const safeWidth = Math.min(estWidth, CARD_WIDTH_LIMIT);
+
+        if (currentGroup.length > 0 && currentWidth + safeWidth > CARD_WIDTH_LIMIT) {
+          // start a new group
+          groups.push(currentGroup);
+          currentGroup = [h];
+          currentWidth = safeWidth;
+        } else {
+          currentGroup.push(h);
+          currentWidth += safeWidth;
+        }
+      }
+
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+
+      return groups;
+    }
+
+    function renderDatasets() {
+      if (!datasets || datasets.length === 0) {
+        tableContainer.innerHTML = `
+          <div class="empty-state">
+            No data loaded yet. Choose a CSV file above to see your sketch benchmark results.
+          </div>
+        `;
+        addMoreSection.classList.add('hidden');
+        return;
+      }
+
+      addMoreSection.classList.remove('hidden');
+
+      let html = '';
+
+      datasets.forEach(({ headers, rows, name }, idx) => {
+        if (!headers || headers.length === 0) return;
+
+        // Split headers into dynamic groups
+        const headerGroups = groupHeadersByWidth(headers);
+
+        let block = `<div class="dataset-block">
+          <div class="dataset-header">
+            <div>
+              <div class="dataset-title">${escapeHtml(name || 'CSV')}</div>
+              <div class="dataset-meta">${rows.length} rows · ${headers.length} cols</div>
+            </div>
+            <div class="dataset-actions">
+              <span class="pill"><span class="pill-dot"></span>Loaded</span>
+              <button class="clear-btn dataset-remove" type="button" data-remove-idx="${idx}" aria-label="Remove ${escapeHtml(name || 'CSV')}">✕</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <div class="tables-grid">`;
+
+        // Each header group becomes one table-card
+        headerGroups.forEach(subHeaders => {
+          block += '<div class="table-card"><table><thead><tr>';
+          subHeaders.forEach(h => {
+            block += `<th>${escapeHtml(h)}</th>`;
+          });
+          block += '</tr></thead><tbody>';
+
+          rows.forEach(row => {
+            block += '<tr>';
+            subHeaders.forEach(h => {
+              const value = row[h] ?? '';
+              block += `<td>${escapeHtml(value)}</td>`;
+            });
+            block += '</tr>';
+          });
+
+          block += '</tbody></table></div>';
+        });
+
+        block += '</div></div></div>'; // tables-grid, table-wrapper, dataset-block
+        html += block;
+      });
+
+      if (!html) {
+        tableContainer.innerHTML = '<div class="empty-state">No headers found in CSV.</div>';
+        addMoreSection.classList.add('hidden');
+      } else {
+        tableContainer.innerHTML = html;
+      }
+    }
+
+    // This helper is no longer used but kept for reference:
+    // dynamic number of columns per table, clamped between 2–4 columns.
+    function getColsPerTable() {
+      const containerWidth = tableContainer.clientWidth || window.innerWidth || 1024;
+
+      // Assume each column needs about 220px to remain readable
+      const MIN_COL_WIDTH = 220;
+      const approxCols = Math.floor(containerWidth / MIN_COL_WIDTH);
+
+      // Avoid too many columns in one table (keep things legible)
+      const cols = Math.max(2, Math.min(approxCols, 4));
+      return cols;
+    }
+
+    // Re-render tables on resize to adapt column grouping if needed
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (!datasets || datasets.length === 0) return;
+        renderDatasets();
+      }, 120);
+    });
+
+    // =====================================================================
+    // Remove a single dataset card via the X button
+    // =====================================================================
+    tableContainer.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-remove-idx]');
+      if (!btn) return;
+      const idx = Number(btn.getAttribute('data-remove-idx'));
+      if (Number.isNaN(idx)) return;
+      const removed = datasets.splice(idx, 1)[0];
+      setStatus(`<span class="pill"><span class="pill-dot"></span>Removed <strong>${escapeHtml(removed?.name || 'CSV')}</strong></span>`);
+      if (datasets.length === 0) {
+        dropZone.classList.remove('hidden');
+        addMoreSection.classList.add('hidden');
+        setStatus(`<span class="pill"><span class="pill-dot"></span>Waiting for CSV…</span>`);
+      }
+      renderDatasets();
+    });
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // =====================================================================
+    // Auto-load CSV files from the data directory
+    // =====================================================================
+    async function autoLoadDataFiles() {
+      try {
+        // Try to fetch a manifest file that lists available CSV files
+        const manifestResponse = await fetch('data/index.json');
+
+        if (manifestResponse.ok) {
+          const manifest = await manifestResponse.json();
+          const csvFiles = manifest.files || [];
+
+          if (csvFiles.length === 0) {
+            console.log('No CSV files listed in data/index.json');
+            return;
+          }
+
+          setStatus(`<span class="pill"><span class="pill-dot"></span>Loading ${csvFiles.length} file(s) from data directory…</span>`);
+
+          // Load each CSV file
+          for (const filename of csvFiles) {
+            await loadCsvFromUrl(`data/${filename}`, filename);
+          }
+
+          if (datasets.length > 0) {
+            dropZone.classList.add('hidden');
+          }
+        } else {
+          // Fallback: try to load common CSV files directly
+          await tryLoadCommonFiles();
+        }
+      } catch (err) {
+        console.log('Could not auto-load from manifest, trying common files:', err.message);
+        await tryLoadCommonFiles();
+      }
+    }
+
+    // Try to load CSV files with common naming patterns
+    async function tryLoadCommonFiles() {
+      const commonFiles = [
+        'benchmarks.csv',
+        'results.csv',
+        'sketch_results.csv',
+        'output.csv'
+      ];
+
+      let loadedCount = 0;
+      for (const filename of commonFiles) {
+        try {
+          const success = await loadCsvFromUrl(`data/${filename}`, filename);
+          if (success) loadedCount++;
+        } catch (err) {
+          // Silently continue if file doesn't exist
+        }
+      }
+
+      if (loadedCount > 0 && datasets.length > 0) {
+        dropZone.classList.add('hidden');
+      }
+    }
+
+    // Load a CSV file from a URL
+    async function loadCsvFromUrl(url, filename) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          return false;
+        }
+
+        const text = await response.text();
+        const { headers, rows } = parseCSV(text);
+
+        datasets.push({ headers, rows, name: filename });
+        setStatus(`<span class="pill"><span class="pill-dot"></span>Loaded <strong>${filename}</strong> · <strong>${rows.length}</strong> rows</span>`);
+        renderDatasets();
+
+        return true;
+      } catch (err) {
+        console.error(`Failed to load ${url}:`, err);
+        return false;
+      }
+    }
+
+    // Auto-load data files when page loads
+    window.addEventListener('DOMContentLoaded', () => {
+      autoLoadDataFiles();
+    });
+  </script>
+</body>
+</html>

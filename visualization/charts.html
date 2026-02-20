@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Benchmark Visualizations</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h3 class="sidebar-title">View Options</h3>
+      </div>
+
+      <div class="view-options-group">
+        <label class="view-option active" data-view="merged">
+          <input type="radio" name="viewMode" value="merged" checked>
+          <div class="option-icon">📊</div>
+          <div class="option-content">
+            <div class="option-title">All Together</div>
+            <div class="option-desc">Merged view with 5 categories</div>
+          </div>
+        </label>
+
+        <label class="view-option" data-view="individual">
+          <input type="radio" name="viewMode" value="individual">
+          <div class="option-icon">📁</div>
+          <div class="option-content">
+            <div class="option-title">Graph by JSON</div>
+            <div class="option-desc">Individual graphs per file</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="container">
+        <div class="card">
+          <div class="nav-header">
+            <a href="index.html" class="back-link">← Back to Home</a>
+            <a href="tables.html" class="view-link">View Tables →</a>
+          </div>
+
+          <h1>Benchmark Visualizations</h1>
+          <div class="subtitle">
+            Interactive charts showing median performance metrics across benchmarks.
+          </div>
+
+          <div class="controls">
+            <div>
+              <label for="csvInput">Single JSON file</label><br>
+              <input type="file" id="csvInput" accept=".json,.jsonl,application/json">
+            </div>
+            <div class="status" id="status">
+              <span class="pill">
+                <span class="pill-dot"></span>
+                Waiting for JSON…
+              </span>
+            </div>
+            <button id="clearBtn" class="clear-btn" type="button">
+              Clear all
+            </button>
+          </div>
+
+          <div class="drop-zone" id="dropZone">
+            <strong>Drop JSON file here</strong>
+            <span>or click to browse</span>
+          </div>
+
+          <div id="chartContainer">
+            <div class="empty-state">
+              No data loaded yet. Choose a JSON file above to see benchmark visualizations.
+            </div>
+          </div>
+
+          <div class="add-more hidden" id="addMoreSection">
+            <div class="add-more-label">Add more files to display</div>
+            <div class="drop-zone add-more-zone" id="addMoreZone">
+              <strong>Drop another JSON here</strong>
+              <span>or click to browse</span>
+            </div>
+          </div>
+          <input type="file" id="addMoreInput" accept=".json,.jsonl,application/json" class="hidden">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script type="module" src="js/appCharts.js"></script>
+</body>
+</html>
