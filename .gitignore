@@ -1,0 +1,50 @@
+# Binary files
+*.bin
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.a
+
+# Rust target directories
+target/
+**/target/
+Cargo.lock
+
+# C++ build artifacts
+*.dSYM/
+cpp_benchmark
+cpp_countmin_benchmark
+cpp/build/
+cpp/build_*/
+cpp/output/
+cpp/_gbench/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Specific input file
+input/benchmark_data_1m_int64.bin
+input/generate_data
+
+# Benchmark outputs
+rust/bench_sketches/output/
+
+# Build directories
+build/
+dist/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
