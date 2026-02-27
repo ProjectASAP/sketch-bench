@@ -6,7 +6,7 @@ use bench_common::{
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
     ELASTIC_BUCKETS,
 };
-use sketchlib_rust::Elastic as LibElastic;
+use sketchlib_rust::{DefaultXxHasher, Elastic as LibElastic};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let results = run_benchmark_strings(
         config,
-        || LibElastic::init_with_length(ELASTIC_BUCKETS as i32),
+        || LibElastic::<DefaultXxHasher>::init_with_length(ELASTIC_BUCKETS as i32),
         |sketch, key| sketch.insert(key.to_owned()),
     )?;
 
