@@ -42,6 +42,8 @@ BINARIES=(
   univmon_lib
   nitro_oxide
   nitro_lib
+  hll_datasketches
+  countmin_datasketches
 )
 
 taskset_prefix=()
