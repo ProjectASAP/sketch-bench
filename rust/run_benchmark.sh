@@ -30,6 +30,7 @@ BINARIES=(
   countmin_lib_vector2d_fast
   countmin_lib_vector2d_regular
   countmin_lib_fixedmatrix_fast
+  countmin_lib_fixedmatrix_custom_fast
   countsketch_oxide
   countsketch_lib_vector2d_fast
   countsketch_lib_vector2d_regular
