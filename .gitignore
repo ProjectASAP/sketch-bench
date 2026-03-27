@@ -8,6 +8,10 @@
 *.out
 *.a
 
+# data
+*.csv
+*.pcap
+
 # Rust target directories
 target/
 **/target/

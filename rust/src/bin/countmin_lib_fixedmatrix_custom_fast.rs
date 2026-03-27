@@ -5,9 +5,9 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use sketchlib_rust::{CountMin, FastPath, SketchInput, impl_fixed_matrix};
+use sketchlib_rust::{CountMin, FastPath, SketchInput, impl_fixed_matrix, DefaultXxHasher};
 
-impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538, u128);
+impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
