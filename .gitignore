@@ -52,3 +52,6 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Accuracy plotting cache
+accuracy/.mplconfig/
