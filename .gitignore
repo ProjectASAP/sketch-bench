@@ -55,3 +55,4 @@ Thumbs.db
 
 # Accuracy plotting cache
 accuracy/.mplconfig/
+accuracy/data/generate_zipf_data

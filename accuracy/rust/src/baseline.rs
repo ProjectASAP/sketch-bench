@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = 100;
+
 #[derive(Clone, Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
@@ -17,6 +19,15 @@ impl BaselineData {
 
     pub fn distinct_items(&self) -> usize {
         self.frequencies.len()
+    }
+
+    pub fn heavy_hitters(&self) -> Vec<(i64, u64)> {
+        self.frequencies
+            .iter()
+            .filter_map(|(&key, &true_count)| {
+                (true_count >= HEAVY_HITTER_MIN_TRUE_COUNT).then_some((key, true_count))
+            })
+            .collect()
     }
 }
 

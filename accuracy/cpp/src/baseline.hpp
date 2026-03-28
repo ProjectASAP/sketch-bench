@@ -4,13 +4,30 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <vector>
+
+constexpr uint64_t kHeavyHitterMinTrueCount = 100;
 
 struct BaselineData {
   std::vector<int64_t> values;
   std::unordered_map<int64_t, uint64_t> frequencies;
 };
+
+inline std::vector<std::pair<int64_t, uint64_t>> heavy_hitters(const BaselineData& baseline) {
+  std::vector<std::pair<int64_t, uint64_t>> result;
+  result.reserve(baseline.frequencies.size());
+  for (const auto& entry : baseline.frequencies) {
+    if (entry.second >= kHeavyHitterMinTrueCount) {
+      result.emplace_back(entry.first, entry.second);
+    }
+  }
+  if (result.empty()) {
+    throw std::runtime_error("Baseline contains no heavy hitters with true_count >= 100");
+  }
+  return result;
+}
 
 inline BaselineData load_baseline(const std::string& path) {
   std::ifstream input(path, std::ios::binary | std::ios::ate);

@@ -21,6 +21,13 @@ COLORS = {
     "rust_sketchlib_cms": "#4C78A8",
     "cpp_datasketches_cms": "#F58518",
 }
+IMPLEMENTATIONS = ["rust_datasketches_cms", "rust_sketchlib_cms", "cpp_datasketches_cms"]
+ALL_COLUMNS = [2048, 4096, 8192, 16384, 32768, 65536, 131072]
+GROUPED_OFFSETS = {
+    "rust_datasketches_cms": -0.24,
+    "rust_sketchlib_cms": 0.0,
+    "cpp_datasketches_cms": 0.24,
+}
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -32,26 +39,51 @@ def load_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def plot_grouped_boxplots(rows: list[dict[str, str]], output_path: Path) -> None:
+def group_rows_by_implementation_and_cols(
+    rows: list[dict[str, str]],
+) -> dict[str, dict[int, list[float]]]:
     grouped: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
         grouped[row["implementation"]][int(row["cols"])].append(
             float(row["median_relative_error"]) * 100.0
         )
+    return grouped
+
+
+def require_column_data(
+    grouped: dict[str, dict[int, list[float]]], x_values: list[int], output_path: Path
+) -> None:
+    for implementation in IMPLEMENTATIONS:
+        for col in x_values:
+            if not grouped[implementation][col]:
+                raise ValueError(
+                    f"missing data for implementation={implementation}, cols={col} while writing {output_path}"
+                )
+
+
+def base_title_lines() -> list[str]:
+    return [
+        "CMS Accuracy: Heavy Hitters Only Median-Over-Seeds Relative Error",
+        "Data: 1M Zipf-distributed int64 values (s=1.1, support=100k)",
+        "Heavy hitters only (true_count >= 100)",
+        "Sketch fixed to 5 rows",
+    ]
+
+
+def plot_grouped_boxplots(
+    grouped: dict[str, dict[int, list[float]]],
+    output_path: Path,
+    x_values: list[int],
+    title_lines: list[str],
+) -> None:
+    require_column_data(grouped, x_values, output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(12.5, 5.5))
-    x_values = [2048, 4096, 8192, 16384, 32768, 65536, 131072]
-    implementations = ["rust_datasketches_cms", "rust_sketchlib_cms", "cpp_datasketches_cms"]
-    offsets = {
-        "rust_datasketches_cms": -0.24,
-        "rust_sketchlib_cms": 0.0,
-        "cpp_datasketches_cms": 0.24,
-    }
     width = 0.18
 
-    for implementation in implementations:
-        positions = [index + offsets[implementation] for index in range(len(x_values))]
+    for implementation in IMPLEMENTATIONS:
+        positions = [index + GROUPED_OFFSETS[implementation] for index in range(len(x_values))]
         data = [grouped[implementation][col] for col in x_values]
         bp = ax.boxplot(
             data,
@@ -83,23 +115,109 @@ def plot_grouped_boxplots(rows: list[dict[str, str]], output_path: Path) -> None
             zorder=3,
         )
 
-    ax.set_title(
-        "CMS Accuracy: Per-Key Median-Over-Seeds Relative Error\n"
-        "Data: 1M uniformly random int64 values\n"
-        "Sketch fixed to 5 rows"
-    )
+    ax.set_title("\n".join(title_lines))
     ax.set_xlabel("Columns")
     ax.set_ylabel("Median-Over-Seeds Relative Error (%)")
     ax.set_xticks(range(len(x_values)))
     ax.set_xticklabels([str(value) for value in x_values])
     ax.grid(True, axis="y", alpha=0.25)
     legend_handles = [
-        Line2D([0], [0], color=COLORS[name], lw=6, label=name) for name in implementations
+        Line2D([0], [0], color=COLORS[name], lw=6, label=name) for name in IMPLEMENTATIONS
     ]
     ax.legend(handles=legend_handles)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
+
+
+def plot_single_column_boxplot(
+    grouped: dict[str, dict[int, list[float]]],
+    output_path: Path,
+    col: int,
+    title_lines: list[str],
+) -> None:
+    require_column_data(grouped, [col], output_path)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    positions = list(range(len(IMPLEMENTATIONS)))
+    data = [grouped[implementation][col] for implementation in IMPLEMENTATIONS]
+    bp = ax.boxplot(
+        data,
+        positions=positions,
+        widths=0.55,
+        patch_artist=True,
+        showfliers=False,
+        medianprops={"color": "#222222", "linewidth": 2},
+        whiskerprops={"linewidth": 1.5},
+        capprops={"linewidth": 1.5},
+        boxprops={"alpha": 0.75},
+    )
+
+    for patch, implementation in zip(bp["boxes"], IMPLEMENTATIONS):
+        color = COLORS.get(implementation, "#333333")
+        patch.set_facecolor(color)
+        patch.set_edgecolor(color)
+        patch.set_alpha(0.75)
+
+    for whisker, implementation in zip(bp["whiskers"], [name for name in IMPLEMENTATIONS for _ in range(2)]):
+        whisker.set_color(COLORS.get(implementation, "#333333"))
+    for cap, implementation in zip(bp["caps"], [name for name in IMPLEMENTATIONS for _ in range(2)]):
+        cap.set_color(COLORS.get(implementation, "#333333"))
+
+    ax.set_title("\n".join(title_lines))
+    ax.set_xlabel("Implementation")
+    ax.set_ylabel("Median-Over-Seeds Relative Error (%)")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(IMPLEMENTATIONS, rotation=12, ha="right")
+    ax.grid(True, axis="y", alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
+def write_all_plots(rows: list[dict[str, str]], output_path: Path) -> list[Path]:
+    grouped = group_rows_by_implementation_and_cols(rows)
+    written_paths = [output_path]
+    stem = output_path.stem
+    suffix = output_path.suffix
+
+    plot_grouped_boxplots(grouped, output_path, ALL_COLUMNS, base_title_lines())
+
+    from_8192_path = output_path.with_name(f"{stem}_from_8192{suffix}")
+    plot_grouped_boxplots(
+        grouped,
+        from_8192_path,
+        [8192, 16384, 32768, 65536, 131072],
+        base_title_lines() + ["Columns shown: 8192 and above"],
+    )
+    written_paths.append(from_8192_path)
+
+    from_16384_path = output_path.with_name(f"{stem}_from_16384{suffix}")
+    plot_grouped_boxplots(
+        grouped,
+        from_16384_path,
+        [16384, 32768, 65536, 131072],
+        base_title_lines() + ["Columns shown: 16384 and above"],
+    )
+    written_paths.append(from_16384_path)
+
+    for col in ALL_COLUMNS:
+        per_col_path = output_path.with_name(f"{stem}_col_{col}{suffix}")
+        plot_single_column_boxplot(
+            grouped,
+            per_col_path,
+            col,
+            [
+                "CMS Accuracy: Heavy Hitters Only Median-Over-Seeds Relative Error",
+                f"Column count: {col}",
+                "Data: 1M Zipf-distributed int64 values (s=1.1, support=100k)",
+                "Heavy hitters only (true_count >= 100)",
+            ],
+        )
+        written_paths.append(per_col_path)
+
+    return written_paths
 
 
 def main() -> None:
@@ -109,7 +227,8 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = load_rows(args.input_key_errors)
-    plot_grouped_boxplots(rows, args.output)
+    for path in write_all_plots(rows, args.output):
+        print(f"Wrote {path}")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ use datasketches::countmin::CountMinSketch;
 use std::io;
 
 pub fn run_summary(baseline: &BaselineData) -> Vec<AccuracyRow> {
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
     let mut rows = Vec::with_capacity(SEEDS.len() * COLS_LIST.len());
     for &seed in &SEEDS {
         for &cols in &COLS_LIST {
@@ -13,7 +14,7 @@ pub fn run_summary(baseline: &BaselineData) -> Vec<AccuracyRow> {
             for &value in &baseline.values {
                 sketch.update(value);
             }
-            rows.push(measure(seed, cols, baseline, |value| {
+            rows.push(measure(seed, cols, baseline, &heavy_hitters, |value| {
                 sketch.estimate(*value) as u64
             }));
         }
@@ -25,6 +26,7 @@ pub fn write_key_median_errors(
     baseline: &BaselineData,
     writer: &mut KeyErrorCsvWriter,
 ) -> io::Result<()> {
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
     for &cols in &COLS_LIST {
         let sketches: Vec<CountMinSketch> = SEEDS
             .iter()
@@ -37,7 +39,7 @@ pub fn write_key_median_errors(
             })
             .collect();
 
-        for (&key, &true_count) in &baseline.frequencies {
+        for &(key, true_count) in &heavy_hitters {
             let mut estimates = [0u64; SEEDS.len()];
             for (index, sketch) in sketches.iter().enumerate() {
                 estimates[index] = sketch.estimate(key) as u64;
@@ -61,7 +63,13 @@ pub fn write_key_median_errors(
     Ok(())
 }
 
-fn measure<F>(seed: u64, cols: usize, baseline: &BaselineData, mut estimate: F) -> AccuracyRow
+fn measure<F>(
+    seed: u64,
+    cols: usize,
+    baseline: &BaselineData,
+    heavy_hitters: &[(i64, u64)],
+    mut estimate: F,
+) -> AccuracyRow
 where
     F: FnMut(&i64) -> u64,
 {
@@ -69,8 +77,8 @@ where
     let mut max_relative_error = 0.0f64;
     let mut total_absolute_error = 0.0f64;
 
-    for (value, &true_count) in &baseline.frequencies {
-        let estimate_value = estimate(value);
+    for &(value, true_count) in heavy_hitters {
+        let estimate_value = estimate(&value);
         let absolute_error = estimate_value.abs_diff(true_count) as f64;
         let relative_error = absolute_error / true_count as f64;
         total_relative_error += relative_error;
@@ -80,7 +88,7 @@ where
         }
     }
 
-    let distinct = baseline.distinct_items() as f64;
+    let distinct = heavy_hitters.len() as f64;
     AccuracyRow {
         implementation: IMPLEMENTATION_RUST_DATASKETCHES,
         language: "rust",
@@ -88,9 +96,18 @@ where
         rows: ROWS,
         cols,
         total_items: baseline.total_items(),
-        distinct_items: baseline.distinct_items(),
+        distinct_items: heavy_hitters.len(),
         avg_relative_error: total_relative_error / distinct,
         max_relative_error,
         mean_absolute_error: total_absolute_error / distinct,
     }
+}
+
+fn heavy_hitters_or_panic(baseline: &BaselineData) -> Vec<(i64, u64)> {
+    let heavy_hitters = baseline.heavy_hitters();
+    assert!(
+        !heavy_hitters.is_empty(),
+        "baseline contains no heavy hitters with true_count >= 100"
+    );
+    heavy_hitters
 }

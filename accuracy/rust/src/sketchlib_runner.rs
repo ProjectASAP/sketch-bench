@@ -77,16 +77,17 @@ define_seeded_hasher!(H09, 9);
 define_seeded_hasher!(H10, 10);
 
 pub fn run_summary(baseline: &BaselineData) -> Vec<AccuracyRow> {
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
     let mut rows = Vec::with_capacity(10 * COLS_LIST.len());
     macro_rules! push_runs {
         ($seed:expr, $hasher:ty) => {
-            rows.push(run_one::<M5x2K, $hasher>($seed, 2048, baseline));
-            rows.push(run_one::<M5x4K, $hasher>($seed, 4096, baseline));
-            rows.push(run_one::<M5x8K, $hasher>($seed, 8192, baseline));
-            rows.push(run_one::<M5x16K, $hasher>($seed, 16384, baseline));
-            rows.push(run_one::<M5x32K, $hasher>($seed, 32768, baseline));
-            rows.push(run_one::<M5x64K, $hasher>($seed, 65536, baseline));
-            rows.push(run_one::<M5x128K, $hasher>($seed, 131072, baseline));
+            rows.push(run_one::<M5x2K, $hasher>($seed, 2048, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x4K, $hasher>($seed, 4096, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x8K, $hasher>($seed, 8192, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x16K, $hasher>($seed, 16384, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x32K, $hasher>($seed, 32768, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x64K, $hasher>($seed, 65536, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x128K, $hasher>($seed, 131072, baseline, &heavy_hitters));
         };
     }
     push_runs!(1, H01);
@@ -106,17 +107,23 @@ pub fn write_key_median_errors(
     baseline: &BaselineData,
     writer: &mut KeyErrorCsvWriter,
 ) -> io::Result<()> {
-    write_group_medians_m5x2k(baseline, writer)?;
-    write_group_medians_m5x4k(baseline, writer)?;
-    write_group_medians_m5x8k(baseline, writer)?;
-    write_group_medians_m5x16k(baseline, writer)?;
-    write_group_medians_m5x32k(baseline, writer)?;
-    write_group_medians_m5x64k(baseline, writer)?;
-    write_group_medians_m5x128k(baseline, writer)?;
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
+    write_group_medians_m5x2k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x4k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x8k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x16k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x32k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x64k(baseline, &heavy_hitters, writer)?;
+    write_group_medians_m5x128k(baseline, &heavy_hitters, writer)?;
     Ok(())
 }
 
-fn run_one<S, H>(seed: u64, cols: usize, baseline: &BaselineData) -> AccuracyRow
+fn run_one<S, H>(
+    seed: u64,
+    cols: usize,
+    baseline: &BaselineData,
+    heavy_hitters: &[(i64, u64)],
+) -> AccuracyRow
 where
     S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
@@ -130,8 +137,8 @@ where
     let mut total_relative_error = 0.0f64;
     let mut max_relative_error = 0.0f64;
     let mut total_absolute_error = 0.0f64;
-    for (value, &true_count) in &baseline.frequencies {
-        let estimate_value: u64 = sketch.estimate(&SketchInput::I64(*value)).into() as u64;
+    for &(value, true_count) in heavy_hitters {
+        let estimate_value: u64 = sketch.estimate(&SketchInput::I64(value)).into() as u64;
         let absolute_error = estimate_value.abs_diff(true_count) as f64;
         let relative_error = absolute_error / true_count as f64;
         total_relative_error += relative_error;
@@ -141,7 +148,7 @@ where
         }
     }
 
-    let distinct = baseline.distinct_items() as f64;
+    let distinct = heavy_hitters.len() as f64;
     AccuracyRow {
         implementation: IMPLEMENTATION_RUST_SKETCHLIB,
         language: "rust",
@@ -149,7 +156,7 @@ where
         rows: ROWS,
         cols,
         total_items: baseline.total_items(),
-        distinct_items: baseline.distinct_items(),
+        distinct_items: heavy_hitters.len(),
         avg_relative_error: total_relative_error / distinct,
         max_relative_error,
         mean_absolute_error: total_absolute_error / distinct,
@@ -171,7 +178,11 @@ where
 
 macro_rules! write_group_medians {
     ($fn_name:ident, $storage:ty, $cols:expr) => {
-        fn $fn_name(baseline: &BaselineData, writer: &mut KeyErrorCsvWriter) -> io::Result<()> {
+        fn $fn_name(
+            baseline: &BaselineData,
+            heavy_hitters: &[(i64, u64)],
+            writer: &mut KeyErrorCsvWriter,
+        ) -> io::Result<()> {
             let s01 = median_estimator::<$storage, H01>(baseline);
             let s02 = median_estimator::<$storage, H02>(baseline);
             let s03 = median_estimator::<$storage, H03>(baseline);
@@ -183,7 +194,7 @@ macro_rules! write_group_medians {
             let s09 = median_estimator::<$storage, H09>(baseline);
             let s10 = median_estimator::<$storage, H10>(baseline);
 
-            for (&key, &true_count) in &baseline.frequencies {
+            for &(key, true_count) in heavy_hitters {
                 let value = SketchInput::I64(key);
                 let mut estimates = [
                     {
@@ -254,6 +265,15 @@ write_group_medians!(write_group_medians_m5x16k, M5x16K, 16384);
 write_group_medians!(write_group_medians_m5x32k, M5x32K, 32768);
 write_group_medians!(write_group_medians_m5x64k, M5x64K, 65536);
 write_group_medians!(write_group_medians_m5x128k, M5x128K, 131072);
+
+fn heavy_hitters_or_panic(baseline: &BaselineData) -> Vec<(i64, u64)> {
+    let heavy_hitters = baseline.heavy_hitters();
+    assert!(
+        !heavy_hitters.is_empty(),
+        "baseline contains no heavy hitters with true_count >= 100"
+    );
+    heavy_hitters
+}
 
 fn hash_input64(seed: u64, key: &SketchInput) -> u64 {
     match key {
