@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -27,12 +28,12 @@ inline uint64_t estimate_value(const datasketches::CountMinSketch<int64_t>& sket
   return min_estimate;
 }
 
-inline std::vector<AccuracyRow> run_datasketches(const BaselineData& baseline) {
-  constexpr size_t kRows = 3;
-  constexpr size_t kCols[] = {2048, 4096, 8192};
+inline std::vector<AccuracyRow> run_datasketches_summary(const BaselineData& baseline) {
+  constexpr size_t kRows = 5;
+  constexpr size_t kCols[] = {2048, 4096, 8192, 16384, 32768, 65536, 131072};
 
   std::vector<AccuracyRow> results;
-  results.reserve(kSeeds.size() * 3);
+  results.reserve(kSeeds.size() * 7);
 
   for (const uint64_t seed : kSeeds) {
     for (const size_t cols : kCols) {
@@ -67,6 +68,53 @@ inline std::vector<AccuracyRow> run_datasketches(const BaselineData& baseline) {
           total_relative_error / distinct,
           max_relative_error,
           total_absolute_error / distinct,
+      });
+    }
+  }
+
+  return results;
+}
+
+inline std::vector<KeyMedianErrorRow> run_datasketches_key_errors(const BaselineData& baseline) {
+  constexpr size_t kRows = 5;
+  constexpr size_t kCols[] = {2048, 4096, 8192, 16384, 32768, 65536, 131072};
+
+  std::vector<KeyMedianErrorRow> results;
+  results.reserve(baseline.frequencies.size() * 7);
+
+  for (const size_t cols : kCols) {
+    std::vector<datasketches::CountMinSketch<int64_t>> sketches;
+    sketches.reserve(kSeeds.size());
+    for (const uint64_t seed : kSeeds) {
+      datasketches::CountMinSketch<int64_t> sketch(
+          static_cast<uint8_t>(kRows), static_cast<uint32_t>(cols), seed);
+      for (const int64_t value : baseline.values) {
+        sketch.Insert(value);
+      }
+      sketches.push_back(std::move(sketch));
+    }
+
+    for (const auto& entry : baseline.frequencies) {
+      std::array<uint64_t, 10> estimates{};
+      for (size_t i = 0; i < sketches.size(); ++i) {
+        estimates[i] = estimate_value(sketches[i], entry.first);
+      }
+      std::sort(estimates.begin(), estimates.end());
+      const uint64_t median_estimate = estimates[(estimates.size() / 2) - 1];
+      const double median_relative_error =
+          static_cast<double>(median_estimate > entry.second ? median_estimate - entry.second
+                                                             : entry.second - median_estimate) /
+          static_cast<double>(entry.second);
+
+      results.push_back(KeyMedianErrorRow{
+          "cpp_datasketches_cms",
+          "cpp",
+          kRows,
+          cols,
+          entry.first,
+          entry.second,
+          median_estimate,
+          median_relative_error,
       });
     }
   }

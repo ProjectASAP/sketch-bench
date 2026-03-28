@@ -7,7 +7,7 @@ mod sketchlib_runner;
 
 use baseline::load_baseline;
 use config::{IMPLEMENTATION_RUST_DATASKETCHES, IMPLEMENTATION_RUST_SKETCHLIB};
-use output::write_csv;
+use output::{write_csv, KeyErrorCsvWriter};
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
@@ -15,8 +15,10 @@ use std::path::PathBuf;
 #[derive(Debug)]
 struct Args {
     data: PathBuf,
-    output: PathBuf,
-    append: bool,
+    output_summary: PathBuf,
+    output_key_errors: PathBuf,
+    skip_summary: bool,
+    skip_key_errors: bool,
     implementation_filter: Option<String>,
 }
 
@@ -24,30 +26,65 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     let baseline = load_baseline(&args.data)?;
 
-    let mut rows = Vec::new();
-    match args.implementation_filter.as_deref() {
-        None => {
-            rows.extend(datasketches_runner::run(&baseline));
-            rows.extend(sketchlib_runner::run(&baseline));
-        }
-        Some(IMPLEMENTATION_RUST_DATASKETCHES) => rows.extend(datasketches_runner::run(&baseline)),
-        Some(IMPLEMENTATION_RUST_SKETCHLIB) => rows.extend(sketchlib_runner::run(&baseline)),
-        Some(other) => {
-            return Err(format!(
-                "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
-            )
-            .into())
-        }
+    if args.skip_summary && args.skip_key_errors {
+        return Err("cannot skip both summary and key-error outputs".into());
     }
 
-    write_csv(&args.output, &rows, args.append)?;
+    if !args.skip_summary {
+        let mut rows = Vec::new();
+        match args.implementation_filter.as_deref() {
+            None => {
+                rows.extend(datasketches_runner::run_summary(&baseline));
+                rows.extend(sketchlib_runner::run_summary(&baseline));
+            }
+            Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
+                rows.extend(datasketches_runner::run_summary(&baseline))
+            }
+            Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
+                rows.extend(sketchlib_runner::run_summary(&baseline))
+            }
+            Some(other) => {
+                return Err(format!(
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                )
+                .into())
+            }
+        }
+        write_csv(&args.output_summary, &rows, false)?;
+    }
+
+    if !args.skip_key_errors {
+        let mut writer = KeyErrorCsvWriter::create(&args.output_key_errors, false)?;
+        match args.implementation_filter.as_deref() {
+            None => {
+                datasketches_runner::write_key_median_errors(&baseline, &mut writer)?;
+                sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?;
+            }
+            Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
+                datasketches_runner::write_key_median_errors(&baseline, &mut writer)?
+            }
+            Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
+                sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?
+            }
+            Some(other) => {
+                return Err(format!(
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                )
+                .into())
+            }
+        }
+        writer.flush()?;
+    }
+
     Ok(())
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../data/benchmark_data_1m_int64.bin");
-    let mut output = PathBuf::from("../output/cms_accuracy_results.csv");
-    let mut append = false;
+    let mut output_summary = PathBuf::from("../output/cms_accuracy_results.csv");
+    let mut output_key_errors = PathBuf::from("../output/cms_accuracy_key_median_errors.csv");
+    let mut skip_summary = false;
+    let mut skip_key_errors = false;
     let mut implementation_filter = None;
 
     let mut args = env::args().skip(1);
@@ -56,16 +93,22 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--data" => {
                 data = PathBuf::from(args.next().ok_or("--data requires a path")?);
             }
-            "--output" => {
-                output = PathBuf::from(args.next().ok_or("--output requires a path")?);
+            "--output-summary" => {
+                output_summary =
+                    PathBuf::from(args.next().ok_or("--output-summary requires a path")?);
             }
-            "--append" => append = true,
+            "--output-key-errors" => {
+                output_key_errors =
+                    PathBuf::from(args.next().ok_or("--output-key-errors requires a path")?);
+            }
+            "--skip-summary" => skip_summary = true,
+            "--skip-key-errors" => skip_key_errors = true,
             "--impl" => {
                 implementation_filter = Some(args.next().ok_or("--impl requires a value")?);
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: cargo run --release -- [--data PATH] [--output PATH] [--append] [--impl NAME]"
+                    "Usage: cargo run --release -- [--data PATH] [--output-summary PATH] [--output-key-errors PATH] [--skip-summary] [--skip-key-errors] [--impl NAME]"
                 );
                 std::process::exit(0);
             }
@@ -75,8 +118,10 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
 
     Ok(Args {
         data,
-        output,
-        append,
+        output_summary,
+        output_key_errors,
+        skip_summary,
+        skip_key_errors,
         implementation_filter,
     })
 }
