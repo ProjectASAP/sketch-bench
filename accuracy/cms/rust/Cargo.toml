@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 datasketches = "0.2.0"
-sketchlib-rust = { path = "../../../sketchlib-rust" }
+sketchlib-rust = { path = "../../../../sketchlib-rust" }
 smallvec = "1.13.2"
 twox-hash = "2.1.2"
 
