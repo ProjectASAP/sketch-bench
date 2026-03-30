@@ -1,6 +1,8 @@
 use crate::baseline::BaselineData;
 use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
-use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
+use crate::output::{
+    AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
+};
 use sketchlib_rust::{
     impl_fixed_matrix, CountMin, FastPath, HeapItem, MatrixStorage, SketchHasher, SketchInput,
 };
@@ -118,6 +120,95 @@ pub fn write_key_median_errors(
     Ok(())
 }
 
+pub fn write_key_seed_errors(
+    baseline: &BaselineData,
+    writer: &mut KeySeedErrorCsvWriter,
+    seed_filter: Option<u64>,
+    cols_filter: Option<usize>,
+) -> io::Result<()> {
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
+    maybe_write_seed_errors_for_group::<M5x2K, H01>(1, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H01>(1, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H01>(1, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H01>(1, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H01>(1, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H01>(1, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H01>(1, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H02>(2, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H02>(2, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H02>(2, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H02>(2, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H02>(2, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H02>(2, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H02>(2, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H03>(3, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H03>(3, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H03>(3, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H03>(3, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H03>(3, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H03>(3, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H03>(3, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H04>(4, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H04>(4, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H04>(4, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H04>(4, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H04>(4, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H04>(4, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H04>(4, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H05>(5, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H05>(5, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H05>(5, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H05>(5, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H05>(5, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H05>(5, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H05>(5, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H06>(6, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H06>(6, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H06>(6, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H06>(6, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H06>(6, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H06>(6, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H06>(6, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H07>(7, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H07>(7, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H07>(7, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H07>(7, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H07>(7, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H07>(7, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H07>(7, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H08>(8, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H08>(8, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H08>(8, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H08>(8, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H08>(8, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H08>(8, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H08>(8, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H09>(9, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H09>(9, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H09>(9, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H09>(9, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H09>(9, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H09>(9, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H09>(9, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+
+    maybe_write_seed_errors_for_group::<M5x2K, H10>(10, 2048, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x4K, H10>(10, 4096, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x8K, H10>(10, 8192, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x16K, H10>(10, 16384, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x32K, H10>(10, 32768, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x64K, H10>(10, 65536, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    maybe_write_seed_errors_for_group::<M5x128K, H10>(10, 131072, baseline, &heavy_hitters, writer, seed_filter, cols_filter)?;
+    Ok(())
+}
+
 fn run_one<S, H>(
     seed: u64,
     cols: usize,
@@ -174,6 +265,60 @@ where
         sketch.insert(&SketchInput::I64(value));
     }
     sketch
+}
+
+fn write_seed_errors_for_group<S, H>(
+    seed: u64,
+    cols: usize,
+    baseline: &BaselineData,
+    heavy_hitters: &[(i64, u64)],
+    writer: &mut KeySeedErrorCsvWriter,
+) -> io::Result<()>
+where
+    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
+    H: SketchHasher<HashType = u128>,
+{
+    let sketch = median_estimator::<S, H>(baseline);
+    for &(key, true_count) in heavy_hitters {
+        let estimate: u64 = sketch.estimate(&SketchInput::I64(key)).into() as u64;
+        let relative_error = estimate.abs_diff(true_count) as f64 / true_count as f64;
+        writer.write_row(&KeySeedErrorRow {
+            implementation: IMPLEMENTATION_RUST_SKETCHLIB,
+            language: "rust",
+            seed,
+            rows: ROWS,
+            cols,
+            key,
+            true_count,
+            estimate,
+            relative_error,
+        })?;
+    }
+    Ok(())
+}
+
+fn maybe_write_seed_errors_for_group<S, H>(
+    seed: u64,
+    cols: usize,
+    baseline: &BaselineData,
+    heavy_hitters: &[(i64, u64)],
+    writer: &mut KeySeedErrorCsvWriter,
+    seed_filter: Option<u64>,
+    cols_filter: Option<usize>,
+) -> io::Result<()>
+where
+    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
+    H: SketchHasher<HashType = u128>,
+{
+    if seed_filter.is_some_and(|required| required != seed) {
+        return Ok(());
+    }
+    if cols_filter.is_some_and(|required| required != cols) {
+        return Ok(());
+    }
+    write_seed_errors_for_group::<S, H>(seed, cols, baseline, heavy_hitters, writer)
 }
 
 macro_rules! write_group_medians {

@@ -7,7 +7,7 @@ This variant mirrors `accuracy/cms`, but the Rust implementation is `sketchlib-r
 
 Shared assets live outside this directory:
 
-- dataset: `accuracy/data/benchmark_data_1m_int64_zipf_s11_k100000.bin`
+- dataset: `accuracy/data/benchmark_data_10m_int64_zipf_s11_k100000.bin`
 - scripts: `accuracy/scripts/`
 - plots: `accuracy/plots/cs/`
 

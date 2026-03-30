@@ -15,9 +15,10 @@ esac
 
 VARIANT_DIR="${ACCURACY_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_accuracy"
-DATA_DST="${ACCURACY_DIR}/data/benchmark_data_1m_int64_zipf_s11_k100000.bin"
+DATA_DST="${ACCURACY_DIR}/data/benchmark_data_10m_int64_zipf_s11_k100000.bin"
 BUILD_DIR="${VARIANT_DIR}/cpp/build"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_cpp.csv}"
+KEY_SEED_ERROR_OUTPUT_PATH="${ACCURACY_KEY_SEED_ERRORS_OUTPUT_PATH:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_seed_errors_cpp.csv}"
 
 mkdir -p "${ACCURACY_DIR}/data" "${VARIANT_DIR}/output" "${BUILD_DIR}"
 
@@ -39,4 +40,5 @@ else
   KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_cpp.csv}"
   "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode summary > "${SUMMARY_OUTPUT_PATH}"
   "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-errors > "${KEY_ERROR_OUTPUT_PATH}"
+  "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-seed-errors > "${KEY_SEED_ERROR_OUTPUT_PATH}"
 fi

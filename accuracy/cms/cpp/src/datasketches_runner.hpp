@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "count_min.hpp"
@@ -102,6 +103,54 @@ inline std::vector<KeyMedianErrorRow> run_datasketches_key_errors(const Baseline
           median_estimate,
           median_relative_error,
       });
+    }
+  }
+
+  return results;
+}
+
+inline std::vector<KeySeedErrorRow> run_datasketches_key_seed_errors(
+    const BaselineData& baseline, const std::optional<uint64_t>& seed_filter,
+    const std::optional<size_t>& cols_filter) {
+  constexpr size_t kRows = 5;
+  constexpr size_t kCols[] = {2048, 4096, 8192, 16384, 32768, 65536, 131072};
+  const auto hitters = heavy_hitters(baseline);
+
+  std::vector<KeySeedErrorRow> results;
+  results.reserve(hitters.size() * 7 * kSeeds.size());
+
+  for (const uint64_t seed : kSeeds) {
+    if (seed_filter.has_value() && seed_filter.value() != seed) {
+      continue;
+    }
+    for (const size_t cols : kCols) {
+      if (cols_filter.has_value() && cols_filter.value() != cols) {
+        continue;
+      }
+      datasketches::count_min_sketch<int64_t> sketch(
+          static_cast<uint8_t>(kRows), static_cast<uint32_t>(cols), seed);
+      for (const int64_t value : baseline.values) {
+        sketch.update(value);
+      }
+
+      for (const auto& entry : hitters) {
+        const uint64_t estimate = static_cast<uint64_t>(sketch.get_estimate(entry.first));
+        const double relative_error =
+            static_cast<double>(estimate > entry.second ? estimate - entry.second
+                                                        : entry.second - estimate) /
+            static_cast<double>(entry.second);
+        results.push_back(KeySeedErrorRow{
+            "cpp_datasketches_cms",
+            "cpp",
+            seed,
+            kRows,
+            cols,
+            entry.first,
+            entry.second,
+            estimate,
+            relative_error,
+        });
+      }
     }
   }
 

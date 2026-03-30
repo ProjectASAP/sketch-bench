@@ -15,8 +15,9 @@ esac
 
 VARIANT_DIR="${ACCURACY_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_accuracy"
-DATA_DST="${ACCURACY_DIR}/data/benchmark_data_1m_int64_zipf_s11_k100000.bin"
+DATA_DST="${ACCURACY_DIR}/data/benchmark_data_10m_int64_zipf_s11_k100000.bin"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_rust.csv}"
+KEY_SEED_ERROR_OUTPUT_PATH="${ACCURACY_KEY_SEED_ERRORS_OUTPUT_PATH:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_seed_errors_rust.csv}"
 
 mkdir -p "${ACCURACY_DIR}/data" "${VARIANT_DIR}/output"
 
@@ -37,5 +38,6 @@ else
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}" \
-    --output-key-errors "${KEY_ERROR_OUTPUT_PATH}"
+    --output-key-errors "${KEY_ERROR_OUTPUT_PATH}" \
+    --output-key-seed-errors "${KEY_SEED_ERROR_OUTPUT_PATH}"
 fi

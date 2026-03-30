@@ -1,6 +1,8 @@
 use crate::baseline::BaselineData;
 use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_DATASKETCHES, ROWS};
-use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
+use crate::output::{
+    AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
+};
 use crate::seeds::SEEDS;
 use datasketches::countmin::CountMinSketch;
 use std::io;
@@ -58,6 +60,46 @@ pub fn write_key_median_errors(
                 median_estimate,
                 median_relative_error,
             })?;
+        }
+    }
+    Ok(())
+}
+
+pub fn write_key_seed_errors(
+    baseline: &BaselineData,
+    writer: &mut KeySeedErrorCsvWriter,
+    seed_filter: Option<u64>,
+    cols_filter: Option<usize>,
+) -> io::Result<()> {
+    let heavy_hitters = heavy_hitters_or_panic(baseline);
+    for &seed in &SEEDS {
+        if seed_filter.is_some_and(|required| required != seed) {
+            continue;
+        }
+        for &cols in &COLS_LIST {
+            if cols_filter.is_some_and(|required| required != cols) {
+                continue;
+            }
+            let mut sketch = CountMinSketch::with_seed(ROWS as u8, cols as u32, seed);
+            for &value in &baseline.values {
+                sketch.update(value);
+            }
+
+            for &(key, true_count) in &heavy_hitters {
+                let estimate = sketch.estimate(key) as u64;
+                let relative_error = estimate.abs_diff(true_count) as f64 / true_count as f64;
+                writer.write_row(&KeySeedErrorRow {
+                    implementation: IMPLEMENTATION_RUST_DATASKETCHES,
+                    language: "rust",
+                    seed,
+                    rows: ROWS,
+                    cols,
+                    key,
+                    true_count,
+                    estimate,
+                    relative_error,
+                })?;
+            }
         }
     }
     Ok(())

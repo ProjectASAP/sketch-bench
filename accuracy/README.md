@@ -53,9 +53,10 @@ DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh hl
 ## Paths
 
 - Shared dataset:
-  - `accuracy/data/benchmark_data_1m_int64_zipf_s11_k100000.bin`
+  - `accuracy/data/benchmark_data_10m_int64_zipf_s11_k100000.bin`
 - CMS outputs:
   - `accuracy/cms/output/cms_accuracy_results.csv`
+  - `accuracy/cms/output/cms_accuracy_key_seed_errors.csv`
   - `accuracy/plots/cms/cms_accuracy_avg_relative_error.png`
 - CS outputs:
   - `accuracy/cs/output/cs_accuracy_results.csv`

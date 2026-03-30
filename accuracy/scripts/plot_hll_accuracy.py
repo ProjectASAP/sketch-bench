@@ -102,7 +102,7 @@ def main() -> None:
         "\n".join(
             [
                 "HLL Accuracy: Relative Error Over 10 Seeded Input Remappings",
-                "Data: 1M Zipf-distributed int64 values (s=1.1, support=100k)",
+                "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
                 "Single fixed-size group in Sketchlib Rust and DataSketches",
             ]
         )

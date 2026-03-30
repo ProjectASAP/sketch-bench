@@ -9,11 +9,11 @@
 #include <vector>
 
 int main() {
-  constexpr std::size_t kNumValues = 1'000'000;
+  constexpr std::size_t kNumValues = 10'000'000;
   constexpr std::size_t kSupportSize = 100'000;
   constexpr double kZipfExponent = 1.1;
   constexpr std::uint64_t kSeed = 42;
-  constexpr const char* kFilename = "benchmark_data_1m_int64_zipf_s11_k100000.bin";
+  constexpr const char* kFilename = "benchmark_data_10m_int64_zipf_s11_k100000.bin";
 
   std::vector<double> cdf;
   cdf.reserve(kSupportSize);
