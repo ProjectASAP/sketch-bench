@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(cms_accuracy_cpp)
+project(hll_accuracy_cpp)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,12 +21,9 @@ endif()
 
 include_directories(
     SYSTEM
-    ${DATASKETCHES_CPP_ROOT}/count/include
+    ${DATASKETCHES_CPP_ROOT}/hll/include
     ${DATASKETCHES_CPP_ROOT}/common/include
 )
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-add_executable(cms_accuracy src/main.cpp)
-
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "DataSketches C++ Repo: ${DATASKETCHES_CPP_ROOT}")
+add_executable(hll_accuracy src/main.cpp)

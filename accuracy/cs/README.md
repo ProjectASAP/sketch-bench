@@ -3,7 +3,7 @@
 This variant mirrors `accuracy/cms`, but the Rust implementation is `sketchlib-rust` Count Sketch:
 
 - Rust `sketchlib-rust` Count Sketch
-- C++ DataSketches from `Insert-Optimized-Data-Sketches`
+- C++ Apache DataSketches `count_min_sketch` as the comparison target
 
 Shared assets live outside this directory:
 
@@ -26,13 +26,13 @@ ACCURACY_VARIANT=cs accuracy/scripts/run_accuracy_rust.sh
 C++ only:
 
 ```bash
-ACCURACY_VARIANT=cs accuracy/scripts/run_accuracy_cpp.sh
+DATASKETCHES_CPP_ROOT=~/datasketches-cpp ACCURACY_VARIANT=cs accuracy/scripts/run_accuracy_cpp.sh
 ```
 
 All implementations plus plots:
 
 ```bash
-accuracy/scripts/run_accuracy_all.sh cs
+DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh cs
 ```
 
 ## Outputs

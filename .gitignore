@@ -16,6 +16,7 @@
 target/
 **/target/
 Cargo.lock
+rust-target/
 
 # C++ build artifacts
 *.dSYM/

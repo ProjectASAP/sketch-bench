@@ -6,9 +6,9 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs) ;;
+  cms|cs|hll) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms or cs" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, or hll" >&2
     exit 1
     ;;
 esac
@@ -18,7 +18,6 @@ RESULT_PREFIX="${VARIANT}_accuracy"
 DATA_DST="${ACCURACY_DIR}/data/benchmark_data_1m_int64_zipf_s11_k100000.bin"
 BUILD_DIR="${VARIANT_DIR}/cpp/build"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_cpp.csv}"
-KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_cpp.csv}"
 
 mkdir -p "${ACCURACY_DIR}/data" "${VARIANT_DIR}/output" "${BUILD_DIR}"
 
@@ -33,5 +32,11 @@ fi
 
 cmake -S "${VARIANT_DIR}/cpp" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${BUILD_DIR}" --config Release
-"${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode summary > "${SUMMARY_OUTPUT_PATH}"
-"${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-errors > "${KEY_ERROR_OUTPUT_PATH}"
+
+if [[ "${VARIANT}" == "hll" ]]; then
+  "${BUILD_DIR}/hll_accuracy" --data "${DATA_DST}" > "${SUMMARY_OUTPUT_PATH}"
+else
+  KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_cpp.csv}"
+  "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode summary > "${SUMMARY_OUTPUT_PATH}"
+  "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-errors > "${KEY_ERROR_OUTPUT_PATH}"
+fi

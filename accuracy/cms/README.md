@@ -4,7 +4,7 @@ This variant contains Count-Min Sketch accuracy experiments for:
 
 - Rust `datasketches`
 - Rust `sketchlib-rust`
-- C++ DataSketches from `Insert-Optimized-Data-Sketches`
+- C++ Apache DataSketches `count_min_sketch`
 
 Shared assets live outside this directory:
 
@@ -27,13 +27,13 @@ accuracy/scripts/run_accuracy_rust.sh
 C++ only:
 
 ```bash
-accuracy/scripts/run_accuracy_cpp.sh
+DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_cpp.sh
 ```
 
 All implementations plus plots:
 
 ```bash
-accuracy/scripts/run_accuracy_all.sh cms
+DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh cms
 ```
 
 ## Outputs

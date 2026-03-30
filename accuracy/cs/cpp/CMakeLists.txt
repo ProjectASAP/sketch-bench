@@ -10,24 +10,23 @@ endif()
 
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -fomit-frame-pointer")
 
-set(INSERT_OPT_ROOT "$ENV{INSERT_OPT_ROOT}" CACHE PATH "Path to Insert-Optimized-Data-Sketches")
-if(NOT INSERT_OPT_ROOT)
-    set(INSERT_OPT_ROOT "$ENV{HOME}/Insert-Optimized-Data-Sketches")
+set(DATASKETCHES_CPP_ROOT "$ENV{DATASKETCHES_CPP_ROOT}" CACHE PATH "Path to apache/datasketches-cpp")
+if(NOT DATASKETCHES_CPP_ROOT)
+    set(DATASKETCHES_CPP_ROOT "$ENV{HOME}/datasketches-cpp")
 endif()
 
-if(NOT EXISTS "${INSERT_OPT_ROOT}")
-    message(FATAL_ERROR "Insert-Optimized-Data-Sketches not found at: ${INSERT_OPT_ROOT}\nSet INSERT_OPT_ROOT or place the repo at ~/Insert-Optimized-Data-Sketches.")
+if(NOT EXISTS "${DATASKETCHES_CPP_ROOT}")
+    message(FATAL_ERROR "datasketches-cpp not found at: ${DATASKETCHES_CPP_ROOT}\nSet DATASKETCHES_CPP_ROOT or place the repo at ~/datasketches-cpp.")
 endif()
 
 include_directories(
     SYSTEM
-    ${INSERT_OPT_ROOT}/src
-    ${INSERT_OPT_ROOT}/include
-    ${INSERT_OPT_ROOT}/include/pcg
+    ${DATASKETCHES_CPP_ROOT}/count/include
+    ${DATASKETCHES_CPP_ROOT}/common/include
 )
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_executable(cms_accuracy src/main.cpp)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "Insert-Optimized Repo: ${INSERT_OPT_ROOT}")
+message(STATUS "DataSketches C++ Repo: ${DATASKETCHES_CPP_ROOT}")
