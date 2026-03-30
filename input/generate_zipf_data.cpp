@@ -1,3 +1,4 @@
+// Generate accuracy Zipf input: 10M int64 values with seed 42
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

@@ -129,7 +129,7 @@ fn splitmix64(mut x: u64) -> u64 {
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut data = PathBuf::from("../data/benchmark_data_10m_int64_zipf_s11_k100000.bin");
+    let mut data = PathBuf::from("../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
     let mut output_summary = PathBuf::from("../output/hll_accuracy_results_rust.csv");
     let mut implementation_filter = None;
 

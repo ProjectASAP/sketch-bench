@@ -15,14 +15,14 @@ esac
 
 VARIANT_DIR="${ACCURACY_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_accuracy"
-DATA_DST="${ACCURACY_DIR}/data/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DATA_DST="${ACCURACY_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_rust.csv}"
 KEY_SEED_ERROR_OUTPUT_PATH="${ACCURACY_KEY_SEED_ERRORS_OUTPUT_PATH:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_seed_errors_rust.csv}"
 
-mkdir -p "${ACCURACY_DIR}/data" "${VARIANT_DIR}/output"
+mkdir -p "${ACCURACY_DIR}/../input" "${VARIANT_DIR}/output"
 
 if [[ ! -f "${DATA_DST}" ]]; then
-  "${ACCURACY_DIR}/data/generate_zipf_data.sh"
+  "${ACCURACY_DIR}/../input/generate_zipf_data.sh"
 fi
 
 if [[ ! -f "${VARIANT_DIR}/rust/Cargo.lock" ]]; then

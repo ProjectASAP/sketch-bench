@@ -8,7 +8,7 @@ This variant contains Count-Min Sketch accuracy experiments for:
 
 Shared assets live outside this directory:
 
-- dataset: `accuracy/data/benchmark_data_10m_int64_zipf_s11_k100000.bin`
+- dataset: `input/benchmark_data_10m_int64_zipf_s11_k100000.bin`
 - scripts: `accuracy/scripts/`
 - plots: `accuracy/plots/cms/`
 

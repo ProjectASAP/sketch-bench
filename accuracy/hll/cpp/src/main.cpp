@@ -9,7 +9,7 @@
 namespace {
 
 struct Args {
-  std::string data_path = "../data/benchmark_data_10m_int64_zipf_s11_k100000.bin";
+  std::string data_path = "../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin";
 };
 
 Args parse_args(int argc, char** argv) {

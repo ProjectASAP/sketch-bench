@@ -127,7 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut data = PathBuf::from("../data/benchmark_data_10m_int64_zipf_s11_k100000.bin");
+    let mut data = PathBuf::from("../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
     let mut output_summary = PathBuf::from("../output/cms_accuracy_results.csv");
     let mut output_key_errors = PathBuf::from("../output/cms_accuracy_key_median_errors.csv");
     let mut output_key_seed_errors = PathBuf::from("../output/cms_accuracy_key_seed_errors.csv");

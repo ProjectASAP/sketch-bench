@@ -2,7 +2,7 @@
 
 `accuracy/` is split into shared assets plus per-sketch variants:
 
-- `accuracy/data`: shared datasets and dataset generators
+- `input`: shared datasets and dataset generators
 - `accuracy/plots`: shared plot output root, with one subdirectory per variant
 - `accuracy/scripts`: shared runner and plotting entry points
 - `accuracy/cms`: Count-Min Sketch accuracy sources and CMS-specific outputs
@@ -53,7 +53,7 @@ DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh hl
 ## Paths
 
 - Shared dataset:
-  - `accuracy/data/benchmark_data_10m_int64_zipf_s11_k100000.bin`
+  - `input/benchmark_data_10m_int64_zipf_s11_k100000.bin`
 - CMS outputs:
   - `accuracy/cms/output/cms_accuracy_results.csv`
   - `accuracy/cms/output/cms_accuracy_key_seed_errors.csv`
