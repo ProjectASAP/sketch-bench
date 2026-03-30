@@ -1,0 +1,13 @@
+[package]
+name = "cs_throughput"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sketchlib-rust = { path = "../../../../sketchlib-rust" }
+twox-hash = "2.1.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
