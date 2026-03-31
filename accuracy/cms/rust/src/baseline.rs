@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = 100;
@@ -38,6 +38,14 @@ pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pcap"))
     {
         return load_pcap_baseline(path);
+    }
+
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    {
+        return load_csv_baseline(path);
     }
 
     let mut file = File::open(path)?;
@@ -117,6 +125,38 @@ fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
 
     if values.is_empty() {
         return Err(format!("pcap contains zero IPv4 packets: {}", path.display()).into());
+    }
+
+    Ok(BaselineData {
+        values,
+        frequencies,
+    })
+}
+
+fn load_csv_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut values = Vec::new();
+    let mut frequencies = HashMap::new();
+
+    for (line_index, line_result) in reader.lines().enumerate() {
+        let line = line_result?;
+        if line_index == 0 {
+            continue;
+        }
+        let field = line.split(',').next().unwrap_or("").trim();
+        if field.is_empty() {
+            continue;
+        }
+        let value: i64 = field.parse().map_err(|e| {
+            format!("failed to parse first field as i64 on line {}: {e}", line_index + 1)
+        })?;
+        values.push(value);
+        *frequencies.entry(value).or_insert(0) += 1;
+    }
+
+    if values.is_empty() {
+        return Err(format!("CSV contains no data rows: {}", path.display()).into());
     }
 
     Ok(BaselineData {

@@ -1,6 +1,6 @@
-use sketchlib_rust::count::CountSketchCounter;
 use sketchlib_rust::{
-    impl_fixed_matrix, Count, FastPath, HeapItem, MatrixStorage, SketchHasher, SketchInput,
+    impl_fixed_matrix, hash_for_matrix_seeded_generic, Count, FastPath, HeapItem, MatrixHashType,
+    SketchHasher, SketchInput,
 };
 use std::env;
 use std::error::Error;
@@ -157,7 +157,7 @@ macro_rules! define_seeded_hasher {
         struct $name;
 
         impl SketchHasher for $name {
-            type HashType = u128;
+            type HashType = MatrixHashType;
 
             fn hash64_seeded(d: usize, key: &SketchInput) -> u64 {
                 hash_input64($seed + d as u64, key)
@@ -176,26 +176,12 @@ macro_rules! define_seeded_hasher {
             }
 
             fn hash_for_matrix_seeded(
-                _seed_idx: usize,
+                seed_idx: usize,
                 rows: usize,
                 cols: usize,
                 key: &SketchInput,
             ) -> Self::HashType {
-                let mask_bits = if cols.is_power_of_two() {
-                    cols.ilog2() as usize
-                } else {
-                    cols.ilog2() as usize + 1
-                };
-                let col_mask = (1u128 << mask_bits) - 1;
-                let mut packed = 0u128;
-                for row in 0..rows {
-                    let row_hash = Self::hash128_seeded(row, key);
-                    let col_bits = row_hash & col_mask;
-                    packed |= col_bits << (mask_bits * row);
-                    let sign_bit = (row_hash >> 127) & 1;
-                    packed |= sign_bit << (127 - row);
-                }
-                packed
+                hash_for_matrix_seeded_generic::<Self>(seed_idx, rows, cols, key)
             }
         }
     };
@@ -212,6 +198,7 @@ define_seeded_hasher!(H08, 8);
 define_seeded_hasher!(H09, 9);
 define_seeded_hasher!(H10, 10);
 
+#[inline(always)]
 fn hash_input64(seed: u64, key: &SketchInput) -> u64 {
     match key {
         SketchInput::I8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
@@ -234,6 +221,7 @@ fn hash_input64(seed: u64, key: &SketchInput) -> u64 {
     }
 }
 
+#[inline(always)]
 fn hash_input128(seed: u64, key: &SketchInput) -> u128 {
     match key {
         SketchInput::I8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
@@ -256,6 +244,7 @@ fn hash_input128(seed: u64, key: &SketchInput) -> u128 {
     }
 }
 
+#[inline(always)]
 fn hash_heap64(seed: u64, key: &HeapItem) -> u64 {
     match key {
         HeapItem::I8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
@@ -276,6 +265,7 @@ fn hash_heap64(seed: u64, key: &HeapItem) -> u64 {
     }
 }
 
+#[inline(always)]
 fn hash_heap128(seed: u64, key: &HeapItem) -> u128 {
     match key {
         HeapItem::I8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),

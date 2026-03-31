@@ -18,7 +18,7 @@ Fixed benchmark configuration:
 - rows: `5`
 - cols: `2048`
 - input: `10M` Zipf-distributed int64 values
-- Rust sketchlib: 10 hash seeds (`1..10`)
+- Rust sketchlib: 10 repeated runs
 - C++ insert-optimized: 10 repeated runs
 
 ## Run

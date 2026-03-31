@@ -6,15 +6,16 @@ use baseline::load_baseline;
 use datasketches::hll::{HllSketch, HllType};
 use output::{write_csv, AccuracyRow};
 use seeds::SEEDS;
-use sketchlib_rust::{DataFusion, HyperLogLog, SketchInput};
+use sketchlib_rust::{
+    DataFusion, HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
+};
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 
 const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_hll";
 const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_hll";
-const LG_K: u8 = 14;
-const REGISTERS: usize = 1usize << LG_K;
+const LG_K_LIST: &[u8] = &[12, 14, 16];
 
 #[derive(Debug)]
 struct Args {
@@ -57,40 +58,94 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_sketchlib(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+fn run_sketchlib_at_precision<S>(
+    lg_k: u8,
+    registers: usize,
+    values: &[i64],
+    true_distinct: usize,
+) -> Vec<AccuracyRow>
+where
+    S: Default + SketchInsertEstimate,
+{
     let mut rows = Vec::with_capacity(SEEDS.len());
     for &seed in &SEEDS {
-        let mut sketch = HyperLogLog::<DataFusion>::new();
+        let mut sketch = S::default();
         for &value in values {
-            sketch.insert(&SketchInput::U64(seeded_key(value, seed)));
+            sketch.sketch_insert(&SketchInput::U64(seeded_key(value, seed)));
         }
         rows.push(build_row(
             IMPLEMENTATION_RUST_SKETCHLIB,
             "rust",
             seed,
+            lg_k,
+            registers,
             values.len(),
             true_distinct,
-            sketch.estimate() as f64,
+            sketch.sketch_estimate() as f64,
         ));
     }
     rows
 }
 
-fn run_datasketches_rust(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
-    let mut rows = Vec::with_capacity(SEEDS.len());
-    for &seed in &SEEDS {
-        let mut sketch = HllSketch::new(LG_K, HllType::Hll8);
-        for &value in values {
-            sketch.update(seeded_key(value, seed));
+trait SketchInsertEstimate {
+    fn sketch_insert(&mut self, input: &SketchInput);
+    fn sketch_estimate(&self) -> usize;
+}
+
+impl SketchInsertEstimate for HyperLogLogP12<DataFusion> {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() }
+}
+
+impl SketchInsertEstimate for HyperLogLogP14<DataFusion> {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() }
+}
+
+impl SketchInsertEstimate for HyperLogLogP16<DataFusion> {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() }
+}
+
+fn run_sketchlib(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+    let mut rows = Vec::new();
+    for &lg_k in LG_K_LIST {
+        match lg_k {
+            12 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP12<DataFusion>>(
+                12, 1 << 12, values, true_distinct,
+            )),
+            14 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP14<DataFusion>>(
+                14, 1 << 14, values, true_distinct,
+            )),
+            16 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP16<DataFusion>>(
+                16, 1 << 16, values, true_distinct,
+            )),
+            _ => unreachable!(),
         }
-        rows.push(build_row(
-            IMPLEMENTATION_RUST_DATASKETCHES,
-            "rust",
-            seed,
-            values.len(),
-            true_distinct,
-            sketch.estimate(),
-        ));
+    }
+    rows
+}
+
+fn run_datasketches_rust(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+    let mut rows = Vec::new();
+    for &lg_k in LG_K_LIST {
+        let registers = 1usize << lg_k;
+        for &seed in &SEEDS {
+            let mut sketch = HllSketch::new(lg_k, HllType::Hll8);
+            for &value in values {
+                sketch.update(seeded_key(value, seed));
+            }
+            rows.push(build_row(
+                IMPLEMENTATION_RUST_DATASKETCHES,
+                "rust",
+                seed,
+                lg_k,
+                registers,
+                values.len(),
+                true_distinct,
+                sketch.estimate(),
+            ));
+        }
     }
     rows
 }
@@ -99,6 +154,8 @@ fn build_row(
     implementation: &'static str,
     language: &'static str,
     seed: u64,
+    lg_k: u8,
+    registers: usize,
     total_items: usize,
     true_distinct: usize,
     estimate: f64,
@@ -108,8 +165,8 @@ fn build_row(
         implementation,
         language,
         seed,
-        lg_k: LG_K,
-        registers: REGISTERS,
+        lg_k,
+        registers,
         total_items,
         true_distinct,
         estimate,

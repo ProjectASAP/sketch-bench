@@ -30,6 +30,12 @@ RUST_CAIDA_KEY_SEED_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_caida_ru
 CPP_CAIDA_KEY_SEED_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_caida_cpp.csv"
 CAIDA_SOURCE_PCAP="${ACCURACY_CMS_CAIDA_SOURCE_PCAP:-${ACCURACY_DIR}/../input/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap}"
 CAIDA_KEY_SEED_CSV="${ACCURACY_CMS_CAIDA_KEY_SEED_ERRORS:-${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_caida.csv}"
+CIC_INPUT_DIR="${ACCURACY_DIR}/../input"
+CIC_SENTINEL="${CIC_INPUT_DIR}/Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
+CIC_COMBINED_CSV="${OUTPUT_DIR}/cic_combined.csv"
+RUST_CIC_KEY_SEED_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_cic_rust.csv"
+CPP_CIC_KEY_SEED_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_cic_cpp.csv"
+CIC_KEY_SEED_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_key_seed_errors_cic.csv"
 DATASET_COMPARE_COLS="${ACCURACY_CMS_DATASET_COMPARE_COLS:-65536}"
 DATASET_COMPARE_SEED="${ACCURACY_CMS_DATASET_COMPARE_SEED:-5}"
 DATASET_COMPARE_PLOT_PATH="${PLOTS_DIR}/${RESULT_PREFIX}_dataset_compare_col_${DATASET_COMPARE_COLS}_seed_${DATASET_COMPARE_SEED}.png"
@@ -74,48 +80,94 @@ else
     cat "${CPP_KEY_ERROR_CSV}"
   } > "${KEY_ERROR_CSV_PATH}"
 
-  {
-    echo "${KEY_SEED_ERROR_HEADER}"
-    tail -n +2 "${RUST_KEY_SEED_CSV}"
-    cat "${CPP_KEY_SEED_CSV}"
-  } > "${KEY_SEED_ERROR_CSV_PATH}"
+  if [[ "${VARIANT}" == "cms" ]]; then
+    {
+      echo "${KEY_SEED_ERROR_HEADER}"
+      tail -n +2 "${RUST_KEY_SEED_CSV}"
+      cat "${CPP_KEY_SEED_CSV}"
+    } > "${KEY_SEED_ERROR_CSV_PATH}"
+  fi
 
   python3 "${SCRIPT_DIR}/plot_cms_accuracy.py" \
     --variant "${VARIANT}" \
     --input-key-errors "${KEY_ERROR_CSV_PATH}" \
     --output "${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error.png"
 
-  if [[ "${VARIANT}" == "cms" && -f "${CAIDA_SOURCE_PCAP}" ]]; then
-    cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
-      --data "${CAIDA_SOURCE_PCAP}" \
-      --output-key-seed-errors "${RUST_CAIDA_KEY_SEED_CSV}" \
-      --skip-summary \
-      --skip-key-errors \
-      --seed "${DATASET_COMPARE_SEED}" \
-      --cols "${DATASET_COMPARE_COLS}"
+  if [[ "${VARIANT}" == "cms" ]]; then
+    DATASET_ARGS=("--dataset-key-seed-errors" "zipf=${KEY_SEED_ERROR_CSV_PATH}")
 
-    "${VARIANT_DIR}/cpp/build/cms_accuracy" \
-      --data "${CAIDA_SOURCE_PCAP}" \
-      --seed "${DATASET_COMPARE_SEED}" \
-      --cols "${DATASET_COMPARE_COLS}" \
-      --mode key-seed-errors \
-      > "${CPP_CAIDA_KEY_SEED_CSV}"
+    if [[ -f "${CAIDA_SOURCE_PCAP}" ]]; then
+      cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
+        --data "${CAIDA_SOURCE_PCAP}" \
+        --output-key-seed-errors "${RUST_CAIDA_KEY_SEED_CSV}" \
+        --skip-summary \
+        --skip-key-errors \
+        --seed "${DATASET_COMPARE_SEED}" \
+        --cols "${DATASET_COMPARE_COLS}"
 
-    {
-      echo "${KEY_SEED_ERROR_HEADER}"
-      tail -n +2 "${RUST_CAIDA_KEY_SEED_CSV}"
-      cat "${CPP_CAIDA_KEY_SEED_CSV}"
-    } > "${CAIDA_KEY_SEED_CSV}"
+      "${VARIANT_DIR}/cpp/build/cms_accuracy" \
+        --data "${CAIDA_SOURCE_PCAP}" \
+        --seed "${DATASET_COMPARE_SEED}" \
+        --cols "${DATASET_COMPARE_COLS}" \
+        --mode key-seed-errors \
+        > "${CPP_CAIDA_KEY_SEED_CSV}"
 
-    python3 "${SCRIPT_DIR}/plot_cms_accuracy.py" \
-      --variant "${VARIANT}" \
-      --input-key-errors "${KEY_ERROR_CSV_PATH}" \
-      --output "${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error.png" \
-      --dataset-key-seed-errors "zipf=${KEY_SEED_ERROR_CSV_PATH}" \
-      --dataset-key-seed-errors "caida=${CAIDA_KEY_SEED_CSV}" \
-      --dataset-boxplot-cols "${DATASET_COMPARE_COLS}" \
-      --dataset-boxplot-seed "${DATASET_COMPARE_SEED}" \
-      --dataset-boxplot-output "${DATASET_COMPARE_PLOT_PATH}"
+      {
+        echo "${KEY_SEED_ERROR_HEADER}"
+        tail -n +2 "${RUST_CAIDA_KEY_SEED_CSV}"
+        cat "${CPP_CAIDA_KEY_SEED_CSV}"
+      } > "${CAIDA_KEY_SEED_CSV}"
+
+      DATASET_ARGS+=("--dataset-key-seed-errors" "caida=${CAIDA_KEY_SEED_CSV}")
+      echo "Wrote ${CAIDA_KEY_SEED_CSV}"
+    fi
+
+    if [[ -f "${CIC_SENTINEL}" ]]; then
+      {
+        head -1 "${CIC_SENTINEL}"
+        for f in "${CIC_INPUT_DIR}"/Friday-*.csv "${CIC_INPUT_DIR}"/Monday-*.csv \
+                 "${CIC_INPUT_DIR}"/Thursday-*.csv "${CIC_INPUT_DIR}"/Tuesday-*.csv \
+                 "${CIC_INPUT_DIR}"/Wednesday-*.csv; do
+          tail -n +2 "$f"
+        done
+      } > "${CIC_COMBINED_CSV}"
+
+      cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
+        --data "${CIC_COMBINED_CSV}" \
+        --output-key-seed-errors "${RUST_CIC_KEY_SEED_CSV}" \
+        --skip-summary \
+        --skip-key-errors \
+        --seed "${DATASET_COMPARE_SEED}" \
+        --cols "${DATASET_COMPARE_COLS}"
+
+      "${VARIANT_DIR}/cpp/build/cms_accuracy" \
+        --data "${CIC_COMBINED_CSV}" \
+        --seed "${DATASET_COMPARE_SEED}" \
+        --cols "${DATASET_COMPARE_COLS}" \
+        --mode key-seed-errors \
+        > "${CPP_CIC_KEY_SEED_CSV}"
+
+      {
+        echo "${KEY_SEED_ERROR_HEADER}"
+        tail -n +2 "${RUST_CIC_KEY_SEED_CSV}"
+        cat "${CPP_CIC_KEY_SEED_CSV}"
+      } > "${CIC_KEY_SEED_CSV}"
+
+      DATASET_ARGS+=("--dataset-key-seed-errors" "cic=${CIC_KEY_SEED_CSV}")
+      echo "Wrote ${CIC_KEY_SEED_CSV}"
+    fi
+
+    if [[ ${#DATASET_ARGS[@]} -ge 4 ]]; then
+      python3 "${SCRIPT_DIR}/plot_cms_accuracy.py" \
+        --variant "${VARIANT}" \
+        --input-key-errors "${KEY_ERROR_CSV_PATH}" \
+        --output "${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error.png" \
+        "${DATASET_ARGS[@]}" \
+        --dataset-boxplot-cols "${DATASET_COMPARE_COLS}" \
+        --dataset-boxplot-seed "${DATASET_COMPARE_SEED}" \
+        --dataset-boxplot-output "${DATASET_COMPARE_PLOT_PATH}"
+      echo "Wrote ${DATASET_COMPARE_PLOT_PATH}"
+    fi
   fi
 
   echo "Wrote ${SUMMARY_CSV_PATH}"
@@ -131,8 +183,4 @@ else
   echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error_col_32768.png"
   echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error_col_65536.png"
   echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error_col_131072.png"
-  if [[ "${VARIANT}" == "cms" && -f "${CAIDA_SOURCE_PCAP}" ]]; then
-    echo "Wrote ${CAIDA_KEY_SEED_CSV}"
-    echo "Wrote ${DATASET_COMPARE_PLOT_PATH}"
-  fi
 fi

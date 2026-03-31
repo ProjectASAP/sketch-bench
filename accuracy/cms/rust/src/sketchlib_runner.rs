@@ -4,7 +4,8 @@ use crate::output::{
     AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
 };
 use sketchlib_rust::{
-    impl_fixed_matrix, CountMin, FastPath, HeapItem, MatrixStorage, SketchHasher, SketchInput,
+    impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
+    MatrixHashType, MatrixStorage, SketchHasher, SketchInput,
 };
 use std::io;
 use twox_hash::{XxHash3_128, XxHash3_64};
@@ -23,7 +24,7 @@ macro_rules! define_seeded_hasher {
         struct $name;
 
         impl SketchHasher for $name {
-            type HashType = u128;
+            type HashType = MatrixHashType;
 
             fn hash64_seeded(d: usize, key: &SketchInput) -> u64 {
                 hash_input64($seed + d as u64, key)
@@ -42,26 +43,12 @@ macro_rules! define_seeded_hasher {
             }
 
             fn hash_for_matrix_seeded(
-                _seed_idx: usize,
+                seed_idx: usize,
                 rows: usize,
                 cols: usize,
                 key: &SketchInput,
             ) -> Self::HashType {
-                let mask_bits = if cols.is_power_of_two() {
-                    cols.ilog2() as usize
-                } else {
-                    cols.ilog2() as usize + 1
-                };
-                let col_mask = (1u128 << mask_bits) - 1;
-                let mut packed = 0u128;
-                for row in 0..rows {
-                    let row_hash = Self::hash128_seeded(row, key);
-                    let col_bits = row_hash & col_mask;
-                    packed |= col_bits << (mask_bits * row);
-                    let sign_bit = (row_hash >> 127) & 1;
-                    packed |= sign_bit << (127 - row);
-                }
-                packed
+                hash_for_matrix_seeded_generic::<Self>(seed_idx, rows, cols, key)
             }
         }
     };
@@ -218,7 +205,7 @@ fn run_one<S, H>(
 where
     S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
-    H: SketchHasher<HashType = u128>,
+    H: SketchHasher<HashType = MatrixHashType>,
 {
     let mut sketch = CountMin::<S, FastPath, H>::from_storage(S::default());
     for &value in &baseline.values {
@@ -258,7 +245,7 @@ fn median_estimator<S, H>(baseline: &BaselineData) -> CountMin<S, FastPath, H>
 where
     S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
-    H: SketchHasher<HashType = u128>,
+    H: SketchHasher<HashType = MatrixHashType>,
 {
     let mut sketch = CountMin::<S, FastPath, H>::from_storage(S::default());
     for &value in &baseline.values {
@@ -277,7 +264,7 @@ fn write_seed_errors_for_group<S, H>(
 where
     S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
-    H: SketchHasher<HashType = u128>,
+    H: SketchHasher<HashType = MatrixHashType>,
 {
     let sketch = median_estimator::<S, H>(baseline);
     for &(key, true_count) in heavy_hitters {
@@ -310,7 +297,7 @@ fn maybe_write_seed_errors_for_group<S, H>(
 where
     S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
-    H: SketchHasher<HashType = u128>,
+    H: SketchHasher<HashType = MatrixHashType>,
 {
     if seed_filter.is_some_and(|required| required != seed) {
         return Ok(());

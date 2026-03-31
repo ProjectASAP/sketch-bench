@@ -17,6 +17,14 @@ constexpr uint64_t kSeeds[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 constexpr const char* kCsvHeader =
     "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec";
 
+inline void black_box(const void* value) {
+#if defined(__GNUC__) || defined(__clang__)
+  asm volatile("" : : "g"(value) : "memory");
+#else
+  (void)value;
+#endif
+}
+
 struct Row {
   uint64_t seed;
   size_t total_items;
@@ -72,6 +80,7 @@ std::vector<int64_t> load_dataset(const std::string& path) {
   if (!input.read(reinterpret_cast<char*>(data.data()), size)) {
     throw std::runtime_error("Failed to read dataset: " + path);
   }
+  black_box(data.data());
   return data;
 }
 
@@ -86,6 +95,7 @@ std::vector<Row> run_datasketches(const std::vector<int64_t>& data) {
     for (const int64_t value : data) {
       sketch.update(value);
     }
+    black_box(&sketch);
     const auto end = std::chrono::steady_clock::now();
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,7 @@ struct BaselineData {
 };
 
 inline BaselineData load_pcap_baseline(const std::string& path);
+inline BaselineData load_csv_baseline(const std::string& path);
 
 inline std::vector<std::pair<int64_t, uint64_t>> heavy_hitters(const BaselineData& baseline) {
   std::vector<std::pair<int64_t, uint64_t>> result;
@@ -34,6 +36,9 @@ inline std::vector<std::pair<int64_t, uint64_t>> heavy_hitters(const BaselineDat
 inline BaselineData load_baseline(const std::string& path) {
   if (path.size() >= 5 && path.substr(path.size() - 5) == ".pcap") {
     return load_pcap_baseline(path);
+  }
+  if (path.size() >= 4 && path.substr(path.size() - 4) == ".csv") {
+    return load_csv_baseline(path);
   }
 
   std::ifstream input(path, std::ios::binary | std::ios::ate);
@@ -156,6 +161,47 @@ inline BaselineData load_pcap_baseline(const std::string& path) {
 
   if (baseline.values.empty()) {
     throw std::runtime_error("PCAP contains zero IPv4 packets: " + path);
+  }
+  return baseline;
+}
+
+inline BaselineData load_csv_baseline(const std::string& path) {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::runtime_error("Failed to open CSV dataset: " + path);
+  }
+
+  BaselineData baseline;
+  std::string line;
+
+  // Skip header
+  if (!std::getline(input, line)) {
+    throw std::runtime_error("CSV file is empty: " + path);
+  }
+
+  while (std::getline(input, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    const auto comma_pos = line.find(',');
+    std::string field = (comma_pos != std::string::npos) ? line.substr(0, comma_pos) : line;
+    // trim whitespace
+    while (!field.empty() && field.front() == ' ') field.erase(field.begin());
+    while (!field.empty() && field.back() == ' ') field.pop_back();
+    if (field.empty()) {
+      continue;
+    }
+    char* end_ptr = nullptr;
+    const int64_t value = std::strtoll(field.c_str(), &end_ptr, 10);
+    if (end_ptr == field.c_str()) {
+      throw std::runtime_error("Failed to parse first CSV field as integer: " + field);
+    }
+    baseline.values.push_back(value);
+    baseline.frequencies[value] += 1;
+  }
+
+  if (baseline.values.empty()) {
+    throw std::runtime_error("CSV contains no data rows: " + path);
   }
   return baseline;
 }

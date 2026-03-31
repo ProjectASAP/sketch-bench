@@ -33,11 +33,17 @@ if [[ "${VARIANT}" == "hll" ]]; then
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}"
-else
+elif [[ "${VARIANT}" == "cms" ]]; then
   KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_rust.csv}"
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}" \
     --output-key-errors "${KEY_ERROR_OUTPUT_PATH}" \
     --output-key-seed-errors "${KEY_SEED_ERROR_OUTPUT_PATH}"
+else
+  KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_rust.csv}"
+  cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
+    --data "${DATA_DST}" \
+    --output-summary "${SUMMARY_OUTPUT_PATH}" \
+    --output-key-errors "${KEY_ERROR_OUTPUT_PATH}"
 fi

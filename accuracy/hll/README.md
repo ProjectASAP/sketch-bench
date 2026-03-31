@@ -1,12 +1,12 @@
 # HLL Accuracy Comparison Framework
 
-This variant compares fixed-size HLL implementations at `lg_k=14` (`16384` registers):
+This variant compares HLL implementations across multiple precision levels (`lg_k=12,14,16`, i.e. `4096`, `16384`, `65536` registers):
 
-- Rust `sketchlib-rust` HLL
+- Rust `sketchlib-rust` HLL (P12, P14, P16)
 - Rust `datasketches` HLL
 - C++ Apache DataSketches HLL
 
-Unlike CMS/CS, HLL has a single fixed-size group in this repo, so the plot is a single grouped box plot. The variance comes from the 10 seeded input remappings (`1..10`) applied before insertion.
+The x-axis of the plot shows the register count, with grouped box plots per implementation. The variance comes from the 10 seeded input remappings (`1..10`) applied before insertion.
 
 Shared assets live outside this directory:
 

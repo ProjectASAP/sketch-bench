@@ -41,15 +41,18 @@ def load_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def group_rows(rows: list[dict[str, str]]) -> tuple[dict[str, list[float]], str]:
-    grouped: dict[str, list[float]] = defaultdict(list)
-    labels = set()
+def group_rows(
+    rows: list[dict[str, str]],
+) -> tuple[dict[str, dict[int, list[float]]], list[int]]:
+    grouped: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    register_sizes: set[int] = set()
     for row in rows:
-        grouped[row["implementation"]].append(float(row["relative_error"]) * 100.0)
-        labels.add(f"lg_k={row['lg_k']} ({row['registers']} registers)")
-    if len(labels) != 1:
-        raise ValueError(f"expected exactly one fixed-size HLL group, found: {sorted(labels)}")
-    return grouped, labels.pop()
+        registers = int(row["registers"])
+        grouped[row["implementation"]][registers].append(
+            float(row["relative_error"]) * 100.0
+        )
+        register_sizes.add(registers)
+    return grouped, sorted(register_sizes)
 
 
 def main() -> None:
@@ -59,42 +62,54 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = load_rows(args.input)
-    grouped, group_label = group_rows(rows)
-    for implementation in IMPLEMENTATIONS:
-        if not grouped[implementation]:
-            raise ValueError(f"missing rows for implementation={implementation}")
+    grouped, register_sizes = group_rows(rows)
+    for impl_name in IMPLEMENTATIONS:
+        for reg in register_sizes:
+            if not grouped[impl_name][reg]:
+                raise ValueError(
+                    f"missing rows for implementation={impl_name}, registers={reg}"
+                )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8.8, 5.6))
-    center = 0.0
+    fig, ax = plt.subplots(figsize=(12.5, 5.5))
     width = 0.18
 
-    for implementation in IMPLEMENTATIONS:
-        position = center + OFFSETS[implementation]
-        values = grouped[implementation]
+    for impl_name in IMPLEMENTATIONS:
+        positions = [
+            idx + OFFSETS[impl_name] for idx in range(len(register_sizes))
+        ]
+        data = [grouped[impl_name][reg] for reg in register_sizes]
         bp = ax.boxplot(
-            [values],
-            positions=[position],
+            data,
+            positions=positions,
             widths=width,
             patch_artist=True,
             showfliers=False,
             medianprops={"color": "#222222", "linewidth": 2},
-            whiskerprops={"color": COLORS[implementation], "linewidth": 1.5},
-            capprops={"color": COLORS[implementation], "linewidth": 1.5},
-            boxprops={"facecolor": COLORS[implementation], "edgecolor": COLORS[implementation], "alpha": 0.78},
+            whiskerprops={"color": COLORS[impl_name], "linewidth": 1.5},
+            capprops={"color": COLORS[impl_name], "linewidth": 1.5},
+            boxprops={
+                "facecolor": COLORS[impl_name],
+                "edgecolor": COLORS[impl_name],
+                "alpha": 0.78,
+            },
         )
         for patch in bp["boxes"]:
-            patch.set_facecolor(COLORS[implementation])
-            patch.set_edgecolor(COLORS[implementation])
+            patch.set_facecolor(COLORS[impl_name])
+            patch.set_edgecolor(COLORS[impl_name])
             patch.set_alpha(0.78)
-        median = sorted(values)[len(values) // 2]
+
+        medians = []
+        for values in data:
+            sorted_values = sorted(values)
+            medians.append(sorted_values[len(sorted_values) // 2])
         ax.plot(
-            [position],
-            [median],
-            color=COLORS[implementation],
+            positions,
+            medians,
+            color=COLORS[impl_name],
+            linewidth=2,
             marker="o",
             markersize=5,
-            linewidth=0,
             zorder=3,
         )
 
@@ -103,17 +118,19 @@ def main() -> None:
             [
                 "HLL Accuracy: Relative Error Over 10 Seeded Input Remappings",
                 "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
-                "Single fixed-size group in Sketchlib Rust and DataSketches",
             ]
         )
     )
-    ax.set_xlabel("Configuration")
+    ax.set_xlabel("Registers")
     ax.set_ylabel("Relative Error (%)")
-    ax.set_xticks([center])
-    ax.set_xticklabels([group_label])
+    ax.set_xticks(range(len(register_sizes)))
+    ax.set_xticklabels([str(r) for r in register_sizes])
     ax.grid(True, axis="y", alpha=0.25)
     ax.legend(
-        handles=[Line2D([0], [0], color=COLORS[name], lw=6, label=name) for name in IMPLEMENTATIONS]
+        handles=[
+            Line2D([0], [0], color=COLORS[name], lw=6, label=name)
+            for name in IMPLEMENTATIONS
+        ]
     )
     fig.tight_layout()
     fig.savefig(args.output, dpi=200)

@@ -40,5 +40,7 @@ else
   KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_cpp.csv}"
   "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode summary > "${SUMMARY_OUTPUT_PATH}"
   "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-errors > "${KEY_ERROR_OUTPUT_PATH}"
-  "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-seed-errors > "${KEY_SEED_ERROR_OUTPUT_PATH}"
+  if [[ "${VARIANT}" == "cms" ]]; then
+    "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode key-seed-errors > "${KEY_SEED_ERROR_OUTPUT_PATH}"
+  fi
 fi
