@@ -18,12 +18,14 @@ import matplotlib.pyplot as plt
 
 COLORS = {
     "rust_sketchlib_cms": "#4C78A8",
-    "rust_datasketches_cms": "#54A24B",
+    "rust_oxide_cms": "#54A24B",
+    "rust_datasketches_cms": "#E45756",
     "cpp_datasketches_cms": "#F58518",
 }
 
 LABELS = {
     "rust_sketchlib_cms": "Rust sketchlib",
+    "rust_oxide_cms": "Rust sketch_oxide",
     "rust_datasketches_cms": "Rust DataSketches",
     "cpp_datasketches_cms": "C++ DataSketches",
 }
@@ -50,6 +52,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
 
     implementations = [
         "rust_sketchlib_cms",
+        "rust_oxide_cms",
         "rust_datasketches_cms",
         "cpp_datasketches_cms",
     ]
@@ -61,7 +64,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(9.2, 5.6))
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
     bars = ax.bar(
         positions,
         medians,

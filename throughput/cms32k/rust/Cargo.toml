@@ -1,9 +1,10 @@
 [package]
-name = "cs_throughput"
+name = "cms32k_throughput"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+datasketches = "0.2.0"
 sketch_oxide = "0.1.6"
 sketchlib-rust = { path = "../../../../sketchlib-rust" }
 twox-hash = "2.1.2"

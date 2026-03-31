@@ -1,4 +1,5 @@
 use datasketches::countmin::CountMinSketch;
+use sketch_oxide::frequency::CountMinSketch as OxideCountMin;
 use sketchlib_rust::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
     MatrixHashType, SketchHasher, SketchInput,
@@ -13,8 +14,11 @@ use twox_hash::{XxHash3_128, XxHash3_64};
 
 const ROWS: usize = 5;
 const COLS: usize = 2048;
+const EPSILON: f64 = 0.0013;
+const DELTA: f64 = 0.0067;
 const SEEDS: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_cms";
+const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cms";
 const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cms";
 const CSV_HEADER: &str =
     "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec";
@@ -64,13 +68,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.implementation_filter.as_deref() {
         None => {
             rows.extend(run_datasketches(&data));
+            rows.extend(run_oxide(&data));
             rows.extend(run_sketchlib(&data));
         }
         Some(IMPLEMENTATION_RUST_DATASKETCHES) => rows.extend(run_datasketches(&data)),
+        Some(IMPLEMENTATION_RUST_OXIDE) => rows.extend(run_oxide(&data)),
         Some(IMPLEMENTATION_RUST_SKETCHLIB) => rows.extend(run_sketchlib(&data)),
         Some(other) => {
             return Err(format!(
-                "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                "unsupported --impl value: {other}; expected \
+                 {IMPLEMENTATION_RUST_DATASKETCHES}, {IMPLEMENTATION_RUST_OXIDE}, \
+                 or {IMPLEMENTATION_RUST_SKETCHLIB}"
             )
             .into())
         }
@@ -159,6 +167,31 @@ fn run_datasketches(data: &[i64]) -> Vec<ThroughputRow> {
         let elapsed = start.elapsed().as_nanos();
         rows.push(ThroughputRow {
             implementation: IMPLEMENTATION_RUST_DATASKETCHES,
+            language: "rust",
+            seed,
+            rows: ROWS,
+            cols: COLS,
+            total_items: data.len(),
+            total_nanoseconds: elapsed,
+            throughput_items_per_sec: data.len() as f64 * 1_000_000_000.0 / elapsed as f64,
+        });
+    }
+    rows
+}
+
+fn run_oxide(data: &[i64]) -> Vec<ThroughputRow> {
+    let mut rows = Vec::with_capacity(SEEDS.len());
+    for &seed in &SEEDS {
+        let mut sketch = OxideCountMin::new(EPSILON, DELTA).expect("valid CMS parameters");
+        let _ = seed;
+        let start = Instant::now();
+        for &value in data {
+            sketch.update(&value);
+        }
+        std::hint::black_box(&sketch);
+        let elapsed = start.elapsed().as_nanos();
+        rows.push(ThroughputRow {
+            implementation: IMPLEMENTATION_RUST_OXIDE,
             language: "rust",
             seed,
             rows: ROWS,

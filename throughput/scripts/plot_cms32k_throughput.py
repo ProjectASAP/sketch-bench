@@ -17,15 +17,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 COLORS = {
-    "rust_sketchlib_cs": "#4C78A8",
-    "rust_oxide_cs": "#54A24B",
-    "cpp_insert_optimized_cs": "#F58518",
+    "rust_sketchlib_cms": "#4C78A8",
+    "rust_oxide_cms": "#54A24B",
+    "rust_datasketches_cms": "#E45756",
+    "cpp_datasketches_cms": "#F58518",
 }
 
 LABELS = {
-    "rust_sketchlib_cs": "Rust sketchlib",
-    "rust_oxide_cs": "Rust sketch_oxide",
-    "cpp_insert_optimized_cs": "AWS insert-optimized",
+    "rust_sketchlib_cms": "Rust sketchlib",
+    "rust_oxide_cms": "Rust sketch_oxide",
+    "rust_datasketches_cms": "Rust DataSketches",
+    "cpp_datasketches_cms": "C++ DataSketches",
 }
 
 
@@ -39,28 +41,41 @@ def load_rows(path: Path) -> list[dict[str, str]]:
 
 def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     grouped: dict[str, list[float]] = defaultdict(list)
+    cols = set()
+    seed_count = set()
     total_items = set()
     for row in rows:
         grouped[row["implementation"]].append(float(row["throughput_items_per_sec"]))
+        cols.add(int(row["cols"]))
+        seed_count.add(int(row["seed"]))
         total_items.add(int(row["total_items"]))
 
-    implementations = ["rust_sketchlib_cs", "rust_oxide_cs", "cpp_insert_optimized_cs"]
-    medians = [statistics.median(grouped[name]) for name in implementations]
+    implementations = [
+        "rust_sketchlib_cms",
+        "rust_oxide_cms",
+        "rust_datasketches_cms",
+        "cpp_datasketches_cms",
+    ]
+    for implementation in implementations:
+        if not grouped.get(implementation):
+            raise ValueError(f"missing data for {implementation}")
+
+    medians = [statistics.median(grouped[implementation]) for implementation in implementations]
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(9.6, 5.6))
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
     bars = ax.bar(
         positions,
         medians,
-        width=0.56,
-        color=[COLORS[name] for name in implementations],
+        width=0.55,
+        color=[COLORS[implementation] for implementation in implementations],
         alpha=0.88,
         zorder=2,
     )
 
     box = ax.boxplot(
-        [grouped[name] for name in implementations],
+        [grouped[implementation] for implementation in implementations],
         positions=positions,
         widths=0.22,
         patch_artist=True,
@@ -83,9 +98,9 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     ax.set_title(
         "\n".join(
             [
-                "Count Sketch Insertion Throughput",
+                "CMS Insertion Throughput (5 \u00d7 32768)",
                 f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values (s=1.1, support=100k)",
-                "Sketch fixed to 5 x 2048; 10 runs",
+                f"Sketch fixed to 5 x {next(iter(cols))}; 10 seeded runs",
             ]
         )
     )
@@ -116,6 +131,7 @@ def main() -> None:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+
     render_plot(load_rows(args.input), args.output)
     print(f"Wrote {args.output}")
 

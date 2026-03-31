@@ -1,7 +1,8 @@
-use sketch_oxide::frequency::CountSketch as OxideCountSketch;
+use datasketches::countmin::CountMinSketch;
+use sketch_oxide::frequency::CountMinSketch as OxideCountMin;
 use sketchlib_rust::{
-    impl_fixed_matrix, hash_for_matrix_seeded_generic, Count, FastPath, HeapItem, MatrixHashType,
-    SketchHasher, SketchInput,
+    impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
+    MatrixHashType, SketchHasher, SketchInput,
 };
 use std::env;
 use std::error::Error;
@@ -12,16 +13,17 @@ use std::time::Instant;
 use twox_hash::{XxHash3_128, XxHash3_64};
 
 const ROWS: usize = 5;
-const COLS: usize = 2048;
-const EPSILON: f64 = 0.0013;
+const COLS: usize = 32768;
+const EPSILON: f64 = 0.0000830;
 const DELTA: f64 = 0.0067;
 const SEEDS: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cs";
-const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cs";
+const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_cms";
+const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cms";
+const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cms";
 const CSV_HEADER: &str =
     "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec";
 
-impl_fixed_matrix!(M5x2K, i32, 5, 2048);
+impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 
 #[derive(Clone, Debug)]
 struct ThroughputRow {
@@ -51,6 +53,13 @@ impl ThroughputRow {
     }
 }
 
+#[derive(Debug)]
+struct Args {
+    data: PathBuf,
+    output: PathBuf,
+    implementation_filter: Option<String>,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     let data = load_dataset(&args.data)?;
@@ -58,15 +67,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rows = Vec::new();
     match args.implementation_filter.as_deref() {
         None => {
+            rows.extend(run_datasketches(&data));
             rows.extend(run_oxide(&data));
             rows.extend(run_sketchlib(&data));
         }
+        Some(IMPLEMENTATION_RUST_DATASKETCHES) => rows.extend(run_datasketches(&data)),
         Some(IMPLEMENTATION_RUST_OXIDE) => rows.extend(run_oxide(&data)),
         Some(IMPLEMENTATION_RUST_SKETCHLIB) => rows.extend(run_sketchlib(&data)),
         Some(other) => {
             return Err(format!(
                 "unsupported --impl value: {other}; expected \
-                 {IMPLEMENTATION_RUST_OXIDE} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                 {IMPLEMENTATION_RUST_DATASKETCHES}, {IMPLEMENTATION_RUST_OXIDE}, \
+                 or {IMPLEMENTATION_RUST_SKETCHLIB}"
             )
             .into())
         }
@@ -76,16 +88,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct Args {
-    data: PathBuf,
-    output: PathBuf,
-    implementation_filter: Option<String>,
-}
-
 fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
-    let mut output = PathBuf::from("../output/cs_throughput_results_rust.csv");
+    let mut output = PathBuf::from("../output/cms32k_throughput_results_rust.csv");
     let mut implementation_filter = None;
 
     let mut args = env::args().skip(1);
@@ -113,6 +118,13 @@ fn load_dataset(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_size = metadata.len() as usize;
+    if file_size == 0 {
+        return Err(format!("dataset is empty: {}", path.display()).into());
+    }
+    if file_size % std::mem::size_of::<i64>() != 0 {
+        return Err(format!("dataset size is not divisible by 8 bytes: {}", path.display()).into());
+    }
+
     let mut buffer = vec![0u8; file_size];
     file.read_exact(&mut buffer)?;
 
@@ -143,14 +155,38 @@ fn write_rows(path: &Path, rows: &[ThroughputRow]) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
+fn run_datasketches(data: &[i64]) -> Vec<ThroughputRow> {
+    let mut rows = Vec::with_capacity(SEEDS.len());
+    for &seed in &SEEDS {
+        let mut sketch = CountMinSketch::with_seed(ROWS as u8, COLS as u32, seed);
+        let start = Instant::now();
+        for &value in data {
+            sketch.update(value);
+        }
+        std::hint::black_box(&sketch);
+        let elapsed = start.elapsed().as_nanos();
+        rows.push(ThroughputRow {
+            implementation: IMPLEMENTATION_RUST_DATASKETCHES,
+            language: "rust",
+            seed,
+            rows: ROWS,
+            cols: COLS,
+            total_items: data.len(),
+            total_nanoseconds: elapsed,
+            throughput_items_per_sec: data.len() as f64 * 1_000_000_000.0 / elapsed as f64,
+        });
+    }
+    rows
+}
+
 fn run_oxide(data: &[i64]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(SEEDS.len());
     for &seed in &SEEDS {
-        let mut sketch = OxideCountSketch::new(EPSILON, DELTA).expect("valid CountSketch parameters");
+        let mut sketch = OxideCountMin::new(EPSILON, DELTA).expect("valid CMS parameters");
         let _ = seed;
         let start = Instant::now();
         for &value in data {
-            sketch.update(&value, 1);
+            sketch.update(&value);
         }
         std::hint::black_box(&sketch);
         let elapsed = start.elapsed().as_nanos();
@@ -172,7 +208,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(SEEDS.len());
     macro_rules! push_seed {
         ($seed:expr, $hasher:ty) => {{
-            let mut sketch = Count::<M5x2K, FastPath, $hasher>::from_storage(M5x2K::default());
+            let mut sketch = CountMin::<M5x32K, FastPath, $hasher>::from_storage(M5x32K::default());
             let start = Instant::now();
             for &value in data {
                 sketch.insert(&SketchInput::I64(value));

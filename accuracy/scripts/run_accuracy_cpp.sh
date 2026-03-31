@@ -6,12 +6,17 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll) ;;
+  cms|cs|hll|kll|octo) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, or octo" >&2
     exit 1
     ;;
 esac
+
+if [[ "${VARIANT}" == "octo" ]]; then
+  echo "octo variant is Rust-only; skipping C++ build."
+  exit 0
+fi
 
 VARIANT_DIR="${ACCURACY_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_accuracy"

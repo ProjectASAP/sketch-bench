@@ -12,8 +12,8 @@ use std::time::Instant;
 use twox_hash::{XxHash3_128, XxHash3_64};
 
 const ROWS: usize = 5;
-const COLS: usize = 2048;
-const EPSILON: f64 = 0.0013;
+const COLS: usize = 32768;
+const EPSILON: f64 = 0.0000830;
 const DELTA: f64 = 0.0067;
 const SEEDS: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cs";
@@ -21,7 +21,7 @@ const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cs";
 const CSV_HEADER: &str =
     "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec";
 
-impl_fixed_matrix!(M5x2K, i32, 5, 2048);
+impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 
 #[derive(Clone, Debug)]
 struct ThroughputRow {
@@ -85,7 +85,7 @@ struct Args {
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
-    let mut output = PathBuf::from("../output/cs_throughput_results_rust.csv");
+    let mut output = PathBuf::from("../output/cs32k_throughput_results_rust.csv");
     let mut implementation_filter = None;
 
     let mut args = env::args().skip(1);
@@ -172,7 +172,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(SEEDS.len());
     macro_rules! push_seed {
         ($seed:expr, $hasher:ty) => {{
-            let mut sketch = Count::<M5x2K, FastPath, $hasher>::from_storage(M5x2K::default());
+            let mut sketch = Count::<M5x32K, FastPath, $hasher>::from_storage(M5x32K::default());
             let start = Instant::now();
             for &value in data {
                 sketch.insert(&SketchInput::I64(value));

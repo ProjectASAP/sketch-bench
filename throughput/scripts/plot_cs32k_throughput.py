@@ -19,13 +19,11 @@ import matplotlib.pyplot as plt
 COLORS = {
     "rust_sketchlib_cs": "#4C78A8",
     "rust_oxide_cs": "#54A24B",
-    "cpp_insert_optimized_cs": "#F58518",
 }
 
 LABELS = {
     "rust_sketchlib_cs": "Rust sketchlib",
     "rust_oxide_cs": "Rust sketch_oxide",
-    "cpp_insert_optimized_cs": "AWS insert-optimized",
 }
 
 
@@ -44,12 +42,16 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         grouped[row["implementation"]].append(float(row["throughput_items_per_sec"]))
         total_items.add(int(row["total_items"]))
 
-    implementations = ["rust_sketchlib_cs", "rust_oxide_cs", "cpp_insert_optimized_cs"]
+    implementations = ["rust_sketchlib_cs", "rust_oxide_cs"]
+    for name in implementations:
+        if not grouped.get(name):
+            raise ValueError(f"missing data for {name}")
+
     medians = [statistics.median(grouped[name]) for name in implementations]
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(9.6, 5.6))
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
     bars = ax.bar(
         positions,
         medians,
@@ -83,9 +85,9 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     ax.set_title(
         "\n".join(
             [
-                "Count Sketch Insertion Throughput",
+                "Count Sketch Insertion Throughput (5 \u00d7 32768)",
                 f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values (s=1.1, support=100k)",
-                "Sketch fixed to 5 x 2048; 10 runs",
+                "Sketch fixed to 5 x 32768; 10 runs",
             ]
         )
     )

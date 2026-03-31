@@ -6,9 +6,9 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll) ;;
+  cms|cs|hll|kll|octo) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, or octo" >&2
     exit 1
     ;;
 esac
@@ -29,7 +29,13 @@ if [[ ! -f "${VARIANT_DIR}/rust/Cargo.lock" ]]; then
   cargo generate-lockfile --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml"
 fi
 
-if [[ "${VARIANT}" == "hll" || "${VARIANT}" == "kll" ]]; then
+if [[ "${VARIANT}" == "octo" ]]; then
+  cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
+    --data "${DATA_DST}" \
+    --output-cms "${VARIANT_DIR}/output/octo_accuracy_cms.csv" \
+    --output-cs "${VARIANT_DIR}/output/octo_accuracy_cs.csv" \
+    --output-hll "${VARIANT_DIR}/output/octo_accuracy_hll.csv"
+elif [[ "${VARIANT}" == "hll" || "${VARIANT}" == "kll" ]]; then
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}"

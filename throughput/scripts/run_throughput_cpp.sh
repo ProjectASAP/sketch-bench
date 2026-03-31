@@ -6,12 +6,17 @@ THROUGHPUT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${1:-${THROUGHPUT_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll) ;;
+  cms|cs|hll|kll|octo|cms32k|cs32k) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, octo, cms32k, or cs32k" >&2
     exit 1
     ;;
 esac
+
+if [[ "${VARIANT}" == "octo" || "${VARIANT}" == "cs32k" ]]; then
+  echo "${VARIANT} variant is Rust-only; skipping C++ build."
+  exit 0
+fi
 
 VARIANT_DIR="${THROUGHPUT_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_throughput"
@@ -36,4 +41,5 @@ case "${VARIANT}" in
   cs) "${BUILD_DIR}/cs_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
   hll) "${BUILD_DIR}/hll_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
   kll) "${BUILD_DIR}/kll_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
+  cms32k) "${BUILD_DIR}/cms32k_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
 esac

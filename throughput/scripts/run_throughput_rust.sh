@@ -6,9 +6,9 @@ THROUGHPUT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${1:-${THROUGHPUT_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll) ;;
+  cms|cs|hll|kll|octo|cms32k|cs32k) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, octo, cms32k, or cs32k" >&2
     exit 1
     ;;
 esac

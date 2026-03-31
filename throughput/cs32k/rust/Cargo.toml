@@ -1,5 +1,5 @@
 [package]
-name = "cs_throughput"
+name = "cs32k_throughput"
 version = "0.1.0"
 edition = "2021"
 
