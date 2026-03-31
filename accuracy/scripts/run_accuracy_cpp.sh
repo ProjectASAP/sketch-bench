@@ -6,9 +6,9 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll) ;;
+  cms|cs|hll|kll) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, or hll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
     exit 1
     ;;
 esac
@@ -36,6 +36,8 @@ cmake --build "${BUILD_DIR}" --config Release
 
 if [[ "${VARIANT}" == "hll" ]]; then
   "${BUILD_DIR}/hll_accuracy" --data "${DATA_DST}" > "${SUMMARY_OUTPUT_PATH}"
+elif [[ "${VARIANT}" == "kll" ]]; then
+  "${BUILD_DIR}/kll_accuracy" --data "${DATA_DST}" > "${SUMMARY_OUTPUT_PATH}"
 else
   KEY_ERROR_OUTPUT_PATH="${2:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_median_errors_cpp.csv}"
   "${BUILD_DIR}/cms_accuracy" --data "${DATA_DST}" --mode summary > "${SUMMARY_OUTPUT_PATH}"

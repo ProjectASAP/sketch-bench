@@ -6,9 +6,9 @@ THROUGHPUT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${1:-${THROUGHPUT_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs) ;;
+  cms|cs|hll|kll) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms or cs" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
     exit 1
     ;;
 esac
@@ -34,4 +34,6 @@ cmake --build "${BUILD_DIR}" --config Release
 case "${VARIANT}" in
   cms) "${BUILD_DIR}/cms_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
   cs) "${BUILD_DIR}/cs_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
+  hll) "${BUILD_DIR}/hll_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
+  kll) "${BUILD_DIR}/kll_throughput" --data "${DATA_DST}" --output "${OUTPUT_PATH}" ;;
 esac

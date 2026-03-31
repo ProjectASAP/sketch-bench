@@ -6,9 +6,9 @@ THROUGHPUT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${1:-${THROUGHPUT_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs) ;;
+  cms|cs|hll|kll) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms or cs" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
     exit 1
     ;;
 esac
@@ -20,7 +20,17 @@ PLOTS_DIR="${THROUGHPUT_DIR}/plots/${VARIANT}"
 SUMMARY_CSV_PATH="${OUTPUT_DIR}/${RESULT_PREFIX}_results.csv"
 RUST_SUMMARY_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_results_rust.csv"
 CPP_SUMMARY_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_results_cpp.csv"
-SUMMARY_HEADER="implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec"
+case "${VARIANT}" in
+  kll)
+    SUMMARY_HEADER="implementation,language,run,k,total_items,total_nanoseconds,throughput_items_per_sec"
+    ;;
+  hll)
+    SUMMARY_HEADER="implementation,language,run,lg_k,registers,total_items,total_nanoseconds,throughput_items_per_sec"
+    ;;
+  *)
+    SUMMARY_HEADER="implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec"
+    ;;
+esac
 
 mkdir -p "${OUTPUT_DIR}" "${PLOTS_DIR}"
 
@@ -41,6 +51,16 @@ case "${VARIANT}" in
     ;;
   cs)
     python3 "${SCRIPT_DIR}/plot_cs_throughput.py" \
+      --input "${SUMMARY_CSV_PATH}" \
+      --output "${PLOTS_DIR}/${RESULT_PREFIX}_insertion.png"
+    ;;
+  hll)
+    python3 "${SCRIPT_DIR}/plot_hll_throughput.py" \
+      --input "${SUMMARY_CSV_PATH}" \
+      --output "${PLOTS_DIR}/${RESULT_PREFIX}_insertion.png"
+    ;;
+  kll)
+    python3 "${SCRIPT_DIR}/plot_kll_throughput.py" \
       --input "${SUMMARY_CSV_PATH}" \
       --output "${PLOTS_DIR}/${RESULT_PREFIX}_insertion.png"
     ;;

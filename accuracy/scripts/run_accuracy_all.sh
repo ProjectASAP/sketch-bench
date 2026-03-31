@@ -6,9 +6,9 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${1:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll) ;;
+  cms|cs|hll|kll) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, or hll" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, or kll" >&2
     exit 1
     ;;
 esac
@@ -41,7 +41,24 @@ DATASET_COMPARE_SEED="${ACCURACY_CMS_DATASET_COMPARE_SEED:-5}"
 DATASET_COMPARE_PLOT_PATH="${PLOTS_DIR}/${RESULT_PREFIX}_dataset_compare_col_${DATASET_COMPARE_COLS}_seed_${DATASET_COMPARE_SEED}.png"
 mkdir -p "${OUTPUT_DIR}" "${PLOTS_DIR}"
 
-if [[ "${VARIANT}" == "hll" ]]; then
+if [[ "${VARIANT}" == "kll" ]]; then
+  SUMMARY_HEADER="implementation,language,k,percentile,total_items,true_quantile,estimate,relative_error"
+  "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
+  "${SCRIPT_DIR}/run_accuracy_cpp.sh" "${CPP_SUMMARY_CSV}" "" "${VARIANT}"
+
+  {
+    echo "${SUMMARY_HEADER}"
+    tail -n +2 "${RUST_SUMMARY_CSV}"
+    cat "${CPP_SUMMARY_CSV}"
+  } > "${SUMMARY_CSV_PATH}"
+
+  python3 "${SCRIPT_DIR}/plot_kll_accuracy.py" \
+    --input "${SUMMARY_CSV_PATH}" \
+    --output "${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
+
+  echo "Wrote ${SUMMARY_CSV_PATH}"
+  echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
+elif [[ "${VARIANT}" == "hll" ]]; then
   SUMMARY_HEADER="implementation,language,seed,lg_k,registers,total_items,true_distinct,estimate,relative_error"
   "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
   "${SCRIPT_DIR}/run_accuracy_cpp.sh" "${CPP_SUMMARY_CSV}" "" "${VARIANT}"
