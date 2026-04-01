@@ -16,6 +16,7 @@
 target/
 **/target/
 Cargo.lock
+rust-target/
 
 # C++ build artifacts
 *.dSYM/
@@ -48,7 +49,15 @@ dist/
 *.swp
 *.swo
 *~
+.tmp/
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Accuracy plotting cache
+accuracy/.mplconfig/
+accuracy/data/generate_zipf_data
+
+# Throughput plotting cache
+throughput/.mplconfig
