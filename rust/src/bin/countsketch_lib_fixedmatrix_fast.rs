@@ -5,7 +5,7 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use sketchlib_rust::{Count, FastPath, FixedMatrix, SketchInput};
+use asap_sketchlib::{Count, FastPath, FixedMatrix, SketchInput};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

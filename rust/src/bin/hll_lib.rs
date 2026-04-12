@@ -5,7 +5,7 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use sketchlib_rust::{HyperLogLog as LibHyperLogLog, DataFusion, SketchInput};
+use asap_sketchlib::{HyperLogLog as LibHyperLogLog, ErtlMLE, SketchInput};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let results = run_benchmark_i64(
         config,
-        || LibHyperLogLog::<DataFusion>::new(),
+        || LibHyperLogLog::<ErtlMLE>::new(),
         |sketch, value| sketch.insert(&SketchInput::I64(value)),
     )?;
 

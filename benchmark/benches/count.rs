@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use sketchlib_rust::{Count, FastPath, FixedMatrix, SketchInput, Vector2D};
+use asap_sketchlib::{Count, FastPath, FixedMatrix, SketchInput, Vector2D};
 
 const SAMPLE_COUNT: usize = 1_000_000;
 const RNG_SEED: u64 = 0x5eed_c0de_1234_5678;

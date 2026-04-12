@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use sketchlib_rust::{CountMin, NitroBatch, RegularPath, SketchInput, Vector2D};
+use asap_sketchlib::{CountMin, NitroBatch, RegularPath, SketchInput, Vector2D};
 
 fn build_vals() -> Vec<i64> {
     let mut rng = StdRng::seed_from_u64(0x5eed_c0de_1234_5678);

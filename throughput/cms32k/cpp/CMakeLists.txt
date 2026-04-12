@@ -27,3 +27,4 @@ include_directories(
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_executable(cms32k_throughput src/main.cpp)
+add_executable(cms32k_throughput_query src/main_query.cpp)

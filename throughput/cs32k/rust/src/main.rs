@@ -1,5 +1,5 @@
 use sketch_oxide::frequency::CountSketch as OxideCountSketch;
-use sketchlib_rust::{
+use asap_sketchlib::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, Count, FastPath, HeapItem, MatrixHashType,
     SketchHasher, SketchInput,
 };

@@ -1,4 +1,4 @@
-use sketchlib_rust::{Count, CountMin, FastPath, SketchInput, impl_fixed_matrix};
+use asap_sketchlib::{Count, CountMin, FastPath, SketchInput, impl_fixed_matrix};
 
 impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 use std::env;
@@ -228,7 +228,7 @@ fn run_octo_cs(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
 }
 
 fn run_regular_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
-    use sketchlib_rust::{HyperLogLog, Regular};
+    use asap_sketchlib::{HyperLogLog, Regular};
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
         let barrier = Barrier::new(1);
@@ -272,7 +272,7 @@ fn run_octo_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
                     .map(|part| {
                         let barrier = &barrier;
                         s.spawn(move || {
-                            let mut sketch = sketchlib_rust::HyperLogLog::<sketchlib_rust::Regular>::default();
+                            let mut sketch = asap_sketchlib::HyperLogLog::<asap_sketchlib::Regular>::default();
                             barrier.wait();
                             let start = Instant::now();
                             for input in *part {

@@ -3,7 +3,7 @@ use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
 use crate::output::{
     AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
 };
-use sketchlib_rust::{
+use asap_sketchlib::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
     MatrixHashType, MatrixStorage, SketchHasher, SketchInput,
 };
@@ -203,7 +203,7 @@ fn run_one<S, H>(
     heavy_hitters: &[(i64, u64)],
 ) -> AccuracyRow
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
     H: SketchHasher<HashType = MatrixHashType>,
 {
@@ -243,7 +243,7 @@ where
 
 fn median_estimator<S, H>(baseline: &BaselineData) -> CountMin<S, FastPath, H>
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
     H: SketchHasher<HashType = MatrixHashType>,
 {
@@ -262,7 +262,7 @@ fn write_seed_errors_for_group<S, H>(
     writer: &mut KeySeedErrorCsvWriter,
 ) -> io::Result<()>
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
     H: SketchHasher<HashType = MatrixHashType>,
 {
@@ -295,7 +295,7 @@ fn maybe_write_seed_errors_for_group<S, H>(
     cols_filter: Option<usize>,
 ) -> io::Result<()>
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: Copy + PartialOrd + From<i32> + std::ops::AddAssign + Into<i64>,
     H: SketchHasher<HashType = MatrixHashType>,
 {

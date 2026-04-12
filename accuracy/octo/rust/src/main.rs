@@ -1,4 +1,4 @@
-use sketchlib_rust::{
+use asap_sketchlib::{
     CmDelta, Count, CountDelta, CountMin, FastPath, HllDelta, HyperLogLog, Regular, SketchInput,
     impl_fixed_matrix,
 };

@@ -1,8 +1,8 @@
 use crate::baseline::BaselineData;
 use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
 use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
-use sketchlib_rust::count::CountSketchCounter;
-use sketchlib_rust::{
+use asap_sketchlib::count::CountSketchCounter;
+use asap_sketchlib::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, Count, FastPath, HeapItem, MatrixHashType,
     MatrixStorage, SketchHasher, SketchInput,
 };
@@ -113,7 +113,7 @@ fn run_one<S, H>(
     heavy_hitters: &[(i64, u64)],
 ) -> AccuracyRow
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: CountSketchCounter,
     H: SketchHasher<HashType = MatrixHashType>,
 {
@@ -153,7 +153,7 @@ where
 
 fn median_estimator<S, H>(baseline: &BaselineData) -> Count<S, FastPath, H>
 where
-    S: MatrixStorage + Default + sketchlib_rust::FastPathHasher<H>,
+    S: MatrixStorage + Default + asap_sketchlib::FastPathHasher<H>,
     S::Counter: CountSketchCounter,
     H: SketchHasher<HashType = MatrixHashType>,
 {

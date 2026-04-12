@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sketchlib-rust = { path = "../../../../sketchlib-rust" }
+asap_sketchlib = { path = "../../../../asap_sketchlib" }
 sketch_oxide = "0.1.5"
 
 [profile.release]

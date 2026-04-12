@@ -6,7 +6,7 @@ use bench_common::{
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, ROWS,
     UNIVMON_LAYERS, UNIVMON_MAX_STREAM,
 };
-use sketchlib_rust::{SketchInput, UnivMon as LibUnivMon};
+use asap_sketchlib::{SketchInput, UnivMon as LibUnivMon};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

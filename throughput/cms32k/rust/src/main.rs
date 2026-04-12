@@ -1,6 +1,6 @@
 use datasketches::countmin::CountMinSketch;
 use sketch_oxide::frequency::CountMinSketch as OxideCountMin;
-use sketchlib_rust::{
+use asap_sketchlib::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
     MatrixHashType, SketchHasher, SketchInput,
 };

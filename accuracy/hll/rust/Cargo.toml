@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 datasketches = "0.2.0"
-sketchlib-rust = { path = "../../../../sketchlib-rust" }
+asap_sketchlib = { path = "../../../../asap_sketchlib" }
 
 [profile.release]
 opt-level = 3

@@ -6,7 +6,7 @@ use bench_common::{
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
     NITRO_RATE, ROWS,
 };
-use sketchlib_rust::{NitroBatch, Vector2D};
+use asap_sketchlib::{NitroBatch, Vector2D};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

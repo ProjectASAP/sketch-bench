@@ -1,6 +1,6 @@
 use datasketches::hll::{HllSketch, HllType};
 use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
-use sketchlib_rust::{DataFusion, HyperLogLogP12, SketchInput};
+use asap_sketchlib::{ErtlMLE, HyperLogLogP12, SketchInput};
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
-        let mut sketch = HyperLogLogP12::<DataFusion>::default();
+        let mut sketch = HyperLogLogP12::<ErtlMLE>::default();
         let start = Instant::now();
         for &value in data {
             sketch.insert(&SketchInput::I64(value));

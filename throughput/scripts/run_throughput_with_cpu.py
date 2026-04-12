@@ -195,7 +195,12 @@ def monitor_command(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--variant", default="cms", choices=["cms"])
+    parser.add_argument(
+        "--variant",
+        default="cms",
+        choices=["cms", "cs", "hll", "kll", "octo", "cms32k", "cs32k"],
+    )
+    parser.add_argument("--op", default="both", choices=["insert", "query", "both"])
     parser.add_argument("--sample-interval", type=float, default=0.5)
     args = parser.parse_args()
 
@@ -205,30 +210,50 @@ def main() -> None:
     output_dir = throughput_dir / args.variant / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    result_prefix = f"{args.variant}_throughput"
-    rust_output = output_dir / f"{result_prefix}_results_rust.csv"
-    cpp_output = output_dir / f"{result_prefix}_results_cpp.csv"
+    ops = ["insert", "query"] if args.op == "both" else [args.op]
+    rust_only_variants = {"octo", "cs32k"}
+    cpp_skip_query = {"cs"}  # cs has no C++ query binary
+    octo_skip_query = {"octo"}  # octo has no query binary
 
-    stages = [
-        (
-            "rust",
-            [
-                str(script_dir / "run_throughput_rust.sh"),
-                args.variant,
-                str(rust_output),
-            ],
-            output_dir / f"{result_prefix}_cpu_rust.csv",
-        ),
-        (
-            "cpp",
-            [
-                str(script_dir / "run_throughput_cpp.sh"),
-                args.variant,
-                str(cpp_output),
-            ],
-            output_dir / f"{result_prefix}_cpu_cpp.csv",
-        ),
-    ]
+    stages: list[tuple[str, list[str], Path]] = []
+    for op in ops:
+        if args.variant in octo_skip_query and op == "query":
+            continue
+        result_prefix = (
+            f"{args.variant}_throughput_query" if op == "query" else f"{args.variant}_throughput"
+        )
+        rust_output = output_dir / f"{result_prefix}_results_rust.csv"
+        stages.append(
+            (
+                f"rust_{op}",
+                [
+                    str(script_dir / "run_throughput_rust.sh"),
+                    args.variant,
+                    str(rust_output),
+                    op,
+                ],
+                output_dir / f"{result_prefix}_cpu_rust.csv",
+            )
+        )
+        if args.variant in rust_only_variants:
+            continue
+        if op == "query" and args.variant in cpp_skip_query:
+            continue
+        cpp_output = output_dir / f"{result_prefix}_results_cpp.csv"
+        stages.append(
+            (
+                f"cpp_{op}",
+                [
+                    str(script_dir / "run_throughput_cpp.sh"),
+                    args.variant,
+                    str(cpp_output),
+                    op,
+                ],
+                output_dir / f"{result_prefix}_cpu_cpp.csv",
+            )
+        )
+
+    result_prefix = f"{args.variant}_throughput"
 
     summary_rows = []
     for stage_name, command, output_csv in stages:

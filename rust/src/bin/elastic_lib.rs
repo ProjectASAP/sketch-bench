@@ -6,7 +6,7 @@ use bench_common::{
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
     ELASTIC_BUCKETS,
 };
-use sketchlib_rust::{DefaultXxHasher, Elastic as LibElastic};
+use asap_sketchlib::{DefaultXxHasher, Elastic as LibElastic};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

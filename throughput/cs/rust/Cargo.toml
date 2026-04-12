@@ -5,8 +5,16 @@ edition = "2021"
 
 [dependencies]
 sketch_oxide = "0.1.6"
-sketchlib-rust = { path = "../../../../sketchlib-rust" }
+asap_sketchlib = { path = "../../../../asap_sketchlib" }
 twox-hash = "2.1.2"
+
+[[bin]]
+name = "cs_throughput"
+path = "src/main.rs"
+
+[[bin]]
+name = "cs_throughput_query"
+path = "src/bin/query.rs"
 
 [profile.release]
 opt-level = 3

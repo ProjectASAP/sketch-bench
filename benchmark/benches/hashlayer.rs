@@ -1,7 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use sketchlib_rust::{
-    Count, CountMin, DataFusion, DefaultXxHasher, FastPath, HyperLogLog, RegularPath, SketchInput,
+use asap_sketchlib::{
+    Count, CountMin, ErtlMLE, DefaultXxHasher, FastPath, HyperLogLog, RegularPath, SketchInput,
     Vector2D, sketch_framework::hashlayer::HashSketchEnsemble,
 };
 
@@ -24,7 +24,7 @@ fn bench_separate_insert_three_sketches(c: &mut Criterion) {
                 (
                     CountMin::<Vector2D<i32>, FastPath>::default(),
                     Count::<Vector2D<i32>, RegularPath>::default(),
-                    HyperLogLog::<DataFusion>::default(),
+                    HyperLogLog::<ErtlMLE>::default(),
                 )
             },
             |(mut cm, mut count, mut hll)| {
@@ -48,7 +48,7 @@ fn bench_hashlayer_insert_all(c: &mut Criterion) {
                 HashSketchEnsemble::new(vec![
                     CountMin::<Vector2D<i32>, FastPath>::default().into(),
                     Count::<Vector2D<i32>, FastPath>::default().into(),
-                    HyperLogLog::<DataFusion>::default().into(),
+                    HyperLogLog::<ErtlMLE>::default().into(),
                 ])
                 .expect("compatible sketches")
             },

@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use sketchlib_rust::{
+use asap_sketchlib::{
     CountMin, FastPath, FixedMatrix, RegularPath, SketchInput, Vector2D, hash128_seeded,
 };
 

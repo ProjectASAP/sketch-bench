@@ -4,7 +4,7 @@ mod output;
 use baseline::{load_baseline, BaselineData};
 use output::{write_csv, AccuracyRow};
 use sketch_oxide::quantiles::KllSketch as OxideKll;
-use sketchlib_rust::{SketchInput, KLL};
+use asap_sketchlib::{SketchInput, KLL};
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;

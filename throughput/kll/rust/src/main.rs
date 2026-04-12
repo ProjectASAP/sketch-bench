@@ -1,5 +1,5 @@
 use sketch_oxide::quantiles::KllSketch as OxideKll;
-use sketchlib_rust::{SketchInput, KLL};
+use asap_sketchlib::{SketchInput, KLL};
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};

@@ -26,3 +26,4 @@ include_directories(
 )
 
 add_executable(hll_throughput src/main.cpp)
+add_executable(hll_throughput_query src/main_query.cpp)

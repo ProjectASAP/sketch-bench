@@ -6,8 +6,8 @@ use baseline::load_baseline;
 use datasketches::hll::{HllSketch, HllType};
 use output::{write_csv, AccuracyRow};
 use seeds::SEEDS;
-use sketchlib_rust::{
-    DataFusion, HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
+use asap_sketchlib::{
+    ErtlMLE, HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
 };
 use std::env;
 use std::error::Error;
@@ -92,17 +92,17 @@ trait SketchInsertEstimate {
     fn sketch_estimate(&self) -> usize;
 }
 
-impl SketchInsertEstimate for HyperLogLogP12<DataFusion> {
+impl SketchInsertEstimate for HyperLogLogP12<ErtlMLE> {
     fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
-impl SketchInsertEstimate for HyperLogLogP14<DataFusion> {
+impl SketchInsertEstimate for HyperLogLogP14<ErtlMLE> {
     fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
-impl SketchInsertEstimate for HyperLogLogP16<DataFusion> {
+impl SketchInsertEstimate for HyperLogLogP16<ErtlMLE> {
     fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
@@ -111,13 +111,13 @@ fn run_sketchlib(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
     let mut rows = Vec::new();
     for &lg_k in LG_K_LIST {
         match lg_k {
-            12 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP12<DataFusion>>(
+            12 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP12<ErtlMLE>>(
                 12, 1 << 12, values, true_distinct,
             )),
-            14 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP14<DataFusion>>(
+            14 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP14<ErtlMLE>>(
                 14, 1 << 14, values, true_distinct,
             )),
-            16 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP16<DataFusion>>(
+            16 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP16<ErtlMLE>>(
                 16, 1 << 16, values, true_distinct,
             )),
             _ => unreachable!(),
