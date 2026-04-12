@@ -17,19 +17,25 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 COLORS = {
-    "rust_sketchlib_hll": "#4C78A8",
+    "rust_asap_sketchlib_hll_ertlmle": "#4C78A8",
+    "rust_asap_sketchlib_hll_hip": "#B279A2",
+    "rust_sketch_oxide_hll": "#E45756",
     "rust_datasketches_hll": "#54A24B",
     "cpp_datasketches_hll": "#F58518",
 }
 IMPLEMENTATIONS = [
-    "rust_sketchlib_hll",
+    "rust_asap_sketchlib_hll_ertlmle",
+    "rust_asap_sketchlib_hll_hip",
+    "rust_sketch_oxide_hll",
     "rust_datasketches_hll",
     "cpp_datasketches_hll",
 ]
 OFFSETS = {
-    "rust_sketchlib_hll": -0.24,
-    "rust_datasketches_hll": 0.0,
-    "cpp_datasketches_hll": 0.24,
+    "rust_asap_sketchlib_hll_ertlmle": -0.32,
+    "rust_asap_sketchlib_hll_hip": -0.16,
+    "rust_sketch_oxide_hll": 0.0,
+    "rust_datasketches_hll": 0.16,
+    "cpp_datasketches_hll": 0.32,
 }
 
 
@@ -72,7 +78,7 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(12.5, 5.5))
-    width = 0.18
+    width = 0.14
 
     for impl_name in IMPLEMENTATIONS:
         positions = [

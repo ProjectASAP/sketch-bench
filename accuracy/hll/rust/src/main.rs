@@ -6,15 +6,20 @@ use baseline::load_baseline;
 use datasketches::hll::{HllSketch, HllType};
 use output::{write_csv, AccuracyRow};
 use seeds::SEEDS;
+use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
+use sketch_oxide::Sketch;
 use asap_sketchlib::{
-    ErtlMLE, HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
+    ErtlMLE, HyperLogLogHIPP12, HyperLogLogHIPP14, HyperLogLogHIPP16,
+    HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
 };
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 
 const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_hll";
-const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_hll";
+const IMPLEMENTATION_RUST_ASAP_ERTLMLE: &str = "rust_asap_sketchlib_hll_ertlmle";
+const IMPLEMENTATION_RUST_ASAP_HIP: &str = "rust_asap_sketchlib_hll_hip";
+const IMPLEMENTATION_RUST_OXIDE: &str = "rust_sketch_oxide_hll";
 const LG_K_LIST: &[u8] = &[12, 14, 16];
 
 #[derive(Debug)]
@@ -31,14 +36,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut rows = Vec::new();
     match args.implementation_filter.as_deref() {
         None => {
-            rows.extend(run_sketchlib(&baseline.values, baseline.distinct_items()));
+            rows.extend(run_asap_ertlmle(&baseline.values, baseline.distinct_items()));
+            rows.extend(run_asap_hip(&baseline.values, baseline.distinct_items()));
+            rows.extend(run_oxide(&baseline.values, baseline.distinct_items()));
             rows.extend(run_datasketches_rust(
                 &baseline.values,
                 baseline.distinct_items(),
             ));
         }
-        Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
-            rows.extend(run_sketchlib(&baseline.values, baseline.distinct_items()));
+        Some(IMPLEMENTATION_RUST_ASAP_ERTLMLE) => {
+            rows.extend(run_asap_ertlmle(&baseline.values, baseline.distinct_items()));
+        }
+        Some(IMPLEMENTATION_RUST_ASAP_HIP) => {
+            rows.extend(run_asap_hip(&baseline.values, baseline.distinct_items()));
+        }
+        Some(IMPLEMENTATION_RUST_OXIDE) => {
+            rows.extend(run_oxide(&baseline.values, baseline.distinct_items()));
         }
         Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
             rows.extend(run_datasketches_rust(
@@ -48,7 +61,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(other) => {
             return Err(format!(
-                "unsupported --impl value: {other}; expected one of {IMPLEMENTATION_RUST_SKETCHLIB}, {IMPLEMENTATION_RUST_DATASKETCHES}"
+                "unsupported --impl value: {other}; expected one of \
+                 {IMPLEMENTATION_RUST_ASAP_ERTLMLE}, {IMPLEMENTATION_RUST_ASAP_HIP}, \
+                 {IMPLEMENTATION_RUST_OXIDE}, {IMPLEMENTATION_RUST_DATASKETCHES}"
             )
             .into());
         }
@@ -56,35 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     write_csv(&args.output_summary, &rows, false)?;
     Ok(())
-}
-
-fn run_sketchlib_at_precision<S>(
-    lg_k: u8,
-    registers: usize,
-    values: &[i64],
-    true_distinct: usize,
-) -> Vec<AccuracyRow>
-where
-    S: Default + SketchInsertEstimate,
-{
-    let mut rows = Vec::with_capacity(SEEDS.len());
-    for &seed in &SEEDS {
-        let mut sketch = S::default();
-        for &value in values {
-            sketch.sketch_insert(&SketchInput::U64(seeded_key(value, seed)));
-        }
-        rows.push(build_row(
-            IMPLEMENTATION_RUST_SKETCHLIB,
-            "rust",
-            seed,
-            lg_k,
-            registers,
-            values.len(),
-            true_distinct,
-            sketch.sketch_estimate() as f64,
-        ));
-    }
-    rows
 }
 
 trait SketchInsertEstimate {
@@ -107,20 +93,108 @@ impl SketchInsertEstimate for HyperLogLogP16<ErtlMLE> {
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
-fn run_sketchlib(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+impl SketchInsertEstimate for HyperLogLogHIPP12 {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() as usize }
+}
+
+impl SketchInsertEstimate for HyperLogLogHIPP14 {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() as usize }
+}
+
+impl SketchInsertEstimate for HyperLogLogHIPP16 {
+    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_estimate(&self) -> usize { self.estimate() as usize }
+}
+
+fn run_asap_at_precision<S>(
+    implementation: &'static str,
+    lg_k: u8,
+    registers: usize,
+    values: &[i64],
+    true_distinct: usize,
+) -> Vec<AccuracyRow>
+where
+    S: Default + SketchInsertEstimate,
+{
+    let mut rows = Vec::with_capacity(SEEDS.len());
+    for &seed in &SEEDS {
+        let mut sketch = S::default();
+        for &value in values {
+            sketch.sketch_insert(&SketchInput::U64(seeded_key(value, seed)));
+        }
+        rows.push(build_row(
+            implementation,
+            "rust",
+            seed,
+            lg_k,
+            registers,
+            values.len(),
+            true_distinct,
+            sketch.sketch_estimate() as f64,
+        ));
+    }
+    rows
+}
+
+fn run_asap_ertlmle(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
     let mut rows = Vec::new();
     for &lg_k in LG_K_LIST {
         match lg_k {
-            12 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP12<ErtlMLE>>(
-                12, 1 << 12, values, true_distinct,
+            12 => rows.extend(run_asap_at_precision::<HyperLogLogP12<ErtlMLE>>(
+                IMPLEMENTATION_RUST_ASAP_ERTLMLE, 12, 1 << 12, values, true_distinct,
             )),
-            14 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP14<ErtlMLE>>(
-                14, 1 << 14, values, true_distinct,
+            14 => rows.extend(run_asap_at_precision::<HyperLogLogP14<ErtlMLE>>(
+                IMPLEMENTATION_RUST_ASAP_ERTLMLE, 14, 1 << 14, values, true_distinct,
             )),
-            16 => rows.extend(run_sketchlib_at_precision::<HyperLogLogP16<ErtlMLE>>(
-                16, 1 << 16, values, true_distinct,
+            16 => rows.extend(run_asap_at_precision::<HyperLogLogP16<ErtlMLE>>(
+                IMPLEMENTATION_RUST_ASAP_ERTLMLE, 16, 1 << 16, values, true_distinct,
             )),
             _ => unreachable!(),
+        }
+    }
+    rows
+}
+
+fn run_asap_hip(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+    let mut rows = Vec::new();
+    for &lg_k in LG_K_LIST {
+        match lg_k {
+            12 => rows.extend(run_asap_at_precision::<HyperLogLogHIPP12>(
+                IMPLEMENTATION_RUST_ASAP_HIP, 12, 1 << 12, values, true_distinct,
+            )),
+            14 => rows.extend(run_asap_at_precision::<HyperLogLogHIPP14>(
+                IMPLEMENTATION_RUST_ASAP_HIP, 14, 1 << 14, values, true_distinct,
+            )),
+            16 => rows.extend(run_asap_at_precision::<HyperLogLogHIPP16>(
+                IMPLEMENTATION_RUST_ASAP_HIP, 16, 1 << 16, values, true_distinct,
+            )),
+            _ => unreachable!(),
+        }
+    }
+    rows
+}
+
+fn run_oxide(values: &[i64], true_distinct: usize) -> Vec<AccuracyRow> {
+    let mut rows = Vec::new();
+    for &lg_k in LG_K_LIST {
+        let registers = 1usize << lg_k;
+        for &seed in &SEEDS {
+            let mut sketch = OxideHyperLogLog::new(lg_k).expect("valid precision");
+            for &value in values {
+                sketch.update(&seeded_key(value, seed));
+            }
+            rows.push(build_row(
+                IMPLEMENTATION_RUST_OXIDE,
+                "rust",
+                seed,
+                lg_k,
+                registers,
+                values.len(),
+                true_distinct,
+                sketch.estimate(),
+            ));
         }
     }
     rows

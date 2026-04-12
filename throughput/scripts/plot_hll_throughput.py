@@ -18,13 +18,15 @@ import matplotlib.pyplot as plt
 
 COLORS = {
     "rust_sketchlib_hll": "#4C78A8",
+    "rust_sketchlib_hll_hip": "#72B7B2",
     "rust_oxide_hll": "#54A24B",
     "rust_datasketches_hll": "#E45756",
     "cpp_datasketches_hll": "#F58518",
 }
 
 LABELS = {
-    "rust_sketchlib_hll": "Rust sketchlib",
+    "rust_sketchlib_hll": "Rust sketchlib\n(ErtlMLE)",
+    "rust_sketchlib_hll_hip": "Rust sketchlib\n(HIP)",
     "rust_oxide_hll": "Rust sketch_oxide",
     "rust_datasketches_hll": "Rust DataSketches",
     "cpp_datasketches_hll": "C++ DataSketches",
@@ -32,6 +34,7 @@ LABELS = {
 
 IMPLEMENTATIONS = [
     "rust_sketchlib_hll",
+    "rust_sketchlib_hll_hip",
     "rust_oxide_hll",
     "rust_datasketches_hll",
     "cpp_datasketches_hll",
@@ -115,7 +118,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     )
     ax.set_ylabel("Throughput (items/sec)")
     ax.set_xticks(positions)
-    ax.set_xticklabels([LABELS[name] for name in IMPLEMENTATIONS], rotation=8, ha="right")
+    ax.set_xticklabels([LABELS[name] for name in IMPLEMENTATIONS])
     ax.grid(True, axis="y", alpha=0.25, zorder=1)
 
     max_height = max(max(values) for values in grouped.values())
