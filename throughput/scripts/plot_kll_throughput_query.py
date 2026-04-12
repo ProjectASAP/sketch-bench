@@ -49,7 +49,15 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     implementations = [name for name in COLORS if grouped.get(name)]
     if not implementations:
         raise ValueError("no known implementations present")
-    medians = [statistics.median(grouped[name]) for name in implementations]
+    ns_medians = [statistics.median(grouped[name]) for name in implementations]
+    throughputs = [
+        (1e9 / ns) if ns > 0 else 0.0 for ns in ns_medians
+    ]
+    throughput_samples = {
+        name: [(1e9 / ns) if ns > 0 else 0.0 for ns in grouped[name]]
+        for name in implementations
+    }
+    medians = throughputs
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +70,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         alpha=0.88,
     )
     ax.boxplot(
-        [grouped[name] for name in implementations],
+        [throughput_samples[name] for name in implementations],
         positions=positions,
         widths=0.22,
         patch_artist=True,
@@ -74,23 +82,23 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     k_str = next(iter(k_set)) if k_set else "?"
     ax.set_title(
         "\n".join([
-            "KLL quantile() Latency",
+            "KLL quantile() Throughput",
             f"Data: {n_str:,} int64 values; k={k_str}",
             "10 runs x 10 repeats x 101 percentiles (p0..p100)",
         ])
     )
-    ax.set_ylabel("Nanoseconds per quantile() call (median)")
+    ax.set_ylabel("quantile() calls per second (median)")
     ax.set_xticks(positions)
     ax.set_xticklabels([LABELS[name] for name in implementations])
     ax.grid(True, axis="y", alpha=0.25)
 
-    max_height = max(max(values) for values in grouped.values())
+    max_height = max(max(values) for values in throughput_samples.values())
     ax.set_ylim(0, max_height * 1.18)
     for bar, value in zip(bars, medians):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + max_height * 0.02,
-            f"{value:.0f} ns",
+            f"{value:,.0f}/s",
             ha="center",
             va="bottom",
             fontsize=11,
