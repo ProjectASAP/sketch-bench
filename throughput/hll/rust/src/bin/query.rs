@@ -1,7 +1,7 @@
 use datasketches::hll::{HllSketch, HllType};
 use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
 use sketch_oxide::Sketch;
-use asap_sketchlib::{ErtlMLE, HyperLogLogP12, SketchInput};
+use asap_sketchlib::{ErtlMLE, HyperLogLogHIPP12, HyperLogLogP12, SketchInput};
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -14,6 +14,7 @@ const REGISTERS: usize = 1 << (LG_K as usize);
 const RUNS: usize = 10;
 const CALLS_PER_RUN: usize = 10;
 const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_hll";
+const IMPLEMENTATION_RUST_SKETCHLIB_HIP: &str = "rust_sketchlib_hll_hip";
 const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_hll";
 const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_hll";
 const CSV_HEADER: &str =
@@ -64,17 +65,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.implementation_filter.as_deref() {
         None => {
             rows.extend(run_sketchlib(&data));
+            rows.extend(run_sketchlib_hip(&data));
             rows.extend(run_oxide(&data));
             rows.extend(run_datasketches(&data));
         }
         Some(IMPLEMENTATION_RUST_SKETCHLIB) => rows.extend(run_sketchlib(&data)),
+        Some(IMPLEMENTATION_RUST_SKETCHLIB_HIP) => rows.extend(run_sketchlib_hip(&data)),
         Some(IMPLEMENTATION_RUST_OXIDE) => rows.extend(run_oxide(&data)),
         Some(IMPLEMENTATION_RUST_DATASKETCHES) => rows.extend(run_datasketches(&data)),
         Some(other) => {
             return Err(format!(
                 "unsupported --impl value: {other}; expected \
-                 {IMPLEMENTATION_RUST_SKETCHLIB}, {IMPLEMENTATION_RUST_OXIDE}, \
-                 or {IMPLEMENTATION_RUST_DATASKETCHES}"
+                 {IMPLEMENTATION_RUST_SKETCHLIB}, {IMPLEMENTATION_RUST_SKETCHLIB_HIP}, \
+                 {IMPLEMENTATION_RUST_OXIDE}, or {IMPLEMENTATION_RUST_DATASKETCHES}"
             )
             .into())
         }
@@ -99,6 +102,35 @@ fn run_sketchlib(data: &[i64]) -> Vec<QueryRow> {
             let elapsed = start.elapsed().as_nanos();
             rows.push(QueryRow {
                 implementation: IMPLEMENTATION_RUST_SKETCHLIB,
+                language: "rust",
+                run,
+                lg_k: LG_K,
+                registers: REGISTERS,
+                total_items: data.len(),
+                call_index: c,
+                nanoseconds: elapsed,
+                estimate: estimate as f64,
+            });
+        }
+    }
+    rows
+}
+
+fn run_sketchlib_hip(data: &[i64]) -> Vec<QueryRow> {
+    let mut rows = Vec::with_capacity(RUNS * CALLS_PER_RUN);
+    for run in 1..=RUNS {
+        let mut sketch = HyperLogLogHIPP12::default();
+        for &value in data {
+            sketch.insert(&SketchInput::I64(value));
+        }
+        std::hint::black_box(&sketch);
+        for c in 1..=CALLS_PER_RUN {
+            let start = Instant::now();
+            let estimate = sketch.estimate();
+            std::hint::black_box(&estimate);
+            let elapsed = start.elapsed().as_nanos();
+            rows.push(QueryRow {
+                implementation: IMPLEMENTATION_RUST_SKETCHLIB_HIP,
                 language: "rust",
                 run,
                 lg_k: LG_K,

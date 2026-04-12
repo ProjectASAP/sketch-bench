@@ -18,13 +18,15 @@ import matplotlib.pyplot as plt
 
 COLORS = {
     "rust_sketchlib_hll": "#4C78A8",
+    "rust_sketchlib_hll_hip": "#72B7B2",
     "rust_oxide_hll": "#54A24B",
     "rust_datasketches_hll": "#E45756",
     "cpp_datasketches_hll": "#F58518",
 }
 
 LABELS = {
-    "rust_sketchlib_hll": "Rust sketchlib",
+    "rust_sketchlib_hll": "Rust sketchlib\n(ErtlMLE)",
+    "rust_sketchlib_hll_hip": "Rust sketchlib\n(HIP)",
     "rust_oxide_hll": "Rust sketch_oxide",
     "rust_datasketches_hll": "Rust DataSketches",
     "cpp_datasketches_hll": "C++ DataSketches",
@@ -63,7 +65,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    fig, ax = plt.subplots(figsize=(12.0, 5.8))
     bars = ax.bar(
         positions,
         medians,
