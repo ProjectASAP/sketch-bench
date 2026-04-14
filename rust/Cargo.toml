@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-asap_sketchlib = { path = "../../asap_sketchlib" }
+asap_sketchlib = { path = "../../asap_sketchlib", features = ["experimental"] }
 sketch_oxide = "0.1.5"
 datasketches = "0.2.0"
 

@@ -5,7 +5,7 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, KLL_K,
 };
-use asap_sketchlib::{SketchInput, KLL};
+use asap_sketchlib::KLL;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
@@ -20,12 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let results = run_benchmark_i64(
         config,
-        || KLL::init_kll(KLL_K),
-        |sketch, value| {
-            sketch
-                .update(&SketchInput::I64(value))
-                .expect("KLL insert succeeds")
-        },
+        || KLL::<i64>::init_kll(KLL_K),
+        |sketch, value| sketch.update(&value),
     )?;
 
     print_results(&results);

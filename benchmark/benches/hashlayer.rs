@@ -1,17 +1,17 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use asap_sketchlib::{
-    Count, CountMin, ErtlMLE, DefaultXxHasher, FastPath, HyperLogLog, RegularPath, SketchInput,
+    Count, CountMin, DataInput, DefaultXxHasher, ErtlMLE, FastPath, HyperLogLog, RegularPath,
     Vector2D, sketch_framework::hashlayer::HashSketchEnsemble,
 };
 
 const SAMPLE_COUNT: usize = 10_000;
 const RNG_SEED: u64 = 0x5eed_c0de_1234_5678;
 
-fn build_keys() -> Vec<SketchInput<'static>> {
+fn build_keys() -> Vec<DataInput<'static>> {
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     (0..SAMPLE_COUNT)
-        .map(|_| SketchInput::U64(rng.random::<u64>()))
+        .map(|_| DataInput::U64(rng.random::<u64>()))
         .collect()
 }
 

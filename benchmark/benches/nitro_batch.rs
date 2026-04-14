@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use asap_sketchlib::{CountMin, NitroBatch, RegularPath, SketchInput, Vector2D};
+use asap_sketchlib::{CountMin, DataInput, NitroBatch, RegularPath, Vector2D};
 
 fn build_vals() -> Vec<i64> {
     let mut rng = StdRng::seed_from_u64(0x5eed_c0de_1234_5678);
@@ -61,7 +61,7 @@ fn bench_nitro_batch(c: &mut Criterion) {
                 || CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(5, 2048),
                 |mut sketch| {
                     for key in &keys_i64 {
-                        let input = SketchInput::I64(*key);
+                        let input = DataInput::I64(*key);
                         sketch.insert(&input);
                     }
                     black_box(sketch);

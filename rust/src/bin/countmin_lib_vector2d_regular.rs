@@ -5,7 +5,7 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, COLS,
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, ROWS,
 };
-use asap_sketchlib::{CountMin, RegularPath, SketchInput, Vector2D};
+use asap_sketchlib::{CountMin, DataInput, RegularPath, Vector2D};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             discard_trials: DEFAULT_DISCARD_TRIALS,
         },
         || CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(ROWS, COLS),
-        |sketch, value| sketch.insert(&SketchInput::I64(value)),
+        |sketch, value| sketch.insert(&DataInput::I64(value)),
     )?;
     print_results(&results);
     Ok(())

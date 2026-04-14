@@ -6,7 +6,7 @@ use bench_common::{
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, ROWS,
     UNIVMON_LAYERS, UNIVMON_MAX_STREAM,
 };
-use asap_sketchlib::{SketchInput, UnivMon as LibUnivMon};
+use asap_sketchlib::{DataInput, UnivMon as LibUnivMon};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results = run_benchmark_strings(
         config,
         || LibUnivMon::init_univmon(UNIVMON_MAX_STREAM as usize, ROWS, COLS, UNIVMON_LAYERS),
-        |sketch, key| sketch.fast_insert(&SketchInput::Str(key), 1),
+        |sketch, key| sketch.fast_insert(&DataInput::Str(key), 1),
     )?;
 
     print_results(&results);

@@ -4,7 +4,7 @@ mod output;
 use baseline::{load_baseline, BaselineData};
 use output::{write_csv, AccuracyRow};
 use sketch_oxide::quantiles::KllSketch as OxideKll;
-use asap_sketchlib::{SketchInput, KLL};
+use asap_sketchlib::KLL;
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
@@ -53,11 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn run_sketchlib(baseline: &BaselineData) -> Vec<AccuracyRow> {
     let mut rows = Vec::with_capacity(K_LIST.len() * NUM_PERCENTILES);
     for &k in K_LIST {
-        let mut sketch = KLL::init_kll(k);
+        let mut sketch: KLL<i64> = KLL::init_kll(k);
         for &value in &baseline.values {
-            sketch
-                .update(&SketchInput::I64(value))
-                .expect("KLL insert succeeds");
+            sketch.update(&value).expect("KLL insert succeeds");
         }
         for p in 0..NUM_PERCENTILES {
             let true_q = baseline.ground_truth_quantile(p);

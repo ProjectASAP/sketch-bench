@@ -1,7 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use asap_sketchlib::{
-    CountMin, FastPath, FixedMatrix, RegularPath, SketchInput, Vector2D, hash128_seeded,
+    CountMin, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D, hash128_seeded,
 };
 
 const SAMPLE_COUNT: usize = 1_000_000;
@@ -23,7 +23,7 @@ impl StackCms {
     }
 
     #[inline(always)]
-    fn insert(&mut self, value: &SketchInput) {
+    fn insert(&mut self, value: &DataInput) {
         for r in 0..STACK_CMS_ROWS {
             let hashed = hash128_seeded(r, value);
             let col = ((hashed as u64 & LOWER_32_MASK) as usize) % STACK_CMS_COLS;
@@ -33,7 +33,7 @@ impl StackCms {
     }
 
     #[inline(always)]
-    fn estimate(&self, value: &SketchInput) -> i32 {
+    fn estimate(&self, value: &DataInput) -> i32 {
         let mut min = i32::MAX;
         for r in 0..STACK_CMS_ROWS {
             let hashed = hash128_seeded(r, value);
@@ -59,7 +59,7 @@ fn bench_countmin(c: &mut Criterion) {
             || CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(5, 2048),
             |mut sketch| {
                 for &key in &keys {
-                    let input = SketchInput::I64(key);
+                    let input = DataInput::I64(key);
                     sketch.insert(&input);
                 }
                 black_box(sketch);
@@ -72,7 +72,7 @@ fn bench_countmin(c: &mut Criterion) {
             || CountMin::<Vector2D<i32>, FastPath>::with_dimensions(5, 2048),
             |mut sketch| {
                 for &key in &keys {
-                    let input = SketchInput::I64(key);
+                    let input = DataInput::I64(key);
                     sketch.insert(&input);
                 }
                 black_box(sketch);
@@ -85,7 +85,7 @@ fn bench_countmin(c: &mut Criterion) {
             CountMin::<FixedMatrix, RegularPath>::default,
             |mut sketch| {
                 for &key in &keys {
-                    let input = SketchInput::I64(key);
+                    let input = DataInput::I64(key);
                     sketch.insert(&input);
                 }
                 black_box(sketch);
@@ -96,7 +96,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("fixed_fast_insert_only", |b| {
         b.iter_with_setup(CountMin::<FixedMatrix, FastPath>::default, |mut sketch| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 sketch.insert(&input);
             }
             black_box(sketch);
@@ -106,7 +106,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("baseline_stack_insert", |b| {
         b.iter_with_setup(StackCms::new, |mut sketch| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 sketch.insert(&input);
             }
             black_box(sketch);
@@ -115,38 +115,38 @@ fn bench_countmin(c: &mut Criterion) {
 
     let mut insert_prefilled = CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(5, 2048);
     for &key in &keys {
-        let input = SketchInput::I64(key);
+        let input = DataInput::I64(key);
         insert_prefilled.insert(&input);
     }
 
     let mut fast_prefilled = CountMin::<Vector2D<i32>, FastPath>::with_dimensions(5, 2048);
     for &key in &keys {
-        let input = SketchInput::I64(key);
+        let input = DataInput::I64(key);
         fast_prefilled.insert(&input);
     }
 
     let mut fixed_insert_prefilled = CountMin::<FixedMatrix, RegularPath>::default();
     for &key in &keys {
-        let input = SketchInput::I64(key);
+        let input = DataInput::I64(key);
         fixed_insert_prefilled.insert(&input);
     }
 
     let mut fixed_fast_prefilled = CountMin::<FixedMatrix, FastPath>::default();
     for &key in &keys {
-        let input = SketchInput::I64(key);
+        let input = DataInput::I64(key);
         fixed_fast_prefilled.insert(&input);
     }
 
     let mut stack_prefilled = StackCms::new();
     for &key in &keys {
-        let input = SketchInput::I64(key);
+        let input = DataInput::I64(key);
         stack_prefilled.insert(&input);
     }
 
     group.bench_function("estimate", |b| {
         b.iter(|| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 black_box(insert_prefilled.estimate(&input));
             }
         });
@@ -155,7 +155,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("fast_estimate", |b| {
         b.iter(|| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 black_box(fast_prefilled.estimate(&input));
             }
         });
@@ -164,7 +164,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("fixed_estimate", |b| {
         b.iter(|| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 black_box(fixed_insert_prefilled.estimate(&input));
             }
         });
@@ -173,7 +173,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("fixed_fast_estimate", |b| {
         b.iter(|| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 black_box(fixed_fast_prefilled.estimate(&input));
             }
         });
@@ -182,7 +182,7 @@ fn bench_countmin(c: &mut Criterion) {
     group.bench_function("baseline_stack_estimate", |b| {
         b.iter(|| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 black_box(stack_prefilled.estimate(&input));
             }
         });

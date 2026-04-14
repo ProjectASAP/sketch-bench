@@ -1,5 +1,5 @@
 use sketch_oxide::quantiles::KllSketch as OxideKll;
-use asap_sketchlib::{SketchInput, KLL};
+use asap_sketchlib::KLL;
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -75,12 +75,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
-        let mut sketch = KLL::init_kll(K);
+        let mut sketch: KLL<i64> = KLL::init_kll(K);
         let start = Instant::now();
         for &value in data {
-            sketch
-                .update(&SketchInput::I64(value))
-                .expect("KLL insert succeeds");
+            sketch.update(&value).expect("KLL insert succeeds");
         }
         std::hint::black_box(&sketch);
         let elapsed = start.elapsed().as_nanos();

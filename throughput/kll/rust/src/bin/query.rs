@@ -1,5 +1,5 @@
 use sketch_oxide::quantiles::KllSketch as OxideKll;
-use asap_sketchlib::{SketchInput, KLL};
+use asap_sketchlib::KLL;
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -84,11 +84,9 @@ fn run_sketchlib(data: &[i64]) -> Vec<QueryRow> {
     let total = RUNS * REPEATS_PER_RUN * NUM_PERCENTILES;
     let mut rows = Vec::with_capacity(total);
     for run in 1..=RUNS {
-        let mut sketch = KLL::init_kll(K);
+        let mut sketch: KLL<i64> = KLL::init_kll(K);
         for &value in data {
-            sketch
-                .update(&SketchInput::I64(value))
-                .expect("KLL insert succeeds");
+            sketch.update(&value).expect("KLL insert succeeds");
         }
         std::hint::black_box(&sketch);
         let mut call_index: usize = 0;

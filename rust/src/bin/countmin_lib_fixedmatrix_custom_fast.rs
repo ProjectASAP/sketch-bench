@@ -5,7 +5,7 @@ use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use asap_sketchlib::{CountMin, FastPath, SketchInput, impl_fixed_matrix, DefaultXxHasher};
+use asap_sketchlib::{CountMin, DataInput, FastPath, impl_fixed_matrix};
 
 impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
 
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CustomCountMinMatrixI32U128::default(),
             )
         },
-        |sketch, value| sketch.insert(&SketchInput::I64(value)),
+        |sketch, value| sketch.insert(&DataInput::I64(value)),
     )?;
     print_results(&results);
     Ok(())

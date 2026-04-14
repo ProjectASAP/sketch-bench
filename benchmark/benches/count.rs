@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use asap_sketchlib::{Count, FastPath, FixedMatrix, SketchInput, Vector2D};
+use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, Vector2D};
 
 const SAMPLE_COUNT: usize = 1_000_000;
 const RNG_SEED: u64 = 0x5eed_c0de_1234_5678;
@@ -19,7 +19,7 @@ fn bench_count(c: &mut Criterion) {
     group.bench_function("insert_1m_i64_fixedmatrix", |b| {
         b.iter_with_setup(Count::<FixedMatrix, FastPath>::default, |mut sketch| {
             for &key in &keys {
-                let input = SketchInput::I64(key);
+                let input = DataInput::I64(key);
                 sketch.insert(&input);
             }
             black_box(sketch);
@@ -31,7 +31,7 @@ fn bench_count(c: &mut Criterion) {
             || Count::<Vector2D<i32>, FastPath>::with_dimensions(ROWS, COLS),
             |mut sketch| {
                 for &key in &keys {
-                    let input = SketchInput::I64(key);
+                    let input = DataInput::I64(key);
                     sketch.insert(&input);
                 }
                 black_box(sketch);
