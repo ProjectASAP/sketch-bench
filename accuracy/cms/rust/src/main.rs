@@ -2,11 +2,14 @@ mod baseline;
 mod config;
 mod datasketches_runner;
 mod output;
+mod oxide_runner;
 mod seeds;
 mod sketchlib_runner;
 
 use baseline::load_baseline;
-use config::{IMPLEMENTATION_RUST_DATASKETCHES, IMPLEMENTATION_RUST_SKETCHLIB};
+use config::{
+    IMPLEMENTATION_RUST_DATASKETCHES, IMPLEMENTATION_RUST_OXIDE, IMPLEMENTATION_RUST_SKETCHLIB,
+};
 use output::{write_csv, KeyErrorCsvWriter, KeySeedErrorCsvWriter};
 use std::env;
 use std::error::Error;
@@ -39,17 +42,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         match args.implementation_filter.as_deref() {
             None => {
                 rows.extend(datasketches_runner::run_summary(&baseline));
+                rows.extend(oxide_runner::run_summary(&baseline));
                 rows.extend(sketchlib_runner::run_summary(&baseline));
             }
             Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
                 rows.extend(datasketches_runner::run_summary(&baseline))
             }
+            Some(IMPLEMENTATION_RUST_OXIDE) => rows.extend(oxide_runner::run_summary(&baseline)),
             Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
                 rows.extend(sketchlib_runner::run_summary(&baseline))
             }
             Some(other) => {
                 return Err(format!(
-                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES}, {IMPLEMENTATION_RUST_OXIDE}, or {IMPLEMENTATION_RUST_SKETCHLIB}"
                 )
                 .into())
             }
@@ -62,17 +67,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         match args.implementation_filter.as_deref() {
             None => {
                 datasketches_runner::write_key_median_errors(&baseline, &mut writer)?;
+                oxide_runner::write_key_median_errors(&baseline, &mut writer)?;
                 sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?;
             }
             Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
                 datasketches_runner::write_key_median_errors(&baseline, &mut writer)?
+            }
+            Some(IMPLEMENTATION_RUST_OXIDE) => {
+                oxide_runner::write_key_median_errors(&baseline, &mut writer)?
             }
             Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
                 sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?
             }
             Some(other) => {
                 return Err(format!(
-                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES}, {IMPLEMENTATION_RUST_OXIDE}, or {IMPLEMENTATION_RUST_SKETCHLIB}"
                 )
                 .into())
             }
@@ -90,6 +99,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     args.seed_filter,
                     args.cols_filter,
                 )?;
+                oxide_runner::write_key_seed_errors(
+                    &baseline,
+                    &mut writer,
+                    args.seed_filter,
+                    args.cols_filter,
+                )?;
                 sketchlib_runner::write_key_seed_errors(
                     &baseline,
                     &mut writer,
@@ -99,6 +114,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             Some(IMPLEMENTATION_RUST_DATASKETCHES) => {
                 datasketches_runner::write_key_seed_errors(
+                    &baseline,
+                    &mut writer,
+                    args.seed_filter,
+                    args.cols_filter,
+                )?
+            }
+            Some(IMPLEMENTATION_RUST_OXIDE) => {
+                oxide_runner::write_key_seed_errors(
                     &baseline,
                     &mut writer,
                     args.seed_filter,
@@ -115,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             Some(other) => {
                 return Err(format!(
-                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES} or {IMPLEMENTATION_RUST_SKETCHLIB}"
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_DATASKETCHES}, {IMPLEMENTATION_RUST_OXIDE}, or {IMPLEMENTATION_RUST_SKETCHLIB}"
                 )
                 .into())
             }
@@ -153,8 +176,10 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
                     PathBuf::from(args.next().ok_or("--output-key-errors requires a path")?);
             }
             "--output-key-seed-errors" => {
-                output_key_seed_errors =
-                    PathBuf::from(args.next().ok_or("--output-key-seed-errors requires a path")?);
+                output_key_seed_errors = PathBuf::from(
+                    args.next()
+                        .ok_or("--output-key-seed-errors requires a path")?,
+                );
             }
             "--skip-summary" => skip_summary = true,
             "--skip-key-errors" => skip_key_errors = true,

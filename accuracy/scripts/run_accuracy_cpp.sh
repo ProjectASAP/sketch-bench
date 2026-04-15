@@ -13,14 +13,14 @@ case "${VARIANT}" in
     ;;
 esac
 
-if [[ "${VARIANT}" == "octo" || "${VARIANT}" == "dd" || "${VARIANT}" == "nitro" ]]; then
-  echo "${VARIANT} variant is Rust-only; skipping C++ build."
+if [[ "${VARIANT}" == "octo" || "${VARIANT}" == "dd" || "${VARIANT}" == "nitro" || "${VARIANT}" == "cs" ]]; then
+  echo "${VARIANT} variant has no C++ accuracy baseline; skipping C++ build."
   exit 0
 fi
 
 VARIANT_DIR="${ACCURACY_DIR}/${VARIANT}"
 RESULT_PREFIX="${VARIANT}_accuracy"
-DATA_DST="${ACCURACY_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DATA_DST="${4:-${ACCURACY_DATASET:-${ACCURACY_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin}}"
 BUILD_DIR="${VARIANT_DIR}/cpp/build"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_cpp.csv}"
 KEY_SEED_ERROR_OUTPUT_PATH="${ACCURACY_KEY_SEED_ERRORS_OUTPUT_PATH:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_seed_errors_cpp.csv}"
@@ -33,7 +33,12 @@ rm -f "${BUILD_DIR}/CMakeCache.txt"
 rm -rf "${BUILD_DIR}/CMakeFiles"
 
 if [[ ! -f "${DATA_DST}" ]]; then
-  "${ACCURACY_DIR}/../input/generate_zipf_data.sh"
+  if [[ "${DATA_DST}" == "${ACCURACY_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin" ]]; then
+    "${ACCURACY_DIR}/../input/generate_zipf_data.sh"
+  else
+    echo "dataset not found: ${DATA_DST}" >&2
+    exit 1
+  fi
 fi
 
 cmake -S "${VARIANT_DIR}/cpp" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release

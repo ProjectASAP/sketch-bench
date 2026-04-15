@@ -37,6 +37,10 @@ OFFSETS = {
     "rust_datasketches_hll": 0.16,
     "cpp_datasketches_hll": 0.32,
 }
+DATASET_LABEL = os.environ.get(
+    "ACCURACY_DATASET_LABEL",
+    "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -123,7 +127,7 @@ def main() -> None:
         "\n".join(
             [
                 "HLL Accuracy: Relative Error Over 10 Seeded Input Remappings",
-                "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+                DATASET_LABEL,
             ]
         )
     )

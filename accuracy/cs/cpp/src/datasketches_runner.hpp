@@ -43,7 +43,7 @@ inline std::vector<AccuracyRow> run_datasketches_summary(const BaselineData& bas
 
       const double distinct = static_cast<double>(hitters.size());
       results.push_back(AccuracyRow{
-          "cpp_datasketches_cms",
+          "cpp_datasketches_cs",
           "cpp",
           seed,
           kRows,
@@ -93,7 +93,7 @@ inline std::vector<KeyMedianErrorRow> run_datasketches_key_errors(const Baseline
           static_cast<double>(entry.second);
 
       results.push_back(KeyMedianErrorRow{
-          "cpp_datasketches_cms",
+          "cpp_datasketches_cs",
           "cpp",
           kRows,
           cols,

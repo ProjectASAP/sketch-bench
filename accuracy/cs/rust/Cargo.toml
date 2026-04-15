@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sketch_oxide = "0.1.6"
 asap_sketchlib = { path = "../../../../asap_sketchlib" }
 smallvec = "1.13.2"
 twox-hash = "2.1.2"

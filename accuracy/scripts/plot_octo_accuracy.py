@@ -19,6 +19,10 @@ import matplotlib.pyplot as plt
 
 THREAD_COLORS = {1: "#4C78A8", 2: "#54A24B", 4: "#F58518", 8: "#E45756"}
 THREAD_COUNTS = [1, 2, 4, 8]
+DATASET_LABEL = os.environ.get(
+    "ACCURACY_DATASET_LABEL",
+    "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -78,8 +82,8 @@ def plot_cms_cs(rows: list[dict[str, str]], output: Path, sketch_label: str) -> 
         "\n".join(
             [
                 f"OctoSketch {sketch_label} Accuracy (Avg Relative Error % on Heavy Hitters)",
-                f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values; "
-                f"5 x 32,768 sketch; 10 runs per config",
+                DATASET_LABEL,
+                "5 x 32,768 sketch; 10 runs per config",
             ]
         )
     )
@@ -154,8 +158,8 @@ def plot_hll(rows: list[dict[str, str]], output: Path) -> None:
         "\n".join(
             [
                 "OctoSketch HLL Accuracy (Cardinality Relative Error %)",
-                f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values; "
-                f"HLL P14 (16,384 registers); 10 runs per config",
+                DATASET_LABEL,
+                "HLL P14 (16,384 registers); 10 runs per config",
             ]
         )
     )

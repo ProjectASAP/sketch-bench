@@ -106,8 +106,9 @@ fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     let mut frequencies = HashMap::new();
 
     while offset + 16 <= buffer.len() {
-        let incl_len =
-            read_u32(&buffer[offset + 8..offset + 12], endianness).try_into().unwrap_or(0usize);
+        let incl_len = read_u32(&buffer[offset + 8..offset + 12], endianness)
+            .try_into()
+            .unwrap_or(0usize);
         offset += 16;
         if offset + incl_len > buffer.len() {
             return Err(format!("truncated packet data in {}", path.display()).into());
@@ -149,7 +150,10 @@ fn load_csv_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
             continue;
         }
         let value: i64 = field.parse().map_err(|e| {
-            format!("failed to parse first field as i64 on line {}: {e}", line_index + 1)
+            format!(
+                "failed to parse first field as i64 on line {}: {e}",
+                line_index + 1
+            )
         })?;
         values.push(value);
         *frequencies.entry(value).or_insert(0) += 1;

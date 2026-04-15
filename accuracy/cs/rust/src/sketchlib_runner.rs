@@ -3,8 +3,8 @@ use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
 use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
 use asap_sketchlib::count::CountSketchCounter;
 use asap_sketchlib::{
-    impl_fixed_matrix, hash_for_matrix_seeded_generic, Count, FastPath, HeapItem, MatrixHashType,
-    MatrixStorage, SketchHasher, DataInput,
+    hash_for_matrix_seeded_generic, impl_fixed_matrix, Count, DataInput, FastPath, HeapItem,
+    MatrixHashType, MatrixStorage, SketchHasher,
 };
 use std::io;
 use twox_hash::{XxHash3_128, XxHash3_64};
@@ -69,13 +69,48 @@ pub fn run_summary(baseline: &BaselineData) -> Vec<AccuracyRow> {
     let mut rows = Vec::with_capacity(10 * COLS_LIST.len());
     macro_rules! push_runs {
         ($seed:expr, $hasher:ty) => {
-            rows.push(run_one::<M5x2K, $hasher>($seed, 2048, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x4K, $hasher>($seed, 4096, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x8K, $hasher>($seed, 8192, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x16K, $hasher>($seed, 16384, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x32K, $hasher>($seed, 32768, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x64K, $hasher>($seed, 65536, baseline, &heavy_hitters));
-            rows.push(run_one::<M5x128K, $hasher>($seed, 131072, baseline, &heavy_hitters));
+            rows.push(run_one::<M5x2K, $hasher>(
+                $seed,
+                2048,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x4K, $hasher>(
+                $seed,
+                4096,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x8K, $hasher>(
+                $seed,
+                8192,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x16K, $hasher>(
+                $seed,
+                16384,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x32K, $hasher>(
+                $seed,
+                32768,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x64K, $hasher>(
+                $seed,
+                65536,
+                baseline,
+                &heavy_hitters,
+            ));
+            rows.push(run_one::<M5x128K, $hasher>(
+                $seed,
+                131072,
+                baseline,
+                &heavy_hitters,
+            ));
         };
     }
     push_runs!(1, H01);
@@ -185,36 +220,16 @@ macro_rules! write_group_medians {
             for &(key, true_count) in heavy_hitters {
                 let value = DataInput::I64(key);
                 let mut estimates = [
-                    {
-                        s01.estimate(&value).round() as i64
-                    },
-                    {
-                        s02.estimate(&value).round() as i64
-                    },
-                    {
-                        s03.estimate(&value).round() as i64
-                    },
-                    {
-                        s04.estimate(&value).round() as i64
-                    },
-                    {
-                        s05.estimate(&value).round() as i64
-                    },
-                    {
-                        s06.estimate(&value).round() as i64
-                    },
-                    {
-                        s07.estimate(&value).round() as i64
-                    },
-                    {
-                        s08.estimate(&value).round() as i64
-                    },
-                    {
-                        s09.estimate(&value).round() as i64
-                    },
-                    {
-                        s10.estimate(&value).round() as i64
-                    },
+                    { s01.estimate(&value).round() as i64 },
+                    { s02.estimate(&value).round() as i64 },
+                    { s03.estimate(&value).round() as i64 },
+                    { s04.estimate(&value).round() as i64 },
+                    { s05.estimate(&value).round() as i64 },
+                    { s06.estimate(&value).round() as i64 },
+                    { s07.estimate(&value).round() as i64 },
+                    { s08.estimate(&value).round() as i64 },
+                    { s09.estimate(&value).round() as i64 },
+                    { s10.estimate(&value).round() as i64 },
                 ];
                 estimates.sort_unstable();
                 let median_estimate = estimates[(estimates.len() / 2) - 1];

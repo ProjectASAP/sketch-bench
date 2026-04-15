@@ -1,11 +1,12 @@
 mod baseline;
 mod config;
 mod output;
+mod oxide_runner;
 mod seeds;
 mod sketchlib_runner;
 
 use baseline::load_baseline;
-use config::IMPLEMENTATION_RUST_SKETCHLIB;
+use config::{IMPLEMENTATION_RUST_OXIDE, IMPLEMENTATION_RUST_SKETCHLIB};
 use output::{write_csv, KeyErrorCsvWriter};
 use std::env;
 use std::error::Error;
@@ -32,12 +33,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !args.skip_summary {
         let mut rows = Vec::new();
         match args.implementation_filter.as_deref() {
-            None | Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
+            None => {
+                rows.extend(oxide_runner::run_summary(&baseline));
+                rows.extend(sketchlib_runner::run_summary(&baseline))
+            }
+            Some(IMPLEMENTATION_RUST_OXIDE) => rows.extend(oxide_runner::run_summary(&baseline)),
+            Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
                 rows.extend(sketchlib_runner::run_summary(&baseline))
             }
             Some(other) => {
                 return Err(format!(
-                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_SKETCHLIB}"
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_OXIDE} or {IMPLEMENTATION_RUST_SKETCHLIB}"
                 )
                 .into())
             }
@@ -48,12 +54,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !args.skip_key_errors {
         let mut writer = KeyErrorCsvWriter::create(&args.output_key_errors, false)?;
         match args.implementation_filter.as_deref() {
-            None | Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
+            None => {
+                oxide_runner::write_key_median_errors(&baseline, &mut writer)?;
+                sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?
+            }
+            Some(IMPLEMENTATION_RUST_OXIDE) => {
+                oxide_runner::write_key_median_errors(&baseline, &mut writer)?
+            }
+            Some(IMPLEMENTATION_RUST_SKETCHLIB) => {
                 sketchlib_runner::write_key_median_errors(&baseline, &mut writer)?
             }
             Some(other) => {
                 return Err(format!(
-                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_SKETCHLIB}"
+                    "unsupported --impl value: {other}; expected {IMPLEMENTATION_RUST_OXIDE} or {IMPLEMENTATION_RUST_SKETCHLIB}"
                 )
                 .into())
             }

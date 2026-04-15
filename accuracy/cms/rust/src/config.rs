@@ -1,4 +1,5 @@
 pub const IMPLEMENTATION_RUST_DATASKETCHES: &str = "rust_datasketches_cms";
+pub const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cms";
 pub const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cms";
 
 pub const ROWS: usize = 5;

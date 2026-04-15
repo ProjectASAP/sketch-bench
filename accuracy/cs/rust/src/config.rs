@@ -1,3 +1,4 @@
+pub const IMPLEMENTATION_RUST_OXIDE: &str = "rust_oxide_cs";
 pub const IMPLEMENTATION_RUST_SKETCHLIB: &str = "rust_sketchlib_cs";
 
 pub const ROWS: usize = 5;

@@ -16,6 +16,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 COLOR = "#E45756"
+DATASET_LABEL = os.environ.get(
+    "ACCURACY_DATASET_LABEL",
+    "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -97,7 +101,7 @@ def main() -> None:
         "\n".join(
             [
                 "Nitro Accuracy: Heavy-Hitter Avg Relative Error",
-                "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+                DATASET_LABEL,
                 f"Nitro Count-Min target fixed to 5 x {cols:,}; 10 trials per rate",
             ]
         )

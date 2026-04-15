@@ -18,12 +18,16 @@ import matplotlib.pyplot as plt
 
 COLORS = {
     "rust_datasketches_cms": "#54A24B",
+    "rust_oxide_cms": "#E45756",
+    "rust_oxide_cs": "#E45756",
     "rust_sketchlib_cms": "#4C78A8",
     "rust_sketchlib_cs": "#4C78A8",
     "cpp_datasketches_cms": "#F58518",
 }
 IMPLEMENTATION_LABELS = {
     "rust_datasketches_cms": "Rust DataSketches",
+    "rust_oxide_cms": "Rust sketch_oxide",
+    "rust_oxide_cs": "Rust sketch_oxide",
     "rust_sketchlib_cms": "Rust sketchlib",
     "rust_sketchlib_cs": "Rust sketchlib",
     "cpp_datasketches_cms": "C++ DataSketches",
@@ -33,25 +37,31 @@ VARIANT_CONFIG = {
     "cms": {
         "implementations": [
             "rust_datasketches_cms",
+            "rust_oxide_cms",
             "rust_sketchlib_cms",
             "cpp_datasketches_cms",
         ],
         "grouped_offsets": {
-            "rust_datasketches_cms": -0.24,
-            "rust_sketchlib_cms": 0.0,
-            "cpp_datasketches_cms": 0.24,
+            "rust_datasketches_cms": -0.27,
+            "rust_oxide_cms": -0.09,
+            "rust_sketchlib_cms": 0.09,
+            "cpp_datasketches_cms": 0.27,
         },
         "title": "CMS Accuracy",
     },
     "cs": {
-        "implementations": ["rust_sketchlib_cs", "cpp_datasketches_cms"],
+        "implementations": ["rust_oxide_cs", "rust_sketchlib_cs"],
         "grouped_offsets": {
-            "rust_sketchlib_cs": -0.12,
-            "cpp_datasketches_cms": 0.12,
+            "rust_oxide_cs": -0.12,
+            "rust_sketchlib_cs": 0.12,
         },
         "title": "CS Accuracy",
     },
 }
+DATASET_LABEL = os.environ.get(
+    "ACCURACY_DATASET_LABEL",
+    "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -98,7 +108,7 @@ def require_column_data(
 def base_title_lines(title_prefix: str) -> list[str]:
     return [
         f"{title_prefix}: Heavy Hitters Only Median-Over-Seeds Relative Error",
-        "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+        DATASET_LABEL,
         "Heavy hitters only (true_count >= 100)",
         "Sketch fixed to 5 rows",
     ]
@@ -116,7 +126,7 @@ def plot_grouped_boxplots(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(12.5, 5.5))
-    width = 0.18
+    width = 0.16 if len(implementations) >= 4 else 0.18
 
     for implementation in implementations:
         positions = [index + grouped_offsets[implementation] for index in range(len(x_values))]
@@ -158,7 +168,14 @@ def plot_grouped_boxplots(
     ax.set_xticklabels([str(value) for value in x_values])
     ax.grid(True, axis="y", alpha=0.25)
     legend_handles = [
-        Line2D([0], [0], color=COLORS[name], lw=6, label=name) for name in implementations
+        Line2D(
+            [0],
+            [0],
+            color=COLORS[name],
+            lw=6,
+            label=IMPLEMENTATION_LABELS.get(name, name),
+        )
+        for name in implementations
     ]
     ax.legend(handles=legend_handles)
     fig.tight_layout()
@@ -206,7 +223,11 @@ def plot_single_column_boxplot(
     ax.set_xlabel("Implementation")
     ax.set_ylabel("Median-Over-Seeds Relative Error (%)")
     ax.set_xticks(positions)
-    ax.set_xticklabels(implementations, rotation=12, ha="right")
+    ax.set_xticklabels(
+        [IMPLEMENTATION_LABELS.get(name, name) for name in implementations],
+        rotation=12,
+        ha="right",
+    )
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
@@ -264,7 +285,7 @@ def write_all_plots(rows: list[dict[str, str]], variant: str, output_path: Path)
             [
                 f"{title_prefix}: Heavy Hitters Only Median-Over-Seeds Relative Error",
                 f"Column count: {col}",
-                "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+                DATASET_LABEL,
                 "Heavy hitters only (true_count >= 100)",
             ],
         )

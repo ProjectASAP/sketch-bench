@@ -31,6 +31,10 @@ OFFSETS = {
     "rust_oxide_kll": 0.0,
     "cpp_datasketches_kll": 0.24,
 }
+DATASET_LABEL = os.environ.get(
+    "ACCURACY_DATASET_LABEL",
+    "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+)
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -117,7 +121,7 @@ def main() -> None:
         "\n".join(
             [
                 "KLL Accuracy: Quantile Relative Error (p0-p100)",
-                "Data: 10M Zipf-distributed int64 values (s=1.1, support=100k)",
+                DATASET_LABEL,
                 "101 quantile queries per (implementation, k) pair",
             ]
         )
