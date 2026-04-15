@@ -1,0 +1,20 @@
+[package]
+name = "kll_polars_throughput"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+polars = { version = "0.46", features = ["lazy"] }
+
+[[bin]]
+name = "kll_polars_throughput"
+path = "src/main.rs"
+
+[[bin]]
+name = "kll_polars_throughput_query"
+path = "src/bin/query.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

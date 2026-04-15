@@ -8,6 +8,10 @@
 - `accuracy/cms`: Count-Min Sketch accuracy sources and CMS-specific outputs
 - `accuracy/cs`: Count Sketch accuracy sources and CS-specific outputs
 - `accuracy/hll`: HyperLogLog accuracy sources and HLL-specific outputs
+- `accuracy/kll`: KLL quantile accuracy sources and outputs
+- `accuracy/dd`: DDSketch quantile accuracy sources and outputs
+- `accuracy/nitro`: Nitro-heavy-hitter accuracy sources and outputs
+- `accuracy/octo`: OctoSketch accuracy sources and outputs
 
 ## Variants
 
@@ -20,6 +24,10 @@
   - Rust `datasketches`
   - Rust `sketchlib-rust`
   - C++ Apache DataSketches
+- `kll` compares KLL quantile sketch implementations across multiple `k` values.
+- `dd` benchmarks Rust `DDSketch` quantile accuracy across multiple `alpha` settings.
+- `nitro` benchmarks Rust Nitro Count-Min accuracy across multiple Nitro sampling rates.
+- `octo` emits separate CMS/CS/HLL accuracy plots for OctoSketch worker counts.
 
 ## Run
 
@@ -29,6 +37,8 @@ Rust only:
 accuracy/scripts/run_accuracy_rust.sh
 ACCURACY_VARIANT=cs accuracy/scripts/run_accuracy_rust.sh
 ACCURACY_VARIANT=hll accuracy/scripts/run_accuracy_rust.sh
+ACCURACY_VARIANT=dd accuracy/scripts/run_accuracy_rust.sh
+ACCURACY_VARIANT=nitro accuracy/scripts/run_accuracy_rust.sh
 ```
 
 C++ only:
@@ -48,6 +58,9 @@ accuracy/scripts/run_accuracy_all.sh cs
 DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh cms
 DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh cs
 DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh hll
+accuracy/scripts/run_accuracy_all.sh dd
+accuracy/scripts/run_accuracy_all.sh nitro
+accuracy/scripts/run_accuracy_all.sh all
 ```
 
 ## Paths
@@ -64,3 +77,14 @@ DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh hl
 - HLL outputs:
   - `accuracy/hll/output/hll_accuracy_results.csv`
   - `accuracy/plots/hll/hll_accuracy_relative_error.png`
+- KLL outputs:
+  - `accuracy/kll/output/kll_accuracy_results.csv`
+  - `accuracy/plots/kll/kll_accuracy_relative_error.png`
+- DD outputs:
+  - `accuracy/dd/output/dd_accuracy_results.csv`
+  - `accuracy/plots/dd/dd_accuracy_relative_error.png`
+- Nitro outputs:
+  - `accuracy/nitro/output/nitro_accuracy_results.csv`
+  - `accuracy/plots/nitro/nitro_accuracy_relative_error.png`
+- Aggregate overview:
+  - `accuracy/plots/accuracy_overview.png`

@@ -6,9 +6,9 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll|octo) ;;
+  cms|cs|hll|kll|dd|nitro|octo) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, or octo" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, dd, nitro, or octo" >&2
     exit 1
     ;;
 esac
@@ -18,8 +18,10 @@ RESULT_PREFIX="${VARIANT}_accuracy"
 DATA_DST="${ACCURACY_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
 SUMMARY_OUTPUT_PATH="${1:-${VARIANT_DIR}/output/${RESULT_PREFIX}_results_rust.csv}"
 KEY_SEED_ERROR_OUTPUT_PATH="${ACCURACY_KEY_SEED_ERRORS_OUTPUT_PATH:-${VARIANT_DIR}/output/${RESULT_PREFIX}_key_seed_errors_rust.csv}"
+export TMPDIR="${ACCURACY_DIR}/.tmp"
+export CARGO_TARGET_DIR="/tmp/sketchlib-bench-accuracy-target/${VARIANT}"
 
-mkdir -p "${ACCURACY_DIR}/../input" "${VARIANT_DIR}/output"
+mkdir -p "${ACCURACY_DIR}/../input" "${VARIANT_DIR}/output" "${TMPDIR}" "${CARGO_TARGET_DIR}"
 
 if [[ ! -f "${DATA_DST}" ]]; then
   "${ACCURACY_DIR}/../input/generate_zipf_data.sh"
@@ -35,7 +37,7 @@ if [[ "${VARIANT}" == "octo" ]]; then
     --output-cms "${VARIANT_DIR}/output/octo_accuracy_cms.csv" \
     --output-cs "${VARIANT_DIR}/output/octo_accuracy_cs.csv" \
     --output-hll "${VARIANT_DIR}/output/octo_accuracy_hll.csv"
-elif [[ "${VARIANT}" == "hll" || "${VARIANT}" == "kll" ]]; then
+elif [[ "${VARIANT}" == "hll" || "${VARIANT}" == "kll" || "${VARIANT}" == "dd" || "${VARIANT}" == "nitro" ]]; then
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}"

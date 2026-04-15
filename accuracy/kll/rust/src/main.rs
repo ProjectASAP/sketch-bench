@@ -55,7 +55,7 @@ fn run_sketchlib(baseline: &BaselineData) -> Vec<AccuracyRow> {
     for &k in K_LIST {
         let mut sketch: KLL<i64> = KLL::init_kll(k);
         for &value in &baseline.values {
-            sketch.update(&value).expect("KLL insert succeeds");
+            sketch.update(&value);
         }
         for p in 0..NUM_PERCENTILES {
             let true_q = baseline.ground_truth_quantile(p);

@@ -8,9 +8,9 @@ OUTPUT_ARG="${2:-}"
 OP="${3:-${THROUGHPUT_OP:-insert}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll|octo|cms32k|cs32k) ;;
+  cms|cs|hll|kll|octo|cms32k|cs32k|dd|nitro) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, octo, cms32k, or cs32k" >&2
+    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, octo, cms32k, cs32k, dd, or nitro" >&2
     exit 1
     ;;
 esac

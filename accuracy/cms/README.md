@@ -36,7 +36,17 @@ All implementations plus plots:
 DATASKETCHES_CPP_ROOT=~/datasketches-cpp accuracy/scripts/run_accuracy_all.sh cms
 ```
 
-If `input/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap` exists, that same command now also:
+By default, that command only runs the main Zipf accuracy comparison.
+
+To also run the slower CAIDA/CIC dataset comparison from `pcap`/CSV inputs, opt in explicitly:
+
+```bash
+ACCURACY_CMS_ENABLE_PCAP_COMPARE=1 \
+DATASKETCHES_CPP_ROOT=~/datasketches-cpp \
+accuracy/scripts/run_accuracy_all.sh cms
+```
+
+When `ACCURACY_CMS_ENABLE_PCAP_COMPARE=1` and `input/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap` exists, the command also:
 
 - runs CMS seed-level accuracy on the CAIDA pcap for both Rust and C++
 - writes `accuracy/cms/output/cms_accuracy_key_seed_errors_caida.csv`
@@ -44,6 +54,7 @@ If `input/equinix-nyc.dirA.20190117-125910.UTC.anon.pcap` exists, that same comm
 
 Optional overrides:
 
+- `ACCURACY_CMS_ENABLE_PCAP_COMPARE=1`
 - `ACCURACY_CMS_CAIDA_SOURCE_PCAP`
 - `ACCURACY_CMS_CAIDA_KEY_SEED_ERRORS`
 - `ACCURACY_CMS_DATASET_COMPARE_COLS`

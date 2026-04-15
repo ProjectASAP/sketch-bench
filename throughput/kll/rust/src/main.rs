@@ -78,7 +78,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
         let mut sketch: KLL<i64> = KLL::init_kll(K);
         let start = Instant::now();
         for &value in data {
-            sketch.update(&value).expect("KLL insert succeeds");
+            sketch.update(&value);
         }
         std::hint::black_box(&sketch);
         let elapsed = start.elapsed().as_nanos();

@@ -1,4 +1,4 @@
-use asap_sketchlib::{Count, CountMin, FastPath, SketchInput, impl_fixed_matrix};
+use asap_sketchlib::{Count, CountMin, FastPath, DataInput, impl_fixed_matrix};
 
 impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 use std::env;
@@ -51,8 +51,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     let data = load_dataset(&args.data)?;
 
-    let inputs: Vec<SketchInput<'static>> =
-        data.iter().map(|&v| SketchInput::I64(v)).collect();
+    let inputs: Vec<DataInput<'static>> =
+        data.iter().map(|&v| DataInput::I64(v)).collect();
 
     let mut rows = Vec::new();
 
@@ -70,12 +70,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn partition<'a>(inputs: &'a [SketchInput<'static>], n: usize) -> Vec<&'a [SketchInput<'static>]> {
+fn partition<'a>(inputs: &'a [DataInput<'static>], n: usize) -> Vec<&'a [DataInput<'static>]> {
     let chunk_size = (inputs.len() + n - 1) / n;
     inputs.chunks(chunk_size).collect()
 }
 
-fn run_regular_cms(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
+fn run_regular_cms(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
         let barrier = Barrier::new(1);
@@ -107,7 +107,7 @@ fn run_regular_cms(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
     rows
 }
 
-fn run_octo_cms(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
+fn run_octo_cms(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
     let mut rows = Vec::new();
     for &num_workers in &THREAD_COUNTS {
         let parts = partition(inputs, num_workers);
@@ -151,7 +151,7 @@ fn run_octo_cms(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
     rows
 }
 
-fn run_regular_cs(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
+fn run_regular_cs(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
         let barrier = Barrier::new(1);
@@ -183,7 +183,7 @@ fn run_regular_cs(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
     rows
 }
 
-fn run_octo_cs(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
+fn run_octo_cs(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
     let mut rows = Vec::new();
     for &num_workers in &THREAD_COUNTS {
         let parts = partition(inputs, num_workers);
@@ -227,14 +227,14 @@ fn run_octo_cs(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
     rows
 }
 
-fn run_regular_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
-    use asap_sketchlib::{HyperLogLog, Regular};
+fn run_regular_hll(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
+    use asap_sketchlib::{ErtlMLE, HyperLogLog};
     let mut rows = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
         let barrier = Barrier::new(1);
         let nanos = std::thread::scope(|s| {
             let h = s.spawn(|| {
-                let mut sketch = HyperLogLog::<Regular>::default();
+                let mut sketch = HyperLogLog::<ErtlMLE>::default();
                 barrier.wait();
                 let start = Instant::now();
                 for input in inputs {
@@ -260,7 +260,7 @@ fn run_regular_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
     rows
 }
 
-fn run_octo_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
+fn run_octo_hll(inputs: &[DataInput<'static>]) -> Vec<ThroughputRow> {
     let mut rows = Vec::new();
     for &num_workers in &THREAD_COUNTS {
         let parts = partition(inputs, num_workers);
@@ -272,7 +272,7 @@ fn run_octo_hll(inputs: &[SketchInput<'static>]) -> Vec<ThroughputRow> {
                     .map(|part| {
                         let barrier = &barrier;
                         s.spawn(move || {
-                            let mut sketch = asap_sketchlib::HyperLogLog::<asap_sketchlib::Regular>::default();
+                            let mut sketch = asap_sketchlib::HyperLogLog::<asap_sketchlib::ErtlMLE>::default();
                             barrier.wait();
                             let start = Instant::now();
                             for input in *part {

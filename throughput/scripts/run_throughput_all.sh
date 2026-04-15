@@ -34,10 +34,11 @@ run_op() {
   local SUMMARY_CSV_PATH="${OUTPUT_DIR}/${RESULT_PREFIX}_results.csv"
   local RUST_SUMMARY_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_results_rust.csv"
   local CPP_SUMMARY_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_results_cpp.csv"
+  local POLARS_SUMMARY_CSV="${OUTPUT_DIR}/${RESULT_PREFIX}_results_polars.csv"
 
   local RUST_ONLY=false
   case "${VARIANT}" in
-    octo|cs32k) RUST_ONLY=true ;;
+    octo|cs32k|dd|nitro) RUST_ONLY=true ;;
   esac
   # For query op, cs also lacks a C++ binary
   if [[ "${OP}" == "query" && "${VARIANT}" == "cs" ]]; then
@@ -51,6 +52,7 @@ run_op() {
 
   if [[ "${VARIANT}" == "octo" && "${OP}" == "insert" ]]; then
     "${SCRIPT_DIR}/run_throughput_rust.sh" "${VARIANT}" "${RUST_SUMMARY_CSV}" "${OP}"
+    "${SCRIPT_DIR}/run_throughput_polars.sh" "${VARIANT}" "${POLARS_SUMMARY_CSV}" "${OP}" || true
     python3 "${SCRIPT_DIR}/plot_octo_throughput.py" \
       --input "${RUST_SUMMARY_CSV}" \
       --output-cms "${PLOTS_DIR}/${RESULT_PREFIX}_cms.png" \
@@ -61,15 +63,21 @@ run_op() {
   fi
 
   "${SCRIPT_DIR}/run_throughput_rust.sh" "${VARIANT}" "${RUST_SUMMARY_CSV}" "${OP}"
+  "${SCRIPT_DIR}/run_throughput_polars.sh" "${VARIANT}" "${POLARS_SUMMARY_CSV}" "${OP}" || true
 
   if [[ "${RUST_ONLY}" == "true" ]]; then
-    cp "${RUST_SUMMARY_CSV}" "${SUMMARY_CSV_PATH}"
+    {
+      head -n 1 "${RUST_SUMMARY_CSV}"
+      tail -n +2 "${RUST_SUMMARY_CSV}"
+      [[ -f "${POLARS_SUMMARY_CSV}" ]] && tail -n +2 "${POLARS_SUMMARY_CSV}"
+    } > "${SUMMARY_CSV_PATH}"
   else
     "${SCRIPT_DIR}/run_throughput_cpp.sh" "${VARIANT}" "${CPP_SUMMARY_CSV}" "${OP}"
     {
       echo "${SUMMARY_HEADER}"
       tail -n +2 "${RUST_SUMMARY_CSV}"
       tail -n +2 "${CPP_SUMMARY_CSV}"
+      [[ -f "${POLARS_SUMMARY_CSV}" ]] && tail -n +2 "${POLARS_SUMMARY_CSV}"
     } > "${SUMMARY_CSV_PATH}"
   fi
 
@@ -118,7 +126,7 @@ while [[ $# -gt 0 ]]; do
       OP_REQUESTED="${1#--op=}"; shift ;;
     -h|--help)
       echo "Usage: $0 [VARIANT] [--op insert|query|both]"
-      echo "VARIANT: cms|cs|hll|kll|octo|cms32k|cs32k|all (default: all)"
+      echo "VARIANT: cms|cs|hll|kll|octo|cms32k|cs32k|dd|nitro|all (default: all)"
       exit 0 ;;
     *)
       REQUESTED="$1"; shift ;;
@@ -135,10 +143,10 @@ case "${OP_REQUESTED}" in
 esac
 
 case "${REQUESTED}" in
-  cms|cs|hll|kll|octo|cms32k|cs32k) VARIANTS=("${REQUESTED}") ;;
-  all) VARIANTS=(cms cs hll kll octo cms32k cs32k) ;;
+  cms|cs|hll|kll|octo|cms32k|cs32k|dd|nitro) VARIANTS=("${REQUESTED}") ;;
+  all) VARIANTS=(cms cs hll kll octo cms32k cs32k dd nitro) ;;
   *)
-    echo "unsupported variant: ${REQUESTED}; expected cms, cs, hll, kll, octo, cms32k, cs32k, or all" >&2
+    echo "unsupported variant: ${REQUESTED}; expected cms, cs, hll, kll, octo, cms32k, cs32k, dd, nitro, or all" >&2
     exit 1 ;;
 esac
 

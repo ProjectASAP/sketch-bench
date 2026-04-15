@@ -1,6 +1,6 @@
 use datasketches::hll::{HllSketch, HllType};
 use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
-use asap_sketchlib::{ErtlMLE, HyperLogLogHIPP12, HyperLogLogP12, SketchInput};
+use asap_sketchlib::{ErtlMLE, HyperLogLogHIPP12, HyperLogLogP12, DataInput};
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -89,7 +89,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<ThroughputRow> {
         let mut sketch = HyperLogLogP12::<ErtlMLE>::default();
         let start = Instant::now();
         for &value in data {
-            sketch.insert(&SketchInput::I64(value));
+            sketch.insert(&DataInput::I64(value));
         }
         std::hint::black_box(&sketch);
         let elapsed = start.elapsed().as_nanos();
@@ -113,7 +113,7 @@ fn run_sketchlib_hip(data: &[i64]) -> Vec<ThroughputRow> {
         let mut sketch = HyperLogLogHIPP12::default();
         let start = Instant::now();
         for &value in data {
-            sketch.insert(&SketchInput::I64(value));
+            sketch.insert(&DataInput::I64(value));
         }
         std::hint::black_box(&sketch);
         let elapsed = start.elapsed().as_nanos();

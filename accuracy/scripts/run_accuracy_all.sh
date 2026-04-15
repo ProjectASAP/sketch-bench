@@ -34,6 +34,7 @@ run_variant() {
   local DATASET_COMPARE_COLS="${ACCURACY_CMS_DATASET_COMPARE_COLS:-65536}"
   local DATASET_COMPARE_SEED="${ACCURACY_CMS_DATASET_COMPARE_SEED:-5}"
   local DATASET_COMPARE_PLOT_PATH="${PLOTS_DIR}/${RESULT_PREFIX}_dataset_compare_col_${DATASET_COMPARE_COLS}_seed_${DATASET_COMPARE_SEED}.png"
+  local ENABLE_PCAP_COMPARE="${ACCURACY_CMS_ENABLE_PCAP_COMPARE:-0}"
   mkdir -p "${OUTPUT_DIR}" "${PLOTS_DIR}"
 
   if [[ "${VARIANT}" == "octo" ]]; then
@@ -50,6 +51,28 @@ run_variant() {
     echo "Wrote ${PLOTS_DIR}/octo_accuracy_cms.png"
     echo "Wrote ${PLOTS_DIR}/octo_accuracy_cs.png"
     echo "Wrote ${PLOTS_DIR}/octo_accuracy_hll.png"
+  elif [[ "${VARIANT}" == "dd" ]]; then
+    local SUMMARY_HEADER="implementation,language,alpha,percentile,total_items,true_quantile,estimate,relative_error"
+    "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
+    cp "${RUST_SUMMARY_CSV}" "${SUMMARY_CSV_PATH}"
+
+    python3 "${SCRIPT_DIR}/plot_dd_accuracy.py" \
+      --input "${SUMMARY_CSV_PATH}" \
+      --output "${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
+
+    echo "Wrote ${SUMMARY_CSV_PATH}"
+    echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
+  elif [[ "${VARIANT}" == "nitro" ]]; then
+    local SUMMARY_HEADER="implementation,language,trial,rows,cols,rate,total_items,distinct_items,avg_relative_error,max_relative_error,mean_absolute_error"
+    "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
+    cp "${RUST_SUMMARY_CSV}" "${SUMMARY_CSV_PATH}"
+
+    python3 "${SCRIPT_DIR}/plot_nitro_accuracy.py" \
+      --input "${SUMMARY_CSV_PATH}" \
+      --output "${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
+
+    echo "Wrote ${SUMMARY_CSV_PATH}"
+    echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
   elif [[ "${VARIANT}" == "kll" ]]; then
     local SUMMARY_HEADER="implementation,language,k,percentile,total_items,true_quantile,estimate,relative_error"
     "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
@@ -119,7 +142,7 @@ run_variant() {
       --input-key-errors "${KEY_ERROR_CSV_PATH}" \
       --output "${PLOTS_DIR}/${RESULT_PREFIX}_avg_relative_error.png"
 
-    if [[ "${VARIANT}" == "cms" ]]; then
+    if [[ "${VARIANT}" == "cms" && "${ENABLE_PCAP_COMPARE}" == "1" ]]; then
       local DATASET_ARGS=("--dataset-key-seed-errors" "zipf=${KEY_SEED_ERROR_CSV_PATH}")
 
       if [[ -f "${CAIDA_SOURCE_PCAP}" ]]; then
@@ -215,16 +238,19 @@ run_variant() {
 REQUESTED="${1:-${ACCURACY_VARIANT:-all}}"
 
 case "${REQUESTED}" in
-  cms|cs|hll|kll|octo)
+  cms|cs|hll|kll|dd|nitro|octo)
     run_variant "${REQUESTED}"
     ;;
   all)
-    for v in cms cs hll kll octo; do
+    for v in cms cs hll kll dd nitro octo; do
       run_variant "$v"
     done
+    python3 "${SCRIPT_DIR}/plot_accuracy_overview.py" \
+      --output "${ACCURACY_DIR}/plots/accuracy_overview.png"
+    echo "Wrote ${ACCURACY_DIR}/plots/accuracy_overview.png"
     ;;
   *)
-    echo "unsupported variant: ${REQUESTED}; expected cms, cs, hll, kll, octo, or all" >&2
+    echo "unsupported variant: ${REQUESTED}; expected cms, cs, hll, kll, dd, nitro, octo, or all" >&2
     exit 1
     ;;
 esac

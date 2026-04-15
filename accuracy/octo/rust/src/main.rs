@@ -1,5 +1,5 @@
 use asap_sketchlib::{
-    CmDelta, Count, CountDelta, CountMin, FastPath, HllDelta, HyperLogLog, Regular, SketchInput,
+    CmDelta, Count, CountDelta, CountMin, DataInput, ErtlMLE, FastPath, HllDelta, HyperLogLog,
     impl_fixed_matrix,
 };
 use std::collections::HashMap;
@@ -35,8 +35,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .filter_map(|(&k, &v)| (v >= HEAVY_HITTER_MIN_TRUE_COUNT).then_some((k, v)))
         .collect();
 
-    let inputs: Vec<SketchInput<'static>> =
-        values.iter().map(|&v| SketchInput::I64(v)).collect();
+    let inputs: Vec<DataInput<'static>> =
+        values.iter().map(|&v| DataInput::I64(v)).collect();
 
     run_cms_accuracy(&args.output_cms, &inputs, &heavy_hitters, values.len())?;
     run_cs_accuracy(&args.output_cs, &inputs, &heavy_hitters, values.len())?;
@@ -44,14 +44,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn partition<'a>(inputs: &'a [SketchInput<'static>], n: usize) -> Vec<&'a [SketchInput<'static>]> {
+fn partition<'a>(inputs: &'a [DataInput<'static>], n: usize) -> Vec<&'a [DataInput<'static>]> {
     let chunk_size = (inputs.len() + n - 1) / n;
     inputs.chunks(chunk_size).collect()
 }
 
 fn run_cms_accuracy(
     output: &Path,
-    inputs: &[SketchInput<'static>],
+    inputs: &[DataInput<'static>],
     heavy_hitters: &[(i64, u64)],
     total_items: usize,
 ) -> Result<(), Box<dyn Error>> {
@@ -103,7 +103,7 @@ fn run_cms_accuracy(
 
 fn run_cs_accuracy(
     output: &Path,
-    inputs: &[SketchInput<'static>],
+    inputs: &[DataInput<'static>],
     heavy_hitters: &[(i64, u64)],
     total_items: usize,
 ) -> Result<(), Box<dyn Error>> {
@@ -155,7 +155,7 @@ fn run_cs_accuracy(
 
 fn run_hll_accuracy(
     output: &Path,
-    inputs: &[SketchInput<'static>],
+    inputs: &[DataInput<'static>],
     true_distinct: usize,
     total_items: usize,
 ) -> Result<(), Box<dyn Error>> {
@@ -172,7 +172,7 @@ fn run_hll_accuracy(
                     .iter()
                     .map(|part| {
                         s.spawn(move || {
-                            let mut sketch = HyperLogLog::<Regular>::default();
+                            let mut sketch = HyperLogLog::<ErtlMLE>::default();
                             let mut deltas = Vec::new();
                             for input in *part {
                                 sketch.insert_emit_delta(input, &mut |d| deltas.push(d));
@@ -184,7 +184,7 @@ fn run_hll_accuracy(
                 handles.into_iter().map(|h: std::thread::ScopedJoinHandle<'_, Vec<HllDelta>>| h.join().unwrap()).collect()
             });
 
-            let mut agg = HyperLogLog::<Regular>::default();
+            let mut agg = HyperLogLog::<ErtlMLE>::default();
             for batch in &all_deltas {
                 for &delta in batch {
                     agg.apply_delta(delta);
@@ -212,7 +212,7 @@ fn cms_errors(
     let mut max_re: f64 = 0.0;
     let mut sum_ae = 0.0;
     for &(key, true_count) in heavy_hitters {
-        let est = sketch.estimate(&SketchInput::I64(key)) as f64;
+        let est = sketch.estimate(&DataInput::I64(key)) as f64;
         let ae = (est - true_count as f64).abs();
         let re = ae / true_count as f64;
         sum_re += re;
@@ -233,7 +233,7 @@ fn cs_errors(
     let mut max_re: f64 = 0.0;
     let mut sum_ae = 0.0;
     for &(key, true_count) in heavy_hitters {
-        let est = sketch.estimate(&SketchInput::I64(key));
+        let est = sketch.estimate(&DataInput::I64(key));
         let ae = (est - true_count as f64).abs();
         let re = ae / true_count as f64;
         sum_re += re;

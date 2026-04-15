@@ -5,7 +5,7 @@ use crate::output::{
 };
 use asap_sketchlib::{
     impl_fixed_matrix, hash_for_matrix_seeded_generic, CountMin, FastPath, HeapItem,
-    MatrixHashType, MatrixStorage, SketchHasher, SketchInput,
+    MatrixHashType, MatrixStorage, SketchHasher, DataInput,
 };
 use std::io;
 use twox_hash::{XxHash3_128, XxHash3_64};
@@ -26,11 +26,11 @@ macro_rules! define_seeded_hasher {
         impl SketchHasher for $name {
             type HashType = MatrixHashType;
 
-            fn hash64_seeded(d: usize, key: &SketchInput) -> u64 {
+            fn hash64_seeded(d: usize, key: &DataInput) -> u64 {
                 hash_input64($seed + d as u64, key)
             }
 
-            fn hash128_seeded(d: usize, key: &SketchInput) -> u128 {
+            fn hash128_seeded(d: usize, key: &DataInput) -> u128 {
                 hash_input128($seed + d as u64, key)
             }
 
@@ -46,7 +46,7 @@ macro_rules! define_seeded_hasher {
                 seed_idx: usize,
                 rows: usize,
                 cols: usize,
-                key: &SketchInput,
+                key: &DataInput,
             ) -> Self::HashType {
                 hash_for_matrix_seeded_generic::<Self>(seed_idx, rows, cols, key)
             }
@@ -209,14 +209,14 @@ where
 {
     let mut sketch = CountMin::<S, FastPath, H>::from_storage(S::default());
     for &value in &baseline.values {
-        sketch.insert(&SketchInput::I64(value));
+        sketch.insert(&DataInput::I64(value));
     }
 
     let mut total_relative_error = 0.0f64;
     let mut max_relative_error = 0.0f64;
     let mut total_absolute_error = 0.0f64;
     for &(value, true_count) in heavy_hitters {
-        let estimate_value: u64 = sketch.estimate(&SketchInput::I64(value)).into() as u64;
+        let estimate_value: u64 = sketch.estimate(&DataInput::I64(value)).into() as u64;
         let absolute_error = estimate_value.abs_diff(true_count) as f64;
         let relative_error = absolute_error / true_count as f64;
         total_relative_error += relative_error;
@@ -249,7 +249,7 @@ where
 {
     let mut sketch = CountMin::<S, FastPath, H>::from_storage(S::default());
     for &value in &baseline.values {
-        sketch.insert(&SketchInput::I64(value));
+        sketch.insert(&DataInput::I64(value));
     }
     sketch
 }
@@ -268,7 +268,7 @@ where
 {
     let sketch = median_estimator::<S, H>(baseline);
     for &(key, true_count) in heavy_hitters {
-        let estimate: u64 = sketch.estimate(&SketchInput::I64(key)).into() as u64;
+        let estimate: u64 = sketch.estimate(&DataInput::I64(key)).into() as u64;
         let relative_error = estimate.abs_diff(true_count) as f64 / true_count as f64;
         writer.write_row(&KeySeedErrorRow {
             implementation: IMPLEMENTATION_RUST_SKETCHLIB,
@@ -327,7 +327,7 @@ macro_rules! write_group_medians {
             let s10 = median_estimator::<$storage, H10>(baseline);
 
             for &(key, true_count) in heavy_hitters {
-                let value = SketchInput::I64(key);
+                let value = DataInput::I64(key);
                 let mut estimates = [
                     {
                         let estimate: i64 = s01.estimate(&value).into();
@@ -407,47 +407,47 @@ fn heavy_hitters_or_panic(baseline: &BaselineData) -> Vec<(i64, u64)> {
     heavy_hitters
 }
 
-fn hash_input64(seed: u64, key: &SketchInput) -> u64 {
+fn hash_input64(seed: u64, key: &DataInput) -> u64 {
     match key {
-        SketchInput::I8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I16(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I32(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::I128(v) => XxHash3_64::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
-        SketchInput::ISIZE(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::U8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U16(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U32(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::U128(v) => XxHash3_64::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
-        SketchInput::USIZE(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::F32(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::F64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::Str(v) => XxHash3_64::oneshot_with_seed(seed, v.as_bytes()),
-        SketchInput::String(v) => XxHash3_64::oneshot_with_seed(seed, v.as_bytes()),
-        SketchInput::Bytes(v) => XxHash3_64::oneshot_with_seed(seed, v),
+        DataInput::I8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I16(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I32(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::I128(v) => XxHash3_64::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
+        DataInput::ISIZE(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::U8(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U16(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U32(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::U128(v) => XxHash3_64::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
+        DataInput::USIZE(v) => XxHash3_64::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::F32(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::F64(v) => XxHash3_64::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::Str(v) => XxHash3_64::oneshot_with_seed(seed, v.as_bytes()),
+        DataInput::String(v) => XxHash3_64::oneshot_with_seed(seed, v.as_bytes()),
+        DataInput::Bytes(v) => XxHash3_64::oneshot_with_seed(seed, v),
     }
 }
 
-fn hash_input128(seed: u64, key: &SketchInput) -> u128 {
+fn hash_input128(seed: u64, key: &DataInput) -> u128 {
     match key {
-        SketchInput::I8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I16(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I32(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::I64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::I128(v) => XxHash3_128::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
-        SketchInput::ISIZE(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
-        SketchInput::U8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U16(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U32(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::U64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::U128(v) => XxHash3_128::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
-        SketchInput::USIZE(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
-        SketchInput::F32(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::F64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
-        SketchInput::Str(v) => XxHash3_128::oneshot_with_seed(seed, v.as_bytes()),
-        SketchInput::String(v) => XxHash3_128::oneshot_with_seed(seed, v.as_bytes()),
-        SketchInput::Bytes(v) => XxHash3_128::oneshot_with_seed(seed, v),
+        DataInput::I8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I16(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I32(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::I64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::I128(v) => XxHash3_128::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
+        DataInput::ISIZE(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as i64).to_ne_bytes()),
+        DataInput::U8(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U16(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U32(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::U64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::U128(v) => XxHash3_128::oneshot_with_seed(seed, &(*v).to_ne_bytes()),
+        DataInput::USIZE(v) => XxHash3_128::oneshot_with_seed(seed, &(*v as u64).to_ne_bytes()),
+        DataInput::F32(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::F64(v) => XxHash3_128::oneshot_with_seed(seed, &v.to_ne_bytes()),
+        DataInput::Str(v) => XxHash3_128::oneshot_with_seed(seed, v.as_bytes()),
+        DataInput::String(v) => XxHash3_128::oneshot_with_seed(seed, v.as_bytes()),
+        DataInput::Bytes(v) => XxHash3_128::oneshot_with_seed(seed, v),
     }
 }
 

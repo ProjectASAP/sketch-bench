@@ -86,7 +86,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<QueryRow> {
     for run in 1..=RUNS {
         let mut sketch: KLL<i64> = KLL::init_kll(K);
         for &value in data {
-            sketch.update(&value).expect("KLL insert succeeds");
+            sketch.update(&value);
         }
         std::hint::black_box(&sketch);
         let mut call_index: usize = 0;

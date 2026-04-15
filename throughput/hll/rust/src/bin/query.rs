@@ -1,7 +1,7 @@
 use datasketches::hll::{HllSketch, HllType};
 use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
 use sketch_oxide::Sketch;
-use asap_sketchlib::{ErtlMLE, HyperLogLogHIPP12, HyperLogLogP12, SketchInput};
+use asap_sketchlib::{ErtlMLE, HyperLogLogHIPP12, HyperLogLogP12, DataInput};
 use std::env;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -92,7 +92,7 @@ fn run_sketchlib(data: &[i64]) -> Vec<QueryRow> {
     for run in 1..=RUNS {
         let mut sketch = HyperLogLogP12::<ErtlMLE>::default();
         for &value in data {
-            sketch.insert(&SketchInput::I64(value));
+            sketch.insert(&DataInput::I64(value));
         }
         std::hint::black_box(&sketch);
         for c in 1..=CALLS_PER_RUN {
@@ -121,7 +121,7 @@ fn run_sketchlib_hip(data: &[i64]) -> Vec<QueryRow> {
     for run in 1..=RUNS {
         let mut sketch = HyperLogLogHIPP12::default();
         for &value in data {
-            sketch.insert(&SketchInput::I64(value));
+            sketch.insert(&DataInput::I64(value));
         }
         std::hint::black_box(&sketch);
         for c in 1..=CALLS_PER_RUN {

@@ -10,7 +10,7 @@ use sketch_oxide::cardinality::HyperLogLog as OxideHyperLogLog;
 use sketch_oxide::Sketch;
 use asap_sketchlib::{
     ErtlMLE, HyperLogLogHIPP12, HyperLogLogHIPP14, HyperLogLogHIPP16,
-    HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, SketchInput,
+    HyperLogLogP12, HyperLogLogP14, HyperLogLogP16, DataInput,
 };
 use std::env;
 use std::error::Error;
@@ -74,37 +74,37 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 trait SketchInsertEstimate {
-    fn sketch_insert(&mut self, input: &SketchInput);
+    fn sketch_insert(&mut self, input: &DataInput);
     fn sketch_estimate(&self) -> usize;
 }
 
 impl SketchInsertEstimate for HyperLogLogP12<ErtlMLE> {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
 impl SketchInsertEstimate for HyperLogLogP14<ErtlMLE> {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
 impl SketchInsertEstimate for HyperLogLogP16<ErtlMLE> {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() }
 }
 
 impl SketchInsertEstimate for HyperLogLogHIPP12 {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() as usize }
 }
 
 impl SketchInsertEstimate for HyperLogLogHIPP14 {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() as usize }
 }
 
 impl SketchInsertEstimate for HyperLogLogHIPP16 {
-    fn sketch_insert(&mut self, input: &SketchInput) { self.insert(input); }
+    fn sketch_insert(&mut self, input: &DataInput) { self.insert(input); }
     fn sketch_estimate(&self) -> usize { self.estimate() as usize }
 }
 
@@ -122,7 +122,7 @@ where
     for &seed in &SEEDS {
         let mut sketch = S::default();
         for &value in values {
-            sketch.sketch_insert(&SketchInput::U64(seeded_key(value, seed)));
+            sketch.sketch_insert(&DataInput::U64(seeded_key(value, seed)));
         }
         rows.push(build_row(
             implementation,
