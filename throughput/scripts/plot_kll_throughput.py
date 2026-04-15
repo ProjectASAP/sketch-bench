@@ -21,6 +21,7 @@ COLORS = {
     "rust_oxide_kll": "#54A24B",
     "cpp_datasketches_kll": "#F58518",
     "cpp_insert_optimized_kll": "#E45756",
+    "polars_quantile": "#B279A2",
 }
 
 LABELS = {
@@ -28,6 +29,7 @@ LABELS = {
     "rust_oxide_kll": "Rust sketch_oxide",
     "cpp_datasketches_kll": "C++ DataSketches",
     "cpp_insert_optimized_kll": "C++ AWS insert-opt",
+    "polars_quantile": "Polars quantile",
 }
 
 IMPLEMENTATIONS = [
@@ -35,6 +37,7 @@ IMPLEMENTATIONS = [
     "rust_oxide_kll",
     "cpp_datasketches_kll",
     "cpp_insert_optimized_kll",
+    "polars_quantile",
 ]
 
 
@@ -55,12 +58,12 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         total_items.add(int(row["total_items"]))
         k_values.add(int(row["k"]))
 
-    for impl_name in IMPLEMENTATIONS:
-        if not grouped.get(impl_name):
-            raise ValueError(f"missing data for {impl_name}")
+    implementations = [impl_name for impl_name in IMPLEMENTATIONS if grouped.get(impl_name)]
+    if not implementations:
+        raise ValueError("no known implementations present in input")
 
-    medians = [statistics.median(grouped[name]) for name in IMPLEMENTATIONS]
-    positions = list(range(len(IMPLEMENTATIONS)))
+    medians = [statistics.median(grouped[name]) for name in implementations]
+    positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(10.5, 5.8))
@@ -68,13 +71,13 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         positions,
         medians,
         width=0.55,
-        color=[COLORS[name] for name in IMPLEMENTATIONS],
+        color=[COLORS[name] for name in implementations],
         alpha=0.88,
         zorder=2,
     )
 
     box = ax.boxplot(
-        [grouped[name] for name in IMPLEMENTATIONS],
+        [grouped[name] for name in implementations],
         positions=positions,
         widths=0.22,
         patch_artist=True,
@@ -85,18 +88,18 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         capprops={"linewidth": 1.4},
         boxprops={"linewidth": 1.2},
     )
-    for patch, impl_name in zip(box["boxes"], IMPLEMENTATIONS):
+    for patch, impl_name in zip(box["boxes"], implementations):
         patch.set_facecolor("#ffffff")
         patch.set_edgecolor(COLORS[impl_name])
         patch.set_alpha(0.96)
     for whisker, impl_name in zip(
         box["whiskers"],
-        [name for name in IMPLEMENTATIONS for _ in range(2)],
+        [name for name in implementations for _ in range(2)],
     ):
         whisker.set_color(COLORS[impl_name])
     for cap, impl_name in zip(
         box["caps"],
-        [name for name in IMPLEMENTATIONS for _ in range(2)],
+        [name for name in implementations for _ in range(2)],
     ):
         cap.set_color(COLORS[impl_name])
 
@@ -111,7 +114,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     )
     ax.set_ylabel("Throughput (items/sec)")
     ax.set_xticks(positions)
-    ax.set_xticklabels([LABELS[name] for name in IMPLEMENTATIONS], rotation=8, ha="right")
+    ax.set_xticklabels([LABELS[name] for name in implementations], rotation=8, ha="right")
     ax.grid(True, axis="y", alpha=0.25, zorder=1)
 
     max_height = max(max(values) for values in grouped.values())

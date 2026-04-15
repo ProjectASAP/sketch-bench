@@ -21,6 +21,7 @@ COLORS = {
     "rust_oxide_cms": "#54A24B",
     "rust_datasketches_cms": "#E45756",
     "cpp_datasketches_cms": "#F58518",
+    "polars_freq": "#B279A2",
 }
 
 LABELS = {
@@ -28,6 +29,7 @@ LABELS = {
     "rust_oxide_cms": "Rust sketch_oxide",
     "rust_datasketches_cms": "Rust DataSketches",
     "cpp_datasketches_cms": "C++ DataSketches",
+    "polars_freq": "Polars freq",
 }
 
 TITLE = "CMS Query Throughput"

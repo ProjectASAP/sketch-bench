@@ -21,6 +21,7 @@ COLORS = {
     "rust_oxide_cms": "#54A24B",
     "rust_datasketches_cms": "#E45756",
     "cpp_datasketches_cms": "#F58518",
+    "polars_freq": "#B279A2",
 }
 
 LABELS = {
@@ -28,6 +29,7 @@ LABELS = {
     "rust_oxide_cms": "Rust sketch_oxide",
     "rust_datasketches_cms": "Rust DataSketches",
     "cpp_datasketches_cms": "C++ DataSketches",
+    "polars_freq": "Polars freq",
 }
 
 
@@ -55,10 +57,11 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         "rust_oxide_cms",
         "rust_datasketches_cms",
         "cpp_datasketches_cms",
+        "polars_freq",
     ]
-    for implementation in implementations:
-        if not grouped.get(implementation):
-            raise ValueError(f"missing data for {implementation}")
+    implementations = [implementation for implementation in implementations if grouped.get(implementation)]
+    if not implementations:
+        raise ValueError("no known implementations present in input")
 
     medians = [statistics.median(grouped[implementation]) for implementation in implementations]
     positions = list(range(len(implementations)))

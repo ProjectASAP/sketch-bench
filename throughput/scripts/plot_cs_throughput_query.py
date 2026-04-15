@@ -19,11 +19,13 @@ import matplotlib.pyplot as plt
 COLORS = {
     "rust_sketchlib_cs": "#4C78A8",
     "rust_oxide_cs": "#54A24B",
+    "polars_freq": "#B279A2",
 }
 
 LABELS = {
     "rust_sketchlib_cs": "Rust sketchlib",
     "rust_oxide_cs": "Rust sketch_oxide",
+    "polars_freq": "Polars freq",
 }
 
 TITLE = "Count Sketch Query Throughput"

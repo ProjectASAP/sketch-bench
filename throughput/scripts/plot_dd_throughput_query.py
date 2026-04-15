@@ -5,7 +5,6 @@ import argparse
 import csv
 import os
 import statistics
-from collections import defaultdict
 from pathlib import Path
 
 if "MPLCONFIGDIR" not in os.environ:
@@ -17,31 +16,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 COLORS = {
-    "rust_sketchlib_hll": "#4C78A8",
-    "rust_sketchlib_hll_hip": "#72B7B2",
-    "rust_oxide_hll": "#54A24B",
-    "rust_datasketches_hll": "#E45756",
-    "cpp_datasketches_hll": "#F58518",
-    "polars_cardinality": "#B279A2",
+    "rust_sketchlib_dd": "#4C78A8",
+    "polars_quantile": "#B279A2",
 }
 
 LABELS = {
-    "rust_sketchlib_hll": "Rust sketchlib\n(ErtlMLE)",
-    "rust_sketchlib_hll_hip": "Rust sketchlib\n(HIP)",
-    "rust_oxide_hll": "Rust sketch_oxide",
-    "rust_datasketches_hll": "Rust DataSketches",
-    "cpp_datasketches_hll": "C++ DataSketches",
-    "polars_cardinality": "Polars\ncardinality",
+    "rust_sketchlib_dd": "Rust sketchlib",
+    "polars_quantile": "Polars quantile",
 }
-
-IMPLEMENTATIONS = [
-    "rust_sketchlib_hll",
-    "rust_sketchlib_hll_hip",
-    "rust_oxide_hll",
-    "rust_datasketches_hll",
-    "cpp_datasketches_hll",
-    "polars_cardinality",
-]
 
 
 def load_rows(path: Path) -> list[dict[str, str]]:
@@ -53,25 +35,24 @@ def load_rows(path: Path) -> list[dict[str, str]]:
 
 
 def render_plot(rows: list[dict[str, str]], output: Path) -> None:
-    grouped: dict[str, list[float]] = defaultdict(list)
-    total_items = set()
-    lg_k_values = set()
-    registers_values = set()
+    grouped_ns: dict[str, list[float]] = {}
     for row in rows:
-        grouped[row["implementation"]].append(float(row["throughput_items_per_sec"]))
-        total_items.add(int(row["total_items"]))
-        lg_k_values.add(int(row["lg_k"]))
-        registers_values.add(int(row["registers"]))
-
-    implementations = [impl_name for impl_name in IMPLEMENTATIONS if grouped.get(impl_name)]
+        grouped_ns.setdefault(row["implementation"], []).append(float(row["nanoseconds"]))
+    total_items = {int(row["total_items"]) for row in rows}
+    alpha_values = {float(row["alpha"]) for row in rows}
+    implementations = [name for name in ("rust_sketchlib_dd", "polars_quantile") if name in grouped_ns]
     if not implementations:
         raise ValueError("no known implementations present in input")
-
-    medians = [statistics.median(grouped[name]) for name in implementations]
-    positions = list(range(len(implementations)))
+    throughput_samples = {
+        name: [(1e9 / ns) if ns > 0 else 0.0 for ns in grouped_ns[name]]
+        for name in implementations
+    }
+    medians = [statistics.median(throughput_samples[name]) for name in implementations]
+    max_height = max(max(values) for values in throughput_samples.values())
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    fig, ax = plt.subplots(figsize=(8.2, 5.6))
+    positions = list(range(len(implementations)))
     bars = ax.bar(
         positions,
         medians,
@@ -80,9 +61,8 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         alpha=0.88,
         zorder=2,
     )
-
     box = ax.boxplot(
-        [grouped[name] for name in implementations],
+        [throughput_samples[name] for name in implementations],
         positions=positions,
         widths=0.22,
         patch_artist=True,
@@ -93,44 +73,34 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         capprops={"linewidth": 1.4},
         boxprops={"linewidth": 1.2},
     )
-    for patch, impl_name in zip(box["boxes"], implementations):
+    for patch, name in zip(box["boxes"], implementations):
         patch.set_facecolor("#ffffff")
-        patch.set_edgecolor(COLORS[impl_name])
+        patch.set_edgecolor(COLORS[name])
         patch.set_alpha(0.96)
-    for whisker, impl_name in zip(
-        box["whiskers"],
-        [name for name in implementations for _ in range(2)],
-    ):
-        whisker.set_color(COLORS[impl_name])
-    for cap, impl_name in zip(
-        box["caps"],
-        [name for name in implementations for _ in range(2)],
-    ):
-        cap.set_color(COLORS[impl_name])
+    for whisker, name in zip(box["whiskers"], [name for name in implementations for _ in range(2)]):
+        whisker.set_color(COLORS[name])
+    for cap, name in zip(box["caps"], [name for name in implementations for _ in range(2)]):
+        cap.set_color(COLORS[name])
 
-    lg_k = next(iter(lg_k_values))
-    regs = next(iter(registers_values))
     ax.set_title(
         "\n".join(
             [
-                "HLL Insertion Throughput",
+                "DD Sketch quantile() Throughput",
                 f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values (s=1.1, support=100k)",
-                f"lg_k={lg_k} ({regs:,} registers); 10 runs per implementation",
+                f"alpha={next(iter(alpha_values)):.4f}; 10 runs x 10 repeats x 101 percentiles",
             ]
         )
     )
-    ax.set_ylabel("Throughput (items/sec)")
+    ax.set_ylabel("quantile() calls per second")
     ax.set_xticks(positions)
     ax.set_xticklabels([LABELS[name] for name in implementations])
     ax.grid(True, axis="y", alpha=0.25, zorder=1)
-
-    max_height = max(max(values) for values in grouped.values())
     ax.set_ylim(0, max_height * 1.18)
-    for bar, value in zip(bars, medians):
+    for bar, median in zip(bars, medians):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + max_height * 0.02,
-            f"{value / 1_000_000:.2f}M",
+            f"{median:,.0f}/s",
             ha="center",
             va="bottom",
             fontsize=11,

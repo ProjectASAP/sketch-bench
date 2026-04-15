@@ -20,12 +20,14 @@ COLORS = {
     "rust_sketchlib_cs": "#4C78A8",
     "rust_oxide_cs": "#54A24B",
     "cpp_insert_optimized_cs": "#F58518",
+    "polars_freq": "#B279A2",
 }
 
 LABELS = {
     "rust_sketchlib_cs": "Rust sketchlib",
     "rust_oxide_cs": "Rust sketch_oxide",
     "cpp_insert_optimized_cs": "AWS insert-optimized",
+    "polars_freq": "Polars freq",
 }
 
 
@@ -44,7 +46,15 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         grouped[row["implementation"]].append(float(row["throughput_items_per_sec"]))
         total_items.add(int(row["total_items"]))
 
-    implementations = ["rust_sketchlib_cs", "rust_oxide_cs", "cpp_insert_optimized_cs"]
+    implementations = [
+        "rust_sketchlib_cs",
+        "rust_oxide_cs",
+        "cpp_insert_optimized_cs",
+        "polars_freq",
+    ]
+    implementations = [name for name in implementations if grouped.get(name)]
+    if not implementations:
+        raise ValueError("no known implementations present in input")
     medians = [statistics.median(grouped[name]) for name in implementations]
     positions = list(range(len(implementations)))
 

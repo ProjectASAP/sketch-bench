@@ -22,6 +22,7 @@ COLORS = {
     "rust_oxide_hll": "#54A24B",
     "rust_datasketches_hll": "#E45756",
     "cpp_datasketches_hll": "#F58518",
+    "polars_cardinality": "#B279A2",
 }
 
 LABELS = {
@@ -30,6 +31,7 @@ LABELS = {
     "rust_oxide_hll": "Rust sketch_oxide",
     "rust_datasketches_hll": "Rust DataSketches",
     "cpp_datasketches_hll": "C++ DataSketches",
+    "polars_cardinality": "Polars\ncardinality",
 }
 
 

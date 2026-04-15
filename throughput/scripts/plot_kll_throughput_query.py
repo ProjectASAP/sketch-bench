@@ -20,12 +20,14 @@ COLORS = {
     "rust_sketchlib_kll": "#4C78A8",
     "rust_oxide_kll": "#54A24B",
     "cpp_datasketches_kll": "#F58518",
+    "polars_quantile": "#B279A2",
 }
 
 LABELS = {
     "rust_sketchlib_kll": "Rust sketchlib",
     "rust_oxide_kll": "Rust sketch_oxide",
     "cpp_datasketches_kll": "C++ DataSketches",
+    "polars_quantile": "Polars quantile",
 }
 
 
