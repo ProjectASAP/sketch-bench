@@ -10,7 +10,6 @@ const LG_K: u8 = 12;
 const REGISTERS: usize = 1 << (LG_K as usize);
 const RUNS: usize = 10;
 const CALLS_PER_RUN: usize = 10;
-const IMPLEMENTATION: &str = "polars_cardinality";
 const CSV_HEADER: &str =
     "implementation,language,run,lg_k,registers,total_items,call_index,nanoseconds,estimate";
 
@@ -19,6 +18,22 @@ struct Args {
     data: PathBuf,
     output: PathBuf,
     variant: String,
+    engine: Engine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Engine {
+    Lazy,
+    Eager,
+}
+
+impl Engine {
+    fn implementation(self) -> &'static str {
+        match self {
+            Self::Lazy => "polars_cardinality",
+            Self::Eager => "polars_cardinality_eager",
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -30,24 +45,36 @@ fn main() -> Result<(), Box<dyn Error>> {
     for run in 1..=RUNS {
         for call_index in 1..=CALLS_PER_RUN {
             let start = Instant::now();
-            let value_col = Column::new("v".into(), &data);
-            let df = DataFrame::new(vec![value_col])?;
-            let result = df
-                .lazy()
-                .select([col("v").n_unique().alias("exact_cardinality")])
-                .collect()?;
+            let estimate = match args.engine {
+                Engine::Lazy => {
+                    let value_col = Column::new("v".into(), &data);
+                    let df = DataFrame::new(vec![value_col])?;
+                    let result = df
+                        .lazy()
+                        .select([col("v").n_unique().alias("exact_cardinality")])
+                        .collect()?;
+                    let estimate = result
+                        .column("exact_cardinality")?
+                        .as_materialized_series()
+                        .cast(&DataType::Float64)?
+                        .f64()?
+                        .get(0)
+                        .unwrap_or(f64::NAN);
+                    std::hint::black_box(&result);
+                    estimate
+                }
+                Engine::Eager => {
+                    let value_col = Column::new("v".into(), &data);
+                    let series = value_col.as_materialized_series();
+                    let estimate = series.n_unique()? as f64;
+                    std::hint::black_box(estimate);
+                    estimate
+                }
+            };
             let elapsed = start.elapsed().as_nanos();
-            let estimate = result
-                .column("exact_cardinality")?
-                .as_materialized_series()
-                .cast(&DataType::Float64)?
-                .f64()?
-                .get(0)
-                .unwrap_or(f64::NAN);
-            std::hint::black_box(&result);
             csv_lines.push(format!(
                 "{},{},{},{},{},{},{},{},{:.6}",
-                IMPLEMENTATION,
+                args.engine.implementation(),
                 "rust",
                 run,
                 LG_K,
@@ -67,15 +94,17 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
     let mut output = PathBuf::from("../hll/output/hll_throughput_query_results_polars.csv");
     let mut variant = String::from("hll");
+    let mut engine = Engine::Lazy;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--data" => data = PathBuf::from(args.next().ok_or("--data requires a path")?),
             "--output" => output = PathBuf::from(args.next().ok_or("--output requires a path")?),
             "--variant" => variant = args.next().ok_or("--variant requires a value")?,
+            "--engine" => engine = parse_engine(&args.next().ok_or("--engine requires a value")?)?,
             "--help" | "-h" => {
                 println!(
-                    "Usage: polars_cardinality_throughput_query [--data PATH] [--output PATH] [--variant hll]"
+                    "Usage: polars_cardinality_throughput_query [--data PATH] [--output PATH] [--variant hll] [--engine lazy|eager]"
                 );
                 std::process::exit(0);
             }
@@ -86,7 +115,16 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
         data,
         output,
         variant,
+        engine,
     })
+}
+
+fn parse_engine(engine: &str) -> Result<Engine, Box<dyn Error>> {
+    match engine {
+        "lazy" => Ok(Engine::Lazy),
+        "eager" => Ok(Engine::Eager),
+        _ => Err(format!("unsupported polars_cardinality engine: {engine}").into()),
+    }
 }
 
 fn validate_variant(variant: &str) -> Result<(), Box<dyn Error>> {

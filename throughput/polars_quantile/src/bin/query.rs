@@ -9,7 +9,6 @@ use std::time::Instant;
 const RUNS: usize = 10;
 const REPEATS_PER_RUN: usize = 10;
 const NUM_PERCENTILES: usize = 101;
-const IMPLEMENTATION: &str = "polars_quantile";
 const K: i32 = 200;
 const ALPHA: f64 = 0.01;
 
@@ -18,6 +17,22 @@ struct Args {
     data: PathBuf,
     output: PathBuf,
     variant: String,
+    engine: Engine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Engine {
+    Lazy,
+    Eager,
+}
+
+impl Engine {
+    fn implementation(self) -> &'static str {
+        match self {
+            Self::Lazy => "polars_quantile",
+            Self::Eager => "polars_quantile_eager",
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -25,6 +40,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config = variant_config(&args.variant)?;
     let data = load_dataset(&args.data)?;
     let quantile_exprs = build_quantile_exprs();
+    let value_col = Column::new("v".into(), &data);
+    let series = value_col
+        .as_materialized_series()
+        .cast(&DataType::Float64)?;
 
     let total = RUNS * REPEATS_PER_RUN * NUM_PERCENTILES;
     let mut csv_lines: Vec<String> = Vec::with_capacity(total);
@@ -32,24 +51,56 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut call_index: usize = 0;
         for repeat in 1..=REPEATS_PER_RUN {
             let start = Instant::now();
-            let value_col = Column::new("v".into(), &data);
-            let df = DataFrame::new(vec![value_col])?;
-            let result = df.lazy().select(quantile_exprs.clone()).collect()?;
+            let estimates = match args.engine {
+                Engine::Lazy => {
+                    let df = DataFrame::new(vec![value_col.clone()])?;
+                    let result = df.lazy().select(quantile_exprs.clone()).collect()?;
+                    let estimates = (0..NUM_PERCENTILES)
+                        .map(|percentile| {
+                            result
+                                .column(&format!("p_{percentile}"))?
+                                .as_materialized_series()
+                                .cast(&DataType::Float64)?
+                                .f64()?
+                                .get(0)
+                                .ok_or_else(|| {
+                                    PolarsError::ComputeError(
+                                        format!("missing quantile result for p_{percentile}").into(),
+                                    )
+                                })
+                        })
+                        .collect::<PolarsResult<Vec<f64>>>()?;
+                    std::hint::black_box(&result);
+                    estimates
+                }
+                Engine::Eager => {
+                    let values = series
+                        .f64()?
+                        .quantile(0.0, QuantileMethod::Linear)
+                        .map(|_| ())?;
+                    let estimates = (0..NUM_PERCENTILES)
+                        .map(|percentile| {
+                            series
+                                .f64()?
+                                .quantile(percentile as f64 / 100.0, QuantileMethod::Linear)?
+                                .ok_or_else(|| {
+                                    PolarsError::ComputeError(
+                                        format!("missing quantile result for p_{percentile}").into(),
+                                    )
+                                })
+                        })
+                        .collect::<PolarsResult<Vec<f64>>>()?;
+                    std::hint::black_box(values);
+                    estimates
+                }
+            };
             let elapsed = start.elapsed().as_nanos();
-            std::hint::black_box(&result);
-            for percentile in 0..NUM_PERCENTILES {
+            for (percentile, q_value) in estimates.into_iter().enumerate() {
                 call_index += 1;
-                let q_value = result
-                    .column(&format!("p_{percentile}"))?
-                    .as_materialized_series()
-                    .cast(&DataType::Float64)?
-                    .f64()?
-                    .get(0)
-                    .unwrap_or(f64::NAN);
                 csv_lines.push(match config {
                     VariantConfig::Kll => format!(
                         "{},{},{},{},{},{},{},{},{},{:.6}",
-                        IMPLEMENTATION,
+                        args.engine.implementation(),
                         "rust",
                         run,
                         K,
@@ -62,7 +113,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     ),
                     VariantConfig::Dd => format!(
                         "{},{},{},{:.6},{},{},{},{},{},{:.6}",
-                        IMPLEMENTATION,
+                        args.engine.implementation(),
                         "rust",
                         run,
                         ALPHA,
@@ -97,15 +148,17 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
     let mut output = PathBuf::from("../kll/output/kll_throughput_query_results_polars.csv");
     let mut variant = String::from("kll");
+    let mut engine = Engine::Lazy;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--data" => data = PathBuf::from(args.next().ok_or("--data requires a path")?),
             "--output" => output = PathBuf::from(args.next().ok_or("--output requires a path")?),
             "--variant" => variant = args.next().ok_or("--variant requires a value")?,
+            "--engine" => engine = parse_engine(&args.next().ok_or("--engine requires a value")?)?,
             "--help" | "-h" => {
                 println!(
-                    "Usage: polars_quantile_throughput_query [--data PATH] [--output PATH] [--variant kll|dd]"
+                    "Usage: polars_quantile_throughput_query [--data PATH] [--output PATH] [--variant kll|dd] [--engine lazy|eager]"
                 );
                 std::process::exit(0);
             }
@@ -116,7 +169,16 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
         data,
         output,
         variant,
+        engine,
     })
+}
+
+fn parse_engine(engine: &str) -> Result<Engine, Box<dyn Error>> {
+    match engine {
+        "lazy" => Ok(Engine::Lazy),
+        "eager" => Ok(Engine::Eager),
+        _ => Err(format!("unsupported polars_quantile engine: {engine}").into()),
+    }
 }
 
 enum VariantConfig {

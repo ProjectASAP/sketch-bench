@@ -10,7 +10,6 @@ use std::time::Instant;
 const ROWS: usize = 5;
 const COLS: usize = 2048;
 const SEEDS: [u64; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const IMPLEMENTATION: &str = "polars_freq";
 const CSV_HEADER: &str =
     "implementation,language,seed,rows,cols,total_items,total_queries,total_nanoseconds,throughput_queries_per_sec";
 
@@ -24,6 +23,22 @@ struct Args {
     data: PathBuf,
     output: PathBuf,
     variant: String,
+    engine: Engine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Engine {
+    Lazy,
+    Eager,
+}
+
+impl Engine {
+    fn implementation(self) -> &'static str {
+        match self {
+            Self::Lazy => "polars_freq",
+            Self::Eager => "polars_freq_eager",
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -39,25 +54,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         let keys_df = DataFrame::new(vec![key_col])?;
 
         let start = Instant::now();
-        let counts_lazy = df
-            .lazy()
-            .group_by([col("v")])
-            .agg([len().alias("count")]);
-        let result = keys_df
-            .lazy()
-            .join(
-                counts_lazy,
-                [col("v")],
-                [col("v")],
-                JoinArgs::new(JoinType::Left),
-            )
-            .collect()?;
+        let result = match args.engine {
+            Engine::Lazy => {
+                let counts_lazy = df
+                    .lazy()
+                    .group_by([col("v")])
+                    .agg([len().alias("count")]);
+                keys_df
+                    .lazy()
+                    .join(
+                        counts_lazy,
+                        [col("v")],
+                        [col("v")],
+                        JoinArgs::new(JoinType::Left),
+                    )
+                    .collect()?
+            }
+            Engine::Eager => {
+                let counts_df = df.group_by(["v"])?.select(["v"]).count()?;
+                keys_df.left_join(&counts_df, ["v"], ["v"])?
+            }
+        };
         std::hint::black_box(&result);
         let elapsed = start.elapsed().as_nanos();
         let throughput = keys.len() as f64 * 1_000_000_000.0 / elapsed as f64;
         csv_lines.push(format!(
             "{},{},{},{},{},{},{},{},{:.6}",
-            IMPLEMENTATION,
+            args.engine.implementation(),
             "rust",
             seed,
             ROWS,
@@ -77,15 +100,17 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from("../../input/benchmark_data_10m_int64_zipf_s11_k100000.bin");
     let mut output = PathBuf::from("../cms/output/cms_throughput_query_results_polars.csv");
     let mut variant = String::from("cms");
+    let mut engine = Engine::Lazy;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--data" => data = PathBuf::from(args.next().ok_or("--data requires a path")?),
             "--output" => output = PathBuf::from(args.next().ok_or("--output requires a path")?),
             "--variant" => variant = args.next().ok_or("--variant requires a value")?,
+            "--engine" => engine = parse_engine(&args.next().ok_or("--engine requires a value")?)?,
             "--help" | "-h" => {
                 println!(
-                    "Usage: polars_freq_throughput_query [--data PATH] [--output PATH] [--variant cms|cs]"
+                    "Usage: polars_freq_throughput_query [--data PATH] [--output PATH] [--variant cms|cs] [--engine lazy|eager]"
                 );
                 std::process::exit(0);
             }
@@ -96,7 +121,16 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
         data,
         output,
         variant,
+        engine,
     })
+}
+
+fn parse_engine(engine: &str) -> Result<Engine, Box<dyn Error>> {
+    match engine {
+        "lazy" => Ok(Engine::Lazy),
+        "eager" => Ok(Engine::Eager),
+        _ => Err(format!("unsupported polars_freq engine: {engine}").into()),
+    }
 }
 
 fn validate_variant(variant: &str) -> Result<(), Box<dyn Error>> {

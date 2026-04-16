@@ -37,8 +37,11 @@ COLORS = {
     "cpp_insert_optimized_kll": "#E45756",
     "rust_sketchlib_dd": "#4C78A8",
     "polars_freq": "#B279A2",
+    "polars_freq_eager": "#B279A2",
     "polars_cardinality": "#B279A2",
+    "polars_cardinality_eager": "#B279A2",
     "polars_quantile": "#B279A2",
+    "polars_quantile_eager": "#B279A2",
 }
 
 LABELS = {
@@ -60,8 +63,11 @@ LABELS = {
     "cpp_insert_optimized_kll": "KLL AWS",
     "rust_sketchlib_dd": "DD sketchlib",
     "polars_freq": "Polars freq",
+    "polars_freq_eager": "Polars freq eager",
     "polars_cardinality": "Polars cardinality",
+    "polars_cardinality_eager": "Polars cardinality eager",
     "polars_quantile": "Polars quantile",
+    "polars_quantile_eager": "Polars quantile eager",
 }
 
 PANELS = {
@@ -76,6 +82,7 @@ PANELS = {
             "rust_oxide_cs",
             "cpp_insert_optimized_cs",
             "polars_freq",
+            "polars_freq_eager",
         ],
     },
     "cardinality": {
@@ -87,6 +94,7 @@ PANELS = {
             "rust_datasketches_hll",
             "cpp_datasketches_hll",
             "polars_cardinality",
+            "polars_cardinality_eager",
         ],
     },
     "quantile": {
@@ -98,6 +106,7 @@ PANELS = {
             "cpp_insert_optimized_kll",
             "rust_sketchlib_dd",
             "polars_quantile",
+            "polars_quantile_eager",
         ],
     },
 }
@@ -120,7 +129,7 @@ def throughput_samples(op: str, family: str, implementation: str, rows: list[dic
         return [float(row["throughput_queries_per_sec"]) for row in matching]
     if family == "cardinality":
         return [(1e9 / float(row["nanoseconds"])) if float(row["nanoseconds"]) > 0 else 0.0 for row in matching]
-    if family == "quantile" and implementation == "polars_quantile":
+    if family == "quantile" and implementation.startswith("polars_quantile"):
         batches: dict[tuple[int, int], dict[str, float]] = {}
         for row in matching:
             key = (int(row["run"]), int(row["repeat"]))
@@ -133,32 +142,53 @@ def throughput_samples(op: str, family: str, implementation: str, rows: list[dic
     return [(1e9 / float(row["nanoseconds"])) if float(row["nanoseconds"]) > 0 else 0.0 for row in matching]
 
 
-def sources_for(op: str) -> dict[str, list[tuple[Path, list[str]]]]:
+def polars_spec(polars_engine: str) -> dict[str, tuple[Path, str]]:
+    if polars_engine == "lazy":
+        return {
+            "freq": (ROOT / "polars_freq" / "output" / "polars_freq_query_results.csv", "polars_freq"),
+            "cardinality": (ROOT / "polars_cardinality" / "output" / "polars_cardinality_query_results.csv", "polars_cardinality"),
+            "quantile": (ROOT / "polars_quantile" / "output" / "polars_quantile_query_results.csv", "polars_quantile"),
+        }
+    if polars_engine == "eager":
+        return {
+            "freq": (ROOT / "polars_freq" / "output" / "polars_freq_query_results_eager.csv", "polars_freq_eager"),
+            "cardinality": (ROOT / "polars_cardinality" / "output" / "polars_cardinality_query_results_eager.csv", "polars_cardinality_eager"),
+            "quantile": (ROOT / "polars_quantile" / "output" / "polars_quantile_query_results_eager.csv", "polars_quantile_eager"),
+        }
+    raise ValueError(f"unsupported polars engine: {polars_engine}")
+
+
+def sources_for(op: str, polars_engine: str) -> dict[str, list[tuple[Path, list[str]]]]:
     suffix = "throughput_results.csv" if op == "insert" else "throughput_query_results.csv"
-    freq_polars = ROOT / "polars_freq" / "output" / ("polars_freq_throughput_results.csv" if op == "insert" else "polars_freq_query_results.csv")
-    cardinality_polars = ROOT / "polars_cardinality" / "output" / ("polars_cardinality_throughput_results.csv" if op == "insert" else "polars_cardinality_query_results.csv")
-    quantile_polars = ROOT / "polars_quantile" / "output" / ("polars_quantile_throughput_results.csv" if op == "insert" else "polars_quantile_query_results.csv")
+    if op == "insert":
+        polars_sources = {
+            "freq": (ROOT / "polars_freq" / "output" / "polars_freq_throughput_results.csv", "polars_freq"),
+            "cardinality": (ROOT / "polars_cardinality" / "output" / "polars_cardinality_throughput_results.csv", "polars_cardinality"),
+            "quantile": (ROOT / "polars_quantile" / "output" / "polars_quantile_throughput_results.csv", "polars_quantile"),
+        }
+    else:
+        polars_sources = polars_spec(polars_engine)
     return {
         "freq": [
             (ROOT / "cms" / "output" / f"cms_{suffix}", ["rust_sketchlib_cms", "rust_oxide_cms", "rust_datasketches_cms", "cpp_datasketches_cms"]),
             (ROOT / "cs" / "output" / f"cs_{suffix}", ["rust_sketchlib_cs", "rust_oxide_cs", "cpp_insert_optimized_cs"]),
-            (freq_polars, ["polars_freq"]),
+            (polars_sources["freq"][0], [polars_sources["freq"][1]]),
         ],
         "cardinality": [
             (ROOT / "hll" / "output" / f"hll_{suffix}", ["rust_sketchlib_hll", "rust_sketchlib_hll_hip", "rust_oxide_hll", "rust_datasketches_hll", "cpp_datasketches_hll"]),
-            (cardinality_polars, ["polars_cardinality"]),
+            (polars_sources["cardinality"][0], [polars_sources["cardinality"][1]]),
         ],
         "quantile": [
             (ROOT / "kll" / "output" / f"kll_{suffix}", ["rust_sketchlib_kll", "rust_oxide_kll", "cpp_datasketches_kll", "cpp_insert_optimized_kll"]),
             (ROOT / "dd" / "output" / f"dd_{suffix}", ["rust_sketchlib_dd"]),
-            (quantile_polars, ["polars_quantile"]),
+            (polars_sources["quantile"][0], [polars_sources["quantile"][1]]),
         ],
     }
 
 
-def render(op: str, output: Path) -> None:
+def render(op: str, output: Path, polars_engine: str) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(19, 6.5))
-    panel_sources = sources_for(op)
+    panel_sources = sources_for(op, polars_engine)
     ylabel = "Throughput (items/sec)" if op == "insert" else "Throughput (queries/sec)"
 
     for ax, family in zip(axes, ("freq", "cardinality", "quantile")):
@@ -218,7 +248,10 @@ def render(op: str, output: Path) -> None:
             )
 
     title = "Throughput Overview: Insertion" if op == "insert" else "Throughput Overview: Query"
-    subtitle = "Polars uses lazy end-to-end batch execution; quantile uses one batched p0..p100 collect"
+    if op == "query" and polars_engine == "eager":
+        subtitle = "Polars uses eager execution for freq/cardinality/quantile; quantile runs p0..p100 via eager quantile calls"
+    else:
+        subtitle = "Polars uses lazy end-to-end batch execution; quantile uses one batched p0..p100 collect"
     fig.suptitle(f"{title}\n{subtitle}", fontsize=16)
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -229,10 +262,11 @@ def render(op: str, output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--op", required=True, choices=("insert", "query"))
+    parser.add_argument("--polars-engine", default="lazy", choices=("lazy", "eager"))
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
-    render(args.op, args.output)
+    render(args.op, args.output, args.polars_engine)
     print(f"Wrote {args.output}")
 
 
