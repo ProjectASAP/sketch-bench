@@ -31,23 +31,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     validate_variant(&args.variant)?;
     let Dataset { values, keys } = load_dataset(&args.data)?;
 
-    let data_col = Column::new("v".into(), &values);
-    let df = DataFrame::new(vec![data_col])?;
-    let counts = df
-        .lazy()
-        .group_by([col("v")])
-        .agg([len().alias("count")])
-        .collect()?;
-
     let mut csv_lines: Vec<String> = Vec::with_capacity(SEEDS.len());
     for &seed in &SEEDS {
-        let keys_col = Column::new("v".into(), &keys);
-        let keys_df = DataFrame::new(vec![keys_col])?;
+        let value_col = Column::new("v".into(), &values);
+        let df = DataFrame::new(vec![value_col])?;
+        let key_col = Column::new("v".into(), &keys);
+        let keys_df = DataFrame::new(vec![key_col])?;
+
         let start = Instant::now();
+        let counts_lazy = df
+            .lazy()
+            .group_by([col("v")])
+            .agg([len().alias("count")]);
         let result = keys_df
             .lazy()
             .join(
-                counts.clone().lazy(),
+                counts_lazy,
                 [col("v")],
                 [col("v")],
                 JoinArgs::new(JoinType::Left),

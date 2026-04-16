@@ -26,16 +26,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     validate_variant(&args.variant)?;
     let data = load_dataset(&args.data)?;
 
-    let col = Column::new("v".into(), &data);
-    let series = col.as_materialized_series().clone();
-
     let mut csv_lines: Vec<String> = Vec::with_capacity(RUNS * CALLS_PER_RUN);
     for run in 1..=RUNS {
         for call_index in 1..=CALLS_PER_RUN {
             let start = Instant::now();
-            let estimate = series.n_unique()?;
-            std::hint::black_box(&estimate);
+            let value_col = Column::new("v".into(), &data);
+            let df = DataFrame::new(vec![value_col])?;
+            let result = df
+                .lazy()
+                .select([col("v").n_unique().alias("exact_cardinality")])
+                .collect()?;
             let elapsed = start.elapsed().as_nanos();
+            let estimate = result
+                .column("exact_cardinality")?
+                .as_materialized_series()
+                .cast(&DataType::Float64)?
+                .f64()?
+                .get(0)
+                .unwrap_or(f64::NAN);
+            std::hint::black_box(&result);
             csv_lines.push(format!(
                 "{},{},{},{},{},{},{},{},{:.6}",
                 IMPLEMENTATION,
@@ -46,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 data.len(),
                 call_index,
                 elapsed,
-                estimate as f64
+                estimate
             ));
         }
     }

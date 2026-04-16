@@ -27,9 +27,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut csv_lines: Vec<String> = Vec::with_capacity(RUNS);
     for run in 1..=RUNS {
         let start = Instant::now();
-        let col = Column::new("v".into(), &data);
-        let df = DataFrame::new(vec![col])?;
-        std::hint::black_box(&df);
+        let value_col = Column::new("v".into(), &data);
+        let df = DataFrame::new(vec![value_col])?;
+        let result = df
+            .lazy()
+            .select([col("v").n_unique().alias("exact_cardinality")])
+            .collect()?;
+        std::hint::black_box(&result);
         let elapsed = start.elapsed().as_nanos();
         let throughput = data.len() as f64 * 1_000_000_000.0 / elapsed as f64;
         csv_lines.push(format!(

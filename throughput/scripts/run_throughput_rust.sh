@@ -30,7 +30,8 @@ if [[ "${VARIANT}" == "octo" && "${OP}" == "query" ]]; then
 fi
 
 VARIANT_DIR="${THROUGHPUT_DIR}/${VARIANT}"
-DATA_DST="${THROUGHPUT_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DEFAULT_DATASET="${THROUGHPUT_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DATA_DST="${THROUGHPUT_DATASET:-${ACCURACY_DATASET:-${DEFAULT_DATASET}}}"
 
 if [[ "${OP}" == "insert" ]]; then
   BIN_NAME="${VARIANT}_throughput"
@@ -44,8 +45,11 @@ OUTPUT_PATH="${OUTPUT_ARG:-${DEFAULT_OUTPUT}}"
 
 mkdir -p "${THROUGHPUT_DIR}/../input" "${VARIANT_DIR}/output"
 
-if [[ ! -f "${DATA_DST}" ]]; then
+if [[ "${DATA_DST}" == "${DEFAULT_DATASET}" && ! -f "${DATA_DST}" ]]; then
   "${THROUGHPUT_DIR}/../input/generate_zipf_data.sh"
+elif [[ ! -f "${DATA_DST}" ]]; then
+  echo "dataset not found: ${DATA_DST}" >&2
+  exit 1
 fi
 
 if [[ ! -f "${VARIANT_DIR}/rust/Cargo.lock" ]]; then

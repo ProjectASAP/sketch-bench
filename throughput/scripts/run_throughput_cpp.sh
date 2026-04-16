@@ -36,7 +36,8 @@ if [[ "${VARIANT}" == "cs" && "${OP}" == "query" ]]; then
 fi
 
 VARIANT_DIR="${THROUGHPUT_DIR}/${VARIANT}"
-DATA_DST="${THROUGHPUT_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DEFAULT_DATASET="${THROUGHPUT_DIR}/../input/benchmark_data_10m_int64_zipf_s11_k100000.bin"
+DATA_DST="${THROUGHPUT_DATASET:-${ACCURACY_DATASET:-${DEFAULT_DATASET}}}"
 BUILD_DIR="${VARIANT_DIR}/cpp/build"
 
 if [[ "${OP}" == "insert" ]]; then
@@ -54,8 +55,11 @@ mkdir -p "${THROUGHPUT_DIR}/../input" "${VARIANT_DIR}/output" "${BUILD_DIR}"
 rm -f "${BUILD_DIR}/CMakeCache.txt"
 rm -rf "${BUILD_DIR}/CMakeFiles"
 
-if [[ ! -f "${DATA_DST}" ]]; then
+if [[ "${DATA_DST}" == "${DEFAULT_DATASET}" && ! -f "${DATA_DST}" ]]; then
   "${THROUGHPUT_DIR}/../input/generate_zipf_data.sh"
+elif [[ ! -f "${DATA_DST}" ]]; then
+  echo "dataset not found: ${DATA_DST}" >&2
+  exit 1
 fi
 
 cmake -S "${VARIANT_DIR}/cpp" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release

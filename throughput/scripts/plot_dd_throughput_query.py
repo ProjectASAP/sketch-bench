@@ -5,6 +5,7 @@ import argparse
 import csv
 import os
 import statistics
+from collections import defaultdict
 from pathlib import Path
 
 if "MPLCONFIGDIR" not in os.environ:
@@ -35,18 +36,32 @@ def load_rows(path: Path) -> list[dict[str, str]]:
 
 
 def render_plot(rows: list[dict[str, str]], output: Path) -> None:
-    grouped_ns: dict[str, list[float]] = {}
+    grouped: dict[str, list[float]] = defaultdict(list)
+    polars_batches: dict[tuple[int, int], dict[str, float]] = {}
     for row in rows:
-        grouped_ns.setdefault(row["implementation"], []).append(float(row["nanoseconds"]))
+        implementation = row["implementation"]
+        if implementation == "polars_quantile":
+            key = (int(row["run"]), int(row["repeat"]))
+            batch = polars_batches.setdefault(
+                key,
+                {"nanoseconds": float(row["nanoseconds"]), "count": 0.0},
+            )
+            batch["count"] += 1.0
+        else:
+            grouped[implementation].append((1e9 / float(row["nanoseconds"])) if float(row["nanoseconds"]) > 0 else 0.0)
     total_items = {int(row["total_items"]) for row in rows}
     alpha_values = {float(row["alpha"]) for row in rows}
-    implementations = [name for name in ("rust_sketchlib_dd", "polars_quantile") if name in grouped_ns]
+
+    if polars_batches:
+        grouped["polars_quantile"].extend(
+            (batch["count"] * 1e9 / batch["nanoseconds"]) if batch["nanoseconds"] > 0 else 0.0
+            for batch in polars_batches.values()
+        )
+
+    implementations = [name for name in ("rust_sketchlib_dd", "polars_quantile") if name in grouped]
     if not implementations:
         raise ValueError("no known implementations present in input")
-    throughput_samples = {
-        name: [(1e9 / ns) if ns > 0 else 0.0 for ns in grouped_ns[name]]
-        for name in implementations
-    }
+    throughput_samples = {name: grouped[name] for name in implementations}
     medians = [statistics.median(throughput_samples[name]) for name in implementations]
     max_height = max(max(values) for values in throughput_samples.values())
 
@@ -87,7 +102,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
             [
                 "DD Sketch quantile() Throughput",
                 f"Data: {next(iter(total_items)):,} Zipf-distributed int64 values (s=1.1, support=100k)",
-                f"alpha={next(iter(alpha_values)):.4f}; 10 runs x 10 repeats x 101 percentiles",
+                f"alpha={next(iter(alpha_values)):.4f}; sketches scalar, Polars batched p0..p100",
             ]
         )
     )

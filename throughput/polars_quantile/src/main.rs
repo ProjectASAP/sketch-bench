@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const RUNS: usize = 10;
+const NUM_PERCENTILES: usize = 101;
 const IMPLEMENTATION: &str = "polars_quantile";
 const K: i32 = 200;
 const ALPHA: f64 = 0.01;
@@ -22,13 +23,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     let config = variant_config(&args.variant)?;
     let data = load_dataset(&args.data)?;
+    let quantile_exprs = build_quantile_exprs();
     let mut csv_lines: Vec<String> = Vec::with_capacity(RUNS);
 
     for run in 1..=RUNS {
         let start = Instant::now();
-        let col = Column::new("v".into(), &data);
-        let df = DataFrame::new(vec![col])?;
-        std::hint::black_box(&df);
+        let value_col = Column::new("v".into(), &data);
+        let df = DataFrame::new(vec![value_col])?;
+        let result = df.lazy().select(quantile_exprs.clone()).collect()?;
+        std::hint::black_box(&result);
         let elapsed = start.elapsed().as_nanos();
         let throughput = data.len() as f64 * 1_000_000_000.0 / elapsed as f64;
         csv_lines.push(match config {
@@ -45,6 +48,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     write_csv(&args.output, config.insert_header(), &csv_lines)?;
     Ok(())
+}
+
+fn build_quantile_exprs() -> Vec<Expr> {
+    (0..NUM_PERCENTILES)
+        .map(|percentile| {
+            let rank = percentile as f64 / 100.0;
+            col("v")
+                .quantile(lit(rank), QuantileMethod::Linear)
+                .alias(format!("p_{percentile}"))
+        })
+        .collect()
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {

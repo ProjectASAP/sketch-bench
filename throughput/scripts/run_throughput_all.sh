@@ -254,3 +254,11 @@ for v in "${VARIANTS[@]}"; do
     esac
   done
 done
+
+if [[ "${REQUESTED}" == "all" && -f "${SCRIPT_DIR}/plot_throughput_overview.py" ]]; then
+  for op in "${OPS[@]}"; do
+    python3 "${SCRIPT_DIR}/plot_throughput_overview.py" \
+      --op "${op}" \
+      --output "${THROUGHPUT_DIR}/plots/throughput_overview_$([[ "${op}" == "insert" ]] && echo insertion || echo query).png"
+  done
+fi

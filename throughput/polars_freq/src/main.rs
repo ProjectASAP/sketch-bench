@@ -28,9 +28,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut csv_lines: Vec<String> = Vec::with_capacity(SEEDS.len());
     for &seed in &SEEDS {
         let start = Instant::now();
-        let col = Column::new("v".into(), &data);
-        let df = DataFrame::new(vec![col])?;
-        std::hint::black_box(&df);
+        let value_col = Column::new("v".into(), &data);
+        let df = DataFrame::new(vec![value_col])?;
+        let result = df
+            .lazy()
+            .group_by([col("v")])
+            .agg([len().alias("count")])
+            .collect()?;
+        std::hint::black_box(&result);
         let elapsed = start.elapsed().as_nanos();
         let throughput = data.len() as f64 * 1_000_000_000.0 / elapsed as f64;
         csv_lines.push(format!(

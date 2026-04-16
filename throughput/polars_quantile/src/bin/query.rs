@@ -24,23 +24,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     let config = variant_config(&args.variant)?;
     let data = load_dataset(&args.data)?;
-
-    let col = Column::new("v".into(), &data);
-    let series = col.as_materialized_series().clone();
+    let quantile_exprs = build_quantile_exprs();
 
     let total = RUNS * REPEATS_PER_RUN * NUM_PERCENTILES;
     let mut csv_lines: Vec<String> = Vec::with_capacity(total);
     for run in 1..=RUNS {
         let mut call_index: usize = 0;
         for repeat in 1..=REPEATS_PER_RUN {
+            let start = Instant::now();
+            let value_col = Column::new("v".into(), &data);
+            let df = DataFrame::new(vec![value_col])?;
+            let result = df.lazy().select(quantile_exprs.clone()).collect()?;
+            let elapsed = start.elapsed().as_nanos();
+            std::hint::black_box(&result);
             for percentile in 0..NUM_PERCENTILES {
                 call_index += 1;
-                let rank = percentile as f64 / 100.0;
-                let start = Instant::now();
-                let q_scalar = series.quantile_reduce(rank, QuantileMethod::Linear)?;
-                let q_value = q_scalar.value().try_extract::<f64>().unwrap_or(f64::NAN);
-                std::hint::black_box(&q_value);
-                let elapsed = start.elapsed().as_nanos();
+                let q_value = result
+                    .column(&format!("p_{percentile}"))?
+                    .as_materialized_series()
+                    .cast(&DataType::Float64)?
+                    .f64()?
+                    .get(0)
+                    .unwrap_or(f64::NAN);
                 csv_lines.push(match config {
                     VariantConfig::Kll => format!(
                         "{},{},{},{},{},{},{},{},{},{:.6}",
@@ -75,6 +80,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     write_csv(&args.output, config.query_header(), &csv_lines)?;
     Ok(())
+}
+
+fn build_quantile_exprs() -> Vec<Expr> {
+    (0..NUM_PERCENTILES)
+        .map(|percentile| {
+            let rank = percentile as f64 / 100.0;
+            col("v")
+                .quantile(lit(rank), QuantileMethod::Linear)
+                .alias(format!("p_{percentile}"))
+        })
+        .collect()
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {

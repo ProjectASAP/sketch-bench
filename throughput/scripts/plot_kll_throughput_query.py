@@ -41,25 +41,34 @@ def load_rows(path: Path) -> list[dict[str, str]]:
 
 def render_plot(rows: list[dict[str, str]], output: Path) -> None:
     grouped: dict[str, list[float]] = defaultdict(list)
+    polars_batches: dict[tuple[int, int], dict[str, float]] = {}
     total_items = set()
     k_set = set()
     for row in rows:
-        grouped[row["implementation"]].append(float(row["nanoseconds"]))
+        implementation = row["implementation"]
+        if implementation == "polars_quantile":
+            key = (int(row["run"]), int(row["repeat"]))
+            batch = polars_batches.setdefault(
+                key,
+                {"nanoseconds": float(row["nanoseconds"]), "count": 0.0},
+            )
+            batch["count"] += 1.0
+        else:
+            grouped[implementation].append((1e9 / float(row["nanoseconds"])) if float(row["nanoseconds"]) > 0 else 0.0)
         total_items.add(int(row["total_items"]))
         k_set.add(int(row["k"]))
+
+    if polars_batches:
+        grouped["polars_quantile"].extend(
+            (batch["count"] * 1e9 / batch["nanoseconds"]) if batch["nanoseconds"] > 0 else 0.0
+            for batch in polars_batches.values()
+        )
 
     implementations = [name for name in COLORS if grouped.get(name)]
     if not implementations:
         raise ValueError("no known implementations present")
-    ns_medians = [statistics.median(grouped[name]) for name in implementations]
-    throughputs = [
-        (1e9 / ns) if ns > 0 else 0.0 for ns in ns_medians
-    ]
-    throughput_samples = {
-        name: [(1e9 / ns) if ns > 0 else 0.0 for ns in grouped[name]]
-        for name in implementations
-    }
-    medians = throughputs
+    throughput_samples = {name: grouped[name] for name in implementations}
+    medians = [statistics.median(throughput_samples[name]) for name in implementations]
     positions = list(range(len(implementations)))
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -86,7 +95,7 @@ def render_plot(rows: list[dict[str, str]], output: Path) -> None:
         "\n".join([
             "KLL quantile() Throughput",
             f"Data: {n_str:,} int64 values; k={k_str}",
-            "10 runs x 10 repeats x 101 percentiles (p0..p100)",
+            "Sketches: scalar queries; Polars: one batched p0..p100 collect",
         ])
     )
     ax.set_ylabel("quantile() calls per second (median)")
