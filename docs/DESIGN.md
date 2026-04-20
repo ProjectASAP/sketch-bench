@@ -450,7 +450,9 @@ Both subcommands write the same JSONL schema, so `visualization/` consumes eithe
 
 ## 7. Runtime / controller feedback loop
 
-### 7.1 Embedded usage (asap-fusion, DataCollector, ASAPQuery)
+### 7.1 Embedded benchmarking (asap-fusion, DataCollector, ASAPQuery)
+
+**Scope: bench-mode metrics only.** The embedded path collects macro metrics (throughput, latency, CPU, memory, accuracy) — the same `RunMetrics` shape produced by `BenchRunner` (§5), just emitted per sampling window instead of per offline run. Profile-mode metrics (hw counters, cachegrind, heaptrack, perf record, VTune) are **not** available here: `sketch-profile` is CLI-only and forbidden as a dep of `sketch-runtime` (§3.1, §10). Those tools are too expensive for always-on embedding.
 
 ```rust
 use sketch_core::Probe;
