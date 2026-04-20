@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 asap_sketchlib = { path = "../../asap_sketchlib", features = ["experimental"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+polars = { version = "0.46", features = ["lazy", "is_in"] }
 rand = "0.9"
 twox-hash = "2.1"
 
@@ -49,4 +50,8 @@ harness = false
 
 [[bench]]
 name = "box_vec"
+harness = false
+
+[[bench]]
+name = "polars_compare"
 harness = false

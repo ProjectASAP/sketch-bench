@@ -11,6 +11,12 @@ cargo bench
 # a single benchmark suite
 cargo bench --bench countmin
 
+# generate the 10M Zipf input used by polars_compare
+cargo run --bin generate_zipf_data --release
+
+# Polars vs sketch comparisons
+cargo bench --bench polars_compare
+
 # filter by function name
 cargo bench -- countmin_default/insert_only
 ```
@@ -30,3 +36,4 @@ HTML reports are written to `target/criterion/`.
 | `row_access` | Row-update strategies for Nitro: skip-nothing, skip-packet, skip-rows |
 | `median_bench` | Median of 3/4/5 via sorting-network vs `sort_unstable` |
 | `box_vec` | Memory layout comparison: `Vec<Vec>`, `Vec<Box<[T]>>`, flattened `Vec` |
+| `polars_compare` | Sketch vs Polars exact baselines for frequency, cardinality, and quantile on a synthesized 10M Zipf dataset |
