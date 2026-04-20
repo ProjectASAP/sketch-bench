@@ -163,7 +163,274 @@ Offline runs fill `bench` and/or `profile`. Runtime samples emit the same record
 
 ---
 
-## 5. CLI (`sketch-cli` → `sketchlib`)
+## 5. `sketch-bench` library — detailed design
+
+`sketch-bench` is the concrete benchmark library built on top of `sketch-core`. The same crate is invoked by `sketch-cli` for offline runs; downstream apps consume a thinner interface via `sketch-runtime` (see §7), but both share the types and metric definitions described here.
+
+### 5.1 Design principles
+
+- **Explicit state.** Measurement state lives in a `Sink`; no thread-locals.
+- **Zero cost when off.** `MetricsMask` compiled down so `Probe` with a `NoopSink` is a pass-through.
+- **Fresh state per run.** Multi-run statistics require independent initial conditions — the runner takes a factory closure, not a single sketch.
+- **Same record shape offline and online.** `RunMetrics` is the unit of output; offline N-run mean/stddev is built from the same records that runtime samplers emit.
+- **No panics on sampled paths.** Errors are captured in the report, never unwound into app code.
+
+### 5.2 Module layout
+
+```
+sketch-bench/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs
+│   ├── runner.rs            # BenchRunner: workload + factory → BenchReport
+│   ├── config.rs            # BenchConfig, MetricsMask
+│   ├── report.rs            # BenchReport → sketch-core v1 JSONL
+│   ├── metrics/
+│   │   ├── mod.rs           # MetricsSink trait; NoopSink, FullSink
+│   │   ├── time.rs          # WallClock, CpuTime (getrusage)
+│   │   ├── latency.rs       # LatencyRecorder (hdrhistogram)
+│   │   ├── memory.rs        # Rss (/proc/self/status), JemallocPeak
+│   │   └── throughput.rs    # ItemsPerSec
+│   ├── accuracy/
+│   │   ├── mod.rs           # GroundTruth + Comparator traits
+│   │   ├── frequency.rs     # CMS/CS: L1, L2, relative error
+│   │   ├── cardinality.rs   # HLL: relative error
+│   │   ├── quantile.rs      # KLL: rank error grid
+│   │   └── topk.rs          # precision@k, recall@k
+│   └── aggregation/
+│       ├── mod.rs           # RunStats<T>: mean/stddev/95% CI
+│       └── welford.rs       # numerically-stable online accumulator
+├── benches/                 # self-overhead + aggregator perf
+└── tests/
+```
+
+### 5.3 Public API
+
+#### `BenchConfig`
+
+```rust
+bitflags::bitflags! {
+    pub struct MetricsMask: u32 {
+        const THROUGHPUT = 1 << 0;
+        const LATENCY    = 1 << 1;
+        const CPU        = 1 << 2;
+        const MEMORY     = 1 << 3;
+        const ACCURACY   = 1 << 4;
+    }
+}
+
+pub struct BenchConfig {
+    pub runs: usize,                 // e.g. 10
+    pub warmup_runs: usize,          // e.g. 3
+    pub metrics: MetricsMask,
+    pub query_count: Option<usize>,  // None = skip query phase
+    pub threads: usize,              // 1 for single-threaded
+    pub seed: u64,                   // reproducibility
+}
+```
+
+#### `BenchRunner`
+
+```rust
+pub struct BenchRunner<S, W, G = ()>
+where
+    S: Sketch,
+    W: Workload<Item = S::Input<'static>>,
+    G: GroundTruth<S>,
+{
+    config: BenchConfig,
+    workload: W,
+    ground_truth: Option<G>,
+}
+
+impl<S, W, G> BenchRunner<S, W, G> {
+    pub fn new(config: BenchConfig, workload: W) -> Self;
+    pub fn with_ground_truth(self, g: G) -> Self;
+    /// Factory is called once per run to get an independent fresh sketch.
+    pub fn run<F: FnMut() -> S>(&self, factory: F) -> BenchReport;
+}
+```
+
+The factory argument is deliberate: N-run CI requires independent initial state — sharing a sketch across runs would correlate the samples.
+
+#### `BenchReport`
+
+```rust
+pub struct BenchReport {
+    pub sketch: String,
+    pub impl_name: String,
+    pub workload_desc: WorkloadDesc,
+    pub per_run: Vec<RunMetrics>,      // length == config.runs (warmup excluded)
+    pub aggregated: AggregatedMetrics, // mean/stddev/CI over per_run
+}
+
+impl BenchReport {
+    pub fn to_jsonl(&self) -> String;   // v1 schema (§4.4)
+    pub fn write_to(&self, path: &Path) -> io::Result<()>;
+}
+```
+
+#### `MetricsSink` (the lower-level hook)
+
+```rust
+pub trait MetricsSink {
+    fn on_update_start(&mut self);
+    fn on_update_end(&mut self);
+    fn on_query_start(&mut self);
+    fn on_query_end(&mut self);
+    fn finalize(self) -> RunMetrics;
+}
+```
+
+Built-in sinks: `NoopSink` (passthrough), `FullSink { mask: MetricsMask }` (offline), `SampledSink` in `sketch-runtime` (for embedded use).
+
+`Probe<S, Sink>` from `sketch-core` (§4.2) is the only caller of these hooks — which is why the same sketch wrapper serves offline benchmarks and runtime samplers.
+
+### 5.4 End-to-end flow
+
+```
+(BenchConfig, Workload, Factory<Sketch>, Optional<GroundTruth>)
+          │
+          ▼
+ items = workload.generate()
+          │
+          ▼
+ for run in 0..(warmup_runs + runs):
+     sketch = factory()
+     sink   = FullSink::new(config.metrics)
+     probe  = Probe::new(sketch, sink)
+     sink.on_run_start()
+       for item in &items { probe.update(item); }
+       if let Some(n) = config.query_count {
+           for q in workload.queries(n) { probe.query(q); }
+       }
+     sink.on_run_end()
+     if run >= warmup_runs:
+         metrics  = sink.finalize()
+         accuracy = ground_truth.as_ref()
+                        .map(|g| g.compare(&probe, &items))
+         per_run.push(metrics.with_accuracy(accuracy))
+          │
+          ▼
+ aggregated = Welford::aggregate(&per_run)
+          │
+          ▼
+ BenchReport → v1 JSONL (§4.4)
+```
+
+### 5.5 Metric collection mechanics
+
+| Metric | Mechanism | Notes |
+|---|---|---|
+| Throughput | `items.len() as f64 / wall_elapsed.as_secs_f64()` | Split for insert and query phases separately |
+| Latency | `hdrhistogram::Histogram<u64>` | Only armed when `MetricsMask::LATENCY` set — zero cost otherwise |
+| Wall clock | `std::time::Instant` at run boundaries | |
+| CPU time | `libc::getrusage(RUSAGE_SELF)` delta (`utime + stime`) | Process only, not children |
+| RSS peak | parse `/proc/self/status:VmHWM` at run end | Linux-only; documented |
+| Heap peak | `tikv_jemalloc_ctl::stats::allocated` sampled | Feature `heap-jemalloc`; `None` when off |
+| Accuracy | sketch-family `GroundTruth::compare` | See §5.6 |
+
+Each metric lives behind a bit in `MetricsMask`. A sink constructs only the recorders its mask enables, so an ACCURACY-only run pays no latency-histogram cost.
+
+### 5.6 Accuracy: the `GroundTruth` trait
+
+```rust
+pub trait GroundTruth<S: Sketch> {
+    type Comparison: Serialize;
+    fn compare(&self, sketch: &S, items: &[S::Input<'_>]) -> Self::Comparison;
+}
+```
+
+Built-in families:
+
+- **Frequency** (CMS, CS) — exact per-key counts from `items`; report `{l1_err, l2_err, relative_err_mean, relative_err_p99}`.
+- **Cardinality** (HLL) — distinct-value count from a `HashSet` over `items`; report `{relative_err_mean, relative_err_p99}`.
+- **Quantile** (KLL) — exact sorted copy; report `max_rank_err` over a 101-point quantile grid.
+- **Top-k** — exact top-k from a `HashMap` count; report `{precision_at_k, recall_at_k}`.
+
+Downstream apps can implement their own `GroundTruth` for domain-specific comparisons.
+
+### 5.7 Aggregation — Welford + 95% CI
+
+`aggregation/welford.rs` is a numerically-stable online accumulator; called once per metric across the N post-warmup runs:
+
+```rust
+pub struct RunStats {
+    pub n: usize,
+    pub mean: f64,
+    pub stddev: f64,        // sample stddev (n-1 divisor)
+    pub ci95_lo: f64,       // mean - 1.96 * stddev / sqrt(n)
+    pub ci95_hi: f64,
+}
+```
+
+CI uses the normal approximation (z = 1.96). For N < 30 the interval is approximate — documented, and easy to tighten by raising `BenchConfig::runs`.
+
+### 5.8 Relationship to `sketch-runtime`
+
+`sketch-runtime` does **not** duplicate the metric implementations; it re-exports them and provides:
+
+- `SampledSink`: a `MetricsSink` that only records on 1/N-th or time-windowed ops.
+- `Exporter` trait + `stdout | file | prometheus | grpc` implementations.
+- A per-window `finalize()` that emits the same `RunMetrics` shape, tagged with a `source` field (`"asap-fusion"`, `"DataCollector"`, …).
+
+So the controller sees the same records whether they came from an offline CI run or a live app — which is what makes the feedback loop in §7 possible.
+
+### 5.9 Worked example — benchmarking HLL
+
+```rust
+use sketch_bench::{BenchRunner, BenchConfig, MetricsMask};
+use sketch_bench::accuracy::cardinality::CardinalityGT;
+use sketch_core::workload::Zipf;
+
+let cfg = BenchConfig {
+    runs: 10,
+    warmup_runs: 3,
+    metrics: MetricsMask::all(),
+    query_count: Some(1),          // HLL has a single cardinality query
+    threads: 1,
+    seed: 42,
+};
+let workload = Zipf::new(1.1, 1_000_000);
+let gt       = CardinalityGT::from_workload(&workload);
+
+let report = BenchRunner::new(cfg, workload)
+    .with_ground_truth(gt)
+    .run(|| hll_oxide::HyperLogLog::new(14));
+
+report.write_to(std::path::Path::new("output/hll_oxide.jsonl"))?;
+```
+
+Emitted JSONL (abbreviated):
+
+```json
+{ "schema_version":1, "sketch":"hll", "impl":"sketch_oxide",
+  "workload":{"shape":"zipf","s":1.1,"size":1000000},
+  "mode":"bench", "runs":10,
+  "bench":{
+    "throughput_items_per_sec":{"mean":4.2e7,"stddev":1.1e6,"ci95":[4.15e7,4.25e7]},
+    "latency_ns":{"p50":21,"p95":48,"p99":120},
+    "cpu_time_ms":{"user":231,"sys":12},
+    "rss_peak_kb":18340, "heap_peak_kb":null,
+    "accuracy":{"relative_error_mean":0.008,"relative_error_p99":0.031}
+  },
+  "source":"cli","timestamp":"..."
+}
+```
+
+### 5.10 Cargo features
+
+| Feature | Default | Effect |
+|---|---|---|
+| `heap-jemalloc` | off | Enables `tikv-jemalloc-ctl` heap-peak metric; forces jemalloc on the linking binary |
+| `hdrhist` | on | Enables `hdrhistogram` latency recorder (off → latency mask is a no-op) |
+| `accuracy-topk` | on | Pulls `HashMap`-based top-k ground truth |
+
+Downstream apps pick the minimum set they need to keep their binary small.
+
+---
+
+## 6. CLI (`sketch-cli` → `sketchlib`)
 
 ```
 sketchlib bench    --sketch hll  --impl oxide --workload zipf-s1.1 --size 1M --runs 10 \
@@ -181,9 +448,9 @@ Both subcommands write the same JSONL schema, so `visualization/` consumes eithe
 
 ---
 
-## 6. Runtime / controller feedback loop
+## 7. Runtime / controller feedback loop
 
-### 6.1 Embedded usage (asap-fusion, DataCollector, ASAPQuery)
+### 7.1 Embedded usage (asap-fusion, DataCollector, ASAPQuery)
 
 ```rust
 use sketch_core::Probe;
@@ -198,13 +465,13 @@ sketch.update(item);            // measured on the sampled path; pass-through ot
 
 Overhead target: `<1%` throughput loss at sampling rate 1/1024. Enforced by a microbench in `sketch-runtime/benches/`.
 
-### 6.2 Exporters
+### 7.2 Exporters
 
 - `stdout`, `file` — dev defaults
 - `prometheus` — scrape endpoint (for generic observability stacks)
 - `grpc` — streaming unary calls to ASAPController (proto in `sketch-runtime/proto/feedback.proto`)
 
-### 6.3 Controller loop (sketch of interaction)
+### 7.3 Controller loop (sketch of interaction)
 
 ```
  asap-fusion / DataCollector / ASAPQuery
@@ -222,7 +489,7 @@ The controller can compare live samples against an offline baseline (same schema
 
 ---
 
-## 7. Code we borrow from asap-fusion
+## 8. Code we borrow from asap-fusion
 
 All adapted, not vendored blindly.
 
@@ -237,7 +504,7 @@ All adapted, not vendored blindly.
 
 ---
 
-## 8. Report compatibility with existing outputs
+## 9. Report compatibility with existing outputs
 
 Existing JSONL under `cpp/output/`, `rust/output/`, `accuracy/`, `throughput/` uses ad-hoc shapes (`{implementation_name, total_nanoseconds}` etc.). Migration:
 
@@ -247,7 +514,7 @@ Existing JSONL under `cpp/output/`, `rust/output/`, `accuracy/`, `throughput/` u
 
 ---
 
-## 9. Overhead + correctness invariants
+## 10. Overhead + correctness invariants
 
 - `sketch-runtime` sampler must cost ≤1% throughput at sample rate 1/1024 — enforced by criterion bench `sketch-runtime/benches/sampler_overhead.rs`.
 - `Probe<S>` without a sink configured is a zero-cost wrapper (`#[inline]`, `PhantomData`).
@@ -256,7 +523,7 @@ Existing JSONL under `cpp/output/`, `rust/output/`, `accuracy/`, `throughput/` u
 
 ---
 
-## 10. Open questions
+## 11. Open questions
 
 - **Jemalloc vs default allocator for embedded consumers.** `tikv-jemalloc-ctl` gives precise heap peak but forces jemalloc on the linking binary. Possible resolution: feature flag `heap-jemalloc` (off by default), fall back to RSS-only.
 - **Controller proto stability.** Who owns `feedback.proto` — here, or in ASAPController? Recommendation: here, versioned, imported by controller.
