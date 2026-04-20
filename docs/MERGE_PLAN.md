@@ -2,7 +2,7 @@
 
 Turns two repos into one, under the design in [`DESIGN.md`](DESIGN.md).
 
-- **Keeper repo**: `sketchlib-bench` (this repo). ~13k LOC Rust + C++, mature harness, visualization, multi-language. Becomes `sketchlib-tool` (brand / CLI), repo name unchanged.
+- **Keeper repo**: `sketchlib-bench` (this repo). ~13k LOC Rust + C++, mature harness, visualization, multi-language. Ships as brand `sketchlib-tool` with CLI binary `sketchlib`; repo name unchanged.
 - **Absorbed repo**: `sketch-profiler`. ~75 LOC Rust, prototype. Only real content is `src/data_gen/` (workload shape primitives) and a `sketchlib-rust` git submodule.
 
 ---
@@ -63,12 +63,23 @@ Then relocate the valuable bits and drop the rest:
 
 ### Phase 4 — Populate `sketch-bench`
 
-- [ ] Port timing primitives (wall + CPU) from existing `benchmark/` crate.
-- [ ] Add `metrics/memory.rs`: `/proc/self/status` `VmHWM` + optional `tikv-jemalloc-ctl` behind the `heap-jemalloc` feature.
-- [ ] Add `metrics/latency.rs` using `hdrhistogram`.
-- [ ] Add `aggregation.rs`: mean / stddev / 95% CI over N runs (existing benches already run 10).
-- [ ] Move ground-truth accuracy comparators from `accuracy/` into `sketch-bench/accuracy/`.
-- [ ] Wire one existing binary (`rust/src/bin/hll_oxide.rs`) through `sketch-bench::runner` end-to-end as the proof-of-shape.
+Target module layout: DESIGN §5.2. Target API: DESIGN §5.3.
+
+- [ ] `src/config.rs` — `BenchConfig` + `MetricsMask` bitflags (THROUGHPUT | LATENCY | CPU | MEMORY | ACCURACY).
+- [ ] `src/metrics/mod.rs` — `MetricsSink` trait + `NoopSink` (zero-cost) + `FullSink`.
+- [ ] `src/metrics/time.rs` — `WallClock` (`Instant`) + `CpuTime` (`getrusage(RUSAGE_SELF)`); port timing primitives from the existing `benchmark/` crate.
+- [ ] `src/metrics/latency.rs` — `LatencyRecorder` using `hdrhistogram`; inert when `MetricsMask::LATENCY` unset.
+- [ ] `src/metrics/memory.rs` — `Rss` from `/proc/self/status:VmHWM`; `JemallocPeak` via `tikv-jemalloc-ctl` behind the `heap-jemalloc` feature.
+- [ ] `src/metrics/throughput.rs` — `ItemsPerSec` (insert + query phases separately).
+- [ ] `src/aggregation/welford.rs` — numerically-stable online mean + variance.
+- [ ] `src/aggregation/mod.rs` — `RunStats` (mean / stddev / 95% CI, z=1.96 normal approx).
+- [ ] `src/accuracy/mod.rs` — `GroundTruth<S: Sketch>` trait; adopt the existing comparators under the top-level `accuracy/` dir.
+- [ ] `src/accuracy/{frequency,cardinality,quantile,topk}.rs` — default impls per sketch family (CMS/CS, HLL, KLL, Top-k).
+- [ ] `src/runner.rs` — `BenchRunner<S, W, G>` taking a fresh-sketch factory closure (`FnMut() -> S`), running warmup + N measured iterations, feeding `Probe<S, FullSink>`.
+- [ ] `src/report.rs` — `BenchReport` + `per_run` + `aggregated`; serialize to the v1 JSONL schema in `sketch-core`.
+- [ ] Cargo features: `heap-jemalloc` (off by default), `hdrhist` (on), `accuracy-topk` (on).
+- [ ] `benches/self_overhead.rs` — criterion bench proving `Probe<_, NoopSink>` is a no-op.
+- [ ] Wire one existing binary (`rust/src/bin/hll_oxide.rs`) end-to-end through `BenchRunner` as the proof-of-shape.
 
 ### Phase 5 — Populate `sketch-profile`
 
@@ -80,16 +91,20 @@ Then relocate the valuable bits and drop the rest:
 
 ### Phase 6 — Populate `sketch-runtime`
 
-- [ ] `sampler/`: every-Nth-op sampler, time-window sampler.
+Embedded-benchmarking only (DESIGN §7.1). No `sketch-profile` deps (CI-enforced in Phase 5).
+
+- [ ] Re-export `sketch-bench` metric types so the embedded path produces the **same `RunMetrics` record shape** as offline runs (DESIGN §5.8). No duplicate implementations.
+- [ ] `sampler/`: `Sampler::every_n(N)` (every-Nth-op) and `Sampler::time_window(d)`; both implement `MetricsSink` (one `RunMetrics` per window).
 - [ ] `exporter/`: `stdout`, `file`, `prometheus`, `grpc`.
-- [ ] Define `sketch-runtime/proto/feedback.proto` for the controller channel.
-- [ ] Overhead bench `sketch-runtime/benches/sampler_overhead.rs` — must show ≤1% throughput loss at 1/1024 sampling.
+- [ ] `proto/feedback.proto` — streaming schema for the ASAPController channel (version-pinned with `sketch-core` schema v1).
+- [ ] Overhead bench `benches/sampler_overhead.rs` — must show ≤1% throughput loss at 1/1024 sampling vs a `Probe<_, NoopSink>` baseline.
 
 ### Phase 7 — Unified CLI `sketch-cli` / `sketchlib`
 
-- [ ] `sketchlib bench …` — dispatches to `sketch-bench::runner`.
+- [ ] `sketchlib bench …` — dispatches to `sketch-bench::BenchRunner`.
 - [ ] `sketchlib profile …` — dispatches to `sketch-profile`.
 - [ ] `sketchlib workload generate|describe` — the workload toolbox.
+- [ ] CLI-side YAML config loader (sweep matrix with `{SIZE}` expansion, borrowed pattern from asap-fusion `experiments/configs/`); pairs with the `sketch-core/workload` side added in Phase 3 (DESIGN §8).
 - [ ] Migrate `run_all_benchmarks.sh` to call `sketchlib` subcommands; keep the shell script as a thin wrapper until all binaries are gone.
 
 ### Phase 8 — Migrate legacy binaries + viz
