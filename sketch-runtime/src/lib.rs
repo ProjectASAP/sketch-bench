@@ -33,6 +33,8 @@ pub mod sampler;
 #[path = "noop.rs"]
 pub mod sampler;
 
-pub use exporter::{Exporter, FileExporter, NoopExporter, StdoutExporter};
+pub use exporter::{Exporter, FanOutExporter, FileExporter, NoopExporter, StdoutExporter};
+#[cfg(feature = "push")]
+pub use exporter::{PushConfig, PushExporter, PushStats, PushStatsSnapshot};
 pub use sampler::{Mode, Sampler, Tag};
 pub use switch::RuntimeSwitch;
