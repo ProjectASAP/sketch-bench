@@ -1,4 +1,5 @@
-//! `Exporter` trait + concrete sinks (`stdout`, `file`, `noop`).
+//! `Exporter` trait + concrete sinks (`stdout`, `file`, `grpc`,
+//! `noop`, `fanout`).
 //!
 //! The trait is deliberately simple — one `export(&Record)`
 //! method, no `Result` on the hot path — because embedded
@@ -11,16 +12,16 @@
 
 pub mod fanout;
 pub mod file;
+#[cfg(feature = "grpc")]
+pub mod grpc;
 pub mod noop;
-#[cfg(feature = "push")]
-pub mod push;
 pub mod stdout;
 
 pub use fanout::FanOutExporter;
 pub use file::FileExporter;
+#[cfg(feature = "grpc")]
+pub use grpc::{GrpcConfig, GrpcExporter, GrpcStats, GrpcStatsSnapshot};
 pub use noop::NoopExporter;
-#[cfg(feature = "push")]
-pub use push::{PushConfig, PushExporter, PushStats, PushStatsSnapshot};
 pub use stdout::StdoutExporter;
 
 use sketch_core::report::Record;
