@@ -1,0 +1,64 @@
+# Workspace manifest for sketchlib-bench → sketchlib-tool.
+#
+# Phase 2 of docs/MERGE_PLAN.md: convert the repo into a cargo
+# workspace so the new `sketch-*` crates can share deps and the
+# existing `rust/` crate keeps building unchanged while it's
+# migrated piece by piece.
+[workspace]
+resolver = "2"
+members = [
+    "sketch-core",
+    "sketch-bench",
+    "sketch-cli",
+    "rust",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ProjectASAP/sketchlib-bench"
+
+[workspace.dependencies]
+# Serde + JSON for the v1 report schema (docs/DESIGN.md §4.4).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Time / stats.
+chrono = { version = "0.4", features = ["serde"] }
+hdrhistogram = "7"
+
+# Memory metrics (opt-in via feature).
+tikv-jemalloc-ctl = "0.5"
+tikv-jemallocator = "0.5"
+
+# RNG for workload generators.
+rand = "0.8"
+rand_distr = "0.4"
+rand_xoshiro = "0.6"
+
+# CLI parsing.
+clap = { version = "4", features = ["derive"] }
+
+# Errors.
+thiserror = "1"
+anyhow = "1"
+
+# Bitflags for MetricsMask.
+bitflags = "2"
+
+# Sketch impls used by the 21 wrappers.
+sketch_oxide = "0.1.6"
+datasketches = "0.2.0"
+asap_sketchlib = { path = "../asap_sketchlib", features = ["experimental"] }
+
+# Internal workspace crates.
+sketch-core = { path = "sketch-core" }
+sketch-bench = { path = "sketch-bench" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

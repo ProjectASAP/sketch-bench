@@ -2,9 +2,8 @@
 mod bench_common;
 
 use bench_common::{
-    default_data_path, print_results, run_benchmark_i64, BenchmarkConfig,
-    DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
-    HLL_PRECISION,
+    default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
+    DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, HLL_PRECISION,
 };
 use datasketches::hll::{HllSketch, HllType};
 

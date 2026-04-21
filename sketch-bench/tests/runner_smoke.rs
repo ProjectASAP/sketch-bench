@@ -1,0 +1,89 @@
+//! End-to-end smoke test for `BenchRunner` against a toy
+//! counting sketch. Proves: sketch construction → N-run +
+//! warmup loop → metrics aggregation → v1 JSONL record.
+
+use sketch_bench::accuracy::cardinality::CardinalityGT;
+use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
+use sketch_core::sketch::Sketch;
+use sketch_core::workload::UniformI64;
+
+/// Trivial exact-counting "sketch" — not a real sketch, but
+/// exercises the full trait + runner machinery against a known
+/// ground truth.
+struct ExactCounter {
+    seen: std::collections::HashSet<i64>,
+}
+
+impl Sketch for ExactCounter {
+    type Item = i64;
+    type Query = ();
+    type Answer = f64;
+    fn update(&mut self, v: &i64) {
+        self.seen.insert(*v);
+    }
+    fn query(&self, _: ()) -> f64 {
+        self.seen.len() as f64
+    }
+    fn memory_bytes(&self) -> usize {
+        self.seen.capacity() * std::mem::size_of::<i64>()
+    }
+}
+
+#[test]
+fn runner_end_to_end_produces_valid_jsonl() {
+    let workload = UniformI64::new(10_000, 5_000, 42);
+    let cfg = BenchConfig {
+        runs: 3,
+        warmup_runs: 1,
+        metrics: MetricsMask::all(),
+        query_count: Some(1),
+        ..Default::default()
+    };
+    let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
+    let report = runner.run(
+        || ExactCounter {
+            seen: Default::default(),
+        },
+        Some(&CardinalityGT),
+    );
+
+    assert_eq!(report.per_run.len(), 3);
+    let bench = &report.bench;
+    let tp = bench
+        .throughput_items_per_sec
+        .as_ref()
+        .expect("throughput collected");
+    assert!(tp.mean > 0.0);
+    assert_eq!(tp.n, 3);
+
+    // v1 JSONL record round-trips.
+    let jsonl = report.to_jsonl();
+    let back: sketch_core::Record = serde_json::from_str(&jsonl).unwrap();
+    assert_eq!(back.sketch, "exact");
+    assert_eq!(back.impl_name, "smoke");
+    assert_eq!(back.runs, 3);
+    assert!(back.bench.as_ref().unwrap().accuracy.is_some());
+}
+
+#[test]
+fn runner_respects_mask_noop_when_empty() {
+    let workload = UniformI64::new(1_000, 100, 1);
+    let cfg = BenchConfig {
+        runs: 2,
+        warmup_runs: 0,
+        metrics: MetricsMask::empty(),
+        query_count: None,
+        ..Default::default()
+    };
+    let report = BenchRunner::new(cfg, &workload, "exact", "empty").run(
+        || ExactCounter {
+            seen: Default::default(),
+        },
+        None::<&CardinalityGT>,
+    );
+    // With no mask bits, we still populate throughput + wall
+    // time (always-on in FullSink), but latency / accuracy stay
+    // absent.
+    assert!(report.bench.throughput_items_per_sec.is_some());
+    assert!(report.bench.accuracy.is_none());
+}

@@ -1,6 +1,32 @@
 # `sketchlib-tool` (repo: `sketchlib-bench`)
 
-> Status: **in transition**. This repo is being merged with [`sketch-profiler`](../sketch-profiler) into a single benchmarking + profiling tool and embeddable library for the ASAP project's sketch algorithms. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
+
+## Quick start
+
+```
+cargo run -p sketch-cli --release -- list-impls
+cargo run -p sketch-cli --release -- bench \
+    --sketch hll --impl oxide \
+    --workload zipf --size 1000000 --zipf-s 1.1 \
+    --runs 10 --warmup-runs 3 \
+    --metrics throughput,latency,cpu,memory \
+    --report out.jsonl
+```
+
+`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over that pair and writes a v1 JSONL record (schema in `sketch-core::report::Record`). Feed the JSONL into `visualization/`.
+
+Covered families / impls (21 total):
+
+| family | implementations |
+|---|---|
+| `hll` | `oxide`, `datasketches`, `lib` (asap_sketchlib) |
+| `kll` | `oxide`, `lib` |
+| `cms` | `oxide`, `datasketches`, `lib-{fixedmatrix-custom-fast,fixedmatrix-fast,vector2d-fast,vector2d-regular}` |
+| `countsketch` | `oxide`, `lib-{fixedmatrix-fast,vector2d-fast,vector2d-regular}` |
+| `elastic` | `oxide`, `lib` |
+| `nitro` | `oxide`, `lib` |
+| `univmon` | `oxide`, `lib` |
 
 `sketchlib-tool` is:
 

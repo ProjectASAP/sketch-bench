@@ -1,12 +1,12 @@
 #[path = "../bench_common.rs"]
 mod bench_common;
 
+use asap_sketchlib::{NitroBatch, Vector2D};
 use bench_common::{
     default_data_path, print_results, run_benchmark_i64_batch, BenchmarkConfig, COLS,
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
     NITRO_RATE, ROWS,
 };
-use asap_sketchlib::{NitroBatch, Vector2D};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

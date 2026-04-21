@@ -1,0 +1,24 @@
+[package]
+name = "sketch-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified `sketchlib` CLI: `bench` + `profile` + `workload` subcommands over every sketch impl in the repo."
+
+[[bin]]
+name = "sketchlib"
+path = "src/main.rs"
+
+[dependencies]
+sketch-core.workspace = true
+sketch-bench.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+# Every wrapped sketch implementation.
+sketch_oxide.workspace = true
+datasketches.workspace = true
+asap_sketchlib.workspace = true
