@@ -63,6 +63,22 @@ impl LatencyRecorder {
         }
     }
 
+    /// Record a pre-measured duration in nanoseconds. Used by
+    /// `sketch-runtime::Sampler` which measures the sampled
+    /// op's wall-time outside the recorder.
+    #[inline]
+    pub fn record_ns(&mut self, ns: u64) {
+        #[cfg(feature = "hdrhist")]
+        {
+            let _ = self.hist.record(ns.max(1));
+        }
+        #[cfg(not(feature = "hdrhist"))]
+        {
+            let _ = ns;
+            self.count = self.count.saturating_add(1);
+        }
+    }
+
     pub fn snapshot(&self) -> LatencySnapshot {
         #[cfg(feature = "hdrhist")]
         {

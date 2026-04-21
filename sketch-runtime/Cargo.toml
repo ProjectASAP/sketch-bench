@@ -1,0 +1,28 @@
+[package]
+name = "sketch-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded sketch-benchmark layer — `Sampler` + `Exporter` so downstream apps (asap-fusion, DataCollector, ASAPQuery) can always-on report sketch metrics to ASAPController using the v1 JSONL schema from sketch-core."
+
+[features]
+# Turn `Sampler` into a real sampler with mode dispatch + exporter
+# I/O. `default-features = false` makes `Sampler` a ZST alias of
+# `NoopSink` — compile-time off with zero binary / runtime cost.
+default = ["enabled"]
+enabled = []
+
+[dependencies]
+sketch-core.workspace = true
+sketch-bench.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3.20.0"
+
+[[bench]]
+name = "sampler_overhead"
+harness = false
