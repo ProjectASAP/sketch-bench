@@ -5,34 +5,38 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Embedded sketch-benchmark layer — `Sampler` + `Exporter` so downstream apps (asap-fusion, DataCollector, ASAPQuery) can always-on report sketch metrics to ASAPController using the v1 JSONL schema from sketch-core."
+build = "build.rs"
 
 [features]
 # Turn `Sampler` into a real sampler with mode dispatch + exporter
 # I/O. `default-features = false` makes `Sampler` a ZST alias of
 # `NoopSink` — compile-time off with zero binary / runtime cost.
-default = ["enabled", "push", "compress-zstd"]
+default = ["enabled", "grpc"]
 enabled = []
-# Push-based HTTP streaming to the controller
-# (`POST /api/v1/runtime-samples`). Required by `PushExporter`.
-push = ["dep:reqwest", "dep:tokio"]
-# zstd body compression for `PushExporter`. On by default —
-# halves bytes-on-wire for JSONL-heavy observability records.
-compress-zstd = ["dep:zstd"]
+# gRPC streaming exporter talking to the ASAPController's
+# RuntimeSamples service. Pulls in tonic + prost; the client
+# negotiates gzip compression on the wire via HTTP/2.
+grpc = ["dep:tonic", "dep:prost", "dep:tokio"]
 
 [dependencies]
 sketch-core.workspace = true
 sketch-bench.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
+tonic = { version = "0.12", features = ["gzip"], optional = true }
+prost = { version = "0.13", optional = true }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"], optional = true }
-zstd = { version = "0.13", optional = true }
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.20.0"
 tokio = { version = "1", features = ["full"] }
-axum = "0.7"
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = "0.12"
+prost = "0.13"
 
 [[bench]]
 name = "sampler_overhead"
