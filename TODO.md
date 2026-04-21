@@ -10,6 +10,7 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 | 3 | `sketch-core`: `Sketch` trait, `Probe`, workloads, v1 JSONL schema | ✅ |
 | 4 | `sketch-bench`: `BenchRunner`, metrics (wall / CPU / RSS / latency / throughput), accuracy comparators (freq / cardinality / quantile / topk), Welford aggregator | ✅ |
 | 7-lite | `sketch-cli`: unified `sketchlib` binary with 21 sketch impls wired end-to-end via a `(family, impl)` dispatch table | ✅ |
+| 6-lite | `sketch-runtime`: `Sampler` (disabled / every-n / time-window), `RuntimeSwitch`, stdout + file + noop exporters, compile-time feature gate (`--no-default-features` → ZST fallback), overhead microbench | ✅ |
 
 ## Deferred (explicitly out-of-scope for this first cut)
 
@@ -24,14 +25,21 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 
 **Why deferred**: `perf_event_open` needs elevated kernel perms + is Linux-only. Landing the library + bench story first unblocks the paper's accuracy-profile claim (ASAPQuery-backend #2) without cross-OS / privilege complications.
 
-### `sketch-runtime` (MERGE_PLAN Phase 6)
+### `sketch-runtime` remaining pieces (MERGE_PLAN Phase 6)
 
-- `Sampler::every_n(N)` + `Sampler::time_window(d)` implementing `MetricsSink`
-- Exporters: stdout / file / prometheus / gRPC
-- `proto/feedback.proto` — streaming schema for ASAPController channel
-- Overhead microbench (≤1% at 1/1024 sampling)
+Core landed — `Sampler`, `RuntimeSwitch`, stdout / file / noop
+exporters, compile-time feature gate. Still open:
 
-**Why deferred**: the paper's "live samples feed controller" loop is separately tracked in the DataCollector repo (see `DataCollector/TODO.md` blockers #1-#2). We'll land `sketch-runtime` when the controller side is ready to consume the gRPC stream.
+- **`PrometheusExporter`** — `/metrics` endpoint that scrapes
+  the last window per probe
+- **`GrpcExporter`** + `proto/feedback.proto` — streaming
+  unary to ASAPController
+- **Tightening** the `sample_every_n = power-of-2` hot path
+  (replace modulo with bitwise AND) to bring measured overhead
+  closer to the design-doc ≤1% target on real sketches
+- **Additional bench config** exposing MEMORY + CPU for
+  per-window emission (today `Sampler` only captures
+  throughput + latency in the window record)
 
 ### C++ binaries → v1 JSONL migration (MERGE_PLAN Phase 8)
 

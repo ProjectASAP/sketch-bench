@@ -9,6 +9,7 @@ resolver = "2"
 members = [
     "sketch-core",
     "sketch-bench",
+    "sketch-runtime",
     "sketch-cli",
     "rust",
 ]
@@ -56,6 +57,7 @@ asap_sketchlib = { path = "../asap_sketchlib", features = ["experimental"] }
 # Internal workspace crates.
 sketch-core = { path = "sketch-core" }
 sketch-bench = { path = "sketch-bench" }
+sketch-runtime = { path = "sketch-runtime" }
 
 [profile.release]
 opt-level = 3
