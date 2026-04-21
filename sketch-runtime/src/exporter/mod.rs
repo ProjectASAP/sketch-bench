@@ -9,12 +9,18 @@
 //! single `Arc<dyn Exporter>` be shared across many `Probe`s
 //! without forcing the caller to wrap it themselves.
 
+pub mod fanout;
 pub mod file;
 pub mod noop;
+#[cfg(feature = "push")]
+pub mod push;
 pub mod stdout;
 
+pub use fanout::FanOutExporter;
 pub use file::FileExporter;
 pub use noop::NoopExporter;
+#[cfg(feature = "push")]
+pub use push::{PushConfig, PushExporter, PushStats, PushStatsSnapshot};
 pub use stdout::StdoutExporter;
 
 use sketch_core::report::Record;

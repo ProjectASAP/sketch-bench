@@ -10,18 +10,29 @@ description = "Embedded sketch-benchmark layer — `Sampler` + `Exporter` so dow
 # Turn `Sampler` into a real sampler with mode dispatch + exporter
 # I/O. `default-features = false` makes `Sampler` a ZST alias of
 # `NoopSink` — compile-time off with zero binary / runtime cost.
-default = ["enabled"]
+default = ["enabled", "push", "compress-zstd"]
 enabled = []
+# Push-based HTTP streaming to the controller
+# (`POST /api/v1/runtime-samples`). Required by `PushExporter`.
+push = ["dep:reqwest", "dep:tokio"]
+# zstd body compression for `PushExporter`. On by default —
+# halves bytes-on-wire for JSONL-heavy observability records.
+compress-zstd = ["dep:zstd"]
 
 [dependencies]
 sketch-core.workspace = true
 sketch-bench.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"], optional = true }
+zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.20.0"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
 
 [[bench]]
 name = "sampler_overhead"
