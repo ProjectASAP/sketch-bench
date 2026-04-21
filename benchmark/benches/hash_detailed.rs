@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use asap_sketchlib::SEEDLIST;
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use asap_sketchlib::SEEDLIST;
 use twox_hash::{
     xxhash3_64::Hasher as Xxh3_64, xxhash3_128::Hasher as Xxh3_128, xxhash32::Hasher as XxHash32,
     xxhash64::Hasher as XxHash64,

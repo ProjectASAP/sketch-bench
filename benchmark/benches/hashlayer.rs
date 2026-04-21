@@ -1,9 +1,9 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use rand::{Rng, SeedableRng, rngs::StdRng};
 use asap_sketchlib::{
     Count, CountMin, DataInput, DefaultXxHasher, ErtlMLE, FastPath, HyperLogLog, RegularPath,
     Vector2D, sketch_framework::hashlayer::HashSketchEnsemble,
 };
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const SAMPLE_COUNT: usize = 10_000;
 const RNG_SEED: u64 = 0x5eed_c0de_1234_5678;

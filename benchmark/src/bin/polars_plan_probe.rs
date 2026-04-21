@@ -7,28 +7,9 @@ use std::time::Instant;
 const DEFAULT_DATA_PATH: &str = "../input/benchmark_data_10m_int64_zipf_s11_k500000.bin";
 const NUM_PERCENTILES: usize = 101;
 
-#[derive(Clone, Copy, Debug)]
-enum Workload {
-    Cardinality,
-    Frequency,
-    Quantile,
-}
-
-impl Workload {
-    fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
-        match value {
-            "cardinality" => Ok(Self::Cardinality),
-            "frequency" => Ok(Self::Frequency),
-            "quantile" => Ok(Self::Quantile),
-            _ => Err(format!("unsupported workload: {value}").into()),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Args {
     data: PathBuf,
-    workload: Workload,
     repeats: usize,
     show_profile: bool,
     show_details: bool,
@@ -36,39 +17,29 @@ struct Args {
 
 #[derive(Clone, Copy, Debug)]
 struct Timings {
-    build_lazy_dsl: u128,
-    collect_schema: u128,
-    explain_unoptimized: u128,
-    explain_optimized: u128,
-    to_alp_optimized_ir: u128,
-    collect_execute: u128,
-    profile_execute: u128,
+    load_dataset: u128,
+    input_df_build: u128,
+    lazy_plan_build: u128,
+    result_collect: u128,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProbeSpec {
+    kind: &'static str,
+    snippet: &'static str,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
-    let ints = load_i64_dataset(&args.data)?;
-    let floats = ints.iter().map(|&v| v as f64).collect::<Vec<_>>();
 
+    println!("probe.kind=polars_plan_probe");
     println!("data={}", args.data.display());
-    println!("rows={}", ints.len());
-    println!("workload={:?}", args.workload);
     println!("repeats={}", args.repeats);
 
     for repeat in 1..=args.repeats {
         println!();
         println!("repeat={repeat}");
-        match args.workload {
-            Workload::Cardinality => {
-                probe_cardinality(&ints, args.show_profile, args.show_details)?
-            }
-            Workload::Frequency => {
-                probe_frequency(&ints, args.show_profile, args.show_details)?
-            }
-            Workload::Quantile => {
-                probe_quantile(&floats, args.show_profile, args.show_details)?
-            }
-        }
+        run_all_probes(&args)?;
     }
 
     Ok(())
@@ -76,7 +47,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
     let mut data = PathBuf::from(DEFAULT_DATA_PATH);
-    let mut workload = Workload::Cardinality;
     let mut repeats = 1usize;
     let mut show_profile = false;
     let mut show_details = false;
@@ -85,16 +55,13 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--data" => data = PathBuf::from(args.next().ok_or("--data requires a path")?),
-            "--workload" => {
-                workload = Workload::parse(&args.next().ok_or("--workload requires a value")?)?
-            }
             "--repeats" => repeats = args.next().ok_or("--repeats requires a value")?.parse()?,
             "--profile" => show_profile = true,
             "--details" => show_details = true,
             "--help" | "-h" => {
                 println!(
                     "Usage: cargo run --release --bin polars_plan_probe -- \
-[--data PATH] [--workload cardinality|frequency|quantile] [--repeats N] [--profile] [--details]"
+[--data PATH] [--repeats N] [--profile] [--details]"
                 );
                 std::process::exit(0);
             }
@@ -104,197 +71,307 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
 
     Ok(Args {
         data,
-        workload,
         repeats,
         show_profile,
         show_details,
     })
 }
 
-fn probe_cardinality(
-    values: &[i64],
-    show_profile: bool,
-    show_details: bool,
-) -> Result<(), Box<dyn Error>> {
-    let df = build_i64_df(values)?;
+fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
+    let load_started = Instant::now();
+    let ints = load_i64_dataset(&args.data)?;
+    let load_elapsed = load_started.elapsed().as_nanos();
+    let floats = ints.iter().map(|&value| value as f64).collect::<Vec<_>>();
 
-    measure_lazy_pipeline(
-        "cardinality",
-        || {
-            df.clone()
-                .lazy()
-                .select([col("v").n_unique().alias("exact_cardinality")])
+    println!("rows={}", ints.len());
+
+    run_int_probe(
+        ProbeSpec {
+            kind: "exact_cardinality",
+            snippet: r#"df.lazy().select([col("v").n_unique().alias("exact_cardinality")])"#,
         },
-        show_profile,
-        show_details,
-    )
-}
+        &ints,
+        load_elapsed,
+        |df| df.lazy().select([col("v").n_unique().alias("exact_cardinality")]),
+        args,
+    )?;
 
-fn probe_frequency(
-    values: &[i64],
-    show_profile: bool,
-    show_details: bool,
-) -> Result<(), Box<dyn Error>> {
-    let df = build_i64_df(values)?;
+    run_int_probe(
+        ProbeSpec {
+            kind: "approx_cardinality",
+            snippet: r#"df.lazy().select([col("v").approx_n_unique().alias("approx_cardinality")])"#,
+        },
+        &ints,
+        load_elapsed,
+        |df| {
+            df.lazy()
+                .select([col("v").approx_n_unique().alias("approx_cardinality")])
+        },
+        args,
+    )?;
 
-    measure_lazy_pipeline(
-        "frequency",
-        || {
-            df.clone()
+    run_float_probe(
+        ProbeSpec {
+            kind: "quantile",
+            snippet: r#"df.lazy().select(build_quantile_exprs())"#,
+        },
+        &floats,
+        load_elapsed,
+        |df| df.lazy().select(build_quantile_exprs()),
+        args,
+    )?;
+
+    run_int_probe(
+        ProbeSpec {
+            kind: "frequency",
+            snippet: r#"df.lazy().group_by([col("v")]).agg([len().alias("count")])"#,
+        },
+        &ints,
+        load_elapsed,
+        |df| {
+            df.lazy()
+                .group_by([col("v")])
+                .agg([len().alias("count")])
+                .sort(
+                    ["count", "v"],
+                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
+                )
+        },
+        args,
+    )?;
+
+    run_float_probe(
+        ProbeSpec {
+            kind: "cardinality_plus_quantile",
+            snippet: r#"df.lazy().select([col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), build_quantile_exprs()...])"#,
+        },
+        &floats,
+        load_elapsed,
+        |df| {
+            let mut exprs = vec![
+                col("v").n_unique().alias("exact_cardinality"),
+                col("v").approx_n_unique().alias("approx_cardinality"),
+            ];
+            exprs.extend(build_quantile_exprs());
+            df.lazy().select(exprs)
+        },
+        args,
+    )?;
+
+    run_int_probe(
+        ProbeSpec {
+            kind: "cardinality_plus_frequency",
+            snippet: r#"global_cardinality.cross_join(grouped_frequency)"#,
+        },
+        &ints,
+        load_elapsed,
+        |df| {
+            let global = df.clone().lazy().select([
+                col("v").n_unique().alias("exact_cardinality"),
+                col("v").approx_n_unique().alias("approx_cardinality"),
+            ]);
+            let grouped = df
                 .lazy()
                 .group_by([col("v")])
                 .agg([len().alias("count")])
+                .sort(
+                    ["count", "v"],
+                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
+                );
+            global.cross_join(grouped, None)
         },
-        show_profile,
-        show_details,
-    )
+        args,
+    )?;
+
+    run_float_probe(
+        ProbeSpec {
+            kind: "quantile_plus_frequency",
+            snippet: r#"global_quantiles.cross_join(grouped_frequency)"#,
+        },
+        &floats,
+        load_elapsed,
+        |df| {
+            let global = df.clone().lazy().select(build_quantile_exprs());
+            let grouped = df
+                .lazy()
+                .group_by([col("v")])
+                .agg([len().alias("count")])
+                .sort(
+                    ["count", "v"],
+                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
+                );
+            global.cross_join(grouped, None)
+        },
+        args,
+    )?;
+
+    run_float_probe(
+        ProbeSpec {
+            kind: "cardinality_plus_quantile_plus_frequency",
+            snippet: r#"global_cardinality_and_quantiles.cross_join(grouped_frequency)"#,
+        },
+        &floats,
+        load_elapsed,
+        |df| {
+            let mut exprs = vec![
+                col("v").n_unique().alias("exact_cardinality"),
+                col("v").approx_n_unique().alias("approx_cardinality"),
+            ];
+            exprs.extend(build_quantile_exprs());
+            let global = df.clone().lazy().select(exprs);
+            let grouped = df
+                .lazy()
+                .group_by([col("v")])
+                .agg([len().alias("count")])
+                .sort(
+                    ["count", "v"],
+                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
+                );
+            global.cross_join(grouped, None)
+        },
+        args,
+    )?;
+
+    Ok(())
 }
 
-fn probe_quantile(
-    values: &[f64],
-    show_profile: bool,
-    show_details: bool,
-) -> Result<(), Box<dyn Error>> {
-    let df = build_f64_df(values)?;
-    let quantile_exprs = build_quantile_exprs();
-
-    measure_lazy_pipeline(
-        "quantile",
-        || df.clone().lazy().select(quantile_exprs.clone()),
-        show_profile,
-        show_details,
-    )
-}
-
-fn measure_lazy_pipeline<F>(
-    label: &str,
+fn run_int_probe<F>(
+    spec: ProbeSpec,
+    values: &[i64],
+    load_elapsed: u128,
     build_lazy: F,
-    show_profile: bool,
-    show_details: bool,
+    args: &Args,
 ) -> Result<(), Box<dyn Error>>
 where
-    F: Fn() -> LazyFrame,
+    F: Fn(DataFrame) -> LazyFrame,
 {
-    let build_started = Instant::now();
-    let lazy = build_lazy();
-    let build_elapsed = build_started.elapsed().as_nanos();
+    let df_started = Instant::now();
+    let df = build_i64_df(values)?;
+    let df_elapsed = df_started.elapsed().as_nanos();
 
-    let mut schema_lazy = lazy.clone();
-    let schema_started = Instant::now();
-    let schema = schema_lazy.collect_schema()?;
-    let schema_elapsed = schema_started.elapsed().as_nanos();
+    run_probe(spec, df, load_elapsed, df_elapsed, build_lazy, args)
+}
 
-    let explain_unopt_started = Instant::now();
-    let explain_unopt = lazy.clone().explain(false)?;
-    let explain_unopt_elapsed = explain_unopt_started.elapsed().as_nanos();
+fn run_float_probe<F>(
+    spec: ProbeSpec,
+    values: &[f64],
+    load_elapsed: u128,
+    build_lazy: F,
+    args: &Args,
+) -> Result<(), Box<dyn Error>>
+where
+    F: Fn(DataFrame) -> LazyFrame,
+{
+    let df_started = Instant::now();
+    let df = build_f64_df(values)?;
+    let df_elapsed = df_started.elapsed().as_nanos();
 
-    let explain_opt_started = Instant::now();
-    let explain_opt = lazy.clone().explain(true)?;
-    let explain_opt_elapsed = explain_opt_started.elapsed().as_nanos();
+    run_probe(spec, df, load_elapsed, df_elapsed, build_lazy, args)
+}
 
-    let alp_started = Instant::now();
-    let alp = lazy.clone().to_alp_optimized()?;
-    let alp_elapsed = alp_started.elapsed().as_nanos();
-    std::hint::black_box(&alp);
+fn run_probe<F>(
+    spec: ProbeSpec,
+    df: DataFrame,
+    load_elapsed: u128,
+    df_elapsed: u128,
+    build_lazy: F,
+    args: &Args,
+) -> Result<(), Box<dyn Error>>
+where
+    F: Fn(DataFrame) -> LazyFrame,
+{
+    println!();
+    println!("query.kind={}", spec.kind);
+    println!("query.snippet={}", spec.snippet);
+
+    let lazy_started = Instant::now();
+    let lazy = build_lazy(df.clone());
+    let lazy_elapsed = lazy_started.elapsed().as_nanos();
 
     let collect_started = Instant::now();
-    let out = lazy.clone().collect()?;
+    let result = lazy.clone().collect()?;
     let collect_elapsed = collect_started.elapsed().as_nanos();
-    std::hint::black_box(&out);
 
-    // This measures execution again, but gives per-node timing from Polars itself.
-    let profile_started = Instant::now();
-    let (_profile_out, profile_df) = lazy.profile()?;
-    let profile_elapsed = profile_started.elapsed().as_nanos();
-
-    let timings = Timings {
-        build_lazy_dsl: build_elapsed,
-        collect_schema: schema_elapsed,
-        explain_unoptimized: explain_unopt_elapsed,
-        explain_optimized: explain_opt_elapsed,
-        to_alp_optimized_ir: alp_elapsed,
-        collect_execute: collect_elapsed,
-        profile_execute: profile_elapsed,
+    let result_schema = result.schema().clone();
+    let lazy_plan_unoptimized = if args.show_details {
+        Some(lazy.clone().explain(false)?)
+    } else {
+        None
+    };
+    let lazy_plan_optimized = if args.show_details {
+        Some(lazy.clone().explain(true)?)
+    } else {
+        None
+    };
+    let profile_df = if args.show_profile {
+        Some(lazy.profile()?.1)
+    } else {
+        None
     };
 
-    print_summary(label, timings);
-    print_raw_timings(label, timings);
+    let timings = Timings {
+        load_dataset: load_elapsed,
+        input_df_build: df_elapsed,
+        lazy_plan_build: lazy_elapsed,
+        result_collect: collect_elapsed,
+    };
 
-    if show_details {
-        println!("[DETAIL] {label}.schema={schema:?}");
-        println!("[DETAIL] {label}.result_shape={:?}", out.shape());
+    print_summary(timings);
+    print_raw_timings(timings);
+
+    if args.show_details {
+        println!("[DETAIL] input_df_shape={:?}", df.shape());
+        println!("[DETAIL] input_df_schema={:?}", df.schema());
+        println!("[DETAIL] input_df_head:");
+        println!("{:?}", df.head(Some(5)));
+        println!("[DETAIL] result_shape={:?}", result.shape());
+        println!("[DETAIL] result_schema={result_schema:?}");
+        println!("[DETAIL] result_head:");
+        println!("{:?}", result.head(Some(5)));
+        println!("[DETAIL] lazy_plan_unoptimized:");
+        println!("{}", lazy_plan_unoptimized.as_deref().unwrap_or(""));
+        println!("[DETAIL] lazy_plan_optimized:");
+        println!("{}", lazy_plan_optimized.as_deref().unwrap_or(""));
     }
 
-    if show_profile {
-        println!("[PROFILE] {label}.profile_df:");
-        println!("{profile_df}");
-    }
-
-    if show_details {
-        println!("[DETAIL] {label}.explain_unoptimized:");
-        println!("{explain_unopt}");
-        println!("[DETAIL] {label}.explain_optimized:");
-        println!("{explain_opt}");
+    if args.show_profile {
+        println!("[PROFILE] profile_df:");
+        println!("{}", profile_df.unwrap());
     }
 
     Ok(())
 }
 
-fn print_summary(label: &str, timings: Timings) {
+fn print_summary(timings: Timings) {
     println!(
-        "[SUMMARY] {label}.full_query_collect_ns={} (= build_lazy_dsl + collect_execute = {} + {})",
-        timings.build_lazy_dsl + timings.collect_execute,
-        timings.build_lazy_dsl,
-        timings.collect_execute
-    );
-    println!(
-        "[SUMMARY] {label}.full_query_profile_ns={} (= build_lazy_dsl + profile_execute = {} + {})",
-        timings.build_lazy_dsl + timings.profile_execute,
-        timings.build_lazy_dsl,
-        timings.profile_execute
-    );
-    println!(
-        "[SUMMARY] {label}.planning_probe_min_ns={} (= build_lazy_dsl + to_alp_optimized_ir = {} + {})",
-        timings.build_lazy_dsl + timings.to_alp_optimized_ir,
-        timings.build_lazy_dsl,
-        timings.to_alp_optimized_ir
-    );
-    println!(
-        "[SUMMARY] {label}.planning_probe_full_ns={} (= build_lazy_dsl + collect_schema + explain_optimized + to_alp_optimized_ir = {} + {} + {} + {})",
-        timings.build_lazy_dsl
-            + timings.collect_schema
-            + timings.explain_optimized
-            + timings.to_alp_optimized_ir,
-        timings.build_lazy_dsl,
-        timings.collect_schema,
-        timings.explain_optimized,
-        timings.to_alp_optimized_ir
+        "[SUMMARY] full_query_collect_ns={} (= load_dataset + input_df_build + lazy_plan_build + result_collect = {} + {} + {} + {})",
+        timings.load_dataset
+            + timings.input_df_build
+            + timings.lazy_plan_build
+            + timings.result_collect,
+        timings.load_dataset,
+        timings.input_df_build,
+        timings.lazy_plan_build,
+        timings.result_collect,
     );
 }
 
-fn print_raw_timings(label: &str, timings: Timings) {
-    println!("[TIMING] {label}.build_lazy_dsl_ns={}", timings.build_lazy_dsl);
-    println!("[TIMING] {label}.collect_schema_ns={}", timings.collect_schema);
-    println!(
-        "[TIMING] {label}.explain_unoptimized_ns={}",
-        timings.explain_unoptimized
-    );
-    println!(
-        "[TIMING] {label}.explain_optimized_ns={}",
-        timings.explain_optimized
-    );
-    println!(
-        "[TIMING] {label}.to_alp_optimized_ir_ns={}",
-        timings.to_alp_optimized_ir
-    );
-    println!(
-        "[TIMING] {label}.collect_execute_ns={}",
-        timings.collect_execute
-    );
-    println!(
-        "[TIMING] {label}.profile_execute_ns={}",
-        timings.profile_execute
-    );
+fn print_raw_timings(timings: Timings) {
+    println!("[TIMING] load_dataset_ns={}", timings.load_dataset);
+    println!("[TIMING] input_df_build_ns={}", timings.input_df_build);
+    println!("[TIMING] lazy_plan_build_ns={}", timings.lazy_plan_build);
+    println!("[TIMING] result_collect_ns={}", timings.result_collect);
+}
+
+fn build_quantile_exprs() -> Vec<Expr> {
+    (0..NUM_PERCENTILES)
+        .map(|percentile| {
+            let rank = percentile as f64 / 100.0;
+            col("v")
+                .quantile(lit(rank), QuantileMethod::Linear)
+                .alias(format!("p_{percentile}"))
+        })
+        .collect()
 }
 
 fn load_i64_dataset(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
@@ -318,15 +395,4 @@ fn build_i64_df(values: &[i64]) -> Result<DataFrame, Box<dyn Error>> {
 
 fn build_f64_df(values: &[f64]) -> Result<DataFrame, Box<dyn Error>> {
     Ok(DataFrame::new(vec![Column::new("v".into(), values)])?)
-}
-
-fn build_quantile_exprs() -> Vec<Expr> {
-    (0..NUM_PERCENTILES)
-        .map(|percentile| {
-            let rank = percentile as f64 / 100.0;
-            col("v")
-                .quantile(lit(rank), QuantileMethod::Linear)
-                .alias(format!("p_{percentile}"))
-        })
-        .collect()
 }

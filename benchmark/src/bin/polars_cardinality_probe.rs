@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 const DEFAULT_DATA_PATH: &str = "../input/benchmark_data_10m_int64_zipf_s11_k500000.bin";
-const QUERY_SNIPPET: &str =
-    r#"df.lazy().select([col("v").n_unique().alias("exact_cardinality")])"#;
+const QUERY_SNIPPET: &str = r#"df.lazy().select([col("v").n_unique().alias("exact_cardinality")])"#;
 
 #[derive(Debug)]
 struct Args {
@@ -19,15 +18,9 @@ struct Args {
 #[derive(Clone, Copy, Debug)]
 struct Timings {
     load_dataset: u128,
-    build_dataframe: u128,
-    build_lazy_select: u128,
-    result_total: u128,
+    input_df_build: u128,
+    lazy_plan_build: u128,
     result_collect: u128,
-    estimate_extract: u128,
-    collect_schema: u128,
-    explain_optimized: u128,
-    to_alp_optimized_ir: u128,
-    profile_execute: u128,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -81,9 +74,8 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
 
 /// Run one probe iteration and report the cost of:
 /// 1. loading/building the input frame,
-/// 2. building and executing the lazy `n_unique` query,
-/// 3. extracting the scalar estimate from the one-row result,
-/// 4. optional planning/profile inspection helpers.
+/// 2. building the lazy `n_unique` query plan,
+/// 3. collecting the one-row result.
 fn run_probe(args: &Args) -> Result<(), Box<dyn Error>> {
     let load_started = Instant::now();
     let values = load_i64_dataset(&args.data)?;
@@ -92,10 +84,6 @@ fn run_probe(args: &Args) -> Result<(), Box<dyn Error>> {
     let df_started = Instant::now();
     let df = build_i64_df(&values)?;
     let df_elapsed = df_started.elapsed().as_nanos();
-
-    // This is the exact query path we want to understand:
-    // build the lazy select, collect the one-row result, then read the scalar.
-    let result_started = Instant::now();
 
     let lazy_started = Instant::now();
     let lazy = df
@@ -107,44 +95,30 @@ fn run_probe(args: &Args) -> Result<(), Box<dyn Error>> {
     let collect_started = Instant::now();
     let result = lazy.clone().collect()?;
     let collect_elapsed = collect_started.elapsed().as_nanos();
-    let result_elapsed = result_started.elapsed().as_nanos();
-
-    let estimate_started = Instant::now();
     let estimate = extract_cardinality(&result)?;
-    let estimate_elapsed = estimate_started.elapsed().as_nanos();
     let rows = values.len();
-
-    // The remaining probes inspect planning / profiling overheads separately from
-    // the main query path above.
-    let mut schema_lazy = lazy.clone();
-    let schema_started = Instant::now();
-    let schema = schema_lazy.collect_schema()?;
-    let schema_elapsed = schema_started.elapsed().as_nanos();
-
-    let explain_started = Instant::now();
-    let explain_optimized = lazy.clone().explain(true)?;
-    let explain_elapsed = explain_started.elapsed().as_nanos();
-
-    let alp_started = Instant::now();
-    let alp = lazy.clone().to_alp_optimized()?;
-    let alp_elapsed = alp_started.elapsed().as_nanos();
-    std::hint::black_box(&alp);
-
-    let profile_started = Instant::now();
-    let (_profile_out, profile_df) = lazy.profile()?;
-    let profile_elapsed = profile_started.elapsed().as_nanos();
+    let result_schema = result.schema().clone();
+    let lazy_plan_unoptimized = if args.show_details {
+        Some(lazy.clone().explain(false)?)
+    } else {
+        None
+    };
+    let lazy_plan_optimized = if args.show_details {
+        Some(lazy.clone().explain(true)?)
+    } else {
+        None
+    };
+    let profile_df = if args.show_profile {
+        Some(lazy.profile()?.1)
+    } else {
+        None
+    };
 
     let timings = Timings {
         load_dataset: load_elapsed,
-        build_dataframe: df_elapsed,
-        build_lazy_select: lazy_elapsed,
-        result_total: result_elapsed,
+        input_df_build: df_elapsed,
+        lazy_plan_build: lazy_elapsed,
         result_collect: collect_elapsed,
-        estimate_extract: estimate_elapsed,
-        collect_schema: schema_elapsed,
-        explain_optimized: explain_elapsed,
-        to_alp_optimized_ir: alp_elapsed,
-        profile_execute: profile_elapsed,
     };
 
     println!("rows={rows}");
@@ -153,15 +127,23 @@ fn run_probe(args: &Args) -> Result<(), Box<dyn Error>> {
     print_raw_timings(timings);
 
     if args.show_details {
-        println!("[DETAIL] schema={schema:?}");
+        println!("[DETAIL] input_df_shape={:?}", df.shape());
+        println!("[DETAIL] input_df_schema={:?}", df.schema());
+        println!("[DETAIL] input_df_head:");
+        println!("{:?}", df.head(Some(5)));
         println!("[DETAIL] result_shape={:?}", result.shape());
-        println!("[DETAIL] optimized_plan:");
-        println!("{explain_optimized}");
+        println!("[DETAIL] result_schema={result_schema:?}");
+        println!("[DETAIL] result_df:");
+        println!("{result}");
+        println!("[DETAIL] lazy_plan_unoptimized:");
+        println!("{}", lazy_plan_unoptimized.as_deref().unwrap_or(""));
+        println!("[DETAIL] lazy_plan_optimized:");
+        println!("{}", lazy_plan_optimized.as_deref().unwrap_or(""));
     }
 
     if args.show_profile {
         println!("[PROFILE] profile_df:");
-        println!("{profile_df}");
+        println!("{}", profile_df.unwrap());
     }
 
     Ok(())
@@ -169,59 +151,23 @@ fn run_probe(args: &Args) -> Result<(), Box<dyn Error>> {
 
 fn print_summary(timings: Timings) {
     println!(
-        "[SUMMARY] full_query_collect_ns={} (= load_dataset + build_dataframe + result_total = {} + {} + {})",
+        "[SUMMARY] full_query_collect_ns={} (= load_dataset + input_df_build + lazy_plan_build + result_collect = {} + {} + {} + {})",
         timings.load_dataset
-            + timings.build_dataframe
-            + timings.result_total,
+            + timings.input_df_build
+            + timings.lazy_plan_build
+            + timings.result_collect,
         timings.load_dataset,
-        timings.build_dataframe,
-        timings.result_total
-    );
-    println!(
-        "[SUMMARY] query_breakdown_ns={} (= build_lazy_select + result_collect + estimate_extract = {} + {} + {})",
-        timings.build_lazy_select + timings.result_collect + timings.estimate_extract,
-        timings.build_lazy_select,
+        timings.input_df_build,
+        timings.lazy_plan_build,
         timings.result_collect,
-        timings.estimate_extract
-    );
-    println!(
-        "[SUMMARY] planning_probe_ns={} (= build_lazy_select + collect_schema + explain_optimized + to_alp_optimized_ir = {} + {} + {} + {})",
-        timings.build_lazy_select
-            + timings.collect_schema
-            + timings.explain_optimized
-            + timings.to_alp_optimized_ir,
-        timings.build_lazy_select,
-        timings.collect_schema,
-        timings.explain_optimized,
-        timings.to_alp_optimized_ir
-    );
-    println!(
-        "[SUMMARY] full_query_profile_ns={} (= load_dataset + build_dataframe + build_lazy_select + profile_execute = {} + {} + {} + {})",
-        timings.load_dataset
-            + timings.build_dataframe
-            + timings.build_lazy_select
-            + timings.profile_execute,
-        timings.load_dataset,
-        timings.build_dataframe,
-        timings.build_lazy_select,
-        timings.profile_execute
     );
 }
 
 fn print_raw_timings(timings: Timings) {
     println!("[TIMING] load_dataset_ns={}", timings.load_dataset);
-    println!("[TIMING] build_dataframe_ns={}", timings.build_dataframe);
-    println!("[TIMING] build_lazy_select_ns={}", timings.build_lazy_select);
-    println!("[TIMING] result_total_ns={}", timings.result_total);
+    println!("[TIMING] input_df_build_ns={}", timings.input_df_build);
+    println!("[TIMING] lazy_plan_build_ns={}", timings.lazy_plan_build);
     println!("[TIMING] result_collect_ns={}", timings.result_collect);
-    println!("[TIMING] estimate_extract_ns={}", timings.estimate_extract);
-    println!("[TIMING] collect_schema_ns={}", timings.collect_schema);
-    println!("[TIMING] explain_optimized_ns={}", timings.explain_optimized);
-    println!(
-        "[TIMING] to_alp_optimized_ir_ns={}",
-        timings.to_alp_optimized_ir
-    );
-    println!("[TIMING] profile_execute_ns={}", timings.profile_execute);
 }
 
 /// Read the scalar result out of the one-row DataFrame using the same cast path

@@ -1,0 +1,839 @@
+probe.kind=polars_plan_probe
+data=../input/benchmark_data_10m_int64_zipf_s11_k500000.bin
+repeats=1
+
+repeat=1
+rows=10000000
+
+query.kind=exact_cardinality
+query.snippet=df.lazy().select([col("v").n_unique().alias("exact_cardinality")])
+[SUMMARY] full_query_collect_ns=311239843 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 48317854 + 48615 + 154901612)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=48317854
+[TIMING] lazy_plan_build_ns=48615
+[TIMING] result_collect_ns=154901612
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Int64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌───────┐
+│ v     │
+│ ---   │
+│ i64   │
+╞═══════╡
+│ 2235  │
+│ 367   │
+│ 2123  │
+│ 2     │
+│ 41187 │
+└───────┘
+[DETAIL] result_shape=(1, 1)
+[DETAIL] result_schema=Schema:
+name: exact_cardinality, field: UInt32
+
+[DETAIL] result_head:
+shape: (1, 1)
+┌───────────────────┐
+│ exact_cardinality │
+│ ---               │
+│ u32               │
+╞═══════════════════╡
+│ 386007            │
+└───────────────────┘
+[DETAIL] lazy_plan_unoptimized:
+ SELECT [col("v").n_unique().alias("exact_cardinality")] FROM
+  DF ["v"]; PROJECT */1 COLUMNS
+[DETAIL] lazy_plan_optimized:
+ SELECT [col("v").n_unique().alias("exact_cardinality")] FROM
+  DF ["v"]; PROJECT 1/1 COLUMNS
+
+query.kind=approx_cardinality
+query.snippet=df.lazy().select([col("v").approx_n_unique().alias("approx_cardinality")])
+[SUMMARY] full_query_collect_ns=219709634 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 47895146 + 5757 + 63836969)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=47895146
+[TIMING] lazy_plan_build_ns=5757
+[TIMING] result_collect_ns=63836969
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Int64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌───────┐
+│ v     │
+│ ---   │
+│ i64   │
+╞═══════╡
+│ 2235  │
+│ 367   │
+│ 2123  │
+│ 2     │
+│ 41187 │
+└───────┘
+[DETAIL] result_shape=(1, 1)
+[DETAIL] result_schema=Schema:
+name: approx_cardinality, field: UInt32
+
+[DETAIL] result_head:
+shape: (1, 1)
+┌────────────────────┐
+│ approx_cardinality │
+│ ---                │
+│ u32                │
+╞════════════════════╡
+│ 383776             │
+└────────────────────┘
+[DETAIL] lazy_plan_unoptimized:
+ SELECT [col("v").approx_n_unique().alias("approx_cardinality")] FROM
+  DF ["v"]; PROJECT */1 COLUMNS
+[DETAIL] lazy_plan_optimized:
+ SELECT [col("v").approx_n_unique().alias("approx_cardinality")] FROM
+  DF ["v"]; PROJECT 1/1 COLUMNS
+
+query.kind=quantile
+query.snippet=df.lazy().select(build_quantile_exprs())
+[SUMMARY] full_query_collect_ns=1581662798 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 47427384 + 60956 + 1426202696)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=47427384
+[TIMING] lazy_plan_build_ns=60956
+[TIMING] result_collect_ns=1426202696
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Float64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌─────────┐
+│ v       │
+│ ---     │
+│ f64     │
+╞═════════╡
+│ 2235.0  │
+│ 367.0   │
+│ 2123.0  │
+│ 2.0     │
+│ 41187.0 │
+└─────────┘
+[DETAIL] result_shape=(1, 101)
+[DETAIL] result_schema=Schema:
+name: p_0, field: Float64
+name: p_1, field: Float64
+name: p_2, field: Float64
+name: p_3, field: Float64
+name: p_4, field: Float64
+name: p_5, field: Float64
+name: p_6, field: Float64
+name: p_7, field: Float64
+name: p_8, field: Float64
+name: p_9, field: Float64
+name: p_10, field: Float64
+name: p_11, field: Float64
+name: p_12, field: Float64
+name: p_13, field: Float64
+name: p_14, field: Float64
+name: p_15, field: Float64
+name: p_16, field: Float64
+name: p_17, field: Float64
+name: p_18, field: Float64
+name: p_19, field: Float64
+name: p_20, field: Float64
+name: p_21, field: Float64
+name: p_22, field: Float64
+name: p_23, field: Float64
+name: p_24, field: Float64
+name: p_25, field: Float64
+name: p_26, field: Float64
+name: p_27, field: Float64
+name: p_28, field: Float64
+name: p_29, field: Float64
+name: p_30, field: Float64
+name: p_31, field: Float64
+name: p_32, field: Float64
+name: p_33, field: Float64
+name: p_34, field: Float64
+name: p_35, field: Float64
+name: p_36, field: Float64
+name: p_37, field: Float64
+name: p_38, field: Float64
+name: p_39, field: Float64
+name: p_40, field: Float64
+name: p_41, field: Float64
+name: p_42, field: Float64
+name: p_43, field: Float64
+name: p_44, field: Float64
+name: p_45, field: Float64
+name: p_46, field: Float64
+name: p_47, field: Float64
+name: p_48, field: Float64
+name: p_49, field: Float64
+name: p_50, field: Float64
+name: p_51, field: Float64
+name: p_52, field: Float64
+name: p_53, field: Float64
+name: p_54, field: Float64
+name: p_55, field: Float64
+name: p_56, field: Float64
+name: p_57, field: Float64
+name: p_58, field: Float64
+name: p_59, field: Float64
+name: p_60, field: Float64
+name: p_61, field: Float64
+name: p_62, field: Float64
+name: p_63, field: Float64
+name: p_64, field: Float64
+name: p_65, field: Float64
+name: p_66, field: Float64
+name: p_67, field: Float64
+name: p_68, field: Float64
+name: p_69, field: Float64
+name: p_70, field: Float64
+name: p_71, field: Float64
+name: p_72, field: Float64
+name: p_73, field: Float64
+name: p_74, field: Float64
+name: p_75, field: Float64
+name: p_76, field: Float64
+name: p_77, field: Float64
+name: p_78, field: Float64
+name: p_79, field: Float64
+name: p_80, field: Float64
+name: p_81, field: Float64
+name: p_82, field: Float64
+name: p_83, field: Float64
+name: p_84, field: Float64
+name: p_85, field: Float64
+name: p_86, field: Float64
+name: p_87, field: Float64
+name: p_88, field: Float64
+name: p_89, field: Float64
+name: p_90, field: Float64
+name: p_91, field: Float64
+name: p_92, field: Float64
+name: p_93, field: Float64
+name: p_94, field: Float64
+name: p_95, field: Float64
+name: p_96, field: Float64
+name: p_97, field: Float64
+name: p_98, field: Float64
+name: p_99, field: Float64
+name: p_100, field: Float64
+
+[DETAIL] result_head:
+shape: (1, 101)
+┌─────┬─────┬─────┬─────┬───┬───────────┬──────────┬───────────┬──────────┐
+│ p_0 ┆ p_1 ┆ p_2 ┆ p_3 ┆ … ┆ p_97      ┆ p_98     ┆ p_99      ┆ p_100    │
+│ --- ┆ --- ┆ --- ┆ --- ┆   ┆ ---       ┆ ---      ┆ ---       ┆ ---      │
+│ f64 ┆ f64 ┆ f64 ┆ f64 ┆   ┆ f64       ┆ f64      ┆ f64       ┆ f64      │
+╞═════╪═════╪═════╪═════╪═══╪═══════════╪══════════╪═══════════╪══════════╡
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 215565.06 ┆ 282684.0 ┆ 374397.01 ┆ 499998.0 │
+└─────┴─────┴─────┴─────┴───┴───────────┴──────────┴───────────┴──────────┘
+[DETAIL] lazy_plan_unoptimized:
+ SELECT [col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+  DF ["v"]; PROJECT */1 COLUMNS
+[DETAIL] lazy_plan_optimized:
+ SELECT [col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+  DF ["v"]; PROJECT 1/1 COLUMNS
+
+query.kind=frequency
+query.snippet=df.lazy().group_by([col("v")]).agg([len().alias("count")])
+[SUMMARY] full_query_collect_ns=302832462 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 48666588 + 14512 + 146179600)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=48666588
+[TIMING] lazy_plan_build_ns=14512
+[TIMING] result_collect_ns=146179600
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Int64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌───────┐
+│ v     │
+│ ---   │
+│ i64   │
+╞═══════╡
+│ 2235  │
+│ 367   │
+│ 2123  │
+│ 2     │
+│ 41187 │
+└───────┘
+[DETAIL] result_shape=(386007, 2)
+[DETAIL] result_schema=Schema:
+name: v, field: Int64
+name: count, field: UInt32
+
+[DETAIL] result_head:
+shape: (5, 2)
+┌─────┬─────────┐
+│ v   ┆ count   │
+│ --- ┆ ---     │
+│ i64 ┆ u32     │
+╞═════╪═════════╡
+│ 1   ┆ 1267123 │
+│ 2   ┆ 588877  │
+│ 3   ┆ 378767  │
+│ 4   ┆ 275141  │
+│ 5   ┆ 215908  │
+└─────┴─────────┘
+[DETAIL] lazy_plan_unoptimized:
+SORT BY [col("count"), col("v")]
+  AGGREGATE
+  	[len().alias("count")] BY [col("v")] FROM
+    DF ["v"]; PROJECT */1 COLUMNS
+[DETAIL] lazy_plan_optimized:
+SORT BY [col("count"), col("v")]
+  AGGREGATE
+  	[len().alias("count")] BY [col("v")] FROM
+    DF ["v"]; PROJECT 1/1 COLUMNS
+
+query.kind=cardinality_plus_quantile
+query.snippet=df.lazy().select([col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), build_quantile_exprs()...])
+[SUMMARY] full_query_collect_ns=1595832030 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 49110307 + 52306 + 1438697655)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=49110307
+[TIMING] lazy_plan_build_ns=52306
+[TIMING] result_collect_ns=1438697655
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Float64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌─────────┐
+│ v       │
+│ ---     │
+│ f64     │
+╞═════════╡
+│ 2235.0  │
+│ 367.0   │
+│ 2123.0  │
+│ 2.0     │
+│ 41187.0 │
+└─────────┘
+[DETAIL] result_shape=(1, 103)
+[DETAIL] result_schema=Schema:
+name: exact_cardinality, field: UInt32
+name: approx_cardinality, field: UInt32
+name: p_0, field: Float64
+name: p_1, field: Float64
+name: p_2, field: Float64
+name: p_3, field: Float64
+name: p_4, field: Float64
+name: p_5, field: Float64
+name: p_6, field: Float64
+name: p_7, field: Float64
+name: p_8, field: Float64
+name: p_9, field: Float64
+name: p_10, field: Float64
+name: p_11, field: Float64
+name: p_12, field: Float64
+name: p_13, field: Float64
+name: p_14, field: Float64
+name: p_15, field: Float64
+name: p_16, field: Float64
+name: p_17, field: Float64
+name: p_18, field: Float64
+name: p_19, field: Float64
+name: p_20, field: Float64
+name: p_21, field: Float64
+name: p_22, field: Float64
+name: p_23, field: Float64
+name: p_24, field: Float64
+name: p_25, field: Float64
+name: p_26, field: Float64
+name: p_27, field: Float64
+name: p_28, field: Float64
+name: p_29, field: Float64
+name: p_30, field: Float64
+name: p_31, field: Float64
+name: p_32, field: Float64
+name: p_33, field: Float64
+name: p_34, field: Float64
+name: p_35, field: Float64
+name: p_36, field: Float64
+name: p_37, field: Float64
+name: p_38, field: Float64
+name: p_39, field: Float64
+name: p_40, field: Float64
+name: p_41, field: Float64
+name: p_42, field: Float64
+name: p_43, field: Float64
+name: p_44, field: Float64
+name: p_45, field: Float64
+name: p_46, field: Float64
+name: p_47, field: Float64
+name: p_48, field: Float64
+name: p_49, field: Float64
+name: p_50, field: Float64
+name: p_51, field: Float64
+name: p_52, field: Float64
+name: p_53, field: Float64
+name: p_54, field: Float64
+name: p_55, field: Float64
+name: p_56, field: Float64
+name: p_57, field: Float64
+name: p_58, field: Float64
+name: p_59, field: Float64
+name: p_60, field: Float64
+name: p_61, field: Float64
+name: p_62, field: Float64
+name: p_63, field: Float64
+name: p_64, field: Float64
+name: p_65, field: Float64
+name: p_66, field: Float64
+name: p_67, field: Float64
+name: p_68, field: Float64
+name: p_69, field: Float64
+name: p_70, field: Float64
+name: p_71, field: Float64
+name: p_72, field: Float64
+name: p_73, field: Float64
+name: p_74, field: Float64
+name: p_75, field: Float64
+name: p_76, field: Float64
+name: p_77, field: Float64
+name: p_78, field: Float64
+name: p_79, field: Float64
+name: p_80, field: Float64
+name: p_81, field: Float64
+name: p_82, field: Float64
+name: p_83, field: Float64
+name: p_84, field: Float64
+name: p_85, field: Float64
+name: p_86, field: Float64
+name: p_87, field: Float64
+name: p_88, field: Float64
+name: p_89, field: Float64
+name: p_90, field: Float64
+name: p_91, field: Float64
+name: p_92, field: Float64
+name: p_93, field: Float64
+name: p_94, field: Float64
+name: p_95, field: Float64
+name: p_96, field: Float64
+name: p_97, field: Float64
+name: p_98, field: Float64
+name: p_99, field: Float64
+name: p_100, field: Float64
+
+[DETAIL] result_head:
+shape: (1, 103)
+┌──────────────────┬─────────────────┬─────┬─────┬───┬───────────┬──────────┬───────────┬──────────┐
+│ exact_cardinalit ┆ approx_cardinal ┆ p_0 ┆ p_1 ┆ … ┆ p_97      ┆ p_98     ┆ p_99      ┆ p_100    │
+│ y                ┆ ity             ┆ --- ┆ --- ┆   ┆ ---       ┆ ---      ┆ ---       ┆ ---      │
+│ ---              ┆ ---             ┆ f64 ┆ f64 ┆   ┆ f64       ┆ f64      ┆ f64       ┆ f64      │
+│ u32              ┆ u32             ┆     ┆     ┆   ┆           ┆          ┆           ┆          │
+╞══════════════════╪═════════════════╪═════╪═════╪═══╪═══════════╪══════════╪═══════════╪══════════╡
+│ 386007           ┆ 382910          ┆ 1.0 ┆ 1.0 ┆ … ┆ 215565.06 ┆ 282684.0 ┆ 374397.01 ┆ 499998.0 │
+└──────────────────┴─────────────────┴─────┴─────┴───┴───────────┴──────────┴───────────┴──────────┘
+[DETAIL] lazy_plan_unoptimized:
+ SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+  DF ["v"]; PROJECT */1 COLUMNS
+[DETAIL] lazy_plan_optimized:
+ SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+  DF ["v"]; PROJECT 1/1 COLUMNS
+
+query.kind=cardinality_plus_frequency
+query.snippet=global_cardinality.cross_join(grouped_frequency)
+[SUMMARY] full_query_collect_ns=321777715 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 48597474 + 9410 + 165199069)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=48597474
+[TIMING] lazy_plan_build_ns=9410
+[TIMING] result_collect_ns=165199069
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Int64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌───────┐
+│ v     │
+│ ---   │
+│ i64   │
+╞═══════╡
+│ 2235  │
+│ 367   │
+│ 2123  │
+│ 2     │
+│ 41187 │
+└───────┘
+[DETAIL] result_shape=(386007, 4)
+[DETAIL] result_schema=Schema:
+name: exact_cardinality, field: UInt32
+name: approx_cardinality, field: UInt32
+name: v, field: Int64
+name: count, field: UInt32
+
+[DETAIL] result_head:
+shape: (5, 4)
+┌───────────────────┬────────────────────┬─────┬─────────┐
+│ exact_cardinality ┆ approx_cardinality ┆ v   ┆ count   │
+│ ---               ┆ ---                ┆ --- ┆ ---     │
+│ u32               ┆ u32                ┆ i64 ┆ u32     │
+╞═══════════════════╪════════════════════╪═════╪═════════╡
+│ 386007            ┆ 383776             ┆ 1   ┆ 1267123 │
+│ 386007            ┆ 383776             ┆ 2   ┆ 588877  │
+│ 386007            ┆ 383776             ┆ 3   ┆ 378767  │
+│ 386007            ┆ 383776             ┆ 4   ┆ 275141  │
+│ 386007            ┆ 383776             ┆ 5   ┆ 215908  │
+└───────────────────┴────────────────────┴─────┴─────────┘
+[DETAIL] lazy_plan_unoptimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality")] FROM
+    DF ["v"]; PROJECT */1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT */1 COLUMNS
+END CROSS JOIN
+[DETAIL] lazy_plan_optimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality")] FROM
+    DF ["v"]; PROJECT 1/1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT 1/1 COLUMNS
+END CROSS JOIN
+
+query.kind=quantile_plus_frequency
+query.snippet=global_quantiles.cross_join(grouped_frequency)
+[SUMMARY] full_query_collect_ns=1620052101 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 55462900 + 55223 + 1456562216)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=55462900
+[TIMING] lazy_plan_build_ns=55223
+[TIMING] result_collect_ns=1456562216
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Float64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌─────────┐
+│ v       │
+│ ---     │
+│ f64     │
+╞═════════╡
+│ 2235.0  │
+│ 367.0   │
+│ 2123.0  │
+│ 2.0     │
+│ 41187.0 │
+└─────────┘
+[DETAIL] result_shape=(386007, 103)
+[DETAIL] result_schema=Schema:
+name: p_0, field: Float64
+name: p_1, field: Float64
+name: p_2, field: Float64
+name: p_3, field: Float64
+name: p_4, field: Float64
+name: p_5, field: Float64
+name: p_6, field: Float64
+name: p_7, field: Float64
+name: p_8, field: Float64
+name: p_9, field: Float64
+name: p_10, field: Float64
+name: p_11, field: Float64
+name: p_12, field: Float64
+name: p_13, field: Float64
+name: p_14, field: Float64
+name: p_15, field: Float64
+name: p_16, field: Float64
+name: p_17, field: Float64
+name: p_18, field: Float64
+name: p_19, field: Float64
+name: p_20, field: Float64
+name: p_21, field: Float64
+name: p_22, field: Float64
+name: p_23, field: Float64
+name: p_24, field: Float64
+name: p_25, field: Float64
+name: p_26, field: Float64
+name: p_27, field: Float64
+name: p_28, field: Float64
+name: p_29, field: Float64
+name: p_30, field: Float64
+name: p_31, field: Float64
+name: p_32, field: Float64
+name: p_33, field: Float64
+name: p_34, field: Float64
+name: p_35, field: Float64
+name: p_36, field: Float64
+name: p_37, field: Float64
+name: p_38, field: Float64
+name: p_39, field: Float64
+name: p_40, field: Float64
+name: p_41, field: Float64
+name: p_42, field: Float64
+name: p_43, field: Float64
+name: p_44, field: Float64
+name: p_45, field: Float64
+name: p_46, field: Float64
+name: p_47, field: Float64
+name: p_48, field: Float64
+name: p_49, field: Float64
+name: p_50, field: Float64
+name: p_51, field: Float64
+name: p_52, field: Float64
+name: p_53, field: Float64
+name: p_54, field: Float64
+name: p_55, field: Float64
+name: p_56, field: Float64
+name: p_57, field: Float64
+name: p_58, field: Float64
+name: p_59, field: Float64
+name: p_60, field: Float64
+name: p_61, field: Float64
+name: p_62, field: Float64
+name: p_63, field: Float64
+name: p_64, field: Float64
+name: p_65, field: Float64
+name: p_66, field: Float64
+name: p_67, field: Float64
+name: p_68, field: Float64
+name: p_69, field: Float64
+name: p_70, field: Float64
+name: p_71, field: Float64
+name: p_72, field: Float64
+name: p_73, field: Float64
+name: p_74, field: Float64
+name: p_75, field: Float64
+name: p_76, field: Float64
+name: p_77, field: Float64
+name: p_78, field: Float64
+name: p_79, field: Float64
+name: p_80, field: Float64
+name: p_81, field: Float64
+name: p_82, field: Float64
+name: p_83, field: Float64
+name: p_84, field: Float64
+name: p_85, field: Float64
+name: p_86, field: Float64
+name: p_87, field: Float64
+name: p_88, field: Float64
+name: p_89, field: Float64
+name: p_90, field: Float64
+name: p_91, field: Float64
+name: p_92, field: Float64
+name: p_93, field: Float64
+name: p_94, field: Float64
+name: p_95, field: Float64
+name: p_96, field: Float64
+name: p_97, field: Float64
+name: p_98, field: Float64
+name: p_99, field: Float64
+name: p_100, field: Float64
+name: v, field: Float64
+name: count, field: UInt32
+
+[DETAIL] result_head:
+shape: (5, 103)
+┌─────┬─────┬─────┬─────┬───┬───────────┬──────────┬─────┬─────────┐
+│ p_0 ┆ p_1 ┆ p_2 ┆ p_3 ┆ … ┆ p_99      ┆ p_100    ┆ v   ┆ count   │
+│ --- ┆ --- ┆ --- ┆ --- ┆   ┆ ---       ┆ ---      ┆ --- ┆ ---     │
+│ f64 ┆ f64 ┆ f64 ┆ f64 ┆   ┆ f64       ┆ f64      ┆ f64 ┆ u32     │
+╞═════╪═════╪═════╪═════╪═══╪═══════════╪══════════╪═════╪═════════╡
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 1.0 ┆ 1267123 │
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 2.0 ┆ 588877  │
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 3.0 ┆ 378767  │
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 4.0 ┆ 275141  │
+│ 1.0 ┆ 1.0 ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 5.0 ┆ 215908  │
+└─────┴─────┴─────┴─────┴───┴───────────┴──────────┴─────┴─────────┘
+[DETAIL] lazy_plan_unoptimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+    DF ["v"]; PROJECT */1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT */1 COLUMNS
+END CROSS JOIN
+[DETAIL] lazy_plan_optimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+    DF ["v"]; PROJECT 1/1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT 1/1 COLUMNS
+END CROSS JOIN
+
+query.kind=cardinality_plus_quantile_plus_frequency
+query.snippet=global_cardinality_and_quantiles.cross_join(grouped_frequency)
+[SUMMARY] full_query_collect_ns=1737564843 (= load_dataset + input_df_build + lazy_plan_build + result_collect = 107971762 + 61472918 + 62172 + 1568057991)
+[TIMING] load_dataset_ns=107971762
+[TIMING] input_df_build_ns=61472918
+[TIMING] lazy_plan_build_ns=62172
+[TIMING] result_collect_ns=1568057991
+[DETAIL] input_df_shape=(10000000, 1)
+[DETAIL] input_df_schema=Schema:
+name: v, field: Float64
+
+[DETAIL] input_df_head:
+shape: (5, 1)
+┌─────────┐
+│ v       │
+│ ---     │
+│ f64     │
+╞═════════╡
+│ 2235.0  │
+│ 367.0   │
+│ 2123.0  │
+│ 2.0     │
+│ 41187.0 │
+└─────────┘
+[DETAIL] result_shape=(386007, 105)
+[DETAIL] result_schema=Schema:
+name: exact_cardinality, field: UInt32
+name: approx_cardinality, field: UInt32
+name: p_0, field: Float64
+name: p_1, field: Float64
+name: p_2, field: Float64
+name: p_3, field: Float64
+name: p_4, field: Float64
+name: p_5, field: Float64
+name: p_6, field: Float64
+name: p_7, field: Float64
+name: p_8, field: Float64
+name: p_9, field: Float64
+name: p_10, field: Float64
+name: p_11, field: Float64
+name: p_12, field: Float64
+name: p_13, field: Float64
+name: p_14, field: Float64
+name: p_15, field: Float64
+name: p_16, field: Float64
+name: p_17, field: Float64
+name: p_18, field: Float64
+name: p_19, field: Float64
+name: p_20, field: Float64
+name: p_21, field: Float64
+name: p_22, field: Float64
+name: p_23, field: Float64
+name: p_24, field: Float64
+name: p_25, field: Float64
+name: p_26, field: Float64
+name: p_27, field: Float64
+name: p_28, field: Float64
+name: p_29, field: Float64
+name: p_30, field: Float64
+name: p_31, field: Float64
+name: p_32, field: Float64
+name: p_33, field: Float64
+name: p_34, field: Float64
+name: p_35, field: Float64
+name: p_36, field: Float64
+name: p_37, field: Float64
+name: p_38, field: Float64
+name: p_39, field: Float64
+name: p_40, field: Float64
+name: p_41, field: Float64
+name: p_42, field: Float64
+name: p_43, field: Float64
+name: p_44, field: Float64
+name: p_45, field: Float64
+name: p_46, field: Float64
+name: p_47, field: Float64
+name: p_48, field: Float64
+name: p_49, field: Float64
+name: p_50, field: Float64
+name: p_51, field: Float64
+name: p_52, field: Float64
+name: p_53, field: Float64
+name: p_54, field: Float64
+name: p_55, field: Float64
+name: p_56, field: Float64
+name: p_57, field: Float64
+name: p_58, field: Float64
+name: p_59, field: Float64
+name: p_60, field: Float64
+name: p_61, field: Float64
+name: p_62, field: Float64
+name: p_63, field: Float64
+name: p_64, field: Float64
+name: p_65, field: Float64
+name: p_66, field: Float64
+name: p_67, field: Float64
+name: p_68, field: Float64
+name: p_69, field: Float64
+name: p_70, field: Float64
+name: p_71, field: Float64
+name: p_72, field: Float64
+name: p_73, field: Float64
+name: p_74, field: Float64
+name: p_75, field: Float64
+name: p_76, field: Float64
+name: p_77, field: Float64
+name: p_78, field: Float64
+name: p_79, field: Float64
+name: p_80, field: Float64
+name: p_81, field: Float64
+name: p_82, field: Float64
+name: p_83, field: Float64
+name: p_84, field: Float64
+name: p_85, field: Float64
+name: p_86, field: Float64
+name: p_87, field: Float64
+name: p_88, field: Float64
+name: p_89, field: Float64
+name: p_90, field: Float64
+name: p_91, field: Float64
+name: p_92, field: Float64
+name: p_93, field: Float64
+name: p_94, field: Float64
+name: p_95, field: Float64
+name: p_96, field: Float64
+name: p_97, field: Float64
+name: p_98, field: Float64
+name: p_99, field: Float64
+name: p_100, field: Float64
+name: v, field: Float64
+name: count, field: UInt32
+
+[DETAIL] result_head:
+shape: (5, 105)
+┌───────────────────┬────────────────────┬─────┬─────┬───┬───────────┬──────────┬─────┬─────────┐
+│ exact_cardinality ┆ approx_cardinality ┆ p_0 ┆ p_1 ┆ … ┆ p_99      ┆ p_100    ┆ v   ┆ count   │
+│ ---               ┆ ---                ┆ --- ┆ --- ┆   ┆ ---       ┆ ---      ┆ --- ┆ ---     │
+│ u32               ┆ u32                ┆ f64 ┆ f64 ┆   ┆ f64       ┆ f64      ┆ f64 ┆ u32     │
+╞═══════════════════╪════════════════════╪═════╪═════╪═══╪═══════════╪══════════╪═════╪═════════╡
+│ 386007            ┆ 382910             ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 1.0 ┆ 1267123 │
+│ 386007            ┆ 382910             ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 2.0 ┆ 588877  │
+│ 386007            ┆ 382910             ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 3.0 ┆ 378767  │
+│ 386007            ┆ 382910             ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 4.0 ┆ 275141  │
+│ 386007            ┆ 382910             ┆ 1.0 ┆ 1.0 ┆ … ┆ 374397.01 ┆ 499998.0 ┆ 5.0 ┆ 215908  │
+└───────────────────┴────────────────────┴─────┴─────┴───┴───────────┴──────────┴─────┴─────────┘
+[DETAIL] lazy_plan_unoptimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+    DF ["v"]; PROJECT */1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT */1 COLUMNS
+END CROSS JOIN
+[DETAIL] lazy_plan_optimized:
+CROSS JOIN:
+LEFT PLAN ON: []
+   SELECT [col("v").n_unique().alias("exact_cardinality"), col("v").approx_n_unique().alias("approx_cardinality"), col("v").quantile().alias("p_0"), col("v").quantile().alias("p_1"), col("v").quantile().alias("p_2"), col("v").quantile().alias("p_3"), col("v").quantile().alias("p_4"), col("v").quantile().alias("p_5"), col("v").quantile().alias("p_6"), col("v").quantile().alias("p_7"), col("v").quantile().alias("p_8"), col("v").quantile().alias("p_9"), col("v").quantile().alias("p_10"), col("v").quantile().alias("p_11"), col("v").quantile().alias("p_12"), col("v").quantile().alias("p_13"), col("v").quantile().alias("p_14"), col("v").quantile().alias("p_15"), col("v").quantile().alias("p_16"), col("v").quantile().alias("p_17"), col("v").quantile().alias("p_18"), col("v").quantile().alias("p_19"), col("v").quantile().alias("p_20"), col("v").quantile().alias("p_21"), col("v").quantile().alias("p_22"), col("v").quantile().alias("p_23"), col("v").quantile().alias("p_24"), col("v").quantile().alias("p_25"), col("v").quantile().alias("p_26"), col("v").quantile().alias("p_27"), col("v").quantile().alias("p_28"), col("v").quantile().alias("p_29"), col("v").quantile().alias("p_30"), col("v").quantile().alias("p_31"), col("v").quantile().alias("p_32"), col("v").quantile().alias("p_33"), col("v").quantile().alias("p_34"), col("v").quantile().alias("p_35"), col("v").quantile().alias("p_36"), col("v").quantile().alias("p_37"), col("v").quantile().alias("p_38"), col("v").quantile().alias("p_39"), col("v").quantile().alias("p_40"), col("v").quantile().alias("p_41"), col("v").quantile().alias("p_42"), col("v").quantile().alias("p_43"), col("v").quantile().alias("p_44"), col("v").quantile().alias("p_45"), col("v").quantile().alias("p_46"), col("v").quantile().alias("p_47"), col("v").quantile().alias("p_48"), col("v").quantile().alias("p_49"), col("v").quantile().alias("p_50"), col("v").quantile().alias("p_51"), col("v").quantile().alias("p_52"), col("v").quantile().alias("p_53"), col("v").quantile().alias("p_54"), col("v").quantile().alias("p_55"), col("v").quantile().alias("p_56"), col("v").quantile().alias("p_57"), col("v").quantile().alias("p_58"), col("v").quantile().alias("p_59"), col("v").quantile().alias("p_60"), col("v").quantile().alias("p_61"), col("v").quantile().alias("p_62"), col("v").quantile().alias("p_63"), col("v").quantile().alias("p_64"), col("v").quantile().alias("p_65"), col("v").quantile().alias("p_66"), col("v").quantile().alias("p_67"), col("v").quantile().alias("p_68"), col("v").quantile().alias("p_69"), col("v").quantile().alias("p_70"), col("v").quantile().alias("p_71"), col("v").quantile().alias("p_72"), col("v").quantile().alias("p_73"), col("v").quantile().alias("p_74"), col("v").quantile().alias("p_75"), col("v").quantile().alias("p_76"), col("v").quantile().alias("p_77"), col("v").quantile().alias("p_78"), col("v").quantile().alias("p_79"), col("v").quantile().alias("p_80"), col("v").quantile().alias("p_81"), col("v").quantile().alias("p_82"), col("v").quantile().alias("p_83"), col("v").quantile().alias("p_84"), col("v").quantile().alias("p_85"), col("v").quantile().alias("p_86"), col("v").quantile().alias("p_87"), col("v").quantile().alias("p_88"), col("v").quantile().alias("p_89"), col("v").quantile().alias("p_90"), col("v").quantile().alias("p_91"), col("v").quantile().alias("p_92"), col("v").quantile().alias("p_93"), col("v").quantile().alias("p_94"), col("v").quantile().alias("p_95"), col("v").quantile().alias("p_96"), col("v").quantile().alias("p_97"), col("v").quantile().alias("p_98"), col("v").quantile().alias("p_99"), col("v").quantile().alias("p_100")] FROM
+    DF ["v"]; PROJECT 1/1 COLUMNS
+RIGHT PLAN ON: []
+  SORT BY [col("count"), col("v")]
+    AGGREGATE
+    	[len().alias("count")] BY [col("v")] FROM
+      DF ["v"]; PROJECT 1/1 COLUMNS
+END CROSS JOIN

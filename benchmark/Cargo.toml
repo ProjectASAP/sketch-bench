@@ -3,10 +3,12 @@ name = "sketchlib-benchmark"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+
 [dependencies]
 asap_sketchlib = { path = "../../asap_sketchlib", features = ["experimental"] }
 criterion = { version = "0.5", features = ["html_reports"] }
-polars = { version = "0.46", features = ["lazy", "is_in"] }
+polars = { version = "0.46", features = ["lazy", "is_in", "approx_unique", "cross_join"] }
 rand = "0.9"
 twox-hash = "2.1"
 

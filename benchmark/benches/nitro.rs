@@ -1,6 +1,6 @@
+use asap_sketchlib::{CountMin, DataInput, FastPath, Vector2D};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use asap_sketchlib::{CountMin, DataInput, FastPath, Vector2D};
 
 const SAMPLE_COUNT: usize = 16_384;
 const RNG_SEED: u64 = 0x5eed_c0de_cafe_f00d;
