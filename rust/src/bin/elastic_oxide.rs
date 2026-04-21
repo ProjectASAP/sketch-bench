@@ -2,9 +2,8 @@
 mod bench_common;
 
 use bench_common::{
-    default_data_path, print_results, run_benchmark_bytes, BenchmarkConfig,
-    DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
-    ELASTIC_BUCKETS, ELASTIC_DEPTH,
+    default_data_path, print_results, run_benchmark_bytes, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
+    DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, ELASTIC_BUCKETS, ELASTIC_DEPTH,
 };
 use sketch_oxide::frequency::ElasticSketch as OxideElastic;
 

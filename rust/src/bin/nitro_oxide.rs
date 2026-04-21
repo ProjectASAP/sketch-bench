@@ -2,9 +2,8 @@
 mod bench_common;
 
 use bench_common::{
-    default_data_path, print_results, run_benchmark_bytes, BenchmarkConfig,
-    DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, DELTA,
-    EPSILON, NITRO_RATE,
+    default_data_path, print_results, run_benchmark_bytes, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
+    DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, DELTA, EPSILON, NITRO_RATE,
 };
 use sketch_oxide::frequency::{CountMinSketch as OxideCountMin, NitroSketch};
 

@@ -1,11 +1,11 @@
 #[path = "../bench_common.rs"]
 mod bench_common;
 
+use asap_sketchlib::{impl_fixed_matrix, CountMin, DataInput, FastPath};
 use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use asap_sketchlib::{CountMin, DataInput, FastPath, impl_fixed_matrix};
 
 impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
 

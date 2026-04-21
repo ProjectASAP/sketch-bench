@@ -1,11 +1,11 @@
 #[path = "../bench_common.rs"]
 mod bench_common;
 
+use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog as LibHyperLogLog};
 use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
 };
-use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog as LibHyperLogLog};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

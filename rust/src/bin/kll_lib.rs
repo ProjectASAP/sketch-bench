@@ -1,11 +1,11 @@
 #[path = "../bench_common.rs"]
 mod bench_common;
 
+use asap_sketchlib::KLL;
 use bench_common::{
     default_data_path, print_results, run_benchmark_i64, BenchmarkConfig, DEFAULT_DISCARD_TRIALS,
     DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS, KLL_K,
 };
-use asap_sketchlib::KLL;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

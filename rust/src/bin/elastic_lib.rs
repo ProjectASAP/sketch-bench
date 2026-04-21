@@ -1,12 +1,12 @@
 #[path = "../bench_common.rs"]
 mod bench_common;
 
+use asap_sketchlib::{DefaultXxHasher, Elastic as LibElastic};
 use bench_common::{
     default_data_path, print_results, run_benchmark_strings, BenchmarkConfig,
     DEFAULT_DISCARD_TRIALS, DEFAULT_MEASURE_ITEMS, DEFAULT_TRIALS, DEFAULT_WARMUP_ITEMS,
     ELASTIC_BUCKETS,
 };
-use asap_sketchlib::{DefaultXxHasher, Elastic as LibElastic};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data_path = default_data_path();

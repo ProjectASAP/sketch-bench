@@ -1,0 +1,31 @@
+[package]
+name = "sketch-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Macro-metric benchmark library for sketch algorithms (throughput, latency, CPU, memory, accuracy) — see docs/DESIGN.md §5."
+
+[features]
+default = ["hdrhist", "accuracy-topk"]
+# Enable the hdrhistogram-backed latency recorder. Off → the
+# LATENCY mask bit is a no-op that costs nothing.
+hdrhist = ["dep:hdrhistogram"]
+# Enable tikv-jemalloc-ctl heap-peak sampling. Forces jemalloc on
+# the linking binary — opt-in only. Off → heap_peak_kb = None.
+heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
+# Pull the HashMap-based top-k ground-truth comparator.
+accuracy-topk = []
+
+[dependencies]
+sketch-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+hdrhistogram = { workspace = true, optional = true }
+tikv-jemalloc-ctl = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
