@@ -6,6 +6,7 @@ use std::time::Instant;
 
 const DEFAULT_DATA_PATH: &str = "../input/benchmark_data_10m_int64_zipf_s11_k500000.bin";
 const NUM_PERCENTILES: usize = 101;
+type ProbeResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug)]
 struct Args {
@@ -20,7 +21,10 @@ struct Timings {
     load_dataset: u128,
     input_df_build: u128,
     lazy_plan_build: u128,
-    result_collect: u128,
+    lazy_result_collect: u128,
+    lazy_result_read: u128,
+    eager_result_collect: u128,
+    eager_result_read: u128,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -92,7 +96,11 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
         },
         &ints,
         load_elapsed,
-        |df| df.lazy().select([col("v").n_unique().alias("exact_cardinality")]),
+        |df| {
+            df.lazy()
+                .select([col("v").n_unique().alias("exact_cardinality")])
+        },
+        exact_cardinality_eager,
         args,
     )?;
 
@@ -107,6 +115,7 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
             df.lazy()
                 .select([col("v").approx_n_unique().alias("approx_cardinality")])
         },
+        approx_cardinality_eager,
         args,
     )?;
 
@@ -118,6 +127,7 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
         &floats,
         load_elapsed,
         |df| df.lazy().select(build_quantile_exprs()),
+        quantile_eager,
         args,
     )?;
 
@@ -128,15 +138,8 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
         },
         &ints,
         load_elapsed,
-        |df| {
-            df.lazy()
-                .group_by([col("v")])
-                .agg([len().alias("count")])
-                .sort(
-                    ["count", "v"],
-                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
-                )
-        },
+        |df| df.lazy().group_by([col("v")]).agg([len().alias("count")]),
+        frequency_eager,
         args,
     )?;
 
@@ -155,6 +158,7 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
             exprs.extend(build_quantile_exprs());
             df.lazy().select(exprs)
         },
+        cardinality_plus_quantile_eager,
         args,
     )?;
 
@@ -170,16 +174,10 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
                 col("v").n_unique().alias("exact_cardinality"),
                 col("v").approx_n_unique().alias("approx_cardinality"),
             ]);
-            let grouped = df
-                .lazy()
-                .group_by([col("v")])
-                .agg([len().alias("count")])
-                .sort(
-                    ["count", "v"],
-                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
-                );
+            let grouped = df.lazy().group_by([col("v")]).agg([len().alias("count")]);
             global.cross_join(grouped, None)
         },
+        cardinality_plus_frequency_eager,
         args,
     )?;
 
@@ -192,16 +190,10 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
         load_elapsed,
         |df| {
             let global = df.clone().lazy().select(build_quantile_exprs());
-            let grouped = df
-                .lazy()
-                .group_by([col("v")])
-                .agg([len().alias("count")])
-                .sort(
-                    ["count", "v"],
-                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
-                );
+            let grouped = df.lazy().group_by([col("v")]).agg([len().alias("count")]);
             global.cross_join(grouped, None)
         },
+        quantile_plus_frequency_eager,
         args,
     )?;
 
@@ -219,80 +211,112 @@ fn run_all_probes(args: &Args) -> Result<(), Box<dyn Error>> {
             ];
             exprs.extend(build_quantile_exprs());
             let global = df.clone().lazy().select(exprs);
-            let grouped = df
-                .lazy()
-                .group_by([col("v")])
-                .agg([len().alias("count")])
-                .sort(
-                    ["count", "v"],
-                    SortMultipleOptions::default().with_order_descending_multi([true, false]),
-                );
+            let grouped = df.lazy().group_by([col("v")]).agg([len().alias("count")]);
             global.cross_join(grouped, None)
         },
+        cardinality_plus_quantile_plus_frequency_eager,
         args,
     )?;
 
     Ok(())
 }
 
-fn run_int_probe<F>(
+fn run_int_probe<F, G>(
     spec: ProbeSpec,
     values: &[i64],
     load_elapsed: u128,
     build_lazy: F,
+    run_eager: G,
     args: &Args,
 ) -> Result<(), Box<dyn Error>>
 where
     F: Fn(DataFrame) -> LazyFrame,
+    G: Fn(DataFrame) -> ProbeResult<DataFrame>,
 {
     let df_started = Instant::now();
     let df = build_i64_df(values)?;
     let df_elapsed = df_started.elapsed().as_nanos();
 
-    run_probe(spec, df, load_elapsed, df_elapsed, build_lazy, args)
+    run_probe(
+        spec,
+        df,
+        load_elapsed,
+        df_elapsed,
+        build_lazy,
+        run_eager,
+        args,
+    )
 }
 
-fn run_float_probe<F>(
+fn run_float_probe<F, G>(
     spec: ProbeSpec,
     values: &[f64],
     load_elapsed: u128,
     build_lazy: F,
+    run_eager: G,
     args: &Args,
 ) -> Result<(), Box<dyn Error>>
 where
     F: Fn(DataFrame) -> LazyFrame,
+    G: Fn(DataFrame) -> ProbeResult<DataFrame>,
 {
     let df_started = Instant::now();
     let df = build_f64_df(values)?;
     let df_elapsed = df_started.elapsed().as_nanos();
 
-    run_probe(spec, df, load_elapsed, df_elapsed, build_lazy, args)
+    run_probe(
+        spec,
+        df,
+        load_elapsed,
+        df_elapsed,
+        build_lazy,
+        run_eager,
+        args,
+    )
 }
 
-fn run_probe<F>(
+fn run_probe<F, G>(
     spec: ProbeSpec,
     df: DataFrame,
     load_elapsed: u128,
     df_elapsed: u128,
     build_lazy: F,
+    run_eager: G,
     args: &Args,
 ) -> Result<(), Box<dyn Error>>
 where
     F: Fn(DataFrame) -> LazyFrame,
+    G: Fn(DataFrame) -> ProbeResult<DataFrame>,
 {
     println!();
+    println!("************************************************************");
     println!("query.kind={}", spec.kind);
     println!("query.snippet={}", spec.snippet);
+    println!("************************************************************");
+    println!();
 
     let lazy_started = Instant::now();
     let lazy = build_lazy(df.clone());
     let lazy_elapsed = lazy_started.elapsed().as_nanos();
 
     let collect_started = Instant::now();
-    let result = lazy.clone().collect()?;
-    let collect_elapsed = collect_started.elapsed().as_nanos();
+    let lazy_result = lazy.clone().collect()?;
+    let lazy_collect_elapsed = collect_started.elapsed().as_nanos();
 
-    let result_schema = result.schema().clone();
+    let lazy_read_started = Instant::now();
+    read_probe_result(spec.kind, &lazy_result)?;
+    let lazy_read_elapsed = lazy_read_started.elapsed().as_nanos();
+
+    let eager_started = Instant::now();
+    let eager_result = run_eager(df.clone())?;
+    let eager_collect_elapsed = eager_started.elapsed().as_nanos();
+
+    let eager_read_started = Instant::now();
+    read_probe_result(spec.kind, &eager_result)?;
+    let eager_read_elapsed = eager_read_started.elapsed().as_nanos();
+
+    let lazy_result_schema = lazy_result.schema().clone();
+    let eager_result_schema = eager_result.schema().clone();
     let lazy_plan_unoptimized = if args.show_details {
         Some(lazy.clone().explain(false)?)
     } else {
@@ -313,7 +337,10 @@ where
         load_dataset: load_elapsed,
         input_df_build: df_elapsed,
         lazy_plan_build: lazy_elapsed,
-        result_collect: collect_elapsed,
+        lazy_result_collect: lazy_collect_elapsed,
+        lazy_result_read: lazy_read_elapsed,
+        eager_result_collect: eager_collect_elapsed,
+        eager_result_read: eager_read_elapsed,
     };
 
     print_summary(timings);
@@ -322,12 +349,10 @@ where
     if args.show_details {
         println!("[DETAIL] input_df_shape={:?}", df.shape());
         println!("[DETAIL] input_df_schema={:?}", df.schema());
-        println!("[DETAIL] input_df_head:");
-        println!("{:?}", df.head(Some(5)));
-        println!("[DETAIL] result_shape={:?}", result.shape());
-        println!("[DETAIL] result_schema={result_schema:?}");
-        println!("[DETAIL] result_head:");
-        println!("{:?}", result.head(Some(5)));
+        println!("[DETAIL] lazy_result_shape={:?}", lazy_result.shape());
+        println!("[DETAIL] lazy_result_schema={lazy_result_schema:?}");
+        println!("[DETAIL] eager_result_shape={:?}", eager_result.shape());
+        println!("[DETAIL] eager_result_schema={eager_result_schema:?}");
         println!("[DETAIL] lazy_plan_unoptimized:");
         println!("{}", lazy_plan_unoptimized.as_deref().unwrap_or(""));
         println!("[DETAIL] lazy_plan_optimized:");
@@ -344,23 +369,172 @@ where
 
 fn print_summary(timings: Timings) {
     println!(
-        "[SUMMARY] full_query_collect_ns={} (= load_dataset + input_df_build + lazy_plan_build + result_collect = {} + {} + {} + {})",
-        timings.load_dataset
-            + timings.input_df_build
-            + timings.lazy_plan_build
-            + timings.result_collect,
-        timings.load_dataset,
-        timings.input_df_build,
-        timings.lazy_plan_build,
-        timings.result_collect,
+        "[SUMMARY] lazy_full_query_collect_ms={:.3} (= load_dataset + input_df_build + lazy_plan_build + lazy_result_collect = {:.3} + {:.3} + {:.3} + {:.3})",
+        ns_to_ms(
+            timings.load_dataset
+                + timings.input_df_build
+                + timings.lazy_plan_build
+                + timings.lazy_result_collect,
+        ),
+        ns_to_ms(timings.load_dataset),
+        ns_to_ms(timings.input_df_build),
+        ns_to_ms(timings.lazy_plan_build),
+        ns_to_ms(timings.lazy_result_collect),
+    );
+    println!(
+        "[SUMMARY] eager_full_query_collect_ms={:.3} (= load_dataset + input_df_build + eager_result_collect = {:.3} + {:.3} + {:.3})",
+        ns_to_ms(timings.load_dataset + timings.input_df_build + timings.eager_result_collect),
+        ns_to_ms(timings.load_dataset),
+        ns_to_ms(timings.input_df_build),
+        ns_to_ms(timings.eager_result_collect),
+    );
+    println!(
+        "[SUMMARY] lazy_full_query_plus_read_ms={:.3} (= load_dataset + input_df_build + lazy_plan_build + lazy_result_collect + lazy_result_read = {:.3} + {:.3} + {:.3} + {:.3} + {:.3})",
+        ns_to_ms(
+            timings.load_dataset
+                + timings.input_df_build
+                + timings.lazy_plan_build
+                + timings.lazy_result_collect
+                + timings.lazy_result_read,
+        ),
+        ns_to_ms(timings.load_dataset),
+        ns_to_ms(timings.input_df_build),
+        ns_to_ms(timings.lazy_plan_build),
+        ns_to_ms(timings.lazy_result_collect),
+        ns_to_ms(timings.lazy_result_read),
+    );
+    println!(
+        "[SUMMARY] eager_full_query_plus_read_ms={:.3} (= load_dataset + input_df_build + eager_result_collect + eager_result_read = {:.3} + {:.3} + {:.3} + {:.3})",
+        ns_to_ms(
+            timings.load_dataset
+                + timings.input_df_build
+                + timings.eager_result_collect
+                + timings.eager_result_read,
+        ),
+        ns_to_ms(timings.load_dataset),
+        ns_to_ms(timings.input_df_build),
+        ns_to_ms(timings.eager_result_collect),
+        ns_to_ms(timings.eager_result_read),
     );
 }
 
 fn print_raw_timings(timings: Timings) {
-    println!("[TIMING] load_dataset_ns={}", timings.load_dataset);
-    println!("[TIMING] input_df_build_ns={}", timings.input_df_build);
-    println!("[TIMING] lazy_plan_build_ns={}", timings.lazy_plan_build);
-    println!("[TIMING] result_collect_ns={}", timings.result_collect);
+    println!(
+        "[TIMING] load_dataset_ms={:.3}",
+        ns_to_ms(timings.load_dataset)
+    );
+    println!(
+        "[TIMING] input_df_build_ms={:.3}",
+        ns_to_ms(timings.input_df_build)
+    );
+    println!(
+        "[TIMING] lazy_plan_build_ms={:.3}",
+        ns_to_ms(timings.lazy_plan_build)
+    );
+    println!(
+        "[TIMING] lazy_result_collect_ms={:.3}",
+        ns_to_ms(timings.lazy_result_collect)
+    );
+    println!(
+        "[TIMING] lazy_result_read_ms={:.3}",
+        ns_to_ms(timings.lazy_result_read)
+    );
+    println!(
+        "[TIMING] eager_result_collect_ms={:.3}",
+        ns_to_ms(timings.eager_result_collect)
+    );
+    println!(
+        "[TIMING] eager_result_read_ms={:.3}",
+        ns_to_ms(timings.eager_result_read)
+    );
+}
+
+fn ns_to_ms(ns: u128) -> f64 {
+    ns as f64 / 1_000_000.0
+}
+
+fn read_probe_result(kind: &str, df: &DataFrame) -> ProbeResult<()> {
+    match kind {
+        "exact_cardinality" => read_numeric_agg_result(df, &["exact_cardinality"]),
+        "approx_cardinality" => read_numeric_agg_result(df, &["approx_cardinality"]),
+        "quantile" => read_numeric_agg_result(df, &["p_0", "p_100"]),
+        "cardinality_plus_quantile" => read_numeric_agg_result(
+            df,
+            &["exact_cardinality", "approx_cardinality", "p_0", "p_100"],
+        ),
+        "frequency" => read_grouped_result(df, &["v", COUNT_COLUMN_PLACEHOLDER]),
+        "cardinality_plus_frequency" => read_grouped_result(
+            df,
+            &[
+                "exact_cardinality",
+                "approx_cardinality",
+                "v",
+                COUNT_COLUMN_PLACEHOLDER,
+            ],
+        ),
+        "quantile_plus_frequency" => {
+            read_grouped_result(df, &["p_0", "p_100", "v", COUNT_COLUMN_PLACEHOLDER])
+        }
+        "cardinality_plus_quantile_plus_frequency" => read_grouped_result(
+            df,
+            &[
+                "exact_cardinality",
+                "approx_cardinality",
+                "p_0",
+                "p_100",
+                "v",
+                COUNT_COLUMN_PLACEHOLDER,
+            ],
+        ),
+        other => Err(format!("unknown probe kind for result read: {other}").into()),
+    }
+}
+
+const COUNT_COLUMN_PLACEHOLDER: &str = "__count__";
+
+fn read_numeric_agg_result(df: &DataFrame, columns: &[&str]) -> ProbeResult<()> {
+    let _ = df.shape();
+    let _ = df.schema();
+    for name in columns {
+        read_cell(df, name, 0)?;
+    }
+    Ok(())
+}
+
+fn read_grouped_result(df: &DataFrame, columns: &[&str]) -> ProbeResult<()> {
+    let _ = df.shape();
+    let _ = df.schema();
+    let height = df.height();
+    if height == 0 {
+        return Ok(());
+    }
+
+    for row in [0, height - 1] {
+        for name in columns {
+            read_cell(df, name, row)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_cell(df: &DataFrame, name: &str, row: usize) -> ProbeResult<()> {
+    let actual = resolve_column_name(df, name)?;
+    let _ = df.column(actual)?.as_materialized_series().get(row)?;
+    Ok(())
+}
+
+fn resolve_column_name<'a>(df: &'a DataFrame, name: &'a str) -> ProbeResult<&'a str> {
+    if name == COUNT_COLUMN_PLACEHOLDER {
+        if df.column("count").is_ok() {
+            return Ok("count");
+        }
+        if df.column("v_count").is_ok() {
+            return Ok("v_count");
+        }
+        return Err("expected grouped result to contain either `count` or `v_count`".into());
+    }
+
+    Ok(name)
 }
 
 fn build_quantile_exprs() -> Vec<Expr> {
@@ -395,4 +569,130 @@ fn build_i64_df(values: &[i64]) -> Result<DataFrame, Box<dyn Error>> {
 
 fn build_f64_df(values: &[f64]) -> Result<DataFrame, Box<dyn Error>> {
     Ok(DataFrame::new(vec![Column::new("v".into(), values)])?)
+}
+
+fn exact_cardinality_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let exact = df.column("v")?.as_materialized_series().n_unique()? as u32;
+    build_single_row_df(vec![Column::new("exact_cardinality".into(), [exact])])
+}
+
+fn approx_cardinality_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let approx = df.column("v")?.approx_n_unique()? as u32;
+    build_single_row_df(vec![Column::new("approx_cardinality".into(), [approx])])
+}
+
+fn quantile_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let series = df
+        .column("v")?
+        .as_materialized_series()
+        .cast(&DataType::Float64)?;
+    build_single_row_df(build_quantile_columns(&series)?)
+}
+
+fn frequency_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    Ok(df.group_by(["v"])?.select(["v"]).count()?)
+}
+
+fn cardinality_plus_quantile_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let series = df.column("v")?.as_materialized_series();
+    let float_series = series.cast(&DataType::Float64)?;
+    let mut cols = vec![
+        Column::new("exact_cardinality".into(), [series.n_unique()? as u32]),
+        Column::new(
+            "approx_cardinality".into(),
+            [df.column("v")?.approx_n_unique()? as u32],
+        ),
+    ];
+    cols.extend(build_quantile_columns(&float_series)?);
+    build_single_row_df(cols)
+}
+
+fn cardinality_plus_frequency_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let exact = df.column("v")?.as_materialized_series().n_unique()? as u32;
+    let approx = df.column("v")?.approx_n_unique()? as u32;
+    let counts = frequency_eager(df)?;
+    let len = counts_height(&counts);
+    with_repeated_prefix(
+        counts,
+        vec![
+            repeated_u32_column("exact_cardinality", exact, len),
+            repeated_u32_column("approx_cardinality", approx, len),
+        ],
+    )
+}
+
+fn quantile_plus_frequency_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let float_series = df
+        .column("v")?
+        .as_materialized_series()
+        .cast(&DataType::Float64)?;
+    let counts = frequency_eager(df)?;
+    let prefix = build_quantile_repeated_columns(&float_series, counts_height(&counts))?;
+    with_repeated_prefix(counts, prefix)
+}
+
+fn cardinality_plus_quantile_plus_frequency_eager(df: DataFrame) -> ProbeResult<DataFrame> {
+    let exact = df.column("v")?.as_materialized_series().n_unique()? as u32;
+    let approx = df.column("v")?.approx_n_unique()? as u32;
+    let float_series = df
+        .column("v")?
+        .as_materialized_series()
+        .cast(&DataType::Float64)?;
+    let counts = frequency_eager(df)?;
+    let mut prefix = vec![
+        repeated_u32_column("exact_cardinality", exact, counts_height(&counts)),
+        repeated_u32_column("approx_cardinality", approx, counts_height(&counts)),
+    ];
+    prefix.extend(build_quantile_repeated_columns(
+        &float_series,
+        counts_height(&counts),
+    )?);
+    with_repeated_prefix(counts, prefix)
+}
+
+fn build_quantile_columns(series: &Series) -> ProbeResult<Vec<Column>> {
+    let quantiles = series.f64()?;
+    let mut cols = Vec::with_capacity(NUM_PERCENTILES);
+    for percentile in 0..NUM_PERCENTILES {
+        let rank = percentile as f64 / 100.0;
+        let value = quantiles
+            .quantile(rank, QuantileMethod::Linear)?
+            .unwrap_or(f64::NAN);
+        cols.push(Column::new(format!("p_{percentile}").into(), [value]));
+    }
+    Ok(cols)
+}
+
+fn build_quantile_repeated_columns(series: &Series, len: usize) -> ProbeResult<Vec<Column>> {
+    let quantiles = series.f64()?;
+    let mut cols = Vec::with_capacity(NUM_PERCENTILES);
+    for percentile in 0..NUM_PERCENTILES {
+        let rank = percentile as f64 / 100.0;
+        let value = quantiles
+            .quantile(rank, QuantileMethod::Linear)?
+            .unwrap_or(f64::NAN);
+        cols.push(Column::new(
+            format!("p_{percentile}").into(),
+            vec![value; len],
+        ));
+    }
+    Ok(cols)
+}
+
+fn build_single_row_df(columns: Vec<Column>) -> ProbeResult<DataFrame> {
+    Ok(DataFrame::new(columns)?)
+}
+
+fn with_repeated_prefix(df: DataFrame, prefix: Vec<Column>) -> ProbeResult<DataFrame> {
+    let mut columns = prefix;
+    columns.extend(df.get_columns().iter().cloned());
+    Ok(DataFrame::new(columns)?)
+}
+
+fn repeated_u32_column(name: &str, value: u32, len: usize) -> Column {
+    Column::new(name.into(), vec![value; len])
+}
+
+fn counts_height(df: &DataFrame) -> usize {
+    df.height()
 }
