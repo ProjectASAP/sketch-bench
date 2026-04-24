@@ -61,10 +61,14 @@ The `rust/src/bin/*` files still work unchanged — they emit the old `total_nan
 
 Gated on `sketch-runtime` landing first.
 
+### Proposed
+
+- [ ] `sketchlib bench-sweep` — offline sweep over a family's config space + file-backed inputs. Design: [`docs/BENCH_SWEEP.md`](BENCH_SWEEP.md). Impl gated on review of that doc.
+
 ### Minor polish (not paper-blocking)
 
 - [ ] Add a `sketchlib workload generate|describe` subcommand (MERGE_PLAN Phase 7)
 - [ ] Expose `heap-jemalloc` feature end-to-end (currently wired but not exercised in the CLI default profile)
 - [ ] Criterion microbench proving `Probe<_, NoopSink>` is a no-op (MERGE_PLAN Phase 4, last bullet)
-- [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`)
+- [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`) — superset of `bench-sweep`
 - [ ] Retire the private warning on `WorkloadAny` (dispatch.rs) by making the type `pub(crate)` visible across the module boundary
