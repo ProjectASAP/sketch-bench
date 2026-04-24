@@ -11,19 +11,24 @@
 
 use std::cell::RefCell;
 
+use sketch_core::config::KllParams;
 use sketch_core::sketch::Sketch;
 
-use crate::params::KLL_K;
-
 // ---------- sketch_oxide KLL ----------
+// `KllSketch::default()` constructs with the crate's built-in `k`
+// (no `new(k)` constructor exposed through the stable surface).
+// We store the requested `k` so `memory_bytes` is sensible; the
+// sweep driver marks oxide KLL as fixed-shape in the dispatch.
 pub struct KllOxide {
     inner: RefCell<sketch_oxide::quantiles::KllSketch>,
+    k: u32,
 }
 
 impl KllOxide {
-    pub fn new() -> Self {
+    pub fn new(p: &KllParams) -> Self {
         Self {
             inner: RefCell::new(sketch_oxide::quantiles::KllSketch::default()),
+            k: p.k,
         }
     }
 }
@@ -39,16 +44,22 @@ impl Sketch for KllOxide {
         self.inner.borrow_mut().quantile(q).unwrap_or(f64::NAN)
     }
     fn memory_bytes(&self) -> usize {
-        (KLL_K as usize) * std::mem::size_of::<f64>() * 4
+        (self.k as usize) * std::mem::size_of::<f64>() * 4
     }
 }
 
 // ---------- asap_sketchlib KLL ----------
-pub struct KllLib(pub asap_sketchlib::KLL<i64>);
+pub struct KllLib {
+    inner: asap_sketchlib::KLL<i64>,
+    k: u32,
+}
 
 impl KllLib {
-    pub fn new() -> Self {
-        Self(asap_sketchlib::KLL::<i64>::init_kll(KLL_K))
+    pub fn new(p: &KllParams) -> Self {
+        Self {
+            inner: asap_sketchlib::KLL::<i64>::init_kll(p.k as i32),
+            k: p.k,
+        }
     }
 }
 
@@ -57,12 +68,12 @@ impl Sketch for KllLib {
     type Query = f64;
     type Answer = f64;
     fn update(&mut self, v: &i64) {
-        self.0.update(v);
+        self.inner.update(v);
     }
     fn query(&self, q: f64) -> f64 {
-        self.0.quantile(q)
+        self.inner.quantile(q)
     }
     fn memory_bytes(&self) -> usize {
-        (KLL_K as usize) * std::mem::size_of::<i64>() * 4
+        (self.k as usize) * std::mem::size_of::<i64>() * 4
     }
 }

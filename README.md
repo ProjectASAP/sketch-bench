@@ -6,15 +6,27 @@
 
 ```
 cargo run -p sketch-cli --release -- list-impls
+
+# default: sweep all impls of a family across the family's default config grid
 cargo run -p sketch-cli --release -- bench \
-    --sketch hll --impl oxide \
+    --sketch hll \
     --workload zipf --size 1000000 --zipf-s 1.1 \
     --runs 10 --warmup-runs 3 \
     --metrics throughput,latency,cpu,memory \
     --report out.jsonl
+
+# single impl, single config — same as the pre-sweep behaviour
+cargo run -p sketch-cli --release -- bench \
+    --sketch hll --impl oxide --config 'lg_k=14' \
+    --workload zipf --size 1000000 --zipf-s 1.1 --runs 10 --report out.jsonl
+
+# explicit grid: Cartesian product across whitespace-separated keys
+cargo run -p sketch-cli --release -- bench \
+    --sketch cms --config 'rows=3,5 cols=1024,2048,4096' \
+    --workload zipf --size 1000000 --runs 10 --report out.jsonl
 ```
 
-`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over that pair and writes a v1 JSONL record (schema in `sketch-core::report::Record`). Feed the JSONL into `visualization/`.
+`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.
 
 Covered families / impls (21 total):
 

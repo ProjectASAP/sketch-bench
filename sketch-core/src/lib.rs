@@ -6,12 +6,17 @@
 //! downstream ASAP app depend here — see `docs/DESIGN.md` §3.1
 //! for the full dependency-direction diagram.
 
+pub mod config;
 pub mod error;
 pub mod probe;
 pub mod report;
 pub mod sketch;
 pub mod workload;
 
+pub use config::{
+    CmsParams, CountSketchParams, ElasticParams, HllParams, KllParams, NitroParams, ParamSet,
+    UnivMonParams,
+};
 pub use error::SketchCoreError;
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{

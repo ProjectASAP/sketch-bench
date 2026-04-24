@@ -21,6 +21,11 @@ pub struct Record {
     pub sketch: String,
     #[serde(rename = "impl")]
     pub impl_name: String,
+    /// Family-specific construction params used for this run.
+    /// Populated by `bench` when it knows the `ParamSet`; absent
+    /// from legacy records. See `docs/BENCH_SWEEP.md` §5.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sketch_config: Option<serde_json::Value>,
     pub workload: WorkloadDesc,
     pub mode: Mode,
     pub runs: usize,
@@ -156,6 +161,7 @@ impl Record {
             schema_version: SCHEMA_VERSION,
             sketch: sketch.into(),
             impl_name: impl_name.into(),
+            sketch_config: None,
             workload,
             mode,
             runs,

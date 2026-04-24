@@ -11,6 +11,7 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 | 4 | `sketch-bench`: `BenchRunner`, metrics (wall / CPU / RSS / latency / throughput), accuracy comparators (freq / cardinality / quantile / topk), Welford aggregator | ✅ |
 | 7-lite | `sketch-cli`: unified `sketchlib` binary with 21 sketch impls wired end-to-end via a `(family, impl)` dispatch table | ✅ |
 | 6-lite | `sketch-runtime`: `Sampler` (disabled / every-n / time-window), `RuntimeSwitch`, stdout + file + noop exporters, compile-time feature gate (`--no-default-features` → ZST fallback), overhead microbench | ✅ |
+| 7-sweep | `sketchlib bench` config sweep: typed `ParamSet` in sketch-core, 21 wrappers refactored to `::new(&params)`, per-family default grids, `--config 'k=v1,v2'` Cartesian override, optional `sketch_config` field in v1 JSONL, fixed-shape impls skipped with stderr log | ✅ |
 
 ## Deferred (explicitly out-of-scope for this first cut)
 
@@ -60,10 +61,6 @@ The `rust/src/bin/*` files still work unchanged — they emit the old `total_nan
 - ASAPController — consume the gRPC feedback stream, diff live samples vs. baselines
 
 Gated on `sketch-runtime` landing first.
-
-### Proposed
-
-- [ ] Extend `sketchlib bench` with config-sweep (`--config k=v1,v2`, auto-sweep all impls of a family). Design: [`docs/BENCH_SWEEP.md`](BENCH_SWEEP.md). Impl gated on review of that doc.
 
 ### Minor polish (not paper-blocking)
 

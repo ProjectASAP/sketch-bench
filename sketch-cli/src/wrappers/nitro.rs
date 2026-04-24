@@ -4,29 +4,27 @@
 //! Nitro is a sampling frequency-family sketch. For this
 //! wrapper the `update` path is the sampled insert; `query`
 //! returns a point-estimate like CMS.
+//!
+//! The tunable param is `rate`; the underlying CMS is sized at
+//! a fixed (5, 2048) — future work can expose those knobs too.
 
 use asap_sketchlib::{NitroBatch, Vector2D};
+use sketch_core::config::NitroParams;
 use sketch_core::sketch::Sketch;
 
-use crate::params::{CMS_COLS, CMS_DELTA, CMS_EPSILON, CMS_ROWS, NITRO_RATE};
+const NITRO_CMS_ROWS: usize = 5;
+const NITRO_CMS_COLS: usize = 2048;
 
 // ---------- asap_sketchlib NitroBatch ----------
-//
-// The legacy binary used `run_benchmark_i64_batch` because
-// NitroBatch ingests via a batch `insert(values: &[i64])`. The
-// `Sketch` trait takes one item at a time; we adapt by inserting
-// single-element slices, which matches the trait shape but loses
-// Nitro's batch optimisation. A dedicated batch-mode runner can
-// be added later (tracked in TODO.md).
 pub struct NitroLib {
     inner: NitroBatch<Vector2D<u32>>,
 }
 
 impl NitroLib {
-    pub fn new() -> Self {
-        let mut sk = Vector2D::<u32>::init(CMS_ROWS, CMS_COLS);
+    pub fn new(p: &NitroParams) -> Self {
+        let mut sk = Vector2D::<u32>::init(NITRO_CMS_ROWS, NITRO_CMS_COLS);
         sk.fill(0_u32);
-        let inner = NitroBatch::with_target(NITRO_RATE, sk);
+        let inner = NitroBatch::with_target(p.rate, sk);
         Self { inner }
     }
 }
@@ -43,13 +41,11 @@ impl Sketch for NitroLib {
     }
     fn query(&self, _q: i64) -> u64 {
         // NitroBatch doesn't expose a cheap point-query in the
-        // benched API; we return 0 for now — accuracy
-        // comparisons for Nitro need a dedicated comparator
-        // (future work).
+        // benched API; see wrapper notes in the older version.
         0
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<u32>()
+        NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u32>()
     }
 }
 
@@ -59,11 +55,13 @@ pub struct NitroOxide(
 );
 
 impl NitroOxide {
-    pub fn new() -> Self {
-        let base = sketch_oxide::frequency::CountMinSketch::new(CMS_EPSILON, CMS_DELTA)
+    pub fn new(p: &NitroParams) -> Self {
+        let epsilon = std::f64::consts::E / NITRO_CMS_COLS as f64;
+        let delta = (-(NITRO_CMS_ROWS as f64)).exp();
+        let base = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
             .expect("valid CMS parameters");
         Self(
-            sketch_oxide::frequency::NitroSketch::new(base, NITRO_RATE)
+            sketch_oxide::frequency::NitroSketch::new(base, p.rate)
                 .expect("valid Nitro parameters"),
         )
     }
@@ -80,6 +78,6 @@ impl Sketch for NitroOxide {
         self.0.query(&q)
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<u64>()
+        NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u64>()
     }
 }

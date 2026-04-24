@@ -4,30 +4,47 @@
 //! `Answer = u64` (count estimate).
 //!
 //! Impls:
-//! * `oxide` — sketch_oxide::frequency::CountMinSketch
-//! * `datasketches` — datasketches::countmin::CountMinSketch
-//! * `lib_fixedmatrix_custom_fast` — asap_sketchlib custom storage
-//! * `lib_fixedmatrix_fast` — asap_sketchlib FixedMatrix + FastPath
-//! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath
-//! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath
+//! * `oxide` — sketch_oxide::frequency::CountMinSketch (tunable via (rows,cols))
+//! * `datasketches` — datasketches::countmin::CountMinSketch (tunable)
+//! * `lib_fixedmatrix_custom_fast` — asap_sketchlib custom storage (FIXED 5x65538)
+//! * `lib_fixedmatrix_fast` — asap_sketchlib FixedMatrix + FastPath (FIXED 5x2048)
+//! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath (tunable)
+//! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
+use sketch_core::config::CmsParams;
 use sketch_core::sketch::Sketch;
 
 use asap_sketchlib::{
     impl_fixed_matrix, CountMin, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D,
 };
 
-use crate::params::{CMS_COLS, CMS_DELTA, CMS_EPSILON, CMS_ROWS};
+/// Convert `(rows, cols)` → `(epsilon, delta)` for the oxide /
+/// datasketches style API (they accept error bounds, not raw
+/// dimensions). Matches the `CMS_ROWS=5 / CMS_COLS=2048` →
+/// `CMS_EPSILON=0.0013 / CMS_DELTA=0.0067` defaults used by the
+/// legacy binaries within float tolerance.
+fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
+    let epsilon = std::f64::consts::E / cols as f64;
+    let delta = (-(rows as f64)).exp();
+    (epsilon, delta)
+}
 
 // ---------- sketch_oxide ----------
-pub struct CmsOxide(pub sketch_oxide::frequency::CountMinSketch);
+pub struct CmsOxide {
+    inner: sketch_oxide::frequency::CountMinSketch,
+    rows: usize,
+    cols: usize,
+}
 
 impl CmsOxide {
-    pub fn new() -> Self {
-        Self(
-            sketch_oxide::frequency::CountMinSketch::new(CMS_EPSILON, CMS_DELTA)
+    pub fn new(p: &CmsParams) -> Self {
+        let (epsilon, delta) = dims_to_err(p.rows, p.cols);
+        Self {
+            inner: sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
                 .expect("valid CMS parameters"),
-        )
+            rows: p.rows,
+            cols: p.cols,
+        }
     }
 }
 
@@ -36,25 +53,30 @@ impl Sketch for CmsOxide {
     type Query = i64;
     type Answer = u64;
     fn update(&mut self, v: &i64) {
-        self.0.update(v);
+        self.inner.update(v);
     }
     fn query(&self, q: i64) -> u64 {
-        self.0.estimate(&q)
+        self.inner.estimate(&q)
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<u32>()
+        self.rows * self.cols * std::mem::size_of::<u32>()
     }
 }
 
 // ---------- datasketches ----------
-pub struct CmsDatasketches(pub datasketches::countmin::CountMinSketch);
+pub struct CmsDatasketches {
+    inner: datasketches::countmin::CountMinSketch,
+    rows: usize,
+    cols: usize,
+}
 
 impl CmsDatasketches {
-    pub fn new() -> Self {
-        Self(datasketches::countmin::CountMinSketch::new(
-            CMS_ROWS as u8,
-            CMS_COLS as u32,
-        ))
+    pub fn new(p: &CmsParams) -> Self {
+        Self {
+            inner: datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32),
+            rows: p.rows,
+            cols: p.cols,
+        }
     }
 }
 
@@ -63,24 +85,29 @@ impl Sketch for CmsDatasketches {
     type Query = i64;
     type Answer = u64;
     fn update(&mut self, v: &i64) {
-        self.0.update(*v);
+        self.inner.update(*v);
     }
     fn query(&self, q: i64) -> u64 {
-        // `estimate<T: Hash>` is a by-value API in datasketches.
-        self.0.estimate(q).max(0) as u64
+        self.inner.estimate(q).max(0) as u64
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<u64>()
+        self.rows * self.cols * std::mem::size_of::<u64>()
     }
 }
 
 // ---------- asap_sketchlib: FixedMatrix custom + FastPath ----------
+// Shape is baked at compile time by `impl_fixed_matrix!`. Only
+// runs when the requested `(rows, cols)` matches this shape;
+// otherwise the dispatch skips it.
 impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
+
+pub const CMS_CUSTOM_FIXED_ROWS: usize = 5;
+pub const CMS_CUSTOM_FIXED_COLS: usize = 65538;
 
 pub struct CmsLibFixedmatrixCustomFast(pub CountMin<CustomCountMinMatrixI32U128, FastPath>);
 
 impl CmsLibFixedmatrixCustomFast {
-    pub fn new() -> Self {
+    pub fn new(_p: &CmsParams) -> Self {
         Self(
             CountMin::<CustomCountMinMatrixI32U128, FastPath>::from_storage(
                 CustomCountMinMatrixI32U128::default(),
@@ -100,15 +127,21 @@ impl Sketch for CmsLibFixedmatrixCustomFast {
         self.0.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
-        5 * 65538 * std::mem::size_of::<i32>()
+        CMS_CUSTOM_FIXED_ROWS * CMS_CUSTOM_FIXED_COLS * std::mem::size_of::<i32>()
     }
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
+// `FixedMatrix::default()` bakes in (5, 2048). Treated as a
+// fixed-shape impl in dispatch; only runs when `(rows, cols)`
+// matches that.
+pub const CMS_FIXED_ROWS: usize = 5;
+pub const CMS_FIXED_COLS: usize = 2048;
+
 pub struct CmsLibFixedmatrixFast(pub CountMin<FixedMatrix, FastPath>);
 
 impl CmsLibFixedmatrixFast {
-    pub fn new() -> Self {
+    pub fn new(_p: &CmsParams) -> Self {
         Self(CountMin::<FixedMatrix, FastPath>::default())
     }
 }
@@ -124,20 +157,24 @@ impl Sketch for CmsLibFixedmatrixFast {
         self.0.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
-        // FixedMatrix's internal dimensions aren't exposed; the
-        // default matches the defaults the binaries use.
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<u32>()
+        CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<u32>()
     }
 }
 
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
-pub struct CmsLibVector2dFast(pub CountMin<Vector2D<i32>, FastPath>);
+pub struct CmsLibVector2dFast {
+    inner: CountMin<Vector2D<i32>, FastPath>,
+    rows: usize,
+    cols: usize,
+}
 
 impl CmsLibVector2dFast {
-    pub fn new() -> Self {
-        Self(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
-            CMS_ROWS, CMS_COLS,
-        ))
+    pub fn new(p: &CmsParams) -> Self {
+        Self {
+            inner: CountMin::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
+            rows: p.rows,
+            cols: p.cols,
+        }
     }
 }
 
@@ -146,24 +183,30 @@ impl Sketch for CmsLibVector2dFast {
     type Query = i64;
     type Answer = u64;
     fn update(&mut self, v: &i64) {
-        self.0.insert(&DataInput::I64(*v));
+        self.inner.insert(&DataInput::I64(*v));
     }
     fn query(&self, q: i64) -> u64 {
-        self.0.estimate(&DataInput::I64(q)) as u64
+        self.inner.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<i32>()
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
-pub struct CmsLibVector2dRegular(pub CountMin<Vector2D<i32>, RegularPath>);
+pub struct CmsLibVector2dRegular {
+    inner: CountMin<Vector2D<i32>, RegularPath>,
+    rows: usize,
+    cols: usize,
+}
 
 impl CmsLibVector2dRegular {
-    pub fn new() -> Self {
-        Self(CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(
-            CMS_ROWS, CMS_COLS,
-        ))
+    pub fn new(p: &CmsParams) -> Self {
+        Self {
+            inner: CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
+            rows: p.rows,
+            cols: p.cols,
+        }
     }
 }
 
@@ -172,12 +215,12 @@ impl Sketch for CmsLibVector2dRegular {
     type Query = i64;
     type Answer = u64;
     fn update(&mut self, v: &i64) {
-        self.0.insert(&DataInput::I64(*v));
+        self.inner.insert(&DataInput::I64(*v));
     }
     fn query(&self, q: i64) -> u64 {
-        self.0.estimate(&DataInput::I64(q)) as u64
+        self.inner.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
-        CMS_ROWS * CMS_COLS * std::mem::size_of::<i32>()
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }

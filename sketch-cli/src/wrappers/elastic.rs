@@ -3,9 +3,8 @@
 
 use std::cell::RefCell;
 
+use sketch_core::config::ElasticParams;
 use sketch_core::sketch::Sketch;
-
-use crate::params::{ELASTIC_BUCKETS, ELASTIC_DEPTH};
 
 // ---------- asap_sketchlib Elastic ----------
 //
@@ -14,18 +13,24 @@ use crate::params::{ELASTIC_BUCKETS, ELASTIC_DEPTH};
 // `Sketch` trait's `fn query(&self, ...)` contract still holds;
 // interior mutability is safe here because BenchRunner queries
 // serially per run.
+//
+// The lib's constructor only accepts `buckets`; `depth` is fixed
+// internally, so we honour `buckets` and record both in the
+// sweep's JSONL config but `depth` has no effect on the build.
 pub struct ElasticLib {
     inner: RefCell<asap_sketchlib::Elastic<asap_sketchlib::DefaultXxHasher>>,
+    buckets: usize,
 }
 
 impl ElasticLib {
-    pub fn new() -> Self {
+    pub fn new(p: &ElasticParams) -> Self {
         Self {
             inner: RefCell::new(
                 asap_sketchlib::Elastic::<asap_sketchlib::DefaultXxHasher>::init_with_length(
-                    ELASTIC_BUCKETS as i32,
+                    p.buckets as i32,
                 ),
             ),
+            buckets: p.buckets,
         }
     }
 }
@@ -41,19 +46,25 @@ impl Sketch for ElasticLib {
         self.inner.borrow_mut().query(q).max(0) as u64
     }
     fn memory_bytes(&self) -> usize {
-        ELASTIC_BUCKETS * std::mem::size_of::<u32>() * 4
+        self.buckets * std::mem::size_of::<u32>() * 4
     }
 }
 
 // ---------- sketch_oxide ElasticSketch ----------
-pub struct ElasticOxide(pub sketch_oxide::frequency::ElasticSketch);
+pub struct ElasticOxide {
+    inner: sketch_oxide::frequency::ElasticSketch,
+    buckets: usize,
+    depth: usize,
+}
 
 impl ElasticOxide {
-    pub fn new() -> Self {
-        Self(
-            sketch_oxide::frequency::ElasticSketch::new(ELASTIC_BUCKETS, ELASTIC_DEPTH)
+    pub fn new(p: &ElasticParams) -> Self {
+        Self {
+            inner: sketch_oxide::frequency::ElasticSketch::new(p.buckets, p.depth)
                 .expect("valid Elastic parameters"),
-        )
+            buckets: p.buckets,
+            depth: p.depth,
+        }
     }
 }
 
@@ -62,12 +73,12 @@ impl Sketch for ElasticOxide {
     type Query = Vec<u8>;
     type Answer = u64;
     fn update(&mut self, v: &Vec<u8>) {
-        self.0.update(v, 1);
+        self.inner.update(v, 1);
     }
     fn query(&self, q: Vec<u8>) -> u64 {
-        self.0.estimate(&q)
+        self.inner.estimate(&q)
     }
     fn memory_bytes(&self) -> usize {
-        ELASTIC_BUCKETS * ELASTIC_DEPTH * std::mem::size_of::<u64>()
+        self.buckets * self.depth * std::mem::size_of::<u64>()
     }
 }

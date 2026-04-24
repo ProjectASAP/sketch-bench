@@ -1,6 +1,6 @@
 # `sketchlib bench` — config-sweep extension
 
-> Status: **design, not implemented**. Review artifact for the follow-up impl PR.
+> Status: **landed**. See the "Changed for the user" section of the PR for the final surface.
 
 Extends the existing `sketchlib bench` command so it can sweep a sketch family's configuration space in one invocation — instead of hard-coding params in `sketch-cli/src/params.rs`, rebuilding, and looping by hand.
 
