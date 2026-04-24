@@ -3,12 +3,12 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use sketch_bench::baselines::ExactKll;
+use sketch_bench::baselines::ExactQuantile;
 
 #[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    exact: ExactKll,
+    exact: ExactQuantile,
 }
 
 impl BaselineData {
@@ -25,7 +25,7 @@ impl BaselineData {
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     let values = load_i64_stream(path)?;
-    let exact = ExactKll::ingest_all(&values);
+    let exact = ExactQuantile::ingest_all(&values);
     Ok(BaselineData { values, exact })
 }
 

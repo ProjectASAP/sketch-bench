@@ -50,14 +50,27 @@ Covered families / impls (21 sketch + 3 exact = 24 total):
 | `univmon` | `oxide`, `lib` |
 
 The `exact` impl per (hll, kll, cms) family is a zero-error baseline
-(HashSet / HashMap / sorted Vec) that implements the same `Sketch`
-trait, so it benches through the identical insert / query / accuracy
-pipeline. It exists to give a side-by-side throughput / CPU / memory
-reference point and to sanity-check the ground-truth wiring. The
-dispatch marks it `Unparameterized`, so sweeps run it once regardless
-of grid size. See `sketch-bench/src/baselines/` for the source; the
+that implements the same `Sketch` trait, so it benches through the
+identical insert / query / accuracy pipeline. It exists to give a
+side-by-side throughput / CPU / memory reference point and to
+sanity-check the ground-truth wiring. The dispatch marks it
+`Unparameterized`, so sweeps run it once regardless of grid size.
+
+The baselines live under `sketch-bench/src/baselines/` organised by
+**statistic** — not by sketch family — so a single exact algorithm
+serves every sketch that answers the same question:
+
+| module             | statistic    | exact algorithm        | sketches that share this baseline |
+|--------------------|--------------|------------------------|-----------------------------------|
+| `cardinality.rs`   | cardinality  | `HashSet<i64>` + `len` | `hll`                             |
+| `frequency.rs`     | frequency    | `HashMap<i64, u64>`    | `cms`, `countsketch`, `elastic`   |
+| `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
+
+`sketch_bench::baselines::Statistic::for_family(...)` is the
+canonical family → statistic lookup. The
 `accuracy/{cms,hll,kll,dd}/rust/src/baseline.rs` harness crates
-delegate there for their ground-truth computation.
+delegate here for their ground-truth computation, so each statistic's
+exact algorithm has exactly one source of truth.
 
 `sketchlib-tool` is:
 

@@ -1,8 +1,9 @@
 //! Exact quantile baseline — `Vec<i64>` sorted on first query.
-//! Implements `Sketch<Item=i64, Query=f64, Answer=f64>`.
+//! Provides ground truth for any sketch family that answers a
+//! quantile / rank query. Shared between all quantile sketches.
 //!
-//! Shared by KLL and DDSketch accuracy harnesses (both want
-//! nearest-rank quantiles on the sorted stream).
+//! Current consumers: `kll`, `dd` (DDSketch) — see
+//! `baselines::Statistic::Quantile`.
 
 use std::cell::{Cell, RefCell};
 
@@ -10,12 +11,12 @@ use sketch_core::config::KllParams;
 use sketch_core::sketch::Sketch;
 
 #[derive(Debug, Default)]
-pub struct ExactKll {
+pub struct ExactQuantile {
     buf: RefCell<Vec<i64>>,
     sorted: Cell<bool>,
 }
 
-impl ExactKll {
+impl ExactQuantile {
     /// Accepts a `KllParams` for dispatch-macro uniformity; the
     /// value is ignored — an exact sorted stream has no k.
     pub fn new(_p: &KllParams) -> Self {
@@ -26,8 +27,8 @@ impl ExactKll {
     }
 
     /// Batch ingest. Sorts eagerly so subsequent quantile calls
-    /// are amortised — matches how `accuracy/kll` pre-sorted in
-    /// `BaselineData`.
+    /// are amortised — matches how `accuracy/{kll,dd}` pre-sorted
+    /// in `BaselineData`.
     pub fn ingest_all(values: &[i64]) -> Self {
         let mut buf = values.to_vec();
         buf.sort_unstable();
@@ -66,7 +67,7 @@ impl ExactKll {
     }
 }
 
-impl Sketch for ExactKll {
+impl Sketch for ExactQuantile {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
@@ -92,7 +93,7 @@ mod tests {
     #[test]
     fn nearest_rank_matches_sorted_index() {
         let vals: Vec<i64> = (1..=101).collect();
-        let b = ExactKll::ingest_all(&vals);
+        let b = ExactQuantile::ingest_all(&vals);
         assert_eq!(b.ground_truth_quantile(0), 1.0);
         assert_eq!(b.ground_truth_quantile(50), 51.0);
         assert_eq!(b.ground_truth_quantile(100), 101.0);
@@ -101,8 +102,8 @@ mod tests {
     #[test]
     fn streamed_quantile_matches_batch() {
         let vals: Vec<i64> = (0..1000).rev().collect();
-        let batch = ExactKll::ingest_all(&vals);
-        let mut streamed = ExactKll::new(&KllParams { k: 200 });
+        let batch = ExactQuantile::ingest_all(&vals);
+        let mut streamed = ExactQuantile::new(&KllParams { k: 200 });
         for v in &vals {
             streamed.update(v);
         }

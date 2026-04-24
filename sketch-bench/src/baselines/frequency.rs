@@ -1,21 +1,27 @@
 //! Exact frequency baseline — `HashMap<i64, u64>`, freq =
-//! `map.get(k)`. Implements `Sketch<Item=i64, Query=i64, Answer=u64>`.
+//! `map.get(k)`. Provides ground truth for any sketch family that
+//! answers a per-key frequency query or derives heavy hitters
+//! from per-key counts.
+//!
+//! Current consumers: `cms`, `countsketch`, `elastic` (see
+//! `baselines::Statistic::Frequency`).
 
 use std::collections::HashMap;
 
 use sketch_core::config::CmsParams;
 use sketch_core::sketch::Sketch;
 
-/// Matches the threshold used by `accuracy/cms/rust/src/baseline.rs`
-/// for heavy-hitter sets — true count ≥ this is kept.
+/// Heavy-hitter threshold — matches the value the legacy
+/// `accuracy/cms/rust/src/baseline.rs` used. Keys with true
+/// count ≥ this are kept in `heavy_hitters`.
 pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = 100;
 
 #[derive(Debug, Default, Clone)]
-pub struct ExactCms {
+pub struct ExactFrequency {
     map: HashMap<i64, u64>,
 }
 
-impl ExactCms {
+impl ExactFrequency {
     /// Accepts a `CmsParams` for dispatch-macro uniformity; the
     /// value is ignored — an exact counter has no shape.
     pub fn new(_p: &CmsParams) -> Self {
@@ -56,7 +62,7 @@ impl ExactCms {
     }
 }
 
-impl Sketch for ExactCms {
+impl Sketch for ExactFrequency {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
@@ -82,7 +88,7 @@ mod tests {
     #[test]
     fn exact_freq_lookup() {
         let vals = [1i64, 2, 2, 3, 3, 3, 4];
-        let b = ExactCms::ingest_all(&vals);
+        let b = ExactFrequency::ingest_all(&vals);
         assert_eq!(b.query(1), 1);
         assert_eq!(b.query(2), 2);
         assert_eq!(b.query(3), 3);
@@ -94,7 +100,7 @@ mod tests {
     #[test]
     fn heavy_hitters_honours_threshold() {
         let vals: Vec<i64> = std::iter::repeat(7).take(150).chain([8, 8, 9]).collect();
-        let b = ExactCms::ingest_all(&vals);
+        let b = ExactFrequency::ingest_all(&vals);
         let hh = b.heavy_hitters(100);
         assert_eq!(hh, vec![(7, 150)]);
     }

@@ -3,15 +3,15 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use sketch_bench::baselines::ExactKll;
+use sketch_bench::baselines::ExactQuantile;
 
-/// DDSketch and KLL share the same ground-truth algorithm
-/// (sorted `Vec<i64>` + nearest-rank lookup), so this harness
-/// reuses `sketch_bench::baselines::ExactKll`.
+/// DDSketch and KLL both answer quantile queries, so this harness
+/// shares the same ground-truth algorithm with the KLL harness —
+/// `sketch_bench::baselines::ExactQuantile`.
 #[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    exact: ExactKll,
+    exact: ExactQuantile,
 }
 
 impl BaselineData {
@@ -26,7 +26,7 @@ impl BaselineData {
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     let values = load_i64_stream(path)?;
-    let exact = ExactKll::ingest_all(&values);
+    let exact = ExactQuantile::ingest_all(&values);
     Ok(BaselineData { values, exact })
 }
 

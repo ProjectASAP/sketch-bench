@@ -3,12 +3,12 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use sketch_bench::baselines::ExactHll;
+use sketch_bench::baselines::ExactCardinality;
 
 #[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    exact: ExactHll,
+    exact: ExactCardinality,
 }
 
 impl BaselineData {
@@ -23,7 +23,7 @@ impl BaselineData {
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     let values = load_i64_stream(path)?;
-    let exact = ExactHll::ingest_all(&values);
+    let exact = ExactCardinality::ingest_all(&values);
     Ok(BaselineData { values, exact })
 }
 

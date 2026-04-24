@@ -3,17 +3,19 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
-use sketch_bench::baselines::{cms::HEAVY_HITTER_MIN_TRUE_COUNT as SHARED_MIN, ExactCms};
+use sketch_bench::baselines::{
+    frequency::HEAVY_HITTER_MIN_TRUE_COUNT as SHARED_MIN, ExactFrequency,
+};
 
 /// Re-exported for any caller that still imports the constant by
 /// the old name. Canonical definition lives in
-/// `sketch_bench::baselines::cms`.
+/// `sketch_bench::baselines::frequency`.
 pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = SHARED_MIN;
 
 #[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    exact: ExactCms,
+    exact: ExactFrequency,
 }
 
 impl BaselineData {
@@ -47,7 +49,7 @@ pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
         load_i64_stream(path)?
     };
 
-    let exact = ExactCms::ingest_all(&values);
+    let exact = ExactFrequency::ingest_all(&values);
     if exact.distinct_items() == 0 {
         return Err(format!("baseline contains zero distinct keys: {}", path.display()).into());
     }

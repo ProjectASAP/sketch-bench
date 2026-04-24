@@ -800,12 +800,12 @@ run_i64_card!(
     Hll
 );
 run_i64_card!(run_hll_lib, hll::HllLib, "hll", "lib", Hll);
-run_i64_card!(run_hll_exact, exact::ExactHll, "hll", "exact", Hll);
+run_i64_card!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll);
 
 // -- KLL --
 run_i64_quant!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll);
 run_i64_quant!(run_kll_lib, kll::KllLib, "kll", "lib", Kll);
-run_i64_quant!(run_kll_exact, exact::ExactKll, "kll", "exact", Kll);
+run_i64_quant!(run_kll_exact, exact::ExactQuantile, "kll", "exact", Kll);
 
 // -- CMS --
 run_i64_freq!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms);
@@ -844,7 +844,7 @@ run_i64_freq!(
     "lib-vector2d-regular",
     Cms
 );
-run_i64_freq!(run_cms_exact, exact::ExactCms, "cms", "exact", Cms);
+run_i64_freq!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms);
 
 // -- CountSketch --
 run_i64_freq!(
