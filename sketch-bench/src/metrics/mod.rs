@@ -12,7 +12,7 @@ use sketch_core::probe::MetricsSink;
 use crate::config::MetricsMask;
 
 pub use latency::LatencyRecorder;
-pub use memory::Rss;
+pub use memory::{JemallocPeak, Rss};
 pub use throughput::ItemsPerSec;
 pub use time::{CpuTimeSample, CpuTimeSampler, WallClock};
 
@@ -29,6 +29,11 @@ pub struct RunMetrics {
     pub cpu_user_ns: Option<u64>,
     pub cpu_sys_ns: Option<u64>,
     pub rss_peak_kb: Option<u64>,
+    /// Peak jemalloc-allocated bytes, in kB. Populated only when
+    /// the `heap-jemalloc` feature is compiled into the binary
+    /// AND the linking process has jemalloc as its global
+    /// allocator. `None` otherwise.
+    pub heap_peak_kb: Option<u64>,
     pub memory_bytes: Option<u64>,
     /// Latency histogram samples (ns/op) for the insert phase.
     /// None when `MetricsMask::LATENCY` unset.
@@ -134,10 +139,10 @@ impl FullSink {
             }
             None => (None, None),
         };
-        let rss_peak_kb = if self.mask.contains(MetricsMask::MEMORY) {
-            Rss::peak_kb()
+        let (rss_peak_kb, heap_peak_kb) = if self.mask.contains(MetricsMask::MEMORY) {
+            (Rss::peak_kb(), JemallocPeak::peak_kb())
         } else {
-            None
+            (None, None)
         };
         let latency_ns = self.latency.take().map(|rec| rec.snapshot());
 
@@ -150,6 +155,7 @@ impl FullSink {
             cpu_user_ns,
             cpu_sys_ns,
             rss_peak_kb,
+            heap_peak_kb,
             memory_bytes,
             latency_ns,
             accuracy: None,

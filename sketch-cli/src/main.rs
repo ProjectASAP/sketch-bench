@@ -9,6 +9,15 @@ mod params;
 mod sweep;
 mod wrappers;
 
+// Install jemalloc as the global allocator when the
+// `heap-jemalloc` feature is on (the default). The static is
+// required for `#[global_allocator]` to take effect — without
+// it, `tikv_jemalloc_ctl::stats::allocated` would read zero or
+// system-allocator numbers.
+#[cfg(feature = "heap-jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::fs::OpenOptions;
 use std::io::Write;
 
