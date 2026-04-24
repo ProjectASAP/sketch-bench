@@ -18,7 +18,7 @@ PANEL_SPECS = [
     ("KLL", Path("plots/kll/kll_accuracy_relative_error.png")),
     ("CMS", Path("plots/cms/cms_accuracy_avg_relative_error_from_8192.png")),
     ("CS", Path("plots/cs/cs_accuracy_avg_relative_error_from_8192.png")),
-    ("HLL", Path("plots/hll/hll_accuracy_relative_error.png")),
+    ("HLL", Path("plots/cardinality/cardinality_accuracy_relative_error.png")),
     ("DD", Path("plots/dd/dd_accuracy_relative_error.png")),
     ("Nitro", Path("plots/nitro/nitro_accuracy_relative_error.png")),
     ("Octo", Path("plots/octo/octo_accuracy_cms.png")),

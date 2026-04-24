@@ -90,7 +90,7 @@ run_variant() {
 
     echo "Wrote ${SUMMARY_CSV_PATH}"
     echo "Wrote ${PLOTS_DIR}/${RESULT_PREFIX}_relative_error.png"
-  elif [[ "${VARIANT}" == "hll" ]]; then
+  elif [[ "${VARIANT}" == "hll" || "${VARIANT}" == "cardinality" ]]; then
     local SUMMARY_HEADER="implementation,language,seed,lg_k,registers,total_items,true_distinct,estimate,relative_error"
     "${SCRIPT_DIR}/run_accuracy_rust.sh" "${RUST_SUMMARY_CSV}" "" "${VARIANT}"
     "${SCRIPT_DIR}/run_accuracy_cpp.sh" "${CPP_SUMMARY_CSV}" "" "${VARIANT}"
@@ -263,11 +263,11 @@ run_variant() {
 REQUESTED="${1:-${ACCURACY_VARIANT:-all}}"
 
 case "${REQUESTED}" in
-  cms|cs|hll|kll|dd|nitro|octo)
+  cms|cs|hll|cardinality|kll|dd|nitro|octo)
     run_variant "${REQUESTED}"
     ;;
   all)
-    for v in cms cs hll kll dd nitro octo; do
+    for v in cms cs cardinality kll dd nitro octo; do
       run_variant "$v"
     done
     python3 "${SCRIPT_DIR}/plot_accuracy_overview.py" \
@@ -275,7 +275,7 @@ case "${REQUESTED}" in
     echo "Wrote ${ACCURACY_DIR}/plots/accuracy_overview.png"
     ;;
   *)
-    echo "unsupported variant: ${REQUESTED}; expected cms, cs, hll, kll, dd, nitro, octo, or all" >&2
+    echo "unsupported variant: ${REQUESTED}; expected cms, cs, cardinality (alias hll), kll, dd, nitro, octo, or all" >&2
     exit 1
     ;;
 esac

@@ -6,9 +6,10 @@ ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
 case "${VARIANT}" in
-  cms|cs|hll|kll|dd|nitro|octo) ;;
+  hll) VARIANT="cardinality" ;;
+  cardinality|cms|cs|kll|dd|nitro|octo) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, dd, nitro, or octo" >&2
+    echo "unsupported variant: ${VARIANT}; expected cardinality, cms, cs, kll, dd, nitro, or octo" >&2
     exit 1
     ;;
 esac
@@ -44,7 +45,7 @@ fi
 cmake -S "${VARIANT_DIR}/cpp" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${BUILD_DIR}" --config Release
 
-if [[ "${VARIANT}" == "hll" ]]; then
+if [[ "${VARIANT}" == "cardinality" ]]; then
   "${BUILD_DIR}/hll_accuracy" --data "${DATA_DST}" > "${SUMMARY_OUTPUT_PATH}"
 elif [[ "${VARIANT}" == "kll" ]]; then
   "${BUILD_DIR}/kll_accuracy" --data "${DATA_DST}" > "${SUMMARY_OUTPUT_PATH}"

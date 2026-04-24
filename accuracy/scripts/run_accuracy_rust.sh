@@ -5,10 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACCURACY_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="${3:-${ACCURACY_VARIANT:-cms}}"
 
+# Alias `hll` → `cardinality` so existing scripts keep working
+# while the accuracy layout migrates to statistic-based names
+# (cardinality, frequency, quantile) that mirror
+# sketch-bench/src/baselines/*.
 case "${VARIANT}" in
-  cms|cs|hll|kll|dd|nitro|octo) ;;
+  hll) VARIANT="cardinality" ;;
+  cardinality|cms|cs|kll|dd|nitro|octo) ;;
   *)
-    echo "unsupported variant: ${VARIANT}; expected cms, cs, hll, kll, dd, nitro, or octo" >&2
+    echo "unsupported variant: ${VARIANT}; expected cardinality, cms, cs, kll, dd, nitro, or octo" >&2
     exit 1
     ;;
 esac
@@ -42,7 +47,7 @@ if [[ "${VARIANT}" == "octo" ]]; then
     --output-cms "${VARIANT_DIR}/output/octo_accuracy_cms.csv" \
     --output-cs "${VARIANT_DIR}/output/octo_accuracy_cs.csv" \
     --output-hll "${VARIANT_DIR}/output/octo_accuracy_hll.csv"
-elif [[ "${VARIANT}" == "hll" || "${VARIANT}" == "kll" || "${VARIANT}" == "dd" || "${VARIANT}" == "nitro" ]]; then
+elif [[ "${VARIANT}" == "cardinality" || "${VARIANT}" == "kll" || "${VARIANT}" == "dd" || "${VARIANT}" == "nitro" ]]; then
   cargo run --release --offline --manifest-path "${VARIANT_DIR}/rust/Cargo.toml" -- \
     --data "${DATA_DST}" \
     --output-summary "${SUMMARY_OUTPUT_PATH}"

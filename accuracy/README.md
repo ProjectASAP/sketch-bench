@@ -7,7 +7,7 @@
 - `accuracy/scripts`: shared runner and plotting entry points
 - `accuracy/cms`: Count-Min Sketch accuracy sources and CMS-specific outputs
 - `accuracy/cs`: Count Sketch accuracy sources and CS-specific outputs
-- `accuracy/hll`: HyperLogLog accuracy sources and HLL-specific outputs
+- `accuracy/cardinality`: cardinality-statistic accuracy sources (currently HLL; formerly `accuracy/hll`)
 - `accuracy/kll`: KLL quantile accuracy sources and outputs
 - `accuracy/dd`: DDSketch quantile accuracy sources and outputs
 - `accuracy/nitro`: Nitro-heavy-hitter accuracy sources and outputs
@@ -20,7 +20,7 @@
   - Rust `sketchlib-rust` Count-Min Sketch
   - C++ Apache DataSketches `count_min_sketch`
 - `cs` mirrors the `cms` layout, but its Rust implementation is `sketchlib-rust` Count Sketch only and the C++ comparison target is Apache DataSketches `count_min_sketch`.
-- `hll` compares fixed-size `lg_k=14` HLLs:
+- `cardinality` compares fixed-size `lg_k=14` HLLs:
   - Rust `datasketches`
   - Rust `sketchlib-rust`
   - C++ Apache DataSketches
@@ -75,8 +75,8 @@ accuracy/scripts/run_accuracy_all.sh all
   - `accuracy/cs/output/cs_accuracy_results.csv`
   - `accuracy/plots/cs/cs_accuracy_avg_relative_error.png`
 - HLL outputs:
-  - `accuracy/hll/output/hll_accuracy_results.csv`
-  - `accuracy/plots/hll/hll_accuracy_relative_error.png`
+  - `accuracy/cardinality/output/cardinality_accuracy_results.csv`
+  - `accuracy/plots/cardinality/cardinality_accuracy_relative_error.png`
 - KLL outputs:
   - `accuracy/kll/output/kll_accuracy_results.csv`
   - `accuracy/plots/kll/kll_accuracy_relative_error.png`
