@@ -24,6 +24,15 @@ cargo run -p sketch-cli --release -- bench \
 cargo run -p sketch-cli --release -- bench \
     --sketch cms --config 'rows=3,5 cols=1024,2048,4096' \
     --workload zipf --size 1000000 --runs 10 --report out.jsonl
+
+# with ground-truth accuracy (CMS / CountSketch / Elastic → frequency rel-err;
+# HLL → cardinality rel-err; KLL → quantile rank-err). Probes up to 100k distinct
+# keys by default for frequency comparators; 0 = probe every distinct key.
+cargo run -p sketch-cli --release -- bench \
+    --sketch cms --config 'rows=5 cols=1024,2048,4096' \
+    --workload zipf --size 1000000 --cardinality 100000 \
+    --runs 10 --accuracy --accuracy-probes 20000 \
+    --report out.jsonl
 ```
 
 `list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.

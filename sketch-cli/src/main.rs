@@ -25,7 +25,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
 
-use dispatch::{ImplEntry, WorkloadSpec};
+use dispatch::{AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
 
 #[derive(Parser, Debug)]
 #[command(name = "sketchlib", version, about = "Unified sketchlib-tool CLI")]
@@ -86,6 +86,20 @@ struct BenchArgs {
     /// omitted, the family's default grid is used.
     #[arg(long)]
     config: Option<String>,
+    /// Compute ground-truth accuracy per run. Implies
+    /// `MetricsMask::ACCURACY`. Per-family comparator: CMS /
+    /// CountSketch / Elastic → frequency (L1/L2/rel-err p99);
+    /// HLL → cardinality (rel-err); KLL → quantile rank-err.
+    /// Nitro / UnivMon are ignored with a stderr note (their
+    /// CLI-wrapper `query` is a stub).
+    #[arg(long, default_value_t = false)]
+    accuracy: bool,
+    /// Cap on the number of distinct keys probed by the
+    /// frequency comparator (CMS / CountSketch / Elastic). `0`
+    /// = probe every distinct key. Ignored by cardinality /
+    /// quantile comparators.
+    #[arg(long, default_value_t = 100_000)]
+    accuracy_probes: usize,
 }
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
@@ -194,13 +208,24 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         },
         other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
     };
+    let mut metrics_mask = parse_mask(args.metrics.as_deref());
+    if args.accuracy {
+        // --accuracy implies the accuracy mask bit, regardless of
+        // what --metrics said. Otherwise the runner would build the
+        // GT but silently drop its output.
+        metrics_mask |= MetricsMask::ACCURACY;
+    }
     let cfg = BenchConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
-        metrics: parse_mask(args.metrics.as_deref()),
+        metrics: metrics_mask,
         query_count: None,
         threads: 1,
         seed: args.seed,
+    };
+    let accuracy_cfg = AccuracyCfg {
+        enabled: args.accuracy,
+        max_probes: args.accuracy_probes,
     };
 
     let impls = select_impls(&args.sketch, &args.impl_name)?;
@@ -233,6 +258,20 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     let mut emitted = 0usize;
     let mut skipped = 0usize;
 
+    // One-time warning per impl when --accuracy is on but the
+    // family has no viable comparator — avoids a stderr line per
+    // config in a big sweep.
+    if accuracy_cfg.enabled {
+        for entry in &impls {
+            if entry.accuracy_kind == AccuracyKind::None {
+                eprintln!(
+                    "sketchlib: --accuracy has no comparator for {}/{} (wrapper query is a stub) — running without ground truth",
+                    entry.family, entry.impl_name
+                );
+            }
+        }
+    }
+
     for (idx_cfg, params) in grid.iter().enumerate() {
         for entry in &impls {
             if !entry.accepts(params) {
@@ -255,12 +294,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 cfg.runs,
                 cfg.warmup_runs,
             );
-            let report = entry.run(&cfg, &workload, params);
+            let report = entry.run(&cfg, &workload, params, &accuracy_cfg);
             let mut record = report.to_record();
             record.sketch_config = Some(params.to_json_value());
             sink.write_line(&record.to_jsonl())?;
         }
-        // Unused but keeps clippy quiet about the index.
         let _ = idx_cfg;
     }
 
