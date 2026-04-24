@@ -119,9 +119,17 @@ impl Workload for ZipfI64 {
     }
 }
 
-/// File-backed `i64` workload; reads little-endian int64s from a
-/// binary file (matching the pre-existing `input/benchmark_data_*.bin`
-/// layout).
+/// File-backed `i64` workload. Dispatches on extension:
+///
+/// * `.bin` (or anything else) — little-endian `int64` stream,
+///   matching the pre-existing `input/benchmark_data_*.bin`
+///   layout.
+/// * `.pcap` — libpcap capture. For each IPv4 packet the source
+///   address is read as a big-endian `u32` and sign-extended into
+///   an `i64`. Non-IPv4 packets are skipped. Used by the
+///   frequency-family accuracy harness against network traces.
+/// * `.csv` — CSV with a header row; the first column on every
+///   subsequent row is parsed as `i64`. Empty lines skipped.
 #[derive(Debug, Clone)]
 pub struct FileI64 {
     items: Vec<i64>,
@@ -129,23 +137,138 @@ pub struct FileI64 {
 }
 
 impl FileI64 {
+    /// Auto-detect format from the file extension and load.
     pub fn load(path: &Path) -> Result<Self, SketchCoreError> {
-        let bytes = std::fs::read(path).map_err(SketchCoreError::Io)?;
-        if bytes.len() % 8 != 0 {
+        let items = match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("pcap") => load_pcap(path)?,
+            Some("csv") => load_csv(path)?,
+            _ => load_bin(path)?,
+        };
+        if items.is_empty() {
             return Err(SketchCoreError::BadParam(format!(
-                "file size {} not a multiple of 8",
-                bytes.len()
+                "file contained zero items: {}",
+                path.display()
             )));
         }
-        let items = bytes
-            .chunks_exact(8)
-            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-            .collect();
         Ok(Self {
             items,
             source_path: path.display().to_string(),
         })
     }
+}
+
+fn load_bin(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
+    let bytes = std::fs::read(path).map_err(SketchCoreError::Io)?;
+    if bytes.len() % 8 != 0 {
+        return Err(SketchCoreError::BadParam(format!(
+            "{}: size {} not a multiple of 8",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    Ok(bytes
+        .chunks_exact(8)
+        .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+        .collect())
+}
+
+fn load_csv(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path).map_err(SketchCoreError::Io)?;
+    let mut items = Vec::new();
+    for (idx, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(SketchCoreError::Io)?;
+        if idx == 0 {
+            // Header row.
+            continue;
+        }
+        let field = line.split(',').next().unwrap_or("").trim();
+        if field.is_empty() {
+            continue;
+        }
+        let v: i64 = field.parse().map_err(|e| {
+            SketchCoreError::BadParam(format!(
+                "{}: bad i64 on line {}: {e}",
+                path.display(),
+                idx + 1
+            ))
+        })?;
+        items.push(v);
+    }
+    Ok(items)
+}
+
+fn load_pcap(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(SketchCoreError::Io)?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).map_err(SketchCoreError::Io)?;
+    if buf.len() < 24 {
+        return Err(SketchCoreError::BadParam(format!(
+            "{}: pcap smaller than header",
+            path.display()
+        )));
+    }
+    let big_endian = match &buf[..4] {
+        [0xd4, 0xc3, 0xb2, 0xa1] | [0x4d, 0x3c, 0xb2, 0xa1] => false,
+        [0xa1, 0xb2, 0xc3, 0xd4] | [0xa1, 0xb2, 0x3c, 0x4d] => true,
+        _ => {
+            return Err(SketchCoreError::BadParam(format!(
+                "{}: unsupported pcap magic",
+                path.display()
+            )))
+        }
+    };
+    let read_u32 = |b: &[u8]| {
+        let a = [b[0], b[1], b[2], b[3]];
+        if big_endian {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+    let linktype = read_u32(&buf[20..24]);
+    let mut off = 24usize;
+    let mut items = Vec::new();
+    while off + 16 <= buf.len() {
+        let incl_len = read_u32(&buf[off + 8..off + 12]) as usize;
+        off += 16;
+        if off + incl_len > buf.len() {
+            return Err(SketchCoreError::BadParam(format!(
+                "{}: truncated pcap record",
+                path.display()
+            )));
+        }
+        let pkt = &buf[off..off + incl_len];
+        off += incl_len;
+        if let Some(src) = extract_ipv4_src(pkt, linktype) {
+            items.push(i64::from(src));
+        }
+    }
+    Ok(items)
+}
+
+fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
+    let ip = match linktype {
+        1 => {
+            // Ethernet: 14-byte header, require ethertype = 0x0800.
+            if packet.len() < 34 || packet[12] != 0x08 || packet[13] != 0x00 {
+                return None;
+            }
+            &packet[14..]
+        }
+        101 => packet,
+        _ => return None,
+    };
+    if ip.len() < 20 || (ip[0] >> 4) != 4 {
+        return None;
+    }
+    Some(u32::from_be_bytes([ip[12], ip[13], ip[14], ip[15]]))
 }
 
 impl Workload for FileI64 {
@@ -257,5 +380,48 @@ mod tests {
         let s = StringFromI64::new(&inner);
         assert_eq!(s.items().len(), 50);
         assert_eq!(s.desc().shape, "uniform");
+    }
+
+    #[test]
+    fn file_bin_roundtrip() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let path = dir.join("sketchlib_bin_roundtrip.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for v in [1i64, -2, 3, 4] {
+            f.write_all(&v.to_le_bytes()).unwrap();
+        }
+        drop(f);
+        let w = FileI64::load(&path).unwrap();
+        assert_eq!(w.items(), &[1, -2, 3, 4]);
+        assert_eq!(w.desc().shape, "file");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn file_csv_skips_header_and_empty() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_csv_roundtrip.csv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "key,value").unwrap();
+        writeln!(f, "10,first").unwrap();
+        writeln!(f).unwrap();
+        writeln!(f, "-5,second").unwrap();
+        drop(f);
+        let w = FileI64::load(&path).unwrap();
+        assert_eq!(w.items(), &[10, -5]);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn file_pcap_rejects_empty_or_bad_magic() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_pcap_bad.pcap");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0u8; 32]).unwrap();
+        drop(f);
+        let err = FileI64::load(&path).unwrap_err();
+        assert!(err.to_string().contains("pcap magic"));
+        std::fs::remove_file(&path).ok();
     }
 }
