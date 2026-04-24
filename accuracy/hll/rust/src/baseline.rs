@@ -1,13 +1,14 @@
-use std::collections::HashSet;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-#[derive(Clone, Debug)]
+use sketch_bench::baselines::ExactHll;
+
+#[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    distinct_items: usize,
+    exact: ExactHll,
 }
 
 impl BaselineData {
@@ -16,11 +17,17 @@ impl BaselineData {
     }
 
     pub fn distinct_items(&self) -> usize {
-        self.distinct_items
+        self.exact.distinct_items()
     }
 }
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
+    let values = load_i64_stream(path)?;
+    let exact = ExactHll::ingest_all(&values);
+    Ok(BaselineData { values, exact })
+}
+
+fn load_i64_stream(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_size = metadata.len() as usize;
@@ -40,21 +47,15 @@ pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     file.read_exact(&mut buffer)?;
 
     let mut values = Vec::with_capacity(file_size / 8);
-    let mut distinct = HashSet::new();
     for chunk in buffer.chunks_exact(8) {
-        let value = i64::from_le_bytes([
+        values.push(i64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
-        values.push(value);
-        distinct.insert(value);
+        ]));
     }
 
     if values.is_empty() {
         return Err(format!("dataset contains zero values: {}", path.display()).into());
     }
 
-    Ok(BaselineData {
-        values,
-        distinct_items: distinct.len(),
-    })
+    Ok(values)
 }

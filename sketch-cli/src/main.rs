@@ -240,7 +240,18 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // Build the workload once — it's shared across all (impl, config) pairs.
     let workload = spec.build_i64()?;
 
-    let total = impls.len() * grid.len();
+    // Unparameterized impls (e.g. exact baselines) run once per
+    // sweep, not once per config.
+    let total: usize = impls
+        .iter()
+        .map(|e| {
+            if e.constraint.is_unparameterized() {
+                1
+            } else {
+                grid.len()
+            }
+        })
+        .sum();
     eprintln!(
         "sketchlib: {} family={} impls=[{}] configs={} total={}",
         "sweep",
@@ -274,6 +285,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
 
     for (idx_cfg, params) in grid.iter().enumerate() {
         for entry in &impls {
+            // Unparameterized impls run once per sweep — skip all
+            // configs after the first.
+            if entry.constraint.is_unparameterized() && idx_cfg > 0 {
+                continue;
+            }
             if !entry.accepts(params) {
                 eprintln!(
                     "sketchlib: skip {}/{} — {} does not match {:?}",
@@ -286,20 +302,24 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 continue;
             }
             emitted += 1;
+            let cfg_label = if entry.constraint.is_unparameterized() {
+                "exact".to_string()
+            } else {
+                params_pretty(params)
+            };
             eprintln!(
                 "sketchlib: [{emitted}/{total}] {}/{} config={} runs={} warmup={}",
-                entry.family,
-                entry.impl_name,
-                params_pretty(params),
-                cfg.runs,
-                cfg.warmup_runs,
+                entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
             );
             let report = entry.run(&cfg, &workload, params, &accuracy_cfg);
             let mut record = report.to_record();
-            record.sketch_config = Some(params.to_json_value());
+            record.sketch_config = if entry.constraint.is_unparameterized() {
+                None
+            } else {
+                Some(params.to_json_value())
+            };
             sink.write_line(&record.to_jsonl())?;
         }
-        let _ = idx_cfg;
     }
 
     eprintln!(

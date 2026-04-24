@@ -3,10 +3,15 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-#[derive(Clone, Debug)]
+use sketch_bench::baselines::ExactKll;
+
+/// DDSketch and KLL share the same ground-truth algorithm
+/// (sorted `Vec<i64>` + nearest-rank lookup), so this harness
+/// reuses `sketch_bench::baselines::ExactKll`.
+#[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    sorted_values: Vec<i64>,
+    exact: ExactKll,
 }
 
 impl BaselineData {
@@ -15,14 +20,17 @@ impl BaselineData {
     }
 
     pub fn ground_truth_quantile(&self, p: usize) -> f64 {
-        assert!(p <= 100, "percentile must be 0..=100");
-        let n = self.sorted_values.len();
-        let index = ((p as f64 / 100.0) * (n - 1) as f64).round() as usize;
-        self.sorted_values[index] as f64
+        self.exact.ground_truth_quantile(p)
     }
 }
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
+    let values = load_i64_stream(path)?;
+    let exact = ExactKll::ingest_all(&values);
+    Ok(BaselineData { values, exact })
+}
+
+fn load_i64_stream(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_size = metadata.len() as usize;
@@ -52,11 +60,5 @@ pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
         return Err(format!("dataset contains zero values: {}", path.display()).into());
     }
 
-    let mut sorted_values = values.clone();
-    sorted_values.sort_unstable();
-
-    Ok(BaselineData {
-        values,
-        sorted_values,
-    })
+    Ok(values)
 }

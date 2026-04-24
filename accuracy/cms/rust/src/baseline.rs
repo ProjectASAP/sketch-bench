@@ -1,15 +1,19 @@
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
-pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = 100;
+use sketch_bench::baselines::{cms::HEAVY_HITTER_MIN_TRUE_COUNT as SHARED_MIN, ExactCms};
 
-#[derive(Clone, Debug)]
+/// Re-exported for any caller that still imports the constant by
+/// the old name. Canonical definition lives in
+/// `sketch_bench::baselines::cms`.
+pub const HEAVY_HITTER_MIN_TRUE_COUNT: u64 = SHARED_MIN;
+
+#[derive(Debug)]
 pub struct BaselineData {
     pub values: Vec<i64>,
-    pub frequencies: HashMap<i64, u64>,
+    exact: ExactCms,
 }
 
 impl BaselineData {
@@ -18,36 +22,40 @@ impl BaselineData {
     }
 
     pub fn distinct_items(&self) -> usize {
-        self.frequencies.len()
+        self.exact.distinct_items()
     }
 
     pub fn heavy_hitters(&self) -> Vec<(i64, u64)> {
-        self.frequencies
-            .iter()
-            .filter_map(|(&key, &true_count)| {
-                (true_count >= HEAVY_HITTER_MIN_TRUE_COUNT).then_some((key, true_count))
-            })
-            .collect()
+        self.exact.heavy_hitters(HEAVY_HITTER_MIN_TRUE_COUNT)
     }
 }
 
 pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
-    if path
+    let values = if path
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pcap"))
     {
-        return load_pcap_baseline(path);
-    }
-
-    if path
+        load_pcap_stream(path)?
+    } else if path
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
     {
-        return load_csv_baseline(path);
+        load_csv_stream(path)?
+    } else {
+        load_i64_stream(path)?
+    };
+
+    let exact = ExactCms::ingest_all(&values);
+    if exact.distinct_items() == 0 {
+        return Err(format!("baseline contains zero distinct keys: {}", path.display()).into());
     }
 
+    Ok(BaselineData { values, exact })
+}
+
+fn load_i64_stream(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_size = metadata.len() as usize;
@@ -67,29 +75,20 @@ pub fn load_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
     file.read_exact(&mut buffer)?;
 
     let mut values = Vec::with_capacity(file_size / 8);
-    let mut frequencies = HashMap::new();
     for chunk in buffer.chunks_exact(8) {
-        let value = i64::from_le_bytes([
+        values.push(i64::from_le_bytes([
             chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
-        values.push(value);
-        *frequencies.entry(value).or_insert(0) += 1;
+        ]));
     }
 
     if values.is_empty() {
         return Err(format!("dataset contains zero values: {}", path.display()).into());
     }
-    if frequencies.is_empty() {
-        return Err(format!("baseline contains zero distinct keys: {}", path.display()).into());
-    }
 
-    Ok(BaselineData {
-        values,
-        frequencies,
-    })
+    Ok(values)
 }
 
-fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
+fn load_pcap_stream(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let mut file = File::open(path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -103,7 +102,6 @@ fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
 
     let mut offset = 24usize;
     let mut values = Vec::new();
-    let mut frequencies = HashMap::new();
 
     while offset + 16 <= buffer.len() {
         let incl_len = read_u32(&buffer[offset + 8..offset + 12], endianness)
@@ -118,9 +116,7 @@ fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
         offset += incl_len;
 
         if let Some(key) = extract_ipv4_source(packet, linktype) {
-            let value = i64::from(key);
-            values.push(value);
-            *frequencies.entry(value).or_insert(0) += 1;
+            values.push(i64::from(key));
         }
     }
 
@@ -128,17 +124,13 @@ fn load_pcap_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
         return Err(format!("pcap contains zero IPv4 packets: {}", path.display()).into());
     }
 
-    Ok(BaselineData {
-        values,
-        frequencies,
-    })
+    Ok(values)
 }
 
-fn load_csv_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
+fn load_csv_stream(path: &Path) -> Result<Vec<i64>, Box<dyn Error>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut values = Vec::new();
-    let mut frequencies = HashMap::new();
 
     for (line_index, line_result) in reader.lines().enumerate() {
         let line = line_result?;
@@ -156,17 +148,13 @@ fn load_csv_baseline(path: &Path) -> Result<BaselineData, Box<dyn Error>> {
             )
         })?;
         values.push(value);
-        *frequencies.entry(value).or_insert(0) += 1;
     }
 
     if values.is_empty() {
         return Err(format!("CSV contains no data rows: {}", path.display()).into());
     }
 
-    Ok(BaselineData {
-        values,
-        frequencies,
-    })
+    Ok(values)
 }
 
 #[derive(Copy, Clone)]

@@ -18,7 +18,7 @@ use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
 use sketch_core::workload::{BytesFromI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
-use crate::wrappers::{cms, countsketch, elastic, hll, kll, nitro, univmon};
+use crate::wrappers::{cms, countsketch, elastic, exact, hll, kll, nitro, univmon};
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
 /// runs `NoGT` (no ground truth). `enabled = true` → each
@@ -130,6 +130,10 @@ pub enum Constraint {
     Tunable,
     FixedCms { rows: usize, cols: usize },
     FixedCountSketch { rows: usize, cols: usize },
+    /// Exact baselines — they ignore the family's `ParamSet`. The
+    /// sweep driver runs them at most once per invocation instead
+    /// of once per config.
+    Unparameterized,
 }
 
 impl Constraint {
@@ -142,8 +146,13 @@ impl Constraint {
             (Constraint::FixedCountSketch { rows, cols }, ParamSet::Countsketch(p)) => {
                 p.rows == *rows && p.cols == *cols
             }
+            (Constraint::Unparameterized, _) => true,
             _ => false,
         }
+    }
+
+    pub fn is_unparameterized(&self) -> bool {
+        matches!(self, Constraint::Unparameterized)
     }
 
     pub fn describe(&self) -> String {
@@ -153,6 +162,7 @@ impl Constraint {
             Constraint::FixedCountSketch { rows, cols } => {
                 format!("fixed countsketch ({rows}x{cols})")
             }
+            Constraint::Unparameterized => "unparameterized".into(),
         }
     }
 }
@@ -214,6 +224,14 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_lib,
     },
+    ImplEntry {
+        family: "hll",
+        impl_name: "exact",
+        description: "exact baseline: HashSet<i64>, cardinality = set.len()",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Cardinality,
+        run: run_hll_exact,
+    },
     // -------- KLL --------
     ImplEntry {
         family: "kll",
@@ -230,6 +248,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Quantile,
         run: run_kll_lib,
+    },
+    ImplEntry {
+        family: "kll",
+        impl_name: "exact",
+        description: "exact baseline: Vec<i64> sorted, quantile = index lookup",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_kll_exact,
     },
     // -------- CMS --------
     ImplEntry {
@@ -285,6 +311,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cms_lib_vector2d_regular,
+    },
+    ImplEntry {
+        family: "cms",
+        impl_name: "exact",
+        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_exact,
     },
     // -------- CountSketch --------
     ImplEntry {
@@ -766,10 +800,12 @@ run_i64_card!(
     Hll
 );
 run_i64_card!(run_hll_lib, hll::HllLib, "hll", "lib", Hll);
+run_i64_card!(run_hll_exact, exact::ExactHll, "hll", "exact", Hll);
 
 // -- KLL --
 run_i64_quant!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll);
 run_i64_quant!(run_kll_lib, kll::KllLib, "kll", "lib", Kll);
+run_i64_quant!(run_kll_exact, exact::ExactKll, "kll", "exact", Kll);
 
 // -- CMS --
 run_i64_freq!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms);
@@ -808,6 +844,7 @@ run_i64_freq!(
     "lib-vector2d-regular",
     Cms
 );
+run_i64_freq!(run_cms_exact, exact::ExactCms, "cms", "exact", Cms);
 
 // -- CountSketch --
 run_i64_freq!(

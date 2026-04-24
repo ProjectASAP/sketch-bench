@@ -9,6 +9,7 @@
 
 pub mod accuracy;
 pub mod aggregation;
+pub mod baselines;
 pub mod config;
 pub mod metrics;
 pub mod runner;
