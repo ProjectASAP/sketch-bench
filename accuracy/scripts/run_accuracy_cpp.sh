@@ -26,8 +26,8 @@ case "${VARIANT}" in
     exit 0
     ;;
   kll)
-    CRATE_DIR="${ACCURACY_DIR}/kll"
-    CPP_SUBDIR=""
+    CRATE_DIR="${ACCURACY_DIR}/quantile"
+    CPP_SUBDIR="kll"
     ;;
   *)
     echo "unsupported variant: ${VARIANT}; expected cardinality (hll), cms, kll, cs, dd, nitro, or octo" >&2

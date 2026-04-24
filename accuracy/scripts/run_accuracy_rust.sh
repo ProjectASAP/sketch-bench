@@ -27,7 +27,15 @@ case "${VARIANT}" in
     CRATE_DIR="${ACCURACY_DIR}/frequency"
     SKETCH_ARG="countsketch"
     ;;
-  kll|dd|nitro|octo)
+  kll)
+    CRATE_DIR="${ACCURACY_DIR}/quantile"
+    SKETCH_ARG="kll"
+    ;;
+  dd)
+    CRATE_DIR="${ACCURACY_DIR}/quantile"
+    SKETCH_ARG="dd"
+    ;;
+  nitro|octo)
     CRATE_DIR="${ACCURACY_DIR}/${VARIANT}"
     ;;
   *)

@@ -15,7 +15,8 @@ run_variant() {
   case "${VARIANT}" in
     hll|cardinality)      CRATE_DIR="${ACCURACY_DIR}/cardinality" ;;
     cms|cs|countsketch)   CRATE_DIR="${ACCURACY_DIR}/frequency" ;;
-    kll|dd|nitro|octo)    CRATE_DIR="${ACCURACY_DIR}/${VARIANT}" ;;
+    kll|dd)               CRATE_DIR="${ACCURACY_DIR}/quantile" ;;
+    nitro|octo)           CRATE_DIR="${ACCURACY_DIR}/${VARIANT}" ;;
     *)                    CRATE_DIR="${ACCURACY_DIR}/${VARIANT}" ;;
   esac
   local VARIANT_DIR="${CRATE_DIR}"
