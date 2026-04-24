@@ -1,5 +1,5 @@
 use crate::baseline::BaselineData;
-use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
+use crate::config::{cs_impl::SKETCHLIB as IMPLEMENTATION_RUST_SKETCHLIB, COLS_LIST, ROWS};
 use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
 use asap_sketchlib::count::CountSketchCounter;
 use asap_sketchlib::{

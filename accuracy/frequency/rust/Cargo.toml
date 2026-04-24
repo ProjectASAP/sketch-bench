@@ -1,5 +1,5 @@
 [package]
-name = "cms_accuracy"
+name = "frequency_accuracy"
 version = "0.1.0"
 edition = "2021"
 

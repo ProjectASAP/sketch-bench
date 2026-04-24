@@ -1,10 +1,8 @@
 use crate::baseline::BaselineData;
-use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_OXIDE, ROWS};
-use crate::output::{
-    AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
-};
+use crate::config::{cs_impl::OXIDE as IMPLEMENTATION_RUST_OXIDE, COLS_LIST, ROWS};
+use crate::output::{AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow};
 use crate::seeds::SEEDS;
-use sketch_oxide::frequency::CountMinSketch;
+use sketch_oxide::frequency::CountSketch;
 use std::hash::Hasher;
 use std::io;
 use twox_hash::XxHash64;
@@ -29,20 +27,20 @@ pub fn write_key_median_errors(
 ) -> io::Result<()> {
     let heavy_hitters = heavy_hitters_or_panic(baseline);
     for &cols in &COLS_LIST {
-        let sketches: Vec<CountMinSketch> = SEEDS
+        let sketches: Vec<CountSketch> = SEEDS
             .iter()
             .map(|&seed| build_sketch(seed, cols, &baseline.values))
             .collect();
 
         for &(key, true_count) in &heavy_hitters {
-            let mut estimates = [0u64; SEEDS.len()];
+            let mut estimates = [0i64; SEEDS.len()];
             for (index, (&seed, sketch)) in SEEDS.iter().zip(sketches.iter()).enumerate() {
                 estimates[index] = sketch.estimate(&remap_value(seed, key));
             }
             estimates.sort_unstable();
             let median_estimate = estimates[(estimates.len() / 2) - 1];
             let median_relative_error =
-                median_estimate.abs_diff(true_count) as f64 / true_count as f64;
+                (median_estimate as f64 - true_count as f64).abs() / true_count as f64;
             writer.write_row(&KeyMedianErrorRow {
                 implementation: IMPLEMENTATION_RUST_OXIDE,
                 language: "rust",
@@ -58,55 +56,18 @@ pub fn write_key_median_errors(
     Ok(())
 }
 
-pub fn write_key_seed_errors(
-    baseline: &BaselineData,
-    writer: &mut KeySeedErrorCsvWriter,
-    seed_filter: Option<u64>,
-    cols_filter: Option<usize>,
-) -> io::Result<()> {
-    let heavy_hitters = heavy_hitters_or_panic(baseline);
-    for &seed in &SEEDS {
-        if seed_filter.is_some_and(|required| required != seed) {
-            continue;
-        }
-        for &cols in &COLS_LIST {
-            if cols_filter.is_some_and(|required| required != cols) {
-                continue;
-            }
-
-            let sketch = build_sketch(seed, cols, &baseline.values);
-            for &(key, true_count) in &heavy_hitters {
-                let estimate = sketch.estimate(&remap_value(seed, key));
-                let relative_error = estimate.abs_diff(true_count) as f64 / true_count as f64;
-                writer.write_row(&KeySeedErrorRow {
-                    implementation: IMPLEMENTATION_RUST_OXIDE,
-                    language: "rust",
-                    seed,
-                    rows: ROWS,
-                    cols,
-                    key,
-                    true_count,
-                    estimate,
-                    relative_error,
-                })?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn build_sketch(seed: u64, cols: usize, values: &[i64]) -> CountMinSketch {
-    let epsilon = 2.0 / (cols as f64 - 0.5);
+fn build_sketch(seed: u64, cols: usize, values: &[i64]) -> CountSketch {
+    let epsilon = (3.0 / (cols as f64 - 0.5)).sqrt();
     let delta = (-((ROWS as f64) - 0.25)).exp();
-    let mut sketch = CountMinSketch::new(epsilon, delta).expect("valid Count-Min parameters");
+    let mut sketch = CountSketch::new(epsilon, delta).expect("valid Count Sketch parameters");
     assert_eq!(
         sketch.width(),
         cols,
-        "oxide CMS width mismatch for cols={cols}"
+        "oxide CS width mismatch for cols={cols}"
     );
-    assert_eq!(sketch.depth(), ROWS, "oxide CMS depth mismatch");
+    assert_eq!(sketch.depth(), ROWS, "oxide CS depth mismatch");
     for &value in values {
-        sketch.update(&remap_value(seed, value));
+        sketch.update(&remap_value(seed, value), 1);
     }
     sketch
 }
@@ -125,7 +86,7 @@ fn measure<F>(
     mut estimate: F,
 ) -> AccuracyRow
 where
-    F: FnMut(&i64) -> u64,
+    F: FnMut(&i64) -> i64,
 {
     let mut total_relative_error = 0.0f64;
     let mut max_relative_error = 0.0f64;
@@ -133,7 +94,7 @@ where
 
     for &(value, true_count) in heavy_hitters {
         let estimate_value = estimate(&value);
-        let absolute_error = estimate_value.abs_diff(true_count) as f64;
+        let absolute_error = (estimate_value as f64 - true_count as f64).abs();
         let relative_error = absolute_error / true_count as f64;
         total_relative_error += relative_error;
         total_absolute_error += absolute_error;

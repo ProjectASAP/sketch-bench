@@ -1,5 +1,5 @@
 use crate::baseline::BaselineData;
-use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_DATASKETCHES, ROWS};
+use crate::config::{cms_impl::DATASKETCHES as IMPLEMENTATION_RUST_DATASKETCHES, COLS_LIST, ROWS};
 use crate::output::{
     AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
 };
@@ -57,7 +57,7 @@ pub fn write_key_median_errors(
                 cols,
                 key,
                 true_count,
-                median_estimate,
+                median_estimate: median_estimate as i64,
                 median_relative_error,
             })?;
         }
@@ -96,7 +96,7 @@ pub fn write_key_seed_errors(
                     cols,
                     key,
                     true_count,
-                    estimate,
+                    estimate: estimate as i64,
                     relative_error,
                 })?;
             }

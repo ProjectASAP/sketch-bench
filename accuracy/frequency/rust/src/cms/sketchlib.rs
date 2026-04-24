@@ -1,5 +1,5 @@
 use crate::baseline::BaselineData;
-use crate::config::{COLS_LIST, IMPLEMENTATION_RUST_SKETCHLIB, ROWS};
+use crate::config::{cms_impl::SKETCHLIB as IMPLEMENTATION_RUST_SKETCHLIB, COLS_LIST, ROWS};
 use crate::output::{
     AccuracyRow, KeyErrorCsvWriter, KeyMedianErrorRow, KeySeedErrorCsvWriter, KeySeedErrorRow,
 };
@@ -873,7 +873,7 @@ where
             cols,
             key,
             true_count,
-            estimate,
+            estimate: estimate as i64,
             relative_error,
         })?;
     }
@@ -976,7 +976,7 @@ macro_rules! write_group_medians {
                     cols: $cols,
                     key,
                     true_count,
-                    median_estimate,
+                    median_estimate: median_estimate as i64,
                     median_relative_error,
                 })?;
             }
