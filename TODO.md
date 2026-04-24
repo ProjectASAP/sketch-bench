@@ -63,7 +63,7 @@ Gated on `sketch-runtime` landing first.
 
 ### Proposed
 
-- [ ] `sketchlib bench-sweep` — offline sweep over a family's config space + file-backed inputs. Design: [`docs/BENCH_SWEEP.md`](BENCH_SWEEP.md). Impl gated on review of that doc.
+- [ ] Extend `sketchlib bench` with config-sweep (`--config k=v1,v2`, auto-sweep all impls of a family). Design: [`docs/BENCH_SWEEP.md`](BENCH_SWEEP.md). Impl gated on review of that doc.
 
 ### Minor polish (not paper-blocking)
 
