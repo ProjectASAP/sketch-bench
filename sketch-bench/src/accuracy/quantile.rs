@@ -6,18 +6,57 @@ use sketch_core::sketch::Sketch;
 
 use super::GroundTruth;
 
+/// Lossy-cast to f64. Impl for common numeric item types used
+/// by quantile sketches. Separate from `Into<f64>` because the
+/// standard lib refuses the `i64 -> f64` impl on precision
+/// grounds, but for rank-error analysis the `as` cast is fine.
+pub trait ToF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl ToF64 for f64 {
+    fn to_f64(self) -> f64 {
+        self
+    }
+}
+impl ToF64 for f32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for i64 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for i32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for u64 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for u32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+
 pub struct QuantileGT;
 
 impl<S> GroundTruth<S> for QuantileGT
 where
     S: Sketch<Query = f64, Answer = f64>,
-    S::Item: Clone + PartialOrd + Into<f64>,
+    S::Item: Clone + PartialOrd + ToF64,
 {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> serde_json::Value {
         if items.is_empty() {
             return json!({ "items": 0, "max_rank_err": 0.0 });
         }
-        let mut sorted: Vec<f64> = items.iter().cloned().map(Into::into).collect();
+        let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let n = sorted.len() as f64;

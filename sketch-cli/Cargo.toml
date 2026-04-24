@@ -10,6 +10,15 @@ description = "Unified `sketchlib` CLI: `bench` + `profile` + `workload` subcomm
 name = "sketchlib"
 path = "src/main.rs"
 
+[features]
+default = ["heap-jemalloc"]
+# When on, sketchlib links jemalloc as its global allocator and
+# sketch-bench samples `tikv-jemalloc-ctl::stats::allocated` into
+# `bench.heap_peak_kb`. Turn off with `--no-default-features` to
+# fall back to the system allocator (heap_peak_kb then reports as
+# absent in the JSONL record).
+heap-jemalloc = ["sketch-bench/heap-jemalloc", "dep:tikv-jemallocator"]
+
 [dependencies]
 sketch-core.workspace = true
 sketch-bench.workspace = true
@@ -17,6 +26,7 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+tikv-jemallocator = { workspace = true, optional = true }
 
 # Every wrapped sketch implementation.
 sketch_oxide.workspace = true

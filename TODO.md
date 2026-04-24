@@ -11,6 +11,7 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 | 4 | `sketch-bench`: `BenchRunner`, metrics (wall / CPU / RSS / latency / throughput), accuracy comparators (freq / cardinality / quantile / topk), Welford aggregator | ✅ |
 | 7-lite | `sketch-cli`: unified `sketchlib` binary with 21 sketch impls wired end-to-end via a `(family, impl)` dispatch table | ✅ |
 | 6-lite | `sketch-runtime`: `Sampler` (disabled / every-n / time-window), `RuntimeSwitch`, stdout + file + noop exporters, compile-time feature gate (`--no-default-features` → ZST fallback), overhead microbench | ✅ |
+| 7-sweep | `sketchlib bench` config sweep: typed `ParamSet` in sketch-core, 21 wrappers refactored to `::new(&params)`, per-family default grids, `--config 'k=v1,v2'` Cartesian override, optional `sketch_config` field in v1 JSONL, fixed-shape impls skipped with stderr log | ✅ |
 
 ## Deferred (explicitly out-of-scope for this first cut)
 
@@ -64,7 +65,6 @@ Gated on `sketch-runtime` landing first.
 ### Minor polish (not paper-blocking)
 
 - [ ] Add a `sketchlib workload generate|describe` subcommand (MERGE_PLAN Phase 7)
-- [ ] Expose `heap-jemalloc` feature end-to-end (currently wired but not exercised in the CLI default profile)
 - [ ] Criterion microbench proving `Probe<_, NoopSink>` is a no-op (MERGE_PLAN Phase 4, last bullet)
-- [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`)
+- [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`) — superset of `bench-sweep`
 - [ ] Retire the private warning on `WorkloadAny` (dispatch.rs) by making the type `pub(crate)` visible across the module boundary
