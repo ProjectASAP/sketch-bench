@@ -16,7 +16,7 @@ use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{QuantileGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
-use sketch_core::workload::{BytesFromI64, StringFromI64, UniformI64, Workload, ZipfI64};
+use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
 use crate::wrappers::{cms, countsketch, elastic, exact, hll, kll, nitro, univmon};
 
@@ -56,7 +56,7 @@ pub enum AccuracyKind {
     None,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum WorkloadSpec {
     Uniform {
         size: usize,
@@ -68,6 +68,9 @@ pub enum WorkloadSpec {
         cardinality: u64,
         s: f64,
         seed: u64,
+    },
+    File {
+        path: String,
     },
 }
 
@@ -87,6 +90,10 @@ impl WorkloadSpec {
             } => WorkloadAny::Zipf(
                 ZipfI64::new(size, cardinality, s, seed).map_err(|e| anyhow::anyhow!("{}", e))?,
             ),
+            WorkloadSpec::File { path } => WorkloadAny::File(
+                FileI64::load(std::path::Path::new(&path))
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+            ),
         })
     }
 }
@@ -94,6 +101,7 @@ impl WorkloadSpec {
 pub enum WorkloadAny {
     I64(UniformI64),
     Zipf(ZipfI64),
+    File(FileI64),
 }
 
 impl WorkloadAny {
@@ -101,12 +109,14 @@ impl WorkloadAny {
         match self {
             WorkloadAny::I64(w) => StringWk::FromUniform(StringFromI64::new(w)),
             WorkloadAny::Zipf(w) => StringWk::FromZipf(StringFromI64::new(w)),
+            WorkloadAny::File(w) => StringWk::FromFile(StringFromI64::new(w)),
         }
     }
     fn to_bytes_wk(&self) -> BytesWk {
         match self {
             WorkloadAny::I64(w) => BytesWk::FromUniform(BytesFromI64::new(w)),
             WorkloadAny::Zipf(w) => BytesWk::FromZipf(BytesFromI64::new(w)),
+            WorkloadAny::File(w) => BytesWk::FromFile(BytesFromI64::new(w)),
         }
     }
 }
@@ -114,10 +124,12 @@ impl WorkloadAny {
 enum StringWk {
     FromUniform(StringFromI64<UniformI64>),
     FromZipf(StringFromI64<ZipfI64>),
+    FromFile(StringFromI64<FileI64>),
 }
 enum BytesWk {
     FromUniform(BytesFromI64<UniformI64>),
     FromZipf(BytesFromI64<ZipfI64>),
+    FromFile(BytesFromI64<FileI64>),
 }
 
 /// Constraint that a given impl places on the `ParamSet` it
@@ -564,10 +576,21 @@ macro_rules! run_i64_freq {
                     || <$wrapper>::new(&p),
                     accuracy.max_probes,
                 ),
+                (WorkloadAny::File(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes,
+                ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -594,10 +617,16 @@ macro_rules! run_i64_card {
                 (WorkloadAny::Zipf(w), true) => {
                     bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                (WorkloadAny::File(w), true) => {
+                    bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -624,10 +653,16 @@ macro_rules! run_i64_quant {
                 (WorkloadAny::Zipf(w), true) => {
                     bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                (WorkloadAny::File(w), true) => {
+                    bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -655,6 +690,9 @@ macro_rules! run_i64_none {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 WorkloadAny::Zipf(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                WorkloadAny::File(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -691,10 +729,21 @@ macro_rules! run_string_freq {
                     || <$wrapper>::new(&p),
                     accuracy.max_probes,
                 ),
+                (StringWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    &w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes,
+                ),
                 (StringWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (StringWk::FromZipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (StringWk::FromFile(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -731,10 +780,21 @@ macro_rules! run_bytes_freq {
                     || <$wrapper>::new(&p),
                     accuracy.max_probes,
                 ),
+                (BytesWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    &w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes,
+                ),
                 (BytesWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (BytesWk::FromZipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (BytesWk::FromFile(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -761,6 +821,9 @@ macro_rules! run_string_none {
                 StringWk::FromZipf(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                StringWk::FromFile(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
             }
         }
     };
@@ -783,6 +846,9 @@ macro_rules! run_bytes_none {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 BytesWk::FromZipf(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                BytesWk::FromFile(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }

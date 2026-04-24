@@ -58,7 +58,8 @@ struct BenchArgs {
     /// Warm-up runs before measurement.
     #[arg(long, default_value_t = 3)]
     warmup_runs: usize,
-    /// Workload shape: "uniform" or "zipf".
+    /// Workload shape: "uniform" or "zipf". Ignored when
+    /// `--input` is set (the file replaces the generator).
     #[arg(long, default_value = "uniform")]
     workload: String,
     /// Number of items in the workload.
@@ -73,6 +74,14 @@ struct BenchArgs {
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42)]
     seed: u64,
+    /// Load the workload from a file instead of generating it.
+    /// Format is auto-detected from the extension:
+    /// `.bin` (little-endian i64 stream), `.pcap` (IPv4 src
+    /// addr per packet), `.csv` (first column parsed as i64
+    /// after a header row). Overrides `--workload/--size/
+    /// --cardinality/--zipf-s/--seed`.
+    #[arg(long)]
+    input: Option<String>,
     /// Path to append JSONL records to. `-` or omitted → stdout.
     #[arg(long)]
     report: Option<String>,
@@ -194,19 +203,25 @@ fn main() -> Result<()> {
 }
 
 fn run_bench(args: BenchArgs) -> Result<()> {
-    let spec = match args.workload.as_str() {
-        "uniform" => WorkloadSpec::Uniform {
-            size: args.size,
-            cardinality: args.cardinality,
-            seed: args.seed,
-        },
-        "zipf" => WorkloadSpec::Zipf {
-            size: args.size,
-            cardinality: args.cardinality,
-            s: args.zipf_s,
-            seed: args.seed,
-        },
-        other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
+    let spec = if let Some(path) = args.input.as_deref() {
+        WorkloadSpec::File {
+            path: path.to_string(),
+        }
+    } else {
+        match args.workload.as_str() {
+            "uniform" => WorkloadSpec::Uniform {
+                size: args.size,
+                cardinality: args.cardinality,
+                seed: args.seed,
+            },
+            "zipf" => WorkloadSpec::Zipf {
+                size: args.size,
+                cardinality: args.cardinality,
+                s: args.zipf_s,
+                seed: args.seed,
+            },
+            other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
+        }
     };
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.accuracy {
