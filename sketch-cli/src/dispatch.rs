@@ -239,7 +239,7 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "exact",
-        description: "exact baseline: HashSet<i64>, cardinality = set.len()",
+        description: "exact baseline: HashSet<i64>, cardinality = iterate + count",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_exact,
