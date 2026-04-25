@@ -9,7 +9,7 @@ use sketch_core::report::{Mode, Record, Source};
 use sketch_core::sketch::Sketch;
 use sketch_core::workload::{Workload, WorkloadDesc};
 
-use crate::accuracy::GroundTruth;
+use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
 use crate::config::{BenchConfig, MetricsMask};
 use crate::metrics::{FullSink, RunMetrics};
@@ -65,7 +65,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 let mut metrics = metrics;
                 if self.config.metrics.contains(MetricsMask::ACCURACY) {
                     if let Some(gt) = ground_truth {
-                        metrics.accuracy = Some(gt.compare(&final_sketch, items));
+                        let cmp = gt.compare(&final_sketch, items);
+                        // Query phase ran inside the comparator; pull
+                        // its timing into the run's metrics so
+                        // aggregation surfaces query_throughput
+                        // alongside insertion throughput.
+                        metrics.queries_executed = cmp.queries;
+                        metrics.query_wall_time_ns = cmp.query_wall_ns;
+                        metrics.accuracy = Some(cmp.json);
                     }
                 }
                 metrics.memory_bytes = Some(final_sketch.memory_bytes() as u64);
@@ -183,8 +190,8 @@ where
 /// supplies `None`. Never called; `compare` is a safe default.
 pub struct NoGT;
 impl<S: Sketch> GroundTruth<S> for NoGT {
-    fn compare(&self, _: &S, _: &[S::Item]) -> serde_json::Value {
-        serde_json::json!({})
+    fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
+        Comparison::default()
     }
 }
 

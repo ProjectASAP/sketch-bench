@@ -6,8 +6,9 @@ use serde_json::json;
 use sketch_core::sketch::Sketch;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::time::Instant;
 
-use super::GroundTruth;
+use super::{Comparison, GroundTruth};
 
 pub struct FrequencyGT<K: Eq + Hash> {
     pub keys_to_probe: Vec<K>,
@@ -18,7 +19,7 @@ where
     K: Eq + Hash + Clone,
     S: Sketch<Item = K, Query = K, Answer = u64>,
 {
-    fn compare(&self, sketch: &S, items: &[K]) -> serde_json::Value {
+    fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
         // exact counts
         let mut exact: HashMap<&K, u64> = HashMap::new();
         for it in items {
@@ -31,12 +32,23 @@ where
             self.keys_to_probe.clone()
         };
 
+        // Estimate phase: time only sketch.query() so the
+        // resulting query_throughput excludes ground-truth build
+        // (HashMap construction). Mean L1/L2/rel-err is computed
+        // after timing closes.
+        let mut estimates: Vec<u64> = Vec::with_capacity(probes.len());
+        let q_start = Instant::now();
+        for k in &probes {
+            estimates.push(sketch.query(k.clone()));
+        }
+        let q_ns = q_start.elapsed().as_nanos() as u64;
+
         let mut l1 = 0.0_f64;
         let mut l2 = 0.0_f64;
         let mut rel_errs: Vec<f64> = Vec::with_capacity(probes.len());
 
-        for k in &probes {
-            let est = sketch.query(k.clone()) as f64;
+        for (k, est) in probes.iter().zip(estimates.iter()) {
+            let est = *est as f64;
             let truth = *exact.get(k).unwrap_or(&0) as f64;
             let diff = (est - truth).abs();
             l1 += diff;
@@ -54,13 +66,17 @@ where
         };
         let p99_rel = percentile(&rel_errs, 0.99);
 
-        json!({
-            "l1_err": l1,
-            "l2_err": l2.sqrt(),
-            "relative_error_mean": mean_rel,
-            "relative_error_p99": p99_rel,
-            "probes": probes.len(),
-        })
+        Comparison {
+            json: json!({
+                "l1_err": l1,
+                "l2_err": l2.sqrt(),
+                "relative_error_mean": mean_rel,
+                "relative_error_p99": p99_rel,
+                "probes": probes.len(),
+            }),
+            queries: probes.len() as u64,
+            query_wall_ns: q_ns,
+        }
     }
 }
 
