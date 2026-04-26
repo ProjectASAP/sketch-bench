@@ -1,21 +1,28 @@
-//! Quantile-family ground truth (KLL / DDSketch).
+//! Quantile-family ground truth comparators.
 //!
-//! Builds a sorted f64 copy of the stream and computes the
-//! ground-truth quantile via **Type-7 linear interpolation**
-//! (NumPy / R / Prometheus default — same algorithm
-//! `ExactQuantile::quantile_fraction` uses). Reports value-based
-//! error (absolute + relative + range-normalised) of the
-//! sketch's estimate against that ground truth across a
-//! 101-point quantile grid.
+//! Two metrics, one per sketch family:
 //!
-//! Why value-error and not rank-error: rank-error is the
-//! standard KLL paper bound, but `rank_of` over upper-bound
-//! ties gave non-zero "error" even for the exact baseline on
-//! Zipf streams — a metric artifact, not real divergence.
-//! Pinning the metric to "how far off is the returned value"
-//! against the canonical Type-7 quantile makes the exact
-//! baseline trivially zero and lets sketches' numbers reflect
-//! actual estimation error.
+//! - [`RankErrorGT`] — KLL. Reports `mean_rank_err` /
+//!   `max_rank_err`: how far the rank of the sketch's returned
+//!   value diverges from the requested fractional rank, in
+//!   units of `n` (the stream length). Range-based: when ties
+//!   make the returned value occupy a contiguous rank interval,
+//!   error is 0 if the target falls inside the interval, else
+//!   distance to the nearest edge. This matches the standard
+//!   KLL paper bound and gives the exact baseline ~0 error
+//!   under heavy-tied (Zipf-style) inputs.
+//!
+//! - [`RelativeErrorGT`] — DDSketch. Reports
+//!   `mean_relative_err` / `max_relative_err`: `|v_sketch -
+//!   v_truth| / |v_truth|`, where `v_truth` is the **Type-7
+//!   linear-interpolation** quantile (NumPy / R / Prometheus
+//!   default — same algorithm `ExactQuantile::quantile_fraction`
+//!   uses). This matches DDSketch's relative-error guarantee
+//!   and gives the exact baseline 0 error by construction.
+//!
+//! Picking the metric per family rather than reporting one
+//! universal number reflects how each sketch's correctness
+//! bound is actually defined in its paper.
 
 use serde_json::json;
 use sketch_core::sketch::Sketch;
@@ -62,9 +69,12 @@ impl ToF64 for u32 {
     }
 }
 
-pub struct QuantileGT;
+// ---------- KLL: rank error ----------
 
-impl<S> GroundTruth<S> for QuantileGT
+/// Rank-error comparator for KLL-style sketches.
+pub struct RankErrorGT;
+
+impl<S> GroundTruth<S> for RankErrorGT
 where
     S: Sketch<Query = f64, Answer = f64>,
     S::Item: Clone + PartialOrd + ToF64,
@@ -72,7 +82,7 @@ where
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
         if items.is_empty() {
             return Comparison {
-                json: json!({ "items": 0, "mean_abs_err": 0.0 }),
+                json: json!({ "items": 0, "mean_rank_err": 0.0 }),
                 queries: 0,
                 query_wall_ns: 0,
             };
@@ -80,8 +90,7 @@ where
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Time only the sketch.query() boundary; truth lookup +
-        // error reduction happen after the timer stops.
+        // Time only the sketch.query() boundary.
         let mut estimates: [f64; 101] = [0.0; 101];
         let q_start = Instant::now();
         for (i, slot) in estimates.iter_mut().enumerate() {
@@ -90,63 +99,44 @@ where
         }
         let q_ns = q_start.elapsed().as_nanos() as u64;
 
-        // Range used to normalise absolute error; falls back to
-        // 1.0 on a constant stream so the divisor is never zero.
-        let data_min = sorted[0];
-        let data_max = sorted[sorted.len() - 1];
-        let range = (data_max - data_min).max(1.0);
-
-        let mut max_abs_err = 0.0_f64;
-        let mut max_rel_err = 0.0_f64;
-        let mut max_norm_err = 0.0_f64;
-        let mut sum_abs = 0.0_f64;
-        let mut sum_rel = 0.0_f64;
-        let mut rel_n = 0usize;
-        let mut sum_norm = 0.0_f64;
+        let n = sorted.len();
+        let nf = n as f64;
+        let mut max_rank_err = 0.0_f64;
+        let mut sum_rank_err = 0.0_f64;
 
         for (i, est) in estimates.iter().enumerate() {
             let q = i as f64 / 100.0;
-            let truth = type7_quantile(&sorted, q);
-            let abs_err = (est - truth).abs();
-            sum_abs += abs_err;
-            if abs_err > max_abs_err {
-                max_abs_err = abs_err;
-            }
-            let norm_err = abs_err / range;
-            sum_norm += norm_err;
-            if norm_err > max_norm_err {
-                max_norm_err = norm_err;
-            }
-            if truth.abs() > f64::EPSILON {
-                let rel = abs_err / truth.abs();
-                sum_rel += rel;
-                rel_n += 1;
-                if rel > max_rel_err {
-                    max_rel_err = rel;
-                }
+            // Range of true ranks for the returned value:
+            //   lower = #items strictly less than est
+            //   upper = #items <= est
+            // The value occupies the contiguous rank interval
+            // [lower, upper]. If `q*n` is inside that interval,
+            // the answer is rank-correct (error 0); otherwise
+            // measure distance to the nearest edge.
+            let lower = lower_bound(&sorted, *est);
+            let upper = upper_bound(&sorted, *est);
+            let target = q * nf;
+            let raw_err = if (target as f64) < lower as f64 {
+                lower as f64 - target
+            } else if (target as f64) > upper as f64 {
+                target - upper as f64
+            } else {
+                0.0
+            };
+            let err = raw_err / nf;
+            sum_rank_err += err;
+            if err > max_rank_err {
+                max_rank_err = err;
             }
         }
-        let n_grid = estimates.len() as f64;
-        let mean_abs = sum_abs / n_grid;
-        let mean_norm = sum_norm / n_grid;
-        let mean_rel = if rel_n == 0 {
-            0.0
-        } else {
-            sum_rel / rel_n as f64
-        };
 
+        let mean = sum_rank_err / estimates.len() as f64;
         Comparison {
             json: json!({
-                "items": items.len(),
+                "items": n,
                 "grid_points": 101,
-                "data_min": data_min,
-                "data_max": data_max,
-                "mean_abs_err": mean_abs,
-                "max_abs_err": max_abs_err,
-                "mean_relative_err": mean_rel,
-                "max_relative_err": max_rel_err,
-                "mean_normalized_err": mean_norm,
-                "max_normalized_err": max_norm_err,
+                "mean_rank_err": mean,
+                "max_rank_err": max_rank_err,
             }),
             queries: 101,
             query_wall_ns: q_ns,
@@ -154,10 +144,110 @@ where
     }
 }
 
+// ---------- DDSketch: relative error ----------
+
+/// Relative-error comparator for DDSketch-style sketches.
+pub struct RelativeErrorGT;
+
+impl<S> GroundTruth<S> for RelativeErrorGT
+where
+    S: Sketch<Query = f64, Answer = f64>,
+    S::Item: Clone + PartialOrd + ToF64,
+{
+    fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
+        if items.is_empty() {
+            return Comparison {
+                json: json!({ "items": 0, "mean_relative_err": 0.0 }),
+                queries: 0,
+                query_wall_ns: 0,
+            };
+        }
+        let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut estimates: [f64; 101] = [0.0; 101];
+        let q_start = Instant::now();
+        for (i, slot) in estimates.iter_mut().enumerate() {
+            let q = i as f64 / 100.0;
+            *slot = sketch.query(q);
+        }
+        let q_ns = q_start.elapsed().as_nanos() as u64;
+
+        let mut max_rel_err = 0.0_f64;
+        let mut sum_rel = 0.0_f64;
+        let mut n_rel = 0usize;
+        for (i, est) in estimates.iter().enumerate() {
+            let q = i as f64 / 100.0;
+            let truth = type7_quantile(&sorted, q);
+            // Skip grid points where truth is ~0 — relative
+            // error is undefined there. DDSketch's guarantee is
+            // for non-zero quantiles anyway.
+            if truth.abs() <= f64::EPSILON {
+                continue;
+            }
+            let rel = (est - truth).abs() / truth.abs();
+            sum_rel += rel;
+            n_rel += 1;
+            if rel > max_rel_err {
+                max_rel_err = rel;
+            }
+        }
+        let mean = if n_rel == 0 {
+            0.0
+        } else {
+            sum_rel / n_rel as f64
+        };
+
+        Comparison {
+            json: json!({
+                "items": items.len(),
+                "grid_points": 101,
+                "evaluated_points": n_rel,
+                "mean_relative_err": mean,
+                "max_relative_err": max_rel_err,
+            }),
+            queries: 101,
+            query_wall_ns: q_ns,
+        }
+    }
+}
+
+// ---------- helpers ----------
+
+/// Count of elements strictly less than `x` in a sorted slice.
+fn lower_bound(sorted: &[f64], x: f64) -> usize {
+    let mut lo = 0usize;
+    let mut hi = sorted.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if sorted[mid] < x {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// Count of elements `<= x` in a sorted slice.
+fn upper_bound(sorted: &[f64], x: f64) -> usize {
+    let mut lo = 0usize;
+    let mut hi = sorted.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if sorted[mid] <= x {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
 /// Type-7 linear interpolation on a pre-sorted f64 slice. Same
 /// formula `baselines::quantile::ExactQuantile::quantile_fraction`
 /// uses — keeping the two in lock-step is what makes the exact
-/// baseline land at exactly zero error here.
+/// baseline land at zero relative-error here.
 fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;

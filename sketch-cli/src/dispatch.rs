@@ -13,7 +13,7 @@ use std::hash::Hash;
 use anyhow::Result;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
-use sketch_bench::accuracy::quantile::{QuantileGT, ToF64};
+use sketch_bench::accuracy::quantile::{RankErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
 use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
@@ -509,9 +509,9 @@ where
     W::Item: Clone + PartialOrd + ToF64,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
-    let gt = QuantileGT;
+    let gt = RankErrorGT;
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, QuantileGT>(factory, Some(&gt))
+        .run::<S, _, RankErrorGT>(factory, Some(&gt))
 }
 
 /// Collect distinct keys from `items` and return them in a
