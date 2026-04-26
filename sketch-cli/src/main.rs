@@ -109,6 +109,17 @@ struct BenchArgs {
     /// quantile comparators.
     #[arg(long, default_value_t = 100_000)]
     accuracy_probes: usize,
+    /// Heavy-hitter threshold for the frequency comparator.
+    /// Only keys whose true count is at least this value are
+    /// included in the mean / p99 relative-error metric. `0` =
+    /// no filter (probe every distinct key — the legacy
+    /// behaviour). Setting this >0 reports the metric on the
+    /// regime CMS / CountSketch are designed for; under heavy
+    /// Zipf with many count-1 rare keys, the unfiltered mean is
+    /// dominated by collision noise on those rare keys and is
+    /// not what the sketch was meant to bound.
+    #[arg(long, default_value_t = 0)]
+    accuracy_min_count: u64,
 }
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
@@ -241,6 +252,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     let accuracy_cfg = AccuracyCfg {
         enabled: args.accuracy,
         max_probes: args.accuracy_probes,
+        min_true_count: args.accuracy_min_count,
     };
 
     let impls = select_impls(&args.sketch, &args.impl_name)?;

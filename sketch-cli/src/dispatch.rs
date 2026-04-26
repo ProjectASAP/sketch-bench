@@ -31,6 +31,13 @@ pub struct AccuracyCfg {
     /// Ignored by cardinality / quantile comparators (they're
     /// single-shot).
     pub max_probes: usize,
+    /// Minimum true count for a key to be included in the
+    /// frequency comparator's mean / p99 rel-err. `0` = probe
+    /// every distinct key (legacy behaviour). Setting this >0
+    /// restricts the metric to heavy hitters, which is the
+    /// regime CMS / CountSketch are designed for. Ignored by
+    /// cardinality / quantile comparators.
+    pub min_true_count: u64,
 }
 
 impl AccuracyCfg {
@@ -38,6 +45,7 @@ impl AccuracyCfg {
         Self {
             enabled: false,
             max_probes: 0,
+            min_true_count: 0,
         }
     }
 }
@@ -468,6 +476,7 @@ fn bench_freq_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     max_probes: usize,
+    min_true_count: u64,
 ) -> BenchReport
 where
     W: Workload,
@@ -475,7 +484,10 @@ where
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
 {
     let keys_to_probe = sample_distinct(wk.items(), max_probes);
-    let gt = FrequencyGT { keys_to_probe };
+    let gt = FrequencyGT {
+        keys_to_probe,
+        min_true_count,
+    };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, FrequencyGT<W::Item>>(factory, Some(&gt))
 }
@@ -572,7 +584,7 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -580,7 +592,7 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (WorkloadAny::File(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -588,7 +600,7 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
@@ -725,7 +737,7 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (StringWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -733,7 +745,7 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (StringWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -741,7 +753,7 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (StringWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
@@ -776,7 +788,7 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (BytesWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -784,7 +796,7 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (BytesWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -792,7 +804,7 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (BytesWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
