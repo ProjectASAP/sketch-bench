@@ -26,6 +26,8 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+rand.workspace = true
+rand_xoshiro.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 # Every wrapped sketch implementation.

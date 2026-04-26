@@ -514,29 +514,35 @@ where
         .run::<S, _, QuantileGT>(factory, Some(&gt))
 }
 
-/// Pick up to `max_probes` distinct keys from `items`. `0` =
-/// no cap. Iteration order of a `HashSet` is non-deterministic
-/// across runs, but the GT comparator averages over the probe
-/// set so that's fine for p99 rel-err estimation; tighten if a
-/// reproducibility need arises.
+/// Collect distinct keys from `items` and return them in a
+/// **uniformly shuffled** order, capped at `max_probes` (`0` =
+/// no cap). The shuffle defeats the cache locality the encounter
+/// order would have given the exact-baseline HashMap probe (under
+/// Zipf the heavy hitters appear first, so probing in encounter
+/// order keeps them L1-resident); shuffling models a uniform
+/// random query workload over the distinct-key set, which is
+/// what an offline accuracy bench should be measuring.
+///
+/// Seeded with a fixed value so the probe order is reproducible
+/// across runs of the same workload.
 fn sample_distinct<K>(items: &[K], max_probes: usize) -> Vec<K>
 where
     K: Clone + Eq + Hash,
 {
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
     let mut seen: HashSet<K> = HashSet::new();
     let mut out: Vec<K> = Vec::new();
-    let cap = if max_probes == 0 {
-        usize::MAX
-    } else {
-        max_probes
-    };
     for it in items {
-        if out.len() >= cap {
-            break;
-        }
         if seen.insert(it.clone()) {
             out.push(it.clone());
         }
+    }
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
+    out.shuffle(&mut rng);
+    if max_probes != 0 && out.len() > max_probes {
+        out.truncate(max_probes);
     }
     out
 }
