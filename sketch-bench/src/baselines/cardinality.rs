@@ -2,15 +2,12 @@
 //! count by iterating the set. Provides ground truth for any
 //! sketch family that answers a cardinality query.
 //!
-//! Why iterate instead of returning `set.len()`: the cached
-//! length is maintained during insert, so a `len()` query is
-//! O(1) and turns the comparison against HLL (which scans all
-//! 2^lg_k registers + floating-point math at query time) into
-//! ~6000:1. Iterating walks the underlying hash table — work
-//! that's proportional to the data the baseline is actually
-//! holding — so the per-query cost reflects the same kind of
-//! state-dependent computation HLL pays. The returned value is
-//! identical to `set.len()`; only the timing changes.
+//! Cardinality query is `set.len()` — O(1) read of the cached
+//! length the `HashSet` maintains on insert. This is the natural
+//! exact algorithm; the per-query timing is whatever LLVM
+//! compiles a single load to, and the comparison against HLL
+//! reflects that asymmetry honestly (HLL pays an O(2^lg_k)
+//! register scan on every estimate).
 //!
 //! Current consumers: `hll` (see `baselines::Statistic::Cardinality`).
 
@@ -46,10 +43,7 @@ impl ExactCardinality {
         this
     }
 
-    /// Exact distinct-item count. O(1) — for code paths that
-    /// just need the answer (e.g. accuracy comparators), not the
-    /// per-query timing. The `Sketch::query` impl below is the
-    /// one the bench runner times, and it iterates instead.
+    /// Exact distinct-item count.
     pub fn distinct_items(&self) -> usize {
         self.set.len()
     }
@@ -64,19 +58,8 @@ impl Sketch for ExactCardinality {
         self.set.insert(*v);
     }
 
-    /// Count the set by iterating, not by reading the cached
-    /// `len()`. See the module-level note for the rationale.
     fn query(&self, _: ()) -> f64 {
-        // Manual loop with `black_box` on each element — without
-        // it, LLVM proves `iter().count()` is side-effect-free
-        // and folds it back to `len()`, defeating the point of
-        // doing this in the first place.
-        let mut count: u64 = 0;
-        for v in &self.set {
-            std::hint::black_box(v);
-            count = count.wrapping_add(1);
-        }
-        count as f64
+        self.set.len() as f64
     }
 
     fn memory_bytes(&self) -> usize {
