@@ -13,12 +13,12 @@ use std::hash::Hash;
 use anyhow::Result;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
-use sketch_bench::accuracy::quantile::{RankErrorGT, ToF64};
+use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
 use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
-use crate::wrappers::{cms, countsketch, elastic, exact, hll, kll, nitro, univmon};
+use crate::wrappers::{cms, countsketch, dd, elastic, exact, hll, kll, nitro, univmon};
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
 /// runs `NoGT` (no ground truth). `enabled = true` → each
@@ -239,7 +239,7 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "lib",
-        description: "asap_sketchlib::HyperLogLog<ErtlMLE>",
+        description: "asap_sketchlib::HyperLogLogHIP (P14)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_lib,
@@ -247,7 +247,7 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "exact",
-        description: "exact baseline: HashSet<i64>, cardinality = iterate + count",
+        description: "exact baseline: HashSet<i64>, cardinality = set.len()",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_exact,
@@ -375,6 +375,31 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_lib_vector2d_regular,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "exact",
+        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_exact,
+    },
+    // -------- DDSketch --------
+    ImplEntry {
+        family: "dd",
+        impl_name: "lib",
+        description: "asap_sketchlib::DDSketch (relative-error quantile)",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_dd_lib,
+    },
+    ImplEntry {
+        family: "dd",
+        impl_name: "exact",
+        description: "exact baseline: Vec<i64> sorted, quantile = Type-7 lookup",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_dd_exact,
     },
     // -------- Elastic --------
     ImplEntry {
@@ -526,6 +551,23 @@ where
         .run::<S, _, RankErrorGT>(factory, Some(&gt))
 }
 
+fn bench_quant_rel_gt<S, W>(
+    cfg: &BenchConfig,
+    wk: &W,
+    family: &str,
+    impl_name: &str,
+    factory: impl FnMut() -> S,
+) -> BenchReport
+where
+    W: Workload,
+    W::Item: Clone + PartialOrd + ToF64,
+    S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
+{
+    let gt = RelativeErrorGT;
+    BenchRunner::new(cfg.clone(), wk, family, impl_name)
+        .run::<S, _, RelativeErrorGT>(factory, Some(&gt))
+}
+
 /// Collect distinct keys from `items` and return them in a
 /// **uniformly shuffled** order, capped at `max_probes` (`0` =
 /// no cap). The shuffle defeats the cache locality the encounter
@@ -674,6 +716,42 @@ macro_rules! run_i64_quant {
                 (WorkloadAny::File(w), true) => {
                     bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                (WorkloadAny::I64(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+            }
+        }
+    };
+}
+
+macro_rules! run_i64_quant_rel {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
+        fn $fn_name(
+            cfg: &BenchConfig,
+            wk: &WorkloadAny,
+            params: &ParamSet,
+            accuracy: &AccuracyCfg,
+        ) -> BenchReport {
+            let p = match params {
+                ParamSet::$param_variant(p) => *p,
+                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
+            };
+            match (wk, accuracy.enabled) {
+                (WorkloadAny::I64(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
+                (WorkloadAny::Zipf(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
+                (WorkloadAny::File(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
@@ -959,6 +1037,18 @@ run_i64_freq!(
     "lib-vector2d-regular",
     Countsketch
 );
+
+run_i64_freq!(
+    run_cs_exact,
+    exact::ExactFrequencyCs,
+    "countsketch",
+    "exact",
+    Countsketch
+);
+
+// -- DDSketch --
+run_i64_quant_rel!(run_dd_lib, dd::DdLib, "dd", "lib", Dd);
+run_i64_quant_rel!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd);
 
 // -- Elastic --
 run_string_freq!(

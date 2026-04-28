@@ -4,6 +4,7 @@
 
 pub mod cms;
 pub mod countsketch;
+pub mod dd;
 pub mod elastic;
 pub mod exact;
 pub mod hll;

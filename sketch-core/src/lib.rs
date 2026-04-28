@@ -14,8 +14,8 @@ pub mod sketch;
 pub mod workload;
 
 pub use config::{
-    CmsParams, CountSketchParams, ElasticParams, HllParams, KllParams, NitroParams, ParamSet,
-    UnivMonParams,
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, UnivMonParams,
 };
 pub use error::SketchCoreError;
 pub use probe::{MetricsSink, NoopSink, Probe};
