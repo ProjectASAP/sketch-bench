@@ -39,6 +39,9 @@ impl Sketch for ExactFrequencyCs {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
+    fn finalize_for_query(&mut self) {
+        self.0.finalize_for_query();
+    }
 }
 
 /// DDSketch view of [`ExactQuantile`]. Same sorted-stream
@@ -65,5 +68,8 @@ impl Sketch for ExactQuantileDd {
     }
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
+    }
+    fn finalize_for_query(&mut self) {
+        self.0.finalize_for_query();
     }
 }

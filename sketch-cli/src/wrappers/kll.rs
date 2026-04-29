@@ -49,9 +49,17 @@ impl Sketch for KllOxide {
 }
 
 // ---------- asap_sketchlib KLL ----------
+//
+// `asap_sketchlib::KLL::quantile(q)` rebuilds the full CDF from
+// the compactor levels on every call (sort + sweep over the
+// whole buffer). For an apples-to-apples query throughput
+// comparison we precompute the CDF once in `finalize_for_query`
+// and cache it; queries then collapse to a `Cdf::query` binary
+// search.
 pub struct KllLib {
     inner: asap_sketchlib::KLL<i64>,
     k: u32,
+    cdf: RefCell<Option<asap_sketchlib::sketches::kll::Cdf>>,
 }
 
 impl KllLib {
@@ -59,6 +67,7 @@ impl KllLib {
         Self {
             inner: asap_sketchlib::KLL::<i64>::init_kll(p.k as i32),
             k: p.k,
+            cdf: RefCell::new(None),
         }
     }
 }
@@ -69,11 +78,20 @@ impl Sketch for KllLib {
     type Answer = f64;
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
+        if self.cdf.borrow().is_some() {
+            *self.cdf.borrow_mut() = None;
+        }
     }
     fn query(&self, q: f64) -> f64 {
+        if let Some(cdf) = self.cdf.borrow().as_ref() {
+            return cdf.query(q);
+        }
         self.inner.quantile(q)
     }
     fn memory_bytes(&self) -> usize {
         (self.k as usize) * std::mem::size_of::<i64>() * 4
+    }
+    fn finalize_for_query(&mut self) {
+        *self.cdf.borrow_mut() = Some(self.inner.cdf());
     }
 }

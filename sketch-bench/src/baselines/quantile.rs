@@ -104,6 +104,16 @@ impl Sketch for ExactQuantile {
     fn memory_bytes(&self) -> usize {
         self.buf.borrow().capacity() * std::mem::size_of::<i64>()
     }
+
+    /// Sort eagerly so the query phase only pays Type-7 lookup
+    /// cost. Mirrors how KLL/DD lib sketches maintain a queryable
+    /// structure during update.
+    fn finalize_for_query(&mut self) {
+        if !self.sorted.get() {
+            self.buf.get_mut().sort_unstable();
+            self.sorted.set(true);
+        }
+    }
 }
 
 #[cfg(test)]

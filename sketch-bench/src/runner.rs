@@ -109,7 +109,7 @@ where
 
     // Insert phase.
     sink.begin_insert_phase();
-    let sketch = {
+    let mut sketch = {
         use sketch_core::probe::Probe;
         let mut probe: Probe<S, &mut FullSink> = Probe::new(sketch, &mut sink);
         for it in items {
@@ -118,6 +118,10 @@ where
         let (s, _sink) = probe.into_parts();
         s
     };
+    // Bill any deferred build/sort/finalize cost to the insert
+    // phase so query-throughput numbers measure steady-state
+    // queries on a ready-to-answer sketch (see Sketch trait doc).
+    sketch.finalize_for_query();
     sink.end_insert_phase();
 
     // Query-phase timing is handled by each GroundTruth
