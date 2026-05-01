@@ -69,20 +69,21 @@ impl Sketch for HllDatasketches {
 }
 
 // ---------- asap_sketchlib HLL ----------
-// `asap_sketchlib::HyperLogLog::new()` constructs at the lib's
-// compile-time P14 default; it doesn't expose a runtime `lg_k`
-// constructor through the current bindings. We store the requested
-// `lg_k` so `memory_bytes` reports something sensible, and flag
-// this as a fixed-shape impl in `dispatch::ImplEntry`.
+// `asap_sketchlib::HyperLogLogHIP` is the P14 HIP estimator
+// (Kevin J. Lang, arXiv:1708.06839) — a streaming HLL variant
+// that keeps a running estimate updated on every insert, so
+// `estimate()` is O(1) instead of scanning all 2^lg_k registers.
+// Compile-time fixed at P14; we store the requested `lg_k` so
+// `memory_bytes` reports something sensible.
 pub struct HllLib {
-    inner: asap_sketchlib::HyperLogLog<asap_sketchlib::ErtlMLE>,
+    inner: asap_sketchlib::HyperLogLogHIP,
     lg_k: u8,
 }
 
 impl HllLib {
     pub fn new(p: &HllParams) -> Self {
         Self {
-            inner: asap_sketchlib::HyperLogLog::<asap_sketchlib::ErtlMLE>::new(),
+            inner: asap_sketchlib::HyperLogLogHIP::new(),
             lg_k: p.lg_k,
         }
     }

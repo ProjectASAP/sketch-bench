@@ -7,8 +7,11 @@ use sketch_core::sketch::Sketch;
 
 use crate::wrappers::cms::{CMS_FIXED_COLS, CMS_FIXED_ROWS};
 
+// sketch_oxide::frequency::CountSketch sizes its table as
+// `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
+// Inverting that for a target column count w gives ε = sqrt(3/w).
 fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
-    let epsilon = std::f64::consts::E / cols as f64;
+    let epsilon = (3.0 / cols as f64).sqrt();
     let delta = (-(rows as f64)).exp();
     (epsilon, delta)
 }
@@ -40,7 +43,11 @@ impl Sketch for CsOxide {
         self.inner.update(v, 1);
     }
     fn query(&self, q: i64) -> u64 {
-        self.inner.estimate(&q) as u64
+        // CountSketch is an unbiased estimator (median of sign·counter); a
+        // small fraction of estimates can be slightly negative under collision
+        // noise. Clamp to 0 to match CMS-style frequency semantics — without
+        // this, `as u64` wraps -1 into u64::MAX and blows up rel-err.
+        self.inner.estimate(&q).max(0) as u64
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i64>()

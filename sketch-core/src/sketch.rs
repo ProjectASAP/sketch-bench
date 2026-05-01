@@ -54,4 +54,18 @@ pub trait Sketch {
     /// where memory is fixed at construction and uninteresting
     /// to the bench (the operator can log the constant instead).
     fn memory_bytes(&self) -> usize;
+
+    /// One-shot transition from "ingesting" to "queryable".
+    /// Called once between the last `update` and the first
+    /// `query`. Default no-op.
+    ///
+    /// Use this for any maintenance work that some sketches do
+    /// inside `update` (KLL/DD continuously maintain a queryable
+    /// structure) but other sketches defer (the exact baseline
+    /// can buffer raw values and sort once at the end). Doing the
+    /// work here, billed to the insert phase, keeps query-side
+    /// throughput numbers comparable across families: every
+    /// sketch's `query` is measured starting from the same
+    /// "ready-to-answer" state.
+    fn finalize_for_query(&mut self) {}
 }

@@ -5,8 +5,9 @@ use serde_json::json;
 use sketch_core::sketch::Sketch;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::time::Instant;
 
-use super::GroundTruth;
+use super::{Comparison, GroundTruth};
 
 pub struct TopkGT {
     pub k: usize,
@@ -17,7 +18,7 @@ where
     K: Eq + Hash + Clone,
     S: Sketch<Item = K, Query = usize, Answer = Vec<(K, u64)>>,
 {
-    fn compare(&self, sketch: &S, items: &[K]) -> serde_json::Value {
+    fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
         let mut exact: HashMap<K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it.clone()).or_insert(0) += 1;
@@ -26,7 +27,9 @@ where
         exact_vec.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
         exact_vec.truncate(self.k);
 
+        let q_start = Instant::now();
         let est: Vec<(K, u64)> = sketch.query(self.k);
+        let q_ns = q_start.elapsed().as_nanos() as u64;
         let est_set: std::collections::HashSet<K> = est.iter().map(|(k, _)| k.clone()).collect();
         let truth_set: std::collections::HashSet<K> =
             exact_vec.iter().map(|(k, _)| k.clone()).collect();
@@ -43,12 +46,16 @@ where
             tp / truth_set.len() as f64
         };
 
-        json!({
-            "k": self.k,
-            "precision_at_k": precision,
-            "recall_at_k": recall,
-            "true_top_k_count": truth_set.len(),
-            "est_top_k_count": est.len(),
-        })
+        Comparison {
+            json: json!({
+                "k": self.k,
+                "precision_at_k": precision,
+                "recall_at_k": recall,
+                "true_top_k_count": truth_set.len(),
+                "est_top_k_count": est.len(),
+            }),
+            queries: 1,
+            query_wall_ns: q_ns,
+        }
     }
 }

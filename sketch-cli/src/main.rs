@@ -58,7 +58,8 @@ struct BenchArgs {
     /// Warm-up runs before measurement.
     #[arg(long, default_value_t = 3)]
     warmup_runs: usize,
-    /// Workload shape: "uniform" or "zipf".
+    /// Workload shape: "uniform" or "zipf". Ignored when
+    /// `--input` is set (the file replaces the generator).
     #[arg(long, default_value = "uniform")]
     workload: String,
     /// Number of items in the workload.
@@ -73,6 +74,14 @@ struct BenchArgs {
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42)]
     seed: u64,
+    /// Load the workload from a file instead of generating it.
+    /// Format is auto-detected from the extension:
+    /// `.bin` (little-endian i64 stream), `.pcap` (IPv4 src
+    /// addr per packet), `.csv` (first column parsed as i64
+    /// after a header row). Overrides `--workload/--size/
+    /// --cardinality/--zipf-s/--seed`.
+    #[arg(long)]
+    input: Option<String>,
     /// Path to append JSONL records to. `-` or omitted → stdout.
     #[arg(long)]
     report: Option<String>,
@@ -100,6 +109,17 @@ struct BenchArgs {
     /// quantile comparators.
     #[arg(long, default_value_t = 100_000)]
     accuracy_probes: usize,
+    /// Heavy-hitter threshold for the frequency comparator.
+    /// Only keys whose true count is at least this value are
+    /// included in the mean / p99 relative-error metric. `0` =
+    /// no filter (probe every distinct key — the legacy
+    /// behaviour). Setting this >0 reports the metric on the
+    /// regime CMS / CountSketch are designed for; under heavy
+    /// Zipf with many count-1 rare keys, the unfiltered mean is
+    /// dominated by collision noise on those rare keys and is
+    /// not what the sketch was meant to bound.
+    #[arg(long, default_value_t = 0)]
+    accuracy_min_count: u64,
 }
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
@@ -194,19 +214,25 @@ fn main() -> Result<()> {
 }
 
 fn run_bench(args: BenchArgs) -> Result<()> {
-    let spec = match args.workload.as_str() {
-        "uniform" => WorkloadSpec::Uniform {
-            size: args.size,
-            cardinality: args.cardinality,
-            seed: args.seed,
-        },
-        "zipf" => WorkloadSpec::Zipf {
-            size: args.size,
-            cardinality: args.cardinality,
-            s: args.zipf_s,
-            seed: args.seed,
-        },
-        other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
+    let spec = if let Some(path) = args.input.as_deref() {
+        WorkloadSpec::File {
+            path: path.to_string(),
+        }
+    } else {
+        match args.workload.as_str() {
+            "uniform" => WorkloadSpec::Uniform {
+                size: args.size,
+                cardinality: args.cardinality,
+                seed: args.seed,
+            },
+            "zipf" => WorkloadSpec::Zipf {
+                size: args.size,
+                cardinality: args.cardinality,
+                s: args.zipf_s,
+                seed: args.seed,
+            },
+            other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
+        }
     };
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.accuracy {
@@ -226,6 +252,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     let accuracy_cfg = AccuracyCfg {
         enabled: args.accuracy,
         max_probes: args.accuracy_probes,
+        min_true_count: args.accuracy_min_count,
     };
 
     let impls = select_impls(&args.sketch, &args.impl_name)?;
@@ -240,7 +267,18 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // Build the workload once — it's shared across all (impl, config) pairs.
     let workload = spec.build_i64()?;
 
-    let total = impls.len() * grid.len();
+    // Unparameterized impls (e.g. exact baselines) run once per
+    // sweep, not once per config.
+    let total: usize = impls
+        .iter()
+        .map(|e| {
+            if e.constraint.is_unparameterized() {
+                1
+            } else {
+                grid.len()
+            }
+        })
+        .sum();
     eprintln!(
         "sketchlib: {} family={} impls=[{}] configs={} total={}",
         "sweep",
@@ -274,6 +312,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
 
     for (idx_cfg, params) in grid.iter().enumerate() {
         for entry in &impls {
+            // Unparameterized impls run once per sweep — skip all
+            // configs after the first.
+            if entry.constraint.is_unparameterized() && idx_cfg > 0 {
+                continue;
+            }
             if !entry.accepts(params) {
                 eprintln!(
                     "sketchlib: skip {}/{} — {} does not match {:?}",
@@ -286,20 +329,24 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 continue;
             }
             emitted += 1;
+            let cfg_label = if entry.constraint.is_unparameterized() {
+                "exact".to_string()
+            } else {
+                params_pretty(params)
+            };
             eprintln!(
                 "sketchlib: [{emitted}/{total}] {}/{} config={} runs={} warmup={}",
-                entry.family,
-                entry.impl_name,
-                params_pretty(params),
-                cfg.runs,
-                cfg.warmup_runs,
+                entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
             );
             let report = entry.run(&cfg, &workload, params, &accuracy_cfg);
             let mut record = report.to_record();
-            record.sketch_config = Some(params.to_json_value());
+            record.sketch_config = if entry.constraint.is_unparameterized() {
+                None
+            } else {
+                Some(params.to_json_value())
+            };
             sink.write_line(&record.to_jsonl())?;
         }
-        let _ = idx_cfg;
     }
 
     eprintln!(

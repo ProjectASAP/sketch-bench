@@ -37,17 +37,40 @@ cargo run -p sketch-cli --release -- bench \
 
 `list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.
 
-Covered families / impls (21 total):
+Covered families / impls (21 sketch + 3 exact = 24 total):
 
 | family | implementations |
 |---|---|
-| `hll` | `oxide`, `datasketches`, `lib` (asap_sketchlib) |
-| `kll` | `oxide`, `lib` |
-| `cms` | `oxide`, `datasketches`, `lib-{fixedmatrix-custom-fast,fixedmatrix-fast,vector2d-fast,vector2d-regular}` |
+| `hll` | `oxide`, `datasketches`, `lib` (asap_sketchlib), `exact` |
+| `kll` | `oxide`, `lib`, `exact` |
+| `cms` | `oxide`, `datasketches`, `lib-{fixedmatrix-custom-fast,fixedmatrix-fast,vector2d-fast,vector2d-regular}`, `exact` |
 | `countsketch` | `oxide`, `lib-{fixedmatrix-fast,vector2d-fast,vector2d-regular}` |
 | `elastic` | `oxide`, `lib` |
 | `nitro` | `oxide`, `lib` |
 | `univmon` | `oxide`, `lib` |
+
+The `exact` impl per (hll, kll, cms) family is a zero-error baseline
+that implements the same `Sketch` trait, so it benches through the
+identical insert / query / accuracy pipeline. It exists to give a
+side-by-side throughput / CPU / memory reference point and to
+sanity-check the ground-truth wiring. The dispatch marks it
+`Unparameterized`, so sweeps run it once regardless of grid size.
+
+The baselines live under `sketch-bench/src/baselines/` organised by
+**statistic** — not by sketch family — so a single exact algorithm
+serves every sketch that answers the same question:
+
+| module             | statistic    | exact algorithm        | sketches that share this baseline |
+|--------------------|--------------|------------------------|-----------------------------------|
+| `cardinality.rs`   | cardinality  | `HashSet<i64>` + `len` | `hll`                             |
+| `frequency.rs`     | frequency    | `HashMap<i64, u64>`    | `cms`, `countsketch`, `elastic`   |
+| `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
+
+`sketch_bench::baselines::Statistic::for_family(...)` is the
+canonical family → statistic lookup. The
+`accuracy/{cms,hll,kll,dd}/rust/src/baseline.rs` harness crates
+delegate here for their ground-truth computation, so each statistic's
+exact algorithm has exactly one source of truth.
 
 `sketchlib-tool` is:
 

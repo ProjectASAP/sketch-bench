@@ -40,6 +40,14 @@ pub struct NitroParams {
     pub rate: f64,
 }
 
+/// DDSketch's single tuning knob — the relative-error guarantee
+/// `alpha ∈ (0, 1)`. Smaller `alpha` ⇒ more buckets ⇒ tighter
+/// per-quantile error at the cost of memory.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DdParams {
+    pub alpha: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnivMonParams {
     pub layers: usize,
@@ -62,6 +70,7 @@ pub enum ParamSet {
     Elastic(ElasticParams),
     Nitro(NitroParams),
     Univmon(UnivMonParams),
+    Dd(DdParams),
 }
 
 impl ParamSet {
@@ -76,6 +85,7 @@ impl ParamSet {
             ParamSet::Elastic(_) => "elastic",
             ParamSet::Nitro(_) => "nitro",
             ParamSet::Univmon(_) => "univmon",
+            ParamSet::Dd(_) => "dd",
         }
     }
 

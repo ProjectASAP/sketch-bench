@@ -6,8 +6,8 @@
 
 use anyhow::{anyhow, bail, Result};
 use sketch_core::config::{
-    CmsParams, CountSketchParams, ElasticParams, HllParams, KllParams, NitroParams, ParamSet,
-    UnivMonParams,
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, UnivMonParams,
 };
 
 /// Default grid for a family — used when `--config` is omitted.
@@ -66,6 +66,10 @@ pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
             }
             out
         }
+        "dd" => [0.005f64, 0.01, 0.02, 0.05, 0.1]
+            .iter()
+            .map(|&alpha| ParamSet::Dd(DdParams { alpha }))
+            .collect(),
         other => bail!("no default grid for sketch family: {other}"),
     })
 }
@@ -85,6 +89,7 @@ pub fn parse_config(family: &str, spec: &str) -> Result<Vec<ParamSet>> {
         "elastic" => build_elastic(&kvs),
         "nitro" => build_nitro(&kvs),
         "univmon" => build_univmon(&kvs),
+        "dd" => build_dd(&kvs),
         other => bail!("unknown sketch family: {other}"),
     }
 }
@@ -237,6 +242,16 @@ fn build_univmon(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
         }
     }
     Ok(out)
+}
+
+fn build_dd(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
+    let vals = take_single_key(kvs, "dd", &["alpha"])?;
+    vals.iter()
+        .map(|v| {
+            let alpha: f64 = v.parse().map_err(|_| anyhow!("bad alpha value: {v}"))?;
+            Ok(ParamSet::Dd(DdParams { alpha }))
+        })
+        .collect()
 }
 
 fn parse_usize_list(vals: &[String], key: &str, fallback: &[usize]) -> Result<Vec<usize>> {

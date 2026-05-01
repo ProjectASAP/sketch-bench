@@ -3,8 +3,8 @@
 //! values reproduce the knobs the 21 legacy binaries hard-coded.
 
 use sketch_core::config::{
-    CmsParams, CountSketchParams, ElasticParams, HllParams, KllParams, NitroParams, ParamSet,
-    UnivMonParams,
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, UnivMonParams,
 };
 
 /// Default params for a family name (as used by `--sketch`).
@@ -31,6 +31,7 @@ pub fn default_params(family: &str) -> Option<ParamSet> {
             layers: 8,
             max_stream: 256,
         }),
+        "dd" => ParamSet::Dd(DdParams { alpha: 0.01 }),
         _ => return None,
     })
 }

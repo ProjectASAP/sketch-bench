@@ -13,12 +13,12 @@ use std::hash::Hash;
 use anyhow::Result;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
-use sketch_bench::accuracy::quantile::{QuantileGT, ToF64};
+use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
-use sketch_core::workload::{BytesFromI64, StringFromI64, UniformI64, Workload, ZipfI64};
+use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
-use crate::wrappers::{cms, countsketch, elastic, hll, kll, nitro, univmon};
+use crate::wrappers::{cms, countsketch, dd, elastic, exact, hll, kll, nitro, univmon};
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
 /// runs `NoGT` (no ground truth). `enabled = true` → each
@@ -31,6 +31,13 @@ pub struct AccuracyCfg {
     /// Ignored by cardinality / quantile comparators (they're
     /// single-shot).
     pub max_probes: usize,
+    /// Minimum true count for a key to be included in the
+    /// frequency comparator's mean / p99 rel-err. `0` = probe
+    /// every distinct key (legacy behaviour). Setting this >0
+    /// restricts the metric to heavy hitters, which is the
+    /// regime CMS / CountSketch are designed for. Ignored by
+    /// cardinality / quantile comparators.
+    pub min_true_count: u64,
 }
 
 impl AccuracyCfg {
@@ -38,6 +45,7 @@ impl AccuracyCfg {
         Self {
             enabled: false,
             max_probes: 0,
+            min_true_count: 0,
         }
     }
 }
@@ -56,7 +64,7 @@ pub enum AccuracyKind {
     None,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum WorkloadSpec {
     Uniform {
         size: usize,
@@ -68,6 +76,9 @@ pub enum WorkloadSpec {
         cardinality: u64,
         s: f64,
         seed: u64,
+    },
+    File {
+        path: String,
     },
 }
 
@@ -87,6 +98,10 @@ impl WorkloadSpec {
             } => WorkloadAny::Zipf(
                 ZipfI64::new(size, cardinality, s, seed).map_err(|e| anyhow::anyhow!("{}", e))?,
             ),
+            WorkloadSpec::File { path } => WorkloadAny::File(
+                FileI64::load(std::path::Path::new(&path))
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+            ),
         })
     }
 }
@@ -94,6 +109,7 @@ impl WorkloadSpec {
 pub enum WorkloadAny {
     I64(UniformI64),
     Zipf(ZipfI64),
+    File(FileI64),
 }
 
 impl WorkloadAny {
@@ -101,12 +117,14 @@ impl WorkloadAny {
         match self {
             WorkloadAny::I64(w) => StringWk::FromUniform(StringFromI64::new(w)),
             WorkloadAny::Zipf(w) => StringWk::FromZipf(StringFromI64::new(w)),
+            WorkloadAny::File(w) => StringWk::FromFile(StringFromI64::new(w)),
         }
     }
     fn to_bytes_wk(&self) -> BytesWk {
         match self {
             WorkloadAny::I64(w) => BytesWk::FromUniform(BytesFromI64::new(w)),
             WorkloadAny::Zipf(w) => BytesWk::FromZipf(BytesFromI64::new(w)),
+            WorkloadAny::File(w) => BytesWk::FromFile(BytesFromI64::new(w)),
         }
     }
 }
@@ -114,10 +132,12 @@ impl WorkloadAny {
 enum StringWk {
     FromUniform(StringFromI64<UniformI64>),
     FromZipf(StringFromI64<ZipfI64>),
+    FromFile(StringFromI64<FileI64>),
 }
 enum BytesWk {
     FromUniform(BytesFromI64<UniformI64>),
     FromZipf(BytesFromI64<ZipfI64>),
+    FromFile(BytesFromI64<FileI64>),
 }
 
 /// Constraint that a given impl places on the `ParamSet` it
@@ -130,6 +150,10 @@ pub enum Constraint {
     Tunable,
     FixedCms { rows: usize, cols: usize },
     FixedCountSketch { rows: usize, cols: usize },
+    /// Exact baselines — they ignore the family's `ParamSet`. The
+    /// sweep driver runs them at most once per invocation instead
+    /// of once per config.
+    Unparameterized,
 }
 
 impl Constraint {
@@ -142,8 +166,13 @@ impl Constraint {
             (Constraint::FixedCountSketch { rows, cols }, ParamSet::Countsketch(p)) => {
                 p.rows == *rows && p.cols == *cols
             }
+            (Constraint::Unparameterized, _) => true,
             _ => false,
         }
+    }
+
+    pub fn is_unparameterized(&self) -> bool {
+        matches!(self, Constraint::Unparameterized)
     }
 
     pub fn describe(&self) -> String {
@@ -153,6 +182,7 @@ impl Constraint {
             Constraint::FixedCountSketch { rows, cols } => {
                 format!("fixed countsketch ({rows}x{cols})")
             }
+            Constraint::Unparameterized => "unparameterized".into(),
         }
     }
 }
@@ -209,10 +239,18 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "lib",
-        description: "asap_sketchlib::HyperLogLog<ErtlMLE>",
+        description: "asap_sketchlib::HyperLogLogHIP (P14)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_lib,
+    },
+    ImplEntry {
+        family: "hll",
+        impl_name: "exact",
+        description: "exact baseline: HashSet<i64>, cardinality = set.len()",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Cardinality,
+        run: run_hll_exact,
     },
     // -------- KLL --------
     ImplEntry {
@@ -230,6 +268,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Quantile,
         run: run_kll_lib,
+    },
+    ImplEntry {
+        family: "kll",
+        impl_name: "exact",
+        description: "exact baseline: Vec<i64> sorted, quantile = index lookup",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_kll_exact,
     },
     // -------- CMS --------
     ImplEntry {
@@ -286,6 +332,14 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cms_lib_vector2d_regular,
     },
+    ImplEntry {
+        family: "cms",
+        impl_name: "exact",
+        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_exact,
+    },
     // -------- CountSketch --------
     ImplEntry {
         family: "countsketch",
@@ -321,6 +375,31 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_lib_vector2d_regular,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "exact",
+        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_exact,
+    },
+    // -------- DDSketch --------
+    ImplEntry {
+        family: "dd",
+        impl_name: "lib",
+        description: "asap_sketchlib::DDSketch (relative-error quantile)",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_dd_lib,
+    },
+    ImplEntry {
+        family: "dd",
+        impl_name: "exact",
+        description: "exact baseline: Vec<i64> sorted, quantile = Type-7 lookup",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_dd_exact,
     },
     // -------- Elastic --------
     ImplEntry {
@@ -422,6 +501,7 @@ fn bench_freq_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     max_probes: usize,
+    min_true_count: u64,
 ) -> BenchReport
 where
     W: Workload,
@@ -429,7 +509,10 @@ where
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
 {
     let keys_to_probe = sample_distinct(wk.items(), max_probes);
-    let gt = FrequencyGT { keys_to_probe };
+    let gt = FrequencyGT {
+        keys_to_probe,
+        min_true_count,
+    };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, FrequencyGT<W::Item>>(factory, Some(&gt))
 }
@@ -463,34 +546,57 @@ where
     W::Item: Clone + PartialOrd + ToF64,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
-    let gt = QuantileGT;
+    let gt = RankErrorGT;
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, QuantileGT>(factory, Some(&gt))
+        .run::<S, _, RankErrorGT>(factory, Some(&gt))
 }
 
-/// Pick up to `max_probes` distinct keys from `items`. `0` =
-/// no cap. Iteration order of a `HashSet` is non-deterministic
-/// across runs, but the GT comparator averages over the probe
-/// set so that's fine for p99 rel-err estimation; tighten if a
-/// reproducibility need arises.
+fn bench_quant_rel_gt<S, W>(
+    cfg: &BenchConfig,
+    wk: &W,
+    family: &str,
+    impl_name: &str,
+    factory: impl FnMut() -> S,
+) -> BenchReport
+where
+    W: Workload,
+    W::Item: Clone + PartialOrd + ToF64,
+    S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
+{
+    let gt = RelativeErrorGT;
+    BenchRunner::new(cfg.clone(), wk, family, impl_name)
+        .run::<S, _, RelativeErrorGT>(factory, Some(&gt))
+}
+
+/// Collect distinct keys from `items` and return them in a
+/// **uniformly shuffled** order, capped at `max_probes` (`0` =
+/// no cap). The shuffle defeats the cache locality the encounter
+/// order would have given the exact-baseline HashMap probe (under
+/// Zipf the heavy hitters appear first, so probing in encounter
+/// order keeps them L1-resident); shuffling models a uniform
+/// random query workload over the distinct-key set, which is
+/// what an offline accuracy bench should be measuring.
+///
+/// Seeded with a fixed value so the probe order is reproducible
+/// across runs of the same workload.
 fn sample_distinct<K>(items: &[K], max_probes: usize) -> Vec<K>
 where
     K: Clone + Eq + Hash,
 {
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
     let mut seen: HashSet<K> = HashSet::new();
     let mut out: Vec<K> = Vec::new();
-    let cap = if max_probes == 0 {
-        usize::MAX
-    } else {
-        max_probes
-    };
     for it in items {
-        if out.len() >= cap {
-            break;
-        }
         if seen.insert(it.clone()) {
             out.push(it.clone());
         }
+    }
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
+    out.shuffle(&mut rng);
+    if max_probes != 0 && out.len() > max_probes {
+        out.truncate(max_probes);
     }
     out
 }
@@ -520,7 +626,7 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -528,12 +634,23 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
+                ),
+                (WorkloadAny::File(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -560,10 +677,16 @@ macro_rules! run_i64_card {
                 (WorkloadAny::Zipf(w), true) => {
                     bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                (WorkloadAny::File(w), true) => {
+                    bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -590,10 +713,52 @@ macro_rules! run_i64_quant {
                 (WorkloadAny::Zipf(w), true) => {
                     bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                (WorkloadAny::File(w), true) => {
+                    bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+            }
+        }
+    };
+}
+
+macro_rules! run_i64_quant_rel {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
+        fn $fn_name(
+            cfg: &BenchConfig,
+            wk: &WorkloadAny,
+            params: &ParamSet,
+            accuracy: &AccuracyCfg,
+        ) -> BenchReport {
+            let p = match params {
+                ParamSet::$param_variant(p) => *p,
+                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
+            };
+            match (wk, accuracy.enabled) {
+                (WorkloadAny::I64(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
+                (WorkloadAny::Zipf(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
+                (WorkloadAny::File(w), true) => bench_quant_rel_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                ),
+                (WorkloadAny::I64(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::Zipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (WorkloadAny::File(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -623,6 +788,9 @@ macro_rules! run_i64_none {
                 WorkloadAny::Zipf(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                WorkloadAny::File(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+                }
             }
         }
     };
@@ -647,7 +815,7 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (StringWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -655,12 +823,23 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
+                ),
+                (StringWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    &w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (StringWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (StringWk::FromZipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (StringWk::FromFile(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -687,7 +866,7 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (BytesWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -695,12 +874,23 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes,
+                    accuracy.max_probes, accuracy.min_true_count,
+                ),
+                (BytesWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
+                    cfg,
+                    &w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
+                    accuracy.max_probes, accuracy.min_true_count,
                 ),
                 (BytesWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
                 (BytesWk::FromZipf(w), false) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
+                (BytesWk::FromFile(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
             }
@@ -727,6 +917,9 @@ macro_rules! run_string_none {
                 StringWk::FromZipf(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                StringWk::FromFile(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
             }
         }
     };
@@ -751,6 +944,9 @@ macro_rules! run_bytes_none {
                 BytesWk::FromZipf(w) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
                 }
+                BytesWk::FromFile(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
+                }
             }
         }
     };
@@ -766,10 +962,12 @@ run_i64_card!(
     Hll
 );
 run_i64_card!(run_hll_lib, hll::HllLib, "hll", "lib", Hll);
+run_i64_card!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll);
 
 // -- KLL --
 run_i64_quant!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll);
 run_i64_quant!(run_kll_lib, kll::KllLib, "kll", "lib", Kll);
+run_i64_quant!(run_kll_exact, exact::ExactQuantile, "kll", "exact", Kll);
 
 // -- CMS --
 run_i64_freq!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms);
@@ -808,6 +1006,7 @@ run_i64_freq!(
     "lib-vector2d-regular",
     Cms
 );
+run_i64_freq!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms);
 
 // -- CountSketch --
 run_i64_freq!(
@@ -838,6 +1037,18 @@ run_i64_freq!(
     "lib-vector2d-regular",
     Countsketch
 );
+
+run_i64_freq!(
+    run_cs_exact,
+    exact::ExactFrequencyCs,
+    "countsketch",
+    "exact",
+    Countsketch
+);
+
+// -- DDSketch --
+run_i64_quant_rel!(run_dd_lib, dd::DdLib, "dd", "lib", Dd);
+run_i64_quant_rel!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd);
 
 // -- Elastic --
 run_string_freq!(
