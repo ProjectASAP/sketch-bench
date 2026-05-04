@@ -18,6 +18,10 @@ default = ["heap-jemalloc"]
 # to fall back to the system allocator (heap_allocated_kb then
 # reports as absent in the JSONL record).
 heap-jemalloc = ["sketch-bench/heap-jemalloc", "dep:tikv-jemallocator"]
+# Wraps the global allocator in a counting shim so the runner can
+# attribute heap usage to a specific sketch's lifetime. Composes
+# with `heap-jemalloc` (then jemalloc is the inner allocator).
+heap-track = ["sketch-bench/heap-track"]
 
 [dependencies]
 sketch-core.workspace = true

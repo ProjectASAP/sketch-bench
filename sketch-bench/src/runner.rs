@@ -95,8 +95,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 /// One measured run: install `FullSink`, time insert (+
 /// optional query phase), return finalized metrics + the
 /// underlying sketch (for ground-truth comparison).
+///
+/// Heap-track windowing (when the `heap-track` feature is on):
+/// the `before` snapshot is taken *after* `items` is already
+/// allocated by the caller (`workload.items()`), so input bytes
+/// are not attributed to the sketch. `reset_peak` pins the
+/// watermark to that baseline before construction begins.
 fn run_once<S>(
-    sketch: S,
+    factory_sketch: S,
     mut sink: FullSink,
     items: &[S::Item],
     config: &BenchConfig,
@@ -107,11 +113,17 @@ where
 {
     sink.on_run_start();
 
+    #[cfg(feature = "heap-track")]
+    let heap_before = {
+        crate::metrics::heap_track::reset_peak();
+        crate::metrics::heap_track::snapshot()
+    };
+
     // Insert phase.
     sink.begin_insert_phase();
     let mut sketch = {
         use sketch_core::probe::Probe;
-        let mut probe: Probe<S, &mut FullSink> = Probe::new(sketch, &mut sink);
+        let mut probe: Probe<S, &mut FullSink> = Probe::new(factory_sketch, &mut sink);
         for it in items {
             probe.update(it);
         }
@@ -124,6 +136,9 @@ where
     sketch.finalize_for_query();
     sink.end_insert_phase();
 
+    #[cfg(feature = "heap-track")]
+    let heap_after = crate::metrics::heap_track::snapshot();
+
     // Query-phase timing is handled by each GroundTruth
     // comparator (which knows the wrapper's natural Query type).
     // A future scalar-only query microbench can live inside the
@@ -133,7 +148,17 @@ where
     let _ = config.query_count;
 
     let memory_bytes = sketch.memory_bytes() as u64;
-    let metrics = sink.finalize(Some(memory_bytes));
+    #[allow(unused_mut)]
+    let mut metrics = sink.finalize(Some(memory_bytes));
+
+    #[cfg(feature = "heap-track")]
+    {
+        metrics.heap_bytes_net =
+            Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_peak =
+            Some((heap_after.peak - heap_before.in_use).max(0) as u64);
+    }
+
     (metrics, sketch)
 }
 

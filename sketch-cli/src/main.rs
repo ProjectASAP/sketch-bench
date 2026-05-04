@@ -9,14 +9,30 @@ mod params;
 mod sweep;
 mod wrappers;
 
-// Install jemalloc as the global allocator when the
-// `heap-jemalloc` feature is on (the default). The static is
-// required for `#[global_allocator]` to take effect — without
-// it, `tikv_jemalloc_ctl::stats::allocated` would read zero or
-// system-allocator numbers.
-#[cfg(feature = "heap-jemalloc")]
+// Global allocator selection. Four combinations of two feature
+// flags (`heap-jemalloc`, `heap-track`):
+//
+// - heap-jemalloc, no heap-track: bare jemalloc (legacy default)
+// - heap-jemalloc + heap-track:   TrackingAllocator wrapping
+//   jemalloc — counters advance, stats.allocated still readable
+// - heap-track, no heap-jemalloc: TrackingAllocator(System)
+// - neither:                      implicit System allocator
+//
+// The static is required for `#[global_allocator]` to take effect.
+#[cfg(all(feature = "heap-jemalloc", not(feature = "heap-track")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[cfg(all(feature = "heap-jemalloc", feature = "heap-track"))]
+#[global_allocator]
+static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<
+    tikv_jemallocator::Jemalloc,
+> = sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
+
+#[cfg(all(feature = "heap-track", not(feature = "heap-jemalloc")))]
+#[global_allocator]
+static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<std::alloc::System> =
+    sketch_bench::metrics::heap_track::TrackingAllocator(std::alloc::System);
 
 use std::fs::OpenOptions;
 use std::io::Write;
