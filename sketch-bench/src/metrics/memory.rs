@@ -21,21 +21,27 @@ impl Rss {
     }
 }
 
-/// Jemalloc heap-peak, compiled in only when the
-/// `heap-jemalloc` feature is enabled. Consumers linking the
-/// default system allocator get `None` back from `peak_kb`.
-pub struct JemallocPeak;
+/// Jemalloc currently-allocated bytes (`stats.allocated`),
+/// compiled in only when the `heap-jemalloc` feature is enabled.
+/// Consumers linking the default system allocator get `None`.
+///
+/// Despite the historical "peak" naming, `tikv-jemalloc-ctl 0.5`
+/// does not expose `thread.peak.read` / `stats.peak`, so this is
+/// a single-sample read of currently-in-use bytes — useful as a
+/// process-level proxy, not a true high-water mark. Per-sketch
+/// peak tracking lives behind the `heap-track` feature in PR2.
+pub struct JemallocAllocated;
 
-impl JemallocPeak {
+impl JemallocAllocated {
     #[cfg(feature = "heap-jemalloc")]
-    pub fn peak_kb() -> Option<u64> {
+    pub fn read_kb() -> Option<u64> {
         use tikv_jemalloc_ctl::{epoch, stats};
         let _ = epoch::advance();
         stats::allocated::read().ok().map(|b| (b as u64) / 1024)
     }
 
     #[cfg(not(feature = "heap-jemalloc"))]
-    pub fn peak_kb() -> Option<u64> {
+    pub fn read_kb() -> Option<u64> {
         None
     }
 }

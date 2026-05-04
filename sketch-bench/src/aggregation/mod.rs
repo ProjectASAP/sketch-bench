@@ -69,7 +69,7 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
     };
 
     let rss_peak_kb = runs.iter().filter_map(|r| r.rss_peak_kb).max();
-    let heap_peak_kb = runs.iter().filter_map(|r| r.heap_peak_kb).max();
+    let heap_allocated_kb = runs.iter().filter_map(|r| r.heap_allocated_kb).max();
     let memory_bytes = runs.iter().filter_map(|r| r.memory_bytes).next_back();
 
     let latency_ns = runs
@@ -101,7 +101,7 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
         cpu_time_ms,
         wall_time_ms,
         rss_peak_kb,
-        heap_peak_kb,
+        heap_allocated_kb,
         memory_bytes,
         accuracy,
     }
