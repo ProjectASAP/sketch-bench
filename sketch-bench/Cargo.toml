@@ -11,8 +11,9 @@ default = ["hdrhist", "accuracy-topk"]
 # Enable the hdrhistogram-backed latency recorder. Off → the
 # LATENCY mask bit is a no-op that costs nothing.
 hdrhist = ["dep:hdrhistogram"]
-# Enable tikv-jemalloc-ctl heap-peak sampling. Forces jemalloc on
-# the linking binary — opt-in only. Off → heap_peak_kb = None.
+# Enable tikv-jemalloc-ctl `stats.allocated` sampling. Forces
+# jemalloc on the linking binary — opt-in only. Off →
+# heap_allocated_kb = None.
 heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
 # Pull the HashMap-based top-k ground-truth comparator.
 accuracy-topk = []
@@ -23,6 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 bitflags.workspace = true
+hashbrown.workspace = true
 thiserror.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 tikv-jemalloc-ctl = { workspace = true, optional = true }

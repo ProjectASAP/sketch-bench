@@ -6,7 +6,7 @@
 //! Current consumers: `cms`, `countsketch`, `elastic` (see
 //! `baselines::Statistic::Frequency`).
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use sketch_core::config::CmsParams;
 use sketch_core::sketch::Sketch;
@@ -76,8 +76,11 @@ impl Sketch for ExactFrequency {
     }
 
     fn memory_bytes(&self) -> usize {
-        self.map.capacity()
-            * (std::mem::size_of::<i64>() + std::mem::size_of::<u64>() + 1)
+        // hashbrown reports the SwissTable buffer exactly: bucket
+        // array + control bytes + group padding. Excludes the
+        // struct's stack footprint, which is fine — `memory_bytes`
+        // is documented as the heap-resident core (see Sketch).
+        self.map.allocation_size()
     }
 }
 

@@ -34,6 +34,7 @@ impl Sketch for HllOxide {
         self.inner.estimate()
     }
     fn memory_bytes(&self) -> usize {
+        // sketch_oxide stores registers as Vec<u8>: 1 byte/register.
         1usize << self.lg_k
     }
 }
@@ -42,13 +43,16 @@ impl Sketch for HllOxide {
 pub struct HllDatasketches {
     inner: datasketches::hll::HllSketch,
     lg_k: u8,
+    hll_type: datasketches::hll::HllType,
 }
 
 impl HllDatasketches {
     pub fn new(p: &HllParams) -> Self {
+        let hll_type = datasketches::hll::HllType::Hll8;
         Self {
-            inner: datasketches::hll::HllSketch::new(p.lg_k, datasketches::hll::HllType::Hll8),
+            inner: datasketches::hll::HllSketch::new(p.lg_k, hll_type),
             lg_k: p.lg_k,
+            hll_type,
         }
     }
 }
@@ -64,7 +68,14 @@ impl Sketch for HllDatasketches {
         self.inner.estimate()
     }
     fn memory_bytes(&self) -> usize {
-        1usize << self.lg_k
+        // Apache datasketches packs registers per HllType:
+        // Hll4 → 0.5 B, Hll6 → 0.75 B, Hll8 → 1 B.
+        let m = 1usize << self.lg_k;
+        match self.hll_type {
+            datasketches::hll::HllType::Hll4 => m / 2,
+            datasketches::hll::HllType::Hll6 => (m * 6).div_ceil(8),
+            datasketches::hll::HllType::Hll8 => m,
+        }
     }
 }
 
@@ -72,19 +83,16 @@ impl Sketch for HllDatasketches {
 // `asap_sketchlib::HyperLogLogHIP` is the P14 HIP estimator
 // (Kevin J. Lang, arXiv:1708.06839) — a streaming HLL variant
 // that keeps a running estimate updated on every insert, so
-// `estimate()` is O(1) instead of scanning all 2^lg_k registers.
-// Compile-time fixed at P14; we store the requested `lg_k` so
-// `memory_bytes` reports something sensible.
+// `estimate()` is O(1) instead of scanning all 2^14 registers.
+// Compile-time fixed at P14; the requested `lg_k` is ignored.
 pub struct HllLib {
     inner: asap_sketchlib::HyperLogLogHIP,
-    lg_k: u8,
 }
 
 impl HllLib {
-    pub fn new(p: &HllParams) -> Self {
+    pub fn new(_p: &HllParams) -> Self {
         Self {
             inner: asap_sketchlib::HyperLogLogHIP::new(),
-            lg_k: p.lg_k,
         }
     }
 }
@@ -100,6 +108,8 @@ impl Sketch for HllLib {
         self.inner.estimate() as f64
     }
     fn memory_bytes(&self) -> usize {
-        1usize << self.lg_k
+        // Implementation is fixed at P14 — register count is 2^14
+        // regardless of `HllParams::lg_k`, 1 byte per register.
+        1usize << 14
     }
 }

@@ -14,9 +14,9 @@ path = "src/main.rs"
 default = ["heap-jemalloc"]
 # When on, sketchlib links jemalloc as its global allocator and
 # sketch-bench samples `tikv-jemalloc-ctl::stats::allocated` into
-# `bench.heap_peak_kb`. Turn off with `--no-default-features` to
-# fall back to the system allocator (heap_peak_kb then reports as
-# absent in the JSONL record).
+# `bench.heap_allocated_kb`. Turn off with `--no-default-features`
+# to fall back to the system allocator (heap_allocated_kb then
+# reports as absent in the JSONL record).
 heap-jemalloc = ["sketch-bench/heap-jemalloc", "dep:tikv-jemallocator"]
 
 [dependencies]

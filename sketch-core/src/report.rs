@@ -11,7 +11,7 @@ use crate::workload::WorkloadDesc;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// A single record in the v1 JSONL report stream. One record
 /// per benchmark / profile / runtime window.
@@ -75,7 +75,7 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rss_peak_kb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub heap_peak_kb: Option<u64>,
+    pub heap_allocated_kb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_v1() {
-        assert_eq!(SCHEMA_VERSION, 1);
+    fn schema_version_is_v2() {
+        assert_eq!(SCHEMA_VERSION, 2);
     }
 }
