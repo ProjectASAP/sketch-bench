@@ -1,8 +1,8 @@
 # `sketchlib-tool` — Design
 
-Evolution of `sketchlib-bench` into a unified **benchmarking + profiling** tool and **embeddable library** for sketch algorithms used across the ASAP project (asap-fusion, DataCollector, ASAPQuery, ASAPController).
+Evolution of `sketch-bench` into a unified **benchmarking + profiling** tool and **embeddable library** for sketch algorithms used across the ASAP project (asap-fusion, DataCollector, ASAPQuery, ASAPController).
 
-> Repo name remains `sketchlib-bench`. The shipped tool/brand is `sketchlib-tool`; the CLI binary is `sketchlib`.
+> Repo name is `sketch-bench`. The shipped tool/brand is `sketchlib-tool`; the CLI binary is `sketchlib`.
 
 ---
 
@@ -57,7 +57,7 @@ Benchmark and profile are **peer subsystems**, not parent/child.
 ## 3. Crate layout
 
 ```
-sketchlib-bench/            (repo)
+sketch-bench/               (repo)
 ├── sketch-core/            # shared: workload, sketch_probe trait, report schema, serde types
 ├── sketch-bench/           # MACRO metrics (§2.1)
 │   ├── metrics/            # wall-time, cpu-time, rss, jemalloc, hdrhist

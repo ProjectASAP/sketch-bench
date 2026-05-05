@@ -2,7 +2,7 @@
 
 Turns two repos into one, under the design in [`DESIGN.md`](DESIGN.md).
 
-- **Keeper repo**: `sketchlib-bench` (this repo). ~13k LOC Rust + C++, mature harness, visualization, multi-language. Ships as brand `sketchlib-tool` with CLI binary `sketchlib`; repo name unchanged.
+- **Keeper repo**: `sketch-bench` (this repo). ~13k LOC Rust + C++, mature harness, visualization, multi-language. Ships as brand `sketchlib-tool` with CLI binary `sketchlib`.
 - **Absorbed repo**: `sketch-profiler`. ~75 LOC Rust, prototype. Only real content is `src/data_gen/` (workload shape primitives) and a `sketchlib-rust` git submodule.
 
 ---
@@ -32,7 +32,7 @@ Each phase leaves the repo in a **working, mergeable state**. No long-lived bran
 Preserve `sketch-profiler` history via `git subtree`:
 
 ```bash
-cd /home/zeying/repos/sketchlib-bench
+cd /home/zeying/repos/sketch-bench
 git remote add sketch-profiler /home/zeying/repos/sketch-profiler
 git fetch sketch-profiler
 git subtree add --prefix=_import/sketch-profiler sketch-profiler/main --squash=false
@@ -125,7 +125,7 @@ One at a time, in this order (cheapest / lowest blast radius first):
 ### Phase 10 — Cleanup
 
 - [ ] Delete `other_benchmark/`, `insertion_optimized_sample_output/`, loose `cumulative_result.txt` — once their data is re-captured under v1.
-- [ ] Decide on repo rename: keep `sketchlib-bench` (history-friendly) or rename to `sketchlib-tool` (brand-consistent). Default: keep.
+- [x] ~~Decide on repo rename: keep `sketchlib-bench` (history-friendly) or rename to `sketchlib-tool` (brand-consistent). Default: keep.~~ Done 2026-05-05: renamed to `sketch-bench`.
 - [ ] Tag `v1.0` once phases 3–8 land.
 
 ---

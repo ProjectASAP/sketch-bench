@@ -27,7 +27,7 @@ emitting anything until the controller turns it down.
 ```toml
 # In DataCollector's Cargo.toml
 [dependencies]
-sketch-runtime = { path = "../sketchlib-bench/sketch-runtime", default-features = false }
+sketch-runtime = { path = "../sketch-bench/sketch-runtime", default-features = false }
 ```
 
 No code change required — the `Sampler` API surface is identical

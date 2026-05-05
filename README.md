@@ -1,4 +1,4 @@
-# `sketchlib-tool` (repo: `sketchlib-bench`)
+# `sketchlib-tool` (repo: `sketch-bench`)
 
 > Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
 
@@ -94,7 +94,7 @@ Both write the same JSONL schema (see [`docs/DESIGN.md §4.4`](docs/DESIGN.md)) 
 ## Target crate layout (post-merge)
 
 ```
-sketchlib-bench/
+sketch-bench/
 ├── sketch-core/            # shared: workload, Sketch trait, Probe decorator, report schema
 ├── sketch-bench/           # macro metrics (throughput, latency, CPU, memory, accuracy, CI)
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
