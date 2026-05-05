@@ -1,4 +1,4 @@
-# Workspace manifest for sketchlib-bench → sketchlib-tool.
+# Workspace manifest for sketch-bench → sketchlib-tool.
 #
 # Phase 2 of docs/MERGE_PLAN.md: convert the repo into a cargo
 # workspace so the new `sketch-*` crates can share deps and the
@@ -18,7 +18,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/ProjectASAP/sketchlib-bench"
+repository = "https://github.com/ProjectASAP/sketch-bench"
 
 [workspace.dependencies]
 # Serde + JSON for the v1 report schema (docs/DESIGN.md §4.4).
