@@ -2,6 +2,8 @@
 //!
 //! See `docs/DESIGN.md` §5.5.
 
+#[cfg(feature = "heap-track")]
+pub mod heap_track;
 pub mod latency;
 pub mod memory;
 pub mod throughput;
@@ -37,6 +39,17 @@ pub struct RunMetrics {
     /// per-sketch peak lives in PR2 under `heap-track`.
     pub heap_allocated_kb: Option<u64>,
     pub memory_bytes: Option<u64>,
+    /// Net bytes allocated to this sketch over its lifetime, as
+    /// measured by the `heap-track` tracking allocator. Steady
+    /// state at the end of the insert phase; complements the
+    /// logical `memory_bytes` (param-derived) with what actually
+    /// hit the heap. `None` unless `heap-track` is compiled in
+    /// AND the bin installs `TrackingAllocator` as its global.
+    pub heap_bytes_net: Option<u64>,
+    /// High-water mark of the tracker during construction + feed.
+    /// Captures transient peaks (resize, intermediate buffers)
+    /// that `heap_bytes_net` smooths over.
+    pub heap_bytes_peak: Option<u64>,
     /// Latency histogram samples (ns/op) for the insert phase.
     /// None when `MetricsMask::LATENCY` unset.
     pub latency_ns: Option<LatencySnapshot>,
@@ -159,6 +172,8 @@ impl FullSink {
             rss_peak_kb,
             heap_allocated_kb,
             memory_bytes,
+            heap_bytes_net: None,
+            heap_bytes_peak: None,
             latency_ns,
             accuracy: None,
         }

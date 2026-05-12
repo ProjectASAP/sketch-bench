@@ -15,6 +15,11 @@ hdrhist = ["dep:hdrhistogram"]
 # jemalloc on the linking binary — opt-in only. Off →
 # heap_allocated_kb = None.
 heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
+# Compile in the per-sketch tracking allocator (heap_track.rs).
+# The linking binary still has to install `TrackingAllocator` as
+# its `#[global_allocator]` for counters to advance — see
+# `sketch-cli`'s allocator setup. Off → heap_bytes_* = None.
+heap-track = []
 # Pull the HashMap-based top-k ground-truth comparator.
 accuracy-topk = []
 
