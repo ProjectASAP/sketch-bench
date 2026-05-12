@@ -57,9 +57,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         let total_runs = self.config.runs + self.config.warmup_runs;
 
         for run_idx in 0..total_runs {
-            let sketch = factory();
             let sink = FullSink::new(self.config.metrics);
-            let (metrics, final_sketch) = run_once(sketch, sink, items, &self.config);
+            let (metrics, final_sketch) = run_once(&mut factory, sink, items, &self.config);
 
             if run_idx >= self.config.warmup_runs {
                 let mut metrics = metrics;
@@ -98,11 +97,13 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 ///
 /// Heap-track windowing (when the `heap-track` feature is on):
 /// the `before` snapshot is taken *after* `items` is already
-/// allocated by the caller (`workload.items()`), so input bytes
-/// are not attributed to the sketch. `reset_peak` pins the
+/// allocated by the caller (`workload.items()`) but *before*
+/// `factory()` runs, so the sketch's constructor allocations are
+/// attributed even for sketches that allocate everything up front
+/// (CMS, CountSketch, fixed-matrix HLL). `reset_peak` pins the
 /// watermark to that baseline before construction begins.
-fn run_once<S>(
-    factory_sketch: S,
+fn run_once<S, F>(
+    factory: &mut F,
     mut sink: FullSink,
     items: &[S::Item],
     config: &BenchConfig,
@@ -110,6 +111,7 @@ fn run_once<S>(
 where
     S: Sketch,
     S::Item: Clone,
+    F: FnMut() -> S,
 {
     sink.on_run_start();
 
@@ -118,6 +120,8 @@ where
         crate::metrics::heap_track::reset_peak();
         crate::metrics::heap_track::snapshot()
     };
+
+    let factory_sketch = factory();
 
     // Insert phase.
     sink.begin_insert_phase();
