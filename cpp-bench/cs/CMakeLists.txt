@@ -1,1 +1,5 @@
-# Phase 3 adds datasketches_cs and final_cs binaries here.
+add_executable(datasketches_cs datasketches_cs.cpp)
+target_link_libraries(datasketches_cs PRIVATE cpp_bench_common)
+
+add_executable(final_cs final_cs.cpp)
+target_link_libraries(final_cs PRIVATE cpp_bench_common)

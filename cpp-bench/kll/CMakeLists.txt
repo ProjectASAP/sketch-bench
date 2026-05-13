@@ -1,2 +1,5 @@
 add_executable(datasketches_kll datasketches_kll.cpp)
 target_link_libraries(datasketches_kll PRIVATE cpp_bench_common)
+
+add_executable(final_kll final_kll.cpp)
+target_link_libraries(final_kll PRIVATE cpp_bench_common)
