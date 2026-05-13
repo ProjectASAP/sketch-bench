@@ -12,26 +12,6 @@
     "../cpp/output/kll_naive.jsonl",
     "../cpp/output/kll_no_min_max.jsonl",
     "../cpp/output/kll_no_self_move_protection.jsonl",
-    "../cpp/output/kll_pcg_random.jsonl",
-    "../rust/output/countmin_lib_fixedmatrix_fast.jsonl",
-    "../rust/output/countmin_lib.jsonl",
-    "../rust/output/countmin_lib_vector2d_fast.jsonl",
-    "../rust/output/countmin_lib_vector2d_regular.jsonl",
-    "../rust/output/countmin_oxide.jsonl",
-    "../rust/output/countsketch_lib_fixedmatrix_fast.jsonl",
-    "../rust/output/countsketch_lib.jsonl",
-    "../rust/output/countsketch_lib_vector2d_fast.jsonl",
-    "../rust/output/countsketch_lib_vector2d_regular.jsonl",
-    "../rust/output/countsketch_oxide.jsonl",
-    "../rust/output/elastic_lib.jsonl",
-    "../rust/output/elastic_oxide.jsonl",
-    "../rust/output/hll_lib.jsonl",
-    "../rust/output/hll_oxide.jsonl",
-    "../rust/output/kll_lib.jsonl",
-    "../rust/output/kll_oxide.jsonl",
-    "../rust/output/nitro_lib.jsonl",
-    "../rust/output/nitro_oxide.jsonl",
-    "../rust/output/univmon_lib.jsonl",
-    "../rust/output/univmon_oxide.jsonl"
+    "../cpp/output/kll_pcg_random.jsonl"
   ]
 }

@@ -118,8 +118,8 @@ Update `visualization/data/index.json` with JSON/JSONL files from the output dir
 {
   "files": [
     "../cpp/output/kll_final.jsonl",
-    "../rust/output/kll_lib.jsonl",
-    "../rust/output/hll_oxide.jsonl"
+    "../throughput/kll/rust/output/kll_lib.jsonl",
+    "../throughput/hll/rust/output/hll_oxide.jsonl"
   ]
 }
 ```

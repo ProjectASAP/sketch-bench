@@ -53,7 +53,14 @@ Concrete overlap:
 |---|---|
 | `throughput/` | `sketch-bench/src/metrics/throughput.rs` |
 | `accuracy/`   | `sketch-bench/src/accuracy/` |
-| `cpp/` + `rust/` + `run_*.sh` | `sketchlib bench` (`sketch-cli/`) |
+| `cpp/` + `run_*.sh` | `sketchlib bench` (`sketch-cli/`) |
+
+The monolithic `rust/` tree (one binary per sketch, JSONL → `rust/output/`)
+has been retired: cms / cs / hll / kll / nitro are now covered by
+`throughput/<family>/rust/`, and accuracy/* covers the ground-truth side.
+**Caveat:** `throughput/` does *not* yet have subtrees for **univmon** or
+**elastic** — for those two families, `sketchlib bench --sketch
+{univmon,elastic}` is currently the only path.
 
 Both produce comparable throughput / accuracy numbers, but the legacy tree
 still does several things the new stack cannot.
@@ -142,7 +149,7 @@ Three options were considered:
 
 - **A** — docs-only labels, no file moves.
 - **B** — create `legacy/`, move the self-contained legacy artifacts in,
-  leave anything with relative-path coupling (`cpp/`, `rust/`, `accuracy/`,
+  leave anything with relative-path coupling (`cpp/`, `accuracy/`,
   `throughput/`, `run_all_benchmarks.sh`) in place.
 - **C** — also move the coupled trees, fixing all `path = "..."` Cargo
   references and shell `cd cpp/rust` calls.
@@ -176,12 +183,13 @@ remain valid since the TODO is about deletion, not relocation.
 These were *not* moved because they have live relative-path coupling and
 would need a coordinated path-fix commit:
 
-- `cpp/`, `rust/` — referenced by `run_all_benchmarks.sh` and contain their
-  own `output/` consumed by visualization.
+- `cpp/` — referenced by `run_all_benchmarks.sh` and contains its own
+  `output/` consumed by visualization.
 - `accuracy/`, `throughput/` — their per-sketch crates use
   `path = "../../../sketch-bench"` and `path = "../../../../asap_sketchlib"`
   in `Cargo.toml`; their shell scripts use `ACCURACY_DIR/../input`.
-- `run_all_benchmarks.sh` — top-level orchestrator for `cpp/` + `rust/`.
+- `run_all_benchmarks.sh` — top-level orchestrator for `cpp/` (the
+  legacy monolithic `rust/` tree it used to invoke has been removed).
 
 Promoting these to `legacy/` (the option-C path) is tracked implicitly by
 `docs/MERGE_PLAN.md`'s migration phases. Once each legacy harness is

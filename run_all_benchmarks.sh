@@ -4,14 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "========================================"
-echo "Running rust bench_sketches benchmarks"
-echo "========================================"
-(cd "$ROOT_DIR/rust" && bash "run_benchmark.sh")
-
-echo "========================================"
 echo "Running cpp benchmarks"
 echo "========================================"
 (cd "$ROOT_DIR/cpp" && bash "run_benchmark.sh")
+
+# Per-sketch Rust throughput harnesses live under throughput/<family>/rust/
+# and are orchestrated by scripts/run_all.py. Run those separately.
 
 echo "========================================"
 echo "All benchmark suites completed"

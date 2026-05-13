@@ -100,8 +100,8 @@ sketch-bench/
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
 ├── sketch-cli/             # unified `sketchlib` binary
-├── cpp/ rust/              # existing benches, migrating onto sketch-core/bench
-├── accuracy/ throughput/   # existing accuracy/throughput harnesses
+├── cpp/                    # existing C++ benches, migrating onto sketch-core/bench
+├── accuracy/ throughput/   # existing accuracy/throughput harnesses (Rust side)
 ├── input/ scripts/         # shared datasets + generators
 ├── visualization/          # JSON/JSONL viewer (tables + charts)
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
@@ -138,16 +138,26 @@ The legacy harness still works as before while the migration proceeds. Everythin
 2. Execute the benchmark you want, from the repo root:
    ```bash
    ./run_all_benchmarks.sh
-   cd cpp  && ./run_benchmark.sh
-   cd rust && ./run_benchmark.sh
+   cd cpp && ./run_benchmark.sh
    ```
+
+   Per-sketch Rust throughput harnesses live under `throughput/<family>/rust/`
+   (cms, cs, hll, kll, nitro, dd, octo + cms32k / cs32k variants); accuracy
+   harnesses live under `accuracy/<statistic>/`. The old monolithic `rust/`
+   tree was removed once `throughput/` covered its sketches. **UnivMon and
+   Elastic do not yet have `throughput/` subtrees** — for now they are only
+   reachable via `sketchlib bench --sketch {univmon,elastic}`.
    Each script builds with the flags above, runs the binaries, and writes structured output into `output/*.jsonl`.
 3. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
 
 - `cpp/`: Count Sketch + KLL variants (Insert-Optimized and DataSketches).
-- `rust/`: HLL, Count-Min, Count Sketch, Elastic, KLL, UnivMon, Nitro variants.
+- `throughput/<family>/rust/`: per-sketch Rust throughput harnesses
+  (cms, cs, hll, kll, nitro, dd, octo + cms32k / cs32k). UnivMon and
+  Elastic are not (yet) represented here — use `sketchlib bench` instead.
+- `accuracy/<statistic>/`: per-statistic accuracy harnesses
+  (cardinality, frequency, quantile, nitro, octo).
 - `visualization/`: JSON/JSONL loader for charts and tables across all outputs.
 
 ### Build prerequisites
@@ -156,6 +166,6 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 
 ## Contributing while the migration is in flight
 
-- New benchmarks: land them under the existing `rust/` or `cpp/` trees for now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
+- New benchmarks: land them under the existing `throughput/<family>/rust/`, `accuracy/<statistic>/`, or `cpp/` trees for now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
 - New metrics: add under `sketch-bench/metrics/` (macro) or `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
 - Runtime integration in downstream apps: follow Phase 9 of [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
