@@ -20,7 +20,7 @@ with `sketch-runtime` as a parallel consumer of `sketch-core` (+ `sketch-bench`)
 
 - **Reusability**: `sketch-bench` is also consumable by `sketch-profile`
   (future), `sketch-runtime`, unit tests, and the Criterion micro-benches in
-  `benchmark/`.
+  `rust-microbench/` (formerly `benchmark/`).
 - **Dependency isolation**: `sketch-bench` does not pull in any concrete sketch
   implementation. All third-party sketch crates (`sketch_oxide`,
   `datasketches`, `asap_sketchlib`) are declared only in `sketch-cli`'s

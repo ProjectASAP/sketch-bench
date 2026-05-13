@@ -78,7 +78,7 @@ sketch-bench/               (repo)
 └── visualization/          # JSON/JSONL viewer (kept, fed by unified report schema)
 ```
 
-Top-level `Cargo.toml` becomes a workspace over the `sketch-*` crates plus the existing `rust/` and `benchmark/` members.
+Top-level `Cargo.toml` becomes a workspace over the `sketch-*` crates plus the existing `rust/` member. The Criterion micro-bench crate now lives in `rust-microbench/` (renamed from `benchmark/`) and is kept as a standalone cargo project, not a workspace member.
 
 ### 3.1 Dependency direction
 
