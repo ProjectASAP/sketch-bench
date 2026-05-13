@@ -35,7 +35,9 @@ int main(int argc, char** argv) {
         cpp_bench::run_throughput_latency<CsDs>(wl.items, cfg, build, insert);
 
     cpp_bench::Record rec;
-    rec.sketch    = "cs";
+    // Family name matches the Rust dispatch: "countsketch"
+    // (the directory is still cpp-bench/cs/ to mirror cpp/cs/).
+    rec.sketch    = "countsketch";
     rec.impl_name = "datasketches";
     rec.workload  = wl.desc;
     rec.runs      = cfg.runs;

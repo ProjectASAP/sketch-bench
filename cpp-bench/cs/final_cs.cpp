@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
         cpp_bench::run_throughput_latency<CsFinal>(wl.items, cfg, build, insert);
 
     cpp_bench::Record rec;
-    rec.sketch    = "cs";
+    rec.sketch    = "countsketch";
     rec.impl_name = "final";
     rec.workload  = wl.desc;
     rec.runs      = cfg.runs;

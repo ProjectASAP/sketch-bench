@@ -60,6 +60,14 @@ Each phase commit notes what was and wasn't verified.
 - [x] **Phase 4 — orchestrator**
   - `scripts/run_all.py`: runs `sketchlib bench …` for the Rust track
     and the `cpp-bench` binaries, concatenates stdout into one JSONL.
+  - **Family-name alignment**: Rust dispatch calls the family
+    `countsketch`, so cpp-bench's CS binaries emit
+    `Record.sketch = "countsketch"` too — even though they live in
+    `cpp-bench/cs/` for parity with `cpp/cs/`. The orchestrator's
+    `CPP_DIR_FOR_SKETCH` maps the family name to its on-disk dir.
+  - Dry-run verified: `python3 scripts/run_all.py --dry-run …` prints
+    the 4 Rust + 4 C++ commands with valid impl names from
+    `sketch-cli/src/dispatch.rs`.
 - [ ] **Phase 5 — legacy cleanup** *(deferred)*
   - Will move `cpp/` into `legacy/cpp/` (option-C path) once a
     side-by-side run of `scripts/run_all.py` shows numerical parity
