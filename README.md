@@ -137,27 +137,34 @@ The legacy harness still works as before while the migration proceeds. Everythin
 1. Generate/verify input data (done automatically by the scripts).
 2. Execute the benchmark you want, from the repo root:
    ```bash
-   ./run_all_benchmarks.sh
-   cd cpp && ./run_benchmark.sh
+   scripts/run_throughput.sh            # all families incl. octo + polars
+   scripts/run_accuracy.sh              # all statistics, --accuracy on
+   cd cpp && ./run_benchmark.sh         # C++ side (unchanged)
    ```
 
-   Per-sketch Rust throughput harnesses live under `throughput/<family>/rust/`
-   (cms, cs, hll, kll, nitro, dd, octo + cms32k / cs32k variants); accuracy
-   harnesses live under `accuracy/<statistic>/`. The old monolithic `rust/`
-   tree was removed once `throughput/` covered its sketches. **UnivMon and
-   Elastic do not yet have `throughput/` subtrees** — for now they are only
-   reachable via `sketchlib bench --sketch {univmon,elastic}`.
-   Each script builds with the flags above, runs the binaries, and writes structured output into `output/*.jsonl`.
+   Both scripts wrap `sketchlib bench --raw-csv DIR` and dump
+   long-format CSVs into `output/throughput/` and `output/accuracy/`
+   respectively. The per-family Rust harnesses that used to live
+   under `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+   have been retired in favour of `sketch-cli` (their source is
+   recoverable from git history under `legacy/`). The C++ side
+   under `throughput/<family>/cpp/` and `accuracy/<statistic>/cpp/`
+   stays put — that's MERGE_PLAN Phase 8.
 3. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
 
 - `cpp/`: Count Sketch + KLL variants (Insert-Optimized and DataSketches).
-- `throughput/<family>/rust/`: per-sketch Rust throughput harnesses
-  (cms, cs, hll, kll, nitro, dd, octo + cms32k / cs32k). UnivMon and
-  Elastic are not (yet) represented here — use `sketchlib bench` instead.
-- `accuracy/<statistic>/`: per-statistic accuracy harnesses
-  (cardinality, frequency, quantile, nitro, octo).
+- `sketch-cli/`: unified `sketchlib bench` — every Rust impl + the polars
+  exact baselines + the `lib-fastpath-parallel` (octo) variants. The
+  per-family `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+  trees have been retired into git history.
+- `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
+  that fan `sketchlib bench` over all families and dump CSVs the legacy
+  plot scripts (now under `legacy/throughput/scripts/` and
+  `legacy/accuracy/scripts/`) still consume unchanged.
+- `throughput/<family>/cpp/` + `accuracy/<statistic>/cpp/`: still the
+  C++ track (MERGE_PLAN Phase 8 will migrate these onto sketch-core).
 - `visualization/`: JSON/JSONL loader for charts and tables across all outputs.
 
 ### Build prerequisites
@@ -166,6 +173,13 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 
 ## Contributing while the migration is in flight
 
-- New benchmarks: land them under the existing `throughput/<family>/rust/`, `accuracy/<statistic>/`, or `cpp/` trees for now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
-- New metrics: add under `sketch-bench/metrics/` (macro) or `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
-- Runtime integration in downstream apps: follow Phase 9 of [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+- New Rust impls: add a wrapper under `sketch-cli/src/wrappers/<family>.rs`,
+  register it in `sketch-cli/src/dispatch.rs` (one `IMPLS` row + one macro
+  invocation), pick an `AccuracyKind`. The old per-family `rust/` trees are
+  gone; everything new flows through `sketchlib bench`.
+- New C++ benches: land them under `cpp/` or `throughput/<family>/cpp/` for
+  now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
+- New metrics: add under `sketch-bench/metrics/` (macro) or
+  `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
+- Runtime integration in downstream apps: follow Phase 9 of
+  [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).

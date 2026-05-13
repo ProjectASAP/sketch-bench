@@ -12,6 +12,7 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 | 7-lite | `sketch-cli`: unified `sketchlib` binary with 21 sketch impls wired end-to-end via a `(family, impl)` dispatch table | ✅ |
 | 6-lite | `sketch-runtime`: `Sampler` (disabled / every-n / time-window), `RuntimeSwitch`, stdout + file + noop exporters, compile-time feature gate (`--no-default-features` → ZST fallback), overhead microbench | ✅ |
 | 7-sweep | `sketchlib bench` config sweep: typed `ParamSet` in sketch-core, 21 wrappers refactored to `::new(&params)`, per-family default grids, `--config 'k=v1,v2'` Cartesian override, optional `sketch_config` field in v1 JSONL, fixed-shape impls skipped with stderr log | ✅ |
+| 8-tput | `--raw-csv DIR` (legacy long-format CSVs), `polars` impl per family, `lib-fastpath-parallel` ("octo") impl per family, per-call query capture (hll/kll/dd), `scripts/run_{throughput,accuracy}.sh` orchestrators, `throughput/<family>/rust/` + `accuracy/<statistic>/rust/` trees retired | ✅ |
 
 ## Deferred (explicitly out-of-scope for this first cut)
 
@@ -49,9 +50,14 @@ exporters, compile-time feature gate. Still open:
 
 **Why deferred**: C++ parity is pure mechanical translation. The 21 Rust impls via `sketchlib` already cover the accuracy / throughput story for the paper.
 
-### Legacy Rust binaries (MERGE_PLAN Phase 8)
+### Legacy Rust binaries (MERGE_PLAN Phase 8) — RETIRED
 
-The `rust/src/bin/*` files still work unchanged — they emit the old `total_nanoseconds` shape. Now that `sketchlib bench --sketch X --impl Y` covers the same matrix via the v1 schema, these can be retired. One binary per family deleted per follow-up PR keeps diffs reviewable.
+Done in the 8-tput row above. `throughput/<family>/rust/`,
+`accuracy/<statistic>/rust/`, `throughput/polars_*/`,
+`throughput/octo/rust/`, and `accuracy/{nitro,octo}/rust/` are
+gone; source recoverable from git history. Plot scripts moved to
+`legacy/{throughput,accuracy}/scripts/` and still consume the
+sketch-cli-emitted CSVs through `--raw-csv`.
 
 ### Downstream app integration (MERGE_PLAN Phase 9)
 
