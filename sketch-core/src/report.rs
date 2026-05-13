@@ -276,6 +276,29 @@ mod tests {
         assert_eq!(rec.language, Language::Rust);
     }
 
+    /// Wire-format compat test: a JSONL line shaped exactly like
+    /// what `cpp-bench/common/record_v1.cpp` emits must deserialise
+    /// into a `Record` with the right fields. Catches field-name
+    /// drift between the two emitters without needing to compile
+    /// the C++ side.
+    #[test]
+    fn cpp_bench_jsonl_parses() {
+        let cpp_emitted = r#"{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":{"shape":"file","size":1000000,"source_path":"input/benchmark_data_1m_int64.bin"},"mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;
+        let rec: Record = serde_json::from_str(cpp_emitted).unwrap();
+        assert_eq!(rec.sketch, "kll");
+        assert_eq!(rec.impl_name, "datasketches");
+        assert_eq!(rec.language, Language::Cpp);
+        assert_eq!(rec.source, Source::CppBench);
+        let bench = rec.bench.as_ref().unwrap();
+        let tput = bench.throughput_items_per_sec.unwrap();
+        assert_eq!(tput.n, 10);
+        let lat = bench.latency_ns.unwrap();
+        assert_eq!(lat.p99, 60);
+        let acc = bench.accuracy.as_ref().unwrap();
+        assert!(acc.get("queries").is_some());
+        assert!(acc.get("abs_rank_err").is_some());
+    }
+
     #[test]
     fn cpp_record_roundtrips() {
         let wd = WorkloadDesc {
