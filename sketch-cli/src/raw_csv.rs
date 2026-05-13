@@ -33,9 +33,17 @@ pub fn write_runs(
     entry: &ImplEntry,
     params: Option<&ParamSet>,
     seed: u64,
+    workers: usize,
     report: &BenchReport,
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
+    // Parallel ("octo") impls go to a separate combined file with
+    // the legacy `sketch_type, implementation, num_workers,...`
+    // header — `throughput/scripts/plot_octo_throughput.py` reads
+    // exactly that shape from a single file across cms/cs/hll.
+    if entry.impl_name == "lib-fastpath-parallel" {
+        return write_octo_runs(dir, entry, workers, report);
+    }
     let legacy_impl = legacy_impl_name(entry.family, entry.impl_name);
     let param_cols = ParamCols::from(entry.family, params);
 
@@ -92,6 +100,44 @@ pub fn write_runs(
         )?;
     }
     Ok(())
+}
+
+/// Legacy octo CSV: one combined file, header
+/// `sketch_type,implementation,num_workers,run,total_items,total_nanoseconds,throughput_items_per_sec`.
+/// Used by `throughput/scripts/plot_octo_throughput.py`. We emit
+/// `implementation = "octo"` (the legacy label for the parallel
+/// path) regardless of the sketch-cli impl name; the `sketch_type`
+/// column carries the family.
+fn write_octo_runs(
+    dir: &Path,
+    entry: &ImplEntry,
+    workers: usize,
+    report: &BenchReport,
+) -> Result<()> {
+    let path = dir.join("octo_throughput_results_rust.csv");
+    let header = "sketch_type,implementation,num_workers,run,total_items,total_nanoseconds,throughput_items_per_sec";
+    let sketch_type = legacy_sketch_type(entry.family);
+    let rows = report.per_run.iter().enumerate().map(|(idx, run)| {
+        let total_items = run.items_inserted.max(1);
+        let total_ns = run.insert_wall_time_ns.max(1);
+        let throughput = (total_items as f64) * 1_000_000_000.0 / (total_ns as f64);
+        format!(
+            "{sketch_type},octo,{workers},{run_no},{total_items},{total_ns},{throughput:.6}",
+            run_no = idx + 1,
+        )
+    });
+    append_csv(&path, header, rows)
+}
+
+/// Map sketch-cli's family name to the legacy `sketch_type`
+/// column value used by `plot_octo_throughput.py`.
+fn legacy_sketch_type(family: &str) -> &'static str {
+    match family {
+        "countsketch" => "cs",
+        "cms" => "cms",
+        "hll" => "hll",
+        _ => "unknown",
+    }
 }
 
 fn per_call_query_header(family: &str) -> String {
@@ -191,6 +237,19 @@ struct ParamCols {
 impl ParamCols {
     fn from(family: &str, params: Option<&ParamSet>) -> Self {
         let mut cols: Vec<(&'static str, String)> = Vec::new();
+        // Unparameterized impls (exact / polars) still need to
+        // emit values for the family's param columns so each row
+        // matches the legacy header width — plot scripts call
+        // `csv.DictReader` and choke on a short row. Sentinel `0`
+        // values mark "no sketch tuning involved here"; downstream
+        // grouping is by `implementation` so the value isn't read
+        // for these baselines.
+        if params.is_none() {
+            for name in legacy_param_columns(family) {
+                cols.push((name, "0".to_string()));
+            }
+            return Self { cols };
+        }
         match (family, params) {
             ("hll", Some(ParamSet::Hll(p))) => {
                 cols.push(("lg_k", p.lg_k.to_string()));
@@ -301,6 +360,22 @@ fn param_header(family: &str) -> &'static str {
         "elastic" => "buckets,depth",
         "univmon" => "layers,max_stream",
         _ => "",
+    }
+}
+
+/// The same set of columns as `param_header` but as separate
+/// names, used to populate sentinel `0`s for unparameterized
+/// impls so their CSV rows match the legacy width.
+fn legacy_param_columns(family: &str) -> &'static [&'static str] {
+    match family {
+        "hll" => &["lg_k", "registers"],
+        "kll" => &["k"],
+        "cms" | "countsketch" => &["rows", "cols"],
+        "dd" => &["alpha"],
+        "nitro" => &["rows", "cols", "rate"],
+        "elastic" => &["buckets", "depth"],
+        "univmon" => &["layers", "max_stream"],
+        _ => &[],
     }
 }
 

@@ -18,7 +18,9 @@ use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
 use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
-use crate::wrappers::{cms, countsketch, dd, elastic, exact, hll, kll, nitro, univmon};
+use crate::wrappers::{
+    cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
+};
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
 /// runs `NoGT` (no ground truth). `enabled = true` → each
@@ -261,6 +263,22 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_exact,
     },
+    ImplEntry {
+        family: "hll",
+        impl_name: "polars",
+        description: "polars exact: DataFrame.n_unique() (DataFrame baseline)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Cardinality,
+        run: run_hll_polars,
+    },
+    ImplEntry {
+        family: "hll",
+        impl_name: "lib-fastpath-parallel",
+        description: "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::None,
+        run: run_hll_lib_fastpath_parallel,
+    },
     // -------- KLL --------
     ImplEntry {
         family: "kll",
@@ -285,6 +303,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
         run: run_kll_exact,
+    },
+    ImplEntry {
+        family: "kll",
+        impl_name: "polars",
+        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_kll_polars,
     },
     // -------- CMS --------
     ImplEntry {
@@ -349,6 +375,22 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cms_exact,
     },
+    ImplEntry {
+        family: "cms",
+        impl_name: "polars",
+        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_polars,
+    },
+    ImplEntry {
+        family: "cms",
+        impl_name: "lib-fastpath-parallel",
+        description: "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::None,
+        run: run_cms_lib_fastpath_parallel,
+    },
     // -------- CountSketch --------
     ImplEntry {
         family: "countsketch",
@@ -393,6 +435,22 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_exact,
     },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "polars",
+        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_polars,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "lib-fastpath-parallel",
+        description: "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::None,
+        run: run_cs_lib_fastpath_parallel,
+    },
     // -------- DDSketch --------
     ImplEntry {
         family: "dd",
@@ -409,6 +467,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
         run: run_dd_exact,
+    },
+    ImplEntry {
+        family: "dd",
+        impl_name: "polars",
+        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Quantile,
+        run: run_dd_polars,
     },
     // -------- Elastic --------
     ImplEntry {
@@ -787,6 +853,38 @@ macro_rules! run_i64_quant_rel {
     };
 }
 
+/// Parallel-insert impls (`lib-fastpath-parallel` under cms /
+/// countsketch / hll). Threads come from `cfg.threads` (driven
+/// by `--workers N`); accuracy is None because the partitions
+/// are intentionally not merged (matches legacy octo).
+macro_rules! run_i64_parallel {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
+        fn $fn_name(
+            cfg: &BenchConfig,
+            wk: &WorkloadAny,
+            params: &ParamSet,
+            _accuracy: &AccuracyCfg,
+        ) -> BenchReport {
+            let p = match params {
+                ParamSet::$param_variant(p) => *p,
+                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
+            };
+            let workers = cfg.threads;
+            match wk {
+                WorkloadAny::I64(w) => bench_no_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
+                ),
+                WorkloadAny::Zipf(w) => bench_no_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
+                ),
+                WorkloadAny::File(w) => bench_no_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
+                ),
+            }
+        }
+    };
+}
+
 /// For Nitro lib: `Query = i64` but `query()` returns a stub
 /// 0 — a frequency GT would report 100% error, which is
 /// misleading. Always run with NoGT.
@@ -1070,6 +1168,46 @@ run_i64_freq!(
 // -- DDSketch --
 run_i64_quant_rel!(run_dd_lib, dd::DdLib, "dd", "lib", Dd);
 run_i64_quant_rel!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd);
+
+// -- Polars-backed baselines (one per family). Same `Sketch`
+//    contract as the in-tree exact baselines; the legacy
+//    `throughput/polars_*/` binaries are folded into these.
+run_i64_card!(run_hll_polars, polars::PolarsCardinality, "hll", "polars", Hll);
+run_i64_quant!(run_kll_polars, polars::PolarsQuantileKll, "kll", "polars", Kll);
+run_i64_quant_rel!(run_dd_polars, polars::PolarsQuantileDd, "dd", "polars", Dd);
+run_i64_freq!(run_cms_polars, polars::PolarsFrequencyCms, "cms", "polars", Cms);
+run_i64_freq!(
+    run_cs_polars,
+    polars::PolarsFrequencyCs,
+    "countsketch",
+    "polars",
+    Countsketch
+);
+
+// -- Parallel-insert FastPath baselines (one per family). Workers
+//    are read from `cfg.threads` (= `--workers N`). Folds the
+//    legacy `throughput/octo/` binary into sketch-cli.
+run_i64_parallel!(
+    run_cms_lib_fastpath_parallel,
+    parallel::ParallelCmsFastPath,
+    "cms",
+    "lib-fastpath-parallel",
+    Cms
+);
+run_i64_parallel!(
+    run_cs_lib_fastpath_parallel,
+    parallel::ParallelCsFastPath,
+    "countsketch",
+    "lib-fastpath-parallel",
+    Countsketch
+);
+run_i64_parallel!(
+    run_hll_lib_fastpath_parallel,
+    parallel::ParallelHllFastPath,
+    "hll",
+    "lib-fastpath-parallel",
+    Hll
+);
 
 // -- Elastic --
 run_string_freq!(

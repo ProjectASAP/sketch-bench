@@ -110,6 +110,12 @@ struct BenchArgs {
     /// still consume the historical CSV shape.
     #[arg(long)]
     raw_csv: Option<String>,
+    /// Worker threads for parallel-insert impls
+    /// (`lib-fastpath-parallel` under cms / countsketch / hll).
+    /// Other impls ignore it. Default `1` reproduces the
+    /// single-threaded behaviour.
+    #[arg(long, default_value_t = 1)]
+    workers: usize,
     /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy.
     /// Default: all.
     #[arg(long)]
@@ -271,7 +277,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
         query_count: None,
-        threads: 1,
+        threads: args.workers.max(1),
         seed: args.seed,
     };
     let accuracy_cfg = AccuracyCfg {
@@ -379,6 +385,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                     entry,
                     params_opt,
                     cfg.seed,
+                    cfg.threads,
                     &report,
                 )?;
             }
