@@ -26,6 +26,12 @@ cpp/build/
 cpp/build_*/
 cpp/output/
 cpp/_gbench/
+cpp-bench/build/
+cpp-bench/build_*/
+
+# Python cache
+__pycache__/
+*.pyc
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
