@@ -8,6 +8,7 @@
 #include <iostream>
 #include <ostream>
 
+#include "common/accuracy.hpp"
 #include "common/cli.hpp"
 #include "common/record_v1.hpp"
 #include "common/runner.hpp"
@@ -52,6 +53,34 @@ int main(int argc, char** argv) {
     rec.runs       = cfg.runs;
     rec.bench.throughput_items_per_sec = m.throughput;
     if (m.latency.count > 0) rec.bench.latency_ns = m.latency;
+
+    // ---- Accuracy ----
+    //
+    // One extra build+insert pass over items[0..measure_n], then query
+    // each quantile in {0.5, 0.95, 0.99, 0.999}. The exact baseline
+    // is built from the same prefix in compute_quantile_accuracy().
+    if (args.with_accuracy) {
+        const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
+        std::vector<std::int64_t> measured_prefix(
+            wl.items.begin(),
+            wl.items.begin() + static_cast<std::ptrdiff_t>(measure_n));
+
+        KllSketch sketch(k);
+        for (auto v : measured_prefix) sketch.Insert(v);
+
+        // NOTE on method name: the insert-optimized fork's
+        // KarninLangLiberty exposes its quantile query as
+        // `GetQuantile(q)`. If the actual API in your checkout uses a
+        // different spelling (e.g. `Quantile`, `get_quantile`), adjust
+        // the call below — it's intentionally isolated to one line.
+        const std::vector<double> queries = {0.5, 0.95, 0.99, 0.999};
+        auto estimate_q = [&](double q) -> std::int64_t {
+            return sketch.GetQuantile(q);
+        };
+        cpp_bench::QuantileAccuracy qa = cpp_bench::compute_quantile_accuracy(
+            measured_prefix, queries, estimate_q);
+        rec.bench.accuracy_json = qa.json;
+    }
 
     if (args.report_path == "-" || args.report_path.empty()) {
         rec.emit(std::cout);
