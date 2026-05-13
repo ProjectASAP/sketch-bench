@@ -38,6 +38,14 @@ pub struct AccuracyCfg {
     /// regime CMS / CountSketch are designed for. Ignored by
     /// cardinality / quantile comparators.
     pub min_true_count: u64,
+    /// Ask the comparator to record per-call `(call_index, ns,
+    /// estimate, percentile, repeat)` samples — the data the
+    /// legacy `throughput/{hll,kll,dd}/rust/src/bin/query.rs`
+    /// dump. Only cardinality + quantile comparators honour
+    /// it; frequency / top-k ignore. Off by default; the CLI
+    /// turns it on when `--raw-csv` is set together with
+    /// `--accuracy`.
+    pub record_query_calls: bool,
 }
 
 impl AccuracyCfg {
@@ -46,6 +54,7 @@ impl AccuracyCfg {
             enabled: false,
             max_probes: 0,
             min_true_count: 0,
+            record_query_calls: false,
         }
     }
 }
@@ -523,13 +532,14 @@ fn bench_card_gt<S, W>(
     family: &str,
     impl_name: &str,
     factory: impl FnMut() -> S,
+    record_calls: bool,
 ) -> BenchReport
 where
     W: Workload,
     W::Item: Clone + Eq + Hash,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = (), Answer = f64>,
 {
-    let gt = CardinalityGT;
+    let gt = CardinalityGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, CardinalityGT>(factory, Some(&gt))
 }
@@ -540,13 +550,14 @@ fn bench_quant_gt<S, W>(
     family: &str,
     impl_name: &str,
     factory: impl FnMut() -> S,
+    record_calls: bool,
 ) -> BenchReport
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
-    let gt = RankErrorGT;
+    let gt = RankErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, RankErrorGT>(factory, Some(&gt))
 }
@@ -557,13 +568,14 @@ fn bench_quant_rel_gt<S, W>(
     family: &str,
     impl_name: &str,
     factory: impl FnMut() -> S,
+    record_calls: bool,
 ) -> BenchReport
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
-    let gt = RelativeErrorGT;
+    let gt = RelativeErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, RelativeErrorGT>(factory, Some(&gt))
 }
@@ -671,15 +683,18 @@ macro_rules! run_i64_card {
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
             };
             match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => {
-                    bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), true) => {
-                    bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), true) => {
-                    bench_card_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
+                (WorkloadAny::I64(w), true) => bench_card_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
+                (WorkloadAny::Zipf(w), true) => bench_card_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
+                (WorkloadAny::File(w), true) => bench_card_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
@@ -707,15 +722,18 @@ macro_rules! run_i64_quant {
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
             };
             match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => {
-                    bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), true) => {
-                    bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), true) => {
-                    bench_quant_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
+                (WorkloadAny::I64(w), true) => bench_quant_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
+                (WorkloadAny::Zipf(w), true) => bench_quant_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
+                (WorkloadAny::File(w), true) => bench_quant_gt::<$wrapper, _>(
+                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
+                ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
                 }
@@ -745,12 +763,15 @@ macro_rules! run_i64_quant_rel {
             match (wk, accuracy.enabled) {
                 (WorkloadAny::I64(w), true) => bench_quant_rel_gt::<$wrapper, _>(
                     cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_quant_rel_gt::<$wrapper, _>(
                     cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
                 ),
                 (WorkloadAny::File(w), true) => bench_quant_rel_gt::<$wrapper, _>(
                     cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    accuracy.record_query_calls,
                 ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))

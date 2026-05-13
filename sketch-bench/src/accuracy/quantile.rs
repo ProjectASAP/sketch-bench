@@ -28,7 +28,13 @@ use serde_json::json;
 use sketch_core::sketch::Sketch;
 use std::time::Instant;
 
-use super::{Comparison, GroundTruth};
+use super::{Comparison, GroundTruth, QueryCallSample};
+
+/// Number of times the 101-percentile sweep is repeated when
+/// `record_calls` is on. Matches the legacy KLL / DD query
+/// binary's `REPEATS_PER_RUN = 10`.
+const RAW_REPEATS_PER_RUN: usize = 10;
+const NUM_PERCENTILES: usize = 101;
 
 /// Lossy-cast to f64. Impl for common numeric item types used
 /// by quantile sketches. Separate from `Into<f64>` because the
@@ -72,7 +78,13 @@ impl ToF64 for u32 {
 // ---------- KLL: rank error ----------
 
 /// Rank-error comparator for KLL-style sketches.
-pub struct RankErrorGT;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RankErrorGT {
+    /// Capture per-call samples for the legacy
+    /// `kll_throughput_query_results_rust.csv` shape (one row
+    /// per (run, repeat, percentile) tuple). Off by default.
+    pub record_calls: bool,
+}
 
 impl<S> GroundTruth<S> for RankErrorGT
 where
@@ -85,6 +97,7 @@ where
                 json: json!({ "items": 0, "mean_rank_err": 0.0 }),
                 queries: 0,
                 query_wall_ns: 0,
+                query_calls: None,
             };
         }
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
@@ -98,6 +111,12 @@ where
             *slot = sketch.query(q);
         }
         let q_ns = q_start.elapsed().as_nanos() as u64;
+
+        let query_calls = if self.record_calls {
+            Some(capture_quantile_calls(sketch))
+        } else {
+            None
+        };
 
         let n = sorted.len();
         let nf = n as f64;
@@ -140,6 +159,7 @@ where
             }),
             queries: 101,
             query_wall_ns: q_ns,
+            query_calls,
         }
     }
 }
@@ -147,7 +167,12 @@ where
 // ---------- DDSketch: relative error ----------
 
 /// Relative-error comparator for DDSketch-style sketches.
-pub struct RelativeErrorGT;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RelativeErrorGT {
+    /// Capture per-call samples for the legacy
+    /// `dd_throughput_query_results_rust.csv` shape. Off by default.
+    pub record_calls: bool,
+}
 
 impl<S> GroundTruth<S> for RelativeErrorGT
 where
@@ -160,6 +185,7 @@ where
                 json: json!({ "items": 0, "mean_relative_err": 0.0 }),
                 queries: 0,
                 query_wall_ns: 0,
+                query_calls: None,
             };
         }
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
@@ -172,6 +198,12 @@ where
             *slot = sketch.query(q);
         }
         let q_ns = q_start.elapsed().as_nanos() as u64;
+
+        let query_calls = if self.record_calls {
+            Some(capture_quantile_calls(sketch))
+        } else {
+            None
+        };
 
         let mut max_rel_err = 0.0_f64;
         let mut sum_rel = 0.0_f64;
@@ -208,6 +240,7 @@ where
             }),
             queries: 101,
             query_wall_ns: q_ns,
+            query_calls,
         }
     }
 }
@@ -242,6 +275,39 @@ fn upper_bound(sorted: &[f64], x: f64) -> usize {
         }
     }
     lo
+}
+
+/// Independently-time each `query(p)` call across
+/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` to reproduce the
+/// legacy `{kll,dd}_throughput_query_results_rust.csv` per-call
+/// shape. The percentile sweep is by `p ∈ 0..NUM_PERCENTILES`,
+/// so the recorded `percentile` field is `p as f64 / 100.0`
+/// (matching the legacy harness's integer index → fraction
+/// convention).
+fn capture_quantile_calls<S>(sketch: &S) -> Vec<QueryCallSample>
+where
+    S: Sketch<Query = f64, Answer = f64>,
+{
+    let mut samples = Vec::with_capacity(RAW_REPEATS_PER_RUN * NUM_PERCENTILES);
+    let mut call_index = 0usize;
+    for repeat in 1..=RAW_REPEATS_PER_RUN {
+        for p in 0..NUM_PERCENTILES {
+            call_index += 1;
+            let rank = p as f64 / 100.0;
+            let t0 = Instant::now();
+            let q = sketch.query(rank);
+            let ns = t0.elapsed().as_nanos() as u64;
+            std::hint::black_box(&q);
+            samples.push(QueryCallSample {
+                call_index,
+                nanoseconds: ns,
+                estimate: q,
+                percentile: rank,
+                repeat,
+            });
+        }
+    }
+    samples
 }
 
 /// Type-7 linear interpolation on a pre-sorted f64 slice. Same

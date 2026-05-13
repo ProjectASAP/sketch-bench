@@ -6,6 +6,7 @@
 
 mod dispatch;
 mod params;
+mod raw_csv;
 mod sweep;
 mod wrappers;
 
@@ -101,6 +102,14 @@ struct BenchArgs {
     /// Path to append JSONL records to. `-` or omitted → stdout.
     #[arg(long)]
     report: Option<String>,
+    /// Optional output directory for legacy long-format CSVs (one
+    /// row per measured run). Files are named
+    /// `<family>_throughput_results_rust.csv` and, when a query
+    /// phase runs, `<family>_throughput_query_results_rust.csv`.
+    /// Coexists with `--report`; intended for plot scripts that
+    /// still consume the historical CSV shape.
+    #[arg(long)]
+    raw_csv: Option<String>,
     /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy.
     /// Default: all.
     #[arg(long)]
@@ -269,6 +278,10 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         enabled: args.accuracy,
         max_probes: args.accuracy_probes,
         min_true_count: args.accuracy_min_count,
+        // Per-call CSV (hll/kll/dd) is only emittable when both
+        // `--raw-csv` and `--accuracy` are on: the comparator is
+        // what owns the query phase + per-call instrumentation.
+        record_query_calls: args.accuracy && args.raw_csv.is_some(),
     };
 
     let impls = select_impls(&args.sketch, &args.impl_name)?;
@@ -355,6 +368,20 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
             );
             let report = entry.run(&cfg, &workload, params, &accuracy_cfg);
+            if let Some(dir) = args.raw_csv.as_deref() {
+                let params_opt = if entry.constraint.is_unparameterized() {
+                    None
+                } else {
+                    Some(params)
+                };
+                raw_csv::write_runs(
+                    std::path::Path::new(dir),
+                    entry,
+                    params_opt,
+                    cfg.seed,
+                    &report,
+                )?;
+            }
             let mut record = report.to_record();
             record.sketch_config = if entry.constraint.is_unparameterized() {
                 None

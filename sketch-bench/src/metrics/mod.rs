@@ -57,6 +57,12 @@ pub struct RunMetrics {
     /// different ground-truth families can emit their own shape
     /// without leaking into the common metric struct.
     pub accuracy: Option<serde_json::Value>,
+    /// Per-call query samples — `Some` only when the dispatch
+    /// requested `record_calls` on a comparator that supports
+    /// it. Consumed by `sketch-cli/raw_csv` to back the legacy
+    /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
+    /// not surfaced in the v2 JSONL record.
+    pub query_calls: Option<Vec<crate::accuracy::QueryCallSample>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -176,6 +182,7 @@ impl FullSink {
             heap_bytes_peak: None,
             latency_ns,
             accuracy: None,
+            query_calls: None,
         }
     }
 }
