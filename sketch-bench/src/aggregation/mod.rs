@@ -5,15 +5,28 @@ pub mod welford;
 
 use sketch_core::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
+use super::config::MetricsMask;
 use super::metrics::{ItemsPerSec, RunMetrics};
 use welford::Welford;
 
-/// Roll up a slice of `RunMetrics` into a single
-/// `BenchSection` ready to ship in a v1 JSONL record.
-pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
+/// Roll up a slice of `RunMetrics` into a single `BenchSection`.
+///
+/// `mask` is the *pass* mask (post-`MetricsMask::passes()` split)
+/// that produced these runs. Fields whose bit is not present in
+/// `mask` are suppressed (set to `None`) even if the run records
+/// happen to carry a value — this is what makes each pass emit
+/// only the metric it is responsible for, so downstream consumers
+/// can tell "not measured in this pass" apart from "measured and
+/// happened to be zero". Throughput / query_throughput depend on
+/// the THROUGHPUT and ACCURACY bits respectively; latency on
+/// LATENCY; cpu on CPU; rss / heap_allocated on MEMORY. The
+/// logical `memory_bytes` (param-derived from the sketch itself)
+/// is always emitted because it costs nothing to capture and
+/// downstream plots want it on every row.
+pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let n = runs.len();
 
-    let throughput = {
+    let throughput = if mask.contains(MetricsMask::THROUGHPUT) {
         let mut w = Welford::new();
         for r in runs {
             if r.insert_wall_time_ns > 0 {
@@ -24,9 +37,11 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
             }
         }
         maybe_runstats(w)
+    } else {
+        None
     };
 
-    let query_throughput = {
+    let query_throughput = if mask.contains(MetricsMask::ACCURACY) {
         let mut w = Welford::new();
         for r in runs {
             if r.query_wall_time_ns > 0 {
@@ -37,8 +52,12 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
             }
         }
         maybe_runstats(w)
+    } else {
+        None
     };
 
+    // Wall time of the whole iteration is cheap to capture and
+    // useful as a sanity check across passes — always emit.
     let wall_time_ms = {
         let mut w = Welford::new();
         for r in runs {
@@ -47,7 +66,7 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
         maybe_runstats(w)
     };
 
-    let cpu_time_ms = {
+    let cpu_time_ms = if mask.contains(MetricsMask::CPU) {
         let mut user_w = Welford::new();
         let mut sys_w = Welford::new();
         let mut any = false;
@@ -66,31 +85,46 @@ pub fn aggregate(runs: &[RunMetrics]) -> BenchSection {
         } else {
             None
         }
+    } else {
+        None
     };
 
-    let rss_peak_kb = runs.iter().filter_map(|r| r.rss_peak_kb).max();
-    let heap_allocated_kb = runs.iter().filter_map(|r| r.heap_allocated_kb).max();
+    let (rss_peak_kb, heap_allocated_kb) = if mask.contains(MetricsMask::MEMORY) {
+        (
+            runs.iter().filter_map(|r| r.rss_peak_kb).max(),
+            runs.iter().filter_map(|r| r.heap_allocated_kb).max(),
+        )
+    } else {
+        (None, None)
+    };
     let memory_bytes = runs.iter().filter_map(|r| r.memory_bytes).next_back();
 
-    let latency_ns = runs
-        .iter()
-        .rev()
-        .find_map(|r| r.latency_ns.as_ref())
-        .map(|l| LatencySummary {
-            p50: l.p50,
-            p95: l.p95,
-            p99: l.p99,
-            p999: l.p999,
-            max: l.max,
-            count: l.count,
-        });
+    let latency_ns = if mask.contains(MetricsMask::LATENCY) {
+        runs.iter()
+            .rev()
+            .find_map(|r| r.latency_ns.as_ref())
+            .map(|l| LatencySummary {
+                p50: l.p50,
+                p95: l.p95,
+                p99: l.p99,
+                p999: l.p999,
+                max: l.max,
+                count: l.count,
+            })
+    } else {
+        None
+    };
 
     // Pick the last run's accuracy — all post-warmup runs share
     // the same workload + ground truth, so any of them is
     // representative. Averaging across accuracy samples needs a
     // family-aware merge that each comparator defines; we do that
     // per-family in `accuracy::` when it matters.
-    let accuracy = runs.iter().rev().find_map(|r| r.accuracy.clone());
+    let accuracy = if mask.contains(MetricsMask::ACCURACY) {
+        runs.iter().rev().find_map(|r| r.accuracy.clone())
+    } else {
+        None
+    };
 
     let _ = n; // n is implicit in each RunStats.n
 
@@ -140,7 +174,7 @@ mod tests {
 
     #[test]
     fn aggregate_empty_returns_none_metrics() {
-        let out = aggregate(&[]);
+        let out = aggregate(&[], MetricsMask::all());
         assert!(out.throughput_items_per_sec.is_none());
     }
 
@@ -150,9 +184,16 @@ mod tests {
             rm(1_000_000, 100_000_000, 100_000_000), // 10M/s
             rm(1_000_000, 50_000_000, 50_000_000),   // 20M/s
         ];
-        let out = aggregate(&runs);
+        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
         let tp = out.throughput_items_per_sec.expect("throughput present");
         assert!((tp.mean - 15_000_000.0).abs() < 1.0);
         assert_eq!(tp.n, 2);
+    }
+
+    #[test]
+    fn aggregate_suppresses_throughput_when_bit_unset() {
+        let runs = vec![rm(1_000_000, 100_000_000, 100_000_000)];
+        let out = aggregate(&runs, MetricsMask::LATENCY);
+        assert!(out.throughput_items_per_sec.is_none());
     }
 }

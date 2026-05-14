@@ -209,17 +209,21 @@ pub struct ImplEntry {
         wk: &WorkloadAny,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
-    ) -> BenchReport,
+    ) -> Vec<BenchReport>,
 }
 
 impl ImplEntry {
+    /// Run the bench. Returns one `BenchReport` per metric pass —
+    /// see [`sketch_bench::MetricsMask::passes`]. Callers iterate
+    /// the Vec and emit each report on its own JSONL line / CSV
+    /// row group.
     pub fn run(
         &self,
         cfg: &BenchConfig,
         wk: &WorkloadAny,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
-    ) -> BenchReport {
+    ) -> Vec<BenchReport> {
         (self.run)(cfg, wk, params, accuracy)
     }
     pub fn accepts(&self, params: &ParamSet) -> bool {
@@ -353,6 +357,17 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "cms",
+        impl_name: "lib-fixedmatrix-fast-32k",
+        description: "asap_sketchlib CMS, FixedMatrix (5x32768), FastPath",
+        constraint: Constraint::FixedCms {
+            rows: cms::CMS_FIXED_32K_ROWS,
+            cols: cms::CMS_FIXED_32K_COLS,
+        },
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_lib_fixedmatrix_fast_32k,
+    },
+    ImplEntry {
+        family: "cms",
         impl_name: "lib-vector2d-fast",
         description: "asap_sketchlib CMS, Vector2D, FastPath",
         constraint: Constraint::Tunable,
@@ -410,6 +425,17 @@ pub const IMPLS: &[ImplEntry] = &[
         },
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_lib_fixedmatrix_fast,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "lib-fixedmatrix-fast-32k",
+        description: "asap_sketchlib Count, FixedMatrix (5x32768), FastPath",
+        constraint: Constraint::FixedCountSketch {
+            rows: cms::CMS_FIXED_32K_ROWS,
+            cols: cms::CMS_FIXED_32K_COLS,
+        },
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_lib_fixedmatrix_fast_32k,
     },
     ImplEntry {
         family: "countsketch",
@@ -559,7 +585,7 @@ fn bench_no_gt<S, W>(
     family: &str,
     impl_name: &str,
     factory: impl FnMut() -> S,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone,
@@ -577,7 +603,7 @@ fn bench_freq_gt<S, W>(
     factory: impl FnMut() -> S,
     max_probes: usize,
     min_true_count: u64,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone + Eq + Hash,
@@ -599,7 +625,7 @@ fn bench_card_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     record_calls: bool,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone + Eq + Hash,
@@ -617,7 +643,7 @@ fn bench_quant_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     record_calls: bool,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
@@ -635,7 +661,7 @@ fn bench_quant_rel_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     record_calls: bool,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
@@ -692,7 +718,7 @@ macro_rules! run_i64_freq {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -743,7 +769,7 @@ macro_rules! run_i64_card {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -782,7 +808,7 @@ macro_rules! run_i64_quant {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -821,7 +847,7 @@ macro_rules! run_i64_quant_rel {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -864,7 +890,7 @@ macro_rules! run_i64_parallel {
             wk: &WorkloadAny,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -895,7 +921,7 @@ macro_rules! run_i64_none {
             wk: &WorkloadAny,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -922,7 +948,7 @@ macro_rules! run_string_freq {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -973,7 +999,7 @@ macro_rules! run_bytes_freq {
             wk: &WorkloadAny,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -1024,7 +1050,7 @@ macro_rules! run_string_none {
             wk: &WorkloadAny,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -1051,7 +1077,7 @@ macro_rules! run_bytes_none {
             wk: &WorkloadAny,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> BenchReport {
+        ) -> Vec<BenchReport> {
             let p = match params {
                 ParamSet::$param_variant(p) => *p,
                 _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
@@ -1112,6 +1138,13 @@ run_i64_freq!(
     Cms
 );
 run_i64_freq!(
+    run_cms_lib_fixedmatrix_fast_32k,
+    cms::CmsLibFixedmatrixFast32k,
+    "cms",
+    "lib-fixedmatrix-fast-32k",
+    Cms
+);
+run_i64_freq!(
     run_cms_lib_vector2d_fast,
     cms::CmsLibVector2dFast,
     "cms",
@@ -1140,6 +1173,13 @@ run_i64_freq!(
     countsketch::CsLibFixedmatrixFast,
     "countsketch",
     "lib-fixedmatrix-fast",
+    Countsketch
+);
+run_i64_freq!(
+    run_cs_lib_fixedmatrix_fast_32k,
+    countsketch::CsLibFixedmatrixFast32k,
+    "countsketch",
+    "lib-fixedmatrix-fast-32k",
     Countsketch
 );
 run_i64_freq!(

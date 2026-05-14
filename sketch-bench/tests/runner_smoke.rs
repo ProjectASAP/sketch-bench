@@ -40,24 +40,38 @@ fn runner_end_to_end_produces_valid_jsonl() {
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    let report = runner.run(
+    let reports = runner.run(
         || ExactCounter {
             seen: Default::default(),
         },
         Some(&CardinalityGT::default()),
     );
 
-    assert_eq!(report.per_run.len(), 3);
-    let bench = &report.bench;
-    let tp = bench
+    // `MetricsMask::all()` ⇒ 3 passes (throughput, latency, accuracy).
+    assert_eq!(reports.len(), 3);
+    for r in &reports {
+        assert_eq!(r.per_run.len(), 3);
+    }
+
+    let throughput = reports
+        .iter()
+        .find(|r| r.bench.throughput_items_per_sec.is_some())
+        .expect("a throughput pass exists");
+    let tp = throughput
+        .bench
         .throughput_items_per_sec
         .as_ref()
-        .expect("throughput collected");
+        .unwrap();
     assert!(tp.mean > 0.0);
     assert_eq!(tp.n, 3);
 
-    // v1 JSONL record round-trips.
-    let jsonl = report.to_jsonl();
+    let accuracy = reports
+        .iter()
+        .find(|r| r.bench.accuracy.is_some())
+        .expect("an accuracy pass exists");
+
+    // v1 JSONL record round-trips for each pass.
+    let jsonl = accuracy.to_jsonl();
     let back: sketch_core::Record = serde_json::from_str(&jsonl).unwrap();
     assert_eq!(back.sketch, "exact");
     assert_eq!(back.impl_name, "smoke");
@@ -75,15 +89,12 @@ fn runner_respects_mask_noop_when_empty() {
         query_count: None,
         ..Default::default()
     };
-    let report = BenchRunner::new(cfg, &workload, "exact", "empty").run(
+    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run(
         || ExactCounter {
             seen: Default::default(),
         },
         None::<&CardinalityGT>,
     );
-    // With no mask bits, we still populate throughput + wall
-    // time (always-on in FullSink), but latency / accuracy stay
-    // absent.
-    assert!(report.bench.throughput_items_per_sec.is_some());
-    assert!(report.bench.accuracy.is_none());
+    // Empty mask ⇒ no passes ⇒ no reports.
+    assert!(reports.is_empty());
 }

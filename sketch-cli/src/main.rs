@@ -373,29 +373,36 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 "sketchlib: [{emitted}/{total}] {}/{} config={} runs={} warmup={}",
                 entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
             );
-            let report = entry.run(&cfg, &workload, params, &accuracy_cfg);
-            if let Some(dir) = args.raw_csv.as_deref() {
-                let params_opt = if entry.constraint.is_unparameterized() {
+            // Each `entry.run` call returns one report per metric
+            // pass (see `MetricsMask::passes()`); emit each on its
+            // own JSONL line and its own CSV row group. Downstream
+            // group-by on (sketch, impl, sketch_config, workload)
+            // merges them back.
+            let reports = entry.run(&cfg, &workload, params, &accuracy_cfg);
+            for report in &reports {
+                if let Some(dir) = args.raw_csv.as_deref() {
+                    let params_opt = if entry.constraint.is_unparameterized() {
+                        None
+                    } else {
+                        Some(params)
+                    };
+                    raw_csv::write_runs(
+                        std::path::Path::new(dir),
+                        entry,
+                        params_opt,
+                        cfg.seed,
+                        cfg.threads,
+                        report,
+                    )?;
+                }
+                let mut record = report.to_record();
+                record.sketch_config = if entry.constraint.is_unparameterized() {
                     None
                 } else {
-                    Some(params)
+                    Some(params.to_json_value())
                 };
-                raw_csv::write_runs(
-                    std::path::Path::new(dir),
-                    entry,
-                    params_opt,
-                    cfg.seed,
-                    cfg.threads,
-                    &report,
-                )?;
+                sink.write_line(&record.to_jsonl())?;
             }
-            let mut record = report.to_record();
-            record.sketch_config = if entry.constraint.is_unparameterized() {
-                None
-            } else {
-                Some(params.to_json_value())
-            };
-            sink.write_line(&record.to_jsonl())?;
         }
     }
 
