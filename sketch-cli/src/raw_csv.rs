@@ -24,6 +24,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use sketch_bench::runner::BenchReport;
+use sketch_bench::MetricsMask;
 use sketch_core::config::ParamSet;
 
 use crate::dispatch::ImplEntry;
@@ -42,19 +43,32 @@ pub fn write_runs(
     // header — `throughput/scripts/plot_octo_throughput.py` reads
     // exactly that shape from a single file across cms/cs/hll.
     if entry.impl_name == "lib-fastpath-parallel" {
-        return write_octo_runs(dir, entry, workers, report);
+        // Octo's CSV exists to track throughput across worker
+        // counts; only emit from the THROUGHPUT pass so the
+        // insert_wall_time_ns column reflects a clean hot path,
+        // not the latency-pass timer overhead.
+        if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
+            return write_octo_runs(dir, entry, workers, report);
+        }
+        return Ok(());
     }
     let legacy_impl = legacy_impl_name(entry.family, entry.impl_name);
     let param_cols = ParamCols::from(entry.family, params);
 
-    let insert_path = dir.join(format!("{}_throughput_results_rust.csv", entry.family));
-    append_csv(
-        &insert_path,
-        &insert_header(entry.family),
-        report.per_run.iter().enumerate().map(|(idx, run)| {
-            format_insert_row(entry.family, &legacy_impl, &param_cols, seed, idx + 1, run)
-        }),
-    )?;
+    // Only the THROUGHPUT pass produces a clean insert-phase wall
+    // clock; rows from other passes (LATENCY pass is inflated by
+    // per-op timing; ACCURACY pass is clean but conceptually
+    // belongs to the query CSV) would muddle the throughput plot.
+    if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
+        let insert_path = dir.join(format!("{}_throughput_results_rust.csv", entry.family));
+        append_csv(
+            &insert_path,
+            &insert_header(entry.family),
+            report.per_run.iter().enumerate().map(|(idx, run)| {
+                format_insert_row(entry.family, &legacy_impl, &param_cols, seed, idx + 1, run)
+            }),
+        )?;
+    }
 
     let has_per_call = report
         .per_run

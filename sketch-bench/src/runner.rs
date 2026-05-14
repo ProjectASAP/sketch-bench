@@ -40,12 +40,50 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    /// Run the bench. `factory` is called once per iteration
-    /// (warm-up + measured) to produce a fresh sketch — each run
-    /// must see independent state or the aggregated CI is
-    /// meaningless. `ground_truth` is optional; when `None` the
-    /// accuracy field is left off.
-    pub fn run<S, F, G>(&self, mut factory: F, ground_truth: Option<&G>) -> BenchReport
+    /// Run the bench across the metric passes encoded in
+    /// `config.metrics`. Each primary bit (THROUGHPUT / LATENCY /
+    /// ACCURACY) produces its **own** `BenchReport` with a fresh
+    /// sketch population — see [`MetricsMask::passes`]. Returns
+    /// one report per pass, in the order produced by `passes()`.
+    ///
+    /// Rationale for strict per-pass isolation: per-update
+    /// instrumentation (latency `Instant::now()` pair) inflates
+    /// the insert-phase wall clock, which is the throughput
+    /// denominator. Splitting throughput and latency into two
+    /// independent passes guarantees the throughput pass sees a
+    /// clean hot path. Accuracy gets its own pass too so its
+    /// insert phase isn't billed any per-op overhead either.
+    ///
+    /// `factory` is called once per iteration (warm-up +
+    /// measured) **per pass** — each run must see independent
+    /// state or the aggregated CI is meaningless.
+    /// `ground_truth` is consulted only in the ACCURACY pass.
+    pub fn run<S, F, G>(&self, mut factory: F, ground_truth: Option<&G>) -> Vec<BenchReport>
+    where
+        S: Sketch<Item = W::Item>,
+        W::Item: Clone,
+        F: FnMut() -> S,
+        G: GroundTruth<S>,
+    {
+        let passes = self.config.metrics.passes();
+        if passes.is_empty() {
+            return Vec::new();
+        }
+        let mut reports = Vec::with_capacity(passes.len());
+        for pass_mask in passes {
+            let mut pass_cfg = self.config.clone();
+            pass_cfg.metrics = pass_mask;
+            reports.push(self.run_pass(&mut factory, ground_truth, pass_cfg));
+        }
+        reports
+    }
+
+    fn run_pass<S, F, G>(
+        &self,
+        factory: &mut F,
+        ground_truth: Option<&G>,
+        pass_cfg: BenchConfig,
+    ) -> BenchReport
     where
         S: Sketch<Item = W::Item>,
         W::Item: Clone,
@@ -53,16 +91,16 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         G: GroundTruth<S>,
     {
         let items = self.workload.items();
-        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(self.config.runs);
-        let total_runs = self.config.runs + self.config.warmup_runs;
+        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(pass_cfg.runs);
+        let total_runs = pass_cfg.runs + pass_cfg.warmup_runs;
 
         for run_idx in 0..total_runs {
-            let sink = FullSink::new(self.config.metrics);
-            let (metrics, final_sketch) = run_once(&mut factory, sink, items, &self.config);
+            let sink = FullSink::new(pass_cfg.metrics);
+            let (metrics, final_sketch) = run_once(factory, sink, items, &pass_cfg);
 
-            if run_idx >= self.config.warmup_runs {
+            if run_idx >= pass_cfg.warmup_runs {
                 let mut metrics = metrics;
-                if self.config.metrics.contains(MetricsMask::ACCURACY) {
+                if pass_cfg.metrics.contains(MetricsMask::ACCURACY) {
                     if let Some(gt) = ground_truth {
                         let cmp = gt.compare(&final_sketch, items);
                         // Query phase ran inside the comparator; pull
@@ -80,14 +118,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        let bench = aggregate(&per_run);
+        let bench = aggregate(&per_run, pass_cfg.metrics);
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
             workload: self.workload.desc(),
             per_run,
             bench,
-            config: self.config.clone(),
+            config: pass_cfg,
         }
     }
 }
@@ -209,7 +247,7 @@ pub fn run_without_accuracy<S, W, F>(
     sketch_name: impl Into<String>,
     impl_name: impl Into<String>,
     factory: F,
-) -> BenchReport
+) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone,
