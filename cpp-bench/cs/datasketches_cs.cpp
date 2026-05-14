@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
     rec.bench.throughput_items_per_sec = m.throughput;
     if (m.latency.count > 0) rec.bench.latency_ns = m.latency;
 
+#if 0  // accuracy block disabled: Insert-Opt lacks query API
     if (args.with_accuracy) {
         const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
         std::vector<std::int64_t> prefix(
@@ -64,6 +65,7 @@ int main(int argc, char** argv) {
         rec.bench.accuracy_json =
             cpp_bench::compute_frequency_accuracy(prefix, top_k, estimate_freq).json;
     }
+#endif
 
     if (args.report_path == "-" || args.report_path.empty()) {
         rec.emit(std::cout);

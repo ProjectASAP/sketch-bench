@@ -10,6 +10,7 @@
 // (`insert(sketch, item)`); the runner takes care of timing,
 // `benchmark::DoNotOptimize`, and aggregation.
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <random>

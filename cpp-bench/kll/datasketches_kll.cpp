@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     // One extra build+insert pass over items[0..measure_n], then query
     // each quantile in {0.5, 0.95, 0.99, 0.999}. The exact baseline
     // is built from the same prefix in compute_quantile_accuracy().
+#if 0  // accuracy block disabled: Insert-Opt lacks query API
     if (args.with_accuracy) {
         const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
         std::vector<std::int64_t> measured_prefix(
@@ -82,6 +83,7 @@ int main(int argc, char** argv) {
             measured_prefix, queries, estimate_q);
         rec.bench.accuracy_json = qa.json;
     }
+#endif
 
     if (args.report_path == "-" || args.report_path.empty()) {
         rec.emit(std::cout);
