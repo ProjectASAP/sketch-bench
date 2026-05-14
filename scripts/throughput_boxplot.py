@@ -165,15 +165,32 @@ def fmt_mops(v: float, _pos=None) -> str:
     return f"{v / 1e6:.0f}M"
 
 
+def _bar_with_mini_box(ax, positions: list[float], values: list[list[float]], colors: list) -> None:
+    """Draw a solid bar (0..mean) per impl with a narrow mini-boxplot of the runs
+    overlayed on top to show run-to-run dispersion."""
+    means = [sum(v) / len(v) for v in values]
+    ax.bar(positions, means, width=0.62, color=colors, alpha=0.55, edgecolor="black", linewidth=0.6, zorder=1)
+    bp = ax.boxplot(values, positions=positions, widths=0.20, showfliers=False,
+                    patch_artist=True, zorder=3,
+                    medianprops=dict(color="black", linewidth=1.2),
+                    whiskerprops=dict(color="black", linewidth=0.8),
+                    capprops=dict(color="black", linewidth=0.8),
+                    boxprops=dict(linewidth=0.8))
+    for patch in bp["boxes"]:
+        patch.set_facecolor("white")
+        patch.set_alpha(0.95)
+
+
 def boxplot(data: dict[str, list[float]], title: str, out_png: Path, ylabel: str = "Throughput (items/sec)") -> None:
     labels = list(data.keys())
     values = [data[k] for k in labels]
     fig, ax = plt.subplots(figsize=(max(6, 1.4 * len(labels) + 2), 4.5))
-    bp = ax.boxplot(values, labels=labels, patch_artist=True, widths=0.55, showmeans=True)
+    positions = list(range(1, len(labels) + 1))
     cmap = plt.get_cmap("tab10")
-    for i, patch in enumerate(bp["boxes"]):
-        patch.set_facecolor(cmap(i % 10))
-        patch.set_alpha(0.55)
+    colors = [cmap(i % 10) for i in range(len(labels))]
+    _bar_with_mini_box(ax, positions, values, colors)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(fmt_mops))
@@ -201,15 +218,15 @@ def boxplot_grouped(data: dict[tuple[str, str], list[float]], title: str, out_pn
     values = [data[k] for k in keys]
     labels = [f"{lab}" for _, lab in keys]
     fig, ax = plt.subplots(figsize=(max(8, 1.2 * len(keys) + 2), 5.0))
-    bp = ax.boxplot(values, positions=positions, widths=0.6, patch_artist=True, showmeans=True)
     # Colour by impl name (identical impls across groups share colour).
     impl_to_color = {}
     cmap = plt.get_cmap("tab10")
-    for i, (_, lab) in enumerate(keys):
+    colors = []
+    for _, lab in keys:
         if lab not in impl_to_color:
             impl_to_color[lab] = cmap(len(impl_to_color) % 10)
-        bp["boxes"][i].set_facecolor(impl_to_color[lab])
-        bp["boxes"][i].set_alpha(0.55)
+        colors.append(impl_to_color[lab])
+    _bar_with_mini_box(ax, positions, values, colors)
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, rotation=18, ha="right")
     # Group-name annotations under each cluster.
