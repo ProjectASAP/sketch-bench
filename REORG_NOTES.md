@@ -5,12 +5,15 @@ branch `chore/legacy-reorg`. Standalone — not part of the design docs in
 `docs/`.
 
 > **Historical snapshot.** Paths in §2 / §6 / §7 reflect the mid-reorg
-> state. The cleanup completed since: `throughput/` and `accuracy/`
-> top-level trees have been deleted; their `cpp/` subtrees moved to
-> `cpp-bench/legacy/{throughput,accuracy}/<family>/`; the `legacy/`
-> top-level tree has been deleted; the plot + orchestrator scripts that
-> used to live under `legacy/{throughput,accuracy}/scripts/` now sit at
-> `visualization/plots/{throughput,accuracy}/`. Use `git log -- <path>` to
+> state. The cleanup completed since: `throughput/`, `accuracy/`, and
+> the original `legacy/` top-level trees have been deleted; the per-family
+> C++ harnesses they contained have been ported onto `cpp-bench/common/`
+> (now live under `cpp-bench/{hll,cms,cs,kll}/`); the plot scripts that
+> orchestrated the old layout now sit at `visualization/plots/`. The
+> per-impl `run_*_{cpp,rust,polars,all}.sh` shell scaffolding has been
+> retired in favour of top-level `scripts/run_throughput.sh` /
+> `scripts/run_accuracy.sh` (Rust via `sketchlib bench`) and
+> `cmake --build cpp-bench/build` (C++). Use `git log -- <path>` to
 > recover any pre-deletion content.
 
 ## 1. The three workspace crates
@@ -99,13 +102,15 @@ sketch-core` cannot match today:
    `*_key_seed_errors_rust.csv` with one row per (key, seed) for box-plot
    variance analysis. The current `Record` schema only has aggregated mean /
    p99 rel-err.
-7. **PNG output** — `accuracy/scripts/plot_*.py` and
-   `throughput/scripts/plot_*.py` produce publication PNGs. The new stack
-   stops at JSONL; `visualization/` is browser-only.
-8. **CPU pinning / process-per-trial** — `throughput/scripts/run_throughput_with_cpu.py`
-   implements `taskset` pinning, `scaling_governor=performance`, Turbo off,
-   and per-trial fork. `sketchlib` runs all trials inside one long-lived
-   process.
+7. **PNG output** — `visualization/plots/{throughput,accuracy}/plot_*.py`
+   produce publication PNGs from the long-format CSVs emitted by
+   `sketchlib bench --raw-csv DIR`. The browser-only side (`visualization/`)
+   stops at JSONL.
+8. **CPU pinning / process-per-trial** — the previous shell layer
+   (`run_throughput_with_cpu.py`, retired) implemented `taskset` pinning,
+   `scaling_governor=performance`, Turbo off, and per-trial fork.
+   `sketchlib` runs all trials inside one long-lived process; the
+   equivalent pinning hooks have not yet been ported.
 9. **Parametric naming convention** — `throughput/cms32k/`, `cs32k/` carry
    the parameter in the directory name; new stack expresses this via
    `--config 'cols=32768'` but the plot scripts/CSV conventions haven't

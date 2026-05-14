@@ -43,12 +43,11 @@ exporters, compile-time feature gate. Still open:
   per-window emission (today `Sampler` only captures
   throughput + latency in the window record)
 
-### C++ binaries → v1 JSONL migration (MERGE_PLAN Phase 8)
+### C++ binaries → v1 JSONL migration (MERGE_PLAN Phase 8) — RETIRED
 
-- Rewrite `cpp-bench/legacy/{throughput,accuracy}/<family>/` onto the v1-JSONL `cpp-bench/common/` runner (matching `cpp-bench/cs` / `cpp-bench/kll`)
-- Visualization layer dual-read compatibility for one release, then drop legacy shapes
+Done. `cpp-bench/{hll,cms,cs,kll}/` now host v1-JSONL binaries on the shared `cpp-bench/common/` runner; `cms32k` is reachable via `--k 32768` on the cms binary. The original `cpp-bench/legacy/` subtree has been deleted (recoverable from git history).
 
-**Why deferred**: C++ parity is pure mechanical translation. The 21 Rust impls via `sketchlib` already cover the accuracy / throughput story for the paper.
+Visualization layer still consumes the legacy long-format CSVs that `sketchlib bench --raw-csv DIR` emits; a v1-JSONL reader can be added later if needed.
 
 ### Legacy Rust binaries (MERGE_PLAN Phase 8) — RETIRED
 
@@ -58,10 +57,10 @@ Done in the 8-tput row above. `throughput/<family>/rust/`,
 gone; source recoverable from git history. Plot scripts moved to
 `visualization/plots/{throughput,accuracy}/` and still consume the
 sketch-cli-emitted CSVs through `--raw-csv`. The per-family C++
-harnesses moved to `cpp-bench/legacy/{throughput,accuracy}/`
-(awaiting Phase 8 rewrite onto `cpp-bench/common/`); the empty
-`throughput/`, `accuracy/`, and `legacy/` top-level directories
-have been deleted.
+harnesses have been ported onto `cpp-bench/common/` (now live at
+`cpp-bench/{hll,cms,cs,kll}/`); the empty `throughput/`, `accuracy/`,
+the original `legacy/` top-level directory, and `cpp-bench/legacy/`
+have all been deleted.
 
 ### Downstream app integration (MERGE_PLAN Phase 9)
 

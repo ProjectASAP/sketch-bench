@@ -98,11 +98,10 @@ sketch-bench/
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
 ├── sketch-cli/             # unified `sketchlib` binary
 ├── cpp/                    # new C++ benches (v1 JSONL via cpp-bench/)
-├── cpp-bench/              # C++ track of sketch-bench; legacy/ holds the
-│                           # pre-migration per-family throughput + accuracy C++ harnesses
+├── cpp-bench/              # C++ track of sketch-bench (google-benchmark + apache datasketches)
 ├── input/ scripts/         # shared datasets + top-level orchestrators
 ├── visualization/          # JSON/JSONL viewer (tables + charts) + per-family
-│                           # plot + run scripts under visualization/plots/
+│                           # matplotlib plot scripts under visualization/plots/
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
 ```
 
@@ -146,10 +145,16 @@ The legacy harness still works as before while the migration proceeds. Everythin
    respectively. The per-family Rust harnesses that used to live
    under `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
    have been retired in favour of `sketch-cli` (recoverable from
-   git history). The pre-migration per-family C++ harnesses now
-   live under `cpp-bench/legacy/{throughput,accuracy}/`; they will
-   be rewritten onto `cpp-bench/common/` (MERGE_PLAN Phase 8).
-3. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
+   git history). The per-family C++ harnesses have likewise been
+   ported onto `cpp-bench/common/` (`cpp-bench/{hll,cms,cs,kll}/`).
+3. C++ benchmarks build through one top-level CMake project:
+   ```bash
+   cmake -S cpp-bench -B cpp-bench/build
+   cmake --build cpp-bench/build
+   ./cpp-bench/build/{hll,cms,cs,kll}/<impl>_<family> --workload ... --report-path ...
+   ```
+   `scripts/run_all.py` orchestrates both tracks (Rust via `sketchlib bench`, C++ via the binaries above) into a single v1-JSONL report.
+4. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
 
@@ -162,9 +167,9 @@ The legacy harness still works as before while the migration proceeds. Everythin
   that fan `sketchlib bench` over all families and dump CSVs the legacy
   plot scripts (now under `visualization/plots/throughput/` and
   `visualization/plots/accuracy/`) still consume unchanged.
-- `cpp-bench/legacy/{throughput,accuracy}/`: pre-migration per-family
-  C++ harnesses (MERGE_PLAN Phase 8 will rewrite these onto `cpp-bench/common/`).
-- `visualization/`: JSON/JSONL loader for charts and tables across all outputs.
+- `visualization/`: JSON/JSONL loader for charts and tables across all
+  outputs, plus per-family matplotlib `plot_*.py` scripts under
+  `visualization/plots/{throughput,accuracy}/`.
 
 ### Build prerequisites
 
@@ -177,8 +182,8 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
   invocation), pick an `AccuracyKind`. The old per-family `rust/` trees are
   gone; everything new flows through `sketchlib bench`.
 - New C++ benches: land them under `cpp-bench/<family>/` on the new
-  v1-JSONL framework (`cpp-bench/common/`). The pre-migration per-family
-  binaries under `cpp-bench/legacy/` are not the recommended template.
+  v1-JSONL framework (`cpp-bench/common/`); follow `cpp-bench/kll/` or
+  `cpp-bench/cs/` as templates.
 - New metrics: add under `sketch-bench/metrics/` (macro) or
   `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
 - Runtime integration in downstream apps: follow Phase 9 of

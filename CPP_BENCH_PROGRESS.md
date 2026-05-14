@@ -68,10 +68,15 @@ Each phase commit notes what was and wasn't verified.
   - Dry-run verified: `python3 scripts/run_all.py --dry-run …` prints
     the 4 Rust + 4 C++ commands with valid impl names from
     `sketch-cli/src/dispatch.rs`.
-- [ ] **Phase 5 — legacy cleanup** *(deferred)*
-  - Will move `cpp/` into `legacy/cpp/` (option-C path) once a
-    side-by-side run of `scripts/run_all.py` shows numerical parity
-    on KLL/CS. Tracked here so we don't drop it.
+- [x] **Phase 5 — legacy cleanup**
+  - `cpp-bench/legacy/{throughput,accuracy}/` (the pre-migration
+    per-family C++ harnesses) has been deleted. The hll + cms variants
+    are now `cpp-bench/{hll,cms}/datasketches_<family>.cpp` on
+    `cpp-bench/common/`; `cms32k` is reachable via `--k 32768` on the
+    cms binary. The standalone `cpp/` tree of Insert-Optimized variants
+    is still in place and is *not* the same as the deleted legacy tree;
+    moving it under a `legacy/` namespace remains a follow-up if/when
+    parity is verified.
 
 ## Follow-ups (out of scope for this rollout)
 
