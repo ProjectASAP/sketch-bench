@@ -39,8 +39,9 @@ int main(int argc, char** argv) {
     auto build  = [&]() { return HllSketch(lg_k, datasketches::HLL_8); };
     auto insert = [](HllSketch& s, std::int64_t v) { s.update(v); };
 
-    cpp_bench::AggregatedMetrics m =
-        cpp_bench::run_throughput_latency<HllSketch>(wl.items, cfg, build, insert);
+    std::vector<cpp_bench::RunResult> raw =
+        cpp_bench::run_throughput_latency_raw<HllSketch>(wl.items, cfg, build, insert);
+    cpp_bench::AggregatedMetrics m = cpp_bench::aggregate(raw);
 
     cpp_bench::Record rec;
     rec.sketch    = "hll";
@@ -70,6 +71,24 @@ int main(int argc, char** argv) {
         std::ofstream out(args.report_path, std::ios::app);
         if (!out) { std::cerr << "cpp-bench: cannot write " << args.report_path << '\n'; return 2; }
         rec.emit(out);
+    }
+
+    if (args.legacy_csv_path) {
+        std::ofstream csv(*args.legacy_csv_path);
+        if (!csv) { std::cerr << "cpp-bench: cannot write " << *args.legacy_csv_path << '\n'; return 2; }
+        const std::size_t total_items = std::min(cfg.measure_items, wl.items.size());
+        const std::size_t registers   = std::size_t{1} << lg_k;
+        csv << "implementation,language,run,lg_k,registers,total_items,"
+               "total_nanoseconds,throughput_items_per_sec\n";
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            const double tput = raw[i].throughput_items_per_sec;
+            const long long total_ns = tput > 0.0
+                ? static_cast<long long>(static_cast<double>(total_items) * 1e9 / tput)
+                : 0LL;
+            csv << "cpp_datasketches_hll,cpp," << (i + 1) << ','
+                << static_cast<int>(lg_k) << ',' << registers << ','
+                << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
     }
     return 0;
 }

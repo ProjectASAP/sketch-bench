@@ -27,7 +27,10 @@ namespace {
         "  --seed S                RNG seed for any synthetic gen (default 0x5e7c4011)\n"
         "  --k K                   sketch construction param (KLL k, CS cols, ...)\n"
         "  --with-accuracy         compute accuracy against an exact baseline\n"
-        "  --report PATH           write JSONL to PATH (default '-' = stdout)\n";
+        "  --report PATH           write JSONL to PATH (default '-' = stdout)\n"
+        "  --legacy-csv PATH       additionally write per-run rows in the\n"
+        "                          legacy long-format CSV consumed by\n"
+        "                          visualization/plots/*.py\n";
     std::exit(2);
 }
 
@@ -70,6 +73,7 @@ CliArgs parse_cli(int argc, char** argv) {
         else if (a == "--k")             out.k = parse_size(argv0, need(i));
         else if (a == "--with-accuracy") out.with_accuracy = true;
         else if (a == "--report")        out.report_path = need(i);
+        else if (a == "--legacy-csv")    out.legacy_csv_path = need(i);
         else if (a == "-h" || a == "--help") usage(argv0);
         else                             usage(argv0, ("unknown arg: " + a).c_str());
     }

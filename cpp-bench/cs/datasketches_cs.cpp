@@ -31,8 +31,9 @@ int main(int argc, char** argv) {
     auto build  = []()  { return CsDs{}; };
     auto insert = [](CsDs& s, std::int64_t v) { s.Insert(v); };
 
-    cpp_bench::AggregatedMetrics m =
-        cpp_bench::run_throughput_latency<CsDs>(wl.items, cfg, build, insert);
+    std::vector<cpp_bench::RunResult> raw =
+        cpp_bench::run_throughput_latency_raw<CsDs>(wl.items, cfg, build, insert);
+    cpp_bench::AggregatedMetrics m = cpp_bench::aggregate(raw);
 
     cpp_bench::Record rec;
     // Family name matches the Rust dispatch: "countsketch"
@@ -70,6 +71,27 @@ int main(int argc, char** argv) {
         std::ofstream out(args.report_path, std::ios::app);
         if (!out) { std::cerr << "cpp-bench: cannot write " << args.report_path << '\n'; return 2; }
         rec.emit(out);
+    }
+
+    // Legacy CSV: see datasketches_cms.cpp for the seed-column caveat.
+    if (args.legacy_csv_path) {
+        std::ofstream csv(*args.legacy_csv_path);
+        if (!csv) { std::cerr << "cpp-bench: cannot write " << *args.legacy_csv_path << '\n'; return 2; }
+        const std::size_t total_items = std::min(cfg.measure_items, wl.items.size());
+        const std::uint64_t seed = args.rng_seed.value_or(cfg.rng_seed);
+        // The CS variants don't carry explicit (rows, cols) on the
+        // datasketches-namespace class, so we report 0 for both;
+        // plot_cs_throughput.py ignores those columns for aggregation.
+        csv << "implementation,language,seed,rows,cols,total_items,"
+               "total_nanoseconds,throughput_items_per_sec\n";
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            const double tput = raw[i].throughput_items_per_sec;
+            const long long total_ns = tput > 0.0
+                ? static_cast<long long>(static_cast<double>(total_items) * 1e9 / tput)
+                : 0LL;
+            csv << "cpp_datasketches_cs,cpp," << seed << ",0,0,"
+                << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
     }
     return 0;
 }

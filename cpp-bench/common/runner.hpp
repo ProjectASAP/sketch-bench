@@ -49,10 +49,11 @@ struct AggregatedMetrics {
 // throughput + latency fields.
 AggregatedMetrics aggregate(const std::vector<RunResult>& runs);
 
-// Run the benchmark loop. `build` returns a fresh sketch by value;
-// `insert(sketch, item)` ingests one item.
+// Run the benchmark loop and return the raw per-run results
+// (no aggregation). Callers that need the legacy long-format CSV
+// reach in here to get one row per run.
 template <typename Sketch, typename BuildFn, typename InsertFn>
-AggregatedMetrics run_throughput_latency(
+std::vector<RunResult> run_throughput_latency_raw(
     const std::vector<std::int64_t>& items,
     const RunnerConfig& cfg,
     BuildFn  build,
@@ -112,7 +113,18 @@ AggregatedMetrics run_throughput_latency(
         results.push_back(std::move(rr));
     }
 
-    return aggregate(results);
+    return results;
+}
+
+// Backwards-compatible aggregating wrapper.
+template <typename Sketch, typename BuildFn, typename InsertFn>
+AggregatedMetrics run_throughput_latency(
+    const std::vector<std::int64_t>& items,
+    const RunnerConfig& cfg,
+    BuildFn  build,
+    InsertFn insert)
+{
+    return aggregate(run_throughput_latency_raw<Sketch>(items, cfg, build, insert));
 }
 
 }  // namespace cpp_bench

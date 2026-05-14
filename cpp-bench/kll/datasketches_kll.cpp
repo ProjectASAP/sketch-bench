@@ -42,8 +42,9 @@ int main(int argc, char** argv) {
     auto build  = [&]() { return KllSketch(k); };
     auto insert = [](KllSketch& s, std::int64_t v) { s.Insert(v); };
 
-    cpp_bench::AggregatedMetrics m =
-        cpp_bench::run_throughput_latency<KllSketch>(wl.items, cfg, build, insert);
+    std::vector<cpp_bench::RunResult> raw =
+        cpp_bench::run_throughput_latency_raw<KllSketch>(wl.items, cfg, build, insert);
+    cpp_bench::AggregatedMetrics m = cpp_bench::aggregate(raw);
 
     cpp_bench::Record rec;
     rec.sketch     = "kll";
@@ -91,6 +92,22 @@ int main(int argc, char** argv) {
             return 2;
         }
         rec.emit(out);
+    }
+
+    if (args.legacy_csv_path) {
+        std::ofstream csv(*args.legacy_csv_path);
+        if (!csv) { std::cerr << "cpp-bench: cannot write " << *args.legacy_csv_path << '\n'; return 2; }
+        const std::size_t total_items = std::min(cfg.measure_items, wl.items.size());
+        csv << "implementation,language,run,k,total_items,"
+               "total_nanoseconds,throughput_items_per_sec\n";
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            const double tput = raw[i].throughput_items_per_sec;
+            const long long total_ns = tput > 0.0
+                ? static_cast<long long>(static_cast<double>(total_items) * 1e9 / tput)
+                : 0LL;
+            csv << "cpp_datasketches_kll,cpp," << (i + 1) << ',' << k << ','
+                << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
     }
     return 0;
 }

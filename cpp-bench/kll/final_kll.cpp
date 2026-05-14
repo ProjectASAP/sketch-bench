@@ -29,8 +29,9 @@ int main(int argc, char** argv) {
     auto build  = []()  { return KllFinal{}; };
     auto insert = [](KllFinal& s, std::int64_t v) { s.Insert(v); };
 
-    cpp_bench::AggregatedMetrics m =
-        cpp_bench::run_throughput_latency<KllFinal>(wl.items, cfg, build, insert);
+    std::vector<cpp_bench::RunResult> raw =
+        cpp_bench::run_throughput_latency_raw<KllFinal>(wl.items, cfg, build, insert);
+    cpp_bench::AggregatedMetrics m = cpp_bench::aggregate(raw);
 
     cpp_bench::Record rec;
     rec.sketch    = "kll";
@@ -64,6 +65,24 @@ int main(int argc, char** argv) {
         std::ofstream out(args.report_path, std::ios::app);
         if (!out) { std::cerr << "cpp-bench: cannot write " << args.report_path << '\n'; return 2; }
         rec.emit(out);
+    }
+
+    if (args.legacy_csv_path) {
+        std::ofstream csv(*args.legacy_csv_path);
+        if (!csv) { std::cerr << "cpp-bench: cannot write " << *args.legacy_csv_path << '\n'; return 2; }
+        const std::size_t total_items = std::min(cfg.measure_items, wl.items.size());
+        // final::KarninLangLiberty uses a default-constructed k; we report
+        // 0 since the legacy `k` column is informational for plot grouping.
+        csv << "implementation,language,run,k,total_items,"
+               "total_nanoseconds,throughput_items_per_sec\n";
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            const double tput = raw[i].throughput_items_per_sec;
+            const long long total_ns = tput > 0.0
+                ? static_cast<long long>(static_cast<double>(total_items) * 1e9 / tput)
+                : 0LL;
+            csv << "cpp_final_kll,cpp," << (i + 1) << ",0,"
+                << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
     }
     return 0;
 }

@@ -33,6 +33,12 @@ struct CliArgs {
     // it in the emitted record. Off by default because it costs
     // extra memory (a full exact baseline).
     bool with_accuracy = false;
+
+    // Optional legacy long-format CSV destination. When set, the binary
+    // writes per-run rows in the schema visualization/plots/*.py expect
+    // (one row per measurement run, columns vary per family). The v1
+    // JSONL Record is still emitted to `report_path` independently.
+    std::optional<std::string> legacy_csv_path;
 };
 
 // Parse argv. Aborts (exit 2) with a usage message on bad input.
