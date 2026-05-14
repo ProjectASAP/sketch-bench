@@ -50,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #
 # C++ binary path convention: `{cpp_bin_dir}/{cpp_dir}/{impl}_{cpp_dir}`,
 # where `cpp_dir` is the on-disk dir name in cpp-bench/ (which for the
-# countsketch family is still "cs", mirroring cpp/cs/).
+# countsketch family is "cs").
 DEFAULT_COMBOS: list[tuple[str, str, str]] = [
     # Rust track — names from sketch-cli/src/dispatch.rs
     ("rust", "kll",         "lib"),
@@ -65,8 +65,7 @@ DEFAULT_COMBOS: list[tuple[str, str, str]] = [
 ]
 
 # C++ family name → on-disk directory under cpp-bench/. Most match
-# (kll → kll), but the countsketch family lives under cs/ to mirror
-# cpp/cs/.
+# (kll → kll), but the countsketch family lives under cs/.
 CPP_DIR_FOR_SKETCH: dict[str, str] = {
     "kll": "kll",
     "countsketch": "cs",

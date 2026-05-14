@@ -40,8 +40,8 @@ sketch->~KarninLangLiberty<int64_t>();
 - This is not a real fix; it is a fragile, layout-dependent side effect.
 
 ## Current mitigation in this repo
-- All C++ benchmarks use Google Benchmark and mimic the external include order
-  (see `cpp/kll/kll_final.cpp`).
+- The C++ benchmarks mimic the external include order
+  (see `cpp-bench/kll/final_kll.cpp`).
 - This matches the upstream benchmark setup and avoids the crash in practice,
   but does not remove the UB.
 

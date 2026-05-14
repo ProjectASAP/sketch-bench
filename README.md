@@ -97,8 +97,7 @@ sketch-bench/
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
 ├── sketch-cli/             # unified `sketchlib` binary
-├── cpp/                    # new C++ benches (v1 JSONL via cpp-bench/)
-├── cpp-bench/              # C++ track of sketch-bench (google-benchmark + apache datasketches)
+├── cpp-bench/              # C++ track of sketch-bench (v1 JSONL via cpp-bench/common/)
 ├── input/ scripts/         # shared datasets + top-level orchestrators
 ├── visualization/          # JSON/JSONL viewer (tables + charts) + per-family
 │                           # matplotlib plot scripts under visualization/plots/
@@ -137,7 +136,7 @@ The legacy harness still works as before while the migration proceeds. Everythin
    ```bash
    scripts/run_throughput.sh            # all families incl. octo + polars
    scripts/run_accuracy.sh              # all statistics, --accuracy on
-   cd cpp && ./run_benchmark.sh         # C++ side (unchanged)
+   scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
    ```
 
    Both scripts wrap `sketchlib bench --raw-csv DIR` and dump
@@ -158,7 +157,11 @@ The legacy harness still works as before while the migration proceeds. Everythin
 
 ### Benchmarks at a glance
 
-- `cpp/`: Count Sketch + KLL variants (Insert-Optimized and DataSketches).
+- `cpp-bench/`: HLL / CMS / Count Sketch / KLL — the Apache DataSketches
+  baseline plus the Insert-Optimized "final" variant for every family, and
+  the full CS/KLL optimization-evolution series (naive → fastrange →
+  fixed_size → final / naive → cached_level_capacities → no_min_max →
+  no_self_move_protection → pcg_random → final). All emit v1 JSONL.
 - `sketch-cli/`: unified `sketchlib bench` — every Rust impl + the polars
   exact baselines + the `lib-fastpath-parallel` (octo) variants. The
   per-family `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
