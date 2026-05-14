@@ -77,6 +77,8 @@ endif()
 add_subdirectory(common)
 add_subdirectory(kll)
 add_subdirectory(cs)
+add_subdirectory(hll)
+add_subdirectory(cms)
 
 message(STATUS "[cpp-bench] build type:  ${CMAKE_BUILD_TYPE}")
 message(STATUS "[cpp-bench] CXX flags:   ${CMAKE_CXX_FLAGS_RELEASE}")
