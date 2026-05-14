@@ -44,7 +44,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
         || ExactCounter {
             seen: Default::default(),
         },
-        Some(&CardinalityGT),
+        Some(&CardinalityGT::default()),
     );
 
     assert_eq!(report.per_run.len(), 3);

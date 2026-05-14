@@ -80,19 +80,18 @@ impl Sketch for HllDatasketches {
 }
 
 // ---------- asap_sketchlib HLL ----------
-// `asap_sketchlib::HyperLogLogHIP` is the P14 HIP estimator
-// (Kevin J. Lang, arXiv:1708.06839) — a streaming HLL variant
-// that keeps a running estimate updated on every insert, so
-// `estimate()` is O(1) instead of scanning all 2^14 registers.
-// Compile-time fixed at P14; the requested `lg_k` is ignored.
+// `asap_sketchlib::HyperLogLog<Classic>` is the P14 classic HLL estimator
+// (Flajolet et al., 2007). Insert path only bumps registers; `estimate()`
+// scans all 2^14 registers (O(m)). Compile-time fixed at P14; the
+// requested `lg_k` is ignored.
 pub struct HllLib {
-    inner: asap_sketchlib::HyperLogLogHIP,
+    inner: asap_sketchlib::HyperLogLog<asap_sketchlib::Classic>,
 }
 
 impl HllLib {
     pub fn new(_p: &HllParams) -> Self {
         Self {
-            inner: asap_sketchlib::HyperLogLogHIP::new(),
+            inner: asap_sketchlib::HyperLogLog::<asap_sketchlib::Classic>::new(),
         }
     }
 }

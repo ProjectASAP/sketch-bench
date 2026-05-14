@@ -56,6 +56,7 @@ where
             }),
             queries: 1,
             query_wall_ns: q_ns,
+            query_calls: None,
         }
     }
 }

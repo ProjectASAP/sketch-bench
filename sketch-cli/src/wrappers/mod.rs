@@ -10,4 +10,6 @@ pub mod exact;
 pub mod hll;
 pub mod kll;
 pub mod nitro;
+pub mod parallel;
+pub mod polars;
 pub mod univmon;

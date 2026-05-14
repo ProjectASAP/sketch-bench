@@ -72,13 +72,13 @@ sketch-bench/               (repo)
 │   ├── sampler/            # every-Nth-op / time-window sampling
 │   └── exporter/           # stdout, file, prometheus, grpc-to-controller
 ├── sketch-cli/             # unified binary `sketchlib`: `bench` / `profile` subcommands
-├── cpp/  rust/             # existing Rust/C++ benches — migrated onto sketch-core/bench
+├── cpp/                    # existing C++ benches — migrated onto sketch-core/bench
 ├── accuracy/ throughput/   # existing — migrated onto sketch-bench
 ├── input/  scripts/        # shared datasets + generators
 └── visualization/          # JSON/JSONL viewer (kept, fed by unified report schema)
 ```
 
-Top-level `Cargo.toml` becomes a workspace over the `sketch-*` crates plus the existing `rust/` and `benchmark/` members.
+Top-level `Cargo.toml` becomes a workspace over the `sketch-*` crates plus the existing `rust/` member. The Criterion micro-bench crate now lives in `rust-microbench/` (renamed from `benchmark/`) and is kept as a standalone cargo project, not a workspace member.
 
 ### 3.1 Dependency direction
 
@@ -508,7 +508,7 @@ All adapted, not vendored blindly.
 
 ## 9. Report compatibility with existing outputs
 
-Existing JSONL under `cpp/output/`, `rust/output/`, `accuracy/`, `throughput/` uses ad-hoc shapes (`{implementation_name, total_nanoseconds}` etc.). Migration:
+Existing JSONL under `cpp/output/`, `accuracy/`, `throughput/` uses ad-hoc shapes (`{implementation_name, total_nanoseconds}` etc.). Migration:
 
 1. `sketch-bench` adapters read the legacy shape and re-emit the v1 schema in `§4.4`.
 2. Visualization layer `visualization/` is updated to consume the v1 schema; legacy viewer kept one release cycle.

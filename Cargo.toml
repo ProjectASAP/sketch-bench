@@ -1,9 +1,9 @@
 # Workspace manifest for sketch-bench → sketchlib-tool.
 #
-# Phase 2 of docs/MERGE_PLAN.md: convert the repo into a cargo
-# workspace so the new `sketch-*` crates can share deps and the
-# existing `rust/` crate keeps building unchanged while it's
-# migrated piece by piece.
+# Phase 2 of docs/MERGE_PLAN.md: cargo workspace shared by the
+# new `sketch-*` crates. The monolithic legacy `rust/` crate and
+# the per-sketch `throughput/<family>/rust/` + `accuracy/<stat>/rust/`
+# harnesses have all been retired in favour of `sketchlib bench`.
 [workspace]
 resolver = "2"
 members = [
@@ -11,7 +11,6 @@ members = [
     "sketch-bench",
     "sketch-runtime",
     "sketch-cli",
-    "rust",
 ]
 
 [workspace.package]

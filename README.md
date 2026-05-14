@@ -67,10 +67,7 @@ serves every sketch that answers the same question:
 | `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
 
 `sketch_bench::baselines::Statistic::for_family(...)` is the
-canonical family → statistic lookup. The
-`accuracy/{cms,hll,kll,dd}/rust/src/baseline.rs` harness crates
-delegate here for their ground-truth computation, so each statistic's
-exact algorithm has exactly one source of truth.
+canonical family → statistic lookup.
 
 `sketchlib-tool` is:
 
@@ -100,10 +97,10 @@ sketch-bench/
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
 ├── sketch-cli/             # unified `sketchlib` binary
-├── cpp/ rust/              # existing benches, migrating onto sketch-core/bench
-├── accuracy/ throughput/   # existing accuracy/throughput harnesses
-├── input/ scripts/         # shared datasets + generators
-├── visualization/          # JSON/JSONL viewer (tables + charts)
+├── cpp-bench/              # C++ track of sketch-bench (v1 JSONL via cpp-bench/common/)
+├── input/ scripts/         # shared datasets + top-level orchestrators
+├── visualization/          # JSON/JSONL viewer (tables + charts) + per-family
+│                           # matplotlib plot scripts under visualization/plots/
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
 ```
 
@@ -137,18 +134,45 @@ The legacy harness still works as before while the migration proceeds. Everythin
 1. Generate/verify input data (done automatically by the scripts).
 2. Execute the benchmark you want, from the repo root:
    ```bash
-   ./run_all_benchmarks.sh
-   cd cpp  && ./run_benchmark.sh
-   cd rust && ./run_benchmark.sh
+   scripts/run_throughput.sh            # all families incl. octo + polars
+   scripts/run_accuracy.sh              # all statistics, --accuracy on
+   scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
    ```
-   Each script builds with the flags above, runs the binaries, and writes structured output into `output/*.jsonl`.
-3. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
+
+   Both scripts wrap `sketchlib bench --raw-csv DIR` and dump
+   long-format CSVs into `output/throughput/` and `output/accuracy/`
+   respectively. The per-family Rust harnesses that used to live
+   under `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+   have been retired in favour of `sketch-cli` (recoverable from
+   git history). The per-family C++ harnesses have likewise been
+   ported onto `cpp-bench/common/` (`cpp-bench/{hll,cms,cs,kll}/`).
+3. C++ benchmarks build through one top-level CMake project:
+   ```bash
+   cmake -S cpp-bench -B cpp-bench/build
+   cmake --build cpp-bench/build
+   ./cpp-bench/build/{hll,cms,cs,kll}/<impl>_<family> --workload ... --report-path ...
+   ```
+   `scripts/run_all.py` orchestrates both tracks (Rust via `sketchlib bench`, C++ via the binaries above) into a single v1-JSONL report.
+4. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
 
-- `cpp/`: Count Sketch + KLL variants (Insert-Optimized and DataSketches).
-- `rust/`: HLL, Count-Min, Count Sketch, Elastic, KLL, UnivMon, Nitro variants.
-- `visualization/`: JSON/JSONL loader for charts and tables across all outputs.
+- `cpp-bench/`: HLL / CMS / Count Sketch / KLL — the Apache DataSketches
+  baseline plus the Insert-Optimized "final" variant for every family, and
+  the full CS/KLL optimization-evolution series (naive → fastrange →
+  fixed_size → final / naive → cached_level_capacities → no_min_max →
+  no_self_move_protection → pcg_random → final). All emit v1 JSONL.
+- `sketch-cli/`: unified `sketchlib bench` — every Rust impl + the polars
+  exact baselines + the `lib-fastpath-parallel` (octo) variants. The
+  per-family `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+  trees have been retired into git history.
+- `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
+  that fan `sketchlib bench` over all families and dump CSVs the legacy
+  plot scripts (now under `visualization/plots/throughput/` and
+  `visualization/plots/accuracy/`) still consume unchanged.
+- `visualization/`: JSON/JSONL loader for charts and tables across all
+  outputs, plus per-family matplotlib `plot_*.py` scripts under
+  `visualization/plots/{throughput,accuracy}/`.
 
 ### Build prerequisites
 
@@ -156,6 +180,14 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 
 ## Contributing while the migration is in flight
 
-- New benchmarks: land them under the existing `rust/` or `cpp/` trees for now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
-- New metrics: add under `sketch-bench/metrics/` (macro) or `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
-- Runtime integration in downstream apps: follow Phase 9 of [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+- New Rust impls: add a wrapper under `sketch-cli/src/wrappers/<family>.rs`,
+  register it in `sketch-cli/src/dispatch.rs` (one `IMPLS` row + one macro
+  invocation), pick an `AccuracyKind`. The old per-family `rust/` trees are
+  gone; everything new flows through `sketchlib bench`.
+- New C++ benches: land them under `cpp-bench/<family>/` on the new
+  v1-JSONL framework (`cpp-bench/common/`); follow `cpp-bench/kll/` or
+  `cpp-bench/cs/` as templates.
+- New metrics: add under `sketch-bench/metrics/` (macro) or
+  `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
+- Runtime integration in downstream apps: follow Phase 9 of
+  [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).

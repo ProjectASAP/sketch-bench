@@ -38,3 +38,5 @@ tikv-jemallocator = { workspace = true, optional = true }
 sketch_oxide.workspace = true
 datasketches.workspace = true
 asap_sketchlib.workspace = true
+# DataFrame-engine baselines (hll/cms/kll/dd `polars` impls).
+polars = { version = "0.46", features = ["lazy"] }

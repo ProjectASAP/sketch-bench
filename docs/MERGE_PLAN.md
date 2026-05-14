@@ -48,7 +48,7 @@ Then relocate the valuable bits and drop the rest:
 
 ### Phase 2 — Workspace scaffold
 
-- [ ] Convert top-level `Cargo.toml` into a workspace with members: the new `sketch-*` crates (stubs at first) and the existing `rust/`, `benchmark/` crates.
+- [ ] Convert top-level `Cargo.toml` into a workspace with members: the new `sketch-*` crates (stubs at first) and the existing `rust/` crate. The Criterion micro-bench crate (`rust-microbench/`, formerly `benchmark/`) stays a standalone cargo project, not a workspace member.
 - [ ] Create empty crates with stub `lib.rs`: `sketch-core`, `sketch-bench`, `sketch-profile`, `sketch-runtime`, `sketch-cli`.
 - [ ] CI: `cargo check --workspace` and existing benches still build.
 
@@ -67,7 +67,7 @@ Target module layout: DESIGN §5.2. Target API: DESIGN §5.3.
 
 - [ ] `src/config.rs` — `BenchConfig` + `MetricsMask` bitflags (THROUGHPUT | LATENCY | CPU | MEMORY | ACCURACY).
 - [ ] `src/metrics/mod.rs` — `MetricsSink` trait + `NoopSink` (zero-cost) + `FullSink`.
-- [ ] `src/metrics/time.rs` — `WallClock` (`Instant`) + `CpuTime` (`getrusage(RUSAGE_SELF)`); port timing primitives from the existing `benchmark/` crate.
+- [ ] `src/metrics/time.rs` — `WallClock` (`Instant`) + `CpuTime` (`getrusage(RUSAGE_SELF)`); port timing primitives from the existing `rust-microbench/` crate (formerly `benchmark/`).
 - [ ] `src/metrics/latency.rs` — `LatencyRecorder` using `hdrhistogram`; inert when `MetricsMask::LATENCY` unset.
 - [ ] `src/metrics/memory.rs` — `Rss` from `/proc/self/status:VmHWM`; `JemallocPeak` via `tikv-jemalloc-ctl` behind the `heap-jemalloc` feature.
 - [ ] `src/metrics/throughput.rs` — `ItemsPerSec` (insert + query phases separately).

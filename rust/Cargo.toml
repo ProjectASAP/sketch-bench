@@ -1,9 +1,0 @@
-[package]
-name = "bench_sketches"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-asap_sketchlib.workspace = true
-sketch_oxide.workspace = true
-datasketches.workspace = true

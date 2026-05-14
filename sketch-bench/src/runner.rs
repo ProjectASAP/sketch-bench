@@ -72,6 +72,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                         metrics.queries_executed = cmp.queries;
                         metrics.query_wall_time_ns = cmp.query_wall_ns;
                         metrics.accuracy = Some(cmp.json);
+                        metrics.query_calls = cmp.query_calls;
                     }
                 }
                 metrics.memory_bytes = Some(final_sketch.memory_bytes() as u64);

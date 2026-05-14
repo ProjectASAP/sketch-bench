@@ -8,9 +8,17 @@ use std::hash::Hash;
 use std::hint::black_box;
 use std::time::Instant;
 
-use super::{Comparison, GroundTruth};
+use super::{Comparison, GroundTruth, QueryCallSample};
 
-pub struct CardinalityGT;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CardinalityGT {
+    /// When set, also stash a `Vec<QueryCallSample>` of
+    /// independently-timed `sketch.query(())` calls so the
+    /// legacy `hll_throughput_query_results_rust.csv` shape
+    /// (one row per call) can be emitted. Off by default —
+    /// production accuracy runs pay nothing.
+    pub record_calls: bool,
+}
 
 /// Number of repeated `sketch.query(())` calls used to time
 /// steady-state cardinality query throughput. A single call is
@@ -22,6 +30,11 @@ pub struct CardinalityGT;
 /// and makes this row directly comparable to KLL (101 quantile
 /// queries) / Frequency (one probe per heavy hitter).
 const QUERY_TIMING_REPEATS: usize = 4096;
+
+/// How many independently-timed `query()` calls to record per
+/// run when `record_calls` is on. Matches the legacy HLL query
+/// binary's `CALLS_PER_RUN = 10`.
+const RAW_CALLS_PER_RUN: usize = 10;
 
 impl<S, K> GroundTruth<S> for CardinalityGT
 where
@@ -44,6 +57,25 @@ where
         let abs_err = (est - truth).abs();
         let rel_err = if truth > 0.0 { abs_err / truth } else { 0.0 };
 
+        let query_calls = if self.record_calls {
+            let mut samples = Vec::with_capacity(RAW_CALLS_PER_RUN);
+            for i in 1..=RAW_CALLS_PER_RUN {
+                let t0 = Instant::now();
+                let est = black_box(sketch.query(black_box(())));
+                let ns = t0.elapsed().as_nanos() as u64;
+                samples.push(QueryCallSample {
+                    call_index: i,
+                    nanoseconds: ns,
+                    estimate: est,
+                    percentile: f64::NAN,
+                    repeat: 0,
+                });
+            }
+            Some(samples)
+        } else {
+            None
+        };
+
         Comparison {
             json: json!({
                 "truth": truth,
@@ -53,6 +85,7 @@ where
             }),
             queries: QUERY_TIMING_REPEATS as u64,
             query_wall_ns: q_ns,
+            query_calls,
         }
     }
 }

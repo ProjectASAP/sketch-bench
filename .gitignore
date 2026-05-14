@@ -26,6 +26,12 @@ cpp/build/
 cpp/build_*/
 cpp/output/
 cpp/_gbench/
+cpp-bench/build/
+cpp-bench/build_*/
+
+# Python cache
+__pycache__/
+*.pyc
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -35,9 +41,11 @@ compile_commands.json
 # Specific input file
 input/benchmark_data_1m_int64.bin
 input/generate_data
+input/generate_zipf_data
 
 # Benchmark outputs
 rust/bench_sketches/output/
+visualization/output/
 
 # Build directories
 build/
@@ -61,3 +69,4 @@ accuracy/data/generate_zipf_data
 
 # Throughput plotting cache
 throughput/.mplconfig
+visualization/plots/.mplconfig/

@@ -111,6 +111,7 @@ where
             }),
             queries: probes.len() as u64,
             query_wall_ns: q_ns,
+            query_calls: None,
         }
     }
 }

@@ -1,0 +1,59 @@
+[workspace]
+
+[package]
+name = "rust-microbench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+asap_sketchlib = { path = "../../asap_sketchlib", features = ["experimental"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+polars = { version = "0.46", features = ["lazy", "is_in"] }
+rand = "0.9"
+twox-hash = "2.1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[[bench]]
+name = "countmin"
+harness = false
+
+[[bench]]
+name = "count"
+harness = false
+
+[[bench]]
+name = "nitro"
+harness = false
+
+[[bench]]
+name = "nitro_batch"
+harness = false
+
+[[bench]]
+name = "hash_detailed"
+harness = false
+
+[[bench]]
+name = "hashlayer"
+harness = false
+
+[[bench]]
+name = "row_access"
+harness = false
+
+[[bench]]
+name = "median_bench"
+harness = false
+
+[[bench]]
+name = "box_vec"
+harness = false
+
+[[bench]]
+name = "polars_compare"
+harness = false
