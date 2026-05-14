@@ -357,6 +357,17 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "cms",
+        impl_name: "lib-fixedmatrix-fast-32k",
+        description: "asap_sketchlib CMS, FixedMatrix (5x32768), FastPath",
+        constraint: Constraint::FixedCms {
+            rows: cms::CMS_FIXED_32K_ROWS,
+            cols: cms::CMS_FIXED_32K_COLS,
+        },
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_lib_fixedmatrix_fast_32k,
+    },
+    ImplEntry {
+        family: "cms",
         impl_name: "lib-vector2d-fast",
         description: "asap_sketchlib CMS, Vector2D, FastPath",
         constraint: Constraint::Tunable,
@@ -414,6 +425,17 @@ pub const IMPLS: &[ImplEntry] = &[
         },
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_lib_fixedmatrix_fast,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "lib-fixedmatrix-fast-32k",
+        description: "asap_sketchlib Count, FixedMatrix (5x32768), FastPath",
+        constraint: Constraint::FixedCountSketch {
+            rows: cms::CMS_FIXED_32K_ROWS,
+            cols: cms::CMS_FIXED_32K_COLS,
+        },
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_lib_fixedmatrix_fast_32k,
     },
     ImplEntry {
         family: "countsketch",
@@ -1116,6 +1138,13 @@ run_i64_freq!(
     Cms
 );
 run_i64_freq!(
+    run_cms_lib_fixedmatrix_fast_32k,
+    cms::CmsLibFixedmatrixFast32k,
+    "cms",
+    "lib-fixedmatrix-fast-32k",
+    Cms
+);
+run_i64_freq!(
     run_cms_lib_vector2d_fast,
     cms::CmsLibVector2dFast,
     "cms",
@@ -1144,6 +1173,13 @@ run_i64_freq!(
     countsketch::CsLibFixedmatrixFast,
     "countsketch",
     "lib-fixedmatrix-fast",
+    Countsketch
+);
+run_i64_freq!(
+    run_cs_lib_fixedmatrix_fast_32k,
+    countsketch::CsLibFixedmatrixFast32k,
+    "countsketch",
+    "lib-fixedmatrix-fast-32k",
     Countsketch
 );
 run_i64_freq!(

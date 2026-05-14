@@ -131,6 +131,40 @@ impl Sketch for CmsLibFixedmatrixCustomFast {
     }
 }
 
+// ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
+// Same code path as the 5x2048 FixedMatrix (compile-time baked
+// shape via `impl_fixed_matrix!`), at 5x32768 to mirror the
+// CMS+CS 32K panel.
+impl_fixed_matrix!(CountMinMatrix5x32K, i32, 5, 32768);
+
+pub const CMS_FIXED_32K_ROWS: usize = 5;
+pub const CMS_FIXED_32K_COLS: usize = 32768;
+
+pub struct CmsLibFixedmatrixFast32k(pub CountMin<CountMinMatrix5x32K, FastPath>);
+
+impl CmsLibFixedmatrixFast32k {
+    pub fn new(_p: &CmsParams) -> Self {
+        Self(CountMin::<CountMinMatrix5x32K, FastPath>::from_storage(
+            CountMinMatrix5x32K::default(),
+        ))
+    }
+}
+
+impl Sketch for CmsLibFixedmatrixFast32k {
+    type Item = i64;
+    type Query = i64;
+    type Answer = u64;
+    fn update(&mut self, v: &i64) {
+        self.0.insert(&DataInput::I64(*v));
+    }
+    fn query(&self, q: i64) -> u64 {
+        self.0.estimate(&DataInput::I64(q)) as u64
+    }
+    fn memory_bytes(&self) -> usize {
+        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
+    }
+}
+
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
 // `FixedMatrix::default()` bakes in (5, 2048). Treated as a
 // fixed-shape impl in dispatch; only runs when `(rows, cols)`

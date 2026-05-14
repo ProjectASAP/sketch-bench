@@ -5,7 +5,9 @@ use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vecto
 use sketch_core::config::CountSketchParams;
 use sketch_core::sketch::Sketch;
 
-use crate::wrappers::cms::{CMS_FIXED_COLS, CMS_FIXED_ROWS};
+use crate::wrappers::cms::{
+    CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS, CountMinMatrix5x32K,
+};
 
 // sketch_oxide::frequency::CountSketch sizes its table as
 // `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
@@ -77,6 +79,35 @@ impl Sketch for CsLibFixedmatrixFast {
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
+    }
+}
+
+// ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
+// Same code path as the 5x2048 FixedMatrix variant, at 5x32768
+// to match the CMS+CS 32K throughput panel. Reuses the
+// `CountMinMatrix5x32K` shape declared in cms.rs.
+pub struct CsLibFixedmatrixFast32k(pub Count<CountMinMatrix5x32K, FastPath>);
+
+impl CsLibFixedmatrixFast32k {
+    pub fn new(_p: &CountSketchParams) -> Self {
+        Self(Count::<CountMinMatrix5x32K, FastPath>::from_storage(
+            CountMinMatrix5x32K::default(),
+        ))
+    }
+}
+
+impl Sketch for CsLibFixedmatrixFast32k {
+    type Item = i64;
+    type Query = i64;
+    type Answer = u64;
+    fn update(&mut self, v: &i64) {
+        self.0.insert(&DataInput::I64(*v));
+    }
+    fn query(&self, q: i64) -> u64 {
+        self.0.estimate(&DataInput::I64(q)) as u64
+    }
+    fn memory_bytes(&self) -> usize {
+        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
     }
 }
 
