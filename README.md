@@ -67,10 +67,7 @@ serves every sketch that answers the same question:
 | `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
 
 `sketch_bench::baselines::Statistic::for_family(...)` is the
-canonical family → statistic lookup. The
-`accuracy/{cms,hll,kll,dd}/rust/src/baseline.rs` harness crates
-delegate here for their ground-truth computation, so each statistic's
-exact algorithm has exactly one source of truth.
+canonical family → statistic lookup.
 
 `sketchlib-tool` is:
 
@@ -100,10 +97,12 @@ sketch-bench/
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
 ├── sketch-cli/             # unified `sketchlib` binary
-├── cpp/                    # existing C++ benches, migrating onto sketch-core/bench
-├── accuracy/ throughput/   # existing accuracy/throughput harnesses (Rust side)
-├── input/ scripts/         # shared datasets + generators
-├── visualization/          # JSON/JSONL viewer (tables + charts)
+├── cpp/                    # new C++ benches (v1 JSONL via cpp-bench/)
+├── cpp-bench/              # C++ track of sketch-bench; legacy/ holds the
+│                           # pre-migration per-family throughput + accuracy C++ harnesses
+├── input/ scripts/         # shared datasets + top-level orchestrators
+├── visualization/          # JSON/JSONL viewer (tables + charts) + per-family
+│                           # plot + run scripts under visualization/plots/
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
 ```
 
@@ -146,10 +145,10 @@ The legacy harness still works as before while the migration proceeds. Everythin
    long-format CSVs into `output/throughput/` and `output/accuracy/`
    respectively. The per-family Rust harnesses that used to live
    under `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
-   have been retired in favour of `sketch-cli` (their source is
-   recoverable from git history under `legacy/`). The C++ side
-   under `throughput/<family>/cpp/` and `accuracy/<statistic>/cpp/`
-   stays put — that's MERGE_PLAN Phase 8.
+   have been retired in favour of `sketch-cli` (recoverable from
+   git history). The pre-migration per-family C++ harnesses now
+   live under `cpp-bench/legacy/{throughput,accuracy}/`; they will
+   be rewritten onto `cpp-bench/common/` (MERGE_PLAN Phase 8).
 3. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
@@ -161,10 +160,10 @@ The legacy harness still works as before while the migration proceeds. Everythin
   trees have been retired into git history.
 - `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
   that fan `sketchlib bench` over all families and dump CSVs the legacy
-  plot scripts (now under `legacy/throughput/scripts/` and
-  `legacy/accuracy/scripts/`) still consume unchanged.
-- `throughput/<family>/cpp/` + `accuracy/<statistic>/cpp/`: still the
-  C++ track (MERGE_PLAN Phase 8 will migrate these onto sketch-core).
+  plot scripts (now under `visualization/plots/throughput/` and
+  `visualization/plots/accuracy/`) still consume unchanged.
+- `cpp-bench/legacy/{throughput,accuracy}/`: pre-migration per-family
+  C++ harnesses (MERGE_PLAN Phase 8 will rewrite these onto `cpp-bench/common/`).
 - `visualization/`: JSON/JSONL loader for charts and tables across all outputs.
 
 ### Build prerequisites
@@ -177,8 +176,9 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
   register it in `sketch-cli/src/dispatch.rs` (one `IMPLS` row + one macro
   invocation), pick an `AccuracyKind`. The old per-family `rust/` trees are
   gone; everything new flows through `sketchlib bench`.
-- New C++ benches: land them under `cpp/` or `throughput/<family>/cpp/` for
-  now; they'll be re-homed onto `sketch-bench` in Phase 8 of the merge plan.
+- New C++ benches: land them under `cpp-bench/<family>/` on the new
+  v1-JSONL framework (`cpp-bench/common/`). The pre-migration per-family
+  binaries under `cpp-bench/legacy/` are not the recommended template.
 - New metrics: add under `sketch-bench/metrics/` (macro) or
   `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
 - Runtime integration in downstream apps: follow Phase 9 of

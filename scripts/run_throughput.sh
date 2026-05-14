@@ -12,7 +12,7 @@
 #   sketch-cli/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — regular impls
 #
 # Output layout mirrors the legacy `throughput/<family>/output/`
-# shape so the plot scripts under `legacy/throughput/scripts/`
+# shape so the plot scripts under `visualization/plots/throughput/`
 # keep working without changes: each family writes
 # `<family>_throughput_results_rust.csv` (insert) and, when
 # accuracy ran, `<family>_throughput_query_results_rust.csv`.

@@ -4,6 +4,15 @@ Captures the architecture walkthrough and the legacy-reorg work done on
 branch `chore/legacy-reorg`. Standalone — not part of the design docs in
 `docs/`.
 
+> **Historical snapshot.** Paths in §2 / §6 / §7 reflect the mid-reorg
+> state. The cleanup completed since: `throughput/` and `accuracy/`
+> top-level trees have been deleted; their `cpp/` subtrees moved to
+> `cpp-bench/legacy/{throughput,accuracy}/<family>/`; the `legacy/`
+> top-level tree has been deleted; the plot + orchestrator scripts that
+> used to live under `legacy/{throughput,accuracy}/scripts/` now sit at
+> `visualization/plots/{throughput,accuracy}/`. Use `git log -- <path>` to
+> recover any pre-deletion content.
+
 ## 1. The three workspace crates
 
 | crate | role | kind |

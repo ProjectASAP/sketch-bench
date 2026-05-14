@@ -45,7 +45,7 @@ exporters, compile-time feature gate. Still open:
 
 ### C++ binaries → v1 JSONL migration (MERGE_PLAN Phase 8)
 
-- Update `cpp/` harnesses to emit v1 JSONL directly (schema header shared via `sketch-core/schema/v1.json`)
+- Rewrite `cpp-bench/legacy/{throughput,accuracy}/<family>/` onto the v1-JSONL `cpp-bench/common/` runner (matching `cpp-bench/cs` / `cpp-bench/kll`)
 - Visualization layer dual-read compatibility for one release, then drop legacy shapes
 
 **Why deferred**: C++ parity is pure mechanical translation. The 21 Rust impls via `sketchlib` already cover the accuracy / throughput story for the paper.
@@ -56,8 +56,12 @@ Done in the 8-tput row above. `throughput/<family>/rust/`,
 `accuracy/<statistic>/rust/`, `throughput/polars_*/`,
 `throughput/octo/rust/`, and `accuracy/{nitro,octo}/rust/` are
 gone; source recoverable from git history. Plot scripts moved to
-`legacy/{throughput,accuracy}/scripts/` and still consume the
-sketch-cli-emitted CSVs through `--raw-csv`.
+`visualization/plots/{throughput,accuracy}/` and still consume the
+sketch-cli-emitted CSVs through `--raw-csv`. The per-family C++
+harnesses moved to `cpp-bench/legacy/{throughput,accuracy}/`
+(awaiting Phase 8 rewrite onto `cpp-bench/common/`); the empty
+`throughput/`, `accuracy/`, and `legacy/` top-level directories
+have been deleted.
 
 ### Downstream app integration (MERGE_PLAN Phase 9)
 
