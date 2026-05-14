@@ -55,7 +55,7 @@ hashbrown = "0.17"
 # Sketch impls used by the 21 wrappers.
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"
-asap_sketchlib = { version = "0.2.0", features = ["experimental"] }
+asap_sketchlib = { version = "0.2.1", features = ["experimental"] }
 
 # Internal workspace crates.
 sketch-core = { path = "sketch-core" }
