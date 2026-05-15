@@ -52,6 +52,7 @@ impl Sketch for CmsOxide {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
     }
@@ -84,6 +85,7 @@ impl Sketch for CmsDatasketches {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(*v);
     }
@@ -120,6 +122,7 @@ impl Sketch for CmsLibFixedmatrixCustomFast {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
@@ -154,6 +157,7 @@ impl Sketch for CmsLibFixedmatrixFast32k {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
@@ -184,6 +188,7 @@ impl Sketch for CmsLibFixedmatrixFast {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
@@ -216,6 +221,7 @@ impl Sketch for CmsLibVector2dFast {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
@@ -248,6 +254,7 @@ impl Sketch for CmsLibVector2dRegular {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }

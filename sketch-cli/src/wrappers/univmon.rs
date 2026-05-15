@@ -37,6 +37,7 @@ impl Sketch for UnivMonLib {
     type Item = String;
     type Query = ();
     type Answer = f64;
+    #[inline]
     fn update(&mut self, v: &String) {
         self.inner
             .fast_insert(&asap_sketchlib::DataInput::Str(v), 1);
@@ -71,6 +72,7 @@ impl Sketch for UnivMonOxide {
     type Item = Vec<u8>;
     type Query = ();
     type Answer = f64;
+    #[inline]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1.0).expect("UnivMon update succeeds");
     }

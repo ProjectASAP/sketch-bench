@@ -57,6 +57,13 @@ enum Cmd {
     Bench(BenchArgs),
     /// List every `(family, impl)` pair the CLI can drive.
     ListImpls,
+    /// Diagnostic: embedded copy of throughput-bench's CountSketch
+    /// FixedMatrix+FastPath hot loop. Used to isolate whether the
+    /// throughput gap vs throughput-bench is in our runner stack
+    /// or in the sketchlib binary itself (it turned out to be the
+    /// binary — same hot loop code is ~40% slower inside sketchlib
+    /// than inside throughput-bench's tiny standalone binary).
+    DiagCs,
 }
 
 #[derive(Parser, Debug)]
@@ -241,7 +248,42 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Bench(args) => run_bench(args),
+        Cmd::DiagCs => run_diag_cs(),
     }
+}
+
+fn run_diag_cs() -> Result<()> {
+    use std::fs::File;
+    use std::io::Read;
+    use std::time::Instant;
+    use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix};
+
+    let path = "/users/yuanyc/sketch-bench/input/benchmark_data_1m_int64.bin";
+    let mut f = File::open(path)?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    let mut data: Vec<i64> = Vec::with_capacity(buf.len() / 8);
+    for chunk in buf.chunks_exact(8) {
+        data.push(i64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3],
+            chunk[4], chunk[5], chunk[6], chunk[7],
+        ]));
+    }
+    let data = std::hint::black_box(data);
+
+    for trial in 0..12 {
+        let mut sketch = Count::<FixedMatrix, FastPath>::default();
+        let start = Instant::now();
+        for &value in data.iter().take(1_000_000) {
+            sketch.insert(&DataInput::I64(value));
+        }
+        std::hint::black_box(&sketch);
+        let ns = start.elapsed().as_nanos();
+        if trial >= 2 {
+            println!("{{\"impl\":\"diag_cs\",\"trial\":{trial},\"ns\":{ns}}}");
+        }
+    }
+    Ok(())
 }
 
 fn run_bench(args: BenchArgs) -> Result<()> {

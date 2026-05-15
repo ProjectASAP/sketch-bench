@@ -591,8 +591,15 @@ where
     W::Item: Clone,
     S: sketch_core::sketch::Sketch<Item = W::Item>,
 {
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, sketch_bench::NoGT>(factory, None)
+    let runner = BenchRunner::new(cfg.clone(), wk, family, impl_name);
+    // Throughput-only short-circuit: pass an `insert` closure
+    // defined here in sketch-cli so the wrapper's `update` body
+    // (also in sketch-cli) is in the same crate as the closure
+    // body at codegen time.
+    if cfg.metrics == sketch_bench::MetricsMask::THROUGHPUT {
+        return vec![runner.run_throughput(factory, |s, it| s.update(it))];
+    }
+    runner.run::<S, _, sketch_bench::NoGT>(factory, None)
 }
 
 fn bench_freq_gt<S, W>(
