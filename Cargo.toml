@@ -11,6 +11,7 @@ members = [
     "sketch-bench",
     "sketch-runtime",
     "sketch-cli",
+    "sketch-cli-throughput",
 ]
 
 [workspace.package]

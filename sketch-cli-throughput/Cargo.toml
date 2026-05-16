@@ -1,0 +1,14 @@
+[package]
+name = "sketch-cli-throughput"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Slim throughput-only binary. Phase 1 probe for the sketchlib-vs-throughput-bench gap: same hot loop, separate (small) link unit."
+
+[[bin]]
+name = "sketchlib-throughput-cs-fixedmatrix-fast"
+path = "src/bin/cs_lib_fixedmatrix_fast.rs"
+
+[dependencies]
+asap_sketchlib.workspace = true
