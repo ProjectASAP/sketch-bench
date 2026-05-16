@@ -4,7 +4,31 @@
 //!
 //! See `docs/DESIGN.md` §5.3 + §5.4.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Burn CPU on the current core so the cpufreq governor ramps to max turbo
+/// before timing starts. Mirrors throughput-bench/src/bench_common.rs::warmup_cpu.
+/// External shell warmups don't work reliably because the governor can drop
+/// frequency during the bench process's exec/startup window.
+///
+/// Duration is read from `BENCH_WARMUP_SECS` (default 10s). Set to 0 to skip.
+fn warmup_cpu_from_env() {
+    let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    if secs == 0 {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    let mut x: u64 = 0xdeadbeef;
+    while Instant::now() < deadline {
+        for _ in 0..10_000 {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        }
+        std::hint::black_box(x);
+    }
+}
 
 use sketch_core::probe::NoopSink;
 use sketch_core::report::{BenchSection, Mode, Record, RunStats, Source};
@@ -167,6 +191,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         let n_items = items.len() as u64;
         let total = pass_cfg.runs + pass_cfg.warmup_runs;
         let mut ns_list: Vec<u64> = Vec::with_capacity(pass_cfg.runs);
+
+        warmup_cpu_from_env();
 
         for trial in 0..total {
             let mut sketch = factory();

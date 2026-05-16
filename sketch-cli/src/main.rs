@@ -252,6 +252,7 @@ fn main() -> Result<()> {
     }
 }
 
+#[inline(never)]
 fn run_diag_cs() -> Result<()> {
     use std::fs::File;
     use std::io::Read;
@@ -270,6 +271,25 @@ fn run_diag_cs() -> Result<()> {
         ]));
     }
     let data = std::hint::black_box(data);
+
+    // Burn CPU so the governor ramps before timing — mirrors
+    // throughput-bench/src/bench_common.rs::warmup_cpu and the
+    // warmup in sketch-bench's run_throughput_pass_with. Without
+    // this, cold-start cpufreq dominates the first few trials.
+    let warmup_secs: u64 = std::env::var("BENCH_WARMUP_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    if warmup_secs > 0 {
+        let deadline = Instant::now() + std::time::Duration::from_secs(warmup_secs);
+        let mut x: u64 = 0xdeadbeef;
+        while Instant::now() < deadline {
+            for _ in 0..10_000 {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            }
+            std::hint::black_box(x);
+        }
+    }
 
     for trial in 0..12 {
         let mut sketch = Count::<FixedMatrix, FastPath>::default();

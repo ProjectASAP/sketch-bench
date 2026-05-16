@@ -64,6 +64,13 @@ sketch-runtime = { path = "sketch-runtime" }
 
 [profile.release]
 opt-level = 3
-lto = "fat"
+# thin LTO instead of fat: in the 27MB sketch-cli binary, fat LTO
+# was making LLVM keep generic dynamic-rows versions of
+# asap_sketchlib's FixedMatrix insert (with row-count bailout
+# branches and no BMI2 rorx hash) instead of specializing them.
+# thin LTO lets each crate finalize its own specializations before
+# cross-crate inlining, so the FixedMatrix hot path stays unrolled.
+# throughput-bench keeps its own fat-LTO profile (separate workspace).
+lto = "thin"
 codegen-units = 1
 panic = "abort"
