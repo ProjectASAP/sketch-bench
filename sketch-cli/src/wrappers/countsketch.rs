@@ -41,6 +41,7 @@ impl Sketch for CsOxide {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v, 1);
     }
@@ -71,6 +72,7 @@ impl Sketch for CsLibFixedmatrixFast {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
@@ -100,6 +102,7 @@ impl Sketch for CsLibFixedmatrixFast32k {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
@@ -132,6 +135,7 @@ impl Sketch for CsLibVector2dFast {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
@@ -164,6 +168,7 @@ impl Sketch for CsLibVector2dRegular {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }

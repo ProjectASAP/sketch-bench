@@ -27,6 +27,7 @@ impl Sketch for HllOxide {
     type Item = i64;
     type Query = ();
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
     }
@@ -61,6 +62,7 @@ impl Sketch for HllDatasketches {
     type Item = i64;
     type Query = ();
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(*v);
     }
@@ -100,6 +102,7 @@ impl Sketch for HllLib {
     type Item = i64;
     type Query = ();
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
     }

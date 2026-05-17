@@ -33,6 +33,7 @@ impl Sketch for NitroLib {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline]
     fn update(&mut self, v: &i64) {
         self.inner.insert(std::slice::from_ref(v));
     }
@@ -71,6 +72,7 @@ impl Sketch for NitroOxide {
     type Item = Vec<u8>;
     type Query = Vec<u8>;
     type Answer = u64;
+    #[inline]
     fn update(&mut self, v: &Vec<u8>) {
         self.0.update_sampled(v);
     }

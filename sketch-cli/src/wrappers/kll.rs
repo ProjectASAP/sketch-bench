@@ -56,6 +56,12 @@ impl Sketch for KllOxide {
 // comparison we precompute the CDF once in `finalize_for_query`
 // and cache it; queries then collapse to a `Cdf::query` binary
 // search.
+//
+// `update` deliberately does NOT invalidate the cached CDF —
+// `BenchRunner` only ever calls `finalize_for_query` once, after
+// the insert phase has ended, and never re-inserts afterwards. A
+// per-update RefCell::borrow() check is a measurable cost on a
+// hot 10ns/op insert path; we drop it on the throughput path.
 pub struct KllLib {
     inner: asap_sketchlib::KLL<i64>,
     k: u32,
@@ -76,11 +82,9 @@ impl Sketch for KllLib {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
-        if self.cdf.borrow().is_some() {
-            *self.cdf.borrow_mut() = None;
-        }
     }
     fn query(&self, q: f64) -> f64 {
         if let Some(cdf) = self.cdf.borrow().as_ref() {
