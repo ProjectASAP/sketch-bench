@@ -8,7 +8,16 @@
 #   2. profile run         (workload binary; either a user file or
 #                           the default 10M zipf, generated if missing)
 #   3. merge               (llvm-profdata merge)
-#   4. optimised build     (-Cprofile-use) → target/release/sketchlib
+#   4. optimised build     (-Cprofile-use) → target/release-pgo/sketchlib
+#
+# Output path note: stage 4 deliberately writes to target/release-pgo/
+# rather than target/release/. cargo owns target/release/, so any later
+# `cargo build --release -p sketch-cli` (without --target) silently
+# overwrites the PGO binary with a fresh non-PGO build, and downstream
+# scripts then run ~30–60 % slower with no visible signal. Keeping the
+# PGO artefact in a path cargo never touches makes that footgun
+# impossible. scripts/run_throughput_fast.sh prefers the PGO binary and
+# falls back to target/release/ if it's missing.
 #
 # Usage:
 #   scripts/build_pgo.sh                                 # default workload
@@ -123,11 +132,13 @@ RUSTFLAGS="-C target-cpu=native -Cprofile-use=${PROFDATA_OUT}" \
     cargo build --release -p sketch-cli \
         --target "${HOST_TRIPLE}" >&2
 
-# Copy into the canonical target/release/ so scripts that look there
-# (run_throughput_fast.sh, downstream tooling) pick up the PGO binary
-# without needing to know about the --target subdir.
+# Copy into target/release-pgo/ — a path cargo never writes to, so a
+# later `cargo build --release` can't silently clobber the PGO binary.
+# scripts/run_throughput_fast.sh prefers this path.
+PGO_BIN_DIR="${REPO_ROOT}/target/release-pgo"
+mkdir -p "${PGO_BIN_DIR}"
 cp "${REPO_ROOT}/target/${HOST_TRIPLE}/release/sketchlib" \
-   "${REPO_ROOT}/target/release/sketchlib"
+   "${PGO_BIN_DIR}/sketchlib"
 
-size_bytes="$(stat -c %s "${REPO_ROOT}/target/release/sketchlib")"
-echo "# done: target/release/sketchlib (${size_bytes} bytes)" >&2
+size_bytes="$(stat -c %s "${PGO_BIN_DIR}/sketchlib")"
+echo "# done: target/release-pgo/sketchlib (${size_bytes} bytes)" >&2

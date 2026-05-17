@@ -47,7 +47,7 @@ user runs the 4 stages on their own machine. The wrapper script
 
 ```bash
 rustup component add llvm-tools-preview       # one-time
-scripts/build_pgo.sh                          # → target/release/sketchlib
+scripts/build_pgo.sh                          # → target/release-pgo/sketchlib
 ```
 
 The default profile workload is `input/benchmark_data_10m_int64_zipf_s11_k100000.bin`,
@@ -137,14 +137,21 @@ RUSTFLAGS="-C target-cpu=native -Cprofile-use=$(pwd)/target/pgo-merged.profdata"
   cargo build --release -p sketch-cli \
     --target x86_64-unknown-linux-gnu
 
+mkdir -p target/release-pgo
 cp target/x86_64-unknown-linux-gnu/release/sketchlib \
-   target/release/sketchlib
+   target/release-pgo/sketchlib
 ```
 
-The copy step puts the PGO binary where `scripts/run_throughput_fast.sh`
-and the rest of the repo expect it. Without `--target`, the
-`-Cprofile-use` build is skipped for host-only artefacts and you'd get
-a non-PGO binary.
+The copy step lands the PGO binary at `target/release-pgo/sketchlib`
+— a path cargo never writes to. `scripts/run_throughput_fast.sh`
+prefers this path and only falls back to `target/release/sketchlib`
+(with a warning) if it's missing. Using `target/release/sketchlib`
+directly would work, but any later `cargo build --release` would
+silently overwrite it with a non-PGO build, and benchmark numbers
+would drop ~30–60 % with no visible signal.
+
+Without `--target`, the `-Cprofile-use` build is skipped for
+host-only artefacts and you'd get a non-PGO binary.
 
 ## Measured impact
 

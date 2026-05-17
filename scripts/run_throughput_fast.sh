@@ -57,10 +57,23 @@ config_for() {
     esac
 }
 
-BIN_PATH="${REPO_ROOT}/target/release/sketchlib"
-if [[ ! -x "${BIN_PATH}" ]]; then
-    echo "building sketchlib (release)..." >&2
-    (cd "${REPO_ROOT}" && cargo build --release -p sketch-cli >&2)
+# Prefer the PGO binary in target/release-pgo/ (produced by
+# scripts/build_pgo.sh). Fall back to the plain target/release/ build
+# — building it if absent — and warn loudly, since non-PGO is ~30–60 %
+# slower on the FixedMatrix/FastPath hot loops and silent fallback
+# would corrupt benchmark numbers.
+PGO_BIN_PATH="${REPO_ROOT}/target/release-pgo/sketchlib"
+PLAIN_BIN_PATH="${REPO_ROOT}/target/release/sketchlib"
+if [[ -x "${PGO_BIN_PATH}" ]]; then
+    BIN_PATH="${PGO_BIN_PATH}"
+else
+    BIN_PATH="${PLAIN_BIN_PATH}"
+    if [[ ! -x "${BIN_PATH}" ]]; then
+        echo "building sketchlib (release, non-PGO)..." >&2
+        (cd "${REPO_ROOT}" && cargo build --release -p sketch-cli >&2)
+    fi
+    echo "warn: ${PGO_BIN_PATH} not found; running non-PGO ${BIN_PATH}." >&2
+    echo "      run scripts/build_pgo.sh first for full throughput." >&2
 fi
 
 # --- environment lock-down ---
