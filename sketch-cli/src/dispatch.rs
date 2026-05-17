@@ -50,17 +50,6 @@ pub struct AccuracyCfg {
     pub record_query_calls: bool,
 }
 
-impl AccuracyCfg {
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            max_probes: 0,
-            min_true_count: 0,
-            record_query_calls: false,
-        }
-    }
-}
-
 /// Which comparator a family supports. Used for stderr
 /// diagnostics when `--accuracy` is on but the family has no
 /// viable GT.
