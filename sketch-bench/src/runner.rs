@@ -7,9 +7,9 @@
 use std::time::{Duration, Instant};
 
 /// Burn CPU on the current core so the cpufreq governor ramps to max turbo
-/// before timing starts. Mirrors throughput-bench/src/bench_common.rs::warmup_cpu.
-/// External shell warmups don't work reliably because the governor can drop
-/// frequency during the bench process's exec/startup window.
+/// before timing starts. External shell warmups don't work reliably because
+/// the governor can drop frequency during the bench process's exec/startup
+/// window.
 ///
 /// Duration is read from `BENCH_WARMUP_SECS` (default 10s). Set to 0 to skip.
 fn warmup_cpu_from_env() {
@@ -105,15 +105,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // Throughput-only pass (no secondary CPU/MEMORY bits) takes a
             // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
             // finalize_for_query, memory_bytes, and Welford-via-aggregate
-            // — just times the hot loop, matches throughput-bench's
-            // run_benchmark_i64.
+            // — just times the hot loop.
             //
             // Hot loop calls `sketch.update(it)` through the Sketch trait;
             // monomorphization + #[inline] on the impl gets the wrapper
             // body inlined into the loop. Callers who want a fully
-            // monomorphized closure-driven hot loop (like
-            // throughput-bench's `Insert: FnMut(&mut S, Item)`) can call
-            // `run_throughput_pass_with` directly.
+            // monomorphized closure-driven hot loop can call
+            // `run_throughput_pass_with` directly with a closure defined
+            // in their own crate.
             if pass_mask == MetricsMask::THROUGHPUT {
                 reports.push(self.run_throughput_pass(&mut factory, pass_cfg));
             } else {
@@ -145,10 +144,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         self.run_throughput_pass_with(&mut factory, insert, pass_cfg)
     }
 
-    /// Throughput-only fast path. Mirrors
-    /// `throughput-bench/src/bench_common.rs::run_benchmark_i64`:
-    /// fresh sketch per trial, time the insert loop with
-    /// `Instant::now`, no other instrumentation.
+    /// Throughput-only fast path: fresh sketch per trial, time the
+    /// insert loop with `Instant::now`, no other instrumentation.
     fn run_throughput_pass<S, F>(
         &self,
         factory: &mut F,
@@ -170,8 +167,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     }
 
     /// Throughput-only fast path with an explicit insert closure.
-    /// Mirrors throughput-bench's `run_benchmark_i64` signature so
-    /// the closure body monomorphizes at the *caller's* crate,
+    /// The closure body monomorphizes at the *caller's* crate,
     /// giving LLVM a direct shot at folding the wrapper's update
     /// into the hot loop.
     #[inline(always)]

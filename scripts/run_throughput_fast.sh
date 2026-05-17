@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
 # Run sketchlib's slim throughput path on the canonical four
-# families (kll/cms/countsketch/hll) with the exact configs the
-# throughput-bench binaries use:
+# families (kll/cms/countsketch/hll):
 #
 #   kll          k=200
 #   hll          lg_k=14
 #   cms          rows=5 cols=2048   (impl: lib-fixedmatrix-fast)
 #   countsketch  rows=5 cols=2048   (impl: lib-fixedmatrix-fast)
 #
-# Wraps the run in the same CPU pin / governor / pre-warm logic as
-# throughput-bench/run.sh — single core, performance governor, an
-# optional no-turbo lock, and a 2s busy-loop pre-warm so schedutil
-# pins the core at max frequency before the bench fires.
+# Wraps the run in CPU pin / governor / pre-warm logic — single
+# core, performance governor, an optional no-turbo lock, and a 2s
+# busy-loop pre-warm so schedutil pins the core at max frequency
+# before the bench fires.
 #
 # Usage:
 #   scripts/run_throughput_fast.sh                       # all four
 #   scripts/run_throughput_fast.sh kll cms               # subset
 #   PIN_CORE=2 LOCK_FREQUENCY=1 scripts/run_throughput_fast.sh
 #
-# Env knobs (defaults match throughput-bench/run.sh):
+# Env knobs:
 #   PIN_CORE         core to taskset to              (default 2)
 #   LOCK_FREQUENCY   1 = `cpupower -g performance`   (default 0)
 #   DISABLE_TURBO    1 = echo 1 > intel_pstate/no_turbo (default 0)
@@ -47,8 +46,7 @@ if [[ ${#FAMILIES[@]} -eq 0 ]]; then
     FAMILIES=(kll cms countsketch hll)
 fi
 
-# Canonical (family, impl, --config) tuples mirroring
-# throughput-bench/src/bench_common.rs constants.
+# Canonical (family, impl, --config) tuples.
 config_for() {
     case "$1" in
         kll)          echo "lib|k=200" ;;
@@ -65,7 +63,7 @@ if [[ ! -x "${BIN_PATH}" ]]; then
     (cd "${REPO_ROOT}" && cargo build --release -p sketch-cli >&2)
 fi
 
-# --- environment lock-down (mirrors throughput-bench/run.sh) ---
+# --- environment lock-down ---
 restore=()
 cleanup() {
     for cmd in "${restore[@]}"; do
@@ -115,8 +113,7 @@ run_one() {
     local params="${cfg#*|}"
 
     echo "# === ${family} / ${impl} / ${params} ===" >&2
-    # Bash-quoted exec so the pre-warm busy-loop runs on the pinned
-    # core (same trick as throughput-bench/run.sh).
+    # Bash-quoted exec so the pre-warm busy-loop runs on the pinned core.
     taskset -c "${PIN_CORE}" bash -c "
 end=\$((SECONDS+${WARMUP_SECONDS}))
 while [ \$SECONDS -lt \$end ]; do :; done

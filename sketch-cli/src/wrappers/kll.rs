@@ -61,7 +61,7 @@ impl Sketch for KllOxide {
 // `BenchRunner` only ever calls `finalize_for_query` once, after
 // the insert phase has ended, and never re-inserts afterwards. A
 // per-update RefCell::borrow() check is a measurable cost on a
-// hot 10ns/op insert path; we drop it to match throughput-bench.
+// hot 10ns/op insert path; we drop it on the throughput path.
 pub struct KllLib {
     inner: asap_sketchlib::KLL<i64>,
     k: u32,

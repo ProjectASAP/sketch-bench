@@ -11,7 +11,6 @@ members = [
     "sketch-bench",
     "sketch-runtime",
     "sketch-cli",
-    "sketch-cli-throughput",
 ]
 
 [workspace.package]
@@ -71,7 +70,9 @@ opt-level = 3
 # branches and no BMI2 rorx hash) instead of specializing them.
 # thin LTO lets each crate finalize its own specializations before
 # cross-crate inlining, so the FixedMatrix hot path stays unrolled.
-# throughput-bench keeps its own fat-LTO profile (separate workspace).
+# (For the full recovery of that specialization in the monolithic
+# binary, see docs/PGO.md — PGO replaces LLVM's module-size
+# heuristic with measured profile data.)
 lto = "thin"
 codegen-units = 1
 panic = "abort"

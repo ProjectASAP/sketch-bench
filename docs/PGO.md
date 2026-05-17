@@ -37,6 +37,27 @@ ships with the `llvm-tools-preview` rustup component.
 PGO does not change source, does not change algorithms, and does not
 require code annotations. It just lets the cost model stop guessing.
 
+## TL;DR for users on another machine
+
+PGO output is hardware- and toolchain-specific (`-C target-cpu=native`
+bakes in the build host's CPU features; rustc version is coupled to
+the profile format). So you can't ship a prebuilt PGO binary — every
+user runs the 4 stages on their own machine. The wrapper script
+`scripts/build_pgo.sh` does the whole thing end-to-end:
+
+```bash
+rustup component add llvm-tools-preview       # one-time
+scripts/build_pgo.sh                          # → target/release/sketchlib
+```
+
+The default profile workload is `input/benchmark_data_10m_int64_zipf_s11_k100000.bin`,
+which is generated on the fly if missing (needs `g++`). Pass a custom
+workload path as the first argument if you want to profile a
+different distribution. All 4 throughput families are exercised
+during stage 2, so the profile covers every hot path the CLI has.
+
+The rest of this doc spells out what the script does and why.
+
 ## Prerequisites
 
 ```bash
@@ -77,26 +98,30 @@ instrumentation overhead).
 
 ### Stage 2 — profile run
 
-Run any representative throughput workload. The convenience subcommand
-`sketchlib diag-cs` runs the CountSketch `FixedMatrix + FastPath` hot
-loop directly; it's the minimum sufficient workload to specialise the
-single function that matters most:
+Run any representative throughput workload through the instrumented
+binary. The convenience script `scripts/build_pgo.sh` drives all
+four families via `bench --metrics throughput`:
 
 ```bash
-BENCH_WARMUP_SECS=10 taskset -c 2 \
-  ./target/x86_64-unknown-linux-gnu/release/sketchlib diag-cs \
-  >/dev/null
+INSTRUMENTED=./target/x86_64-unknown-linux-gnu/release/sketchlib
+WL=$(pwd)/input/benchmark_data_10m_int64_zipf_s11_k100000.bin
+for tuple in \
+    "kll|lib|k=200" \
+    "hll|lib|lg_k=14" \
+    "cms|lib-fixedmatrix-fast|rows=5 cols=2048" \
+    "countsketch|lib-fixedmatrix-fast|rows=5 cols=2048" ; do
+    f="${tuple%%|*}" rest="${tuple#*|}"
+    i="${rest%%|*}" c="${rest#*|}"
+    taskset -c 2 "$INSTRUMENTED" bench \
+        --sketch "$f" --impl "$i" --metrics throughput \
+        --config "$c" --runs 3 --warmup-runs 1 --input "$WL" >/dev/null
+done
 ```
 
-For a profile that also covers KLL / HLL / CMS, run the full
-throughput sweep instead:
-
-```bash
-PIN_CORE=2 scripts/run_throughput_fast.sh >/dev/null
-```
-
-Either run produces one `default_<hash>_<pid>.profraw` per process exit
-inside `$PGO_DIR`.
+If you only care about a single family, you can run just that one
+tuple — but only that family's hot loop benefits from PGO; the
+others fall back to the LLVM cost-model defaults. Each invocation
+produces one `default_<hash>_<pid>.profraw` inside `$PGO_DIR`.
 
 ### Stage 3 — merge
 
@@ -128,21 +153,26 @@ Hardware: CloudLab node, single core (`taskset -c 2`), governor on
 `input/benchmark_data_1m_int64.bin`, 1 M `i64`. 10 measured trials
 after 2 discarded warmup trials, 10 s `BENCH_WARMUP_SECS`.
 
-### CountSketch `FixedMatrix + FastPath` 5 × 2048 (`diag-cs`)
+### CountSketch `FixedMatrix + FastPath` 5 × 2048
 
-| build                                | binary  | total `rorx` | hot loop                          | time / 1M | items / s |
-| ------------------------------------ | ------- | ------------ | --------------------------------- | --------- | --------- |
-| baseline (thin LTO)                  | 28 MB   | 4 191        | generic, `cmp $1/$3/$5,%rsi` bail | ~14.0 ms  | ~71 M     |
-| inline / unroll threshold bump       | 41 MB   | 6 333        | same bailout                      | ~14.0 ms  | ~71 M     |
-| **PGO**                              | **24 MB** | **2 665**  | **`rorx $0x20,...$0xf,...$0x28`, unrolled** | **~7.78 ms** | **~129 M** |
-| `throughput-bench` reference (small) | 386 KB  | —            | same unrolled `rorx`              | ~8.00 ms  | ~125 M    |
-| `sketch-cli-throughput` (small)      | 437 KB  | —            | same unrolled `rorx`              | ~8.03 ms  | ~125 M    |
+| build                                | binary    | total `rorx` | hot loop                                     | time / 1M  | items / s |
+| ------------------------------------ | --------- | ------------ | -------------------------------------------- | ---------- | --------- |
+| baseline (thin LTO)                  | 28 MB     | 4 191        | generic, `cmp $1/$3/$5,%rsi` bail            | ~14.0 ms   | ~71 M     |
+| inline / unroll threshold bump       | 41 MB     | 6 333        | same bailout                                 | ~14.0 ms   | ~71 M     |
+| **PGO**                              | **24 MB** | **2 665**    | **`rorx $0x20,...$0xf,...$0x28`, unrolled**  | **~7.78 ms** | **~129 M** |
 
-The PGO binary runs the same monolithic `sketchlib` we already ship,
-but is now **slightly faster than the standalone reference binary** on
-the same hot loop, and ~45 % faster than the non-PGO build. The binary
-is also ~14 % smaller than the non-PGO build because cold code paths
-get outlined.
+Historical reference: before this PR, two standalone
+single-binary harnesses (`throughput-bench/` and
+`sketch-cli-throughput/`) measured this same loop at ~8.0 ms /
+~125 M items/s — those crates were the small-link-unit baseline
+that proved the gap was binary-level. The PGO `sketchlib` now
+matches that number inside the monolithic 24 MB binary, so both
+crates have been removed.
+
+The PGO binary runs the same monolithic `sketchlib` we already ship
+and is ~45 % faster than the non-PGO build on the CountSketch hot
+loop. The binary is also ~14 % smaller than the non-PGO build
+because cold code paths get outlined.
 
 ### Full `sketchlib bench --metrics throughput` sweep (PGO build)
 
@@ -171,8 +201,8 @@ Documented here so we don't retry these blind in the future.
   still got the dynamic-rows fallback. The specialization choice is
   not gated by inline / unroll cost-model thresholds; it is gated by
   whatever module-size heuristic PGO bypasses.
-- **`#[inline(never)]` on `run_diag_cs`** — isolated the symbol cleanly
-  for objdump, did not change runtime.
+- **`#[inline(never)]` on an isolated hot-loop wrapper fn** — pinned
+  the symbol cleanly for objdump, did not change runtime.
 - **`#[inline(always)]` on all wrapper `update` impls** — necessary for
   cross-crate inlining but does not reach the underlying
   `Count::insert` specialization decision.
@@ -182,12 +212,12 @@ Documented here so we don't retry these blind in the future.
 - **PGO is not in CI yet.** The default `cargo build --release` is the
   non-PGO 28 MB build; treat the PGO recipe above as a manual release
   step until / unless we automate it.
-- **The profile is workload-specific.** A profile collected from
-  `diag-cs` (CountSketch only) is enough to specialise that single hot
-  function, but for the full four-family throughput sweep you want a
-  profile run that exercises all four. The script
-  `scripts/run_throughput_fast.sh` is a self-contained workload for
-  that.
+- **The profile is workload-specific.** A profile collected from a
+  single family (e.g. just CountSketch) is enough to specialise that
+  family's hot loop, but other families fall back to LLVM's cost-model
+  defaults. `scripts/build_pgo.sh` exercises all four families at
+  stage 2 so the resulting profile covers every throughput hot loop
+  the CLI has.
 - **Profile staleness.** If you upgrade `asap_sketchlib`, change
   workspace layout, or bump rustc, the profile may no longer match the
   current IR. Regenerate it — a stale profile silently degrades to
