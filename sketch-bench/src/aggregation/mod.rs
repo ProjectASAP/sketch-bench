@@ -26,19 +26,20 @@ use welford::Welford;
 pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let n = runs.len();
 
-    let throughput = if mask.contains(MetricsMask::THROUGHPUT) {
+    let (throughput, throughput_samples) = if mask.contains(MetricsMask::THROUGHPUT) {
         let mut w = Welford::new();
+        let mut samples: Vec<f64> = Vec::with_capacity(runs.len());
         for r in runs {
             if r.insert_wall_time_ns > 0 {
-                w.push(ItemsPerSec::compute(
-                    r.items_inserted,
-                    r.insert_wall_time_ns,
-                ));
+                let v = ItemsPerSec::compute(r.items_inserted, r.insert_wall_time_ns);
+                w.push(v);
+                samples.push(v);
             }
         }
-        maybe_runstats(w)
+        let s = if samples.is_empty() { None } else { Some(samples) };
+        (maybe_runstats(w), s)
     } else {
-        None
+        (None, None)
     };
 
     let query_throughput = if mask.contains(MetricsMask::ACCURACY) {
@@ -130,6 +131,7 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
 
     BenchSection {
         throughput_items_per_sec: throughput,
+        throughput_samples,
         query_throughput_items_per_sec: query_throughput,
         latency_ns,
         cpu_time_ms,

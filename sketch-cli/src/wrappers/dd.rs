@@ -23,7 +23,7 @@ impl Sketch for DdLib {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.add(&(*v as f64));
     }

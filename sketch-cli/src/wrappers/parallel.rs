@@ -46,7 +46,7 @@ impl Sketch for ParallelCmsFastPath {
     type Query = i64;
     type Answer = u64;
 
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -87,7 +87,7 @@ impl Sketch for ParallelCsFastPath {
     type Query = i64;
     type Answer = u64;
 
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -126,7 +126,7 @@ impl Sketch for ParallelHllFastPath {
     type Query = ();
     type Answer = f64;
 
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }

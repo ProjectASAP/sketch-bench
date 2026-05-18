@@ -41,6 +41,7 @@ impl Sketch for PolarsCardinality {
     type Query = ();
     type Answer = f64;
 
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -84,6 +85,7 @@ struct PolarsFrequencyCore {
 }
 
 impl PolarsFrequencyCore {
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -134,6 +136,7 @@ impl Sketch for PolarsFrequencyCms {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
@@ -162,6 +165,7 @@ impl Sketch for PolarsFrequencyCs {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
@@ -194,6 +198,7 @@ impl Default for PolarsQuantileCore {
 }
 
 impl PolarsQuantileCore {
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -245,6 +250,7 @@ impl Sketch for PolarsQuantileKll {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
@@ -273,6 +279,7 @@ impl Sketch for PolarsQuantileDd {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
