@@ -55,7 +55,7 @@ hashbrown = "0.17"
 # Sketch impls used by the 21 wrappers.
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"
-asap_sketchlib = { version = "0.2.1", features = ["experimental"] }
+asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 
 # Internal workspace crates.
 sketch-core = { path = "sketch-core" }
@@ -64,15 +64,14 @@ sketch-runtime = { path = "sketch-runtime" }
 
 [profile.release]
 opt-level = 3
-# thin LTO instead of fat: in the 27MB sketch-cli binary, fat LTO
-# was making LLVM keep generic dynamic-rows versions of
-# asap_sketchlib's FixedMatrix insert (with row-count bailout
-# branches and no BMI2 rorx hash) instead of specializing them.
-# thin LTO lets each crate finalize its own specializations before
-# cross-crate inlining, so the FixedMatrix hot path stays unrolled.
-# (For the full recovery of that specialization in the monolithic
-# binary, see docs/PGO.md — PGO replaces LLVM's module-size
-# heuristic with measured profile data.)
+# thin LTO + codegen-units=1 keeps each crate's specializations
+# intact across the cross-crate inline boundary. Combined with
+# asap_sketchlib >= 0.2.2 (which marks its fast-path matrix hash
+# entry #[inline(always)] so rows/cols literals propagate into the
+# Packed64 fold), this is enough to keep the FixedMatrix FastPath
+# hot loop fully unrolled in this monolithic binary without PGO.
+# Historical PGO machinery is archived under scripts/archive/
+# and docs/archive/PGO.md.
 lto = "thin"
 codegen-units = 1
 panic = "abort"

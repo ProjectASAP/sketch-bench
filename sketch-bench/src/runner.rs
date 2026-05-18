@@ -204,9 +204,12 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
 
         let mut w = Welford::new();
+        let mut samples: Vec<f64> = Vec::with_capacity(ns_list.len());
         for &ns in &ns_list {
             if ns > 0 {
-                w.push(ItemsPerSec::compute(n_items, ns));
+                let v = ItemsPerSec::compute(n_items, ns);
+                w.push(v);
+                samples.push(v);
             }
         }
         let throughput = if w.n() == 0 {
@@ -220,9 +223,11 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 n: w.n(),
             })
         };
+        let throughput_samples = if samples.is_empty() { None } else { Some(samples) };
 
         let bench = BenchSection {
             throughput_items_per_sec: throughput,
+            throughput_samples,
             query_throughput_items_per_sec: None,
             latency_ns: None,
             cpu_time_ms: None,

@@ -30,7 +30,7 @@ impl Sketch for ExactFrequencyCs {
     type Item = i64;
     type Query = i64;
     type Answer = u64;
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
@@ -61,7 +61,7 @@ impl Sketch for ExactQuantileDd {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }

@@ -37,6 +37,7 @@ impl Sketch for KllOxide {
     type Item = i64;
     type Query = f64;
     type Answer = f64;
+    #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.get_mut().update(*v as f64);
     }

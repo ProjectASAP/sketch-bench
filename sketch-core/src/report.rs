@@ -83,6 +83,11 @@ pub enum Source {
 pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
+    /// Per-run throughput samples (items/sec, one entry per measured run).
+    /// Kept alongside the aggregate so consumers can render box plots /
+    /// CDFs without re-running the bench.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput_samples: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_throughput_items_per_sec: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]

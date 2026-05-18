@@ -39,7 +39,7 @@ impl Sketch for ElasticLib {
     type Item = String;
     type Query = String;
     type Answer = u64;
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &String) {
         self.inner.get_mut().insert(v.clone());
     }
@@ -73,7 +73,7 @@ impl Sketch for ElasticOxide {
     type Item = Vec<u8>;
     type Query = Vec<u8>;
     type Answer = u64;
-    #[inline]
+    #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1);
     }
