@@ -180,9 +180,11 @@ impl Sketch for PolarsFrequencyCs {
     }
 }
 
-/// Polars-backed quantile: pre-compute the 101-point quantile
-/// grid in one `select` so subsequent `query(p)` is an array
-/// lookup. Shared by `kll/polars` and `dd/polars`.
+/// Polars-backed quantile baseline. The heavy work (one polars
+/// sort + 101-point quantile grid build) lives in
+/// `finalize_for_query`, which the runner now times separately
+/// into `RunMetrics::finalize_wall_time_ns`. Insert remains pure
+/// `Vec::push`; per-call `query()` is an array lookup.
 struct PolarsQuantileCore {
     buf: Vec<i64>,
     quantiles: [f64; 101],

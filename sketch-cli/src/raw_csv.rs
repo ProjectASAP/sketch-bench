@@ -330,11 +330,11 @@ fn insert_header(family: &str) -> String {
     let params = param_header(family);
     if params.is_empty() {
         format!(
-            "implementation,language,{lead},total_items,total_nanoseconds,throughput_items_per_sec"
+            "implementation,language,{lead},total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
         )
     } else {
         format!(
-            "implementation,language,{lead},{params},total_items,total_nanoseconds,throughput_items_per_sec"
+            "implementation,language,{lead},{params},total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
         )
     }
 }
@@ -411,8 +411,9 @@ fn format_insert_row(
     } else {
         format!(",{params_str}")
     };
+    let finalize_ns = run.finalize_wall_time_ns;
     format!(
-        "{legacy_impl},rust,{lead}{middle},{total_items},{total_ns},{throughput:.6}"
+        "{legacy_impl},rust,{lead}{middle},{total_items},{total_ns},{throughput:.6},{finalize_ns}"
     )
 }
 
@@ -470,7 +471,7 @@ mod tests {
     fn hll_header_matches_legacy() {
         assert_eq!(
             insert_header("hll"),
-            "implementation,language,run,lg_k,registers,total_items,total_nanoseconds,throughput_items_per_sec"
+            "implementation,language,run,lg_k,registers,total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
         );
     }
 
@@ -478,7 +479,7 @@ mod tests {
     fn cms_header_uses_seed_label() {
         assert_eq!(
             insert_header("cms"),
-            "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec"
+            "implementation,language,seed,rows,cols,total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
         );
     }
 

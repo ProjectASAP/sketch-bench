@@ -115,3 +115,38 @@ impl Sketch for HllLib {
         1usize << 14
     }
 }
+
+// `asap_sketchlib::HyperLogLogHIP` (= HyperLogLogHIPP14) maintains the
+// cardinality estimate incrementally on the insert path — every register
+// upgrade pays a handful of fp ops to update the running `est` /
+// `kxq0` / `kxq1` fields. Query is then O(1) (returns the cached `est`),
+// which closes the gap to apache DataSketches' `get_estimate`. Use this
+// variant when query throughput matters; the Classic variant above is
+// slightly faster to insert but pays O(m) per query.
+pub struct HllLibHip {
+    inner: asap_sketchlib::HyperLogLogHIP,
+}
+
+impl HllLibHip {
+    pub fn new(_p: &HllParams) -> Self {
+        Self {
+            inner: asap_sketchlib::HyperLogLogHIP::new(),
+        }
+    }
+}
+
+impl Sketch for HllLibHip {
+    type Item = i64;
+    type Query = ();
+    type Answer = f64;
+    #[inline(always)]
+    fn update(&mut self, v: &i64) {
+        self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
+    }
+    fn query(&self, _: ()) -> f64 {
+        self.inner.estimate() as f64
+    }
+    fn memory_bytes(&self) -> usize {
+        1usize << 14
+    }
+}

@@ -30,7 +30,9 @@ namespace {
         "  --report PATH           write JSONL to PATH (default '-' = stdout)\n"
         "  --legacy-csv PATH       additionally write per-run rows in the\n"
         "                          legacy long-format CSV consumed by\n"
-        "                          visualization/plots/*.py\n";
+        "                          visualization/plots/*.py\n"
+        "  --query-csv PATH        write per-run query-throughput rows\n"
+        "                          (only honored by binaries with a query API)\n";
     std::exit(2);
 }
 
@@ -74,6 +76,7 @@ CliArgs parse_cli(int argc, char** argv) {
         else if (a == "--with-accuracy") out.with_accuracy = true;
         else if (a == "--report")        out.report_path = need(i);
         else if (a == "--legacy-csv")    out.legacy_csv_path = need(i);
+        else if (a == "--query-csv")     out.query_csv_path = need(i);
         else if (a == "-h" || a == "--help") usage(argv0);
         else                             usage(argv0, ("unknown arg: " + a).c_str());
     }

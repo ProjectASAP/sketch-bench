@@ -417,7 +417,10 @@ where
     }
     std::hint::black_box(&sketch);
     let insert_wall_time_ns = insert_wall.elapsed_ns();
+    let finalize_wall = WallClock::start();
     sketch.finalize_for_query();
+    std::hint::black_box(&sketch);
+    let finalize_wall_time_ns = finalize_wall.elapsed_ns();
 
     #[cfg(feature = "heap-track")]
     let heap_after = crate::metrics::heap_track::snapshot();
@@ -444,6 +447,7 @@ where
         queries_executed: 0,
         wall_time_ns,
         insert_wall_time_ns,
+        finalize_wall_time_ns,
         query_wall_time_ns: 0,
         cpu_user_ns,
         cpu_sys_ns,

@@ -9,10 +9,13 @@
 // Depth (rows) is fixed at 5 (apache's standard CMS preset); legacy used
 // the same value across both width variants.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <unordered_set>
+#include <vector>
 
 #include "common/accuracy.hpp"
 #include "common/cli.hpp"
@@ -96,6 +99,52 @@ int main(int argc, char** argv) {
             csv << "cpp_datasketches_cms,cpp," << cms_seed << ','
                 << static_cast<unsigned>(cms_rows) << ',' << cms_cols << ','
                 << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
+    }
+
+    // Query-throughput pass: build the sketch once over the measured prefix,
+    // then time get_estimate() over the distinct keys for each run. Matches
+    // the Rust FrequencyGT comparator semantics (one probe per distinct key,
+    // capped at 100k).
+    if (args.query_csv_path) {
+        std::ofstream qcsv(*args.query_csv_path);
+        if (!qcsv) { std::cerr << "cpp-bench: cannot write " << *args.query_csv_path << '\n'; return 2; }
+        const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
+
+        CmsSketch sketch(cms_rows, cms_cols, cms_seed);
+        for (std::size_t i = 0; i < measure_n; ++i) sketch.update(wl.items[i]);
+
+        std::unordered_set<std::int64_t> seen;
+        seen.reserve(measure_n);
+        std::vector<std::int64_t> probes;
+        const std::size_t probe_cap = 100000;
+        for (std::size_t i = 0; i < measure_n && probes.size() < probe_cap; ++i) {
+            if (seen.insert(wl.items[i]).second) probes.push_back(wl.items[i]);
+        }
+        const std::size_t total_queries = probes.size();
+
+        qcsv << "implementation,language,seed,rows,cols,total_items,"
+                "total_queries,total_nanoseconds,throughput_queries_per_sec\n";
+        // Warm-up pass (not recorded).
+        {
+            std::uint64_t sink = 0;
+            for (auto k : probes) sink += sketch.get_estimate(k);
+            asm volatile("" : : "r"(sink) : "memory");
+        }
+        for (std::size_t run = 0; run < cfg.runs; ++run) {
+            std::uint64_t sink = 0;
+            auto t0 = std::chrono::steady_clock::now();
+            for (auto k : probes) sink += sketch.get_estimate(k);
+            auto t1 = std::chrono::steady_clock::now();
+            asm volatile("" : : "r"(sink) : "memory");
+            const long long total_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            const double tput = total_ns > 0
+                ? static_cast<double>(total_queries) * 1e9 / static_cast<double>(total_ns)
+                : 0.0;
+            qcsv << "cpp_datasketches_cms,cpp," << cms_seed << ','
+                 << static_cast<unsigned>(cms_rows) << ',' << cms_cols << ','
+                 << measure_n << ',' << total_queries << ',' << total_ns << ',' << tput << '\n';
         }
     }
     return 0;

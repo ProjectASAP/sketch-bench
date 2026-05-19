@@ -7,6 +7,7 @@
 // for non-customised families, so the public API (`hll_sketch::update`,
 // `get_estimate`, `HLL_8`) is unchanged.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -88,6 +89,42 @@ int main(int argc, char** argv) {
             csv << "cpp_datasketches_hll,cpp," << (i + 1) << ','
                 << static_cast<int>(lg_k) << ',' << registers << ','
                 << total_items << ',' << total_ns << ',' << tput << '\n';
+        }
+    }
+
+    // Query-throughput pass: HLL has a single nullary query (get_estimate).
+    // Mirror the Rust CardinalityGT comparator (4096 repeats per run).
+    if (args.query_csv_path) {
+        std::ofstream qcsv(*args.query_csv_path);
+        if (!qcsv) { std::cerr << "cpp-bench: cannot write " << *args.query_csv_path << '\n'; return 2; }
+        const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
+        const std::size_t registers = std::size_t{1} << lg_k;
+
+        HllSketch sketch(lg_k, datasketches::HLL_8);
+        for (std::size_t i = 0; i < measure_n; ++i) sketch.update(wl.items[i]);
+
+        const std::size_t repeats = 4096;
+        qcsv << "implementation,language,run,lg_k,registers,total_items,"
+                "total_queries,total_nanoseconds,throughput_queries_per_sec\n";
+        {
+            double sink = 0.0;
+            for (std::size_t i = 0; i < repeats; ++i) sink += sketch.get_estimate();
+            asm volatile("" : : "r"(sink) : "memory");
+        }
+        for (std::size_t run = 0; run < cfg.runs; ++run) {
+            double sink = 0.0;
+            auto t0 = std::chrono::steady_clock::now();
+            for (std::size_t i = 0; i < repeats; ++i) sink += sketch.get_estimate();
+            auto t1 = std::chrono::steady_clock::now();
+            asm volatile("" : : "r"(sink) : "memory");
+            const long long total_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            const double tput = total_ns > 0
+                ? static_cast<double>(repeats) * 1e9 / static_cast<double>(total_ns)
+                : 0.0;
+            qcsv << "cpp_datasketches_hll,cpp," << (run + 1) << ','
+                 << static_cast<int>(lg_k) << ',' << registers << ','
+                 << measure_n << ',' << repeats << ',' << total_ns << ',' << tput << '\n';
         }
     }
     return 0;

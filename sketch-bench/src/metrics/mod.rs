@@ -27,6 +27,12 @@ pub struct RunMetrics {
     pub queries_executed: u64,
     pub wall_time_ns: u64,
     pub insert_wall_time_ns: u64,
+    /// Wall time for `Sketch::finalize_for_query()` — billed
+    /// separately from insert/query so deferred sketch-build cost
+    /// (e.g. polars sort + 101-quantile grid; asap_sketchlib KLL
+    /// CDF build) is visible without inflating either column.
+    /// Zero for sketches whose `finalize_for_query` is a no-op.
+    pub finalize_wall_time_ns: u64,
     pub query_wall_time_ns: u64,
     pub cpu_user_ns: Option<u64>,
     pub cpu_sys_ns: Option<u64>,
@@ -172,6 +178,11 @@ impl FullSink {
             queries_executed: self.queries_executed,
             wall_time_ns,
             insert_wall_time_ns,
+            // `FullSink` is used by the LATENCY pass which does not
+            // run finalize_for_query; the THROUGHPUT / ACCURACY
+            // passes time finalize in `run_once_clean` and patch
+            // this field directly on the returned RunMetrics.
+            finalize_wall_time_ns: 0,
             query_wall_time_ns,
             cpu_user_ns,
             cpu_sys_ns,

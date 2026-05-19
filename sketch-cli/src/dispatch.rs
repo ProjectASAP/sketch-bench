@@ -243,10 +243,18 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "lib",
-        description: "asap_sketchlib::HyperLogLogHIP (P14)",
+        description: "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_lib,
+    },
+    ImplEntry {
+        family: "hll",
+        impl_name: "lib-hip",
+        description: "asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate, slightly slower insert",
+        constraint: Constraint::Tunable,
+        accuracy_kind: AccuracyKind::Cardinality,
+        run: run_hll_lib_hip,
     },
     ImplEntry {
         family: "hll",
@@ -1103,6 +1111,7 @@ run_i64_card!(
     Hll
 );
 run_i64_card!(run_hll_lib, hll::HllLib, "hll", "lib", Hll);
+run_i64_card!(run_hll_lib_hip, hll::HllLibHip, "hll", "lib-hip", Hll);
 run_i64_card!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll);
 
 // -- KLL --

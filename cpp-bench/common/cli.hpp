@@ -39,6 +39,12 @@ struct CliArgs {
     // (one row per measurement run, columns vary per family). The v1
     // JSONL Record is still emitted to `report_path` independently.
     std::optional<std::string> legacy_csv_path;
+
+    // Optional sibling CSV with per-run query-throughput rows. Set by the
+    // script driver to capture query-phase numbers for the query boxplot.
+    // Schema parallels `legacy_csv_path` but uses
+    // total_queries / throughput_queries_per_sec.
+    std::optional<std::string> query_csv_path;
 };
 
 // Parse argv. Aborts (exit 2) with a usage message on bad input.
