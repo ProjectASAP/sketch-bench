@@ -32,6 +32,16 @@ if(NOT EXISTS "${INSERT_OPT_ROOT}")
         "Set INSERT_OPT_ROOT or place the repo at ~/Insert-Optimized-Data-Sketches.")
 endif()
 
+# ---------- Upstream Apache DataSketches (for families the Insert-Opt fork
+# does not customize, e.g. kll_sketch which exposes get_quantile). Only
+# binaries that opt in get these include paths.
+
+set(DATASKETCHES_UPSTREAM_ROOT "$ENV{DATASKETCHES_UPSTREAM_ROOT}" CACHE PATH
+    "Path to upstream apache/datasketches-cpp checkout")
+if(NOT DATASKETCHES_UPSTREAM_ROOT)
+    set(DATASKETCHES_UPSTREAM_ROOT "$ENV{HOME}/datasketches-cpp")
+endif()
+
 # ---------- Google Benchmark ----------
 #
 # Same pattern as cpp/CMakeLists.txt: prefer an installed copy or a

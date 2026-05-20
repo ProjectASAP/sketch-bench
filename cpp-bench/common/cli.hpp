@@ -45,6 +45,13 @@ struct CliArgs {
     // Schema parallels `legacy_csv_path` but uses
     // total_queries / throughput_queries_per_sec.
     std::optional<std::string> query_csv_path;
+
+    // Optional per-call query CSV: one row per individually timed query
+    // call (steady_clock pair around each `get_estimate` / `get_quantile`).
+    // Counterpart to the Rust comparators' `query_calls` per-call CSV; lets
+    // us compare like-for-like and quantify the timer-overhead component
+    // of the per-call number versus the tight-loop `query_csv_path` number.
+    std::optional<std::string> query_percall_csv_path;
 };
 
 // Parse argv. Aborts (exit 2) with a usage message on bad input.

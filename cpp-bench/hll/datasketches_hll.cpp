@@ -127,5 +127,39 @@ int main(int argc, char** argv) {
                  << measure_n << ',' << repeats << ',' << total_ns << ',' << tput << '\n';
         }
     }
+
+    // Per-call query CSV: mirror Rust comparator's `query_calls` shape so the
+    // two timing methodologies can be compared head-to-head. Each call is
+    // wrapped in its own steady_clock pair — the resulting nanoseconds
+    // include the ~25-40ns vDSO clock_gettime overhead.
+    if (args.query_percall_csv_path) {
+        std::ofstream pcsv(*args.query_percall_csv_path);
+        if (!pcsv) { std::cerr << "cpp-bench: cannot write " << *args.query_percall_csv_path << '\n'; return 2; }
+        const std::size_t measure_n = std::min(cfg.measure_items, wl.items.size());
+        const std::size_t registers = std::size_t{1} << lg_k;
+
+        HllSketch sketch(lg_k, datasketches::HLL_8);
+        for (std::size_t i = 0; i < measure_n; ++i) sketch.update(wl.items[i]);
+
+        const std::size_t calls_per_run = 10;
+        pcsv << "implementation,language,run,lg_k,registers,total_items,"
+                "call_index,nanoseconds,estimate\n";
+        // Warmup
+        { double sink = sketch.get_estimate(); asm volatile("" : : "r"(sink) : "memory"); }
+        for (std::size_t run = 0; run < cfg.runs; ++run) {
+            for (std::size_t i = 1; i <= calls_per_run; ++i) {
+                auto t0 = std::chrono::steady_clock::now();
+                double est = sketch.get_estimate();
+                auto t1 = std::chrono::steady_clock::now();
+                asm volatile("" : : "r"(est) : "memory");
+                const long long ns =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                pcsv << "cpp_datasketches_hll,cpp," << (run + 1) << ','
+                     << static_cast<int>(lg_k) << ',' << registers << ','
+                     << measure_n << ',' << i << ',' << ns << ','
+                     << static_cast<long long>(est) << '\n';
+            }
+        }
+    }
     return 0;
 }

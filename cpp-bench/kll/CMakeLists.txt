@@ -1,6 +1,20 @@
 add_executable(datasketches_kll datasketches_kll.cpp)
 target_link_libraries(datasketches_kll PRIVATE cpp_bench_common)
 
+# Upstream Apache DataSketches kll_sketch (has get_quantile). Headers live
+# outside INSERT_OPT_ROOT — pull them in BEFORE cpp_bench_common's interface
+# includes so anything that exists in both trees resolves to the upstream copy.
+if(EXISTS "${DATASKETCHES_UPSTREAM_ROOT}/kll/include/kll_sketch.hpp")
+    add_executable(datasketches_upstream_kll datasketches_upstream_kll.cpp)
+    target_link_libraries(datasketches_upstream_kll PRIVATE cpp_bench_common)
+    target_include_directories(datasketches_upstream_kll SYSTEM BEFORE PRIVATE
+        ${DATASKETCHES_UPSTREAM_ROOT}/kll/include
+        ${DATASKETCHES_UPSTREAM_ROOT}/common/include)
+else()
+    message(STATUS "[cpp-bench/kll] skipping datasketches_upstream_kll: "
+        "${DATASKETCHES_UPSTREAM_ROOT}/kll/include/kll_sketch.hpp not found")
+endif()
+
 add_executable(final_kll final_kll.cpp)
 target_link_libraries(final_kll PRIVATE cpp_bench_common)
 

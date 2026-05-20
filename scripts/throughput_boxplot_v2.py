@@ -98,15 +98,23 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
         cmd += ["--accuracy"]
     run(cmd)
     insert_csv = impl_dir / f"{family}_throughput_results_rust.csv"
+    # Per-call CSV (one row per timed call). Used for accuracy / latency
+    # distributions; the per-call clock_gettime overhead is baked in, so
+    # it is NOT apples-to-apples with cpp-bench's tight-loop query CSV.
     query_csv = impl_dir / f"{family}_throughput_query_results_rust.csv"
-    return insert_csv, (query_csv if with_query and query_csv.exists() else None)
+    # Tight-loop CSV (one row per run, comparator's outer Instant pair).
+    # Apples-to-apples with cpp-bench `--query-csv`.
+    query_tight = impl_dir / f"{family}_throughput_query_tight_results_rust.csv"
+    chosen = query_tight if (with_query and query_tight.exists()) else query_csv
+    return insert_csv, (chosen if with_query and chosen.exists() else None)
 
 
 def cpp_bench(binary: Path, k: int | None, panel_dir: Path, tag: str, *,
-              with_query: bool = False) -> tuple[Path, Path | None]:
+              with_query: bool = False, with_query_percall: bool = False) -> tuple[Path, Path | None]:
     panel_dir.mkdir(parents=True, exist_ok=True)
     csv_path = panel_dir / f"cpp_{tag}.csv"
     qcsv_path = panel_dir / f"cpp_{tag}_query.csv"
+    pcsv_path = panel_dir / f"cpp_{tag}_query_percall.csv"
     cmd = taskset([
         str(binary),
         "--workload-file", str(INPUT_BIN),
@@ -121,6 +129,8 @@ def cpp_bench(binary: Path, k: int | None, panel_dir: Path, tag: str, *,
         cmd += ["--k", str(k)]
     if with_query:
         cmd += ["--query-csv", str(qcsv_path)]
+    if with_query_percall:
+        cmd += ["--query-percall-csv", str(pcsv_path)]
     run(cmd)
     return csv_path, (qcsv_path if with_query and qcsv_path.exists() else None)
 
@@ -252,7 +262,7 @@ BASELINE_STEPS = [
      lambda: cli_bench("hll",         "datasketches", "lg_k=14",           RAW_DIR / "hll"), []),
     (PANEL_HLL,    "HLL",     "datasketches (C++)",
      lambda: cpp_bench(CPP_BUILD / "hll" / "datasketches_hll", 14,    RAW_DIR / "hll", "ds_hll",
-                       with_query=True), []),
+                       with_query=True, with_query_percall=True), []),
     (PANEL_HLL,    "HLL",     "polars (exact)",
      lambda: cli_bench("hll",         "polars",       "lg_k=14",           RAW_DIR / "hll"), []),
     # KLL — no C++ DataSketches query (Insert-Opt fork has no quantile API);
@@ -262,6 +272,10 @@ BASELINE_STEPS = [
                        warmup_runs=WARMUP_RUNS_KLL), []),
     (PANEL_KLL,    "KLL",     "datasketches (C++)",
      lambda: cpp_bench(CPP_BUILD / "kll" / "datasketches_kll", 200,   RAW_DIR / "kll", "ds_kll"), []),
+    (PANEL_KLL,    "KLL",     "datasketches (C++ Apache)",
+     lambda: cpp_bench(CPP_BUILD / "kll" / "datasketches_upstream_kll", 200,
+                       RAW_DIR / "kll", "ds_upstream_kll",
+                       with_query=True, with_query_percall=True), []),
     (PANEL_KLL,    "KLL",     "InsertOptimized",
      lambda: cpp_bench(CPP_BUILD / "kll" / "final_kll",        200,   RAW_DIR / "kll", "final_kll"), []),
     (PANEL_KLL,    "KLL",     "polars (exact)",
@@ -457,8 +471,8 @@ HLL_INSERT_ORDER = [
 ]
 HLL_QUERY_ORDER = HLL_INSERT_ORDER
 KLL_INSERT_ORDER = ["asap_sketchlib", "oxide", "datasketches (C++)",
-                    "InsertOptimized", "polars (exact)"]
-KLL_QUERY_ORDER = ["asap_sketchlib", "oxide", "polars (exact)"]
+                    "datasketches (C++ Apache)", "InsertOptimized", "polars (exact)"]
+KLL_QUERY_ORDER = ["asap_sketchlib", "oxide", "datasketches (C++ Apache)", "polars (exact)"]
 
 
 def main() -> int:

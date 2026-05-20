@@ -77,6 +77,7 @@ CliArgs parse_cli(int argc, char** argv) {
         else if (a == "--report")        out.report_path = need(i);
         else if (a == "--legacy-csv")    out.legacy_csv_path = need(i);
         else if (a == "--query-csv")     out.query_csv_path = need(i);
+        else if (a == "--query-percall-csv") out.query_percall_csv_path = need(i);
         else if (a == "-h" || a == "--help") usage(argv0);
         else                             usage(argv0, ("unknown arg: " + a).c_str());
     }

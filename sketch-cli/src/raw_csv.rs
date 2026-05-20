@@ -101,6 +101,26 @@ pub fn write_runs(
             }
         }
         append_csv(&query_path, &header, rows.into_iter())?;
+
+        // Also emit the aggregate (tight-loop) CSV: one row per run,
+        // computed from `queries_executed` / `query_wall_time_ns`
+        // (the comparator's outer Instant pair that wraps the whole
+        // 101- or 4096-call tight loop). This is the apples-to-apples
+        // peer of cpp-bench's `--query-csv` and lets the throughput
+        // bar charts compare without per-call timer overhead.
+        if report.per_run.iter().any(|r| r.queries_executed > 0) {
+            let tight_path = dir.join(format!(
+                "{}_throughput_query_tight_results_rust.csv",
+                entry.family
+            ));
+            append_csv(
+                &tight_path,
+                &query_header(entry.family),
+                report.per_run.iter().enumerate().map(|(idx, run)| {
+                    format_query_row(entry.family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                }),
+            )?;
+        }
     } else if report.per_run.iter().any(|r| r.queries_executed > 0) {
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
         let query_path =
