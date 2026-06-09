@@ -1,7 +1,7 @@
 # Next Steps — From Sketch Bench to Approximate Query Benchmark
 
 > Status: design draft. Branch `docs/aqp-next-steps`.
-> Last reconciled to `main` on 2026-06-05 (see the freshness notes inline).
+> Last reconciled to `origin/main` on 2026-06-09 (`ce3e1e2`).
 > Supersedes the open-ended scope in [`TODO.md`](../TODO.md) "Deferred" sections.
 > Companion to [`DESIGN.md`](DESIGN.md) (which stays the source of truth for the
 > existing crate layout and the `Sketch` / `Probe` contracts).
@@ -216,7 +216,7 @@ committing.
 1. This doc (`docs/NEXT_STEPS.md`). *(done)*
 2. Archive cuts from §3 under `docs/archive/` *(done — stray root files
    removed, `docs/archive/` created)*; update `README.md` to point at this
-   doc *(still pending — `README.md` has no AQP reference yet)*.
+   doc *(done — README document index now links the AQP roadmap)*.
 3. `aqp-core` crate stub: plan AST + budget types, no executor yet.
    *(not started — no `aqp-*` crate in the workspace.)*
 4. One end-to-end plan (`count_distinct ∘ group_by`) running on the

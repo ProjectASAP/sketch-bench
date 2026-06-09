@@ -1,6 +1,6 @@
 # `sketchlib-tool` (repo: `sketch-bench`)
 
-> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
+> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the current JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md), [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md), and [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md) for the full contract and AQP roadmap.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ cargo run -p sketch-cli --release -- bench \
     --report out.jsonl
 ```
 
-`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.
+`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.
 
 Covered families / impls (21 sketch + 3 exact = 24 total):
 
@@ -110,6 +110,9 @@ Downstream apps depend on `sketch-core + sketch-bench + sketch-runtime` — not 
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — goals, audiences, crate layout, APIs, report schema, runtime → controller feedback loop.
 - [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) — phased absorption of `sketch-profiler`, history preservation, risks, done criteria.
+- [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) — `sketchlib bench` sweep semantics, config grids, and output contract.
+- [`docs/SCHEMA_V1.md`](docs/SCHEMA_V1.md) — cross-language JSONL record contract for Rust and C++ emitters.
+- [`docs/NEXT_STEPS.md`](docs/NEXT_STEPS.md) — Phase-2 roadmap from sketch microbenchmarks to an approximate-query benchmark.
 
 ## Current behavior (pre-migration)
 

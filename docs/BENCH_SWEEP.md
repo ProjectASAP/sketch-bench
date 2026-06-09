@@ -109,7 +109,7 @@ Same v1 schema. One new optional field:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sketch": "hll",
   "impl": "oxide",
   "sketch_config": { "lg_k": 14 },              // NEW — the ParamSet used

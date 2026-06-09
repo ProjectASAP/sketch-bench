@@ -17,6 +17,7 @@ target/
 **/target/
 Cargo.lock
 rust-target/
+target-local/
 
 # C++ build artifacts
 *.dSYM/
@@ -46,6 +47,7 @@ input/generate_zipf_data
 # Benchmark outputs
 rust/bench_sketches/output/
 visualization/output/
+output/
 
 # Build directories
 build/

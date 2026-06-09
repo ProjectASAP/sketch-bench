@@ -136,7 +136,7 @@ Absorbed from `sketch-profiler`'s `data_gen/`:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sketch": "cms",
   "impl": "sketch_oxide",
   "workload": {"shape": "zipf", "s": 1.1, "size": 1000000},
@@ -404,7 +404,7 @@ report.write_to(std::path::Path::new("output/hll_oxide.jsonl"))?;
 Emitted JSONL (abbreviated):
 
 ```json
-{ "schema_version":1, "sketch":"hll", "impl":"sketch_oxide",
+{ "schema_version":2, "sketch":"hll", "impl":"sketch_oxide",
   "workload":{"shape":"zipf","s":1.1,"size":1000000},
   "mode":"bench", "runs":10,
   "bench":{
