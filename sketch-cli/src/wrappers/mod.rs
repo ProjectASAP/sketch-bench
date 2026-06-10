@@ -11,5 +11,6 @@ pub mod hll;
 pub mod kll;
 pub mod nitro;
 pub mod parallel;
+#[cfg(feature = "polars")]
 pub mod polars;
 pub mod univmon;

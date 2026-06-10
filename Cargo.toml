@@ -7,6 +7,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "aqp-core",
     "sketch-core",
     "sketch-bench",
     "sketch-runtime",
@@ -61,6 +62,7 @@ asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 sketch-core = { path = "sketch-core" }
 sketch-bench = { path = "sketch-bench" }
 sketch-runtime = { path = "sketch-runtime" }
+aqp-core = { path = "aqp-core" }
 
 [profile.release]
 opt-level = 3

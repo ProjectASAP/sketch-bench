@@ -6,7 +6,7 @@ use sketch_core::config::CountSketchParams;
 use sketch_core::sketch::Sketch;
 
 use crate::wrappers::cms::{
-    CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS, CountMinMatrix5x32K,
+    CountMinMatrix5x32K, CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS,
 };
 
 // sketch_oxide::frequency::CountSketch sizes its table as

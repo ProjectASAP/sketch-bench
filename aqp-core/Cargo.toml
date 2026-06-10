@@ -1,0 +1,23 @@
+[package]
+name = "aqp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AQP query parsing and DataFusion LogicalPlan lowering for sketch-bench Phase 2."
+
+[dependencies]
+anyhow.workspace = true
+arrow-schema = "58"
+datafusion-common = "53.1.0"
+datafusion-expr = "53.1.0"
+datafusion-functions-aggregate = "53.1.0"
+datafusion-sql = "53.1.0"
+rand.workspace = true
+rand_distr.workspace = true
+rand_xoshiro.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# First sketch backend for the AQP MVP.
+asap_sketchlib.workspace = true

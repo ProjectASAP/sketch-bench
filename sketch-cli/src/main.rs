@@ -26,9 +26,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(all(feature = "heap-jemalloc", feature = "heap-track"))]
 #[global_allocator]
-static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<
-    tikv_jemallocator::Jemalloc,
-> = sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
+static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<tikv_jemallocator::Jemalloc> =
+    sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
 
 #[cfg(all(feature = "heap-track", not(feature = "heap-jemalloc")))]
 #[global_allocator]
@@ -39,6 +38,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
+use aqp_core::{
+    parse_aqp_sql, run_grouped_count_distinct_mvp, AqpTask, SyntheticEventsConfig, UserDistribution,
+};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
 
@@ -55,8 +57,89 @@ struct Cli {
 enum Cmd {
     /// Run a benchmark across a sketch family's config grid.
     Bench(BenchArgs),
+    /// Parse and run approximate-query benchmark plans.
+    Aqp(AqpArgs),
     /// List every `(family, impl)` pair the CLI can drive.
     ListImpls,
+}
+
+#[derive(Parser, Debug)]
+struct AqpArgs {
+    #[command(subcommand)]
+    command: AqpCmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum AqpCmd {
+    /// Parse a SQL query with DataFusion and show the lowered AQP task.
+    Explain(AqpExplainArgs),
+    /// Parse a SQL query and run supported AQP tasks through the benchmark runner.
+    Run(AqpRunArgs),
+}
+
+#[derive(Parser, Debug)]
+struct AqpExplainArgs {
+    /// Path to a SQL query file.
+    #[arg(long)]
+    query: String,
+}
+
+#[derive(Parser, Debug)]
+struct AqpRunArgs {
+    /// Path to a SQL query file.
+    #[arg(long)]
+    query: String,
+    /// HLL implementation filter for COUNT(DISTINCT) tasks.
+    /// Accepts a single name, a comma list, or `all`.
+    #[arg(long = "impl", default_value = "exact,lib")]
+    impl_name: String,
+    /// Number of measured runs per `(impl, config)` pair.
+    #[arg(long, default_value_t = 10)]
+    runs: usize,
+    /// Warm-up runs before measurement.
+    #[arg(long, default_value_t = 3)]
+    warmup_runs: usize,
+    /// Workload shape backing the query's `events.user_id` column.
+    #[arg(long, default_value = "uniform")]
+    workload: String,
+    /// Number of items in the workload.
+    #[arg(long, default_value_t = 1_000_000)]
+    size: usize,
+    /// Cardinality (uniform: max key; zipf: key-space size).
+    #[arg(long, default_value_t = 100_000)]
+    cardinality: u64,
+    /// Number of synthetic `events.region` groups for grouped AQP queries.
+    #[arg(long, default_value_t = 16)]
+    regions: usize,
+    /// Fraction of synthetic rows biased toward `region_000`.
+    /// `0.0` means uniform regions; values near `1.0` create heavy group skew.
+    #[arg(long, default_value_t = 0.0)]
+    region_skew: f64,
+    /// Zipf `s` exponent (only used when `--workload zipf`).
+    #[arg(long, default_value_t = 1.1)]
+    zipf_s: f64,
+    /// Seed for reproducibility.
+    #[arg(long, default_value_t = 42)]
+    seed: u64,
+    /// Load the `events.user_id` column from a file instead of generating it.
+    #[arg(long)]
+    input: Option<String>,
+    /// Path to append JSONL records to. `-` or omitted → stdout.
+    #[arg(long)]
+    report: Option<String>,
+    /// Worker threads for parallel HLL impls.
+    #[arg(long, default_value_t = 1)]
+    workers: usize,
+    /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy.
+    /// Default: all.
+    #[arg(long)]
+    metrics: Option<String>,
+    /// HLL config grid override, e.g. `'lg_k=14'`.
+    #[arg(long)]
+    config: Option<String>,
+    /// Compute HLL cardinality accuracy against the exact baseline.
+    #[arg(long, default_value_t = false)]
+    accuracy: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -208,10 +291,7 @@ impl ReportSink {
         match spec {
             None | Some("-") => Ok(ReportSink::Stdout),
             Some(path) => Ok(ReportSink::File(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)?,
+                OpenOptions::new().create(true).append(true).open(path)?,
             )),
         }
     }
@@ -241,30 +321,173 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Bench(args) => run_bench(args),
+        Cmd::Aqp(args) => run_aqp(args),
     }
 }
 
-fn run_bench(args: BenchArgs) -> Result<()> {
-    let spec = if let Some(path) = args.input.as_deref() {
-        WorkloadSpec::File {
-            path: path.to_string(),
+fn run_aqp(args: AqpArgs) -> Result<()> {
+    match args.command {
+        AqpCmd::Explain(args) => aqp_explain(args),
+        AqpCmd::Run(args) => aqp_run(args),
+    }
+}
+
+fn aqp_explain(args: AqpExplainArgs) -> Result<()> {
+    let sql = std::fs::read_to_string(&args.query)?;
+    let query = parse_aqp_blocking(sql)?;
+    let out = serde_json::json!({
+        "query_file": args.query,
+        "task": query.task,
+        "runnable_by_current_bench": query.task.runnable_by_current_bench(),
+        "datafusion_logical_plan": query.plan_display,
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn aqp_run(args: AqpRunArgs) -> Result<()> {
+    let sql = std::fs::read_to_string(&args.query)?;
+    let query = parse_aqp_blocking(sql)?;
+    let AqpTask::CountDistinct {
+        table,
+        column,
+        group_by,
+    } = &query.task;
+
+    if table != "events" || column != "user_id" {
+        bail!(
+            "current AQP MVP maps only events.user_id onto count-distinct backends; got {table}.{column}"
+        );
+    }
+    if group_by.len() == 1 && group_by[0] == "region" {
+        if args.input.is_some() {
+            bail!("grouped AQP MVP currently uses synthetic events only; --input is not supported yet");
         }
-    } else {
-        match args.workload.as_str() {
-            "uniform" => WorkloadSpec::Uniform {
-                size: args.size,
-                cardinality: args.cardinality,
+        let user_distribution = match args.workload.as_str() {
+            "uniform" => UserDistribution::Uniform,
+            "zipf" => UserDistribution::Zipf { s: args.zipf_s },
+            other => {
+                bail!("unknown grouped AQP user distribution: {other} (expected uniform|zipf)")
+            }
+        };
+        let report = run_grouped_count_distinct_mvp(
+            &query.task,
+            SyntheticEventsConfig {
+                rows: args.size,
+                regions: args.regions,
+                user_cardinality: args.cardinality,
+                user_distribution,
+                region_skew: args.region_skew,
                 seed: args.seed,
             },
-            "zipf" => WorkloadSpec::Zipf {
-                size: args.size,
-                cardinality: args.cardinality,
-                s: args.zipf_s,
-                seed: args.seed,
-            },
-            other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
-        }
+        )?;
+        let mut sink = ReportSink::open(args.report.as_deref())?;
+        sink.write_line(&report.to_jsonl()?)?;
+        return Ok(());
+    }
+    if !group_by.is_empty() {
+        bail!("unsupported grouped AQP query for MVP: group_by={group_by:?}");
+    }
+
+    let spec = workload_spec(
+        args.input.as_deref(),
+        &args.workload,
+        args.size,
+        args.cardinality,
+        args.zipf_s,
+        args.seed,
+    )?;
+    let mut metrics_mask = parse_mask(args.metrics.as_deref());
+    if args.accuracy {
+        metrics_mask |= MetricsMask::ACCURACY;
+    }
+    let cfg = BenchConfig {
+        runs: args.runs,
+        warmup_runs: args.warmup_runs,
+        metrics: metrics_mask,
+        query_count: None,
+        threads: args.workers.max(1),
+        seed: args.seed,
     };
+    let accuracy_cfg = AccuracyCfg {
+        enabled: args.accuracy,
+        max_probes: 0,
+        min_true_count: 0,
+        record_query_calls: false,
+    };
+
+    let impls = select_impls("hll", &args.impl_name)?;
+    let grid = match args.config.as_deref() {
+        Some(s) => sweep::parse_config("hll", s)?,
+        None => sweep::default_grid("hll")?,
+    };
+    let workload = spec.build_i64()?;
+    let mut sink = ReportSink::open(args.report.as_deref())?;
+
+    eprintln!(
+        "sketchlib: aqp run query={} task={:?} impls=[{}] configs={}",
+        args.query,
+        query.task,
+        impls
+            .iter()
+            .map(|e| e.impl_name)
+            .collect::<Vec<_>>()
+            .join(","),
+        grid.len(),
+    );
+
+    for (idx_cfg, params) in grid.iter().enumerate() {
+        for entry in &impls {
+            if entry.constraint.is_unparameterized() && idx_cfg > 0 {
+                continue;
+            }
+            if !entry.accepts(params) {
+                eprintln!(
+                    "sketchlib: aqp skip {}/{} — {} does not match {:?}",
+                    entry.family,
+                    entry.impl_name,
+                    entry.constraint.describe(),
+                    params,
+                );
+                continue;
+            }
+            let reports = entry.run(&cfg, &workload, params, &accuracy_cfg);
+            for report in &reports {
+                let mut record = report.to_record();
+                record.sketch = "aqp-count-distinct".to_string();
+                record.impl_name = format!("hll-{}", entry.impl_name);
+                record.sketch_config = Some(serde_json::json!({
+                    "aqp": {
+                        "query_file": args.query,
+                        "task": query.task,
+                    },
+                    "hll": if entry.constraint.is_unparameterized() {
+                        serde_json::Value::Null
+                    } else {
+                        params.to_json_value()
+                    },
+                }));
+                sink.write_line(&record.to_jsonl())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_aqp_blocking(sql: String) -> Result<aqp_core::AqpQuery> {
+    parse_aqp_sql(sql)
+}
+
+fn run_bench(args: BenchArgs) -> Result<()> {
+    let spec = workload_spec(
+        args.input.as_deref(),
+        &args.workload,
+        args.size,
+        args.cardinality,
+        args.zipf_s,
+        args.seed,
+    )?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.accuracy {
         // --accuracy implies the accuracy mask bit, regardless of
@@ -406,10 +629,38 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         }
     }
 
-    eprintln!(
-        "sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",
-    );
+    eprintln!("sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",);
     Ok(())
+}
+
+fn workload_spec(
+    input: Option<&str>,
+    workload: &str,
+    size: usize,
+    cardinality: u64,
+    zipf_s: f64,
+    seed: u64,
+) -> Result<WorkloadSpec> {
+    if let Some(path) = input {
+        Ok(WorkloadSpec::File {
+            path: path.to_string(),
+        })
+    } else {
+        match workload {
+            "uniform" => Ok(WorkloadSpec::Uniform {
+                size,
+                cardinality,
+                seed,
+            }),
+            "zipf" => Ok(WorkloadSpec::Zipf {
+                size,
+                cardinality,
+                s: zipf_s,
+                seed,
+            }),
+            other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
+        }
+    }
 }
 
 fn params_pretty(p: &sketch_core::config::ParamSet) -> String {

@@ -36,7 +36,11 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
                 samples.push(v);
             }
         }
-        let s = if samples.is_empty() { None } else { Some(samples) };
+        let s = if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        };
         (maybe_runstats(w), s)
     } else {
         (None, None)

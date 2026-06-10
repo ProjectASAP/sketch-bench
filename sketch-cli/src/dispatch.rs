@@ -18,9 +18,9 @@ use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
 use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
 
-use crate::wrappers::{
-    cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
-};
+#[cfg(feature = "polars")]
+use crate::wrappers::polars;
+use crate::wrappers::{cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, univmon};
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
 /// runs `NoGT` (no ground truth). `enabled = true` → each
@@ -99,8 +99,7 @@ impl WorkloadSpec {
                 ZipfI64::new(size, cardinality, s, seed).map_err(|e| anyhow::anyhow!("{}", e))?,
             ),
             WorkloadSpec::File { path } => WorkloadAny::File(
-                FileI64::load(std::path::Path::new(&path))
-                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+                FileI64::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))?,
             ),
         })
     }
@@ -148,8 +147,14 @@ enum BytesWk {
 #[derive(Debug, Clone, Copy)]
 pub enum Constraint {
     Tunable,
-    FixedCms { rows: usize, cols: usize },
-    FixedCountSketch { rows: usize, cols: usize },
+    FixedCms {
+        rows: usize,
+        cols: usize,
+    },
+    FixedCountSketch {
+        rows: usize,
+        cols: usize,
+    },
     /// Exact baselines — they ignore the family's `ParamSet`. The
     /// sweep driver runs them at most once per invocation instead
     /// of once per config.
@@ -264,6 +269,7 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Cardinality,
         run: run_hll_exact,
     },
+    #[cfg(feature = "polars")]
     ImplEntry {
         family: "hll",
         impl_name: "polars",
@@ -275,7 +281,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
+        description:
+            "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_hll_lib_fastpath_parallel,
@@ -305,6 +312,7 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Quantile,
         run: run_kll_exact,
     },
+    #[cfg(feature = "polars")]
     ImplEntry {
         family: "kll",
         impl_name: "polars",
@@ -387,6 +395,7 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cms_exact,
     },
+    #[cfg(feature = "polars")]
     ImplEntry {
         family: "cms",
         impl_name: "polars",
@@ -398,7 +407,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "cms",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
+        description:
+            "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_cms_lib_fastpath_parallel,
@@ -458,6 +468,7 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_exact,
     },
+    #[cfg(feature = "polars")]
     ImplEntry {
         family: "countsketch",
         impl_name: "polars",
@@ -469,7 +480,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "countsketch",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
+        description:
+            "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_cs_lib_fastpath_parallel,
@@ -491,6 +503,7 @@ pub const IMPLS: &[ImplEntry] = &[
         accuracy_kind: AccuracyKind::Quantile,
         run: run_dd_exact,
     },
+    #[cfg(feature = "polars")]
     ImplEntry {
         family: "dd",
         impl_name: "polars",
@@ -734,7 +747,8 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -742,7 +756,8 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (WorkloadAny::File(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -750,7 +765,8 @@ macro_rules! run_i64_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (WorkloadAny::I64(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
@@ -780,15 +796,27 @@ macro_rules! run_i64_card {
             };
             match (wk, accuracy.enabled) {
                 (WorkloadAny::I64(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::File(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::I64(w), false) => {
@@ -819,15 +847,27 @@ macro_rules! run_i64_quant {
             };
             match (wk, accuracy.enabled) {
                 (WorkloadAny::I64(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::File(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::I64(w), false) => {
@@ -858,15 +898,27 @@ macro_rules! run_i64_quant_rel {
             };
             match (wk, accuracy.enabled) {
                 (WorkloadAny::I64(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::Zipf(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::File(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
+                    cfg,
+                    w,
+                    $family,
+                    $impl,
+                    || <$wrapper>::new(&p),
                     accuracy.record_query_calls,
                 ),
                 (WorkloadAny::I64(w), false) => {
@@ -901,15 +953,21 @@ macro_rules! run_i64_parallel {
             };
             let workers = cfg.threads;
             match wk {
-                WorkloadAny::I64(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
-                WorkloadAny::Zipf(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
-                WorkloadAny::File(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
+                WorkloadAny::I64(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, move || {
+                        <$wrapper>::new(&p, workers)
+                    })
+                }
+                WorkloadAny::Zipf(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, move || {
+                        <$wrapper>::new(&p, workers)
+                    })
+                }
+                WorkloadAny::File(w) => {
+                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, move || {
+                        <$wrapper>::new(&p, workers)
+                    })
+                }
             }
         }
     };
@@ -964,7 +1022,8 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (StringWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -972,7 +1031,8 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (StringWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -980,7 +1040,8 @@ macro_rules! run_string_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (StringWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
@@ -1015,7 +1076,8 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (BytesWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -1023,7 +1085,8 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (BytesWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
                     cfg,
@@ -1031,7 +1094,8 @@ macro_rules! run_bytes_freq {
                     $family,
                     $impl,
                     || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
+                    accuracy.max_probes,
+                    accuracy.min_true_count,
                 ),
                 (BytesWk::FromUniform(w), false) => {
                     bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
@@ -1217,10 +1281,33 @@ run_i64_quant_rel!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd);
 // -- Polars-backed baselines (one per family). Same `Sketch`
 //    contract as the in-tree exact baselines; the legacy
 //    `throughput/polars_*/` binaries are folded into these.
-run_i64_card!(run_hll_polars, polars::PolarsCardinality, "hll", "polars", Hll);
-run_i64_quant!(run_kll_polars, polars::PolarsQuantileKll, "kll", "polars", Kll);
+#[cfg(feature = "polars")]
+run_i64_card!(
+    run_hll_polars,
+    polars::PolarsCardinality,
+    "hll",
+    "polars",
+    Hll
+);
+#[cfg(feature = "polars")]
+run_i64_quant!(
+    run_kll_polars,
+    polars::PolarsQuantileKll,
+    "kll",
+    "polars",
+    Kll
+);
+#[cfg(feature = "polars")]
 run_i64_quant_rel!(run_dd_polars, polars::PolarsQuantileDd, "dd", "polars", Dd);
-run_i64_freq!(run_cms_polars, polars::PolarsFrequencyCms, "cms", "polars", Cms);
+#[cfg(feature = "polars")]
+run_i64_freq!(
+    run_cms_polars,
+    polars::PolarsFrequencyCms,
+    "cms",
+    "polars",
+    Cms
+);
+#[cfg(feature = "polars")]
 run_i64_freq!(
     run_cs_polars,
     polars::PolarsFrequencyCs,
@@ -1272,13 +1359,7 @@ run_bytes_freq!(
 
 // -- Nitro --
 run_i64_none!(run_nitro_lib, nitro::NitroLib, "nitro", "lib", Nitro);
-run_bytes_none!(
-    run_nitro_oxide,
-    nitro::NitroOxide,
-    "nitro",
-    "oxide",
-    Nitro
-);
+run_bytes_none!(run_nitro_oxide, nitro::NitroOxide, "nitro", "oxide", Nitro);
 
 // -- UnivMon --
 run_string_none!(

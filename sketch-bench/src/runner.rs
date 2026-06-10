@@ -24,7 +24,9 @@ fn warmup_cpu_from_env() {
     let mut x: u64 = 0xdeadbeef;
     while Instant::now() < deadline {
         for _ in 0..10_000 {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
         }
         std::hint::black_box(x);
     }
@@ -40,7 +42,7 @@ use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::config::{BenchConfig, MetricsMask};
 use crate::metrics::{
-    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, RunMetrics, Rss, WallClock,
+    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, Rss, RunMetrics, WallClock,
 };
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
@@ -128,11 +130,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// closure body then monomorphizes at the caller's crate.
     /// Returns one `BenchReport` (single-pass throughput).
     #[inline(always)]
-    pub fn run_throughput<S, F, Insert>(
-        &self,
-        mut factory: F,
-        insert: Insert,
-    ) -> BenchReport
+    pub fn run_throughput<S, F, Insert>(&self, mut factory: F, insert: Insert) -> BenchReport
     where
         S: Sketch<Item = W::Item>,
         W::Item: Clone,
@@ -146,11 +144,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
     /// Throughput-only fast path: fresh sketch per trial, time the
     /// insert loop with `Instant::now`, no other instrumentation.
-    fn run_throughput_pass<S, F>(
-        &self,
-        factory: &mut F,
-        pass_cfg: BenchConfig,
-    ) -> BenchReport
+    fn run_throughput_pass<S, F>(&self, factory: &mut F, pass_cfg: BenchConfig) -> BenchReport
     where
         S: Sketch<Item = W::Item>,
         W::Item: Clone,
@@ -223,7 +217,11 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 n: w.n(),
             })
         };
-        let throughput_samples = if samples.is_empty() { None } else { Some(samples) };
+        let throughput_samples = if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        };
 
         let bench = BenchSection {
             throughput_items_per_sec: throughput,
@@ -370,10 +368,8 @@ where
 
     #[cfg(feature = "heap-track")]
     {
-        metrics.heap_bytes_net =
-            Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
-        metrics.heap_bytes_peak =
-            Some((heap_after.peak - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_net = Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_peak = Some((heap_after.peak - heap_before.in_use).max(0) as u64);
     }
 
     (metrics, sketch)
@@ -386,11 +382,7 @@ where
 /// metrics (CPU / MEMORY / heap-track) still attach via direct
 /// primitives instead of going through `FullSink`.
 #[inline(always)]
-fn run_once_clean<S, F>(
-    factory: &mut F,
-    items: &[S::Item],
-    config: &BenchConfig,
-) -> (RunMetrics, S)
+fn run_once_clean<S, F>(factory: &mut F, items: &[S::Item], config: &BenchConfig) -> (RunMetrics, S)
 where
     S: Sketch,
     S::Item: Clone,
@@ -463,10 +455,8 @@ where
 
     #[cfg(feature = "heap-track")]
     {
-        metrics.heap_bytes_net =
-            Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
-        metrics.heap_bytes_peak =
-            Some((heap_after.peak - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_net = Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_peak = Some((heap_after.peak - heap_before.in_use).max(0) as u64);
     }
 
     (metrics, sketch)
