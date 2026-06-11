@@ -1,19 +1,25 @@
-# AQP MVP
+# AQP Benchmark MVP v1 Design
 
-> Status: first executable Phase-2 slice. Sampling backend is intentionally
-> deferred.
+> Purpose: align the Phase-2 MVP goal before adding more query types,
+> backends, or data sources.
+>
+> Status: implemented first slice. Sampling backend is intentionally deferred.
 
-## What This Solves
+## End Goal
 
-Phase 1 benchmarks one sketch family at a time. That answers questions like
-"how fast is this HLL update path?", but it does not answer an AQP question:
+MVP v1 proves that `sketch-bench` can benchmark an **approximate query plan**,
+not just an isolated sketch. The demo should show this full path:
 
 ```text
-Given a query plan and a data source, what happens if we execute the same
-logical query with exact state versus approximate sketch state?
+SQL query
+  -> DataFusion parser / LogicalPlan
+  -> AQP task lowering
+  -> synthetic relational data source
+  -> exact backend + sketch backend
+  -> throughput / memory / accuracy report
 ```
 
-This MVP makes that unit of work a query:
+The MVP query is:
 
 ```sql
 SELECT region, COUNT(DISTINCT user_id) AS users
@@ -21,24 +27,27 @@ FROM events
 GROUP BY region;
 ```
 
-It is still deliberately small, but it is no longer just "run one HLL". It
-benchmarks a plan shape:
+This is intentionally small, but it changes the benchmark unit from
+`HLL update throughput` to:
 
 ```text
-DataFusion SQL
-  -> DataFusion LogicalPlan
-  -> AQP CountDistinct task
-  -> synthetic relational events source
-  -> exact backend and sketch backend
-  -> accuracy / throughput / memory summary
+For the same grouped distinct-count query, how do exact and approximate
+execution behave under a controlled data source?
 ```
 
-## How It Works
+## Scope
 
-The query frontend lives in `aqp-core` and reuses DataFusion:
+MVP v1 supports one AQP query shape:
 
-- DataFusion parses SQL and creates the `LogicalPlan` DAG.
-- `aqp-core` lowers the supported plan shape into:
+- table: `events`
+- group key: `region`
+- aggregate: `COUNT(DISTINCT user_id)`
+
+The query frontend uses DataFusion only for parsing/planning:
+
+- `DFParser::parse_sql(...)` parses SQL.
+- `SqlToRel::statement_to_plan(...)` produces a DataFusion `LogicalPlan`.
+- `aqp-core` lowers the supported `Aggregate` plan into:
 
 ```rust
 AqpTask::CountDistinct {
@@ -48,53 +57,40 @@ AqpTask::CountDistinct {
 }
 ```
 
-The synthetic source generates an `events` relation with:
+DataFusion does **not** execute the query in this MVP. Execution is handled by
+our own backends.
 
-- `region`: group key
-- `user_id`: distinct-count key
+## Execution Backends
 
-The first source knobs are:
+MVP v1 runs the same lowered query task with two fixed backends:
+
+| Policy | Implementation | Role |
+|---|---|---|
+| `exact` | `HashMap<region, HashSet<user_id>>` | Ground truth and exact-cost baseline |
+| `sketch` | `HashMap<region, asap_sketchlib::HyperLogLog<Classic>>` | Approximate grouped distinct-count backend |
+
+The exact backend returns the true per-region distinct count. The sketch
+backend returns per-region HLL estimates. The report compares sketch estimates
+against exact results group by group.
+
+## Synthetic Data Source
+
+MVP v1 uses a synthetic `events` relation, not a real file or DataFusion scan.
+The generated rows contain:
+
+- `region`
+- `user_id`
+
+The source is configurable enough to test whether data distribution matters:
 
 - row count
-- region count
+- number of regions
 - user cardinality
 - user distribution: uniform or Zipf
 - region skew toward `region_000`
 - seed
 
-The MVP has two execution backends:
-
-| Policy | Implementation | Purpose |
-|---|---|---|
-| `exact` | `HashMap<region, HashSet<user_id>>` | Ground truth and exact cost baseline |
-| `sketch` | `HashMap<region, asap_sketchlib::HyperLogLog<Classic>>` | Approximate grouped distinct-count backend |
-
-The report compares sketch estimates against exact results per group and emits:
-
-- exact throughput and rough memory
-- sketch throughput and rough memory
-- compared group count
-- mean / p95 / max relative error
-- worst group
-
-## How To Run
-
-Use the grouped query:
-
-```bash
-cargo run --config profile.dev.debug=0 --target-dir target-local \
-  -p sketch-cli --no-default-features -- \
-  aqp run \
-  --query aqp-workloads/queries/count_distinct_users_by_region.sql \
-  --workload uniform \
-  --size 100000 \
-  --cardinality 10000 \
-  --regions 16 \
-  --region-skew 0.0 \
-  --report -
-```
-
-Try source sensitivity by changing only the source:
+Example:
 
 ```bash
 cargo run --config profile.dev.debug=0 --target-dir target-local \
@@ -110,34 +106,64 @@ cargo run --config profile.dev.debug=0 --target-dir target-local \
   --report -
 ```
 
-These runs answer a first AQP-style question:
+## MVP Output
+
+The MVP emits one JSON object with:
+
+- lowered AQP task
+- synthetic data-source parameters
+- exact backend throughput and rough memory estimate
+- sketch backend throughput and rough memory estimate
+- mean / p95 / max relative error
+- worst group
+
+This is enough to demonstrate an AQP-style comparison:
 
 ```text
-How do exact and sketch grouped distinct-count execution behave as the
-synthetic data source changes?
+same query + same data source + different backend => cost/error tradeoff
 ```
 
-## What This Does Not Solve Yet
+## Success Criteria
 
-This MVP is intentionally not the whole Phase 2 benchmark.
+MVP v1 is successful if it can demonstrate all of the following:
 
-Deferred:
+- A SQL query is parsed by DataFusion into a logical plan.
+- The supported grouped `COUNT(DISTINCT)` plan is lowered into an AQP task.
+- The task runs on a synthetic relational data source.
+- The same task runs with exact and `asap_sketchlib` sketch backends.
+- The report compares throughput, rough memory, and per-group error.
+- Changing source knobs, such as Zipf user distribution or region skew, changes
+  the measured result.
+
+## Non-Goals
+
+MVP v1 does not attempt to be the full AQP benchmark.
+
+Out of scope:
 
 - sampling backend
 - hybrid backend
-- budget parsing and enforcement
-- shard / merge benchmark
-- trace-backed data sources
-- interleaved streaming schedules
-- multi-operator plans and composed error
-- formal AQP JSONL schema shared with visualization
+- budget parsing or enforcement
+- real CSV/Parquet/trace data sources
+- DataFusion physical execution
+- multi-operator plans
+- composed error across operators
+- shard/merge benchmark
+- visualization-ready final report schema
 
-The next useful step is to run source-sensitivity sweeps over:
+## Next Steps
 
-- uniform regions vs skewed regions
-- uniform users vs Zipf users
-- small groups vs many groups
-- low vs high user cardinality
+The next phase should turn this MVP into a broader benchmark by adding:
 
-That will tell us whether the benchmark is exposing meaningful differences
-between exact state and per-group sketch state before we add sampling.
+- source-sensitivity sweeps over distribution, skew, cardinality, and group count
+- a stable AQP report schema
+- trace or file-backed `events` sources
+- more query shapes, such as grouped quantile or top-k
+- budget concepts, such as error target, latency target, and memory target
+- sampling backend after the exact/sketch comparison is clear
+
+The key open research/design question is whether we should define an
+“approximation level” that describes how approximate a query execution is. That
+could mean backend policy, sketch configuration, expected error budget, or the
+fraction of the query plan implemented approximately. MVP v1 exposes the need
+for that concept but does not define it yet.
