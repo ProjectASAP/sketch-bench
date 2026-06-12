@@ -3,7 +3,8 @@
 > Purpose: align the Phase-2 MVP goal before adding more query types,
 > backends, or data sources.
 >
-> Status: implemented first slice. Sampling backend is intentionally deferred.
+> Status: implemented multi-shape slice. Sampling backend is intentionally
+> deferred.
 
 ## End Goal
 
@@ -19,29 +20,45 @@ SQL query
   -> throughput / memory / accuracy report
 ```
 
-The MVP query is:
+The MVP supports a small admitted query set:
 
 ```sql
 SELECT region, COUNT(DISTINCT user_id) AS users
 FROM events
 GROUP BY region;
+
+SELECT region, approx_median(value) AS p50_value
+FROM events
+GROUP BY region;
+
+SELECT approx_percentile_cont(value, 0.95) AS p95_value
+FROM events;
+
+SELECT user_id, COUNT(*) AS frequency
+FROM events
+GROUP BY user_id;
 ```
 
-This is intentionally small, but it changes the benchmark unit from
-`HLL update throughput` to:
+This is intentionally small, but it changes the benchmark unit from isolated
+sketch operations such as `HLL update throughput` to:
 
 ```text
-For the same grouped distinct-count query, how do exact and approximate
-execution behave under a controlled data source?
+For the same admitted SQL query and controlled data source, how do exact and
+approximate execution behave?
 ```
 
 ## Scope
 
-MVP v1 supports one AQP query shape:
+MVP v1 supports these AQP query shapes:
 
-- table: `events`
-- group key: `region`
-- aggregate: `COUNT(DISTINCT user_id)`
+| SQL shape | Lowered task | Approximate backend |
+|---|---|---|
+| `COUNT(DISTINCT user_id)` | `CountDistinct` | `asap_sketchlib::HyperLogLog<Classic>` |
+| `approx_median(value)` / `approx_percentile_cont(value, q)` | `Quantile` | `asap_sketchlib::KLL<f64>` |
+| `COUNT(*) GROUP BY user_id` | `Frequency` | `asap_sketchlib::CountMin` and `asap_sketchlib::Count` |
+
+`COUNT(DISTINCT ...)` and quantile tasks may be ungrouped or grouped by
+`region`. Frequency currently admits `events.user_id` keys only.
 
 The query frontend uses DataFusion only for parsing/planning:
 
@@ -55,6 +72,18 @@ AqpTask::CountDistinct {
     column: "user_id",
     group_by: ["region"],
 }
+
+AqpTask::Quantile {
+    table: "events",
+    column: "value",
+    quantile: 0.5,
+    group_by: ["region"],
+}
+
+AqpTask::Frequency {
+    table: "events",
+    column: "user_id",
+}
 ```
 
 DataFusion does **not** execute the query in this MVP. Execution is handled by
@@ -62,16 +91,21 @@ our own backends.
 
 ## Execution Backends
 
-MVP v1 runs the same lowered query task with two fixed backends:
+MVP v1 runs the same lowered query task with an exact backend and the matching
+`asap_sketchlib` backend or backends:
 
 | Policy | Implementation | Role |
 |---|---|---|
 | `exact` | `HashMap<region, HashSet<user_id>>` | Ground truth and exact-cost baseline |
 | `sketch` | `HashMap<region, asap_sketchlib::HyperLogLog<Classic>>` | Approximate grouped distinct-count backend |
+| `exact` | sorted per-group value vectors | Ground truth for quantile tasks |
+| `sketch` | `HashMap<group, asap_sketchlib::KLL<f64>>` | Approximate quantile backend |
+| `exact` | `HashMap<user_id, count>` | Ground truth for frequency tasks |
+| `sketch` | `asap_sketchlib::CountMin` / `asap_sketchlib::Count` | Approximate point-frequency backends |
 
-The exact backend returns the true per-region distinct count. The sketch
-backend returns per-region HLL estimates. The report compares sketch estimates
-against exact results group by group.
+The report compares each sketch estimate against the exact result over the
+admitted output keys or groups. Frequency reports include multiple sketch
+comparisons in `sketches[]`.
 
 ## Synthetic Data Source
 
@@ -80,6 +114,7 @@ The generated rows contain:
 
 - `region`
 - `user_id`
+- `value`
 
 The source is configurable enough to test whether data distribution matters:
 
@@ -114,13 +149,14 @@ The MVP emits one JSON object with:
 - synthetic data-source parameters
 - exact backend throughput and rough memory estimate
 - sketch backend throughput and rough memory estimate
+- optional `sketches[]` entries when one task has multiple approximate backends
 - mean / p95 / max relative error
 - worst group
 
 This is enough to demonstrate an AQP-style comparison:
 
 ```text
-same query + same data source + different backend => cost/error tradeoff
+same query + same data source + exact/sketch backend => cost/error tradeoff
 ```
 
 ## Success Criteria
@@ -128,9 +164,9 @@ same query + same data source + different backend => cost/error tradeoff
 MVP v1 is successful if it can demonstrate all of the following:
 
 - A SQL query is parsed by DataFusion into a logical plan.
-- The supported grouped `COUNT(DISTINCT)` plan is lowered into an AQP task.
+- Supported aggregate plans are lowered into AQP tasks.
 - The task runs on a synthetic relational data source.
-- The same task runs with exact and `asap_sketchlib` sketch backends.
+- The same task runs with exact and matching `asap_sketchlib` sketch backends.
 - The report compares throughput, rough memory, and per-group error.
 - Changing source knobs, such as Zipf user distribution or region skew, changes
   the measured result.
@@ -158,7 +194,7 @@ The next phase should turn this MVP into a broader benchmark by adding:
 - source-sensitivity sweeps over distribution, skew, cardinality, and group count
 - a stable AQP report schema
 - trace or file-backed `events` sources
-- more query shapes, such as grouped quantile or top-k
+- more query shapes, such as filtered distinct-count or top-k
 - budget concepts, such as error target, latency target, and memory target
 - sampling backend after the exact/sketch comparison is clear
 

@@ -38,9 +38,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqp_core::{
-    parse_aqp_sql, run_grouped_count_distinct_mvp, AqpTask, SyntheticEventsConfig, UserDistribution,
-};
+use aqp_core::{parse_aqp_sql, run_aqp_mvp, SyntheticEventsConfig, UserDistribution};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
 
@@ -89,14 +87,14 @@ struct AqpRunArgs {
     /// Path to a SQL query file.
     #[arg(long)]
     query: String,
-    /// HLL implementation filter for COUNT(DISTINCT) tasks.
-    /// Accepts a single name, a comma list, or `all`.
+    /// Reserved for future AQP backend filtering. Current MVP runs the
+    /// exact baseline plus the built-in asap_sketchlib backend(s).
     #[arg(long = "impl", default_value = "exact,lib")]
     impl_name: String,
-    /// Number of measured runs per `(impl, config)` pair.
+    /// Reserved for future repeated AQP runs.
     #[arg(long, default_value_t = 10)]
     runs: usize,
-    /// Warm-up runs before measurement.
+    /// Reserved for future repeated AQP runs.
     #[arg(long, default_value_t = 3)]
     warmup_runs: usize,
     /// Workload shape backing the query's `events.user_id` column.
@@ -127,17 +125,17 @@ struct AqpRunArgs {
     /// Path to append JSONL records to. `-` or omitted → stdout.
     #[arg(long)]
     report: Option<String>,
-    /// Worker threads for parallel HLL impls.
+    /// Reserved for future parallel AQP backends.
     #[arg(long, default_value_t = 1)]
     workers: usize,
-    /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy.
-    /// Default: all.
+    /// Reserved for future AQP metric selection.
     #[arg(long)]
     metrics: Option<String>,
-    /// HLL config grid override, e.g. `'lg_k=14'`.
+    /// Reserved for future AQP sketch config overrides.
     #[arg(long)]
     config: Option<String>,
-    /// Compute HLL cardinality accuracy against the exact baseline.
+    /// Reserved for future AQP accuracy toggles. Current MVP always compares
+    /// sketch estimates against the exact baseline.
     #[arg(long, default_value_t = false)]
     accuracy: bool,
 }
@@ -348,130 +346,35 @@ fn aqp_explain(args: AqpExplainArgs) -> Result<()> {
 fn aqp_run(args: AqpRunArgs) -> Result<()> {
     let sql = std::fs::read_to_string(&args.query)?;
     let query = parse_aqp_blocking(sql)?;
-    let AqpTask::CountDistinct {
-        table,
-        column,
-        group_by,
-    } = &query.task;
 
-    if table != "events" || column != "user_id" {
-        bail!(
-            "current AQP MVP maps only events.user_id onto count-distinct backends; got {table}.{column}"
-        );
+    if args.input.is_some() {
+        bail!("AQP MVP currently uses synthetic events only; --input is not supported yet");
     }
-    if group_by.len() == 1 && group_by[0] == "region" {
-        if args.input.is_some() {
-            bail!("grouped AQP MVP currently uses synthetic events only; --input is not supported yet");
-        }
-        let user_distribution = match args.workload.as_str() {
-            "uniform" => UserDistribution::Uniform,
-            "zipf" => UserDistribution::Zipf { s: args.zipf_s },
-            other => {
-                bail!("unknown grouped AQP user distribution: {other} (expected uniform|zipf)")
-            }
-        };
-        let report = run_grouped_count_distinct_mvp(
-            &query.task,
-            SyntheticEventsConfig {
-                rows: args.size,
-                regions: args.regions,
-                user_cardinality: args.cardinality,
-                user_distribution,
-                region_skew: args.region_skew,
-                seed: args.seed,
-            },
-        )?;
-        let mut sink = ReportSink::open(args.report.as_deref())?;
-        sink.write_line(&report.to_jsonl()?)?;
-        return Ok(());
-    }
-    if !group_by.is_empty() {
-        bail!("unsupported grouped AQP query for MVP: group_by={group_by:?}");
-    }
-
-    let spec = workload_spec(
-        args.input.as_deref(),
-        &args.workload,
-        args.size,
-        args.cardinality,
-        args.zipf_s,
-        args.seed,
+    let user_distribution = match args.workload.as_str() {
+        "uniform" => UserDistribution::Uniform,
+        "zipf" => UserDistribution::Zipf { s: args.zipf_s },
+        other => bail!("unknown AQP user distribution: {other} (expected uniform|zipf)"),
+    };
+    let report = run_aqp_mvp(
+        &query.task,
+        SyntheticEventsConfig {
+            rows: args.size,
+            regions: args.regions,
+            user_cardinality: args.cardinality,
+            user_distribution,
+            region_skew: args.region_skew,
+            seed: args.seed,
+        },
     )?;
-    let mut metrics_mask = parse_mask(args.metrics.as_deref());
-    if args.accuracy {
-        metrics_mask |= MetricsMask::ACCURACY;
-    }
-    let cfg = BenchConfig {
-        runs: args.runs,
-        warmup_runs: args.warmup_runs,
-        metrics: metrics_mask,
-        query_count: None,
-        threads: args.workers.max(1),
-        seed: args.seed,
-    };
-    let accuracy_cfg = AccuracyCfg {
-        enabled: args.accuracy,
-        max_probes: 0,
-        min_true_count: 0,
-        record_query_calls: false,
-    };
-
-    let impls = select_impls("hll", &args.impl_name)?;
-    let grid = match args.config.as_deref() {
-        Some(s) => sweep::parse_config("hll", s)?,
-        None => sweep::default_grid("hll")?,
-    };
-    let workload = spec.build_i64()?;
     let mut sink = ReportSink::open(args.report.as_deref())?;
 
     eprintln!(
-        "sketchlib: aqp run query={} task={:?} impls=[{}] configs={}",
+        "sketchlib: aqp run query={} task={:?} sketches={}",
         args.query,
         query.task,
-        impls
-            .iter()
-            .map(|e| e.impl_name)
-            .collect::<Vec<_>>()
-            .join(","),
-        grid.len(),
+        report.sketches.len(),
     );
-
-    for (idx_cfg, params) in grid.iter().enumerate() {
-        for entry in &impls {
-            if entry.constraint.is_unparameterized() && idx_cfg > 0 {
-                continue;
-            }
-            if !entry.accepts(params) {
-                eprintln!(
-                    "sketchlib: aqp skip {}/{} — {} does not match {:?}",
-                    entry.family,
-                    entry.impl_name,
-                    entry.constraint.describe(),
-                    params,
-                );
-                continue;
-            }
-            let reports = entry.run(&cfg, &workload, params, &accuracy_cfg);
-            for report in &reports {
-                let mut record = report.to_record();
-                record.sketch = "aqp-count-distinct".to_string();
-                record.impl_name = format!("hll-{}", entry.impl_name);
-                record.sketch_config = Some(serde_json::json!({
-                    "aqp": {
-                        "query_file": args.query,
-                        "task": query.task,
-                    },
-                    "hll": if entry.constraint.is_unparameterized() {
-                        serde_json::Value::Null
-                    } else {
-                        params.to_json_value()
-                    },
-                }));
-                sink.write_line(&record.to_jsonl())?;
-            }
-        }
-    }
-
+    sink.write_line(&report.to_jsonl()?)?;
     Ok(())
 }
 

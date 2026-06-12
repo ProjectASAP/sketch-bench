@@ -19,13 +19,24 @@ For a supported SQL query, how does exact execution compare with an
 asap_sketchlib approximate execution on the same data?
 ```
 
-MVP v1 should support a small set of query shapes. The first implemented shape
-is grouped distinct counting:
+MVP v1 supports a small set of admitted aggregate query shapes. The implemented
+set is intentionally sketch-shaped rather than general SQL:
 
 ```sql
 SELECT region, COUNT(DISTINCT user_id) AS users
 FROM events
 GROUP BY region;
+
+SELECT region, approx_median(value) AS p50_value
+FROM events
+GROUP BY region;
+
+SELECT approx_percentile_cont(value, 0.95) AS p95_value
+FROM events;
+
+SELECT user_id, COUNT(*) AS frequency
+FROM events
+GROUP BY user_id;
 ```
 
 For each supported query, the benchmark should produce a report that shows:
@@ -48,7 +59,7 @@ SQL query
   -> AQP task
   -> generated events data
   -> exact backend for that task
-  -> asap_sketchlib approximate backend for that task
+  -> one or more asap_sketchlib approximate backends for that task
   -> throughput, memory, and accuracy report
 ```
 
@@ -57,38 +68,43 @@ path is owned by `sketch-bench`.
 
 ## What We Currently Have
 
-The current first slice already establishes the core shape of the MVP:
+The current slice establishes the core shape of the MVP:
 
 - A SQL frontend using DataFusion parsing and logical planning.
 - A narrow lowering path from a supported aggregate plan into an AQP task.
-- One task type: grouped `COUNT(DISTINCT user_id)` over `events`.
+- Three task families over `events`:
+  - `COUNT(DISTINCT user_id)`, optionally grouped by `region`, backed by HLL.
+  - `approx_median(value)` / `approx_percentile_cont(value, q)`, optionally
+    grouped by `region`, backed by KLL.
+  - `COUNT(*) GROUP BY user_id`, backed by CountMin and CountSketch.
 - A synthetic `events` source with configurable row count, regions, user
   cardinality, distribution, skew, and seed.
-- An exact backend using per-group sets of user IDs.
-- A sketch backend using per-group `asap_sketchlib` HyperLogLog instances.
+- Exact backends using sets, sorted value vectors, or exact count maps.
+- Sketch backends using `asap_sketchlib` HyperLogLog, KLL, CountMin, and
+  CountSketch.
 - A JSON report with backend performance, rough memory estimates, and relative
   error summary.
 
 This is enough to demonstrate the basic MVP claim:
 
 ```text
-same query + same data + different execution policy => cost/error comparison
+same query + same data + different exact/sketch backend => cost/error comparison
 ```
 
 ## What Is Missing For MVP v1
 
-The current first slice is intentionally narrow. To complete MVP v1, the main
-missing piece is broadening the supported query set while keeping each query
-shape explicit and benchmarkable.
+The current slice is still intentionally narrow. The remaining work is not
+general SQL support; it is making the admitted query set and report schema more
+useful while keeping each query shape explicit and benchmarkable.
 
 MVP v1 still needs:
 
-- Additional query shapes with matching exact and `asap_sketchlib` approximate
-  backends. Candidate shapes include grouped quantile, top-k, frequency, or
-  filtered distinct-count queries.
 - Clear admission rules for each supported query shape, so unsupported SQL fails
   clearly instead of running an unintended benchmark.
-- A report format that can describe multiple query/task types consistently.
+- A report format that can describe multiple query/task types and multiple
+  sketch backends consistently.
+- Additional admitted shapes such as filtered distinct-count queries or top-k,
+  if they have a clear exact backend, sketch backend, and accuracy metric.
 
 Larger follow-up work, likely after MVP v1, includes:
 
