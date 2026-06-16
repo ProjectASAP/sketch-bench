@@ -38,7 +38,10 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqp_core::{parse_aqp_sql, run_aqp_mvp, SyntheticEventsConfig, UserDistribution};
+use aqp_core::{
+    admit_task, parse_aqp_sql, run_aqp_mvp, AdmissionStatus, SyntheticEventsConfig,
+    UserDistribution,
+};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
 
@@ -333,9 +336,12 @@ fn run_aqp(args: AqpArgs) -> Result<()> {
 fn aqp_explain(args: AqpExplainArgs) -> Result<()> {
     let sql = std::fs::read_to_string(&args.query)?;
     let query = parse_aqp_blocking(sql)?;
+    let admission = admit_task(&query.task);
     let out = serde_json::json!({
         "query_file": args.query,
+        "workload_intent": query.task.workload_intent(),
         "task": query.task,
+        "admission": admission,
         "runnable_by_current_bench": query.task.runnable_by_current_bench(),
         "datafusion_logical_plan": query.plan_display,
     });
@@ -346,6 +352,13 @@ fn aqp_explain(args: AqpExplainArgs) -> Result<()> {
 fn aqp_run(args: AqpRunArgs) -> Result<()> {
     let sql = std::fs::read_to_string(&args.query)?;
     let query = parse_aqp_blocking(sql)?;
+    let admission = admit_task(&query.task);
+    if admission.status != AdmissionStatus::Approximated {
+        bail!(
+            "AQP query is not admitted by the MVP runner: {}",
+            admission.reason
+        );
+    }
 
     if args.input.is_some() {
         bail!("AQP MVP currently uses synthetic events only; --input is not supported yet");
@@ -372,7 +385,7 @@ fn aqp_run(args: AqpRunArgs) -> Result<()> {
         "sketchlib: aqp run query={} task={:?} sketches={}",
         args.query,
         query.task,
-        report.sketches.len(),
+        report.approximate_backends.len(),
     );
     sink.write_line(&report.to_jsonl()?)?;
     Ok(())

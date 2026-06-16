@@ -62,15 +62,11 @@ pub enum AqpTask {
 
 impl AqpTask {
     pub fn runnable_by_current_bench(&self) -> bool {
-        match self {
-            AqpTask::CountDistinct { group_by, .. } => {
-                group_by.is_empty() || is_region_group_by(group_by)
-            }
-            AqpTask::Quantile { group_by, .. } => {
-                group_by.is_empty() || is_region_group_by(group_by)
-            }
-            AqpTask::Frequency { column, .. } => column == "user_id",
-        }
+        matches!(admit_task(self).status, AdmissionStatus::Approximated)
+    }
+
+    pub fn workload_intent(&self) -> WorkloadIntent {
+        WorkloadIntent::from_task(self)
     }
 }
 
@@ -78,6 +74,7 @@ const UNGROUPED: &str = "__all__";
 const DEFAULT_KLL_K: i32 = 200;
 const DEFAULT_FREQ_ROWS: usize = 5;
 const DEFAULT_FREQ_COLS: usize = 2048;
+const FREQ_HEAVY_HITTER_TOP_K: usize = 1_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyntheticEventsConfig {
@@ -160,6 +157,163 @@ impl SyntheticEvents {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkloadIntent {
+    pub intent_id: String,
+    pub family: String,
+    pub table: String,
+    pub measure_column: String,
+    pub group_by: Vec<String>,
+    pub parameters: serde_json::Value,
+}
+
+impl WorkloadIntent {
+    pub fn from_task(task: &AqpTask) -> Self {
+        match task {
+            AqpTask::CountDistinct {
+                table,
+                column,
+                group_by,
+            } => Self {
+                intent_id: if group_by.is_empty() {
+                    "count_distinct.v1".to_string()
+                } else {
+                    "grouped_count_distinct.v1".to_string()
+                },
+                family: "cardinality".to_string(),
+                table: table.clone(),
+                measure_column: column.clone(),
+                group_by: group_by.clone(),
+                parameters: serde_json::json!({ "distinct": true }),
+            },
+            AqpTask::Quantile {
+                table,
+                column,
+                quantile,
+                group_by,
+            } => Self {
+                intent_id: if group_by.is_empty() {
+                    "quantile.v1".to_string()
+                } else {
+                    "grouped_quantile.v1".to_string()
+                },
+                family: "quantile".to_string(),
+                table: table.clone(),
+                measure_column: column.clone(),
+                group_by: group_by.clone(),
+                parameters: serde_json::json!({ "quantile": quantile }),
+            },
+            AqpTask::Frequency { table, column } => Self {
+                intent_id: "frequency_by_key.v1".to_string(),
+                family: "frequency".to_string(),
+                table: table.clone(),
+                measure_column: "count".to_string(),
+                group_by: vec![column.clone()],
+                parameters: serde_json::json!({ "aggregate": "count_star" }),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataProfile {
+    pub source_id: String,
+    pub relation: String,
+    pub row_count: usize,
+    pub regions: usize,
+    pub user_cardinality: u64,
+    pub user_distribution: UserDistribution,
+    pub region_skew: f64,
+    pub seed: u64,
+}
+
+impl DataProfile {
+    pub fn synthetic_events(config: &SyntheticEventsConfig) -> Self {
+        Self {
+            source_id: "synthetic_events.v1".to_string(),
+            relation: "events".to_string(),
+            row_count: config.rows,
+            regions: config.regions,
+            user_cardinality: config.user_cardinality,
+            user_distribution: config.user_distribution,
+            region_skew: config.region_skew,
+            seed: config.seed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ApproximationRequirements {
+    pub target_relative_error: Option<f64>,
+    pub target_rank_error: Option<f64>,
+    pub latency_budget_ns: Option<u64>,
+    pub memory_budget_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionStatus {
+    Approximated,
+    ExactFallback,
+    Rejected,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdmissionReport {
+    pub status: AdmissionStatus,
+    pub reason: String,
+    pub execution_backend: Option<String>,
+    pub fallback: Option<String>,
+}
+
+pub fn admit_task(task: &AqpTask) -> AdmissionReport {
+    let accepted = |reason: &str| AdmissionReport {
+        status: AdmissionStatus::Approximated,
+        reason: reason.to_string(),
+        execution_backend: Some("local_exact_plus_asap_sketchlib.v1".to_string()),
+        fallback: None,
+    };
+    let unsupported = |reason: String| AdmissionReport {
+        status: AdmissionStatus::Unsupported,
+        reason,
+        execution_backend: None,
+        fallback: None,
+    };
+
+    match task {
+        AqpTask::CountDistinct {
+            table,
+            column,
+            group_by,
+        } if table == "events"
+            && column == "user_id"
+            && (group_by.is_empty() || is_region_group_by(group_by)) =>
+        {
+            accepted("admitted COUNT(DISTINCT user_id) over events, optionally GROUP BY region")
+        }
+        AqpTask::Quantile {
+            table,
+            column,
+            quantile,
+            group_by,
+        } if table == "events"
+            && matches!(column.as_str(), "user_id" | "value")
+            && (group_by.is_empty() || is_region_group_by(group_by))
+            && (0.0..=1.0).contains(quantile)
+            && quantile.is_finite() =>
+        {
+            accepted("admitted approx_median/approx_percentile_cont over events, optionally GROUP BY region")
+        }
+        AqpTask::Frequency { table, column } if table == "events" && column == "user_id" => {
+            accepted("admitted COUNT(*) GROUP BY user_id over events")
+        }
+        _ => unsupported(format!(
+            "unsupported AQP MVP task {task:?}; supported shapes are COUNT(DISTINCT user_id) over events optionally GROUP BY region, approx_median/approx_percentile_cont over events.user_id or events.value optionally GROUP BY region, and COUNT(*) GROUP BY user_id"
+        )),
+    }
+}
+
 fn sample_region(regions: usize, region_skew: f64, rng: &mut Xoshiro256PlusPlus) -> usize {
     if regions == 1 {
         return 0;
@@ -175,13 +329,13 @@ fn sample_region(regions: usize, region_skew: f64, rng: &mut Xoshiro256PlusPlus)
 pub struct AqpMvpReport {
     pub schema_version: u32,
     pub mode: String,
-    pub task: AqpTask,
-    pub data_source: SyntheticEventsConfig,
-    pub exact: BackendReport,
-    pub sketch: BackendReport,
-    pub accuracy: AccuracySummary,
-    #[serde(default)]
-    pub sketches: Vec<SketchComparison>,
+    pub workload_intent: WorkloadIntent,
+    pub data_profile: DataProfile,
+    pub approximation_requirements: ApproximationRequirements,
+    pub admission: AdmissionReport,
+    pub exact_oracle: BackendReport,
+    pub approximate_backends: Vec<SketchComparison>,
+    pub accuracy_metrics: AccuracyMetrics,
     pub notes: Vec<String>,
 }
 
@@ -193,10 +347,45 @@ impl AqpMvpReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendReport {
+    pub role: String,
+    pub backend_id: String,
     pub policy: String,
     pub implementation: String,
-    pub groups: usize,
+    pub cost_metrics: CostMetrics,
+}
+
+impl BackendReport {
+    fn new(
+        role: impl Into<String>,
+        backend_id: impl Into<String>,
+        policy: impl Into<String>,
+        implementation: impl Into<String>,
+        groups: usize,
+        rows: usize,
+        elapsed_ns: u128,
+        memory_bytes_estimate: u64,
+    ) -> Self {
+        let throughput_rows_per_sec = rows_per_sec(rows, elapsed_ns);
+        Self {
+            role: role.into(),
+            backend_id: backend_id.into(),
+            policy: policy.into(),
+            implementation: implementation.into(),
+            cost_metrics: CostMetrics {
+                rows,
+                groups,
+                elapsed_ns,
+                throughput_rows_per_sec,
+                memory_bytes_estimate,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostMetrics {
     pub rows: usize,
+    pub groups: usize,
     pub elapsed_ns: u128,
     pub throughput_rows_per_sec: f64,
     pub memory_bytes_estimate: u64,
@@ -206,6 +395,7 @@ pub struct BackendReport {
 pub struct SketchComparison {
     pub sketch: BackendReport,
     pub accuracy: AccuracySummary,
+    pub accuracy_metrics: AccuracyMetrics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +414,82 @@ pub struct GroupError {
     pub exact: f64,
     pub estimate: f64,
     pub relative_error: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccuracyMetrics {
+    pub metric_kind: String,
+    pub compared_items: usize,
+    pub missing_items: usize,
+    pub relative_error: Option<AccuracySummary>,
+    pub rank_error: Option<RankErrorSummary>,
+    pub frequency_heavy_hitters: Option<FrequencyHeavyHitterSummary>,
+}
+
+impl AccuracyMetrics {
+    fn relative(metric_kind: impl Into<String>, summary: AccuracySummary) -> Self {
+        Self {
+            metric_kind: metric_kind.into(),
+            compared_items: summary.compared_groups,
+            missing_items: summary.missing_groups,
+            relative_error: Some(summary),
+            rank_error: None,
+            frequency_heavy_hitters: None,
+        }
+    }
+
+    fn quantile(rank_error: RankErrorSummary, value_error: AccuracySummary) -> Self {
+        Self {
+            metric_kind: "quantile_rank_error".to_string(),
+            compared_items: rank_error.compared_groups,
+            missing_items: rank_error.missing_groups,
+            relative_error: Some(value_error),
+            rank_error: Some(rank_error),
+            frequency_heavy_hitters: None,
+        }
+    }
+
+    fn frequency(all_keys: AccuracySummary, heavy_hitters: FrequencyHeavyHitterSummary) -> Self {
+        Self {
+            metric_kind: "frequency_relative_error".to_string(),
+            compared_items: all_keys.compared_groups,
+            missing_items: all_keys.missing_groups,
+            relative_error: Some(all_keys),
+            rank_error: None,
+            frequency_heavy_hitters: Some(heavy_hitters),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankErrorSummary {
+    pub quantile: f64,
+    pub compared_groups: usize,
+    pub missing_groups: usize,
+    pub mean_rank_error: f64,
+    pub p95_rank_error: f64,
+    pub max_rank_error: f64,
+    pub worst_group: Option<RankGroupError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankGroupError {
+    pub group: String,
+    pub target_quantile: f64,
+    pub estimate: f64,
+    pub lower_rank: f64,
+    pub upper_rank: f64,
+    pub rank_error: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrequencyHeavyHitterSummary {
+    pub top_k: usize,
+    pub compared_keys: usize,
+    pub mean_relative_error: f64,
+    pub p95_relative_error: f64,
+    pub max_relative_error: f64,
+    pub worst_key: Option<GroupError>,
 }
 
 pub fn run_grouped_count_distinct_mvp(
@@ -264,20 +530,24 @@ fn run_count_distinct_mvp(task: &AqpTask, source: SyntheticEventsConfig) -> Resu
     let (exact_report, exact) = run_exact_count_distinct(&events, grouped);
     let (sketch_report, sketch) = run_hll_count_distinct(&events, grouped);
     let accuracy = compare_grouped(&exact, &sketch);
+    let accuracy_metrics =
+        AccuracyMetrics::relative("cardinality_relative_error", accuracy.clone());
     let sketches = vec![SketchComparison {
         sketch: sketch_report.clone(),
         accuracy: accuracy.clone(),
+        accuracy_metrics: accuracy_metrics.clone(),
     }];
 
     Ok(AqpMvpReport {
         schema_version: 1,
         mode: "aqp_mvp".to_string(),
-        task: task.clone(),
-        data_source: source,
-        exact: exact_report,
-        sketch: sketch_report,
-        accuracy,
-        sketches,
+        workload_intent: task.workload_intent(),
+        data_profile: DataProfile::synthetic_events(&source),
+        approximation_requirements: ApproximationRequirements::default(),
+        admission: admit_task(task),
+        exact_oracle: exact_report.clone(),
+        approximate_backends: sketches.clone(),
+        accuracy_metrics: accuracy_metrics.clone(),
         notes: vec![
             "This MVP benchmarks admitted query shapes, not general SQL: DataFusion SQL -> LogicalPlan -> AQP task -> exact and asap_sketchlib backends.".to_string(),
             "Sampling backend, budget enforcement, shard merge, and multi-operator composed error are intentionally left for the next phase.".to_string(),
@@ -310,15 +580,16 @@ fn run_exact_count_distinct(
         .sum::<usize>() as u64;
 
     (
-        BackendReport {
-            policy: "exact".to_string(),
-            implementation: "HashMap<region, HashSet<user_id>>".to_string(),
-            groups: result.len(),
-            rows: events.rows.len(),
+        BackendReport::new(
+            "exact_oracle",
+            "oracle.exact.hashset_count_distinct.v1",
+            "exact",
+            "HashMap<region, HashSet<user_id>>",
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -345,15 +616,16 @@ fn run_hll_count_distinct(
     let memory_bytes_estimate = (groups.len() * (1usize << 14)) as u64;
 
     (
-        BackendReport {
-            policy: "sketch".to_string(),
-            implementation: "HashMap<region, asap_sketchlib::HyperLogLog<Classic>>".to_string(),
-            groups: result.len(),
-            rows: events.rows.len(),
+        BackendReport::new(
+            "approximate_backend",
+            "sketch.asap_sketchlib.hll_classic.v1",
+            "sketch",
+            "HashMap<region, asap_sketchlib::HyperLogLog<Classic>>",
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -380,23 +652,28 @@ fn run_quantile_mvp(task: &AqpTask, source: SyntheticEventsConfig) -> Result<Aqp
 
     let events = SyntheticEvents::generate(source.clone())?;
     let grouped = is_region_group_by(group_by);
-    let (exact_report, exact) = run_exact_quantile(&events, column, *quantile, grouped);
+    let (exact_report, exact, sorted_groups) =
+        run_exact_quantile(&events, column, *quantile, grouped);
     let (sketch_report, sketch) = run_kll_quantile(&events, column, *quantile, grouped);
-    let accuracy = compare_grouped(&exact, &sketch);
+    let value_accuracy = compare_grouped(&exact, &sketch);
+    let rank_accuracy = compare_quantile_rank(&sorted_groups, &sketch, *quantile);
+    let accuracy_metrics = AccuracyMetrics::quantile(rank_accuracy.clone(), value_accuracy.clone());
     let sketches = vec![SketchComparison {
         sketch: sketch_report.clone(),
-        accuracy: accuracy.clone(),
+        accuracy: value_accuracy.clone(),
+        accuracy_metrics: accuracy_metrics.clone(),
     }];
 
     Ok(AqpMvpReport {
         schema_version: 1,
         mode: "aqp_mvp".to_string(),
-        task: task.clone(),
-        data_source: source,
-        exact: exact_report,
-        sketch: sketch_report,
-        accuracy,
-        sketches,
+        workload_intent: task.workload_intent(),
+        data_profile: DataProfile::synthetic_events(&source),
+        approximation_requirements: ApproximationRequirements::default(),
+        admission: admit_task(task),
+        exact_oracle: exact_report.clone(),
+        approximate_backends: sketches.clone(),
+        accuracy_metrics: accuracy_metrics.clone(),
         notes: vec![
             "Quantile AQP MVP maps approx_median/approx_percentile_cont SQL shapes to exact sort and asap_sketchlib KLL backends.".to_string(),
             "DataFusion is used for parsing and logical-plan admission only; sketch-bench owns execution.".to_string(),
@@ -409,7 +686,11 @@ fn run_exact_quantile(
     column: &str,
     quantile: f64,
     grouped: bool,
-) -> (BackendReport, HashMap<String, f64>) {
+) -> (
+    BackendReport,
+    HashMap<String, f64>,
+    HashMap<String, Vec<f64>>,
+) {
     let start = Instant::now();
     let mut groups: HashMap<String, Vec<f64>> = HashMap::new();
     for row in &events.rows {
@@ -420,25 +701,29 @@ fn run_exact_quantile(
             .push(numeric_column(row, column));
     }
     let mut result = HashMap::with_capacity(groups.len());
+    let mut sorted_groups = HashMap::with_capacity(groups.len());
     let mut memory_bytes_estimate = 0u64;
     for (group, mut values) in groups {
         memory_bytes_estimate += (values.capacity() * std::mem::size_of::<f64>()) as u64;
         values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        result.insert(group, exact_quantile_sorted(&values, quantile));
+        result.insert(group.clone(), exact_quantile_sorted(&values, quantile));
+        sorted_groups.insert(group, values);
     }
     let elapsed_ns = start.elapsed().as_nanos();
 
     (
-        BackendReport {
-            policy: "exact".to_string(),
-            implementation: format!("HashMap<group, Vec<{column}>> sort/type7"),
-            groups: result.len(),
-            rows: events.rows.len(),
+        BackendReport::new(
+            "exact_oracle",
+            "oracle.exact.sorted_vec_quantile.type7.v1",
+            "exact",
+            format!("HashMap<group, Vec<{column}>> sort/type7"),
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
+        sorted_groups,
     )
 }
 
@@ -467,15 +752,16 @@ fn run_kll_quantile(
         (groups.len() * DEFAULT_KLL_K as usize * std::mem::size_of::<f64>() * 4) as u64;
 
     (
-        BackendReport {
-            policy: "sketch".to_string(),
-            implementation: format!("HashMap<group, asap_sketchlib::KLL<f64>(k={DEFAULT_KLL_K})>"),
-            groups: result.len(),
-            rows: events.rows.len(),
+        BackendReport::new(
+            "approximate_backend",
+            format!("sketch.asap_sketchlib.kll.k{DEFAULT_KLL_K}.v1"),
+            "sketch",
+            format!("HashMap<group, asap_sketchlib::KLL<f64>(k={DEFAULT_KLL_K})>"),
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -492,28 +778,35 @@ fn run_frequency_mvp(task: &AqpTask, source: SyntheticEventsConfig) -> Result<Aq
     let (exact_report, exact) = run_exact_frequency(&events);
     let (cms_report, cms) = run_countmin_frequency(&events);
     let cms_accuracy = compare_grouped(&exact, &cms);
+    let cms_heavy_hitters = compare_frequency_heavy_hitters(&exact, &cms, FREQ_HEAVY_HITTER_TOP_K);
+    let cms_accuracy_metrics = AccuracyMetrics::frequency(cms_accuracy.clone(), cms_heavy_hitters);
     let (cs_report, cs) = run_countsketch_frequency(&events);
     let cs_accuracy = compare_grouped(&exact, &cs);
+    let cs_heavy_hitters = compare_frequency_heavy_hitters(&exact, &cs, FREQ_HEAVY_HITTER_TOP_K);
+    let cs_accuracy_metrics = AccuracyMetrics::frequency(cs_accuracy.clone(), cs_heavy_hitters);
     let sketches = vec![
         SketchComparison {
             sketch: cms_report.clone(),
             accuracy: cms_accuracy.clone(),
+            accuracy_metrics: cms_accuracy_metrics.clone(),
         },
         SketchComparison {
             sketch: cs_report,
             accuracy: cs_accuracy,
+            accuracy_metrics: cs_accuracy_metrics,
         },
     ];
 
     Ok(AqpMvpReport {
         schema_version: 1,
         mode: "aqp_mvp".to_string(),
-        task: task.clone(),
-        data_source: source,
-        exact: exact_report,
-        sketch: cms_report,
-        accuracy: cms_accuracy,
-        sketches,
+        workload_intent: task.workload_intent(),
+        data_profile: DataProfile::synthetic_events(&source),
+        approximation_requirements: ApproximationRequirements::default(),
+        admission: admit_task(task),
+        exact_oracle: exact_report.clone(),
+        approximate_backends: sketches.clone(),
+        accuracy_metrics: cms_accuracy_metrics.clone(),
         notes: vec![
             "Frequency AQP MVP maps GROUP BY user_id COUNT(*) to exact counts plus asap_sketchlib CountMin and CountSketch backends.".to_string(),
             "The sketch backends are queried for every exact key so the report compares point-frequency error over the admitted key set.".to_string(),
@@ -536,15 +829,16 @@ fn run_exact_frequency(events: &SyntheticEvents) -> (BackendReport, HashMap<Stri
         (counts.capacity() * (std::mem::size_of::<i64>() + std::mem::size_of::<u64>())) as u64;
 
     (
-        BackendReport {
-            policy: "exact".to_string(),
-            implementation: "HashMap<user_id, count>".to_string(),
-            groups: result.len(),
-            rows: events.rows.len(),
+        BackendReport::new(
+            "exact_oracle",
+            "oracle.exact.hashmap_frequency.v1",
+            "exact",
+            "HashMap<user_id, count>",
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -573,17 +867,20 @@ fn run_countmin_frequency(events: &SyntheticEvents) -> (BackendReport, HashMap<S
         (DEFAULT_FREQ_ROWS * DEFAULT_FREQ_COLS * std::mem::size_of::<i32>()) as u64;
 
     (
-        BackendReport {
-            policy: "sketch".to_string(),
-            implementation: format!(
+        BackendReport::new(
+            "approximate_backend",
+            format!(
+                "sketch.asap_sketchlib.countmin.fastpath.{DEFAULT_FREQ_ROWS}x{DEFAULT_FREQ_COLS}.v1"
+            ),
+            "sketch",
+            format!(
                 "asap_sketchlib::CountMin<Vector2D<i32>, FastPath>({DEFAULT_FREQ_ROWS}x{DEFAULT_FREQ_COLS})"
             ),
-            groups: result.len(),
-            rows: events.rows.len(),
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -615,17 +912,20 @@ fn run_countsketch_frequency(events: &SyntheticEvents) -> (BackendReport, HashMa
         (DEFAULT_FREQ_ROWS * DEFAULT_FREQ_COLS * std::mem::size_of::<i32>()) as u64;
 
     (
-        BackendReport {
-            policy: "sketch".to_string(),
-            implementation: format!(
+        BackendReport::new(
+            "approximate_backend",
+            format!(
+                "sketch.asap_sketchlib.countsketch.fastpath.{DEFAULT_FREQ_ROWS}x{DEFAULT_FREQ_COLS}.v1"
+            ),
+            "sketch",
+            format!(
                 "asap_sketchlib::Count<Vector2D<i32>, FastPath>({DEFAULT_FREQ_ROWS}x{DEFAULT_FREQ_COLS})"
             ),
-            groups: result.len(),
-            rows: events.rows.len(),
+            result.len(),
+            events.rows.len(),
             elapsed_ns,
-            throughput_rows_per_sec: rows_per_sec(events.rows.len(), elapsed_ns),
             memory_bytes_estimate,
-        },
+        ),
         result,
     )
 }
@@ -680,6 +980,120 @@ fn compare_grouped(exact: &HashMap<String, f64>, sketch: &HashMap<String, f64>) 
     }
 }
 
+fn compare_quantile_rank(
+    sorted_groups: &HashMap<String, Vec<f64>>,
+    sketch: &HashMap<String, f64>,
+    quantile: f64,
+) -> RankErrorSummary {
+    let mut errors = Vec::with_capacity(sorted_groups.len());
+    let mut missing = 0usize;
+
+    for (group, values) in sorted_groups {
+        let Some(&estimate) = sketch.get(group) else {
+            missing += 1;
+            continue;
+        };
+        if values.is_empty() {
+            continue;
+        }
+        let n = values.len() as f64;
+        let lower_rank = values.partition_point(|&v| v < estimate) as f64 / n;
+        let upper_rank = values.partition_point(|&v| v <= estimate) as f64 / n;
+        let rank_error = if quantile < lower_rank {
+            lower_rank - quantile
+        } else if quantile > upper_rank {
+            quantile - upper_rank
+        } else {
+            0.0
+        };
+        errors.push(RankGroupError {
+            group: group.clone(),
+            target_quantile: quantile,
+            estimate,
+            lower_rank,
+            upper_rank,
+            rank_error,
+        });
+    }
+
+    errors.sort_by(|a, b| {
+        a.rank_error
+            .partial_cmp(&b.rank_error)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mean = if errors.is_empty() {
+        0.0
+    } else {
+        errors.iter().map(|e| e.rank_error).sum::<f64>() / errors.len() as f64
+    };
+    let p95 = percentile_rank_error(&errors, 0.95);
+    let worst_group = errors.last().cloned();
+    let max = worst_group.as_ref().map(|e| e.rank_error).unwrap_or(0.0);
+
+    RankErrorSummary {
+        quantile,
+        compared_groups: errors.len(),
+        missing_groups: missing,
+        mean_rank_error: mean,
+        p95_rank_error: p95,
+        max_rank_error: max,
+        worst_group,
+    }
+}
+
+fn compare_frequency_heavy_hitters(
+    exact: &HashMap<String, f64>,
+    sketch: &HashMap<String, f64>,
+    top_k: usize,
+) -> FrequencyHeavyHitterSummary {
+    let mut keys = exact.iter().collect::<Vec<_>>();
+    keys.sort_by(|a, b| {
+        b.1.partial_cmp(a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(b.0))
+    });
+    keys.truncate(top_k.min(keys.len()));
+
+    let mut errors = Vec::with_capacity(keys.len());
+    for (key, &truth) in keys {
+        let estimate = sketch.get(key).copied().unwrap_or(0.0);
+        let relative_error = if truth == 0.0 {
+            0.0
+        } else {
+            (estimate - truth).abs() / truth.abs()
+        };
+        errors.push(GroupError {
+            group: key.clone(),
+            exact: truth,
+            estimate,
+            relative_error,
+        });
+    }
+
+    errors.sort_by(|a, b| {
+        a.relative_error
+            .partial_cmp(&b.relative_error)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mean = if errors.is_empty() {
+        0.0
+    } else {
+        errors.iter().map(|e| e.relative_error).sum::<f64>() / errors.len() as f64
+    };
+    let p95 = percentile_error(&errors, 0.95);
+    let worst_key = errors.last().cloned();
+    let max = worst_key.as_ref().map(|e| e.relative_error).unwrap_or(0.0);
+
+    FrequencyHeavyHitterSummary {
+        top_k,
+        compared_keys: errors.len(),
+        mean_relative_error: mean,
+        p95_relative_error: p95,
+        max_relative_error: max,
+        worst_key,
+    }
+}
+
 fn group_key(row: &EventRow, grouped: bool) -> String {
     if grouped {
         row.region.clone()
@@ -727,6 +1141,14 @@ fn percentile_error(errors: &[GroupError], q: f64) -> f64 {
     }
     let idx = ((errors.len() - 1) as f64 * q).round() as usize;
     errors[idx.min(errors.len() - 1)].relative_error
+}
+
+fn percentile_rank_error(errors: &[RankGroupError], q: f64) -> f64 {
+    if errors.is_empty() {
+        return 0.0;
+    }
+    let idx = ((errors.len() - 1) as f64 * q).round() as usize;
+    errors[idx.min(errors.len() - 1)].rank_error
 }
 
 fn rows_per_sec(rows: usize, elapsed_ns: u128) -> f64 {
@@ -858,7 +1280,7 @@ pub fn lower_plan(plan: &LogicalPlan) -> Result<AqpTask> {
         LogicalPlan::Projection(proj) => lower_plan(&proj.input),
         LogicalPlan::SubqueryAlias(alias) => lower_plan(&alias.input),
         other => bail!(
-            "unsupported AQP plan root: {}. First slice supports COUNT(DISTINCT ...) aggregate queries.",
+            "unsupported AQP plan root: {}. AQP MVP admits aggregate queries only: COUNT(DISTINCT user_id), approx_median/approx_percentile_cont, and COUNT(*) GROUP BY user_id over events.",
             plan_kind(other)
         ),
     }
@@ -1083,11 +1505,43 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(report.exact.groups, 4);
-        assert_eq!(report.sketch.groups, 4);
-        assert_eq!(report.accuracy.compared_groups, 4);
-        assert!(report.exact.throughput_rows_per_sec > 0.0);
-        assert!(report.sketch.throughput_rows_per_sec > 0.0);
+        assert_eq!(report.exact_oracle.cost_metrics.groups, 4);
+        assert_eq!(report.approximate_backends[0].sketch.cost_metrics.groups, 4);
+        assert_eq!(
+            report
+                .accuracy_metrics
+                .relative_error
+                .as_ref()
+                .unwrap()
+                .compared_groups,
+            4
+        );
+        assert_eq!(
+            report.workload_intent.intent_id,
+            "grouped_count_distinct.v1"
+        );
+        assert_eq!(report.data_profile.source_id, "synthetic_events.v1");
+        assert_eq!(report.admission.status, AdmissionStatus::Approximated);
+        assert_eq!(
+            report.exact_oracle.backend_id,
+            "oracle.exact.hashset_count_distinct.v1"
+        );
+        assert_eq!(
+            report.approximate_backends[0].sketch.backend_id,
+            "sketch.asap_sketchlib.hll_classic.v1"
+        );
+        assert_eq!(
+            report.accuracy_metrics.metric_kind,
+            "cardinality_relative_error"
+        );
+        assert!(report.exact_oracle.cost_metrics.throughput_rows_per_sec > 0.0);
+        assert!(
+            report.approximate_backends[0]
+                .sketch
+                .cost_metrics
+                .throughput_rows_per_sec
+                > 0.0
+        );
     }
 
     #[test]
@@ -1154,11 +1608,30 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(report.exact.groups, 4);
-        assert_eq!(report.sketch.groups, 4);
-        assert_eq!(report.sketches.len(), 1);
-        assert!(report.sketch.implementation.contains("KLL"));
-        assert_eq!(report.accuracy.compared_groups, 4);
+        assert_eq!(report.exact_oracle.cost_metrics.groups, 4);
+        assert_eq!(report.approximate_backends[0].sketch.cost_metrics.groups, 4);
+        assert_eq!(report.approximate_backends.len(), 1);
+        assert!(report.approximate_backends[0]
+            .sketch
+            .implementation
+            .contains("KLL"));
+        assert_eq!(
+            report
+                .accuracy_metrics
+                .relative_error
+                .as_ref()
+                .unwrap()
+                .compared_groups,
+            4
+        );
+        assert_eq!(report.workload_intent.intent_id, "grouped_quantile.v1");
+        let rank = report
+            .accuracy_metrics
+            .rank_error
+            .as_ref()
+            .expect("quantile report should include rank error");
+        assert_eq!(rank.compared_groups, 4);
+        assert!(rank.max_rank_error >= 0.0);
     }
 
     #[test]
@@ -1177,14 +1650,46 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(report.exact.groups > 0);
-        assert_eq!(report.sketches.len(), 2);
-        assert!(report.sketches[0]
+        assert!(report.exact_oracle.cost_metrics.groups > 0);
+        assert_eq!(report.approximate_backends.len(), 2);
+        assert!(report.approximate_backends[0]
             .sketch
             .implementation
             .contains("CountMin"));
-        assert!(report.sketches[1].sketch.implementation.contains("Count"));
-        assert_eq!(report.accuracy.compared_groups, report.exact.groups);
+        assert!(report.approximate_backends[1]
+            .sketch
+            .implementation
+            .contains("Count"));
+        assert_eq!(
+            report
+                .accuracy_metrics
+                .relative_error
+                .as_ref()
+                .unwrap()
+                .compared_groups,
+            report.exact_oracle.cost_metrics.groups
+        );
+        assert_eq!(report.workload_intent.intent_id, "frequency_by_key.v1");
+        let heavy = report
+            .accuracy_metrics
+            .frequency_heavy_hitters
+            .as_ref()
+            .expect("frequency report should include heavy-hitter accuracy");
+        assert_eq!(heavy.top_k, FREQ_HEAVY_HITTER_TOP_K);
+        assert!(heavy.compared_keys > 0);
+    }
+
+    #[test]
+    fn admission_reports_unsupported_task_clearly() {
+        let task = AqpTask::CountDistinct {
+            table: "events".to_string(),
+            column: "value".to_string(),
+            group_by: vec!["region".to_string()],
+        };
+        let admission = admit_task(&task);
+        assert_eq!(admission.status, AdmissionStatus::Unsupported);
+        assert!(admission.reason.contains("supported shapes"));
+        assert!(!task.runnable_by_current_bench());
     }
 
     #[test]
