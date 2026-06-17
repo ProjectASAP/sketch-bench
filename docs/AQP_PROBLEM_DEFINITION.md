@@ -293,7 +293,7 @@ and produce the plots that reveal the metrics set.
 - normalized run records
 - plotting/report inputs for metrics set
 
-## MVP v3
+<!-- ## MVP v3
 
 MVP v3 should prove the task-centered benchmark shape before adding external
 systems.
@@ -383,4 +383,4 @@ Non-goals:
 - a leaderboard
 - distributed execution
 - planner evaluation
-- dashboard polish
+- dashboard polish -->
