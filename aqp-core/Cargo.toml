@@ -18,6 +18,7 @@ rand_distr.workspace = true
 rand_xoshiro.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+csv.workspace = true
 
 # First sketch backend for the AQP MVP.
 asap_sketchlib.workspace = true

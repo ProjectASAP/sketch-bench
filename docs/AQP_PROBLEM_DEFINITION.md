@@ -1,7 +1,7 @@
 # AQP Bench Problem Definition
 
 > Status: working definition. This document sets aside the broader MVP notes
-> and defines my current mental modep AQP benchmark.
+> and defines my current mental model for an AQP benchmark.
 
 ## Core Question
 
@@ -82,6 +82,107 @@ A track fixes the benchmark context. Comparisons are meaningful within a track.
 
 The tracks may share vocabulary, data generators, ground-truth code, metrics,
 and report schema. They should not share a fake universal query interface.
+
+## Primary Concrete Example
+
+The primary ASAPQuery integration example is the PromQL quickstart bundle:
+
+```text
+sketch-bench/aqp-workloads/asapquery/promql_quickstart/
+```
+
+It runs ASAPQuery's existing Docker quickstart, uses a `sketch-bench`
+paired-timestamp PromQL runner against Prometheus and ASAPQuery, then imports
+the JSON reports into AQP records. The paired runner preserves ASAPQuery's
+PromQL API and report shape, but sends the same PromQL `time=` value to both
+systems for each query repetition. This is the preferred concrete example
+because it is runnable from the public quickstart path and it produced a
+concrete AQP report:
+
+```text
+sketch-bench/aqp-workloads/asapquery/promql_quickstart/latest_report.jsonl
+```
+
+The latest local run imported 42 AQP records:
+
+- 14 Prometheus baseline option runs
+- 14 ASAPQuery option runs
+- 14 paired comparisons
+
+The case fills the AQP dimensions with specific values:
+
+- `task`: PromQL aggregates and grouped quantiles over `sensor_reading`.
+- `benchmark context`: Prometheus-compatible telemetry query serving.
+- `options`: Prometheus exact baseline, ASAPQuery exact fallback, and ASAPQuery
+  native approximate execution.
+- `data condition`: deterministic fake exporters with multiple pattern groups.
+- `requirements`: p95 latency budget, relative-error target, and result-series
+  matching.
+- `metrics`: latency, speedup, numeric error, missing/extra label sets,
+  admission status, and requirement satisfaction.
+
+The PromQL quickstart should be read as a concrete plan for this definition,
+not only as a demo run. It gives the benchmark a real external system boundary:
+
+```text
+PromQL task x telemetry context x fake-exporter data condition
+  x latency/error requirements
+  x {Prometheus, ASAPQuery exact fallback, ASAPQuery native approximate}
+  => latency, fidelity, admission, and failure behavior
+```
+
+That example fills in the previously vague pieces as follows:
+
+- Metrics are no longer abstract: the imported record contains p95 latency,
+  p95 speedup, relative error, label-set mismatch counts, and per-requirement
+  booleans.
+- Failure behavior is no longer just a note: each query records `baseline`,
+  `exact_fallback`, `approximated`, `option_error`, or missing counterpart
+  behavior.
+- Requirements are checked per dimension, so a query can be latency-good but
+  fidelity-bad, or fidelity-good but latency-bad.
+- Fidelity is measured against the same query timestamp for both options; the
+  runner also emits `paired_diagnostics.json` so timestamp alignment can be
+  checked explicitly.
+- The output is inspectable data, not only a narrative: the bundle includes a
+  sample AQP JSONL report and a runner that can regenerate it.
+
+Concrete rows from the latest paired run show the point:
+
+| Query | ASAP native | p95 speedup | p95 delta | Max relative error | Latency target | Fidelity target |
+|---|:---:|---:|---:|---:|:---:|:---:|
+| `q95_by_pattern` | yes | 175.56x | -2098.0 ms | 0.0056 = 0.56% | met | met |
+| `q99_by_pattern` | yes | 429.59x | -2153.5 ms | 0.0066 = 0.66% | met | met |
+| `q50_by_pattern` | yes | 396.46x | -2303.4 ms | 0.1000 = 10.00% | met | failed |
+| `q95_all` | yes | 1.04x | -74.9 ms | 0.0000 = 0.00% | failed | met |
+
+These rows are useful precisely because they do not collapse into one score.
+The grouped `q95` and `q99` quantiles are much faster and satisfy the 5%
+fidelity target. The grouped `q50` quantile is also much faster but misses that
+target in this run. The ungrouped `q95_all` row preserves fidelity but misses
+the fixed 1000 ms latency budget. That is the kind of boundary an AQP benchmark
+is meant to expose.
+
+`Max relative error` is reported as a fraction, not as a percent. The target in
+this manifest is `0.05`, i.e. 5%. Therefore `0.0056` means about 0.56% relative
+error and meets the fidelity target, while `0.1000` means 10.00% and fails.
+`p95 delta` is `ASAPQuery p95 - Prometheus p95`, so negative values mean
+ASAPQuery was faster and positive values mean it was slower.
+
+The older sequential ASAPQuery scripts chose one fresh `time=now` for the
+baseline pass and a later `time=now` for the ASAPQuery pass. On time-varying
+fake-exporter data, that can inflate relative error by comparing Prometheus at
+time `T` with ASAPQuery at `T + gap`. The legacy high-error rows around 75% to
+95% should be read as evidence that the benchmark protocol needed pairing, not
+as the headline ASAPQuery result.
+
+## Planned SQL Example
+
+The H2O + ClickHouse path is planned as a SQL-track example, documented in
+`docs/AQP_H2O_CLICKHOUSE_CASE_STUDY.md`. It is not a current reproduced result.
+It still needs an end-to-end run, full result values for fidelity comparison,
+and a clear baseline/ASAP pairing invariant before it can be presented like the
+PromQL quickstart.
 
 ## Tasks
 

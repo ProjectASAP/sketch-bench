@@ -1,0 +1,36 @@
+[case]
+case_id = "asapquery_promql_quickstart_v1"
+track = "PromQL AQP"
+benchmark_context = "Prometheus-compatible telemetry query serving"
+
+[task]
+task_id = "promql_sensor_reading_suite"
+family = "mixed_promql_aggregates"
+query_language = "PromQL"
+table = "sensor_reading"
+time_column = "time"
+value_column = "sensor_reading"
+group_by = ["pattern", "region", "service"]
+quantile = 0.95
+window_size_secs = 0
+
+[data_condition]
+dataset_id = "asapquery_quickstart_fake_exporters_v0_5_1"
+description = "ASAPQuery quickstart Docker stack with Prometheus, QueryEngine precompute mode, and seven synthetic fake exporters for sensor_reading."
+group_count = 7
+
+[requirements]
+latency_budget_ms = 1000
+target_relative_error = 0.05
+require_result_rows_match = true
+
+[options]
+approximate_option_id = "asapquery_promql_precompute_v0_5_1"
+baseline_option_id = "prometheus_v3_9_1_exact"
+
+[provenance]
+asapquery_repo_path = "../ASAPQuery"
+benchmark_dir = "../ASAPQuery/benchmarks"
+query_suite_file = "../ASAPQuery/benchmarks/queries/promql_suite.json"
+streaming_config = "../ASAPQuery/asap-quickstart/config/prometheus.yml"
+inference_config = "../ASAPQuery/asap-quickstart/config/engine_config.yaml"

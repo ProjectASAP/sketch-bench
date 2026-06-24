@@ -39,8 +39,8 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 use aqp_core::{
-    admit_task, parse_aqp_sql, run_aqp_mvp, AdmissionStatus, SyntheticEventsConfig,
-    UserDistribution,
+    admit_task, import_asapquery_csv_readers, import_asapquery_promql_json_readers, parse_aqp_sql,
+    run_aqp_mvp, AdmissionStatus, AsapQueryImportManifest, SyntheticEventsConfig, UserDistribution,
 };
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
@@ -76,6 +76,10 @@ enum AqpCmd {
     Explain(AqpExplainArgs),
     /// Parse a SQL query and run supported AQP tasks through the benchmark runner.
     Run(AqpRunArgs),
+    /// Import existing ASAPQuery benchmark CSVs into normalized AQP JSONL.
+    ImportAsapquery(AqpImportAsapQueryArgs),
+    /// Import ASAPQuery quickstart PromQL JSON reports into normalized AQP JSONL.
+    ImportAsapqueryPromql(AqpImportAsapQueryPromqlArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -141,6 +145,41 @@ struct AqpRunArgs {
     /// sketch estimates against the exact baseline.
     #[arg(long, default_value_t = false)]
     accuracy: bool,
+}
+
+#[derive(Parser, Debug)]
+struct AqpImportAsapQueryArgs {
+    /// TOML manifest describing the ASAPQuery benchmark case.
+    #[arg(long)]
+    manifest: String,
+    /// CSV produced by ASAPQuery's approximate benchmark mode.
+    #[arg(long)]
+    asap_csv: String,
+    /// CSV produced by the baseline benchmark mode.
+    #[arg(long)]
+    baseline_csv: String,
+    /// Path to append JSONL records to. `-` or omitted -> stdout.
+    #[arg(long)]
+    report: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+struct AqpImportAsapQueryPromqlArgs {
+    /// TOML manifest describing the ASAPQuery PromQL benchmark case.
+    #[arg(long)]
+    manifest: String,
+    /// JSON produced by benchmarks/scripts/run_baseline.py.
+    #[arg(long)]
+    baseline_json: String,
+    /// JSON produced by benchmarks/scripts/run_asap.py.
+    #[arg(long)]
+    asap_json: String,
+    /// ASAPQuery PromQL suite JSON used by the benchmark scripts.
+    #[arg(long)]
+    query_suite: String,
+    /// Path to append JSONL records to. `-` or omitted -> stdout.
+    #[arg(long)]
+    report: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -330,6 +369,8 @@ fn run_aqp(args: AqpArgs) -> Result<()> {
     match args.command {
         AqpCmd::Explain(args) => aqp_explain(args),
         AqpCmd::Run(args) => aqp_run(args),
+        AqpCmd::ImportAsapquery(args) => aqp_import_asapquery(args),
+        AqpCmd::ImportAsapqueryPromql(args) => aqp_import_asapquery_promql(args),
     }
 }
 
@@ -386,6 +427,42 @@ fn aqp_run(args: AqpRunArgs) -> Result<()> {
         args.query,
         query.task,
         report.approximate_backends.len(),
+    );
+    sink.write_line(&report.to_jsonl()?)?;
+    Ok(())
+}
+
+fn aqp_import_asapquery(args: AqpImportAsapQueryArgs) -> Result<()> {
+    let manifest_text = std::fs::read_to_string(&args.manifest)?;
+    let manifest = AsapQueryImportManifest::from_toml_str(&manifest_text)?;
+    let asap_csv = std::fs::File::open(&args.asap_csv)?;
+    let baseline_csv = std::fs::File::open(&args.baseline_csv)?;
+    let report = import_asapquery_csv_readers(manifest, asap_csv, baseline_csv)?;
+    let mut sink = ReportSink::open(args.report.as_deref())?;
+
+    eprintln!(
+        "sketchlib: aqp import-asapquery case={} records={}",
+        report.case_id,
+        report.records.len(),
+    );
+    sink.write_line(&report.to_jsonl()?)?;
+    Ok(())
+}
+
+fn aqp_import_asapquery_promql(args: AqpImportAsapQueryPromqlArgs) -> Result<()> {
+    let manifest_text = std::fs::read_to_string(&args.manifest)?;
+    let manifest = AsapQueryImportManifest::from_toml_str(&manifest_text)?;
+    let baseline_json = std::fs::File::open(&args.baseline_json)?;
+    let asap_json = std::fs::File::open(&args.asap_json)?;
+    let query_suite = std::fs::File::open(&args.query_suite)?;
+    let report =
+        import_asapquery_promql_json_readers(manifest, baseline_json, asap_json, query_suite)?;
+    let mut sink = ReportSink::open(args.report.as_deref())?;
+
+    eprintln!(
+        "sketchlib: aqp import-asapquery-promql case={} records={}",
+        report.case_id,
+        report.records.len(),
     );
     sink.write_line(&report.to_jsonl()?)?;
     Ok(())

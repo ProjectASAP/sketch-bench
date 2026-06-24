@@ -1,0 +1,39 @@
+[case]
+case_id = "asapquery_h2o_quantile_v1"
+track = "SQL AQP"
+benchmark_context = "ClickHouse-compatible SQL query serving"
+
+[task]
+task_id = "grouped_p95_quantile_10s"
+family = "quantile"
+query_language = "SQL"
+table = "h2o_groupby"
+time_column = "timestamp"
+value_column = "v1"
+group_by = ["id1", "id2"]
+quantile = 0.95
+window_size_secs = 10
+
+[data_condition]
+dataset_id = "h2o_groupby_10m_100_groups"
+description = "H2O groupby dataset streamed with synthetic event timestamps; ASAPQuery benchmark queries 10s windows."
+row_count = 10000000
+window_count = 1000
+group_count = 100
+
+[requirements]
+latency_budget_ms = 1000
+target_relative_error = 0.01
+require_result_rows_match = true
+
+[options]
+approximate_option_id = "asapquery_kll_k200"
+baseline_option_id = "clickhouse_quantile"
+
+[provenance]
+asapquery_repo_path = "../ASAPQuery"
+benchmark_dir = "../ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline"
+asap_query_file = "../ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline/asap_quantile_queries.sql"
+baseline_query_file = "../ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline/clickhouse_quantile_queries.sql"
+streaming_config = "../ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline/streaming_config.yaml"
+inference_config = "../ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline/inference_config.yaml"

@@ -5,7 +5,8 @@
 //! a registered benchmark schema plus a small lowering pass from
 //! DataFusion plans into AQP tasks the current sketch benchmark can run.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -490,6 +491,1111 @@ pub struct FrequencyHeavyHitterSummary {
     pub p95_relative_error: f64,
     pub max_relative_error: f64,
     pub worst_key: Option<GroupError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryImportManifest {
+    pub case_id: String,
+    pub track: String,
+    pub benchmark_context: String,
+    pub task: AsapQueryTaskSpec,
+    pub data_condition: AsapQueryDataCondition,
+    pub requirements: AsapQueryRequirements,
+    pub options: AsapQueryOptions,
+    pub provenance: AsapQueryProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryTaskSpec {
+    pub task_id: String,
+    pub family: String,
+    pub query_language: String,
+    pub table: String,
+    pub time_column: String,
+    pub value_column: String,
+    pub group_by: Vec<String>,
+    pub quantile: f64,
+    pub window_size_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryDataCondition {
+    pub dataset_id: String,
+    pub description: String,
+    pub row_count: Option<u64>,
+    pub window_count: Option<u64>,
+    pub group_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AsapQueryRequirements {
+    pub latency_budget_ms: Option<f64>,
+    pub target_relative_error: Option<f64>,
+    pub require_result_rows_match: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryOptions {
+    pub approximate_option_id: String,
+    pub baseline_option_id: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AsapQueryProvenance {
+    pub asapquery_repo_path: Option<String>,
+    pub benchmark_dir: Option<String>,
+    pub asap_query_file: Option<String>,
+    pub baseline_query_file: Option<String>,
+    pub query_suite_file: Option<String>,
+    pub streaming_config: Option<String>,
+    pub inference_config: Option<String>,
+}
+
+impl AsapQueryImportManifest {
+    pub fn from_toml_str(input: &str) -> Result<Self> {
+        let doc = MiniToml::parse(input)?;
+        let task = AsapQueryTaskSpec {
+            task_id: doc.required("task", "task_id")?,
+            family: doc.required("task", "family")?,
+            query_language: doc
+                .optional("task", "query_language")
+                .unwrap_or_else(|| "SQL".to_string()),
+            table: doc.required("task", "table")?,
+            time_column: doc.required("task", "time_column")?,
+            value_column: doc.required("task", "value_column")?,
+            group_by: doc.array("task", "group_by")?,
+            quantile: doc.f64("task", "quantile")?,
+            window_size_secs: doc.u64("task", "window_size_secs")?,
+        };
+        let data_condition = AsapQueryDataCondition {
+            dataset_id: doc.required("data_condition", "dataset_id")?,
+            description: doc
+                .optional("data_condition", "description")
+                .unwrap_or_default(),
+            row_count: doc.optional_u64("data_condition", "row_count")?,
+            window_count: doc.optional_u64("data_condition", "window_count")?,
+            group_count: doc.optional_u64("data_condition", "group_count")?,
+        };
+        let requirements = AsapQueryRequirements {
+            latency_budget_ms: doc.optional_f64("requirements", "latency_budget_ms")?,
+            target_relative_error: doc.optional_f64("requirements", "target_relative_error")?,
+            require_result_rows_match: doc.bool_or(
+                "requirements",
+                "require_result_rows_match",
+                true,
+            )?,
+        };
+        let options = AsapQueryOptions {
+            approximate_option_id: doc.required("options", "approximate_option_id")?,
+            baseline_option_id: doc.required("options", "baseline_option_id")?,
+        };
+        let provenance = AsapQueryProvenance {
+            asapquery_repo_path: doc.optional("provenance", "asapquery_repo_path"),
+            benchmark_dir: doc.optional("provenance", "benchmark_dir"),
+            asap_query_file: doc.optional("provenance", "asap_query_file"),
+            baseline_query_file: doc.optional("provenance", "baseline_query_file"),
+            query_suite_file: doc.optional("provenance", "query_suite_file"),
+            streaming_config: doc.optional("provenance", "streaming_config"),
+            inference_config: doc.optional("provenance", "inference_config"),
+        };
+        Ok(Self {
+            case_id: doc.required("case", "case_id")?,
+            track: doc.required("case", "track")?,
+            benchmark_context: doc.required("case", "benchmark_context")?,
+            task,
+            data_condition,
+            requirements,
+            options,
+            provenance,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryImportReport {
+    pub schema_version: u32,
+    pub mode: String,
+    pub case_id: String,
+    pub track: String,
+    pub benchmark_context: String,
+    pub task: AsapQueryTaskSpec,
+    pub data_condition: AsapQueryDataCondition,
+    pub requirements: AsapQueryRequirements,
+    pub options: AsapQueryOptions,
+    pub records: Vec<AsapQueryAqpRecord>,
+    pub provenance: AsapQueryProvenance,
+    pub notes: Vec<String>,
+}
+
+impl AsapQueryImportReport {
+    pub fn to_jsonl(&self) -> Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryAqpRecord {
+    pub record_kind: String,
+    pub query_id: String,
+    pub option_run: Option<AsapQueryOptionRun>,
+    pub comparison: Option<AsapQueryPairComparison>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryOptionRun {
+    pub option_id: String,
+    pub role: String,
+    pub admission_status: AsapQueryAdmissionStatus,
+    pub error: Option<String>,
+    pub cost_metrics: AsapQueryCostMetrics,
+    pub result_observation: AsapQueryResultObservation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsapQueryAdmissionStatus {
+    Approximated,
+    Baseline,
+    Timeout,
+    RejectedOrRuntimeError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryCostMetrics {
+    pub latency_ms: f64,
+    pub serving_ms: Option<f64>,
+    pub pipeline_ms: Option<f64>,
+    pub result_rows: usize,
+    pub latency_budget_met: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryResultObservation {
+    pub result_text_kind: String,
+    pub result_text_present: bool,
+    pub result_rows_reported: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPairComparison {
+    pub approximate_option_id: String,
+    pub baseline_option_id: String,
+    pub status: String,
+    pub fidelity_status: String,
+    pub latency_speedup: Option<f64>,
+    pub latency_delta_ms: Option<f64>,
+    pub result_row_delta: Option<i64>,
+    pub numeric_error: Option<AsapQueryNumericErrorSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryNumericErrorSummary {
+    pub compared_values: usize,
+    pub mean_absolute_error: f64,
+    pub max_absolute_error: f64,
+    pub mean_relative_error: f64,
+    pub max_relative_error: f64,
+}
+
+pub fn import_asapquery_csv_readers<R1: Read, R2: Read>(
+    manifest: AsapQueryImportManifest,
+    asap_csv: R1,
+    baseline_csv: R2,
+) -> Result<AsapQueryImportReport> {
+    let asap_rows = read_asapquery_rows(asap_csv).context("read ASAPQuery approximate CSV")?;
+    let baseline_rows = read_asapquery_rows(baseline_csv).context("read ASAPQuery baseline CSV")?;
+    Ok(import_asapquery_rows(manifest, asap_rows, baseline_rows))
+}
+
+pub fn import_asapquery_rows(
+    manifest: AsapQueryImportManifest,
+    asap_rows: Vec<AsapQueryCsvRow>,
+    baseline_rows: Vec<AsapQueryCsvRow>,
+) -> AsapQueryImportReport {
+    let mut by_query: BTreeMap<String, (Option<AsapQueryCsvRow>, Option<AsapQueryCsvRow>)> =
+        BTreeMap::new();
+    for row in asap_rows {
+        let query_id = row.query_id.clone();
+        by_query.entry(query_id).or_default().0 = Some(row);
+    }
+    for row in baseline_rows {
+        let query_id = row.query_id.clone();
+        by_query.entry(query_id).or_default().1 = Some(row);
+    }
+
+    let mut records = Vec::new();
+    for (query_id, (asap, baseline)) in by_query {
+        if let Some(row) = &asap {
+            records.push(AsapQueryAqpRecord {
+                record_kind: "option_run".to_string(),
+                query_id: query_id.clone(),
+                option_run: Some(option_run(
+                    &manifest.options.approximate_option_id,
+                    "approximate",
+                    row,
+                    manifest.requirements.latency_budget_ms,
+                )),
+                comparison: None,
+            });
+        }
+        if let Some(row) = &baseline {
+            records.push(AsapQueryAqpRecord {
+                record_kind: "option_run".to_string(),
+                query_id: query_id.clone(),
+                option_run: Some(option_run(
+                    &manifest.options.baseline_option_id,
+                    "baseline",
+                    row,
+                    manifest.requirements.latency_budget_ms,
+                )),
+                comparison: None,
+            });
+        }
+        records.push(AsapQueryAqpRecord {
+            record_kind: "paired_comparison".to_string(),
+            query_id,
+            option_run: None,
+            comparison: Some(pair_comparison(&manifest, asap.as_ref(), baseline.as_ref())),
+        });
+    }
+
+    AsapQueryImportReport {
+        schema_version: 1,
+        mode: "external_asapquery_import".to_string(),
+        case_id: manifest.case_id.clone(),
+        track: manifest.track.clone(),
+        benchmark_context: manifest.benchmark_context.clone(),
+        task: manifest.task.clone(),
+        data_condition: manifest.data_condition.clone(),
+        requirements: manifest.requirements.clone(),
+        options: manifest.options.clone(),
+        records,
+        provenance: manifest.provenance.clone(),
+        notes: vec![
+            "Imported from external ASAPQuery benchmark CSVs; sketch-bench did not run the external systems.".to_string(),
+            "ClickHouse baseline is recorded as a baseline option, not automatically as an exact oracle.".to_string(),
+        ],
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsapQueryCsvRow {
+    pub query_id: String,
+    pub latency_ms: f64,
+    pub serving_ms: Option<f64>,
+    pub pipeline_ms: Option<f64>,
+    pub result_rows: usize,
+    pub result_text: Option<String>,
+    pub result_text_kind: String,
+    pub error: Option<String>,
+    pub mode: Option<String>,
+}
+
+pub fn read_asapquery_rows<R: Read>(reader: R) -> Result<Vec<AsapQueryCsvRow>> {
+    let mut csv_reader = csv::Reader::from_reader(reader);
+    let headers = csv_reader.headers()?.clone();
+    let mut rows = Vec::new();
+    for record in csv_reader.records() {
+        let record = record?;
+        let get = |name: &str| -> Option<&str> {
+            headers
+                .iter()
+                .position(|h| h == name)
+                .and_then(|idx| record.get(idx))
+                .map(str::trim)
+        };
+        let query_id = get("query_id")
+            .filter(|v| !v.is_empty())
+            .context("ASAPQuery CSV row missing query_id")?
+            .to_string();
+        let latency_ms = parse_optional_f64(get("latency_ms")).unwrap_or(0.0);
+        let result_rows = parse_optional_usize(get("result_rows")).unwrap_or(0);
+        let result_text =
+            first_non_empty(&[get("result_full"), get("result"), get("result_preview")]);
+        let result_text_kind = if get("result_full").is_some_and(|v| !v.is_empty()) {
+            "full"
+        } else if get("result").is_some_and(|v| !v.is_empty()) {
+            "full"
+        } else if get("result_preview").is_some_and(|v| !v.is_empty()) {
+            "preview"
+        } else {
+            "none"
+        }
+        .to_string();
+        rows.push(AsapQueryCsvRow {
+            query_id,
+            latency_ms,
+            serving_ms: parse_optional_f64(get("serving_ms")),
+            pipeline_ms: parse_optional_f64(get("pipeline_ms")),
+            result_rows,
+            result_text,
+            result_text_kind,
+            error: get("error")
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string),
+            mode: get("mode")
+                .filter(|v| !v.is_empty())
+                .map(ToString::to_string),
+        });
+    }
+    Ok(rows)
+}
+
+fn option_run(
+    option_id: &str,
+    role: &str,
+    row: &AsapQueryCsvRow,
+    latency_budget_ms: Option<f64>,
+) -> AsapQueryOptionRun {
+    let admission_status = match (role, row.error.as_deref()) {
+        (_, Some(err)) if err.eq_ignore_ascii_case("timeout") => AsapQueryAdmissionStatus::Timeout,
+        (_, Some(_)) => AsapQueryAdmissionStatus::RejectedOrRuntimeError,
+        ("baseline", None) => AsapQueryAdmissionStatus::Baseline,
+        _ => AsapQueryAdmissionStatus::Approximated,
+    };
+    AsapQueryOptionRun {
+        option_id: option_id.to_string(),
+        role: role.to_string(),
+        admission_status,
+        error: row.error.clone(),
+        cost_metrics: AsapQueryCostMetrics {
+            latency_ms: row.latency_ms,
+            serving_ms: row.serving_ms,
+            pipeline_ms: row.pipeline_ms,
+            result_rows: row.result_rows,
+            latency_budget_met: latency_budget_ms.map(|budget| row.latency_ms <= budget),
+        },
+        result_observation: AsapQueryResultObservation {
+            result_text_kind: row.result_text_kind.clone(),
+            result_text_present: row.result_text.as_ref().is_some_and(|v| !v.is_empty()),
+            result_rows_reported: row.result_rows,
+        },
+    }
+}
+
+fn pair_comparison(
+    manifest: &AsapQueryImportManifest,
+    asap: Option<&AsapQueryCsvRow>,
+    baseline: Option<&AsapQueryCsvRow>,
+) -> AsapQueryPairComparison {
+    let mut status = "compared".to_string();
+    let fidelity_status;
+    let mut row_delta = None;
+    let mut numeric_error = None;
+
+    match (asap, baseline) {
+        (None, _) | (_, None) => {
+            status = "missing_counterpart".to_string();
+            fidelity_status = "missing_counterpart".to_string();
+        }
+        (Some(a), Some(b)) if a.error.is_some() || b.error.is_some() => {
+            status = "option_error".to_string();
+            fidelity_status = "option_error".to_string();
+        }
+        (Some(a), Some(b)) => {
+            row_delta = Some(a.result_rows as i64 - b.result_rows as i64);
+            if manifest.requirements.require_result_rows_match && a.result_rows != b.result_rows {
+                fidelity_status = "row_count_mismatch".to_string();
+            } else if a.result_text_kind != "full" || b.result_text_kind != "full" {
+                fidelity_status = "unavailable_result_truncated".to_string();
+            } else {
+                let a_values = parse_numeric_result_values(a.result_text.as_deref().unwrap_or(""));
+                let b_values = parse_numeric_result_values(b.result_text.as_deref().unwrap_or(""));
+                if a_values.len() != b_values.len() || a_values.is_empty() {
+                    fidelity_status = "numeric_result_unparseable".to_string();
+                } else {
+                    numeric_error = Some(numeric_error_summary(&a_values, &b_values));
+                    fidelity_status = "numeric_value_compared".to_string();
+                }
+            }
+        }
+    }
+
+    let (latency_speedup, latency_delta_ms) = match (asap, baseline) {
+        (Some(a), Some(b)) if a.error.is_none() && b.error.is_none() && a.latency_ms > 0.0 => (
+            Some(b.latency_ms / a.latency_ms),
+            Some(a.latency_ms - b.latency_ms),
+        ),
+        _ => (None, None),
+    };
+
+    AsapQueryPairComparison {
+        approximate_option_id: manifest.options.approximate_option_id.clone(),
+        baseline_option_id: manifest.options.baseline_option_id.clone(),
+        status,
+        fidelity_status,
+        latency_speedup,
+        latency_delta_ms,
+        result_row_delta: row_delta,
+        numeric_error,
+    }
+}
+
+fn parse_numeric_result_values(text: &str) -> Vec<f64> {
+    text.lines()
+        .filter_map(|line| {
+            line.split(['\t', ',', ' '])
+                .find_map(|token| token.trim().parse::<f64>().ok())
+        })
+        .collect()
+}
+
+fn numeric_error_summary(
+    approximate_values: &[f64],
+    baseline_values: &[f64],
+) -> AsapQueryNumericErrorSummary {
+    let mut abs_errors = Vec::with_capacity(approximate_values.len());
+    let mut rel_errors = Vec::with_capacity(approximate_values.len());
+    for (approx, base) in approximate_values.iter().zip(baseline_values.iter()) {
+        let abs = (approx - base).abs();
+        abs_errors.push(abs);
+        rel_errors.push(if *base == 0.0 { 0.0 } else { abs / base.abs() });
+    }
+    AsapQueryNumericErrorSummary {
+        compared_values: abs_errors.len(),
+        mean_absolute_error: mean(&abs_errors),
+        max_absolute_error: abs_errors.iter().copied().fold(0.0, f64::max),
+        mean_relative_error: mean(&rel_errors),
+        max_relative_error: rel_errors.iter().copied().fold(0.0, f64::max),
+    }
+}
+
+fn mean(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
+}
+
+fn parse_optional_f64(value: Option<&str>) -> Option<f64> {
+    value.filter(|v| !v.is_empty())?.parse().ok()
+}
+
+fn parse_optional_usize(value: Option<&str>) -> Option<usize> {
+    value.filter(|v| !v.is_empty())?.parse().ok()
+}
+
+fn first_non_empty(values: &[Option<&str>]) -> Option<String> {
+    values
+        .iter()
+        .flatten()
+        .find(|v| !v.is_empty())
+        .map(|v| (*v).to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlImportReport {
+    pub schema_version: u32,
+    pub mode: String,
+    pub case_id: String,
+    pub track: String,
+    pub benchmark_context: String,
+    pub task: AsapQueryTaskSpec,
+    pub data_condition: AsapQueryDataCondition,
+    pub requirements: AsapQueryRequirements,
+    pub options: AsapQueryOptions,
+    pub records: Vec<AsapQueryPromqlAqpRecord>,
+    pub provenance: AsapQueryProvenance,
+    pub notes: Vec<String>,
+}
+
+impl AsapQueryPromqlImportReport {
+    pub fn to_jsonl(&self) -> Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlAqpRecord {
+    pub record_kind: String,
+    pub query_id: String,
+    pub query_expr: Option<String>,
+    pub declared_approximate: Option<bool>,
+    pub option_run: Option<AsapQueryPromqlOptionRun>,
+    pub comparison: Option<AsapQueryPromqlPairComparison>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlOptionRun {
+    pub option_id: String,
+    pub role: String,
+    pub admission_status: AsapQueryPromqlAdmissionStatus,
+    pub error: Option<String>,
+    pub cost_metrics: AsapQueryPromqlCostMetrics,
+    pub result_observation: AsapQueryPromqlResultObservation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsapQueryPromqlAdmissionStatus {
+    Approximated,
+    ExactFallback,
+    Baseline,
+    OptionError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlCostMetrics {
+    pub latency_samples_ms: Vec<f64>,
+    pub failed_runs: usize,
+    pub min_latency_ms: Option<f64>,
+    pub mean_latency_ms: Option<f64>,
+    pub p50_latency_ms: Option<f64>,
+    pub p95_latency_ms: Option<f64>,
+    pub max_latency_ms: Option<f64>,
+    pub latency_budget_met: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlResultObservation {
+    pub result_series: usize,
+    pub result_values: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlPairComparison {
+    pub approximate_option_id: String,
+    pub baseline_option_id: String,
+    pub status: String,
+    pub fidelity_status: String,
+    pub native_approximate: Option<bool>,
+    pub latency_speedup_p95: Option<f64>,
+    pub latency_delta_p95_ms: Option<f64>,
+    pub result_series_delta: Option<i64>,
+    pub numeric_error: Option<AsapQueryPromqlNumericErrorSummary>,
+    pub requirement_status: AsapQueryPromqlRequirementStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlRequirementStatus {
+    pub latency_budget_met: Option<bool>,
+    pub fidelity_budget_met: Option<bool>,
+    pub result_series_match_met: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsapQueryPromqlNumericErrorSummary {
+    pub compared_series: usize,
+    pub missing_series: usize,
+    pub extra_series: usize,
+    pub mean_absolute_error: f64,
+    pub max_absolute_error: f64,
+    pub mean_relative_error: f64,
+    pub max_relative_error: f64,
+    pub worst_label_set: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AsapQueryPromqlSuite {
+    queries: Vec<AsapQueryPromqlSuiteQuery>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AsapQueryPromqlSuiteQuery {
+    id: String,
+    expr: String,
+    #[serde(default)]
+    approximate: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct AsapQueryPromqlResultFile {
+    results: BTreeMap<String, AsapQueryPromqlQueryResult>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AsapQueryPromqlQueryResult {
+    status: String,
+    #[serde(default)]
+    approximate: bool,
+    #[serde(default)]
+    latencies_ms: Vec<Option<f64>>,
+    #[serde(default)]
+    data: Vec<serde_json::Value>,
+    error: Option<String>,
+}
+
+pub fn import_asapquery_promql_json_readers<R1: Read, R2: Read, R3: Read>(
+    manifest: AsapQueryImportManifest,
+    baseline_json: R1,
+    asap_json: R2,
+    query_suite_json: R3,
+) -> Result<AsapQueryPromqlImportReport> {
+    let baseline: AsapQueryPromqlResultFile =
+        serde_json::from_reader(baseline_json).context("read ASAPQuery PromQL baseline JSON")?;
+    let asap: AsapQueryPromqlResultFile =
+        serde_json::from_reader(asap_json).context("read ASAPQuery PromQL ASAP JSON")?;
+    let suite: AsapQueryPromqlSuite =
+        serde_json::from_reader(query_suite_json).context("read ASAPQuery PromQL query suite")?;
+    Ok(import_asapquery_promql_results(
+        manifest,
+        baseline.results,
+        asap.results,
+        suite.queries,
+    ))
+}
+
+fn import_asapquery_promql_results(
+    manifest: AsapQueryImportManifest,
+    baseline_results: BTreeMap<String, AsapQueryPromqlQueryResult>,
+    asap_results: BTreeMap<String, AsapQueryPromqlQueryResult>,
+    suite_queries: Vec<AsapQueryPromqlSuiteQuery>,
+) -> AsapQueryPromqlImportReport {
+    let suite_by_id = suite_queries
+        .into_iter()
+        .map(|query| (query.id.clone(), query))
+        .collect::<BTreeMap<_, _>>();
+    let mut all_ids = suite_by_id.keys().cloned().collect::<BTreeSet<_>>();
+    all_ids.extend(baseline_results.keys().cloned());
+    all_ids.extend(asap_results.keys().cloned());
+
+    let mut records = Vec::new();
+    for query_id in all_ids {
+        let query = suite_by_id.get(&query_id);
+        let query_expr = query.map(|q| q.expr.clone());
+        let declared_approximate = query.map(|q| q.approximate);
+        let baseline = baseline_results.get(&query_id);
+        let asap = asap_results.get(&query_id);
+
+        if let Some(result) = baseline {
+            records.push(AsapQueryPromqlAqpRecord {
+                record_kind: "option_run".to_string(),
+                query_id: query_id.clone(),
+                query_expr: query_expr.clone(),
+                declared_approximate,
+                option_run: Some(promql_option_run(
+                    &manifest.options.baseline_option_id,
+                    "baseline",
+                    result,
+                    false,
+                    manifest.requirements.latency_budget_ms,
+                )),
+                comparison: None,
+            });
+        }
+        if let Some(result) = asap {
+            records.push(AsapQueryPromqlAqpRecord {
+                record_kind: "option_run".to_string(),
+                query_id: query_id.clone(),
+                query_expr: query_expr.clone(),
+                declared_approximate,
+                option_run: Some(promql_option_run(
+                    &manifest.options.approximate_option_id,
+                    "asapquery",
+                    result,
+                    result.approximate,
+                    manifest.requirements.latency_budget_ms,
+                )),
+                comparison: None,
+            });
+        }
+        records.push(AsapQueryPromqlAqpRecord {
+            record_kind: "paired_comparison".to_string(),
+            query_id,
+            query_expr,
+            declared_approximate,
+            option_run: None,
+            comparison: Some(promql_pair_comparison(
+                &manifest,
+                asap,
+                baseline,
+                declared_approximate,
+            )),
+        });
+    }
+
+    AsapQueryPromqlImportReport {
+        schema_version: 1,
+        mode: "external_asapquery_promql_import".to_string(),
+        case_id: manifest.case_id.clone(),
+        track: manifest.track.clone(),
+        benchmark_context: manifest.benchmark_context.clone(),
+        task: manifest.task.clone(),
+        data_condition: manifest.data_condition.clone(),
+        requirements: manifest.requirements.clone(),
+        options: manifest.options.clone(),
+        records,
+        provenance: manifest.provenance.clone(),
+        notes: vec![
+            "Imported from ASAPQuery quickstart PromQL JSON reports; sketch-bench did not modify ASAPQuery.".to_string(),
+            "Prometheus is recorded as the exact baseline for this PromQL track; ASAPQuery rows are split into approximate native execution and exact fallback behavior.".to_string(),
+            "Latency, admission, and fidelity are separate AQP outcomes because the bundled ASAPQuery comparator treats some approximate fidelity violations as informational warnings.".to_string(),
+        ],
+    }
+}
+
+fn promql_option_run(
+    option_id: &str,
+    role: &str,
+    result: &AsapQueryPromqlQueryResult,
+    native_approximate: bool,
+    latency_budget_ms: Option<f64>,
+) -> AsapQueryPromqlOptionRun {
+    let success = result.status == "success" && result.error.is_none();
+    let admission_status = if !success {
+        AsapQueryPromqlAdmissionStatus::OptionError
+    } else if role == "baseline" {
+        AsapQueryPromqlAdmissionStatus::Baseline
+    } else if native_approximate {
+        AsapQueryPromqlAdmissionStatus::Approximated
+    } else {
+        AsapQueryPromqlAdmissionStatus::ExactFallback
+    };
+    let latencies = valid_promql_latencies(&result.latencies_ms);
+    let stats = latency_stats(&latencies);
+    AsapQueryPromqlOptionRun {
+        option_id: option_id.to_string(),
+        role: role.to_string(),
+        admission_status,
+        error: result.error.clone(),
+        cost_metrics: AsapQueryPromqlCostMetrics {
+            latency_samples_ms: latencies,
+            failed_runs: result.latencies_ms.iter().filter(|v| v.is_none()).count(),
+            min_latency_ms: stats.min,
+            mean_latency_ms: stats.mean,
+            p50_latency_ms: stats.p50,
+            p95_latency_ms: stats.p95,
+            max_latency_ms: stats.max,
+            latency_budget_met: latency_budget_ms
+                .zip(stats.p95)
+                .map(|(budget, p95)| p95 <= budget),
+        },
+        result_observation: AsapQueryPromqlResultObservation {
+            result_series: result.data.len(),
+            result_values: result
+                .data
+                .iter()
+                .filter(|entry| promql_entry_value(entry).is_some())
+                .count(),
+        },
+    }
+}
+
+fn promql_pair_comparison(
+    manifest: &AsapQueryImportManifest,
+    asap: Option<&AsapQueryPromqlQueryResult>,
+    baseline: Option<&AsapQueryPromqlQueryResult>,
+    declared_approximate: Option<bool>,
+) -> AsapQueryPromqlPairComparison {
+    let mut status = "compared".to_string();
+    let fidelity_status;
+    let mut numeric_error = None;
+    let mut result_series_delta = None;
+
+    match (asap, baseline) {
+        (None, _) | (_, None) => {
+            status = "missing_counterpart".to_string();
+            fidelity_status = "missing_counterpart".to_string();
+        }
+        (Some(a), Some(b)) if a.status != "success" || b.status != "success" => {
+            status = "option_error".to_string();
+            fidelity_status = "option_error".to_string();
+        }
+        (Some(a), Some(b)) => {
+            result_series_delta = Some(a.data.len() as i64 - b.data.len() as i64);
+            let summary = promql_numeric_error_summary(&a.data, &b.data);
+            fidelity_status = if summary.compared_series == 0
+                && summary.missing_series == 0
+                && summary.extra_series == 0
+            {
+                "both_empty".to_string()
+            } else if summary.compared_series == 0 {
+                "numeric_result_unparseable".to_string()
+            } else if (summary.missing_series > 0 || summary.extra_series > 0)
+                && manifest.requirements.require_result_rows_match
+            {
+                "label_set_mismatch".to_string()
+            } else {
+                "numeric_value_compared".to_string()
+            };
+            numeric_error = Some(summary);
+        }
+    }
+
+    let asap_p95 = asap.and_then(|a| latency_stats(&valid_promql_latencies(&a.latencies_ms)).p95);
+    let baseline_p95 =
+        baseline.and_then(|b| latency_stats(&valid_promql_latencies(&b.latencies_ms)).p95);
+    let latency_speedup_p95 = match (asap_p95, baseline_p95) {
+        (Some(a), Some(b)) if a > 0.0 => Some(b / a),
+        _ => None,
+    };
+    let latency_delta_p95_ms = match (asap_p95, baseline_p95) {
+        (Some(a), Some(b)) => Some(a - b),
+        _ => None,
+    };
+
+    let fidelity_budget_met = numeric_error.as_ref().and_then(|summary| {
+        manifest.requirements.target_relative_error.map(|target| {
+            summary.max_relative_error <= target
+                && (!manifest.requirements.require_result_rows_match
+                    || (summary.missing_series == 0 && summary.extra_series == 0))
+        })
+    });
+    let result_series_match_met = result_series_delta.map(|delta| delta == 0);
+
+    AsapQueryPromqlPairComparison {
+        approximate_option_id: manifest.options.approximate_option_id.clone(),
+        baseline_option_id: manifest.options.baseline_option_id.clone(),
+        status,
+        fidelity_status,
+        native_approximate: asap.map(|a| a.approximate).or(declared_approximate),
+        latency_speedup_p95,
+        latency_delta_p95_ms,
+        result_series_delta,
+        numeric_error,
+        requirement_status: AsapQueryPromqlRequirementStatus {
+            latency_budget_met: manifest
+                .requirements
+                .latency_budget_ms
+                .zip(asap_p95)
+                .map(|(budget, p95)| p95 <= budget),
+            fidelity_budget_met,
+            result_series_match_met,
+        },
+    }
+}
+
+fn promql_numeric_error_summary(
+    asap_data: &[serde_json::Value],
+    baseline_data: &[serde_json::Value],
+) -> AsapQueryPromqlNumericErrorSummary {
+    let asap_map = promql_value_map(asap_data);
+    let baseline_map = promql_value_map(baseline_data);
+    if asap_map.len() == 1 && baseline_map.len() == 1 {
+        let (a_key, a_value) = asap_map.iter().next().expect("len checked");
+        let (_, b_value) = baseline_map.iter().next().expect("len checked");
+        let abs = (a_value - b_value).abs();
+        let rel = relative_error(*a_value, *b_value);
+        return AsapQueryPromqlNumericErrorSummary {
+            compared_series: 1,
+            missing_series: 0,
+            extra_series: 0,
+            mean_absolute_error: abs,
+            max_absolute_error: abs,
+            mean_relative_error: rel,
+            max_relative_error: rel,
+            worst_label_set: Some(a_key.clone()),
+        };
+    }
+
+    let mut abs_errors = Vec::new();
+    let mut rel_errors = Vec::new();
+    let mut worst_label_set = None;
+    let mut max_relative_error = 0.0;
+    let mut missing_series = 0usize;
+    for (key, baseline_value) in &baseline_map {
+        let Some(asap_value) = asap_map.get(key) else {
+            missing_series += 1;
+            continue;
+        };
+        let abs = (asap_value - baseline_value).abs();
+        let rel = relative_error(*asap_value, *baseline_value);
+        if rel >= max_relative_error {
+            max_relative_error = rel;
+            worst_label_set = Some(key.clone());
+        }
+        abs_errors.push(abs);
+        rel_errors.push(rel);
+    }
+    let extra_series = asap_map
+        .keys()
+        .filter(|key| !baseline_map.contains_key(*key))
+        .count();
+
+    AsapQueryPromqlNumericErrorSummary {
+        compared_series: abs_errors.len(),
+        missing_series,
+        extra_series,
+        mean_absolute_error: mean(&abs_errors),
+        max_absolute_error: abs_errors.iter().copied().fold(0.0, f64::max),
+        mean_relative_error: mean(&rel_errors),
+        max_relative_error,
+        worst_label_set,
+    }
+}
+
+fn promql_value_map(data: &[serde_json::Value]) -> BTreeMap<String, f64> {
+    data.iter()
+        .filter_map(|entry| Some((promql_label_key(entry)?, promql_entry_value(entry)?)))
+        .collect()
+}
+
+fn promql_label_key(entry: &serde_json::Value) -> Option<String> {
+    let metric = entry.get("metric")?.as_object()?;
+    let ordered = metric
+        .iter()
+        .map(|(key, value)| (key.clone(), value.as_str().unwrap_or("").to_string()))
+        .collect::<BTreeMap<_, _>>();
+    serde_json::to_string(&ordered).ok()
+}
+
+fn promql_entry_value(entry: &serde_json::Value) -> Option<f64> {
+    entry.get("value")?.get(1)?.as_str()?.parse().ok()
+}
+
+fn relative_error(approximate: f64, baseline: f64) -> f64 {
+    (approximate - baseline).abs() / baseline.abs().max(1e-9)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LatencyStats {
+    min: Option<f64>,
+    mean: Option<f64>,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    max: Option<f64>,
+}
+
+fn valid_promql_latencies(latencies: &[Option<f64>]) -> Vec<f64> {
+    latencies.iter().flatten().copied().collect()
+}
+
+fn latency_stats(values: &[f64]) -> LatencyStats {
+    if values.is_empty() {
+        return LatencyStats {
+            min: None,
+            mean: None,
+            p50: None,
+            p95: None,
+            max: None,
+        };
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    LatencyStats {
+        min: sorted.first().copied(),
+        mean: Some(mean(&sorted)),
+        p50: Some(percentile_f64(&sorted, 50.0)),
+        p95: Some(percentile_f64(&sorted, 95.0)),
+        max: sorted.last().copied(),
+    }
+}
+
+fn percentile_f64(sorted_values: &[f64], pct: f64) -> f64 {
+    if sorted_values.len() == 1 {
+        return sorted_values[0];
+    }
+    let idx = (pct / 100.0) * (sorted_values.len() - 1) as f64;
+    let lo = idx.floor() as usize;
+    let hi = idx.ceil() as usize;
+    if lo == hi {
+        sorted_values[lo]
+    } else {
+        let frac = idx - lo as f64;
+        sorted_values[lo] * (1.0 - frac) + sorted_values[hi] * frac
+    }
+}
+
+#[derive(Debug, Default)]
+struct MiniToml {
+    values: HashMap<(String, String), String>,
+}
+
+impl MiniToml {
+    fn parse(input: &str) -> Result<Self> {
+        let mut current_section = String::new();
+        let mut values = HashMap::new();
+        for (idx, raw_line) in input.lines().enumerate() {
+            let line = raw_line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() {
+                continue;
+            }
+            if line.starts_with('[') && line.ends_with(']') {
+                current_section = line[1..line.len() - 1].trim().to_string();
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                bail!("invalid manifest line {}: expected key = value", idx + 1);
+            };
+            if current_section.is_empty() {
+                bail!("invalid manifest line {}: key outside a section", idx + 1);
+            }
+            values.insert(
+                (current_section.clone(), key.trim().to_string()),
+                value.trim().trim_end_matches(',').to_string(),
+            );
+        }
+        Ok(Self { values })
+    }
+
+    fn required(&self, section: &str, key: &str) -> Result<String> {
+        self.optional(section, key)
+            .with_context(|| format!("manifest missing [{section}].{key}"))
+    }
+
+    fn optional(&self, section: &str, key: &str) -> Option<String> {
+        self.values
+            .get(&(section.to_string(), key.to_string()))
+            .map(|v| parse_toml_string(v))
+    }
+
+    fn array(&self, section: &str, key: &str) -> Result<Vec<String>> {
+        let raw = self
+            .values
+            .get(&(section.to_string(), key.to_string()))
+            .with_context(|| format!("manifest missing [{section}].{key}"))?;
+        parse_toml_array(raw)
+    }
+
+    fn f64(&self, section: &str, key: &str) -> Result<f64> {
+        self.required(section, key)?
+            .parse()
+            .with_context(|| format!("manifest [{section}].{key} must be a number"))
+    }
+
+    fn u64(&self, section: &str, key: &str) -> Result<u64> {
+        self.required(section, key)?
+            .parse()
+            .with_context(|| format!("manifest [{section}].{key} must be an integer"))
+    }
+
+    fn optional_f64(&self, section: &str, key: &str) -> Result<Option<f64>> {
+        self.optional(section, key)
+            .map(|v| {
+                v.parse()
+                    .with_context(|| format!("manifest [{section}].{key} must be a number"))
+            })
+            .transpose()
+    }
+
+    fn optional_u64(&self, section: &str, key: &str) -> Result<Option<u64>> {
+        self.optional(section, key)
+            .map(|v| {
+                v.parse()
+                    .with_context(|| format!("manifest [{section}].{key} must be an integer"))
+            })
+            .transpose()
+    }
+
+    fn bool_or(&self, section: &str, key: &str, default: bool) -> Result<bool> {
+        self.optional(section, key)
+            .map(|v| {
+                v.parse()
+                    .with_context(|| format!("manifest [{section}].{key} must be true or false"))
+            })
+            .unwrap_or(Ok(default))
+    }
+}
+
+fn parse_toml_string(raw: &str) -> String {
+    raw.trim().trim_matches('"').trim_matches('\'').to_string()
+}
+
+fn parse_toml_array(raw: &str) -> Result<Vec<String>> {
+    let raw = raw.trim();
+    if !raw.starts_with('[') || !raw.ends_with(']') {
+        bail!("manifest array value must use [..] syntax");
+    }
+    let body = &raw[1..raw.len() - 1];
+    if body.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(body
+        .split(',')
+        .map(parse_toml_string)
+        .filter(|v| !v.is_empty())
+        .collect())
 }
 
 pub fn run_grouped_count_distinct_mvp(
@@ -1455,6 +2561,53 @@ fn plan_kind(plan: &LogicalPlan) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn asapquery_manifest() -> AsapQueryImportManifest {
+        AsapQueryImportManifest::from_toml_str(
+            r#"
+[case]
+case_id = "asapquery_h2o_quantile_v1"
+track = "SQL AQP"
+benchmark_context = "ClickHouse-compatible SQL query serving"
+
+[task]
+task_id = "grouped_p95_quantile_10s"
+family = "quantile"
+query_language = "SQL"
+table = "h2o_groupby"
+time_column = "timestamp"
+value_column = "v1"
+group_by = ["id1", "id2"]
+quantile = 0.95
+window_size_secs = 10
+
+[data_condition]
+dataset_id = "h2o_groupby_10m_100_groups"
+description = "H2O groupby dataset streamed with synthetic timestamps"
+row_count = 10000000
+window_count = 10000
+group_count = 100
+
+[requirements]
+latency_budget_ms = 1000
+target_relative_error = 0.01
+require_result_rows_match = true
+
+[options]
+approximate_option_id = "asapquery_kll_k200"
+baseline_option_id = "clickhouse_quantile"
+
+[provenance]
+benchmark_dir = "ASAPQuery/asap-tools/execution-utilities/asap_benchmark_pipeline"
+asap_query_file = "asap_quantile_queries.sql"
+baseline_query_file = "clickhouse_quantile_queries.sql"
+streaming_config = "streaming_config.yaml"
+inference_config = "inference_config.yaml"
+"#,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn parses_count_distinct() {
@@ -1698,5 +2851,231 @@ mod tests {
             parse_aqp_sql("SELECT COUNT(DISTINCT user_id) AS users FROM events WHERE user_id > 10")
                 .unwrap_err();
         assert!(err.to_string().contains("unsupported AQP input operator"));
+    }
+
+    #[test]
+    fn parses_asapquery_manifest_subset() {
+        let manifest = asapquery_manifest();
+        assert_eq!(manifest.case_id, "asapquery_h2o_quantile_v1");
+        assert_eq!(manifest.task.group_by, vec!["id1", "id2"]);
+        assert_eq!(manifest.task.quantile, 0.95);
+        assert_eq!(manifest.requirements.latency_budget_ms, Some(1000.0));
+        assert_eq!(manifest.options.approximate_option_id, "asapquery_kll_k200");
+    }
+
+    #[test]
+    fn imports_asapquery_preview_csv_without_claiming_fidelity() {
+        let asap_csv = "\
+query_id,latency_ms,serving_ms,pipeline_ms,result_rows,result_preview,error,mode
+T000,10.0,8.0,2.0,2,\"1.0 | 2.0\",,asap
+";
+        let baseline_csv = "\
+query_id,latency_ms,serving_ms,pipeline_ms,result_rows,result_preview,error,mode
+T000,100.0,100.0,0.0,2,\"1.0 | 2.0\",,baseline
+";
+        let report = import_asapquery_csv_readers(
+            asapquery_manifest(),
+            Cursor::new(asap_csv),
+            Cursor::new(baseline_csv),
+        )
+        .unwrap();
+        assert_eq!(report.records.len(), 3);
+        let comparison = report
+            .records
+            .iter()
+            .find(|r| r.record_kind == "paired_comparison")
+            .unwrap()
+            .comparison
+            .as_ref()
+            .unwrap();
+        assert_eq!(comparison.status, "compared");
+        assert_eq!(comparison.fidelity_status, "unavailable_result_truncated");
+        assert_eq!(comparison.latency_speedup, Some(10.0));
+    }
+
+    #[test]
+    fn imports_asapquery_error_and_missing_counterpart() {
+        let asap_csv = "\
+query_id,latency_ms,serving_ms,pipeline_ms,result_rows,result_preview,error,mode
+T000,30000.0,30000.0,0.0,0,,Timeout,asap
+T001,12.0,12.0,0.0,1,1.0,,asap
+";
+        let baseline_csv = "\
+query_id,latency_ms,serving_ms,pipeline_ms,result_rows,result_preview,error,mode
+T000,100.0,100.0,0.0,1,1.0,,baseline
+";
+        let report = import_asapquery_csv_readers(
+            asapquery_manifest(),
+            Cursor::new(asap_csv),
+            Cursor::new(baseline_csv),
+        )
+        .unwrap();
+        let timeout_run = report
+            .records
+            .iter()
+            .find(|r| r.query_id == "T000" && r.option_run.is_some())
+            .unwrap()
+            .option_run
+            .as_ref()
+            .unwrap();
+        assert!(matches!(
+            timeout_run.admission_status,
+            AsapQueryAdmissionStatus::Timeout
+        ));
+        let missing = report
+            .records
+            .iter()
+            .find(|r| r.query_id == "T001" && r.record_kind == "paired_comparison")
+            .unwrap()
+            .comparison
+            .as_ref()
+            .unwrap();
+        assert_eq!(missing.status, "missing_counterpart");
+    }
+
+    #[test]
+    fn imports_asapquery_full_results_and_computes_numeric_error() {
+        let asap_csv = "\
+query_id,latency_ms,result_rows,result_full,error,mode
+T000,10.0,2,\"10.0\tid001\n20.0\tid002\",,asap
+";
+        let baseline_csv = "\
+query_id,latency_ms,result_rows,result_full,error,mode
+T000,20.0,2,\"11.0\tid001\n18.0\tid002\",,baseline
+";
+        let report = import_asapquery_csv_readers(
+            asapquery_manifest(),
+            Cursor::new(asap_csv),
+            Cursor::new(baseline_csv),
+        )
+        .unwrap();
+        let comparison = report
+            .records
+            .iter()
+            .find(|r| r.record_kind == "paired_comparison")
+            .unwrap()
+            .comparison
+            .as_ref()
+            .unwrap();
+        assert_eq!(comparison.fidelity_status, "numeric_value_compared");
+        let numeric = comparison.numeric_error.as_ref().unwrap();
+        assert_eq!(numeric.compared_values, 2);
+        assert_eq!(numeric.max_absolute_error, 2.0);
+        assert!(numeric.mean_relative_error > 0.0);
+    }
+
+    #[test]
+    fn imports_asapquery_promql_json_with_latency_and_fidelity() {
+        let manifest = AsapQueryImportManifest::from_toml_str(
+            r#"
+[case]
+case_id = "asapquery_promql_quickstart_v1"
+track = "PromQL AQP"
+benchmark_context = "Prometheus-compatible telemetry query serving"
+
+[task]
+task_id = "promql_sensor_reading_suite"
+family = "mixed_promql_aggregates"
+query_language = "PromQL"
+table = "sensor_reading"
+time_column = "time"
+value_column = "sensor_reading"
+group_by = ["pattern"]
+quantile = 0.95
+window_size_secs = 0
+
+[data_condition]
+dataset_id = "asapquery_quickstart_fake_exporters"
+description = "ASAPQuery quickstart fake exporters"
+group_count = 2
+
+[requirements]
+latency_budget_ms = 100
+target_relative_error = 0.05
+require_result_rows_match = true
+
+[options]
+approximate_option_id = "asapquery_promql_precompute"
+baseline_option_id = "prometheus_exact"
+
+[provenance]
+query_suite_file = "benchmarks/queries/promql_suite.json"
+"#,
+        )
+        .unwrap();
+        let suite = r#"{
+  "queries": [
+    {"id": "q95_by_pattern", "expr": "quantile by (pattern) (0.95, sensor_reading)", "approximate": true}
+  ]
+}"#;
+        let baseline = r#"{
+  "results": {
+    "q95_by_pattern": {
+      "status": "success",
+      "latencies_ms": [100.0, 110.0, 120.0],
+      "data": [
+        {"metric": {"pattern": "a"}, "value": [1, "10.0"]},
+        {"metric": {"pattern": "b"}, "value": [1, "20.0"]}
+      ],
+      "error": null
+    }
+  }
+}"#;
+        let asap = r#"{
+  "results": {
+    "q95_by_pattern": {
+      "status": "success",
+      "approximate": true,
+      "latencies_ms": [4.0, 5.0, 6.0],
+      "data": [
+        {"metric": {"pattern": "a"}, "value": [1, "10.5"]},
+        {"metric": {"pattern": "b"}, "value": [1, "19.0"]}
+      ],
+      "error": null
+    }
+  }
+}"#;
+        let report = import_asapquery_promql_json_readers(
+            manifest,
+            Cursor::new(baseline),
+            Cursor::new(asap),
+            Cursor::new(suite),
+        )
+        .unwrap();
+        assert_eq!(report.records.len(), 3);
+        let asap_run = report
+            .records
+            .iter()
+            .find_map(|record| {
+                record
+                    .option_run
+                    .as_ref()
+                    .filter(|run| run.role == "asapquery")
+            })
+            .unwrap();
+        assert_eq!(
+            asap_run.admission_status,
+            AsapQueryPromqlAdmissionStatus::Approximated
+        );
+        assert_eq!(asap_run.cost_metrics.p95_latency_ms, Some(5.9));
+        let comparison = report
+            .records
+            .iter()
+            .find(|record| record.record_kind == "paired_comparison")
+            .unwrap()
+            .comparison
+            .as_ref()
+            .unwrap();
+        assert_eq!(comparison.fidelity_status, "numeric_value_compared");
+        assert!(comparison.latency_speedup_p95.unwrap() > 18.0);
+        let numeric = comparison.numeric_error.as_ref().unwrap();
+        assert_eq!(numeric.compared_series, 2);
+        assert_eq!(numeric.missing_series, 0);
+        assert_eq!(numeric.extra_series, 0);
+        assert!(numeric.max_relative_error <= 0.05);
+        assert_eq!(
+            comparison.requirement_status.fidelity_budget_met,
+            Some(true)
+        );
     }
 }
