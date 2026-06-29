@@ -70,7 +70,7 @@ SIZE=1000000
 CARDINALITY=100000
 ZIPF_S=1.1
 SEED=42
-METRICS="cpu,memory,accuracy"
+METRICS="cpu,memory,accuracy,throughput"
 ACCURACY_PROBES=20000
 # Zipf: restrict frequency rel-err to keys with count >= this value.
 # Avoids count-1 rare-key noise dominating the mean rel-err for CMS/CS.
