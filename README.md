@@ -111,6 +111,8 @@ Downstream apps depend on `sketch-core + sketch-bench + sketch-runtime` — not 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — goals, audiences, crate layout, APIs, report schema, runtime → controller feedback loop.
 - [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) — phased absorption of `sketch-profiler`, history preservation, risks, done criteria.
 - [`docs/AQP_MVP.md`](docs/AQP_MVP.md) — first executable AQP slice: DataFusion query → grouped count-distinct task → exact vs sketch backends on synthetic events.
+- [`docs/AQP_BLOG_OUTLINE.md`](docs/AQP_BLOG_OUTLINE.md) — design-focused outline for the system-level AQP benchmark story.
+- [`docs/AQP_MVP_V2.md`](docs/AQP_MVP_V2.md) — proposed next MVP around scenarios, exact baselines, resource accounting, and approximation value.
 
 ## Current behavior (pre-migration)
 
