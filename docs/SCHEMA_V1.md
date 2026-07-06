@@ -6,6 +6,13 @@ output: the Rust `sketch-cli` (`sketchlib bench …`), the C++ track
 under `cpp-bench/`, and any future embedded sampler. Everyone serialises
 *exactly* the same fields with *exactly* the same names.
 
+This schema is the low-level sketch benchmark record. It is not the full AQP
+scenario-family schema described in `AQP_PROBLEM_DEFINITION.md` and
+`AQP_MVP_V2.md`. AQP records can be built from these records by adding
+scenario-family metadata: workload provenance, pressure dimensions, baseline
+policy, option/config policy, requirements, and paired exact-vs-approx
+comparisons.
+
 This file pins down the contract for the cross-language case so a
 non-Rust emitter (currently just C++) can produce bytes that
 `serde_json::from_str::<Record>` will deserialise without surprises.
@@ -23,9 +30,27 @@ non-Rust emitter (currently just C++) can produce bytes that
 | `runs` | yes | number of measured runs aggregated into this record. |
 | `bench` | optional | `BenchSection` — measured numbers. Required for `mode = "bench"`. |
 | `profile` | optional | `ProfileSection` — micro-architectural data. Not used by C++ track yet. |
-| `sketch_config` | optional | free-form JSON of construction params. |
+| `sketch_config` | optional | free-form JSON of construction params. AQP importers use this as raw option/config-policy input. |
 | `source` | yes | `"cli" \| "asap-fusion" \| "data-collector" \| "asap-query" \| "cpp-bench"`. The C++ track always emits `"cpp-bench"`. |
 | `timestamp` | yes | RFC3339 / ISO-8601 with a `Z` suffix or numeric offset. |
+
+## Relationship to AQP records
+
+The AQP layer should not overload this low-level record with scenario-family
+fields. Instead, it should either emit separate AQP records or wrap/import this
+record into AQP records:
+
+- `scenario_family`: workload provenance, pressure dimensions, baseline policy,
+  option/config policy, planned/observed condition coverage.
+- `option_run`: one exact or approximate option under a scenario family and
+  data condition. A `Record` can supply the cost/accuracy payload for direct
+  sketch options.
+- `paired_comparison`: exact-vs-approx comparison with fidelity, cost deltas,
+  requirement booleans, and interpretation.
+
+This separation keeps cross-language sketch emitters simple while allowing AQP
+to express exact references, exact performance baselines, requirements, and
+resource-accounting gaps.
 
 `WorkloadDesc` (snake_case keys):
 

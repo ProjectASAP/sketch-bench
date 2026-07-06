@@ -2,7 +2,8 @@
 
 > Status: design outline.
 >
-> Goal: summarize the benchmark design direction.
+> Goal: summarize the benchmark design direction after looking at recent
+> benchmark papers and the current AQP docs.
 
 ## Starting Point
 
@@ -36,15 +37,22 @@ What approximation may add:
 Important caveat:
 
 - These are possible value dimensions, not claims.
-- Each benchmark instance must measure which benefits and costs actually appear.
+- Each scenario family must measure which benefits and costs actually appear.
+- The benchmark should be allowed to reject approximation. A result where
+  optimized exact execution wins is still a useful result.
 
 ## One-Sentence Direction
 
-We want a system-level AQP benchmark that measures when approximate execution is worthwhile against optimized exact alternatives, using native system interfaces, realistic data inputs and dynamics, explicit resource accounting, and exact reference results for fidelity measurement.
+We want a scenario-family AQP benchmark that measures when approximate
+execution is worthwhile against optimized exact alternatives, using native
+system interfaces, explicit workload provenance, controlled data-condition
+sweeps, exact reference results, and resource accounting that says what is
+measured and what is still missing.
 
 ## Core Benchmark Unit
 
-A benchmark instance specifies:
+A benchmark should be organized as a scenario family. One scenario family
+specifies:
 
 - `task`
   - Analytical task or query family.
@@ -57,14 +65,33 @@ A benchmark instance specifies:
 - `native interface`
   - Interface the system normally exposes.
   - The benchmark should not translate every system into one artificial query language.
+- `workload model`
+  - Where requests and data come from.
+  - Examples: product quickstart, real trace, controlled synthetic generator,
+    or hybrid generated workload fitted to real statistics.
+- `pressure dimensions`
+  - Data or workload axes the benchmark is intentionally stressing.
+  - Examples: cardinality, group count, skew, temporal drift, query range,
+    query concurrency, retention horizon.
 - `data condition`
-  - Data source, data shape, time range, skew, cardinality, and replay or generation policy.
+  - One measured point in the family, with source/version, seed, shape, time
+    range, replay or generation policy, and pressure-dimension values.
 - `exact reference execution`
   - Exact computation used to produce the reference answer for fidelity comparison.
 - `exact performance baseline`
   - Optimized exact alternative used for latency and resource comparison.
+- `baseline policy`
+  - Why the exact performance baseline is strong enough for the claim, and
+    which baseline gaps remain.
 - `approximate option`
   - Approximate system path, sketch, summary, or configuration being tested.
+- `option/config policy`
+  - How parameters are chosen and compared.
+  - Examples: fixed defaults, grid sweep, best option under requirement,
+    calibration data, tuning budget.
+- `value hypothesis`
+  - Falsifiable reason approximation might help: pressure, expected benefit,
+    acceptance rule, and rejection rule.
 - `requirements`
   - Error target, latency SLO, memory target, result-shape rule, or other acceptance condition.
 - `resource accounting scope`
@@ -74,6 +101,9 @@ A benchmark instance specifies:
 
 Output records:
 
+- Scenario-family records:
+  - Workload provenance, pressure dimensions, baseline policy, planned and
+    completed condition coverage, and option/config policy.
 - Performance/cost records:
   - Latency, throughput, CPU time, scan bytes, or other measured cost of running an option.
 - Fidelity records:
@@ -84,15 +114,21 @@ Output records:
   - Run status and execution mode, such as exact, approximate, unsupported, timeout, or error.
   - This is separate from fidelity: fidelity says how wrong the answer was; outcome says what happened during execution.
 
-## Why This Benchmark Is Realistic
+## Why This Benchmark Is Credible
 
-The benchmark is realistic when it preserves both:
+Do not claim that the benchmark is "realistic" as a slogan. The benchmark is
+credible when the workload argument is inspectable:
 
 - Real system boundary:
   - Use the system's native interface.
   - Include planner, serving path, serialization, precompute path, fallback behavior, and deployment shape when they are part of the system being evaluated.
-- Realistic data input pressure:
-  - Use data inputs and dynamics that create the kinds of pressure exact systems face in real deployments.
+- Workload provenance:
+  - Say whether the workload is a product quickstart, real trace, controlled
+    generator, or hybrid generator.
+  - Record source version, seed, replay policy, and query suite.
+- Pressure dimensions:
+  - State which data or workload axes the benchmark is meant to stress.
+  - Do not imply coverage of axes that were not run.
 
 Data input design should be a first-class benchmark axis:
 
@@ -100,11 +136,11 @@ Data input design should be a first-class benchmark axis:
   - Purpose: controlled breakpoints.
   - Method: vary one or two dimensions at a time.
   - Examples: cardinality, group count, Zipf skew, window length.
-- Trace or workload replay (mental model: CAIDA-style trace/replay corpus):
+- Trace or workload replay:
   - Purpose: realistic correlations and temporal behavior.
   - Requirement: preserve timestamp/window semantics.
   - Metadata: record trace version, source, replay speed, and replay policy.
-- Hybrid generated traces (mental model: synthetic CAIDA-like inputs, combining the first two):
+- Hybrid generated traces:
   - Purpose: realistic-enough inputs when real traces are unavailable or incomplete.
   - Requirement: encode phenomena such as bursts, drift, skew, and rare groups, not only random rows.
 
@@ -135,7 +171,7 @@ These are target analysis shapes, not current claims.
 
 Do not describe approximation value as one arithmetic score. The units differ: latency, CPU, memory, storage, network, freshness, and fidelity are not directly additive.
 
-Each benchmark instance should answer separate questions:
+Each scenario family should answer separate questions:
 
 - Benefit:
   - What improved relative to the exact performance baseline?
@@ -169,7 +205,12 @@ What the AQP benchmark layer adds:
 
 - More data input variation.
 - Explicit data-condition identifiers and replay/generation policy.
+- Workload provenance and pressure-dimension coverage.
 - Exact-reference versus exact-baseline roles.
+- Baseline policy: why Prometheus is the exact comparison for this scenario,
+  and what stronger exact deployments are outside the current run.
+- Option/config policy: whether approximate parameters are defaults, swept,
+  calibrated, or tuned under a declared budget.
 - Resource accounting for augmentation/precompute overhead.
 - Requirement satisfaction across latency, fidelity, result shape, and resources.
 - Output regions showing where exact remains better, where approximation helps, and where approximation fails.
@@ -179,6 +220,8 @@ This means AQP benchmark can help ASAPQuery tune and test data inputs more compl
 - It can vary cardinality, skew, pattern mix, query range, concurrency, and retention pressure.
 - It can expose when ASAPQuery's approximate path is useful versus when Prometheus exact remains sufficient.
 - It can keep these broader input-shape tests outside the product quickstart, while still reusing quickstart as a concrete adapter target.
+- It can label the quickstart as a seed condition, so the blog does not
+  overclaim from one convenient demo workload.
 
 ## Exact Reference Versus Exact Performance Baseline
 
@@ -210,6 +253,23 @@ They may need to differ:
 - A slow offline exact computation may be best for reference answers, while an indexed/serving exact system is the fair performance baseline.
 - An exact serving system may timeout for a hard condition; that timeout is a baseline result, but the benchmark may still need an offline exact reference to measure approximation error.
 - A benchmark script may record enough data for latency but not enough complete result values for fidelity.
+
+The blog should frame this as a baseline policy, not only a terminology
+distinction:
+
+- What exact system is the reference?
+- What exact system is the performance baseline?
+- Why is that baseline strong enough for this scenario family?
+- Which stronger or different exact baselines would change the claim?
+- Is the result complete, partial, or blocked by missing resource accounting?
+
+It should also frame approximation configuration as a fairness issue:
+
+- Which sketch or summary parameters were used?
+- Were they defaults, tuned, or chosen from a sweep?
+- Was the exact baseline given an equivalent tuning opportunity?
+- Is the reported approximate option a fixed deployment choice or a best-case
+  point selected after seeing the workload?
 <!-- 
 ## Proposed Post Flow
 
@@ -218,13 +278,14 @@ They may need to differ:
    - Exact systems continue to improve.
    - Approximation must justify its error and any added infrastructure.
 
-2. Define the benchmark instance.
-   - Reuse the high-level AQP problem definition.
+2. Define the scenario family.
+   - Reuse the scenario-family shape from the AQP problem definition.
    - Add the distinction between exact reference execution and exact performance baseline.
-   - Make clear that concrete systems and native interfaces are required.
+   - Make clear that concrete systems, native interfaces, workload provenance,
+     and pressure dimensions are required.
 
 3. Explain realistic data input design.
-   - This is a central design point, not a side note.
+   - This is a central design point, not a side note or a marketing claim.
    - Separate synthetic sweeps, trace replay, and hybrid generated traces.
    - Explain which exact-system pressures each data input is meant to create.
 

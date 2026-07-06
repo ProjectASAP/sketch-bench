@@ -20,6 +20,12 @@ SQL query
   -> throughput / memory / accuracy report
 ```
 
+In the newer AQP vocabulary, this is the first local scenario point for a
+future sketch/SQL-shaped scenario family. It is intentionally not the whole
+benchmark claim yet: it lacks workload provenance records, pressure-dimension
+coverage, baseline policy, option/config policy, and scenario-family summary
+records.
+
 The MVP supports a small admitted query set:
 
 ```sql
@@ -147,8 +153,10 @@ The MVP emits one JSON object with:
 
 - lowered AQP task
 - synthetic data-source parameters
+- implicit workload provenance: controlled synthetic `events` generator
 - exact backend throughput and rough memory estimate
 - sketch backend throughput and rough memory estimate
+- sketch configuration where available
 - optional `sketches[]` entries when one task has multiple approximate backends
 - mean / p95 / max relative error
 - worst group
@@ -181,6 +189,10 @@ Out of scope:
 - hybrid backend
 - budget parsing or enforcement
 - real CSV/Parquet/trace data sources
+- scenario-family manifest
+- workload provenance and pressure-dimension coverage records
+- exact-baseline policy beyond the current in-process exact structures
+- option/config policy beyond ad hoc CLI/config values
 - DataFusion physical execution
 - multi-operator plans
 - composed error across operators
@@ -191,8 +203,11 @@ Out of scope:
 
 The next phase should turn this MVP into a broader benchmark by adding:
 
+- scenario-family manifests with workload provenance and pressure dimensions
 - source-sensitivity sweeps over distribution, skew, cardinality, and group count
 - a stable AQP report schema
+- exact reference versus exact performance baseline policy
+- option/config policy for sketch parameters and sweeps
 - trace or file-backed `events` sources
 - more query shapes, such as filtered distinct-count or top-k
 - budget concepts, such as error target, latency target, and memory target

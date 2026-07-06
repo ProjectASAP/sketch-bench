@@ -15,6 +15,7 @@ Produce **one crate graph** that serves three audiences:
 | Developers / researchers | Offline CLI | Reproducible benchmark + profile runs against sketch implementations |
 | Downstream ASAP apps (asap-fusion, DataCollector, ASAPQuery) | Embedded library, runtime | Always-on, low-overhead metrics from live sketch usage |
 | ASAPController control plane | Consumer | Structured metric stream from running apps for online decisions |
+| AQP benchmark layer | Scenario-family adapter | Wrap exact/approx option runs into task/context/data-condition/requirement comparisons |
 
 ### 1.1 Non-goals
 
@@ -52,6 +53,22 @@ Measures microarchitectural and allocation behavior. Higher overhead, usually CL
 
 Benchmark and profile are **peer subsystems**, not parent/child.
 
+### 2.3 AQP scenario family = design layer above benchmark records
+
+AQP is not a third low-level metric mode beside `bench` and `profile`. It is an
+interpretation layer that groups exact and approximate option runs into a
+scenario family:
+
+```text
+task x benchmark context x workload model x data condition x requirement x option
+```
+
+The low-level `bench` record measures one sketch/config/workload run. The AQP
+layer adds workload provenance, pressure dimensions, baseline policy,
+option/config policy, exact-vs-approx paired comparisons, requirement booleans,
+and resource-accounting gaps. This keeps the reusable metric substrate simple
+while letting AQP make system-level claims.
+
 ---
 
 ## 3. Crate layout
@@ -71,7 +88,7 @@ sketch-bench/               (repo)
 ├── sketch-runtime/         # embedded layer for downstream apps
 │   ├── sampler/            # every-Nth-op / time-window sampling
 │   └── exporter/           # stdout, file, prometheus, grpc-to-controller
-├── sketch-cli/             # unified binary `sketchlib`: `bench` / `profile` subcommands
+├── sketch-cli/             # unified binary `sketchlib`: `bench` / `profile` / AQP adapters
 ├── cpp/                    # existing C++ benches — migrated onto sketch-core/bench
 ├── accuracy/ throughput/   # existing — migrated onto sketch-bench
 ├── input/  scripts/        # shared datasets + generators
@@ -133,6 +150,10 @@ Absorbed from `sketch-profiler`'s `data_gen/`:
 - Distribution generators: uniform, Zipf (s-parameter), custom shape
 
 ### 4.4 Report schema (JSONL, one record per run)
+
+This is the low-level sketch record, not the full AQP scenario-family record.
+AQP importers may wrap these records into `scenario_family`, `option_run`, and
+`paired_comparison` records described in the AQP docs.
 
 ```json
 {

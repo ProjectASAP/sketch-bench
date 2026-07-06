@@ -4,6 +4,13 @@
 
 Extends the existing `sketchlib bench` command so it can sweep a sketch family's configuration space in one invocation — instead of hard-coding params in `sketch-cli/src/params.rs`, rebuilding, and looping by hand.
 
+In the broader AQP design, this is the low-level mechanism behind an
+`option/config policy`. A scenario family can later say whether a sketch option
+was evaluated at one fixed default, over a declared grid, as best-of-grid, or as
+the smallest configuration satisfying a requirement. `bench` remains a
+sketch-level command; the AQP layer should summarize its records as
+scenario-family coverage rather than changing this command into an AQP runner.
+
 Scope is deliberately small:
 - **No new subcommand.** Sweep is the default behaviour of `bench`.
 - **No new input formats.** Synthetic `uniform` / `zipf` only. CSV / file / binary inputs tracked separately as a follow-up.
@@ -121,6 +128,17 @@ Same v1 schema. One new optional field:
 ```
 
 `sketch_config` is optional on read (backward compat with any pre-existing records). The visualization layer gets one extra grouping key: `(sketch, impl, sketch_config)`. Drop-in for the existing viewer.
+
+For AQP importers, `sketch_config` is not just display metadata. It is the raw
+input for option/config policy:
+
+- fixed default: one emitted `sketch_config`;
+- grid sweep: multiple emitted `sketch_config` values for the same task/data
+  condition;
+- best-of-grid: a later AQP summary may select one config, but must preserve
+  the full grid that was tried;
+- requirement-minimal config: AQP may choose the smallest memory/config point
+  satisfying declared fidelity and latency requirements.
 
 ---
 

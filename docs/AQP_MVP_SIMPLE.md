@@ -6,8 +6,10 @@ The long-term goal is a deployment-neutral benchmark contract for Approximate
 Query Processing (AQP).
 
 An AQP benchmark should let us compare different systems under the same
-high-level workload intent, data profile, and approximation requirements, even
-when those systems expose different query languages or execution models.
+scenario family: high-level workload intent, benchmark context, workload model,
+data-condition matrix, approximation requirements, exact baseline policy, and
+option/config policy, even when those systems expose different query languages
+or execution models.
 
 Examples of systems under test include:
 
@@ -21,10 +23,15 @@ Examples of systems under test include:
 The benchmark contract should define:
 
 - workload intent, such as grouped cardinality, quantile, frequency, or top-k
-- data profile, such as row count, cardinality, skew, group count, and seed
+- workload provenance, such as product benchmark, trace, generator, or hybrid
+  synthesizer
+- pressure dimensions, such as row count, cardinality, skew, group count,
+  query range, concurrency, and seed
 - approximation requirements, such as target error, latency budget, or memory
   budget
-- exact oracle used for accuracy comparison
+- exact reference execution used for accuracy comparison
+- exact performance baseline used for cost comparison
+- option/config policy for exact and approximate alternatives
 - cost metrics, such as latency, throughput, CPU, memory, and IO
 - accuracy metrics, such as relative error, rank error, worst-group error, and
   missing groups
@@ -35,7 +42,8 @@ The benchmark contract should define:
 This is different from benchmarking one approximate query path. A benchmark of
 an approximate query asks whether one fixed approximate execution is fast and
 accurate. An AQP benchmark asks how a system behaves as an approximate query
-processing system under controlled requirements and data conditions.
+processing system under controlled requirements and data conditions. One run is
+a scenario point; the benchmark claim comes from the scenario family.
 
 ## Ownership Boundary
 
@@ -50,7 +58,7 @@ ASAPController.
 `sketch-bench` should own the measurement contract:
 
 - benchmark workload definitions
-- exact oracle definitions
+- exact reference and exact performance baseline definitions
 - controlled data generation
 - measurement and accuracy comparison
 - normalized reports
@@ -82,7 +90,8 @@ definition. They are centered on their host systems and deployment shapes.
 The reusable piece proposed here is the cross-system comparison contract:
 
 ```text
-same intent + same data profile + same requirement + normalized report
+same task/context + same workload model + same data condition
+  + same requirement + explicit baseline/config policy + normalized report
 ```
 
 ASAPQuery's experiment tools may be one runner for that contract. asap-fusion's
@@ -96,14 +105,16 @@ MVP v1 is the smallest local proof of the benchmark contract.
 
 It does not try to compare all systems yet. It proves that `sketch-bench` can
 represent a few query-shaped workload intents, generate controlled data, run an
-exact oracle and one or more `asap_sketchlib` approximate implementations, and
-emit a report that has the right shape for later cross-system comparison.
+exact reference/performance baseline and one or more `asap_sketchlib`
+approximate implementations, and emit a report that has the right shape for
+later cross-system comparison.
 
 The MVP question is:
 
 ```text
-For an admitted query-shaped workload intent, how does an exact oracle compare
-with an asap_sketchlib approximate implementation on the same generated data?
+For an admitted query-shaped workload intent, how does an exact baseline compare
+with an asap_sketchlib approximate implementation on the same generated data
+condition and under the same requirements?
 ```
 
 MVP v1 supports a small set of admitted aggregate shapes over a synthetic
@@ -134,7 +145,7 @@ benchmark shapes, not a claim that `sketch-bench` owns SQL planning.
 ```text
 admitted workload intent
   -> generated events data
-  -> exact oracle
+  -> exact reference / exact baseline
   -> asap_sketchlib approximate implementation
   -> normalized cost and accuracy report
 ```
@@ -158,6 +169,8 @@ The current implementation already demonstrates the narrow local path:
 - A synthetic `events` source with configurable row count, regions, user
   cardinality, distribution, skew, and seed.
 - Exact oracles using sets, sorted value vectors, or exact count maps.
+- Exact baselines currently reuse the same in-process exact structures as the
+  reference execution.
 - Sketch implementations using `asap_sketchlib` HyperLogLog, KLL, CountMin, and
   CountSketch.
 - A JSON report with backend performance, rough memory estimates, and relative
@@ -180,14 +193,22 @@ only a working demo path.
 MVP v1 still needs:
 
 - Explicit workload-intent names independent of SQL spelling.
+- Scenario-family identifiers, even if each family starts with one condition.
+- Workload provenance and pressure dimensions for generated data.
 - Clear admission rules for each supported shape, so unsupported SQL fails
   clearly instead of running an unintended benchmark.
-- A report schema that separates workload intent, data profile, system/backend,
-  cost metrics, accuracy metrics, and admission/fallback status.
+- A report schema that separates workload intent, workload provenance, data
+  condition, system/backend, cost metrics, accuracy metrics, and
+  admission/fallback status.
+- Baseline policy that states when the exact reference and exact performance
+  baseline are the same in-process structure.
+- Option/config policy that records sketch parameters, config grids, and tuning
+  or default-selection rules.
 - Query-specific accuracy details, such as worst group for grouped aggregates,
   missing groups, rank error for quantiles, and heavy-hitter error for frequency
   tasks.
-- A stable way to identify exact oracles and approximate implementations.
+- A stable way to identify exact reference executions, exact performance
+  baselines, and approximate implementations.
 
 Useful follow-up work after MVP v1 includes:
 
@@ -206,14 +227,14 @@ planner inside `sketch-bench`.
 ## Success Criteria
 
 MVP v1 is successful when a user can run multiple admitted workload intents and
-get a clear normalized report comparing exact oracle results with
+get a clear normalized report comparing exact baseline results with
 `asap_sketchlib` approximate results on the same controlled data.
 
 The report should make the tradeoff visible enough to answer:
 
 ```text
-For this workload intent and data profile, was the approximate implementation
-faster, smaller, and accurate enough relative to the exact oracle?
+For this workload intent and data condition, was the approximate implementation
+faster, smaller, and accurate enough relative to the exact baseline/reference?
 ```
 
 That gives `sketch-bench` a concrete MVP while keeping the long-term AQP

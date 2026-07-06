@@ -13,6 +13,14 @@ what exact and approximate options are available,
 how do they behave under different data conditions and requirements?
 ```
 
+That question should be answered by a scenario suite, not by one benchmark row.
+Recent PVLDB benchmark papers in `docs/vldb_benchmark_papers_2021_2025.md`
+make the same point in different domains: fixed legacy workloads miss
+production behavior, and good benchmarks expose workload pressure, data
+conditions, baselines, and failure modes explicitly. For AQP this means a
+benchmark must be able to show where exact execution wins, where approximation
+wins, and where the approximate path should be rejected.
+
 The output is a set of metrics:
 
 ```text
@@ -31,15 +39,19 @@ The benchmark is useful if it can explain boundaries such as:
 
 ## Definition
 
-An AQP benchmark instance is:
+An AQP scenario family is:
 
 ```text
 task T
 + benchmark context C
++ workload model W
 + options O1..On
++ option/config policy K
 + data conditions D1..Dm
 + ground truth G
 + approximation requirements A
++ resource accounting R
++ comparison protocol P
 + metrics M
 => output metric set
 ```
@@ -54,18 +66,42 @@ Where:
   DataFusion operators through DataFusion plans, stream processing through a
   stream/window API, or direct aggregate primitives through a data-structure
   API.
+- `workload model` states where the task and requests come from: a real
+  workload trace, a product benchmark, a controlled generator, or a hybrid
+  synthesizer. It also states which production pressure the benchmark is trying
+  to model, such as high cardinality, dashboard concurrency, drift, rare
+  groups, large windows, or retention pressure.
 - `options` are the exact and approximate alternatives available in that
   benchmark context.
+- `option/config policy` states which configurations are tried, how defaults
+  are chosen, whether tuning/calibration data is allowed, and how much tuning
+  budget each option receives.
 - `data conditions` are controlled shapes of input data that may change which
   option is good.
 - `ground truth` is the exact result used to judge fidelity.
 - `approximation requirements` are error, latency, memory, confidence, or
   admission targets.
+- `resource accounting` states which exact and approximate costs are counted
+  and which are known gaps.
+- `comparison protocol` states how runs are paired, how timestamps/windows are
+  aligned, how groups are matched, and how numeric edge cases are handled.
 - `metrics` describe latency, accuracy, cost, and other behavior.
 
 Different benchmark contexts should not be forced into one comparison. PromQL
 and ES DSL can both contain aggregates, but they are not the same benchmark
 because their data models and semantics are different.
+
+A full benchmark should define a scenario family:
+
+```text
+one task/context/workload model
+  x multiple data conditions
+  x exact and approximate options
+  x explicit requirements
+```
+
+A single scenario is useful as a smoke test. It is not enough for a benchmark
+claim unless it is clearly labeled as one point in the family.
 
 ## Tracks
 
@@ -82,6 +118,9 @@ A track fixes the benchmark context. Comparisons are meaningful within a track.
 
 The tracks may share vocabulary, data generators, ground-truth code, metrics,
 and report schema. They should not share a fake universal query interface.
+Within a track, the scenario family owns the workload model and data-condition
+matrix. The track only says which native interface and option types are
+admissible.
 
 ## Primary Concrete Example
 
@@ -121,8 +160,9 @@ The case fills the AQP dimensions with specific values:
 - `metrics`: latency, speedup, numeric error, missing/extra label sets,
   admission status, and requirement satisfaction.
 
-The PromQL quickstart should be read as a concrete plan for this definition,
-not only as a demo run. It gives the benchmark a real external system boundary:
+The PromQL quickstart should be read as the seed scenario for this definition,
+not as the full benchmark suite. It gives the benchmark a real external system
+boundary:
 
 ```text
 PromQL task x telemetry context x fake-exporter data condition
@@ -146,6 +186,11 @@ That example fills in the previously vague pieces as follows:
   checked explicitly.
 - The output is inspectable data, not only a narrative: the bundle includes a
   sample AQP JSONL report and a runner that can regenerate it.
+
+What it does not yet provide is the broader scenario family. It still needs a
+matrix over series count, label cardinality, query range, pattern mix, drift,
+burstiness, and query concurrency before it can support a general claim about
+PromQL AQP behavior.
 
 Concrete rows from the latest paired run show the point:
 
@@ -222,11 +267,43 @@ Examples:
 Options should include exact baselines. Without exact baselines, the benchmark
 cannot show whether approximation is worthwhile.
 
+The exact baseline should be treated as a design object, not as a default
+implementation detail. PVLDB benchmark papers that criticize standard
+benchmarks or synthesize production-like workloads are usually reacting to weak
+or stale baselines. AQP Bench should therefore record:
+
+- the exact reference used for fidelity;
+- the exact performance baseline used for cost comparison;
+- whether those are the same system or different systems;
+- why the exact performance baseline is considered strong enough for the
+  scenario.
+
+Approximate options need the same discipline. A benchmark should not compare a
+carefully tuned exact system against an arbitrary sketch configuration, or a
+heavily tuned approximate system against a default exact baseline. Each scenario
+family should record:
+
+- the configuration grid or default configuration policy;
+- whether the option is evaluated at one fixed config, best-of-grid, or
+  requirement-minimal config;
+- any calibration/training data used to choose parameters;
+- tuning budget and stopping rule;
+- whether the same policy is applied to all comparable options.
+
 ## Data Conditions
 
 AQP behavior is data-sensitive. One workload is not enough.
 
-The benchmark should sweep controlled data conditions, such as:
+The benchmark should define data conditions at two levels.
+
+First, it should state workload provenance:
+
+- real trace or product benchmark;
+- controlled synthetic generator;
+- hybrid generator fitted to real statistics;
+- manually curated edge-case workload.
+
+Second, it should sweep controlled data conditions, such as:
 
 - row count or stream length
 - cardinality
@@ -244,8 +321,15 @@ The benchmark should sweep controlled data conditions, such as:
 - correlation between fields
 - out-of-order or late events
 
-The point is not only to generate realistic data. The point is to expose where
-an approximate option breaks, dominates, or becomes irrelevant.
+Every data condition should have an identifier, seed or source version,
+generation/replay policy, and pressure dimensions. The point is not only to
+generate realistic data. The point is to expose where an approximate option
+breaks, dominates, or becomes irrelevant.
+
+This is also where AQP should differ from a narrow microbenchmark. A useful
+suite includes both controlled breakpoints and workload-like conditions. The
+controlled cases explain why a result changes; the workload-like cases test
+whether the breakpoints matter under a realistic query and data mix.
 
 ## Requirements
 
@@ -318,6 +402,10 @@ Useful outputs:
 - break-even points against exact execution
 - sensitivity plots for skew, cardinality, group count, or window size
 - per-task summaries of when each option is appropriate
+- coverage matrices showing which tasks, data conditions, and options were
+  actually exercised
+- baseline-strength notes explaining whether the exact comparison is complete,
+  partial, or still weak
 
 Example conclusion shape:
 
@@ -341,6 +429,14 @@ summaries may be necessary to meet the error requirement.
 The benchmark can be built from these components:
 
 ```text
+ScenarioFamilySpec
+  track
+  value hypothesis
+  workload provenance
+  pressure dimensions
+  condition matrix
+  option/config policy
+
 TaskSpec
   name
   result shape
@@ -354,18 +450,49 @@ TrackSpec
   binding/admission rules
   non-goals
 
+WorkloadModelSpec
+  query/request source
+  generator or replay policy
+  production pressure being modeled
+  workload version
+
 DataConditionSpec
   generator or trace
   shape parameters
   seed
   sweep dimensions
 
+BaselineSpec
+  exact reference execution
+  exact performance baseline
+  baseline-strength note
+
+OptionPolicySpec
+  configuration grid
+  default selection rule
+  tuning budget
+  calibration data
+  fairness notes
+
 RequirementSpec
   fidelity targets
   cost budgets
   confidence targets
 
+ResourceAccountingSpec
+  base exact costs
+  incremental approximate costs
+  effective serving costs
+  missing dimensions
+
+ComparisonProtocolSpec
+  time/window pairing
+  group/key matching
+  numeric error rules
+  repeated-run policy
+
 RunRecord
+  scenario family
   task
   track
   option
@@ -374,36 +501,46 @@ RunRecord
   admission status
   cost metrics
   fidelity metrics
-  ground truth id
+  exact reference id
 ```
 
 This gives `sketch-bench` a concrete role: generate data conditions, run exact
-ground truth and approximate options, collect cost/fidelity/admission records,
-and produce the plots that reveal the metrics set.
+reference/baseline and approximate options, collect cost/fidelity/admission
+records, and produce the plots that reveal the metrics set.
 
 ## What `sketch-bench` Should Own
 
 `sketch-bench` should own:
 
 - task definitions
+- scenario-family manifests
 - data-condition generation and sweeps
+- workload provenance metadata
 - ground-truth methods
+- exact-baseline strength metadata
+- option/config sweep policy
 - direct sketch-vs-exact option runners
 - shared metric definitions
 - admission status vocabulary
+- comparison protocol validation
+- resource-accounting gap tracking
 - normalized run records
 - plotting/report inputs for metrics set
 
 <!-- ## MVP v3
 
-MVP v3 should prove the task-centered benchmark shape before adding external
+MVP v3 should prove the scenario-family benchmark shape before adding external
 systems.
 
 Scope:
 
 ```text
+scenario family: Sketch primitive AQP break-even suite
 track: Sketch primitive AQP
 benchmark context: direct aggregate primitives through aggregate/data-structure API
+workload model: controlled synthetic generator
+pressure dimensions: stream length, cardinality, skew, group count, update/query ratio
+option/config policy: fixed default first, then declared config grid
 ```
 
 Tasks:
@@ -442,15 +579,19 @@ Requirements:
 Run output:
 
 ```text
+scenario family
 task
 track
 option
+workload provenance
 data condition
+baseline policy
+option/config policy
 requirement
 admission status
 cost metrics
 fidelity metrics
-ground truth id
+exact reference id
 ```
 
 Required analysis outputs:
