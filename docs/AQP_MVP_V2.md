@@ -535,15 +535,18 @@ The broader `aqpbmv2_functions` example runs three functionality classes through
 the same grouped and partitioned-merge kernels:
 
 - distinct count: exact `HashSet`, local demo HLL, Apache DataSketches HLL,
-  and `sketch_oxide` HLL;
+  `sketch_oxide` HLL, and `asap_sketchlib` HLL;
 - heavy hitters: exact `HashMap`, Apache DataSketches FrequentItems, and
-  `sketch_oxide` SpaceSaving;
+  `sketch_oxide` SpaceSaving, and `asap_sketchlib` CMSHeap;
 - quantile: exact sorted vector, Apache DataSketches TDigest, and
-  `sketch_oxide` TDigest.
+  `sketch_oxide` TDigest, and `asap_sketchlib` KLL.
 
 The JSON report includes exact outputs, candidate outputs, and coverage
 summaries. Count-distinct and quantile use numeric relative-error coverage;
-heavy hitters use precision/recall at k. The narrower
+heavy hitters use precision/recall at k. Bare Count-Min Sketch is a point
+frequency estimator, so the executable heavy-hitter candidate uses
+`asap_sketchlib` CMSHeap rather than pretending that CMS alone discovers top-k
+items. The narrower
 `aqpbmv2_count_distinct` example remains as a small smoke test for the original
 count-distinct path.
 

@@ -293,6 +293,40 @@ impl ApproxFunction for SketchOxideHllCountDistinct {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AsapHllCountDistinct;
+
+impl ApproxFunction for AsapHllCountDistinct {
+    type Input = i64;
+    type State = asap_sketchlib::HyperLogLog<asap_sketchlib::Classic>;
+    type Output = f64;
+    type Query = ();
+
+    fn create(&self) -> Self::State {
+        asap_sketchlib::HyperLogLog::<asap_sketchlib::Classic>::new()
+    }
+
+    fn update(&self, state: &mut Self::State, input: Self::Input) {
+        state.insert(&asap_sketchlib::DataInput::I64(input));
+    }
+
+    fn merge(&self, left: &mut Self::State, right: Self::State) {
+        left.merge(&right);
+    }
+
+    fn finalize(&self, state: &mut Self::State, _query: Self::Query) -> Self::Output {
+        state.estimate() as f64
+    }
+
+    fn candidate_id(&self) -> &'static str {
+        "approx_count_distinct.asap_sketchlib_hll_classic.v1"
+    }
+
+    fn functionality(&self) -> &'static str {
+        "count_distinct"
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HllState {
     precision: u8,
@@ -527,6 +561,81 @@ impl ApproxFunction for SketchOxideSpaceSavingHeavyHitters {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AsapCmsHeapHeavyHitters {
+    rows: usize,
+    cols: usize,
+    top_k: usize,
+}
+
+impl AsapCmsHeapHeavyHitters {
+    pub fn new(rows: usize, cols: usize, top_k: usize) -> Self {
+        Self { rows, cols, top_k }
+    }
+}
+
+impl ApproxFunction for AsapCmsHeapHeavyHitters {
+    type Input = i64;
+    type State = asap_sketchlib::CMSHeap<asap_sketchlib::Vector2D<i64>, asap_sketchlib::FastPath>;
+    type Output = HeavyHitters;
+    type Query = TopKQuery;
+
+    fn create(&self) -> Self::State {
+        asap_sketchlib::CMSHeap::<asap_sketchlib::Vector2D<i64>, asap_sketchlib::FastPath>::new(
+            self.rows, self.cols, self.top_k,
+        )
+    }
+
+    fn update(&self, state: &mut Self::State, input: Self::Input) {
+        state.insert(&asap_sketchlib::DataInput::I64(input));
+    }
+
+    fn merge(&self, left: &mut Self::State, right: Self::State) {
+        left.merge(&right);
+    }
+
+    fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output {
+        let mut items: Vec<_> = state
+            .heap()
+            .heap()
+            .iter()
+            .filter(|item| item.count >= query.min_count as i64)
+            .filter_map(|item| {
+                heap_item_to_i64(&item.key).map(|key| HeavyHitter {
+                    item: key,
+                    estimate: item.count as f64,
+                })
+            })
+            .collect();
+        sort_and_truncate_heavy_hitters(&mut items, query.k);
+        HeavyHitters { items }
+    }
+
+    fn candidate_id(&self) -> &'static str {
+        "approx_heavy_hitters.asap_sketchlib_cms_heap.v1"
+    }
+
+    fn functionality(&self) -> &'static str {
+        "heavy_hitters"
+    }
+}
+
+fn heap_item_to_i64(item: &asap_sketchlib::HeapItem) -> Option<i64> {
+    match item {
+        asap_sketchlib::HeapItem::I8(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::I16(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::I32(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::I64(v) => Some(*v),
+        asap_sketchlib::HeapItem::ISIZE(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::U8(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::U16(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::U32(v) => Some(*v as i64),
+        asap_sketchlib::HeapItem::U64(v) => i64::try_from(*v).ok(),
+        asap_sketchlib::HeapItem::USIZE(v) => i64::try_from(*v).ok(),
+        _ => None,
+    }
+}
+
 fn sort_and_truncate_heavy_hitters(items: &mut Vec<HeavyHitter>, k: usize) {
     items.sort_by(|a, b| {
         b.estimate
@@ -571,6 +680,54 @@ impl ApproxFunction for ExactQuantile {
 
     fn candidate_id(&self) -> &'static str {
         "exact_quantile.sorted_vec.v1"
+    }
+
+    fn functionality(&self) -> &'static str {
+        "quantile"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AsapKllQuantile {
+    k: i32,
+    seed: u64,
+}
+
+impl AsapKllQuantile {
+    pub fn new(k: i32) -> Self {
+        Self {
+            k,
+            seed: 0x5155_434b_4c4c,
+        }
+    }
+}
+
+impl ApproxFunction for AsapKllQuantile {
+    type Input = f64;
+    type State = asap_sketchlib::KLL<f64>;
+    type Output = f64;
+    type Query = QuantileQuery;
+
+    fn create(&self) -> Self::State {
+        asap_sketchlib::KLL::<f64>::init_kll_with_seed(self.k, self.seed)
+    }
+
+    fn update(&self, state: &mut Self::State, input: Self::Input) {
+        if input.is_finite() {
+            state.update(&input);
+        }
+    }
+
+    fn merge(&self, left: &mut Self::State, right: Self::State) {
+        left.merge(&right);
+    }
+
+    fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output {
+        state.quantile(query.quantile)
+    }
+
+    fn candidate_id(&self) -> &'static str {
+        "approx_quantile.asap_sketchlib_kll.v1"
     }
 
     fn functionality(&self) -> &'static str {
@@ -978,6 +1135,11 @@ pub fn run_aqpbmv2_function_demo() -> Aqpbmv2FunctionDemoReport {
             &count_rows,
             &count_distinct_exact,
         ),
+        evaluate_count_distinct_candidate(
+            &AsapHllCountDistinct,
+            &count_rows,
+            &count_distinct_exact,
+        ),
     ];
 
     let heavy_rows = demo_heavy_hitter_rows(80_000, 24);
@@ -993,6 +1155,12 @@ pub fn run_aqpbmv2_function_demo() -> Aqpbmv2FunctionDemoReport {
         ),
         evaluate_heavy_hitter_candidate(
             &SketchOxideSpaceSavingHeavyHitters::new(128),
+            &heavy_rows,
+            heavy_query,
+            &heavy_hitter_exact,
+        ),
+        evaluate_heavy_hitter_candidate(
+            &AsapCmsHeapHeavyHitters::new(5, 2048, heavy_query.k),
             &heavy_rows,
             heavy_query,
             &heavy_hitter_exact,
@@ -1013,6 +1181,12 @@ pub fn run_aqpbmv2_function_demo() -> Aqpbmv2FunctionDemoReport {
         ),
         evaluate_quantile_candidate(
             &SketchOxideTDigestQuantile::new(200.0),
+            &quantile_rows,
+            quantile_query,
+            &quantile_exact,
+        ),
+        evaluate_quantile_candidate(
+            &AsapKllQuantile::new(200),
             &quantile_rows,
             quantile_query,
             &quantile_exact,
@@ -1153,6 +1327,8 @@ mod tests {
             .grouped_coverage,
             evaluate_count_distinct_candidate(&SketchOxideHllCountDistinct::new(12), &rows, &exact)
                 .grouped_coverage,
+            evaluate_count_distinct_candidate(&AsapHllCountDistinct, &rows, &exact)
+                .grouped_coverage,
         ] {
             assert_eq!(coverage.compared_groups, 16);
             assert!(coverage.answer_coverage >= 0.80);
@@ -1174,6 +1350,13 @@ mod tests {
             .grouped_coverage,
             evaluate_heavy_hitter_candidate(
                 &SketchOxideSpaceSavingHeavyHitters::new(128),
+                &rows,
+                query,
+                &exact,
+            )
+            .grouped_coverage,
+            evaluate_heavy_hitter_candidate(
+                &AsapCmsHeapHeavyHitters::new(5, 2048, query.k),
                 &rows,
                 query,
                 &exact,
@@ -1205,6 +1388,8 @@ mod tests {
                 &exact,
             )
             .grouped_coverage,
+            evaluate_quantile_candidate(&AsapKllQuantile::new(200), &rows, query, &exact)
+                .grouped_coverage,
         ] {
             assert_eq!(coverage.compared_groups, 10);
             assert!(coverage.answer_coverage >= 0.80);
