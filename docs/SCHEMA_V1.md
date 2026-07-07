@@ -44,6 +44,11 @@ wrap/import this record into higher-level records:
 
 - `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
   and raw fidelity summary.
+- `candidate_dossier`: candidate identity, fixed parameters, native operation
+  coverage, declared adoption metadata, primitive measurements, and
+  AQP-kernel coverage summaries. Declared fields such as API shape,
+  documentation, license, and maintenance status should be labeled as metadata,
+  not benchmark measurements.
 - `coverage_summary`: answer coverage, requirement pass/fail, and failure
   localization for grouped or partitioned kernels.
 - `single_vs_grouped_comparison`: whether grouped or partitioned kernel results

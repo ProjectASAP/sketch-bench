@@ -160,6 +160,14 @@ implementation = "asap_sketchlib"
 parameters = { k = 200 }
 binding = "thin_native_binding"
 
+[candidate_metadata]
+language = "rust"
+version = "pinned_or_recorded_version"
+native_operations = ["update", "query", "merge"]
+serialization = "native_or_absent"
+api_binding_effort = "thin"
+metadata_status = "declared_not_benchmarked"
+
 [data_condition]
 id = "n1m_groups10k_zipf1_2_lognormal_tail_seed42"
 rows = 1000000
@@ -193,6 +201,9 @@ single-stream output.
 
 Required records:
 
+- `candidate_dossier`: candidate identity, fixed parameters, native operation
+  coverage, language/runtime metadata, serialization support, and other
+  declared adoption metadata;
 - `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
   and raw fidelity summary;
 - `answer_record`: exact and approximate answer for one logical output key
@@ -202,6 +213,12 @@ Required records:
   localization;
 - `single_vs_grouped_comparison`: whether the grouped or partitioned result
   agrees with the single-state baseline.
+
+The candidate dossier should distinguish measured fields from declared fields.
+For example, update throughput and answer coverage are measured. Language,
+license, documentation quality, public API shape, and maintenance status are
+adoption metadata. They are useful for choosing between candidates, but they
+should not be mixed into a single benchmark score.
 
 ## Success Criteria For This Case
 

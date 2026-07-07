@@ -84,6 +84,19 @@ the grouped or partitioned kernels reveal conclusions that a single-state
 sketch benchmark would miss. If they do not, the toolkit is still useful, but
 the VLDB-level contribution is weaker.
 
+The practical output should help users choose a sketch candidate. That choice
+depends on both measured behavior and adoption metadata:
+
+- measured primitive behavior: update/query/merge cost, memory, and raw
+  fidelity;
+- measured AQP-kernel behavior: answer coverage, failure localization, and
+  sensitivity to grouping and merge shape;
+- declared adoption metadata: language, implemented sketch families, API
+  shape, serialization, dependencies, license, documentation, and maintenance.
+
+The blog should keep these categories separate. API ease and documentation are
+real adoption criteria, but they are not measured by the sketch kernel.
+
 ## Core Benchmark Unit
 
 A benchmark should be organized as a scenario family. One scenario family

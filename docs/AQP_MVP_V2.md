@@ -103,6 +103,80 @@ window rebuilds, error correction, or rewritten merge behavior. If those
 policies are added, the benchmark target becomes "adapter policy plus sketch",
 which is a different project.
 
+## Candidate Selection Model
+
+AQPBMV2 should support sketch selection, not only produce benchmark numbers.
+A user choosing between candidates such as an external library implementation
+and a local `sketchlib` implementation needs more than one error/throughput
+row. The benchmark output should therefore separate three kinds of evidence.
+
+### 1. Declared Adoption Metadata
+
+These fields describe whether a candidate is practical to adopt. They are not
+proved by the kernel benchmark, but they should be recorded so comparisons are
+interpretable:
+
+- sketch families implemented, such as quantile, cardinality, frequency, or
+  top-k;
+- implementation language and runtime requirements;
+- public API shape and whether a thin binding is straightforward;
+- native support for merge, serialization, deserialization, and reset;
+- supported input types and query parameters;
+- build, packaging, and dependency footprint;
+- license and redistribution constraints;
+- documentation, examples, and maintenance status;
+- cross-language or cross-process portability if serialized states are meant
+  to move across boundaries.
+
+The design rule is that adoption metadata must be labeled as declared or
+manually assessed. AQPBMV2 should not pretend that documentation quality or API
+ergonomics are measured by a sketch kernel.
+
+### 2. Measured Primitive Behavior
+
+These are conventional sketch benchmark measurements. AQPBMV2 should keep them
+because they explain the base behavior of the concrete candidate:
+
+- update throughput;
+- query latency;
+- merge latency where merge is native;
+- memory footprint or serialized state size;
+- raw fidelity metrics such as rank error, value error, count error, or
+  precision/recall;
+- parameter sensitivity under single-state workloads.
+
+This layer answers:
+
+```text
+How does the concrete sketch instance behave as a primitive?
+```
+
+### 3. Measured AQP-Kernel Behavior
+
+This is the AQPBMV2-specific layer. It measures whether primitive-level
+behavior remains useful when the benchmark creates many states, many answers,
+grouping pressure, and merge pressure:
+
+- answer coverage across all logical outputs;
+- failure localization by group size, tail region, distribution shape, or
+  partition shape;
+- many-state scaling, including per-state overhead;
+- sensitivity to group skew, input order, partition count, and merge tree;
+- unsupported kernel coverage when a candidate lacks a native operation;
+- ranking changes between single-state, grouped-state, and partitioned-merge
+  kernels.
+
+This layer answers:
+
+```text
+Which candidate is suitable for this AQP-style workload kernel?
+```
+
+The final comparison should be a candidate dossier, not a single leaderboard
+score. A strong candidate may have excellent kernel coverage but poor adoption
+metadata. Another may be easy to integrate but lack merge support or fail
+under grouped-state pressure. AQPBMV2 should make those tradeoffs explicit.
+
 ## What AQPBMV2 Is Not
 
 AQPBMV2 is not:
@@ -218,6 +292,14 @@ implementation = "implementation_a"
 parameters = { k = 200 }
 binding = "thin_native_binding"
 
+[candidate_metadata]
+language = "rust"
+version = "pinned_or_recorded_version"
+native_operations = ["update", "query", "merge"]
+serialization = "native_or_absent"
+api_binding_effort = "thin"
+metadata_status = "declared_not_benchmarked"
+
 [data_condition]
 id = "n10m_groups10k_zipf1_2_lognormal_tail_seed1"
 rows = 10000000
@@ -247,6 +329,8 @@ exact_performance_baseline = "optional_exact_state_run"
 
 For the partitioned kernel, `partition_count` and `merge_shape` become active
 fields. For single-state kernels, group fields are absent or set to one.
+The `candidate_metadata` section is descriptive metadata, not a measured
+benchmark result.
 
 ## Metrics
 

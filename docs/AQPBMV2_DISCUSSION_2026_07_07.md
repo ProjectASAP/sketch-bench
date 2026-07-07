@@ -274,6 +274,54 @@ AQPBMV2 evaluates concrete sketch instances at the workload-kernel level, not
 only at the single-stream primitive level.
 ```
 
+## Refinement: Selection Criteria, Not Just Scores
+
+A later comment suggested listing criteria for choosing between sketch
+implementations or libraries, such as performance, API ease, number of
+implemented sketches, and implementation language. This is useful, but it
+should not change the benchmark target.
+
+The design lesson is:
+
+```text
+AQPBMV2 should produce candidate-selection evidence, not only benchmark rows.
+```
+
+The evidence should be separated into three layers:
+
+1. Declared adoption metadata:
+   language, runtime, license, implemented sketch families, API shape,
+   native merge support, serialization support, documentation, packaging,
+   dependency footprint, and maintenance status.
+
+2. Measured primitive behavior:
+   update throughput, query latency, merge latency, memory/state size, raw
+   fidelity, and parameter sensitivity on single-state workloads.
+
+3. Measured AQP-kernel behavior:
+   answer coverage, failure localization, many-state scaling, unsupported
+   kernel coverage, and sensitivity to group skew, partition count, merge tree,
+   and input distribution.
+
+The important boundary is that AQPBMV2 should not turn qualitative adoption
+metadata into fake benchmark measurements. API ergonomics, documentation, and
+maintenance are still relevant for choosing a sketch implementation, but they
+should be labeled as declared or manually assessed metadata. The kernel
+benchmark measures behavior under controlled kernels.
+
+This suggests a practical output form:
+
+```text
+candidate dossier
+  = identity and fixed parameters
+  + declared adoption metadata
+  + primitive benchmark results
+  + AQP-kernel coverage and failure summaries
+```
+
+This makes the project more useful without weakening the concrete unit under
+test.
+
 ## Remaining Doubts
 
 This direction is not fully proven. The main doubts are:
