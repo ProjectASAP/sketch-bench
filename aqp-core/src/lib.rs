@@ -5,6 +5,8 @@
 //! a registered benchmark schema plus a small lowering pass from
 //! DataFusion plans into AQP tasks the current sketch benchmark can run.
 
+pub mod function;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::sync::Arc;

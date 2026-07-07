@@ -22,3 +22,5 @@ csv.workspace = true
 
 # First sketch backend for the AQP MVP.
 asap_sketchlib.workspace = true
+datasketches.workspace = true
+sketch_oxide.workspace = true

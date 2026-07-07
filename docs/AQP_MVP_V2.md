@@ -103,7 +103,7 @@ trait ApproxFunction {
     fn create(&self) -> Self::State;
     fn update(&self, state: &mut Self::State, input: Self::Input);
     fn merge(&self, left: &mut Self::State, right: Self::State);
-    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+    fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output;
 }
 ```
 
@@ -517,6 +517,35 @@ VLDB-strength benchmark paper.
    primary benchmark.
 10. Keep PromQL, SQL, DataFusion, and external-system adapters out of the V2
    success criteria.
+
+Initial code landing:
+
+```text
+aqp-core/src/function.rs
+```
+
+Runnable smoke path:
+
+```bash
+cargo run -p aqp-core --example aqpbmv2_functions
+cargo run -p aqp-core --example aqpbmv2_count_distinct
+```
+
+The broader `aqpbmv2_functions` example runs three functionality classes through
+the same grouped and partitioned-merge kernels:
+
+- distinct count: exact `HashSet`, local demo HLL, Apache DataSketches HLL,
+  and `sketch_oxide` HLL;
+- heavy hitters: exact `HashMap`, Apache DataSketches FrequentItems, and
+  `sketch_oxide` SpaceSaving;
+- quantile: exact sorted vector, Apache DataSketches TDigest, and
+  `sketch_oxide` TDigest.
+
+The JSON report includes exact outputs, candidate outputs, and coverage
+summaries. Count-distinct and quantile use numeric relative-error coverage;
+heavy hitters use precision/recall at k. The narrower
+`aqpbmv2_count_distinct` example remains as a small smoke test for the original
+count-distinct path.
 
 ## Success Criteria
 
