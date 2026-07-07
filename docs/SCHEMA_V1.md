@@ -7,13 +7,14 @@ under `cpp-bench/`, and any future embedded sampler. Everyone serialises
 *exactly* the same fields with *exactly* the same names.
 
 This schema is the low-level sketch benchmark record. It is not the AQPBMV2
-sketch-kernel schema and not the broader AQP scenario-family schema described in
-`AQP_PROBLEM_DEFINITION.md` and `AQP_MVP_V2.md`. AQPBMV2 records can be built
-from these records by adding kernel identity, data-condition identity,
-execution shape, exact answers, answer coverage, and failure-localization
-summaries. Broader AQP records can add scenario-family metadata such as workload
-provenance, pressure dimensions, baseline policy, option/config policy,
-requirements, and paired exact-vs-approx comparisons.
+approximate-function kernel schema and not the broader AQP scenario-family
+schema described in `AQP_PROBLEM_DEFINITION.md` and `AQP_MVP_V2.md`. AQPBMV2
+records can be built from these records by adding function-candidate identity,
+kernel identity, data-condition identity, execution shape, exact answers,
+answer coverage, and failure-localization summaries. Broader AQP records can
+add scenario-family metadata such as workload provenance, pressure dimensions,
+baseline policy, option/config policy, requirements, and paired exact-vs-approx
+comparisons.
 
 This file pins down the contract for the cross-language case so a
 non-Rust emitter (currently just C++) can produce bytes that
@@ -42,10 +43,10 @@ The AQPBMV2/AQP layer should not overload this low-level record with kernel or
 scenario-family fields. Instead, it should either emit separate records or
 wrap/import this record into higher-level records:
 
-- `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
-  and raw fidelity summary.
-- `candidate_dossier`: candidate identity, fixed parameters, native operation
-  coverage, declared adoption metadata, primitive measurements, and
+- `kernel_run`: function candidate, kernel, data condition, execution shape,
+  raw cost, and raw fidelity summary.
+- `candidate_dossier`: function-candidate identity, fixed parameters, native
+  operation coverage, declared adoption metadata, primitive measurements, and
   AQP-kernel coverage summaries. Declared fields such as API shape,
   documentation, license, and maintenance status should be labeled as metadata,
   not benchmark measurements.

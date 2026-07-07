@@ -53,21 +53,22 @@ Measures microarchitectural and allocation behavior. Higher overhead, usually CL
 
 Benchmark and profile are **peer subsystems**, not parent/child.
 
-### 2.3 AQP layer = sketch kernels now, scenario families later
+### 2.3 AQP layer = function kernels now, scenario families later
 
 AQPBMV2 is not a third low-level metric mode beside `bench` and `profile`.
-It is currently a sketch-kernel layer above the low-level benchmark records:
+It is currently an approximate-function kernel layer above the low-level
+benchmark records:
 
 ```text
-concrete sketch instance
+executable approximate function candidate
 x benchmark-owned kernel
 x data condition
 x requirement
 ```
 
 The initial kernels are single-state, grouped-state, and partitioned-merge
-sketch programs. They are local benchmark programs, not SQL plans selected by a
-database optimizer.
+function programs. They are local benchmark programs, not SQL plans selected by
+a database optimizer.
 
 The broader AQP scenario-family design remains a later interpretation layer
 that groups exact and approximate option runs into:

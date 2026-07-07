@@ -120,21 +120,50 @@ Current AQPBMV2 should not try to benchmark all AQP systems or all AQP query
 interfaces. Its concrete target is:
 
 ```text
-concrete sketch implementation instance
+executable approximate function candidate
++ exact or sketch-backed state implementation
 + fixed parameter setting
-+ thin benchmark binding
++ thin sketch binding when the candidate uses a sketch
 ```
 
-AQPBMV2 should evaluate that target through benchmark-defined sketch kernels,
+AQPBMV2 should evaluate that target through benchmark-defined function kernels,
 not through SQL, PromQL, DataFusion, or a database optimizer. SQL-like examples
 are useful for explaining motivation, but they should not be part of the V2
 benchmark definition.
 
+The executable middle layer should be code, not only a manifest:
+
+```rust
+trait ApproxFunction {
+    type Input;
+    type State;
+    type Output;
+    type Query;
+
+    fn create(&self) -> Self::State;
+    fn update(&self, state: &mut Self::State, input: Self::Input);
+    fn merge(&self, left: &mut Self::State, right: Self::State);
+    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+}
+```
+
+Examples:
+
+```text
+ExactCountDistinct<HashSet>
+HllCountDistinct<HllImpl>
+ExactQuantile<Vec>
+KllQuantile<KllImpl>
+TDigestQuantile<TDigestImpl>
+ExactTopK<HashMap>
+SpaceSavingTopK<SpaceSavingImpl>
+```
+
 The V2 kernel set should start with:
 
-- single-state sketch kernel: one state over one stream;
-- grouped-state sketch kernel: many logical states and many answers;
-- partitioned-merge sketch kernel: partial states plus explicit benchmark-owned
+- single-state function kernel: one state over one stream;
+- grouped-state function kernel: many logical states and many answers;
+- partitioned-merge function kernel: partial states plus explicit benchmark-owned
   merge shape.
 
 This makes AQPBMV2 compatible with the rule that a benchmark must have a
@@ -152,9 +181,9 @@ shape?
 ```
 
 If the answer is no, AQPBMV2 can contribute a workload-kernel-level benchmark
-methodology for sketch instances. If the answer is yes, V2 is mainly an
-engineering toolkit and the broader AQP benchmark must find its contribution
-elsewhere.
+methodology for sketch-backed approximate function candidates. If the answer is
+yes, V2 is mainly an engineering toolkit and the broader AQP benchmark must
+find its contribution elsewhere.
 
 ## Definition
 

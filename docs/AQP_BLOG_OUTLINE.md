@@ -5,6 +5,65 @@
 > Goal: summarize the benchmark design direction after looking at recent
 > benchmark papers and the current AQP docs.
 
+## Query to begin with: SELECT approx_count_distinct(user_id) FROM table;
+
+This is a common query that has approximation. The user_id is replaceable. However, the limitation of this query is the approximation is just a replace of function.
+The table is still likely stored as exact data. Ideally there is a super function that get distinct count, in a cheap way. Due to whatever reason, people trade some accuracy for the resource usage (time, memory, etc.).
+
+If AQPBMV2 is benchmarking this query, it will becomes a benchmark for the whole SQL-related system. DB-1? DB-2? no idea what it will looks like. Maybe each DB that supports similar query should have one benchmark.
+
+## Raw Sketch BM
+
+This is already (somehow) existing in curretn repo and else where. This is about benchmark a sketch directly, like HLL (will use HLL as example afterwards). There are metrics we can care about HLL (accuracy, throughput, etc.). The problem is user don't care about the HLL alone. User care about what question can be solved by HLL and how using HLL is actually helping them on various workload.
+
+A mental experiment: If there is some magic power that combines 3 hll together to support one query, each hll has relative error of 30% (which means these are bad hll), but the query has relative error of 1%; user will use these three 3 hll together to support that query. This is try to mark the gap: benchmark of raw sketch is supposed to help user to choose sketch when serving query, but there is a gap. User not choose a sketch because the sketch is good, but instead, user choose a sketch because the query that use the sketch has good performance, good sketch is likely to achieve that (comparing to bad sketch). So, a raw sketch benchmark is where it starts but not where it ends.
+
+## middle layer standards
+If the proposed middle layer cannot be implemented as executable code, it is not yet a toolkit. It is only a protocol/config/design.
+
+The current executable middle layer should be an approximate-function interface,
+not a raw sketch interface and not a database-specific SQL function:
+
+```rust
+trait ApproxFunction {
+    type Input;
+    type State;
+    type Output;
+    type Query;
+
+    fn create(&self) -> Self::State;
+    fn update(&self, state: &mut Self::State, input: Self::Input);
+    fn merge(&self, left: &mut Self::State, right: Self::State);
+    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+}
+```
+
+Concrete candidates can then be implemented as code:
+
+```text
+ExactCountDistinct<HashSet>
+HllCountDistinct<HllImpl>
+
+ExactQuantile<Vec>
+KllQuantile<KllImpl>
+TDigestQuantile<TDigestImpl>
+
+ExactTopK<HashMap>
+SpaceSavingTopK<SpaceSavingImpl>
+```
+
+This is the middle layer:
+
+```text
+user-level functionality
+  -> executable approximate function candidate
+  -> sketch or exact state implementation
+```
+
+It is not benchmarking Spark's or Trino's function directly. Those systems show
+that the functionality class is real. AQPBMV2 should benchmark executable
+function candidates that implement the same class under controlled kernels.
+
 ## Starting Point
 
 The post should start from one skeptical question:
@@ -55,8 +114,8 @@ The paragraph above describes the broader AQP benchmark ambition. AQPBMV2 is
 now narrower:
 
 ```text
-AQPBMV2 is a sketch-kernel benchmark, not a full SQL/PromQL/AQP system
-benchmark.
+AQPBMV2 is an executable approximate-function benchmark, not a full
+SQL/PromQL/AQP system benchmark and not a raw sketch benchmark.
 ```
 
 The V2 story should not start from "we benchmark approximate SQL." It should
@@ -68,13 +127,14 @@ stream. AQP-style workloads often create many sketch states, many answers,
 grouping pressure, and partial-state merge pressure.
 ```
 
-The blog can still use SQL-shaped examples to explain why grouped and
-partitioned kernels matter, but it should make clear that AQPBMV2 does not run
-SQL or evaluate an optimizer. The benchmark definition should be:
+The blog can still use SQL-shaped examples to explain why approximate
+functions are real user-facing functionality, but it should make clear that
+AQPBMV2 does not run SQL or evaluate an optimizer. The benchmark definition
+should be:
 
 ```text
-concrete sketch instance
-+ benchmark-owned AQP-style kernel
+executable approximate function candidate
++ benchmark-owned AQP-style function kernel
 + controlled data condition
 => answer coverage, failure localization, sensitivity, and cost/fidelity
 ```

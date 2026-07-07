@@ -150,8 +150,9 @@ Therefore, the missing piece cannot be "another sketch benchmark harness."
 The strongest current direction is:
 
 ```text
-AQPBMV2 benchmarks concrete sketch instances under canonical AQP-style sketch
-kernels, with workload-level metrics over many states and many answers.
+AQPBMV2 benchmarks executable approximate function candidates under canonical
+AQP-style kernels, measuring what is gained and lost when exact aggregate state
+is replaced by sketch-backed state.
 ```
 
 The key shift is the unit of evaluation:
@@ -161,10 +162,15 @@ traditional sketch benchmark:
   one sketch state over one stream
   => one or a few answers
 
+traditional database benchmark:
+  one concrete database system
+  => system-level query/runtime behavior
+
 AQPBMV2:
-  canonical AQP-style kernels
-  => many logical states, many answers, controlled grouping/merging pressure,
-     answer coverage, and failure localization
+  executable approximate function candidate
+  => exact-vs-sketch state substitution, many logical states, many answers,
+     controlled grouping/merging pressure, answer coverage, and failure
+     localization
 ```
 
 This is not about SQL syntax. It is about benchmark structure.
@@ -237,14 +243,14 @@ This is a benchmark-defined kernel, not a database-chosen plan.
 
 ## What Would Make This Interesting
 
-AQPBMV2 becomes interesting if it shows that conclusions from single-state
-sketch benchmarks do not reliably predict behavior under grouped or
-partitioned AQP-style kernels.
+AQPBMV2 becomes interesting if it shows that conclusions from raw sketch or
+single-state benchmarks do not reliably predict approximate-function behavior
+under grouped or partitioned AQP-style kernels.
 
 Examples of paper-worthy findings would include:
 
-- a sketch instance that looks strong on single-state streams but fails many
-  small or skewed groups;
+- a sketch-backed function candidate that looks strong on single-state streams
+  but fails many small or skewed groups;
 - candidate rankings that change under group-size skew or partitioned merge;
 - accuracy failures that concentrate in specific workload regions rather than
   appearing uniformly;
@@ -261,17 +267,17 @@ a weaker research contribution.
 Working version:
 
 ```text
-AQPBMV2 contributes an AQP-workload-level benchmark methodology and toolkit
-for concrete sketch instances, replacing single-stream sketch evaluation with
-canonical grouped and partitioned sketch kernels that measure answer coverage,
-failure localization, and sensitivity to workload shape.
+AQPBMV2 contributes an executable benchmark methodology and toolkit for
+sketch-backed approximate function candidates, measuring the cost, fidelity,
+coverage, and failure modes of replacing exact aggregate state with sketch state
+under canonical AQP-style kernels.
 ```
 
 Shorter version:
 
 ```text
-AQPBMV2 evaluates concrete sketch instances at the workload-kernel level, not
-only at the single-stream primitive level.
+AQPBMV2 evaluates sketch-backed approximate functions at the workload-kernel
+level, not only raw sketches at the primitive level.
 ```
 
 ## Refinement: Selection Criteria, Not Just Scores
@@ -321,6 +327,75 @@ candidate dossier
 
 This makes the project more useful without weakening the concrete unit under
 test.
+
+## Refinement: The Middle Layer Must Be Executable Code
+
+A later design correction tightened the toolkit standard:
+
+```text
+If the proposed middle layer cannot be implemented as executable code, it is
+not yet a toolkit. It is only a protocol, config file, or design note.
+```
+
+This changes the AQPBMV2 target. The target should not be a raw sketch
+instance, and it should not be a system-specific SQL function. The target
+should be an executable approximate function candidate.
+
+The minimal interface is:
+
+```rust
+trait ApproxFunction {
+    type Input;
+    type State;
+    type Output;
+    type Query;
+
+    fn create(&self) -> Self::State;
+    fn update(&self, state: &mut Self::State, input: Self::Input);
+    fn merge(&self, left: &mut Self::State, right: Self::State);
+    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+}
+```
+
+Concrete candidates then become code:
+
+```text
+ExactCountDistinct<HashSet>
+HllCountDistinct<HllImpl>
+
+ExactQuantile<Vec>
+KllQuantile<KllImpl>
+TDigestQuantile<TDigestImpl>
+
+ExactTopK<HashMap>
+SpaceSavingTopK<SpaceSavingImpl>
+```
+
+This gives AQPBMV2 a concrete middle layer:
+
+```text
+user-level approximate functionality
+  -> executable function candidate
+  -> exact or sketch-backed state implementation
+```
+
+The benchmark can then ask a precise counterfactual question:
+
+```text
+For a user-level function such as approximate count distinct, what is gained
+and lost when exact state is replaced by sketch-backed state under controlled
+AQP-style kernels?
+```
+
+System-supported functions such as Spark `approx_count_distinct`, Trino
+`approx_percentile`, or Druid DataSketches aggregators show that the
+functionality classes are real. They should not become the V2 unit under test
+unless their function-state implementation is exposed as executable code.
+
+The next reasonable step is a DB-supported function parity probe: run one
+system's approximate function on a small controlled input only to compare
+semantics and result shape with AQPBMV2's function spec. It should not compare
+database latency, optimizer behavior, storage, or execution-engine performance.
 
 ## Remaining Doubts
 

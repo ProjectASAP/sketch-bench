@@ -1,4 +1,4 @@
-# AQPBMV2 Design: AQP Sketch Kernel Benchmark
+# AQPBMV2 Design: Executable Approximate Function Benchmark
 
 > Status: active design direction after the July 2026 discussion.
 >
@@ -10,9 +10,9 @@
 
 ## One-Sentence Scope
 
-AQPBMV2 benchmarks concrete sketch implementation instances under canonical
-AQP-style sketch kernels, measuring workload-level coverage and failure modes
-rather than only single-stream sketch accuracy.
+AQPBMV2 benchmarks executable approximate function candidates under canonical
+AQP-style kernels, measuring what is gained and lost when exact aggregate state
+is replaced by sketch-backed state.
 
 ## The Problem
 
@@ -38,8 +38,8 @@ That is a valid sketch benchmark. It is not enough to answer the AQP-facing
 question:
 
 ```text
-Which concrete sketch instance is suitable for which approximate query
-workload shape?
+Which concrete implementation of a user-level approximate function is suitable
+for which workload shape?
 ```
 
 Approximate query workloads often involve many logical aggregate states and
@@ -74,30 +74,61 @@ idea of AQP, SQL, or a sketch algorithm in a paper.
 The unit under test is:
 
 ```text
-sketch implementation + fixed parameter setting + thin benchmark binding
+approximate function candidate
+= functionality spec + state implementation + fixed parameters
 ```
 
 Examples:
 
 ```text
-KLL implementation A, k=200
-t-digest implementation B, compression=100
-HLL implementation C, precision=14
-CountMin implementation D, width/depth fixed
+HllCountDistinct<HllImpl, precision=14>
+KllQuantile<KllImpl, k=200>
+TDigestQuantile<TDigestImpl, compression=100>
+SpaceSavingTopK<SpaceSavingImpl, k=100>
 ```
 
-The thin binding exists only so the benchmark harness can call different
-libraries through one local interface:
+The raw sketch is not the benchmark target. The target is executable code that
+implements a user-level approximate functionality, such as approximate distinct
+count, approximate quantile, or approximate top-k.
+
+The minimal executable middle layer should look like this:
+
+```rust
+trait ApproxFunction {
+    type Input;
+    type State;
+    type Output;
+    type Query;
+
+    fn create(&self) -> Self::State;
+    fn update(&self, state: &mut Self::State, input: Self::Input);
+    fn merge(&self, left: &mut Self::State, right: Self::State);
+    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+}
+```
+
+Then AQPBMV2 can provide paired exact and sketch-backed implementations:
 
 ```text
-new_state()
-update(state, value)
-merge(state_a, state_b)       when the candidate natively supports merge
-query(state, query_parameter)
-serialized_size(state)        when available
+ExactCountDistinct<HashSet>
+HllCountDistinct<HllImpl>
+
+ExactQuantile<Vec>
+KllQuantile<KllImpl>
+TDigestQuantile<TDigestImpl>
+
+ExactTopK<HashMap>
+SpaceSavingTopK<SpaceSavingImpl>
 ```
 
-The binding is measurement glue, not the research object. It must not add
+This is the middle layer. It is code, not a config file or protocol sketch.
+It is also not a system-specific SQL function. A system function such as
+Spark's `approx_count_distinct` or Trino's `approx_percentile` can motivate the
+functionality class, but AQPBMV2 does not claim to benchmark that system's
+implementation unless the implementation is exposed as an executable candidate.
+
+The thin binding still exists underneath this layer so a candidate can call a
+particular sketch library. That binding is measurement glue. It must not add
 policy such as fallback to exact state, adaptive parameter tuning, custom
 window rebuilds, error correction, or rewritten merge behavior. If those
 policies are added, the benchmark target becomes "adapter policy plus sketch",
@@ -105,10 +136,11 @@ which is a different project.
 
 ## Candidate Selection Model
 
-AQPBMV2 should support sketch selection, not only produce benchmark numbers.
-A user choosing between candidates such as an external library implementation
-and a local `sketchlib` implementation needs more than one error/throughput
-row. The benchmark output should therefore separate three kinds of evidence.
+AQPBMV2 should support approximate-function candidate selection, not only
+produce benchmark numbers. A user choosing between candidates such as
+`HllCountDistinct<DataSketchesHll>` and `HllCountDistinct<SketchlibHll>` needs
+more than one error/throughput row. The benchmark output should therefore
+separate three kinds of evidence.
 
 ### 1. Declared Adoption Metadata
 
@@ -116,8 +148,9 @@ These fields describe whether a candidate is practical to adopt. They are not
 proved by the kernel benchmark, but they should be recorded so comparisons are
 interpretable:
 
-- sketch families implemented, such as quantile, cardinality, frequency, or
-  top-k;
+- function families implemented, such as approximate distinct count, quantile,
+  frequency, or top-k;
+- sketch families used by each function candidate;
 - implementation language and runtime requirements;
 - public API shape and whether a thin binding is straightforward;
 - native support for merge, serialization, deserialization, and reset;
@@ -134,8 +167,8 @@ ergonomics are measured by a sketch kernel.
 
 ### 2. Measured Primitive Behavior
 
-These are conventional sketch benchmark measurements. AQPBMV2 should keep them
-because they explain the base behavior of the concrete candidate:
+These are conventional sketch/function-state measurements. AQPBMV2 should keep
+them because they explain the base behavior of the concrete candidate:
 
 - update throughput;
 - query latency;
@@ -148,7 +181,7 @@ because they explain the base behavior of the concrete candidate:
 This layer answers:
 
 ```text
-How does the concrete sketch instance behave as a primitive?
+How does the concrete function-state implementation behave as a primitive?
 ```
 
 ### 3. Measured AQP-Kernel Behavior
@@ -169,7 +202,8 @@ grouping pressure, and merge pressure:
 This layer answers:
 
 ```text
-Which candidate is suitable for this AQP-style workload kernel?
+Which approximate function candidate is suitable for this AQP-style workload
+kernel?
 ```
 
 The final comparison should be a candidate dossier, not a single leaderboard
@@ -184,6 +218,7 @@ AQPBMV2 is not:
 - a SQL benchmark;
 - a SQL parser, optimizer, or execution benchmark;
 - a benchmark of a complete AQP database system;
+- a raw sketch benchmark;
 - a benchmark of ASAPQuery, ClickHouse, DuckDB, Spark, or DataFusion;
 - a benchmark of a newly invented adapter policy;
 - a claim that every AQP workload can be represented by sketch kernels.
@@ -286,9 +321,11 @@ track = "sketch_kernel_aqp"
 kernel = "grouped_quantile"
 task = "quantile"
 
-[candidate]
-family = "kll"
-implementation = "implementation_a"
+[function_candidate]
+functionality = "approx_quantile"
+implementation = "KllQuantile"
+sketch_family = "kll"
+sketch_implementation = "implementation_a"
 parameters = { k = 200 }
 binding = "thin_native_binding"
 
@@ -361,7 +398,7 @@ Workload-level metrics:
 The benchmark should preserve exact losses. If the exact baseline is faster,
 smaller, or more reliable for a condition, that is a valid result.
 
-## Difference From Existing Sketch Benchmarks
+## Difference From Existing Sketch And DB Benchmarks
 
 The intended distinction is not "AQPBMV2 uses SQL" or "AQPBMV2 has an adapter".
 Those are not meaningful contributions.
@@ -373,10 +410,15 @@ traditional sketch benchmark:
   one sketch state over one stream
   => one or a few answers
 
+traditional database benchmark:
+  one concrete database system
+  => system-level query/runtime behavior
+
 AQPBMV2:
-  canonical AQP-style kernels
-  => many logical states, many answers, controlled grouping/merging pressure,
-     answer coverage, and failure localization
+  executable approximate function candidate
+  => exact-vs-sketch state substitution, many logical states, many answers,
+     controlled grouping/merging pressure, answer coverage, and failure
+     localization
 ```
 
 If an existing benchmark already provides grouped states, partitioned merge
@@ -393,9 +435,45 @@ The broader AQP benchmark design remains useful, but it is later scope:
 - SQL/ClickHouse/DataFusion scenarios benchmark a concrete SQL or engine path.
 - Resource-accounting studies benchmark deployment-level value.
 
-Those are not AQPBMV2 unless they are explicitly reduced to local sketch
-kernels. AQPBMV2 should use the sketch-kernel track to make one narrow,
-defensible step before claiming a full AQP system benchmark.
+Those are not AQPBMV2 unless they are explicitly reduced to executable
+function candidates and local kernels. AQPBMV2 should use the function-kernel
+track to make one narrow, defensible step before claiming a full AQP system
+benchmark.
+
+## Optional DB-Supported Function Parity Probe
+
+AQPBMV2 should not benchmark a database system in V2, but it can use
+DB-supported approximate functions as a parity probe.
+
+Purpose:
+
+```text
+Check whether AQPBMV2's function specs resemble functionality that real systems
+already expose.
+```
+
+Non-purpose:
+
+```text
+Do not use this probe to claim that AQPBMV2 benchmarks Spark, Trino,
+DataFusion, ClickHouse, BigQuery, Snowflake, or Druid.
+```
+
+The probe should be small:
+
+1. Pick one functionality class, preferably approximate count distinct.
+2. Generate a small controlled dataset.
+3. Run AQPBMV2's `ExactCountDistinct` and `HllCountDistinct` candidates through
+   the local kernels.
+4. Separately run one DB-supported approximate function on the same logical
+   input, if the DB is easy to run locally.
+5. Compare only semantics and result shape: input type, null handling,
+   grouping behavior, output type, and rough answer compatibility.
+6. Do not compare database latency, optimizer behavior, scan cost, storage, or
+   execution engine performance.
+
+This gives AQPBMV2 a sanity check against real user-facing functionality
+without letting the work collapse into a database benchmark.
 
 ## Why This Could Become A Paper
 
@@ -405,7 +483,8 @@ changes conclusions that single-state sketch benchmarks would suggest.
 
 A credible paper-shaped contribution would need:
 
-1. A clear benchmark target: concrete sketch instances under fixed bindings.
+1. A clear benchmark target: executable approximate function candidates under
+   fixed parameters and thin sketch bindings.
 2. A canonical kernel set with an argument for why the kernels represent common
    AQP execution pressures: single aggregate, grouped aggregate, and partial
    aggregation plus merge.
@@ -413,44 +492,45 @@ A credible paper-shaped contribution would need:
    tails, correlation, selectivity, and partitioning.
 4. A result model based on answer coverage, failure localization, and
    sensitivity, not only average error and throughput.
-5. An empirical study over multiple real sketch implementations showing
-   non-obvious differences or ranking changes that would be hidden by
-   single-state benchmarks.
+5. An empirical study over multiple real sketch-backed function candidates
+   showing non-obvious differences or ranking changes that would be hidden by
+   raw sketch or single-state benchmarks.
 
 Without item 5, AQPBMV2 is a useful engineering toolkit but probably not a
 VLDB-strength benchmark paper.
 
 ## Implementation Plan
 
-1. Keep the existing single-state sketch benchmark path as the baseline kernel.
-2. Add a kernel manifest format with `kernel`, `candidate`, `data_condition`,
-   `query`, `requirements`, `execution_shape`, and `baseline` sections.
-3. Implement a grouped quantile kernel first.
-4. Emit exact per-group reference answers and candidate per-group answers.
-5. Add answer coverage and failure-localization summaries.
-6. Add a partitioned-merge variant only for candidates with native merge
-   support.
-7. Run at least KLL-like and t-digest-like quantile candidates if available in
-   the repo; otherwise start with whatever concrete quantile implementations
-   are already supported.
-8. Compare the grouped/partitioned conclusions against the single-state
-   baseline conclusions.
-9. Keep PromQL, SQL, DataFusion, and external-system adapters out of the V2
+1. Define the `ApproxFunction` trait and the function-candidate record model.
+2. Implement one exact reference and one sketch-backed candidate for
+   approximate distinct count.
+3. Keep the existing single-state sketch benchmark path as a primitive baseline.
+4. Add a kernel manifest format with `kernel`, `function_candidate`,
+   `data_condition`, `query`, `requirements`, `execution_shape`, and
+   `baseline` sections.
+5. Implement grouped and partitioned kernels over `ApproxFunction`, not over
+   raw sketches directly.
+6. Emit exact per-group reference answers and candidate per-group answers.
+7. Add answer coverage and failure-localization summaries.
+8. Add KLL/t-digest quantile candidates after count-distinct proves the shape.
+9. Add a DB-supported function parity probe as optional validation, not as the
+   primary benchmark.
+10. Keep PromQL, SQL, DataFusion, and external-system adapters out of the V2
    success criteria.
 
 ## Success Criteria
 
 AQPBMV2 succeeds as a design and engineering milestone when:
 
-- a concrete sketch instance can be run through single-state and grouped-state
-  kernels;
+- an executable approximate function candidate can be run through single-state
+  and grouped-state kernels;
 - each run has a stable data-condition id and exact reference answers;
 - reports include answer coverage and failure localization;
 - the benchmark can show whether grouped-state behavior agrees or disagrees
   with single-state behavior;
 - the docs clearly say that SQL/system benchmarking is later scope;
 - negative results are preserved, including exact wins and unsupported
-  candidate/kernel pairs.
+  function-candidate/kernel pairs.
 
 ## Open Questions
 

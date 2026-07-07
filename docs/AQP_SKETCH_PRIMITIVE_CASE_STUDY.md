@@ -1,7 +1,7 @@
-# AQPBMV2 Case Study: Sketch Kernel Benchmark
+# AQPBMV2 Case Study: Approximate Function Kernel Benchmark
 
 This is the planned native `sketch-bench` AQPBMV2 case. It does not adapt an
-external query system. It benchmarks concrete sketch implementation instances
+external query system. It benchmarks executable approximate function candidates
 through local benchmark-owned kernels.
 
 The important change from the earlier sketch-primitive plan is scope:
@@ -11,35 +11,51 @@ old framing:
   wrap existing sketch primitive runs as AQP option/comparison records
 
 current AQPBMV2 framing:
-  compare single-state sketch behavior against grouped-state and
-  partitioned-merge sketch kernels
+  compare exact and sketch-backed approximate function candidates under
+  single-state, grouped-state, and partitioned-merge kernels
 ```
 
 The goal is not to prove that sketches are approximate. The goal is to test
-whether single-stream sketch benchmark conclusions predict behavior for
-AQP-style workloads with many states, many answers, grouping, and explicit
-merge shape.
+whether raw sketch or single-state conclusions predict behavior for
+user-level approximate functionality under AQP-style workloads with many
+states, many answers, grouping, and explicit merge shape.
 
 ## Concrete Unit Under Test
 
-The unit under test is a concrete sketch instance:
+The unit under test is an executable approximate function candidate:
 
 ```text
-sketch implementation + fixed parameter setting + thin benchmark binding
+functionality spec + state implementation + fixed parameter setting
 ```
 
 Examples:
 
 ```text
-KLL implementation, k=200
-t-digest implementation, compression=100
-HLL implementation, precision=14
+HllCountDistinct<HllImpl, precision=14>
+KllQuantile<KllImpl, k=200>
+TDigestQuantile<TDigestImpl, compression=100>
 ```
 
-The thin binding exists only to call the implementation from the benchmark
-harness. It should not add fallback-to-exact, adaptive tuning, custom merge
-logic, or window rebuild policy. If those policies are added, the target is no
-longer the sketch instance; it is an adapter-policy benchmark.
+The executable interface should be code:
+
+```rust
+trait ApproxFunction {
+    type Input;
+    type State;
+    type Output;
+    type Query;
+
+    fn create(&self) -> Self::State;
+    fn update(&self, state: &mut Self::State, input: Self::Input);
+    fn merge(&self, left: &mut Self::State, right: Self::State);
+    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+}
+```
+
+The thin sketch binding exists only below this layer to call a sketch
+implementation. It should not add fallback-to-exact, adaptive tuning, custom
+merge logic, or window rebuild policy. If those policies are added, the target
+is no longer the function candidate; it is an adapter-policy benchmark.
 
 ## Baseline Kernel: Single-State
 
@@ -52,10 +68,11 @@ for value in values:
 answer = query(state, parameter)
 ```
 
-This remains useful as the baseline. It answers:
+This remains useful as the primitive baseline. It answers:
 
 ```text
-How does this sketch instance behave on one stream and one state?
+How does the underlying sketch/state implementation behave on one stream and
+one state?
 ```
 
 Existing `sketchlib bench` support is already close to this baseline:
@@ -71,9 +88,17 @@ Existing `sketchlib bench` support is already close to this baseline:
 
 This is necessary, but it is not sufficient for AQPBMV2's intended claim.
 
-## First New Kernel: Grouped-State Quantile
+## First New Kernel: Grouped-State Count Distinct
 
-The first AQPBMV2 implementation should add a grouped quantile kernel:
+The first AQPBMV2 implementation should be approximate count distinct because
+the exact-vs-sketch substitution is simple:
+
+```text
+ExactCountDistinct<HashSet>
+HllCountDistinct<HllImpl>
+```
+
+The grouped kernel shape is:
 
 ```text
 states = {}
@@ -83,11 +108,12 @@ for row in rows:
   update(states[key], value)
 
 for key in states:
-  answer[key] = quantile(states[key], q)
+  answer[key] = finalize(states[key], ())
 ```
 
-For a KLL-style candidate, this creates many KLL states rather than one KLL
-state. The exact reference is a per-group exact order statistic.
+For an HLL-style candidate, this creates many HLL-backed count-distinct
+function states rather than one raw HLL stream. The exact reference is a
+per-group exact set cardinality.
 
 Controlled data dimensions should include:
 
@@ -104,7 +130,7 @@ The benchmark should report:
 
 - per-group approximate answer;
 - per-group exact answer;
-- per-group rank/value error;
+- per-group relative/absolute error;
 - answer coverage under the requirement;
 - failures grouped by group size and data-condition region;
 - latency and memory/state-size summaries.
@@ -112,11 +138,11 @@ The benchmark should report:
 The desired comparison is:
 
 ```text
-Does the candidate that looked best in the single-state kernel still provide
-the best answer coverage under grouped-state pressure?
+What does replacing exact per-group sets with HLL-backed function states gain
+and lose under grouped-state pressure?
 ```
 
-## Second New Kernel: Partitioned-Merge Quantile
+## Second New Kernel: Partitioned-Merge Function
 
 After grouped-state is stable, add partitioned merge for candidates that
 natively support merge:
@@ -130,7 +156,7 @@ for row in rows:
 
 for key in all_keys:
   merged = merge_all(partial_states[*][key], merge_shape)
-  answer[key] = quantile(merged, q)
+  answer[key] = finalize(merged, query)
 ```
 
 Controlled execution dimensions should include:
@@ -143,21 +169,24 @@ Controlled execution dimensions should include:
 
 This kernel should not be described as "running distributed SQL." The benchmark
 itself owns the partitioning and merge program. That is what keeps the result
-attributable to the sketch instance instead of to an optimizer or query engine.
+attributable to the function candidate instead of to an optimizer or query
+engine.
 
 ## Example Manifest
 
 ```toml
 [benchmark]
-id = "aqpbmv2_grouped_quantile_kll_v1"
-track = "sketch_kernel_aqp"
-kernel = "grouped_quantile"
-task = "quantile"
+id = "aqpbmv2_grouped_count_distinct_hll_v1"
+track = "function_kernel_aqp"
+kernel = "grouped_count_distinct"
+task = "count_distinct"
 
-[candidate]
-family = "kll"
-implementation = "asap_sketchlib"
-parameters = { k = 200 }
+[function_candidate]
+functionality = "approx_count_distinct"
+implementation = "HllCountDistinct"
+sketch_family = "hll"
+sketch_implementation = "asap_sketchlib"
+parameters = { precision = 14 }
 binding = "thin_native_binding"
 
 [candidate_metadata]
@@ -169,20 +198,16 @@ api_binding_effort = "thin"
 metadata_status = "declared_not_benchmarked"
 
 [data_condition]
-id = "n1m_groups10k_zipf1_2_lognormal_tail_seed42"
+id = "n1m_groups10k_zipf1_2_seed42"
 rows = 1000000
 groups = 10000
 group_size_distribution = "zipf"
 group_size_zipf_s = 1.2
-value_distribution = "per_group_lognormal_tail"
-key_value_correlation = "strong"
+value_cardinality_distribution = "per_group_zipf"
 seed = 42
 
-[query]
-quantile = 0.99
-
 [requirements]
-rank_error_max = 0.01
+relative_error_max = 0.05
 answer_coverage_min = 0.95
 
 [execution_shape]
@@ -191,7 +216,7 @@ merge_shape = "none"
 input_order = "generated"
 
 [baseline]
-exact_reference = "per_group_exact_order_statistics"
+exact_reference = "per_group_exact_hash_set"
 ```
 
 ## Report Shape
@@ -204,8 +229,8 @@ Required records:
 - `candidate_dossier`: candidate identity, fixed parameters, native operation
   coverage, language/runtime metadata, serialization support, and other
   declared adoption metadata;
-- `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
-  and raw fidelity summary;
+- `kernel_run`: function candidate, kernel, data condition, execution shape,
+  raw cost, and raw fidelity summary;
 - `answer_record`: exact and approximate answer for one logical output key
   when storage volume is acceptable, or sampled/aggregated answer records when
   it is not;
@@ -225,14 +250,14 @@ should not be mixed into a single benchmark score.
 This case succeeds when it can answer:
 
 ```text
-For the same concrete sketch instance, do single-state benchmark results
+For the same approximate function candidate, do primitive/single-state results
 predict grouped-state and partitioned-merge workload coverage?
 ```
 
 Minimum milestone:
 
-1. Run one KLL-like quantile candidate through the existing single-state path.
-2. Run the same candidate through grouped-state quantile.
+1. Implement `ExactCountDistinct<HashSet>` and `HllCountDistinct<HllImpl>`.
+2. Run the HLL-backed candidate through grouped-state count distinct.
 3. Emit exact per-group baselines.
 4. Report answer coverage and failure localization.
 5. State whether grouped-state behavior matched or contradicted the
@@ -240,8 +265,8 @@ Minimum milestone:
 
 Stronger milestone:
 
-1. Add at least two quantile candidates or parameter settings.
-2. Sweep group count, group-size skew, and tail heaviness.
+1. Add at least two HLL implementations or parameter settings.
+2. Sweep group count, group-size skew, and per-group cardinality.
 3. Show whether candidate ranking changes between single-state and grouped
    kernels.
 4. Add partitioned-merge for candidates with native merge support.
