@@ -37,6 +37,51 @@ The benchmark is useful if it can explain boundaries such as:
 - this system admits only this subset of the task
 - this option is Pareto-dominated and should not be used
 
+## Current AQPBMV2 Boundary
+
+This document describes the broader AQP benchmark problem. AQPBMV2 is now a
+narrower design point inside that space.
+
+Current AQPBMV2 should not try to benchmark all AQP systems or all AQP query
+interfaces. Its concrete target is:
+
+```text
+concrete sketch implementation instance
++ fixed parameter setting
++ thin benchmark binding
+```
+
+AQPBMV2 should evaluate that target through benchmark-defined sketch kernels,
+not through SQL, PromQL, DataFusion, or a database optimizer. SQL-like examples
+are useful for explaining motivation, but they should not be part of the V2
+benchmark definition.
+
+The V2 kernel set should start with:
+
+- single-state sketch kernel: one state over one stream;
+- grouped-state sketch kernel: many logical states and many answers;
+- partitioned-merge sketch kernel: partial states plus explicit benchmark-owned
+  merge shape.
+
+This makes AQPBMV2 compatible with the rule that a benchmark must have a
+concrete unit under test. It also avoids a false claim that V2 benchmarks a
+complete AQP system. PromQL, SQL, DataFusion, and deployment resource
+accounting remain broader or later-scope scenario-family work.
+
+The research question for AQPBMV2 is therefore narrower than the full AQP
+question:
+
+```text
+Do single-state sketch benchmark conclusions predict behavior under
+AQP-style kernels with many states, many answers, grouping, and explicit merge
+shape?
+```
+
+If the answer is no, AQPBMV2 can contribute a workload-kernel-level benchmark
+methodology for sketch instances. If the answer is yes, V2 is mainly an
+engineering toolkit and the broader AQP benchmark must find its contribution
+elsewhere.
+
 ## Definition
 
 An AQP scenario family is:
@@ -113,14 +158,16 @@ A track fixes the benchmark context. Comparisons are meaningful within a track.
 | PromQL AQP | telemetry/time-series queries through PromQL | Prometheus, ASAPQuery, exact fallback, approximate PromQL execution |
 | DataFusion AQP | embedded query engine/operators through DataFusion plans | DataFusion exact operators, asap-fusion operators, approximate UDAFs |
 | ES aggregation AQP | document/index aggregation serving through Elasticsearch DSL | Elasticsearch reference, sketch-backed ES-compatible service |
-| Sketch primitive AQP | direct aggregate primitives through aggregate/data-structure API | exact map/set/vector, HLL, KLL, CountMin, CountSketch, SpaceSaving |
+| Sketch kernel AQP | benchmark-owned single-state, grouped-state, and partitioned-merge kernels over direct aggregate/data-structure APIs | exact map/set/vector, HLL, KLL, CountMin, CountSketch, SpaceSaving |
 | Stream/window AQP | streaming analytics through stream/window API | exact window state, sampling, sketches, approximate join summaries |
 
 The tracks may share vocabulary, data generators, ground-truth code, metrics,
 and report schema. They should not share a fake universal query interface.
 Within a track, the scenario family owns the workload model and data-condition
 matrix. The track only says which native interface and option types are
-admissible.
+admissible. For AQPBMV2, the sketch-kernel track also owns the execution shape:
+the benchmark explicitly defines grouping and merge kernels instead of relying
+on a SQL optimizer or external query engine to choose a plan.
 
 ## Primary Concrete Example
 

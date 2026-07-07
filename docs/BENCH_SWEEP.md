@@ -4,12 +4,15 @@
 
 Extends the existing `sketchlib bench` command so it can sweep a sketch family's configuration space in one invocation — instead of hard-coding params in `sketch-cli/src/params.rs`, rebuilding, and looping by hand.
 
-In the broader AQP design, this is the low-level mechanism behind an
-`option/config policy`. A scenario family can later say whether a sketch option
-was evaluated at one fixed default, over a declared grid, as best-of-grid, or as
-the smallest configuration satisfying a requirement. `bench` remains a
-sketch-level command; the AQP layer should summarize its records as
-scenario-family coverage rather than changing this command into an AQP runner.
+In AQPBMV2, this is the low-level mechanism behind candidate parameter
+selection. The sketch-kernel layer still needs to add kernel identity,
+data-condition identity, execution shape, exact answers, answer coverage, and
+failure localization. In the broader AQP design, the same sweep data can feed
+an `option/config policy` that says whether a sketch option was evaluated at
+one fixed default, over a declared grid, as best-of-grid, or as the smallest
+configuration satisfying a requirement. `bench` remains a sketch-level command;
+the AQP layer should summarize its records rather than changing this command
+into an AQP runner.
 
 Scope is deliberately small:
 - **No new subcommand.** Sweep is the default behaviour of `bench`.

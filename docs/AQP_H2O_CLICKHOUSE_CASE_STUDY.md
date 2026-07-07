@@ -3,6 +3,11 @@
 This is a planned SQL-track AQP case, not a reproduced result. It should not be
 used as evidence for ASAPQuery quality yet.
 
+It is also not part of the current AQPBMV2 scope. AQPBMV2 is now scoped to
+benchmark-owned sketch kernels over concrete sketch instances. This SQL case is
+broader later-scope AQP system work because any real run would involve SQL
+semantics, planning, execution, and system baseline policy.
+
 The idea is to adapt an ASAPQuery H2O/ClickHouse-compatible benchmark into AQP
 form. Unlike the PromQL quickstart case, this path has not been run end to end
 in the current workspace, and the available importer path is not enough for a

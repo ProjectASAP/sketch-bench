@@ -15,7 +15,7 @@ Produce **one crate graph** that serves three audiences:
 | Developers / researchers | Offline CLI | Reproducible benchmark + profile runs against sketch implementations |
 | Downstream ASAP apps (asap-fusion, DataCollector, ASAPQuery) | Embedded library, runtime | Always-on, low-overhead metrics from live sketch usage |
 | ASAPController control plane | Consumer | Structured metric stream from running apps for online decisions |
-| AQP benchmark layer | Scenario-family adapter | Wrap exact/approx option runs into task/context/data-condition/requirement comparisons |
+| AQP benchmark layer | Sketch-kernel and scenario-family adapter | For AQPBMV2, run benchmark-owned sketch kernels; for broader AQP work, wrap exact/approx option runs into task/context/data-condition/requirement comparisons |
 
 ### 1.1 Non-goals
 
@@ -53,21 +53,36 @@ Measures microarchitectural and allocation behavior. Higher overhead, usually CL
 
 Benchmark and profile are **peer subsystems**, not parent/child.
 
-### 2.3 AQP scenario family = design layer above benchmark records
+### 2.3 AQP layer = sketch kernels now, scenario families later
 
-AQP is not a third low-level metric mode beside `bench` and `profile`. It is an
-interpretation layer that groups exact and approximate option runs into a
-scenario family:
+AQPBMV2 is not a third low-level metric mode beside `bench` and `profile`.
+It is currently a sketch-kernel layer above the low-level benchmark records:
+
+```text
+concrete sketch instance
+x benchmark-owned kernel
+x data condition
+x requirement
+```
+
+The initial kernels are single-state, grouped-state, and partitioned-merge
+sketch programs. They are local benchmark programs, not SQL plans selected by a
+database optimizer.
+
+The broader AQP scenario-family design remains a later interpretation layer
+that groups exact and approximate option runs into:
 
 ```text
 task x benchmark context x workload model x data condition x requirement x option
 ```
 
 The low-level `bench` record measures one sketch/config/workload run. The AQP
-layer adds workload provenance, pressure dimensions, baseline policy,
+layer can add workload provenance, pressure dimensions, baseline policy,
 option/config policy, exact-vs-approx paired comparisons, requirement booleans,
-and resource-accounting gaps. This keeps the reusable metric substrate simple
-while letting AQP make system-level claims.
+and resource-accounting gaps. For AQPBMV2, the immediate focus is narrower:
+answer coverage, failure localization, and sensitivity across sketch-kernel
+conditions. This keeps the reusable metric substrate simple while avoiding
+premature system-level claims.
 
 ---
 

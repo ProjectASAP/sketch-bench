@@ -6,12 +6,14 @@ output: the Rust `sketch-cli` (`sketchlib bench …`), the C++ track
 under `cpp-bench/`, and any future embedded sampler. Everyone serialises
 *exactly* the same fields with *exactly* the same names.
 
-This schema is the low-level sketch benchmark record. It is not the full AQP
-scenario-family schema described in `AQP_PROBLEM_DEFINITION.md` and
-`AQP_MVP_V2.md`. AQP records can be built from these records by adding
-scenario-family metadata: workload provenance, pressure dimensions, baseline
-policy, option/config policy, requirements, and paired exact-vs-approx
-comparisons.
+This schema is the low-level sketch benchmark record. It is not the AQPBMV2
+sketch-kernel schema and not the broader AQP scenario-family schema described in
+`AQP_PROBLEM_DEFINITION.md` and `AQP_MVP_V2.md`. AQPBMV2 records can be built
+from these records by adding kernel identity, data-condition identity,
+execution shape, exact answers, answer coverage, and failure-localization
+summaries. Broader AQP records can add scenario-family metadata such as workload
+provenance, pressure dimensions, baseline policy, option/config policy,
+requirements, and paired exact-vs-approx comparisons.
 
 This file pins down the contract for the cross-language case so a
 non-Rust emitter (currently just C++) can produce bytes that
@@ -34,14 +36,21 @@ non-Rust emitter (currently just C++) can produce bytes that
 | `source` | yes | `"cli" \| "asap-fusion" \| "data-collector" \| "asap-query" \| "cpp-bench"`. The C++ track always emits `"cpp-bench"`. |
 | `timestamp` | yes | RFC3339 / ISO-8601 with a `Z` suffix or numeric offset. |
 
-## Relationship to AQP records
+## Relationship to AQPBMV2 and AQP records
 
-The AQP layer should not overload this low-level record with scenario-family
-fields. Instead, it should either emit separate AQP records or wrap/import this
-record into AQP records:
+The AQPBMV2/AQP layer should not overload this low-level record with kernel or
+scenario-family fields. Instead, it should either emit separate records or
+wrap/import this record into higher-level records:
 
+- `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
+  and raw fidelity summary.
+- `coverage_summary`: answer coverage, requirement pass/fail, and failure
+  localization for grouped or partitioned kernels.
+- `single_vs_grouped_comparison`: whether grouped or partitioned kernel results
+  agree with the single-state baseline.
 - `scenario_family`: workload provenance, pressure dimensions, baseline policy,
-  option/config policy, planned/observed condition coverage.
+  option/config policy, planned/observed condition coverage. This is broader
+  AQP scope, not the minimum AQPBMV2 record.
 - `option_run`: one exact or approximate option under a scenario family and
   data condition. A `Record` can supply the cost/accuracy payload for direct
   sketch options.

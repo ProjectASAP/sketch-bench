@@ -6,6 +6,11 @@ from the existing Docker quickstart. `sketch-bench` does not modify ASAPQuery;
 it runs a paired-timestamp wrapper and imports ASAPQuery-compatible JSON
 benchmark reports.
 
+This remains broader AQP system work, not the current AQPBMV2 target. AQPBMV2
+is scoped to benchmark-owned sketch kernels over concrete sketch instances. The
+PromQL quickstart is still useful as a later native-system case study, but it
+should not define V2 success.
+
 Under the current design vocabulary, this is a seed scenario inside a future
 PromQL scenario family. It proves the native-system adapter and pairing
 protocol, but it should not be treated as the whole PromQL AQP benchmark. A

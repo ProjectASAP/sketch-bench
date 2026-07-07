@@ -1,195 +1,241 @@
-# AQP Case Study: Native Sketch Primitive Benchmark
+# AQPBMV2 Case Study: Sketch Kernel Benchmark
 
-This is the planned native `sketch-bench` AQP example. Unlike the ASAPQuery
-PromQL case, this does not adapt an external query system. It uses the existing
-`sketchlib bench` machinery and asks how direct sketch implementations compare
-with exact in-process baselines.
+This is the planned native `sketch-bench` AQPBMV2 case. It does not adapt an
+external query system. It benchmarks concrete sketch implementation instances
+through local benchmark-owned kernels.
 
-This case is not fully implemented yet. The current sketch benchmark substrate
-already measures useful performance and accuracy signals, but it does not yet
-emit AQP-shaped `option_run` and `paired_comparison` records.
+The important change from the earlier sketch-primitive plan is scope:
 
-In the updated AQP design this should become the first local scenario family,
-not a single KLL run. Its job is to validate the scenario-family report shape in
-a controlled setting: workload provenance is a synthetic generator, pressure
-dimensions are explicit sweeps, exact baselines are in-process data structures,
-and option/config policy is a declared sketch parameter grid.
+```text
+old framing:
+  wrap existing sketch primitive runs as AQP option/comparison records
 
-## Benchmark Mapping
-
-| AQP field | Status | Current / planned sketch value |
-|---|---|---|
-| Scenario family | Missing/gap | Need a native sketch primitive family, for example `sketch_quantile_break_even_v1`. |
-| Track | Missing/gap | Sketch primitive AQP is named in the problem definition, but no dedicated AQP report path exists yet. |
-| Benchmark context | Exists conceptually | Direct aggregate/data-structure API. Existing `sketchlib bench` already runs sketches directly. |
-| Workload model | Exists partially | Controlled synthetic generator and file-backed workloads exist; provenance should be recorded in the AQP manifest. |
-| Pressure dimensions | Exists partially | Size, cardinality, skew, group count, and update/query ratio are available or natural sweep axes. |
-| First task candidate | Exists partially | Quantile over generated numeric streams is supported by existing KLL/DDSketch-style benchmark paths. |
-| First exact baseline | Exists partially | Exact sorted-vector quantile exists as an accuracy comparator, but is not recorded as a first-class AQP option run. |
-| First approximate option | Exists | KLL implementations are benchmarkable, for example `asap_sketchlib::KLL(k=200)`. |
-| Option/config policy | Exists partially | `sketch_config` and `--config` support sweeps, but AQP needs to record fixed/default/grid/best-under-requirement policy. |
-| Data condition | Exists partially | Synthetic/file workloads exist, but they need stable AQP data-condition ids. |
-| Requirement example | Missing/gap | Rank-error, memory, and latency targets need to be declared in an AQP manifest and evaluated as budget booleans. |
-
-The existing benchmark entry point is:
-
-```bash
-sketchlib bench \
-  --sketch kll \
-  --impl all \
-  --workload zipf \
-  --size 1000000 \
-  --cardinality 100000 \
-  --zipf-s 1.1 \
-  --seed 42 \
-  --accuracy \
-  --report out.jsonl
+current AQPBMV2 framing:
+  compare single-state sketch behavior against grouped-state and
+  partitioned-merge sketch kernels
 ```
 
-## What Already Exists
+The goal is not to prove that sketches are approximate. The goal is to test
+whether single-stream sketch benchmark conclusions predict behavior for
+AQP-style workloads with many states, many answers, grouping, and explicit
+merge shape.
 
-`sketchlib bench` already provides a strong substrate:
+## Concrete Unit Under Test
 
-- sketch family and implementation selection, such as `hll`, `kll`, `cms`,
-  `countsketch`, `elastic`, and `dd`;
+The unit under test is a concrete sketch instance:
+
+```text
+sketch implementation + fixed parameter setting + thin benchmark binding
+```
+
+Examples:
+
+```text
+KLL implementation, k=200
+t-digest implementation, compression=100
+HLL implementation, precision=14
+```
+
+The thin binding exists only to call the implementation from the benchmark
+harness. It should not add fallback-to-exact, adaptive tuning, custom merge
+logic, or window rebuild policy. If those policies are added, the target is no
+longer the sketch instance; it is an adapter-policy benchmark.
+
+## Baseline Kernel: Single-State
+
+The existing sketch benchmark substrate already covers this shape:
+
+```text
+state = new_state()
+for value in values:
+  update(state, value)
+answer = query(state, parameter)
+```
+
+This remains useful as the baseline. It answers:
+
+```text
+How does this sketch instance behave on one stream and one state?
+```
+
+Existing `sketchlib bench` support is already close to this baseline:
+
+- sketch family and implementation selection;
 - synthetic and file-backed workloads;
 - configuration sweeps through `--config`;
-- repeated measured runs and warmup runs;
+- repeated measured runs and warmups;
 - throughput, latency, CPU, memory, and optional accuracy metrics;
 - ground-truth comparators for cardinality, quantile, and frequency families;
 - JSONL output with `sketch`, `impl`, `workload`, `sketch_config`, and
   `bench.accuracy`.
 
-That is enough to run a sketch benchmark. It is not yet enough to call the run a
-complete AQP case.
+This is necessary, but it is not sufficient for AQPBMV2's intended claim.
 
-## What AQP Would Add
+## First New Kernel: Grouped-State Quantile
 
-The current output is option-centric:
-
-```text
-sketch + impl + config + workload
-  => throughput / latency / accuracy payload
-```
-
-The AQP version should be task-centric:
+The first AQPBMV2 implementation should add a grouped quantile kernel:
 
 ```text
-scenario family
-  x task
-  x benchmark context
-  x workload model
-  x data condition
-  x requirement
-  x option
-  => cost, fidelity, admission, and failure behavior
+states = {}
+for row in rows:
+  key = key_fn(row)
+  value = value_fn(row)
+  update(states[key], value)
+
+for key in states:
+  answer[key] = quantile(states[key], q)
 ```
 
-For a first quantile case, the AQP report should contain:
+For a KLL-style candidate, this creates many KLL states rather than one KLL
+state. The exact reference is a per-group exact order statistic.
 
-- one `option_run` for the exact sorted-vector baseline;
-- one `option_run` for each KLL option/configuration;
-- one `paired_comparison` per exact-vs-KLL pair;
-- one `scenario_family` summary recording workload provenance, pressure
-  dimensions, option/config policy, and condition coverage;
-- p95 latency speedup and latency delta;
-- rank-error and value-error summaries;
-- requirement status, such as `rank_error_budget_met`,
-  `memory_budget_met`, and `latency_budget_met`;
-- admission status, such as `baseline`, `approximated`, `unsupported`,
-  `option_error`, or `missing_counterpart`.
+Controlled data dimensions should include:
 
-## Why This Matches The Core Problem
+- number of rows;
+- number of groups;
+- group-size skew;
+- per-group value distribution;
+- tail heaviness;
+- duplicate rate;
+- key-value correlation;
+- seed.
 
-`AQP_PROBLEM_DEFINITION.md` defines the benchmark shape as:
+The benchmark should report:
+
+- per-group approximate answer;
+- per-group exact answer;
+- per-group rank/value error;
+- answer coverage under the requirement;
+- failures grouped by group size and data-condition region;
+- latency and memory/state-size summaries.
+
+The desired comparison is:
 
 ```text
-scenario family
-  x task
-  x benchmark context
-  x workload model
-  x data condition
-  x requirement
-  x option
-  => cost, fidelity, admission, and failure behavior
+Does the candidate that looked best in the single-state kernel still provide
+the best answer coverage under grouped-state pressure?
 ```
 
-The native sketch primitive case would fill those slots as:
+## Second New Kernel: Partitioned-Merge Quantile
 
-| Core problem slot | Status | Native sketch concrete value / gap |
-|---|---|---|
-| Scenario family | Missing/gap | Need a stable family id and manifest, not only CLI arguments. |
-| Task | Exists partially | Quantile, frequency, and cardinality are supported by existing benchmark/comparator code, but not packaged as AQP task manifests. |
-| Benchmark context | Exists | Direct sketch/data-structure API, not SQL and not PromQL. |
-| Workload model | Exists partially | Controlled generator/file workload exists, but provenance and replay/generation policy are not first-class AQP fields. |
-| Pressure dimensions | Exists partially | Size/cardinality/skew are available; group count and update/query ratio need task-specific support. |
-| Data condition | Exists partially | Generated/file-backed streams have size/cardinality/skew/seed metadata, but need stable AQP condition ids. |
-| Ground truth | Exists partially | Exact sorted vector, hash map, and set baselines exist as comparators, but are not consistently emitted as AQP option runs. |
-| Baseline policy | Missing/gap | Need to state when exact structures are both reference and performance baseline, and when they are reference only. |
-| Requirements | Missing/gap | Rank error, relative error, memory, and latency budgets need explicit manifest fields and pass/fail evaluation. |
-| Options | Exists partially | Sketch implementations/configs exist, but exact-vs-approx pairings are not emitted as AQP comparisons. |
-| Option/config policy | Missing/gap | Need to record whether configs are fixed defaults, grid-swept, or selected as minimum config satisfying requirements. |
-| Cost metrics | Exists | update throughput, query latency, memory, and CPU are already measured by `sketchlib bench`. |
-| Fidelity metrics | Exists partially | rank/relative/absolute error exist for some families; unsupported families need explicit `no_fidelity_observation` behavior. |
-| Admission behavior | Missing/gap | AQP labels such as `baseline`, `approximated`, `unsupported`, and `option_error` are not emitted yet. |
-
-The important distinction is that this track does not evaluate an external
-query system. It evaluates sketch primitives directly. That makes it a good
-native AQP example after the ASAPQuery PromQL external-system example.
-
-## Gaps
-
-This case is not done. The current missing pieces are:
-
-1. No AQP scenario-family manifest for a native sketch case. The run needs
-   explicit task, context, workload provenance, pressure dimensions, data
-   conditions, options, option/config policy, and requirements.
-
-2. Exact baselines are currently used by accuracy comparators, but they are not
-   consistently recorded as first-class AQP option runs.
-
-3. Current JSONL records are not paired-comparison records. They need explicit
-   exact-vs-approx comparisons with speedup, error summary, and requirement
-   status.
-
-4. Raw accuracy numbers are present for some families, but AQP budget fields
-   such as `rank_error_budget_met` or `relative_error_budget_met` are not yet
-   emitted.
-
-5. Some implementations have no accuracy comparator. Those should be recorded
-   as `unsupported` or `no_fidelity_observation`, not silently treated as
-   comparable.
-
-6. Option/config policy is not first-class. AQP should record the parameter grid
-   or default rule, tuning budget, calibration data, and whether a result is a
-   fixed deployment choice or a best-of-grid point.
-
-7. Data-condition identity is still mostly a workload descriptor. AQP should
-   give each controlled condition a stable id, such as
-   `zipf_s1.1_n1m_card100k_seed42`.
-
-8. The low-level `sketchlib bench` schema should remain intact. The AQP layer
-   should be a new adapter/importer or a separate AQP command, not a breaking
-   rewrite of existing benchmark output.
-
-## Suggested First Implementation
-
-Start with one narrow native case:
+After grouped-state is stable, add partitioned merge for candidates that
+natively support merge:
 
 ```text
-task: quantile
-context: direct sketch primitive API
-scenario family: sketch_quantile_break_even_v1
-workload model: controlled synthetic generator
-pressure dimensions: stream length, cardinality, Zipf skew, KLL k
-data condition: zipf_s1.1_n1m_card100k_seed42
-baseline: exact sorted vector quantile
-approximate option: KLL(k=200)
-option/config policy: fixed KLL(k=200) first, then grid sweep over k
-requirements: rank error <= 0.01, p95 query latency <= budget, memory <= budget
+partial_states = {}
+for row in rows:
+  partition = partition_fn(row)
+  key = key_fn(row)
+  update(partial_states[partition][key], value_fn(row))
+
+for key in all_keys:
+  merged = merge_all(partial_states[*][key], merge_shape)
+  answer[key] = quantile(merged, q)
 ```
 
-That should emit exactly one exact `option_run`, one KLL `option_run`, and one
-`paired_comparison`, plus a `scenario_family` summary showing that only one
-condition has been run. After that shape is stable, expand to KLL config
-sweeps, DDSketch, frequency sketches, and HLL/cardinality.
+Controlled execution dimensions should include:
+
+- partition count;
+- partitioning policy;
+- merge tree shape;
+- input order;
+- skew across partitions.
+
+This kernel should not be described as "running distributed SQL." The benchmark
+itself owns the partitioning and merge program. That is what keeps the result
+attributable to the sketch instance instead of to an optimizer or query engine.
+
+## Example Manifest
+
+```toml
+[benchmark]
+id = "aqpbmv2_grouped_quantile_kll_v1"
+track = "sketch_kernel_aqp"
+kernel = "grouped_quantile"
+task = "quantile"
+
+[candidate]
+family = "kll"
+implementation = "asap_sketchlib"
+parameters = { k = 200 }
+binding = "thin_native_binding"
+
+[data_condition]
+id = "n1m_groups10k_zipf1_2_lognormal_tail_seed42"
+rows = 1000000
+groups = 10000
+group_size_distribution = "zipf"
+group_size_zipf_s = 1.2
+value_distribution = "per_group_lognormal_tail"
+key_value_correlation = "strong"
+seed = 42
+
+[query]
+quantile = 0.99
+
+[requirements]
+rank_error_max = 0.01
+answer_coverage_min = 0.95
+
+[execution_shape]
+partition_count = 1
+merge_shape = "none"
+input_order = "generated"
+
+[baseline]
+exact_reference = "per_group_exact_order_statistics"
+```
+
+## Report Shape
+
+AQPBMV2 should add kernel-level records rather than only reusing the current
+single-stream output.
+
+Required records:
+
+- `kernel_run`: candidate, kernel, data condition, execution shape, raw cost,
+  and raw fidelity summary;
+- `answer_record`: exact and approximate answer for one logical output key
+  when storage volume is acceptable, or sampled/aggregated answer records when
+  it is not;
+- `coverage_summary`: answer coverage, requirement pass/fail, and failure
+  localization;
+- `single_vs_grouped_comparison`: whether the grouped or partitioned result
+  agrees with the single-state baseline.
+
+## Success Criteria For This Case
+
+This case succeeds when it can answer:
+
+```text
+For the same concrete sketch instance, do single-state benchmark results
+predict grouped-state and partitioned-merge workload coverage?
+```
+
+Minimum milestone:
+
+1. Run one KLL-like quantile candidate through the existing single-state path.
+2. Run the same candidate through grouped-state quantile.
+3. Emit exact per-group baselines.
+4. Report answer coverage and failure localization.
+5. State whether grouped-state behavior matched or contradicted the
+   single-state result.
+
+Stronger milestone:
+
+1. Add at least two quantile candidates or parameter settings.
+2. Sweep group count, group-size skew, and tail heaviness.
+3. Show whether candidate ranking changes between single-state and grouped
+   kernels.
+4. Add partitioned-merge for candidates with native merge support.
+
+## Remaining Risks
+
+- If grouped and partitioned kernels do not reveal behavior that differs from
+  single-state tests, AQPBMV2 is useful engineering but a weaker research
+  contribution.
+- If the kernels are not argued as canonical AQP execution pressures, they may
+  look like arbitrary synthetic programs.
+- If the binding adds policy, the benchmark target becomes ambiguous.
+- If existing sketch benchmarks already cover these exact kernel shapes, the
+  novelty claim must be narrowed to tooling and reproducibility.

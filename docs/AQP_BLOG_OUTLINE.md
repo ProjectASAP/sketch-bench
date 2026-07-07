@@ -49,6 +49,41 @@ system interfaces, explicit workload provenance, controlled data-condition
 sweeps, exact reference results, and resource accounting that says what is
 measured and what is still missing.
 
+## Current AQPBMV2 Positioning
+
+The paragraph above describes the broader AQP benchmark ambition. AQPBMV2 is
+now narrower:
+
+```text
+AQPBMV2 is a sketch-kernel benchmark, not a full SQL/PromQL/AQP system
+benchmark.
+```
+
+The V2 story should not start from "we benchmark approximate SQL." It should
+start from a more specific gap:
+
+```text
+Traditional sketch benchmarks usually evaluate one sketch state over one value
+stream. AQP-style workloads often create many sketch states, many answers,
+grouping pressure, and partial-state merge pressure.
+```
+
+The blog can still use SQL-shaped examples to explain why grouped and
+partitioned kernels matter, but it should make clear that AQPBMV2 does not run
+SQL or evaluate an optimizer. The benchmark definition should be:
+
+```text
+concrete sketch instance
++ benchmark-owned AQP-style kernel
++ controlled data condition
+=> answer coverage, failure localization, sensitivity, and cost/fidelity
+```
+
+This also sets the honest research bar. AQPBMV2 is only paper-interesting if
+the grouped or partitioned kernels reveal conclusions that a single-state
+sketch benchmark would miss. If they do not, the toolkit is still useful, but
+the VLDB-level contribution is weaker.
+
 ## Core Benchmark Unit
 
 A benchmark should be organized as a scenario family. One scenario family
