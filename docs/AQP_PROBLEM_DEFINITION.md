@@ -37,6 +37,80 @@ The benchmark is useful if it can explain boundaries such as:
 - this system admits only this subset of the task
 - this option is Pareto-dominated and should not be used
 
+## Current Landscape: Approximate Support Is Fragmented
+
+The right claim is not that modern data systems lack approximate query
+functionality. Many popular systems expose approximate aggregate functions,
+sketch-state functions, or sketch-backed extensions.
+
+Examples as of July 2026:
+
+- Apache DataFusion documents `approx_distinct`, `approx_median`,
+  `approx_percentile_cont`, and `approx_percentile_cont_with_weight`; its
+  approximate percentile path is described as using t-digest.
+  <https://datafusion.apache.org/user-guide/sql/aggregate_functions.html>
+- Trino documents approximate aggregate functions including
+  `approx_distinct`, `approx_most_frequent`, `approx_percentile`, and
+  `numeric_histogram`, plus HyperLogLog state functions such as `approx_set`
+  and `merge`.
+  <https://trino.io/docs/current/functions/aggregate.html>
+- Spark SQL documents approximate and sketch-related functions including
+  `approx_count_distinct`, `approx_percentile`, `percentile_approx`,
+  `count_min_sketch`, HLL sketch functions, and KLL sketch aggregate/merge/
+  query functions.
+  <https://spark.apache.org/docs/latest/api/sql/index.html>
+- Google BigQuery documents approximate aggregate functions including
+  `APPROX_COUNT_DISTINCT`, `APPROX_QUANTILES`, `APPROX_TOP_COUNT`, and
+  `APPROX_TOP_SUM`.
+  <https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/approximate_aggregate_functions>
+- ClickHouse documents approximate aggregate functions and sketch-backed
+  distinct-count variants including `uniq`, `uniqCombined`, `uniqHLL12`,
+  `uniqTheta`, and quantile variants such as t-digest and GK-family functions.
+  <https://clickhouse.com/docs/sql-reference/aggregate-functions/reference>
+- Snowflake documents HLL, MinHash/similarity, approximate top-k, and
+  approximate percentile functionality, including accumulate/combine/estimate
+  style functions for some approximate states.
+  <https://docs.snowflake.com/en/sql-reference/functions-aggregation>
+- Apache Druid documents approximate aggregations, including DataSketches
+  Theta, HLL, and Quantiles aggregators, and explicitly discusses when older
+  approximate histogram/cardinality implementations are less suitable.
+  <https://druid.apache.org/docs/latest/querying/aggregations/>
+- Apache DataSketches itself is a production-quality sketch library rather than
+  a complete AQP system. It provides sketch implementations and adaptors for
+  systems such as Hive, Pig, PostgreSQL, BigQuery, and Druid, with cross-language
+  implementations and binary compatibility goals.
+  <https://datasketches.apache.org/>
+  <https://datasketches.apache.org/docs/Architecture/SketchesByComponent.html>
+
+The more accurate problem statement is therefore:
+
+```text
+Approximate query support is common, but fragmented across system-specific
+functions, sketch-state APIs, UDFs/UDAFs, extensions, and standalone sketch
+libraries. There is no widely adopted general-purpose AQP system abstraction,
+and there is no clear benchmark methodology for evaluating how concrete sketch
+implementations support user-level approximate query functionality.
+```
+
+This fragmentation creates the gap AQP Bench should care about:
+
+```text
+user-level task/functionality
+  such as approximate distinct, quantile, top-k, histogram, grouped aggregate
+
+system-specific approximate function or sketch-state API
+  such as approx_percentile, approx_set/merge, HLL_ACCUMULATE/COMBINE/ESTIMATE,
+  sketch UDF/UDAF, or extension aggregator
+
+raw sketch implementation
+  such as HLL, KLL, t-digest, Count-Min, Theta, or sampling summary
+```
+
+Existing sketch benchmarks mostly evaluate the last layer directly. Existing
+database benchmarks mostly evaluate a concrete system or query engine. The hard
+benchmark-design question is how to compare choices across the middle gap
+without pretending there is one universal AQP system interface.
+
 ## Current AQPBMV2 Boundary
 
 This document describes the broader AQP benchmark problem. AQPBMV2 is now a
