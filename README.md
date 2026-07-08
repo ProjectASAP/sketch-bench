@@ -1,6 +1,6 @@
 # `sketchlib-tool` (repo: `sketch-bench`)
 
-> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
+> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/archive/MERGE_PLAN.md`](docs/archive/MERGE_PLAN.md) for the full contract.
 
 ## Quick start
 
@@ -109,7 +109,7 @@ Downstream apps depend on `sketch-core + sketch-bench + sketch-runtime` — not 
 ## Documents
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — goals, audiences, crate layout, APIs, report schema, runtime → controller feedback loop.
-- [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) — phased absorption of `sketch-profiler`, history preservation, risks, done criteria.
+- [`docs/archive/MERGE_PLAN.md`](docs/archive/MERGE_PLAN.md) — phased absorption of `sketch-profiler`, history preservation, risks, done criteria.
 - [`docs/AQP_MVP.md`](docs/AQP_MVP.md) — first executable AQP slice: DataFusion query → grouped count-distinct task → exact vs sketch backends on synthetic events.
 - [`docs/AQP_BLOG_OUTLINE.md`](docs/AQP_BLOG_OUTLINE.md) — design-focused outline for the system-level AQP benchmark story.
 - [`docs/AQP_MVP_V2.md`](docs/AQP_MVP_V2.md) — proposed next MVP around scenarios, exact baselines, resource accounting, and approximation value.
@@ -193,4 +193,4 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 - New metrics: add under `sketch-bench/metrics/` (macro) or
   `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
 - Runtime integration in downstream apps: follow Phase 9 of
-  [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+  [`docs/archive/MERGE_PLAN.md`](docs/archive/MERGE_PLAN.md).

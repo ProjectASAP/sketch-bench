@@ -38,7 +38,7 @@ Each phase commit notes what was and wasn't verified.
   - Add `Source::CppBench` variant.
   - Keep `SCHEMA_VERSION = 2`; both additions have serde defaults so
     pre-existing JSONL still deserialises.
-  - Write `docs/SCHEMA_V1.md` describing the cross-language contract
+  - Write `docs/archive/SCHEMA_V1.md` describing the cross-language contract
     (especially the shape of the `accuracy` field).
 - [x] **Phase 1 — cpp-bench skeleton + first binary**
   - `cpp-bench/CMakeLists.txt` (FetchContent fallback for Google

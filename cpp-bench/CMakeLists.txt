@@ -3,7 +3,7 @@ project(cpp_bench LANGUAGES CXX)
 
 # C++ track of sketch-bench. Mirrors the Rust `sketch-cli` track:
 # every binary emits a single v1 JSONL `Record` to stdout. See
-# `docs/SCHEMA_V1.md` and `CPP_BENCH_PROGRESS.md`.
+# `docs/archive/SCHEMA_V1.md` and `CPP_BENCH_PROGRESS.md`.
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

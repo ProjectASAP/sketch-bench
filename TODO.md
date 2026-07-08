@@ -1,6 +1,6 @@
 # TODO — sketchlib-tool (this repo)
 
-Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+Track record against [`docs/archive/MERGE_PLAN.md`](docs/archive/MERGE_PLAN.md).
 
 ## Landed
 

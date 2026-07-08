@@ -6,7 +6,7 @@ workload file, concatenate every emitted v1 JSONL record into one
 report file.
 
 The two tracks never speak to each other directly — they only have
-to agree on the v1 wire format (see docs/SCHEMA_V1.md). This script
+to agree on the v1 wire format (see docs/archive/SCHEMA_V1.md). This script
 is just a fan-out + fan-in over `subprocess`.
 
 Examples

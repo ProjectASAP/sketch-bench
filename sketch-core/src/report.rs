@@ -23,7 +23,7 @@ pub struct Record {
     pub impl_name: String,
     /// Implementation language. Lets readers split Rust vs C++
     /// records when both tracks dump into one JSONL stream
-    /// (see `docs/SCHEMA_V1.md`). Defaults to `rust` so older
+    /// (see `docs/archive/SCHEMA_V1.md`). Defaults to `rust` so older
     /// records deserialise unchanged.
     #[serde(default)]
     pub language: Language,
@@ -72,7 +72,7 @@ pub enum Source {
     DataCollector,
     AsapQuery,
     /// Run produced by a `cpp-bench` binary (Google Benchmark
-    /// based C++ track). See `docs/SCHEMA_V1.md`.
+    /// based C++ track). See `docs/archive/SCHEMA_V1.md`.
     CppBench,
 }
 

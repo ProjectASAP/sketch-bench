@@ -1,6 +1,6 @@
 #pragma once
 
-// Minimal builder for a v1 JSONL `Record` (see docs/SCHEMA_V1.md and
+// Minimal builder for a v1 JSONL `Record` (see docs/archive/SCHEMA_V1.md and
 // sketch-core/src/report.rs). Hand-rolled to avoid a JSON-library
 // dependency; the output is verified round-trippable through
 // `serde_json::from_str::<Record>` by sketch-core's tests.
@@ -44,7 +44,7 @@ struct BenchSection {
     std::optional<LatencySummary>  latency_ns;
     // accuracy is a pre-serialised JSON object string (e.g.
     // R"({"queries":[0.5,0.95],"abs_rank_err":{...}})") so each
-    // sketch family can shape it per docs/SCHEMA_V1.md.
+    // sketch family can shape it per docs/archive/SCHEMA_V1.md.
     std::optional<std::string>     accuracy_json;
 };
 

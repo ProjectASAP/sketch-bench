@@ -1,7 +1,7 @@
 #pragma once
 
 // Cross-language accuracy contract for the v1 schema's `accuracy`
-// payload. See docs/SCHEMA_V1.md for the per-family JSON shape.
+// payload. See docs/archive/SCHEMA_V1.md for the per-family JSON shape.
 //
 // Each helper returns a pre-serialised JSON object so it can be
 // dropped straight into `BenchSection::accuracy_json`.

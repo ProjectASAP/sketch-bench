@@ -189,7 +189,7 @@ legacy/
 
 All done with `git mv` so history is preserved. Verified no operational
 references (`*.sh`, `*.toml`, `*.py`, `*.rs`) point at any moved path; only
-two doc references exist in `docs/MERGE_PLAN.md` (a TODO bullet) and they
+two doc references exist in `docs/archive/MERGE_PLAN.md` (a TODO bullet) and they
 remain valid since the TODO is about deletion, not relocation.
 
 ## 7. Still in original location (not moved)
@@ -206,6 +206,6 @@ would need a coordinated path-fix commit:
   legacy monolithic `rust/` tree it used to invoke has been removed).
 
 Promoting these to `legacy/` (the option-C path) is tracked implicitly by
-`docs/MERGE_PLAN.md`'s migration phases. Once each legacy harness is
+`docs/archive/MERGE_PLAN.md`'s migration phases. Once each legacy harness is
 absorbed by `sketchlib bench` or by the C++ JSONL adapter (§5), the
 corresponding tree can be moved or deleted.
