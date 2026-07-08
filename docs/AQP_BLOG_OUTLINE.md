@@ -4,26 +4,37 @@
 >
 > Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
+- Main AQPBMV2 claim:
+  - AQPBMV2 provides a `toolkit` for benchmarking executable approximate-function candidates.
+  - It sits between raw sketch benchmarks and full system benchmarks.
+  - It compares exact baselines and sketch-backed implementations under the same execution modes.
+  - It organizes benchmark targets by approximate functionality.
+    - Count distinct.
+    - Heavy hitters.
+    - Quantile.
+  - A sketch instance is a candidate implementation detail.
+  - A sketch instance alone is not the benchmark unit.
+  - The current implementation supports count distinct, heavy hitters, and quantile.
+
 ## Query to begin with: SELECT approx_count_distinct(user_id) FROM table;
 
 - Example query:
   - `SELECT approx_count_distinct(user_id) FROM table;`
 
-- Why this query is useful as motivation:
-  - It is a common approximate aggregate.
+- Reason to pick this query as a motivation:
+  - It is a common approximate aggregate (already supported in many places).
   - The exact table still exists.
   - The system replaces one exact aggregate with an approximate function.
   - Users trade some fidelity for lower latency, memory, or CPU.
   - See `Existing Approximate Query Support` at the end for examples.
 
 - Why AQPBMV2 should not benchmark this SQL query directly:
-  - The benchmark target would become the whole SQL system.
+  - In that case, the benchmark target would become the whole SQL system.
   - Different databases expose different functions and execution plans.
-  - The question would become: which database are we benchmarking?
-    - Spark?
-    - Trino?
-    - BigQuery?
-    - ClickHouse?
+  - The question would become:
+    - Are we benchmarking Spark?
+    - Are we benchmarking Trino?
+    - Are we benchmarking ClickHouse?
   - Each system-supported version of this query deserves its own system benchmark.
   - Parser, optimizer, storage, and execution engine behavior would be mixed in.
   - That belongs to a later system benchmark, not AQPBMV2.
@@ -61,9 +72,25 @@
 ## Current: AQPBMV2
 
 - Scope:
-  - AQPBMV2 is an executable approximate-function benchmark.
+  - AQPBMV2 is an executable approximate-function benchmark toolkit.
   - It is not a full SQL, PromQL, or AQP system benchmark.
   - It is not a raw sketch benchmark.
+
+- Main toolkit contribution:
+  - AQPBMV2 should provide a reusable toolkit.
+  - The toolkit should let users implement and compare approximate-function candidates.
+  - The toolkit should provide execution modes and a report format.
+  - The toolkit should make it easy to add:
+    - more sketch libraries;
+    - more exact baselines;
+    - more functionality classes;
+    - more sketch compositions;
+    - more workload generators;
+    - more comparison metrics.
+  - A candidate may wrap one sketch.
+  - A candidate may also compose multiple sketches.
+  - This is about implementing an approximate functionality.
+  - It is not yet a claim about supporting complex SQL.
 
 - Current executable interface:
 
@@ -111,14 +138,23 @@ user-level functionality
   - `asap_sketchlib` CMSHeap for heavy hitters.
   - `asap_sketchlib` KLL for quantile.
 
-- Current benchmark-owned kernels:
+- Current benchmark-owned execution modes:
   - `grouped_state`
+    - Keep one candidate state per group.
+    - Update that state from all rows in the group.
+    - Finalize one answer per group.
   - `partitioned_merge`
+    - Build candidate states inside partitions.
+    - Merge partition-local states for each group.
+    - Finalize one answer per group after merge.
 
 - Current report metrics:
-  - Numeric relative-error answer coverage for count distinct and quantile.
-  - Mean and max relative error for numeric outputs.
-  - Precision@k and recall@k for heavy hitters.
+  - For count distinct and quantile:
+    - How many group-level answers stay within the chosen error threshold.
+    - Mean and max relative error for numeric outputs.
+  - For heavy hitters:
+    - Whether returned top-k items are true top-k items.
+    - Whether true top-k items are missing from the returned result.
 
 - Current smoke/demo path:
   - `cargo run -p aqp-core --example aqpbmv2_functions`
@@ -134,9 +170,160 @@ user-level functionality
   - Those systems show that the functionality classes are real.
 
 - Research bar:
-  - AQPBMV2 is interesting only if benchmark-owned kernels reveal new behavior.
+  - AQPBMV2 is interesting only if benchmark-owned execution modes reveal new behavior.
     - The behavior should be something raw sketch benchmarks miss.
   - If they do not, AQPBMV2 is still a useful toolkit but a weaker paper contribution.
+
+## AQPBMV2 Preliminary Result
+
+- Command:
+  - `cargo run -q -p aqp-core --example aqpbmv2_functions`
+
+- Functionality coverage supported by this preliminary result:
+  - Count distinct:
+    - Apache DataSketches HLL supports the count-distinct functionality.
+    - `sketch_oxide` HLL supports the count-distinct functionality.
+    - `asap_sketchlib` HLL supports the count-distinct functionality.
+  - Heavy hitters:
+    - Apache DataSketches FrequentItems supports the heavy-hitter functionality.
+    - `sketch_oxide` SpaceSaving supports the heavy-hitter functionality.
+    - `asap_sketchlib` CMSHeap supports the heavy-hitter functionality.
+  - Quantile:
+    - Apache DataSketches TDigest supports the quantile functionality.
+    - `sketch_oxide` TDigest supports the quantile functionality.
+    - `asap_sketchlib` KLL supports the quantile functionality.
+  - This is a capability and integration result.
+  - It does not yet support a claim about general benchmark quality or winner libraries.
+
+- What the input is:
+  - A group means one distinct value of a synthetic group-by key.
+    - Example: `group_000`, `group_001`, ..., `group_031`.
+    - This is the benchmark equivalent of one output group from `GROUP BY service`.
+  - Each group owns one independent aggregate state for the candidate function.
+  - Any group-level claim below only refers to these synthetic demo groups.
+    - It is not a claim about production groups or all possible group-by workloads.
+  - Count distinct input:
+    - 50,000 rows.
+    - 32 synthetic group-by groups.
+    - Deterministic value generator with value cardinality 20,000.
+  - Heavy hitter input:
+    - 80,000 rows.
+    - 24 synthetic group-by groups.
+    - Deterministic top-k pattern.
+    - Per group, the top items are intentionally clear.
+      - Roughly 45%, 20%, and 15% for the top three items.
+      - Remaining rows are long-tail noise.
+  - Quantile input:
+    - 80,000 rows.
+    - 16 synthetic group-by groups.
+    - Deterministic periodic values with a small tail bump.
+    - Query target is p95.
+
+- Internal smoke-test candidate:
+  - The example also runs one in-repository toy HLL implementation.
+  - Its candidate id is `approx_count_distinct.hll_demo.v1`.
+  - It was added with the AQPBMV2 trait layer.
+  - It is included only as a smoke-test candidate and internal reference point.
+  - It is not `asap_sketchlib`.
+  - It is not an external sketch library.
+
+- What the output is:
+  - A JSON report.
+  - Exact baseline outputs for each functionality class.
+  - Candidate outputs under the `grouped_state` execution mode.
+  - Candidate outputs under the `partitioned_merge` execution mode.
+  - Numeric summaries for count distinct and quantile.
+    - Fraction of groups whose approximate answer is within the chosen error threshold.
+    - Mean relative error.
+    - Max relative error.
+  - Set summaries for heavy hitters.
+    - Fraction of returned top-k items that are actually correct.
+    - Fraction of exact top-k items that were returned.
+
+- What "within threshold" means here:
+  - It is a workload-level metric.
+  - It is not a statistical confidence interval.
+  - It means the fraction of produced answers within the declared error threshold.
+  - Example:
+    - 32 count-distinct groups.
+    - 32 groups within the relative-error threshold.
+    - The run has `100%` of answers within threshold.
+
+- Count distinct result:
+  - Exact output has 32 groups.
+  - All candidates have `100%` of group-level answers within the chosen error threshold.
+  - In-repository toy HLL:
+    - Mean relative error: about `0.79%`.
+    - Max relative error: about `2.95%`.
+    - This is not a library result.
+  - Apache DataSketches HLL:
+    - Mean relative error: about `0.76%`.
+    - Max relative error: about `2.40%`.
+  - `sketch_oxide` HLL:
+    - Mean relative error: about `0.87%`.
+    - Max relative error: about `2.27%`.
+  - `asap_sketchlib` HLL:
+    - Mean relative error: about `0.55%`.
+    - Max relative error: about `1.47%`.
+
+- Heavy hitter result:
+  - Exact output has 24 groups.
+  - Apache DataSketches FrequentItems:
+    - Every returned top-k item is correct.
+    - No exact top-k item is missing.
+  - `sketch_oxide` SpaceSaving:
+    - Every returned top-k item is correct.
+    - No exact top-k item is missing.
+  - `asap_sketchlib` CMSHeap:
+    - Every returned top-k item is correct.
+    - No exact top-k item is missing.
+
+- Quantile result:
+  - Exact output has 16 groups.
+  - Apache DataSketches TDigest:
+    - All group-level answers are within the chosen error threshold.
+    - Mean relative error: approximately `0`.
+  - `sketch_oxide` TDigest:
+    - All group-level answers are within the chosen error threshold.
+    - Mean relative error: about `0.39%`.
+    - Max relative error: about `0.63%`.
+  - `asap_sketchlib` KLL:
+    - All group-level answers are within the chosen error threshold.
+    - Mean relative error: `0`.
+
+- What this result represents:
+  - It shows the toolkit wiring works.
+  - Exact baselines and sketch-backed candidates run through the same interface.
+  - Multiple sketch libraries can be compared under the same benchmark-owned execution modes.
+  - `grouped_state` and `partitioned_merge` both execute successfully.
+
+- What this result does not prove:
+  - It does not prove one library is generally better.
+  - It does not prove AQPBMV2 is already benchmark-grade.
+  - The generated data is too easy.
+  - The result is a smoke test and preliminary validation of the toolkit.
+
+- Next steps:
+  - Replace toy generators with benchmark-grade workload generators.
+  - Use explicit distributions.
+    - Uniform.
+    - Zipf.
+    - Lognormal.
+    - Pareto or heavy-tail mixtures.
+  - Add workload knobs.
+    - Group cardinality.
+    - Group-size skew.
+    - Tail heaviness.
+    - Top-k gap.
+    - Filter selectivity.
+    - Correlation between group key and value.
+    - Partition count and merge shape.
+  - Add resource and performance measurement.
+    - Update throughput.
+    - Query latency.
+    - Merge latency.
+    - Memory or serialized state size.
+  - Check whether AQPBMV2 execution modes reveal behavior that raw sketch benchmarks miss.
 
 ## Previous AQPBMV1
 
@@ -148,7 +335,15 @@ user-level functionality
 
 ## Future AQPBMV3
 
+Placeholder.
+
 ## Future AQPBMV4
+
+Placeholder.
+
+## Future AQPBMV5
+
+Placeholder.
 
 ## Existing Approximate Query Support
 
@@ -230,4 +425,4 @@ user-level functionality
     - Standalone sketch libraries.
   - This motivates AQPBMV2's middle layer.
     - Executable approximate-function candidates.
-    - Benchmark-owned kernels.
+    - Benchmark-owned execution modes.
