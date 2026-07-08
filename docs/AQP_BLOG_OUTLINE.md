@@ -1,28 +1,54 @@
-# Blog Outline: Why Approximate Instead Of Keep Optimizing Exact?
+# Blog Outline: AQPBM
 
-> Status: design outline.
+> Status: currently focused on AQPBMV2.
 >
-> Goal: summarize the benchmark design direction after looking at recent
-> benchmark papers and the current AQP docs.
+> Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
 ## Query to begin with: SELECT approx_count_distinct(user_id) FROM table;
 
-This is a common query that has approximation. The user_id is replaceable. However, the limitation of this query is the approximation is just a replace of function.
-The table is still likely stored as exact data. Ideally there is a super function that get distinct count, in a cheap way. Due to whatever reason, people trade some accuracy for the resource usage (time, memory, etc.).
+- Example query:
+  - `SELECT approx_count_distinct(user_id) FROM table;`
 
-If AQPBMV2 is benchmarking this query, it will becomes a benchmark for the whole SQL-related system. DB-1? DB-2? no idea what it will looks like. Maybe each DB that supports similar query should have one benchmark.
+- Why this query is useful as motivation:
+  - It is a common approximate aggregate.
+  - The exact table still exists.
+  - The system replaces one exact aggregate with an approximate function.
+  - Users trade some fidelity for lower latency, memory, or CPU.
+
+- Why AQPBMV2 should not benchmark this SQL query directly:
+  - The benchmark target would become the whole SQL system.
+  - Different databases expose different functions and execution plans.
+  - Parser, optimizer, storage, and execution engine behavior would be mixed in.
+  - That belongs to a later system benchmark, not AQPBMV2.
 
 ## Raw Sketch BM
 
-This is already (somehow) existing in curretn repo and else where. This is about benchmark a sketch directly, like HLL (will use HLL as example afterwards). There are metrics we can care about HLL (accuracy, throughput, etc.). The problem is user don't care about the HLL alone. User care about what question can be solved by HLL and how using HLL is actually helping them on various workload.
+- AQPBMV1 already covers raw sketch benchmarking.
+  - The benchmark target is a sketch primitive.
+  - Example: HLL as one state over one stream.
+  - Inputs can be controlled by distribution and cardinality.
+  - Metrics include accuracy, throughput, and memory.
 
-A mental experiment: If there is some magic power that combines 3 hll together to support one query, each hll has relative error of 30% (which means these are bad hll), but the query has relative error of 1%; user will use these three 3 hll together to support that query. This is try to mark the gap: benchmark of raw sketch is supposed to help user to choose sketch when serving query, but there is a gap. User not choose a sketch because the sketch is good, but instead, user choose a sketch because the query that use the sketch has good performance, good sketch is likely to achieve that (comparing to bad sketch). So, a raw sketch benchmark is where it starts but not where it ends.
+- The limitation:
+  - Users do not care about an isolated HLL state by itself.
+  - Users care about whether a task can be answered well enough.
+  - Users also care about what resources are saved for that task.
+
+- The gap:
+  - A good sketch primitive is useful evidence.
+  - It is not the same as a good approximate function implementation.
+  - A raw sketch benchmark is where the evaluation starts.
+  - It is not where the evaluation should end.
 
 ## middle layer standards
-If the proposed middle layer cannot be implemented as executable code, it is not yet a toolkit. It is only a protocol/config/design.
 
-The current executable middle layer should be an approximate-function interface,
-not a raw sketch interface and not a database-specific SQL function:
+- Standard for the AQPBMV2 middle layer:
+  - It must be executable code.
+  - If it cannot be implemented as code, it is only a protocol or config design.
+  - It should not be only a raw sketch interface.
+  - It should not be a database-specific SQL function.
+
+- Current middle-layer interface:
 
 ```rust
 trait ApproxFunction {
@@ -34,11 +60,11 @@ trait ApproxFunction {
     fn create(&self) -> Self::State;
     fn update(&self, state: &mut Self::State, input: Self::Input);
     fn merge(&self, left: &mut Self::State, right: Self::State);
-    fn finalize(&self, state: &Self::State, query: Self::Query) -> Self::Output;
+    fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output;
 }
 ```
 
-Concrete candidates can then be implemented as code:
+- Concrete candidates can be implemented as code:
 
 ```text
 ExactCountDistinct<HashSet>
@@ -52,7 +78,7 @@ ExactTopK<HashMap>
 SpaceSavingTopK<SpaceSavingImpl>
 ```
 
-This is the middle layer:
+- Middle-layer shape:
 
 ```text
 user-level functionality
@@ -60,9 +86,15 @@ user-level functionality
   -> sketch or exact state implementation
 ```
 
-It is not benchmarking Spark's or Trino's function directly. Those systems show
-that the functionality class is real. AQPBMV2 should benchmark executable
-function candidates that implement the same class under controlled kernels.
+- What AQPBMV2 does not claim:
+  - It does not benchmark Spark's function directly.
+  - It does not benchmark Trino's function directly.
+  - Those systems show that the functionality class is real.
+
+- What AQPBMV2 should benchmark:
+  - Executable function candidates.
+  - Controlled benchmark-owned kernels.
+  - Data shapes that expose behavior missed by raw sketch benchmarks.
 
 ## Starting Point
 
@@ -96,22 +128,11 @@ What approximation may add:
 Important caveat:
 
 - These are possible value dimensions, not claims.
-- Each scenario family must measure which benefits and costs actually appear.
+- The benchmark must measure which benefits and costs actually appear.
 - The benchmark should be allowed to reject approximation. A result where
   optimized exact execution wins is still a useful result.
 
-## One-Sentence Direction
-
-We want a scenario-family AQP benchmark that measures when approximate
-execution is worthwhile against optimized exact alternatives, using native
-system interfaces, explicit workload provenance, controlled data-condition
-sweeps, exact reference results, and resource accounting that says what is
-measured and what is still missing.
-
 ## Current AQPBMV2 Positioning
-
-The paragraph above describes the broader AQP benchmark ambition. AQPBMV2 is
-now narrower:
 
 ```text
 AQPBMV2 is an executable approximate-function benchmark, not a full
@@ -157,255 +178,14 @@ depends on both measured behavior and adoption metadata:
 The blog should keep these categories separate. API ease and documentation are
 real adoption criteria, but they are not measured by the sketch kernel.
 
-## Core Benchmark Unit
+## Previous AQPBMV1
 
-A benchmark should be organized as a scenario family. One scenario family
-specifies:
+- AQPBMV1 is the existing raw-sketch benchmark layer.
+  - Target: sketch primitives directly.
+  - Input control: data shape and distribution.
+  - Metrics: throughput, accuracy, and memory usage.
+  - Role: provide primitive-level evidence for AQPBMV2.
 
-- `task`
-  - Analytical task or query family.
-  - Examples: quantile, count distinct, frequency, top-k, grouped aggregate.
-- `benchmark context`
-  - System/domain/interface where the task is issued.
-  - Examples: PromQL telemetry, SQL analytics, DataFusion plans, sketch API.
-- `system under test`
-  - Concrete exact or approximate system being exercised.
-- `native interface`
-  - Interface the system normally exposes.
-  - The benchmark should not translate every system into one artificial query language.
-- `workload model`
-  - Where requests and data come from.
-  - Examples: product quickstart, real trace, controlled synthetic generator,
-    or hybrid generated workload fitted to real statistics.
-- `pressure dimensions`
-  - Data or workload axes the benchmark is intentionally stressing.
-  - Examples: cardinality, group count, skew, temporal drift, query range,
-    query concurrency, retention horizon.
-- `data condition`
-  - One measured point in the family, with source/version, seed, shape, time
-    range, replay or generation policy, and pressure-dimension values.
-- `exact reference execution`
-  - Exact computation used to produce the reference answer for fidelity comparison.
-- `exact performance baseline`
-  - Optimized exact alternative used for latency and resource comparison.
-- `baseline policy`
-  - Why the exact performance baseline is strong enough for the claim, and
-    which baseline gaps remain.
-- `approximate option`
-  - Approximate system path, sketch, summary, or configuration being tested.
-- `option/config policy`
-  - How parameters are chosen and compared.
-  - Examples: fixed defaults, grid sweep, best option under requirement,
-    calibration data, tuning budget.
-- `value hypothesis`
-  - Falsifiable reason approximation might help: pressure, expected benefit,
-    acceptance rule, and rejection rule.
-- `requirements`
-  - Error target, latency SLO, memory target, result-shape rule, or other acceptance condition.
-- `resource accounting scope`
-  - Costs measured, costs estimated, and costs still missing.
-- `comparison rules`
-  - How to pair runs, align windows, match labels/groups, and compute error.
+## Future AQPBMV3
 
-Output records:
-
-- Scenario-family records:
-  - Workload provenance, pressure dimensions, baseline policy, planned and
-    completed condition coverage, and option/config policy.
-- Performance/cost records:
-  - Latency, throughput, CPU time, scan bytes, or other measured cost of running an option.
-- Fidelity records:
-  - Numeric error and result-shape differences against the exact reference execution.
-- Resource accounting records:
-  - Memory, storage, ingest/update overhead, added service cost, and explicit missing measurements.
-- Outcome records:
-  - Run status and execution mode, such as exact, approximate, unsupported, timeout, or error.
-  - This is separate from fidelity: fidelity says how wrong the answer was; outcome says what happened during execution.
-
-## Why This Benchmark Is Credible
-
-Do not claim that the benchmark is "realistic" as a slogan. The benchmark is
-credible when the workload argument is inspectable:
-
-- Real system boundary:
-  - Use the system's native interface.
-  - Include planner, serving path, serialization, precompute path, fallback behavior, and deployment shape when they are part of the system being evaluated.
-- Workload provenance:
-  - Say whether the workload is a product quickstart, real trace, controlled
-    generator, or hybrid generator.
-  - Record source version, seed, replay policy, and query suite.
-- Pressure dimensions:
-  - State which data or workload axes the benchmark is meant to stress.
-  - Do not imply coverage of axes that were not run.
-
-Data input design should be a first-class benchmark axis:
-
-- Synthetic sweeps:
-  - Purpose: controlled breakpoints.
-  - Method: vary one or two dimensions at a time.
-  - Examples: cardinality, group count, Zipf skew, window length.
-- Trace or workload replay:
-  - Purpose: realistic correlations and temporal behavior.
-  - Requirement: preserve timestamp/window semantics.
-  - Metadata: record trace version, source, replay speed, and replay policy.
-- Hybrid generated traces:
-  - Purpose: realistic-enough inputs when real traces are unavailable or incomplete.
-  - Requirement: encode phenomena such as bursts, drift, skew, and rare groups, not only random rows.
-
-Data and workload pressures to include, not exhaustive:
-
-- Cardinality.
-- Group count and group-size skew.
-- Heavy tails and rare keys.
-- Temporal drift.
-- Bursts.
-- Query window or range length.
-- Dashboard-style query concurrency.
-- Update/query ratio.
-- Retention horizon.
-- Late, missing, or out-of-order data when relevant.
-
-The point is to produce regions like:
-
-- Exact wins below this cardinality.
-- Approximation wins under this latency SLO and error target.
-- Approximation is fast but misses rare groups.
-- Approximation is accurate but too expensive to maintain.
-- Precompute helps high-query-rate dashboards but not low-query-rate workloads.
-
-These are target analysis shapes, not current claims.
-
-## Resource And Value Model
-
-Do not describe approximation value as one arithmetic score. The units differ: latency, CPU, memory, storage, network, freshness, and fidelity are not directly additive.
-
-Each scenario family should answer separate questions:
-
-- Benefit:
-  - What improved relative to the exact performance baseline?
-  - Examples: p95 latency, query CPU, memory growth, retention, concurrency.
-- Added cost:
-  - What extra resource did the approximate option require?
-  - Examples: ingest CPU, sketch memory, summary storage, extra service memory.
-- Fidelity loss:
-  - What error or result-shape difference appeared relative to the exact reference execution?
-  - Examples: relative error, rank error, missing groups, extra label sets.
-- Requirement satisfaction:
-  - Did the approximate option meet the declared error, latency, memory, or result-shape requirement?
-- Deployment interpretation:
-  - Is the option a replacement, augmentation layer, precompute path, tiered retention design, or direct sketch primitive?
-  - The resource model depends on this deployment pattern.
-
-This makes results interpretable without pretending all costs can be reduced to one scalar.
-
-## Relationship To ASAPQuery Quickstart
-
-ASAPQuery quickstart is a concrete system entry point, not the whole AQP benchmark.
-
-What quickstart provides:
-
-- A runnable ASAPQuery deployment.
-- A native PromQL-facing interface.
-- Prometheus as the exact path for paired comparison.
-- A starting workload and fake-exporter data source.
-
-What the AQP benchmark layer adds:
-
-- More data input variation.
-- Explicit data-condition identifiers and replay/generation policy.
-- Workload provenance and pressure-dimension coverage.
-- Exact-reference versus exact-baseline roles.
-- Baseline policy: why Prometheus is the exact comparison for this scenario,
-  and what stronger exact deployments are outside the current run.
-- Option/config policy: whether approximate parameters are defaults, swept,
-  calibrated, or tuned under a declared budget.
-- Resource accounting for augmentation/precompute overhead.
-- Requirement satisfaction across latency, fidelity, result shape, and resources.
-- Output regions showing where exact remains better, where approximation helps, and where approximation fails.
-
-This means AQP benchmark can help ASAPQuery tune and test data inputs more completely:
-
-- It can vary cardinality, skew, pattern mix, query range, concurrency, and retention pressure.
-- It can expose when ASAPQuery's approximate path is useful versus when Prometheus exact remains sufficient.
-- It can keep these broader input-shape tests outside the product quickstart, while still reusing quickstart as a concrete adapter target.
-- It can label the quickstart as a seed condition, so the blog does not
-  overclaim from one convenient demo workload.
-
-## Exact Reference Versus Exact Performance Baseline
-
-These are two roles, not necessarily two different systems.
-
-- `exact reference execution`
-  - Role: answer correctness.
-  - Question: what is the exact result?
-  - Used for: fidelity comparison.
-  - Can be slow if needed, as long as it is semantically precise.
-
-- `exact performance baseline`
-  - Role: exact alternative.
-  - Question: what would a reasonable exact system cost?
-  - Used for: latency, CPU, memory, storage, and SLO comparison.
-  - Should be a fair optimized exact path, not a toy baseline.
-
-They often can be the same:
-
-- Sketch primitive:
-  - Reference: exact `HashMap`, `HashSet`, or sorted vector.
-  - Performance baseline: the same exact structure measured as an option.
-- PromQL:
-  - Reference: Prometheus at the paired timestamp.
-  - Performance baseline: Prometheus serving the same workload.
-
-They may need to differ:
-
-- A slow offline exact computation may be best for reference answers, while an indexed/serving exact system is the fair performance baseline.
-- An exact serving system may timeout for a hard condition; that timeout is a baseline result, but the benchmark may still need an offline exact reference to measure approximation error.
-- A benchmark script may record enough data for latency but not enough complete result values for fidelity.
-
-The blog should frame this as a baseline policy, not only a terminology
-distinction:
-
-- What exact system is the reference?
-- What exact system is the performance baseline?
-- Why is that baseline strong enough for this scenario family?
-- Which stronger or different exact baselines would change the claim?
-- Is the result complete, partial, or blocked by missing resource accounting?
-
-It should also frame approximation configuration as a fairness issue:
-
-- Which sketch or summary parameters were used?
-- Were they defaults, tuned, or chosen from a sweep?
-- Was the exact baseline given an equivalent tuning opportunity?
-- Is the reported approximate option a fixed deployment choice or a best-case
-  point selected after seeing the workload?
-<!-- 
-## Proposed Post Flow
-
-1. Start with the exact-baseline question.
-   - Exact execution is the default users understand.
-   - Exact systems continue to improve.
-   - Approximation must justify its error and any added infrastructure.
-
-2. Define the scenario family.
-   - Reuse the scenario-family shape from the AQP problem definition.
-   - Add the distinction between exact reference execution and exact performance baseline.
-   - Make clear that concrete systems, native interfaces, workload provenance,
-     and pressure dimensions are required.
-
-3. Explain realistic data input design.
-   - This is a central design point, not a side note or a marketing claim.
-   - Separate synthetic sweeps, trace replay, and hybrid generated traces.
-   - Explain which exact-system pressures each data input is meant to create.
-
-4. Explain resource accounting.
-   - Measure what approximation buys.
-   - Measure what approximation adds.
-   - Measure fidelity loss separately.
-   - Interpret the result according to the deployment pattern.
-
-5. Describe the desired benchmark outputs.
-   - Cost/fidelity/resource/outcome records.
-   - Break-even regions.
-   - Requirement satisfaction regions.
-   - Cases where exact remains better.
-   - Cases where approximation is useful only under specific requirements. -->
+## Future AQPBMV4
