@@ -5,7 +5,7 @@
 > Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
 - Main AQPBMV2 claim:
-  - AQPBMV2 provides a `toolkit` for benchmarking executable approximate-function candidates.
+  - AQPBMV2 provides a `toolkit` for benchmarking runnable approximate-function implementations.
   - It sits between raw sketch benchmarks and full system benchmarks.
   - It compares exact baselines and sketch-backed implementations under the same execution modes.
   - It organizes benchmark targets by approximate functionality.
@@ -57,7 +57,7 @@
   - A raw sketch benchmark can help users reason about candidate sketches.
   - It cannot by itself answer whether an approximate function is useful for a user-facing task.
   - AQPBMV2 starts from raw sketch evidence.
-  - It then evaluates executable approximate-function candidates.
+  - It then evaluates runnable implementations of approximate functionality.
 
 - Mental experiment:
   - Suppose a query is implemented using three HLL states.
@@ -67,18 +67,24 @@
     - Example: 1% relative error after the full function logic.
   - A user would choose the full approximate function because it gives good query performance.
     - Not because every raw sketch component looks good in isolation.
-  - This is why AQPBMV2 should evaluate executable function candidates.
+  - This is why AQPBMV2 should evaluate approximate-function implementations.
 
 ## Current: AQPBMV2
 
 - Scope:
-  - AQPBMV2 is an executable approximate-function benchmark toolkit.
+  - AQPBMV2 is a runnable approximate-function benchmark toolkit.
   - It is not a full SQL, PromQL, or AQP system benchmark.
   - It is not a raw sketch benchmark.
+  - Its benchmark unit is a runnable implementation of a functionality.
+    - Example: count distinct implemented by an exact `HashSet`.
+    - Example: count distinct implemented by Apache DataSketches HLL.
+    - Example: quantile implemented by `asap_sketchlib` KLL.
+  - A sketch can be part of the implementation.
+  - The sketch API alone is not the benchmark unit.
 
 - Main toolkit contribution:
   - AQPBMV2 should provide a reusable toolkit.
-  - The toolkit should let users implement and compare approximate-function candidates.
+  - The toolkit should let users implement and compare approximate-function implementations.
   - The toolkit should provide execution modes and a report format.
   - The toolkit should make it easy to add:
     - more sketch libraries;
@@ -87,8 +93,8 @@
     - more sketch compositions;
     - more workload generators;
     - more comparison metrics.
-  - A candidate may wrap one sketch.
-  - A candidate may also compose multiple sketches.
+  - An implementation may wrap one sketch.
+  - An implementation may also compose multiple sketches.
   - This is about implementing an approximate functionality.
   - It is not yet a claim about supporting complex SQL.
 
@@ -112,7 +118,7 @@ trait ApproxFunction {
 
 ```text
 user-level functionality
-  -> executable approximate function candidate
+  -> runnable approximate-function implementation
   -> sketch or exact state implementation
 ```
 
@@ -126,8 +132,7 @@ user-level functionality
   - `ExactHeavyHitters<HashMap>`
   - `ExactQuantile<Vec>`
 
-- Current sketch-backed candidates:
-  - Local demo HLL for count distinct.
+- Current sketch-backed implementations:
   - Apache DataSketches HLL for count distinct.
   - Apache DataSketches FrequentItems for heavy hitters.
   - Apache DataSketches TDigest for quantile.
@@ -140,11 +145,11 @@ user-level functionality
 
 - Current benchmark-owned execution modes:
   - `grouped_state`
-    - Keep one candidate state per group.
+    - Keep one implementation state per group.
     - Update that state from all rows in the group.
     - Finalize one answer per group.
   - `partitioned_merge`
-    - Build candidate states inside partitions.
+    - Build implementation states inside partitions.
     - Merge partition-local states for each group.
     - Finalize one answer per group after merge.
 
@@ -159,8 +164,10 @@ user-level functionality
 - Current smoke/demo path:
   - `cargo run -p aqp-core --example aqpbmv2_functions`
   - The current generated data is only a smoke test.
-  - It proves candidates can be wired into the middle layer and run.
+  - It proves implementations can be wired into the middle layer and run.
   - It is not yet benchmark-grade workload evidence.
+  - The current implementations are still close to one-sketch-per-function cases.
+  - The next step is to add workloads and implementations where the middle layer matters more than the raw sketch API.
 
 - What AQPBMV2 does not claim:
   - It does not benchmark Spark's function directly.
@@ -196,10 +203,21 @@ user-level functionality
   - It does not yet support a claim about general benchmark quality or winner libraries.
 
 - What the input is:
-  - A group means one distinct value of a synthetic group-by key.
+  - Each input row has two logical fields.
+    - `group_key`
+    - `value`
+  - A group means one distinct value of the synthetic `group_key`.
     - Example: `group_000`, `group_001`, ..., `group_031`.
-    - This is the benchmark equivalent of one output group from `GROUP BY service`.
-  - Each group owns one independent aggregate state for the candidate function.
+    - This mimics one output group from `GROUP BY service`.
+  - Current demo group assignment is hand-written in the synthetic generator.
+    - It assigns rows to groups with `idx % group_count`.
+    - It is not produced by a SQL interpreter, query planner, or real data schema.
+  - The benchmark groups rows by `group_key`.
+    - It then runs the target functionality over the `value` field inside each group.
+    - For count distinct, it counts distinct `value`s inside each synthetic group.
+    - For heavy hitters, it finds frequent `value`s inside each synthetic group.
+    - For quantile, it estimates the p95 of `value`s inside each synthetic group.
+  - Each group owns one independent aggregate state for the implementation being tested.
   - Any group-level claim below only refers to these synthetic demo groups.
     - It is not a claim about production groups or all possible group-by workloads.
   - Count distinct input:
@@ -218,14 +236,6 @@ user-level functionality
     - 16 synthetic group-by groups.
     - Deterministic periodic values with a small tail bump.
     - Query target is p95.
-
-- Internal smoke-test candidate:
-  - The example also runs one in-repository toy HLL implementation.
-  - Its candidate id is `approx_count_distinct.hll_demo.v1`.
-  - It was added with the AQPBMV2 trait layer.
-  - It is included only as a smoke-test candidate and internal reference point.
-  - It is not `asap_sketchlib`.
-  - It is not an external sketch library.
 
 - What the output is:
   - A JSON report.
@@ -251,11 +261,7 @@ user-level functionality
 
 - Count distinct result:
   - Exact output has 32 groups.
-  - All candidates have `100%` of group-level answers within the chosen error threshold.
-  - In-repository toy HLL:
-    - Mean relative error: about `0.79%`.
-    - Max relative error: about `2.95%`.
-    - This is not a library result.
+  - All implementations have `100%` of group-level answers within the chosen error threshold.
   - Apache DataSketches HLL:
     - Mean relative error: about `0.76%`.
     - Max relative error: about `2.40%`.
@@ -293,13 +299,17 @@ user-level functionality
 
 - What this result represents:
   - It shows the toolkit wiring works.
-  - Exact baselines and sketch-backed candidates run through the same interface.
+  - Exact baselines and sketch-backed implementations run through the same interface.
   - Multiple sketch libraries can be compared under the same benchmark-owned execution modes.
   - `grouped_state` and `partitioned_merge` both execute successfully.
+  - It is still close to raw sketch comparison because each current implementation mostly wraps one sketch.
+  - Its purpose is to show the middle-layer interface can host those implementations.
 
 - What this result does not prove:
   - It does not prove one library is generally better.
   - It does not prove AQPBMV2 is already benchmark-grade.
+  - It does not yet prove that AQPBMV2 reveals behavior missed by raw sketch benchmarks.
+  - It does not validate the group-generation logic.
   - The generated data is too easy.
   - The result is a smoke test and preliminary validation of the toolkit.
 
@@ -312,6 +322,8 @@ user-level functionality
     - Pareto or heavy-tail mixtures.
   - Add workload knobs.
     - Group cardinality.
+    - Group-key generation.
+    - Mapping from workload/task semantics to group keys.
     - Group-size skew.
     - Tail heaviness.
     - Top-k gap.
@@ -424,5 +436,5 @@ Placeholder.
     - UDFs and extensions.
     - Standalone sketch libraries.
   - This motivates AQPBMV2's middle layer.
-    - Executable approximate-function candidates.
+    - Runnable approximate-function implementations.
     - Benchmark-owned execution modes.

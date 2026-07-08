@@ -4,9 +4,7 @@
 //! benchmark a concrete middle layer between user-visible approximate
 //! functionality and raw sketch primitives.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
@@ -156,52 +154,6 @@ impl ApproxFunction for ExactCountDistinct {
 }
 
 #[derive(Debug, Clone)]
-pub struct HllCountDistinct {
-    precision: u8,
-}
-
-impl HllCountDistinct {
-    pub fn new(precision: u8) -> Self {
-        assert!(
-            (4..=18).contains(&precision),
-            "demo HLL precision must be in 4..=18"
-        );
-        Self { precision }
-    }
-}
-
-impl ApproxFunction for HllCountDistinct {
-    type Input = i64;
-    type State = HllState;
-    type Output = f64;
-    type Query = ();
-
-    fn create(&self) -> Self::State {
-        HllState::new(self.precision)
-    }
-
-    fn update(&self, state: &mut Self::State, input: Self::Input) {
-        state.insert(&input);
-    }
-
-    fn merge(&self, left: &mut Self::State, right: Self::State) {
-        left.merge(right);
-    }
-
-    fn finalize(&self, state: &mut Self::State, _query: Self::Query) -> Self::Output {
-        state.estimate()
-    }
-
-    fn candidate_id(&self) -> &'static str {
-        "approx_count_distinct.hll_demo.v1"
-    }
-
-    fn functionality(&self) -> &'static str {
-        "count_distinct"
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct DataSketchesHllCountDistinct {
     lg_k: u8,
     hll_type: datasketches::hll::HllType,
@@ -325,70 +277,6 @@ impl ApproxFunction for AsapHllCountDistinct {
     fn functionality(&self) -> &'static str {
         "count_distinct"
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct HllState {
-    precision: u8,
-    registers: Vec<u8>,
-}
-
-impl HllState {
-    pub fn new(precision: u8) -> Self {
-        let registers = vec![0; 1usize << precision];
-        Self {
-            precision,
-            registers,
-        }
-    }
-
-    pub fn insert<T: Hash>(&mut self, value: &T) {
-        let hash = hash64(value);
-        let idx = (hash >> (64 - self.precision)) as usize;
-        let remaining = hash << self.precision;
-        let max_rank = 64 - self.precision as u32 + 1;
-        let rank = (remaining.leading_zeros() + 1).min(max_rank) as u8;
-        self.registers[idx] = self.registers[idx].max(rank);
-    }
-
-    pub fn merge(&mut self, other: Self) {
-        assert_eq!(
-            self.precision, other.precision,
-            "cannot merge HLL states with different precision"
-        );
-        for (left, right) in self.registers.iter_mut().zip(other.registers) {
-            *left = (*left).max(right);
-        }
-    }
-
-    pub fn estimate(&self) -> f64 {
-        let m = self.registers.len() as f64;
-        let alpha = match self.registers.len() {
-            16 => 0.673,
-            32 => 0.697,
-            64 => 0.709,
-            _ => 0.7213 / (1.0 + 1.079 / m),
-        };
-        let zero_registers = self.registers.iter().filter(|&&r| r == 0).count();
-        let harmonic_sum = self
-            .registers
-            .iter()
-            .map(|&rank| 2.0_f64.powi(-(rank as i32)))
-            .sum::<f64>();
-        let raw = alpha * m * m / harmonic_sum;
-
-        if raw <= 2.5 * m && zero_registers > 0 {
-            m * (m / zero_registers as f64).ln()
-        } else {
-            raw
-        }
-    }
-}
-
-fn hash64<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -1010,15 +898,6 @@ pub struct QuantileCandidateReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CountDistinctDemoReport {
-    pub exact_grouped: KernelRun<f64>,
-    pub hll_grouped: KernelRun<f64>,
-    pub hll_partitioned_merge: KernelRun<f64>,
-    pub grouped_coverage: NumericCoverageSummary,
-    pub partitioned_coverage: NumericCoverageSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Aqpbmv2FunctionDemoReport {
     pub count_distinct_exact: KernelRun<f64>,
     pub count_distinct_candidates: Vec<CountDistinctCandidateReport>,
@@ -1090,41 +969,11 @@ pub fn demo_quantile_rows(row_count: usize, group_count: usize) -> Vec<GroupedIn
         .collect()
 }
 
-pub fn run_count_distinct_demo() -> CountDistinctDemoReport {
-    let rows = demo_count_distinct_rows(50_000, 32, 20_000);
-    let exact = ExactCountDistinct;
-    let hll = HllCountDistinct::new(12);
-
-    let exact_grouped = run_grouped_kernel(&exact, &rows, ());
-    let hll_grouped = run_grouped_kernel(&hll, &rows, ());
-    let hll_partitioned_merge = run_partitioned_merge_kernel(&hll, &rows, 8, ());
-    let grouped_coverage =
-        compare_count_distinct_outputs(&exact_grouped.outputs, &hll_grouped.outputs, 0.05);
-    let partitioned_coverage = compare_count_distinct_outputs(
-        &exact_grouped.outputs,
-        &hll_partitioned_merge.outputs,
-        0.05,
-    );
-
-    CountDistinctDemoReport {
-        exact_grouped,
-        hll_grouped,
-        hll_partitioned_merge,
-        grouped_coverage,
-        partitioned_coverage,
-    }
-}
-
 pub fn run_aqpbmv2_function_demo() -> Aqpbmv2FunctionDemoReport {
     let count_rows = demo_count_distinct_rows(50_000, 32, 20_000);
     let count_exact = ExactCountDistinct;
     let count_distinct_exact = run_grouped_kernel(&count_exact, &count_rows, ());
     let count_distinct_candidates = vec![
-        evaluate_count_distinct_candidate(
-            &HllCountDistinct::new(12),
-            &count_rows,
-            &count_distinct_exact,
-        ),
         evaluate_count_distinct_candidate(
             &DataSketchesHllCountDistinct::new(12),
             &count_rows,
@@ -1306,32 +1155,22 @@ mod tests {
     }
 
     #[test]
-    fn partitioned_hll_merge_matches_grouped_hll() {
-        let rows = demo_count_distinct_rows(10_000, 17, 3_000);
-        let hll = HllCountDistinct::new(12);
-        let grouped = run_grouped_kernel(&hll, &rows, ());
-        let partitioned = run_partitioned_merge_kernel(&hll, &rows, 7, ());
-        assert_eq!(grouped.outputs, partitioned.outputs);
-    }
-
-    #[test]
     fn real_hll_candidates_produce_count_distinct_coverage() {
         let rows = demo_count_distinct_rows(20_000, 16, 8_000);
         let exact = run_grouped_kernel(&ExactCountDistinct, &rows, ());
-        for coverage in [
+        for report in [
             evaluate_count_distinct_candidate(
                 &DataSketchesHllCountDistinct::new(12),
                 &rows,
                 &exact,
-            )
-            .grouped_coverage,
-            evaluate_count_distinct_candidate(&SketchOxideHllCountDistinct::new(12), &rows, &exact)
-                .grouped_coverage,
-            evaluate_count_distinct_candidate(&AsapHllCountDistinct, &rows, &exact)
-                .grouped_coverage,
+            ),
+            evaluate_count_distinct_candidate(&SketchOxideHllCountDistinct::new(12), &rows, &exact),
+            evaluate_count_distinct_candidate(&AsapHllCountDistinct, &rows, &exact),
         ] {
-            assert_eq!(coverage.compared_groups, 16);
-            assert!(coverage.answer_coverage >= 0.80);
+            assert_eq!(report.grouped_coverage.compared_groups, 16);
+            assert_eq!(report.partitioned_coverage.compared_groups, 16);
+            assert!(report.grouped_coverage.answer_coverage >= 0.80);
+            assert!(report.partitioned_coverage.answer_coverage >= 0.80);
         }
     }
 
@@ -1394,13 +1233,5 @@ mod tests {
             assert_eq!(coverage.compared_groups, 10);
             assert!(coverage.answer_coverage >= 0.80);
         }
-    }
-
-    #[test]
-    fn hll_demo_produces_coverage_summary() {
-        let report = run_count_distinct_demo();
-        assert_eq!(report.grouped_coverage.compared_groups, 32);
-        assert!(report.grouped_coverage.answer_coverage >= 0.90);
-        assert!(report.partitioned_coverage.answer_coverage >= 0.90);
     }
 }

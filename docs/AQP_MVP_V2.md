@@ -463,8 +463,8 @@ The probe should be small:
 
 1. Pick one functionality class, preferably approximate count distinct.
 2. Generate a small controlled dataset.
-3. Run AQPBMV2's `ExactCountDistinct` and `HllCountDistinct` candidates through
-   the local kernels.
+3. Run AQPBMV2's `ExactCountDistinct` and HLL-backed count-distinct
+   implementations through the local kernels.
 4. Separately run one DB-supported approximate function on the same logical
    input, if the DB is easy to run locally.
 5. Compare only semantics and result shape: input type, null handling,
@@ -528,13 +528,12 @@ Runnable smoke path:
 
 ```bash
 cargo run -p aqp-core --example aqpbmv2_functions
-cargo run -p aqp-core --example aqpbmv2_count_distinct
 ```
 
 The broader `aqpbmv2_functions` example runs three functionality classes through
 the same grouped and partitioned-merge kernels:
 
-- distinct count: exact `HashSet`, local demo HLL, Apache DataSketches HLL,
+- distinct count: exact `HashSet`, Apache DataSketches HLL,
   `sketch_oxide` HLL, and `asap_sketchlib` HLL;
 - heavy hitters: exact `HashMap`, Apache DataSketches FrequentItems, and
   `sketch_oxide` SpaceSaving, and `asap_sketchlib` CMSHeap;
@@ -546,9 +545,7 @@ summaries. Count-distinct and quantile use numeric relative-error coverage;
 heavy hitters use precision/recall at k. Bare Count-Min Sketch is a point
 frequency estimator, so the executable heavy-hitter candidate uses
 `asap_sketchlib` CMSHeap rather than pretending that CMS alone discovers top-k
-items. The narrower
-`aqpbmv2_count_distinct` example remains as a small smoke test for the original
-count-distinct path.
+items.
 
 ## Success Criteria
 
