@@ -4,17 +4,30 @@
 >
 > Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
-- Main AQPBMV2 claim:
-  - AQPBMV2 provides a `toolkit` for benchmarking runnable approximate-function implementations.
-  - It sits between raw sketch benchmarks and full system benchmarks.
-  - It compares exact baselines and sketch-backed implementations under the same execution modes.
-  - It organizes benchmark targets by approximate functionality.
-    - Count distinct.
-    - Heavy hitters.
-    - Quantile.
-  - A sketch instance is a candidate implementation detail.
-  - A sketch instance alone is not the benchmark unit.
-  - The current implementation supports count distinct, heavy hitters, and quantile.
+## Abstract
+
+Every major analytical engine ships approximate aggregates, and most are backed by
+a sketch. But the available evidence sits at two extremes. Sketch benchmarks
+measure one sketch state over one stream. System benchmarks measure a whole
+database, with the sketch buried under a parser, an optimizer, and a scheduler.
+Neither answers whether a given approximate implementation holds up in the shape a
+query actually runs it: one state per group, or many partial states merged across
+a shuffle.
+
+We argue the missing unit of measurement is the *runnable implementation of an
+approximate functionality* — code that creates a state, updates it, merges it, and
+finalizes an answer. Under this definition an exact `HashSet` and a HyperLogLog
+are both count-distinct implementations, and compare directly. A sketch becomes an
+implementation detail rather than the benchmark subject.
+
+AQPBMV2 is a toolkit built on that definition. It exposes one executable interface,
+owns the execution modes candidates are driven through, and reports each candidate
+against an exact baseline. It covers count distinct, heavy hitters, and quantile,
+with three sketch-backed candidates each.
+
+What we claim today is integration, not discovery. AQPBMV2 becomes a research
+contribution only when its execution modes expose behavior a raw sketch benchmark
+structurally cannot see.
 
 ## Query to begin with: SELECT approx_count_distinct(user_id) FROM table;
 
@@ -113,6 +126,33 @@ trait ApproxFunction {
     fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output;
 }
 ```
+
+add a concrete query about what the middle layer is
+start from groupby with multiple hll
+
+
+select (occupation, region) from table, find distinct users in each (occupation, region) group
+
+likely traslated into hlls, each group of (occupation, region) will result in a hll of dictinct users
+
+benchmark the thing defined above
+
+try to give more examples like this
+
+then, we can pick which example is good and which example is bad
+
+then, we can have a better definition/scope of middlelayer from those examples
+
+input/output can both be multi dimension
+the data shape/schema, data distribution can matter
+
+the way middlelayer represents query expression
+
+what should be considered as input/output is a problem
+
+output can include performance, resource usage, accuracy, etc.
+
+
 
 - Middle-layer shape:
 
