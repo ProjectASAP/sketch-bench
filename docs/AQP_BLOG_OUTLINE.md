@@ -25,12 +25,12 @@ AQPBM is trying to understand how much speedup and memory reduction can be gaine
 - Real queries
 - Hand-made representative queries
 
-#### Physical Layer / Execution Plan
+#### Physical Plan / Execution Plan
 
-- multiple possible physical layer for each query in previous section
-  - **Notice**: the physical layer is **not** automatically translated from queries in previous section
+- multiple possible physical plan for each query in previous section
+  - **Notice**: the physical plan is **not** automatically translated from queries in previous section
     - if the translation is automatic, **that's great**s (i.e., ASAPController)
-    - after all, hand written physical layer is fine
+    - after all, hand written physical plan is fine
 
 #### Monitor
 
