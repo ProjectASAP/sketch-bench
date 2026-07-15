@@ -1,8 +1,10 @@
 # Blog Outline: AQPBM
 
-> Status: example queries that can be used by AQPBMV2:
-> why care about these queries?
-> what middle layer can be shared among these queries?
+> Status: design doc for AQPBMV2.
+> AQPBMV2 locates at the physical plan.
+> AQPBMV2 monitors possible physical plans.
+> 10 example queries on the ClickBench `hits` table with what the query is and what can be benchmarked around those queries.
+> Open: build the running interpreter/toolkit; add interpreters beyond DataFusion; transcribe real engines' physical plans as reference baselines.
 >
 > Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
@@ -21,162 +23,45 @@ Example queries (each follows the 5-part template: SQL, intent, physical plan, a
 - [Example 9: top-10 search phrases by distinct users — a provably sound cheap plan](#example-9-top-10-search-phrases-by-distinct-users--a-provably-sound-cheap-plan)
 - [Example 10: a fan-out join is safe for count-distinct but corrupts quantile](#example-10-a-fan-out-join-is-safe-for-count-distinct-but-corrupts-quantile)
 
-## Abstract
+## TL;DR
 
-Every major analytical engine ships approximate aggregates, and most are backed by a sketch.
-But the available evidence sits at two extremes.
-Sketch benchmarks measure one sketch state over one stream.
-System benchmarks measure a whole database, with the sketch buried under a parser, an optimizer, and a scheduler.
-Neither answers whether a given approximate implementation holds up in the shape a query actually runs it: one state per group, or many partial states merged across a shuffle.
+**The middle layer is the physical plan, and AQPBMV2 measures it.**
+A sketch is a *leaf* — create / update / merge / finalize over one state — and an exact `HashSet` has the same shape, so leaves are interchangeable components, not the subject.
+The *plan* is the subject: the graph around the leaves — how many states and keyed by what, how many passes, how partial states are partitioned and merged, which side of a join the aggregate sits on, how results compose.
+A raw sketch benchmark tests one leaf over one stream; a system benchmark tests a whole engine; neither tests the plan.
 
-We argue the missing unit of measurement is the *runnable implementation of an approximate functionality* — code that creates a state, updates it, merges it, and finalizes an answer.
-Under this definition an exact `HashSet` and a HyperLogLog are both count-distinct implementations, and compare directly.
-A sketch becomes an implementation detail rather than the benchmark subject.
+**Why the plan is the interesting unit under approximation.**
+Classic optimizers assume every physical plan of a query returns the same answer and differs only in cost; under approximation the answers differ, with different error — so there is no single optimal plan, only a (cost, error) frontier, and some rewrites (e.g. pushing an aggregate below a join) are sound for one leaf (idempotent HLL merge) and silently wrong for another (additive quantile merge).
+The plan matters only when the answer is *not* already precomputable: a global `COUNT(DISTINCT)` is a stored sketch (nothing to benchmark), but the same aggregate per group is a live computation (the benchmark's territory).
 
-AQPBMV2 is a toolkit built on that definition.
-It exposes one executable interface, owns the execution modes candidates are driven through, and reports each candidate against an exact baseline.
-It covers count distinct, heavy hitters, and quantile, with three sketch-backed candidates each.
+**What the middle layer / toolkit must have:**
 
-What we claim today is integration, not discovery.
-AQPBMV2 becomes a research contribution only when its execution modes expose behavior a raw sketch benchmark structurally cannot see.
+- an **IR** reusing a conventional plan representation — reuse a query engine's frontend for `SQL -> logical plan`, then build our own physical IR and interpreter (the Arroyo pattern), not the engine's executor;
+- a **leaf plug-in** (`create/update/merge/finalize`) holding an exact or sketch state, plus **node annotations** the exact world never needed: merge algebra (idempotent / additive) and error metric (rank / value);
+- an **interpreter** that pins the execution details determining the answer (partition topology, merge order for order-sensitive sketches) and reproduces them faithfully;
+- **monitoring** reporting each plan on three tiers of portability:
+  1. plan-intrinsic — total state size, passes, merges, error vs. an exact baseline;
+  2. interpreter-affinity — parallel width and merge algebra → which interpreter *class* the plan favours (a directional hypothesis, to be validated, deletable);
+  3. interpreter-dependent — wall-clock etc., with the interpreter an explicit dimension (>=2 interpreters that accept an injected plan, plan held fixed).
 
-## Intuition (can be skipped)
-
-### Query to begin with: SELECT approx_count_distinct(user_id) FROM table;
-
-- Example query:
-  - `SELECT approx_count_distinct(user_id) FROM table;`
-
-- Reason to pick this query as a motivation:
-  - It is a common approximate aggregate (already supported in many places).
-  - The exact table still exists.
-  - The system replaces one exact aggregate with an approximate function.
-  - Users trade some fidelity for lower latency, memory, or CPU.
-  - See `Existing Approximate Query Support` at the end for examples.
-
-- Why AQPBMV2 should not benchmark this SQL query directly:
-  - In that case, the benchmark target would become the whole SQL system.
-  - Different databases expose different functions and execution plans.
-  - The question would become:
-    - Are we benchmarking Spark?
-    - Are we benchmarking Trino?
-    - Are we benchmarking ClickHouse?
-  - Each system-supported version of this query deserves its own system benchmark.
-  - Parser, optimizer, storage, and execution engine behavior would be mixed in.
-  - That belongs to a later system benchmark, not AQPBMV2.
-
-### Raw Sketch BM
-
-- AQPBMV1 already covers raw sketch benchmarking.
-  - The benchmark target is a sketch primitive.
-  - Example: HLL as one state over one stream.
-  - Inputs can be controlled by distribution and cardinality.
-  - Metrics include accuracy, throughput, and memory.
-
-- The limitation:
-  - Users ultimately want good query or task performance.
-  - Good component or sketch performance may suggest good query performance.
-    - But it is only the starting point.
-  - The benchmark needs to preserve the path from sketch behavior to user-visible functionality.
-
-- The gap:
-  - A raw sketch benchmark can help users reason about candidate sketches.
-  - It cannot by itself answer whether an approximate function is useful for a user-facing task.
-  - AQPBMV2 starts from raw sketch evidence.
-  - It then evaluates runnable implementations of approximate functionality.
-
-- Mental experiment:
-  - Suppose a query is implemented using three HLL states.
-  - Each individual HLL state may look bad in isolation.
-    - Example: 30% relative error per raw sketch state.
-  - The final query answer may still be good.
-    - Example: 1% relative error after the full function logic.
-  - A user would choose the full approximate function because it gives good query performance.
-    - Not because every raw sketch component looks good in isolation.
-  - This is why AQPBMV2 should evaluate approximate-function implementations.
-
-## Current: AQPBMV2
-
-- Scope:
-  - AQPBMV2 is a runnable approximate-function benchmark toolkit.
-  - It is not a full SQL, PromQL, or AQP system benchmark.
-  - It is not a raw sketch benchmark.
-  - Its benchmark unit is a runnable implementation of a functionality.
-    - Example: count distinct implemented by an exact `HashSet`.
-    - Example: count distinct implemented by Apache DataSketches HLL.
-    - Example: quantile implemented by `asap_sketchlib` KLL.
-  - A sketch can be part of the implementation.
-  - The sketch API alone is not the benchmark unit.
-
-- Main toolkit contribution:
-  - AQPBMV2 should provide a reusable toolkit.
-  - The toolkit should let users implement and compare approximate-function implementations.
-  - The toolkit should provide execution modes and a report format.
-  - The toolkit should make it easy to add:
-    - more sketch libraries;
-    - more exact baselines;
-    - more functionality classes;
-    - more sketch compositions;
-    - more workload generators;
-    - more comparison metrics.
-  - An implementation may wrap one sketch.
-  - An implementation may also compose multiple sketches.
-  - This is about implementing an approximate functionality.
-  - It is not yet a claim about supporting complex SQL.
-
-- Current executable interface:
-
-```rust
-trait ApproxFunction {
-    type Input;
-    type State;
-    type Output;
-    type Query;
-
-    fn create(&self) -> Self::State;
-    fn update(&self, state: &mut Self::State, input: Self::Input);
-    fn merge(&self, left: &mut Self::State, right: Self::State);
-    fn finalize(&self, state: &mut Self::State, query: Self::Query) -> Self::Output;
-}
-```
+Today this is a problem definition and a measurement model, worked out through the ten example queries below on real data; the running toolkit is still preliminary.
 
 ## Table Header
 
-The examples are anchored to a real table's header for one reason only: to avoid inventing
-columns off the top of our head.
-The point is the header, not the rows — a concrete, real column list lets us ask "given these
-columns, what example query can I write", and column cardinality is what decides whether the
-middle layer shows up at all.
-Nothing here commits us to this table; the data can be synthesized later.
-The header just keeps the examples honest.
+The examples use Click-bench `hits` table (a real, anonymized web-analytics log, heavy-tailed) for one reason: a real table is better than something coming out of my mind.
+Only the header is used.
+The real data can be generated/synthetic.
+Some columns may have different meaning from actual interpretation (I tried to look for documentation, but not a lot)(but it's not a problem, I just need the column to exist, not how the column is interpreted).
 
-We use the ClickBench `hits` table (a real, anonymized web-analytics log, heavy-tailed).
-Two practical benefits: it is real data, and it has a public playground where queries can be
-tried and exact ground truth (`uniqExact`, `quantileExact`) and physical plans (`EXPLAIN`) can
-be measured directly.
-
-References (present so that no claim below is made off the top of our head):
+References (present so that no claim below is made off the top of our head)(and also a source that I can check):
 
 - Canonical schema (the column list): ClickBench `create.sql` —
   `https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/create.sql`.
 - Dataset docs: ClickHouse example datasets, "Anonymized Web Analytics (Metrica)" —
   `https://clickhouse.com/docs/getting-started/example-datasets/metrica`.
   Note: this page lists the columns but gives **no per-column descriptions**.
-- Playground where every number below was measured —
-  `https://play.clickhouse.com/?user=explorer`.
 
-What is cited vs. measured vs. inferred:
-
-- **Cited**: the column names and declared types come from the schema above.
-- **Measured** on the playground (100M-row table, total rows 99,997,497): every cardinality,
-  distribution, quantile, and physical plan quoted in the examples.
-- **Inferred, not authoritative**: the *meaning* of a column. The docs describe none, and the
-  data is anonymized, so any semantic label (e.g. calling `ResponseEndTiming` a latency, or
-  `MobilePhone` a phone-vendor id) is a guess from the name plus the measured distribution.
-  Guessing meaning from the name already produced wrong examples more than once (`Income`,
-  `MobilePhone`), so semantic labels below are deliberately hedged.
-
-The header below is a selected subset of the ~100 columns, annotated with measured cardinality:
+The header below is a selected subset of the ~100 columns, annotated with (Claude) measured cardinality:
 
 ```sql
 WatchID            Int64      -- near-unique per row
@@ -207,90 +92,6 @@ ResponseEndTiming  Int32      -- numeric timing column (ms), heavy-tailed; 74.6%
 SendTiming         Int32
 ConnectTiming      Int32
 ```
-
-
-
-## What the middle layer is: the physical-plan space
-
-Roughly speaking, a query will go through logical plan (optimization) physical plan, and being executed.
-Logical plan is just describing what functionality the query will do, but not how the functionality is achieved.
-The benchmark is trying to reveal how approximation can help.
-Targeting the logical plan is missing detail about how the query is executed.
-Targeting the real execution is not feasible at this moment.
-Physical plan (and more accurately, possible potential physical plan) is the middle-layer.
-It omitts the detail about which database is translating query to such physical plan or not.
-Instead, the middle-layer is saying, for a certain functionality (where a query can represent), the possible physical plan will use xxx resources and provide yyy benefits from approximation.
-
-This section is the frame for the ten examples that follow.
-Each example is one probe of the space described here.
-
-- Which plan layer is the benchmark about?
-  - A query engine lowers SQL through roughly two plan layers:
-    - **Logical plan**: relational algebra.
-      It says *what*.
-      `Scan -> Filter -> Aggregate(COUNT DISTINCT UserID) GROUP BY RegionID`.
-      It does not commit to an algorithm, to parallelism, or to how data moves.
-    - **Physical plan**: it says *how*.
-      `ParallelScan -> PartialAggregate(which state type) -> Exchange(repartition by RegionID) -> FinalAggregate(merge states) -> Sort -> Limit`.
-    - "Execution plan" is, in most systems, just another name for the physical plan (the thing `EXPLAIN` prints).
-      A few systems (Spark AQE) use it to mean the physical plan plus runtime adaptation.
-  - The middle layer is the **physical plan**.
-  - Evidence: look at what the ten examples actually vary.
-    - Example 1 (one HLL per group vs. a hybrid of exact and HLL by group size), Example 2 (one pass vs. two), Example 6 (range partition vs. hash partition), Example 7 (KLL vs. DDSketch) all keep the **same logical plan** and change only the physical one.
-      Example 6 literally varies the `Exchange` operator.
-  - The `ApproxFunction` trait above is already a physical operator interface.
-    - `create / update / merge / finalize` is the standard shape of a physical aggregate operator: ClickHouse `IAggregateFunction`, Spark `TypedImperativeAggregate`, DataFusion `Accumulator` all have exactly this shape.
-
-- Why approximation breaks the logical/physical layering.
-  - Classic optimizers rest on one invariant:
-    - **Every physical plan of a given logical plan returns the same answer, and they differ only in cost.** The optimizer's job is "find the cheapest plan whose answer is identical."
-    - Hash join vs. merge join: same answer.
-      Broadcast vs. shuffle: same answer.
-  - Under approximation this invariant is false.
-    - HLL vs. exact vs. t-digest return **different answers with different error**.
-    - So the optimizer's objective changes from `min(cost)` to a **(cost, error) Pareto frontier**.
-      There is no single optimal plan, only a frontier.
-    - Which point on the frontier is right depends on how much error the user will accept, and that information is **not in the logical plan**.
-  - Example 10 is stronger still.
-    - It is a **logical rewrite** (push the aggregation below the join, i.e. eager aggregation) whose **correctness depends on a physical choice** (whether `merge` is idempotent: it is for HLL, it is not for t-digest or KLL).
-    - In the classic architecture the legality of a logical rewrite must not depend on the physical implementation.
-      Approximation violates exactly that.
-
-- When the benchmark has something to measure, and when it does not.
-  - The dividing line is not query complexity.
-    It is **precomputability**.
-  - If the answer is already materialized as metadata, the benchmark is pointless, because the answer is a lookup, not a computation.
-    - `SELECT COUNT(DISTINCT UserID) FROM hits` is syntactically trivial, but it is exactly what an Iceberg puffin file stores as a Theta sketch.
-      Nothing to benchmark.
-  - If the answer is **not** precomputable, no stored metadata can serve it, so it must be computed at query time from raw data.
-    That is the benchmark's territory.
-    - `COUNT(DISTINCT UserID) GROUP BY RegionID` is not precomputed anywhere: nobody stores 9,040 per-group HLLs in advance.
-  - Note the two cases differ only in grouping granularity, not in the aggregate function.
-    - Same `COUNT(DISTINCT)`.
-      Global is a lookup; per-region is a live computation.
-    - So complexity is the wrong axis.
-      Precomputability is the right one.
-  - This also sharpens the earlier open question "what should be considered as input".
-    - Input is not only the data.
-      It includes **what has already been precomputed**.
-    - The same query lands on different sides of the line on an Iceberg table that stores a sketch versus a bare Parquet file that does not.
-
-- What the toolkit provides, and what it deliberately does not.
-  - It does **not** provide the optimizer and does **not** pick the plan.
-  - No approximation-aware optimizer exists yet, so every candidate physical plan has to be preparable and runnable by hand.
-  - The deliverable is a **toolkit / harness** that can run and measure *any* physical plan on three axes: cost, error, and soundness.
-  - The benchmark draws the (cost, error, soundness) map.
-    An optimizer is a downstream consumer that walks it.
-
-- Why this is a contribution and not a stopgap.
-  - "Prepare all the physical plans by hand because no optimizer picks them yet" is not a temporary inconvenience.
-    It is the reason the benchmark has to exist.
-  - A classic cost-based optimizer can exist because decades of selectivity estimation and join-cost modeling gave it a map to walk.
-    The approximate side has no such map.
-  - So the map has to come first.
-    AQPBMV2 is the precondition for a future approximation-aware optimizer, not a placeholder for one.
-  - This gives the research bar (later in this document) a concrete target: the map AQPBMV2 produces is the calibration data a future optimizer's cost/error model would be built on.
-
 
 <!--
 Per-example template (each example below follows this 5-part structure):
@@ -859,6 +660,7 @@ fn merge(&self, left: &mut Self::State, right: Self::State);
     The corruption is a property of the aggregate's algebra, not of approximation — which is itself the point.
     The sketch merely inherits whichever algebra its state has.
 
+
 ### Middle-layer finding: filter cardinality decides whether one pass is possible
 
 > Status: this came out of Example 2. Recorded here because it may be worth more
@@ -941,275 +743,29 @@ fn merge(&self, left: &mut Self::State, right: Self::State);
     For example, bucket the filter column coarsely, fan out over the buckets, and only re-scan rows in the boundary bucket.
     - That would be a partial second pass, not a full one.
     - It would also make the filter column's *distribution*, not just its cardinality, matter.
-
-benchmark the thing defined above
-
-try to give more examples like this
-
-then, we can pick which example is good and which example is bad
-
-then, we can have a better definition/scope of middlelayer from those examples
-
-input/output can both be multi dimension the data shape/schema, data distribution can matter
-
-the way middlelayer represents query expression
-
-what should be considered as input/output is a problem
-
-output can include performance, resource usage, accuracy, etc.
-
-
-
-  - TPC-H `lineitem` (familiar, but uniformly generated):
-
-
-```sql
-l_orderkey         -- high cardinality
-l_partkey          -- mid-high cardinality
-l_suppkey          -- mid cardinality
-l_linenumber
-l_quantity         -- small domain (1..50)
-l_extendedprice    -- numeric, usable for quantile
-l_discount         -- 0.00..0.10
-l_tax
-l_returnflag       -- 3 values
-l_linestatus       -- 2 values
-l_shipdate
-l_commitdate
-l_receiptdate
-l_shipinstruct     -- 4 values
-l_shipmode         -- 7 values
-```
-
-  - Caveat on TPC-H:
-    - TPC-H data is generated uniformly.
-    - Heavy-hitter examples degenerate on it, because there is no hitter.
-    - It may still be useful as a uniform control against the skewed `hits` table.
-
-
-
-- Middle-layer shape:
-
-```text
-user-level functionality
-  -> runnable approximate-function implementation
-  -> sketch or exact state implementation
-```
-
-- Current functionality classes:
-  - Count distinct.
-  - Heavy hitters.
-  - Quantile.
-
-- Current exact baselines:
-  - `ExactCountDistinct<HashSet>`
-  - `ExactHeavyHitters<HashMap>`
-  - `ExactQuantile<Vec>`
-
-- Current sketch-backed implementations:
-  - Apache DataSketches HLL for count distinct.
-  - Apache DataSketches FrequentItems for heavy hitters.
-  - Apache DataSketches TDigest for quantile.
-  - `sketch_oxide` HLL for count distinct.
-  - `sketch_oxide` SpaceSaving for heavy hitters.
-  - `sketch_oxide` TDigest for quantile.
-  - `asap_sketchlib` HLL for count distinct.
-  - `asap_sketchlib` CMSHeap for heavy hitters.
-  - `asap_sketchlib` KLL for quantile.
-
-- Current benchmark-owned execution modes:
-  - `grouped_state`
-    - Keep one implementation state per group.
-    - Update that state from all rows in the group.
-    - Finalize one answer per group.
-  - `partitioned_merge`
-    - Build implementation states inside partitions.
-    - Merge partition-local states for each group.
-    - Finalize one answer per group after merge.
-
-- Current report metrics:
-  - For count distinct and quantile:
-    - How many group-level answers stay within the chosen error threshold.
-    - Mean and max relative error for numeric outputs.
-  - For heavy hitters:
-    - Whether returned top-k items are true top-k items.
-    - Whether true top-k items are missing from the returned result.
-
-- Current smoke/demo path:
-  - `cargo run -p aqp-core --example aqpbmv2_functions`
-  - The current generated data is only a smoke test.
-  - It proves implementations can be wired into the middle layer and run.
-  - It is not yet benchmark-grade workload evidence.
-  - The current implementations are still close to one-sketch-per-function cases.
-  - The next step is to add workloads and implementations where the middle layer matters more than the raw sketch API.
-
-- What AQPBMV2 does not claim:
-  - It does not benchmark Spark's function directly.
-  - It does not benchmark Trino's function directly.
-  - It does not benchmark BigQuery's function directly.
-  - It does not benchmark ClickHouse's function directly.
-  - Those systems show that the functionality classes are real.
-
-- Research bar:
-  - AQPBMV2 is interesting only if benchmark-owned execution modes reveal new behavior.
-    - The behavior should be something raw sketch benchmarks miss.
-  - If they do not, AQPBMV2 is still a useful toolkit but a weaker paper contribution.
+- AQPBMV2 does not benchmark Spark / Trino / BigQuery / ClickHouse directly; those systems only show the functionality classes are real.
+- Research bar: AQPBMV2 is a real contribution only if its plans reveal behavior raw sketch benchmarks miss; otherwise it is a useful toolkit but a weaker paper.
 
 ## AQPBMV2 Preliminary Result
 
-- Command:
-  - `cargo run -q -p aqp-core --example aqpbmv2_functions`
+`cargo run -q -p aqp-core --example aqpbmv2_functions` — a smoke test, not benchmark-grade evidence.
 
-- Functionality coverage supported by this preliminary result:
-  - Count distinct:
-    - Apache DataSketches HLL supports the count-distinct functionality.
-    - `sketch_oxide` HLL supports the count-distinct functionality.
-    - `asap_sketchlib` HLL supports the count-distinct functionality.
-  - Heavy hitters:
-    - Apache DataSketches FrequentItems supports the heavy-hitter functionality.
-    - `sketch_oxide` SpaceSaving supports the heavy-hitter functionality.
-    - `asap_sketchlib` CMSHeap supports the heavy-hitter functionality.
-  - Quantile:
-    - Apache DataSketches TDigest supports the quantile functionality.
-    - `sketch_oxide` TDigest supports the quantile functionality.
-    - `asap_sketchlib` KLL supports the quantile functionality.
-  - This is a capability and integration result.
-  - It does not yet support a claim about general benchmark quality or winner libraries.
+- **What runs**: all three functionality classes go through the one interface, three libraries each, against an exact baseline, under both `grouped_state` and `partitioned_merge`:
+  - count distinct — DataSketches / `sketch_oxide` / `asap_sketchlib` HLL;
+  - heavy hitters — DataSketches FrequentItems / `sketch_oxide` SpaceSaving / `asap_sketchlib` CMSHeap;
+  - quantile — DataSketches TDigest / `sketch_oxide` TDigest / `asap_sketchlib` KLL.
+- **Input**: a hand-written synthetic generator (rows assigned to groups by `idx % group_count`), not from a query planner or real schema — so these numbers are only about the toy groups. Count distinct: 50k rows / 32 groups / value cardinality 20k. Heavy hitters: 80k rows / 24 groups / top-3 ~45/20/15%. Quantile: 80k rows / 16 groups / p95.
+- **Results** (mean / max relative error; heavy hitters report exact top-k recovery):
 
-- What the input is:
-  - Each input row has two logical fields.
-    - `group_key`
-    - `value`
-  - A group means one distinct value of the synthetic `group_key`.
-    - Example: `group_000`, `group_001`, ..., `group_031`.
-    - This mimics one output group from `GROUP BY service`.
-  - Current demo group assignment is hand-written in the synthetic generator.
-    - It assigns rows to groups with `idx % group_count`.
-    - It is not produced by a SQL interpreter, query planner, or real data schema.
-  - The benchmark groups rows by `group_key`.
-    - It then runs the target functionality over the `value` field inside each group.
-    - For count distinct, it counts distinct `value`s inside each synthetic group.
-    - For heavy hitters, it finds frequent `value`s inside each synthetic group.
-    - For quantile, it estimates the p95 of `value`s inside each synthetic group.
-  - Each group owns one independent aggregate state for the implementation being tested.
-  - Any group-level claim below only refers to these synthetic demo groups.
-    - It is not a claim about production groups or all possible group-by workloads.
-  - Count distinct input:
-    - 50,000 rows.
-    - 32 synthetic group-by groups.
-    - Deterministic value generator with value cardinality 20,000.
-  - Heavy hitter input:
-    - 80,000 rows.
-    - 24 synthetic group-by groups.
-    - Deterministic top-k pattern.
-    - Per group, the top items are intentionally clear.
-      - Roughly 45%, 20%, and 15% for the top three items.
-      - Remaining rows are long-tail noise.
-  - Quantile input:
-    - 80,000 rows.
-    - 16 synthetic group-by groups.
-    - Deterministic periodic values with a small tail bump.
-    - Query target is p95.
+| functionality | DataSketches | `sketch_oxide` | `asap_sketchlib` |
+| --- | --- | --- | --- |
+| count distinct | 0.76% / 2.40% | 0.87% / 2.27% | 0.55% / 1.47% |
+| heavy hitters | top-k exact | top-k exact | top-k exact |
+| quantile | ~0 | 0.39% / 0.63% | 0 |
 
-- What the output is:
-  - A JSON report.
-  - Exact baseline outputs for each functionality class.
-  - Candidate outputs under the `grouped_state` execution mode.
-  - Candidate outputs under the `partitioned_merge` execution mode.
-  - Numeric summaries for count distinct and quantile.
-    - Fraction of groups whose approximate answer is within the chosen error threshold.
-    - Mean relative error.
-    - Max relative error.
-  - Set summaries for heavy hitters.
-    - Fraction of returned top-k items that are actually correct.
-    - Fraction of exact top-k items that were returned.
-
-- What "within threshold" means here:
-  - It is a workload-level metric.
-  - It is not a statistical confidence interval.
-  - It means the fraction of produced answers within the declared error threshold.
-  - Example:
-    - 32 count-distinct groups.
-    - 32 groups within the relative-error threshold.
-    - The run has `100%` of answers within threshold.
-
-- Count distinct result:
-  - Exact output has 32 groups.
-  - All implementations have `100%` of group-level answers within the chosen error threshold.
-  - Apache DataSketches HLL:
-    - Mean relative error: about `0.76%`.
-    - Max relative error: about `2.40%`.
-  - `sketch_oxide` HLL:
-    - Mean relative error: about `0.87%`.
-    - Max relative error: about `2.27%`.
-  - `asap_sketchlib` HLL:
-    - Mean relative error: about `0.55%`.
-    - Max relative error: about `1.47%`.
-
-- Heavy hitter result:
-  - Exact output has 24 groups.
-  - Apache DataSketches FrequentItems:
-    - Every returned top-k item is correct.
-    - No exact top-k item is missing.
-  - `sketch_oxide` SpaceSaving:
-    - Every returned top-k item is correct.
-    - No exact top-k item is missing.
-  - `asap_sketchlib` CMSHeap:
-    - Every returned top-k item is correct.
-    - No exact top-k item is missing.
-
-- Quantile result:
-  - Exact output has 16 groups.
-  - Apache DataSketches TDigest:
-    - All group-level answers are within the chosen error threshold.
-    - Mean relative error: approximately `0`.
-  - `sketch_oxide` TDigest:
-    - All group-level answers are within the chosen error threshold.
-    - Mean relative error: about `0.39%`.
-    - Max relative error: about `0.63%`.
-  - `asap_sketchlib` KLL:
-    - All group-level answers are within the chosen error threshold.
-    - Mean relative error: `0`.
-
-- What this result represents:
-  - It shows the toolkit wiring works.
-  - Exact baselines and sketch-backed implementations run through the same interface.
-  - Multiple sketch libraries can be compared under the same benchmark-owned execution modes.
-  - `grouped_state` and `partitioned_merge` both execute successfully.
-  - It is still close to raw sketch comparison because each current implementation mostly wraps one sketch.
-  - Its purpose is to show the middle-layer interface can host those implementations.
-
-- What this result does not prove:
-  - It does not prove one library is generally better.
-  - It does not prove AQPBMV2 is already benchmark-grade.
-  - It does not yet prove that AQPBMV2 reveals behavior missed by raw sketch benchmarks.
-  - It does not validate the group-generation logic.
-  - The generated data is too easy.
-  - The result is a smoke test and preliminary validation of the toolkit.
-
-- Next steps:
-  - Replace toy generators with benchmark-grade workload generators.
-  - Use explicit distributions.
-    - Uniform.
-    - Zipf.
-    - Lognormal.
-    - Pareto or heavy-tail mixtures.
-  - Add workload knobs.
-    - Group cardinality.
-    - Group-key generation.
-    - Mapping from workload/task semantics to group keys.
-    - Group-size skew.
-    - Tail heaviness.
-    - Top-k gap.
-    - Filter selectivity.
-    - Correlation between group key and value.
-    - Partition count and merge shape.
-  - Add resource and performance measurement.
-    - Update throughput.
-    - Query latency.
-    - Merge latency.
-    - Memory or serialized state size.
-  - Check whether AQPBMV2 execution modes reveal behavior that raw sketch benchmarks miss.
+  - Every count-distinct and quantile group is within threshold; every heavy-hitter run returns the true top-k with none missing.
+- **What it does / does not prove**: the wiring works and libraries compare under the same modes; it does **not** show one library is better, that AQPBMV2 is benchmark-grade, or that it reveals anything a raw sketch benchmark misses — the generated data is too easy.
+- **Next**: replace toy generators with real workloads (Uniform / Zipf / Lognormal / Pareto; knobs for group cardinality, size skew, tail, top-k gap, filter selectivity, key–value correlation, partition/merge shape) and add resource/performance measurement (throughput, latencies, state size).
 
 ## Previous AQPBMV1
 
@@ -1219,96 +775,14 @@ user-level functionality
   - Metrics: throughput, accuracy, and memory usage.
   - Role: provide primitive-level evidence for AQPBMV2.
 
-## Future AQPBMV3
-
-Placeholder.
-
-## Future AQPBMV4
-
-Placeholder.
-
-## Future AQPBMV5
-
-Placeholder.
-
 ## Existing Approximate Query Support
 
-- Codex found approximate-query or sketch-backed functions in several systems.
-  - This matches my impression that approximation support exists in practice.
-  - This list is not exhaustive.
-  - More systems and functions may need to be added later.
+Approximate aggregates are shipped widely, in fragmented forms (system functions, sketch-state APIs, UDFs, standalone libraries) — which is what motivates a middle layer. Not exhaustive.
 
-- Apache DataFusion:
-  - `approx_distinct`
-  - `approx_median`
-  - `approx_percentile_cont`
-  - `approx_percentile_cont_with_weight`
-  - Approximate percentile functionality is described as using t-digest.
-  - <https://datafusion.apache.org/user-guide/sql/aggregate_functions.html>
-
-- Trino:
-  - `approx_distinct`
-  - `approx_most_frequent`
-  - `approx_percentile`
-  - `numeric_histogram`
-  - HyperLogLog state functions such as `approx_set` and `merge`
-  - <https://trino.io/docs/current/functions/aggregate.html>
-
-- Spark SQL:
-  - `approx_count_distinct`
-  - `approx_percentile`
-  - `percentile_approx`
-  - `count_min_sketch`
-  - HLL sketch functions
-  - KLL sketch aggregate, merge, and query functions
-  - <https://spark.apache.org/docs/latest/api/sql/index.html>
-
-- Google BigQuery:
-  - `APPROX_COUNT_DISTINCT`
-  - `APPROX_QUANTILES`
-  - `APPROX_TOP_COUNT`
-  - `APPROX_TOP_SUM`
-  - <https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/approximate_aggregate_functions>
-
-- ClickHouse:
-  - Approximate distinct-count variants.
-    - `uniq`
-    - `uniqCombined`
-    - `uniqHLL12`
-    - `uniqTheta`
-  - Quantile variants such as t-digest and GK-family functions.
-  - <https://clickhouse.com/docs/sql-reference/aggregate-functions/reference>
-
-- Snowflake:
-  - HLL functionality
-  - MinHash and similarity functionality
-  - Approximate top-k functionality
-  - Approximate percentile functionality
-  - Accumulate, combine, and estimate style functions for some approximate states
-  - <https://docs.snowflake.com/en/sql-reference/functions-aggregation>
-
-- Apache Druid:
-  - DataSketches Theta aggregators
-  - DataSketches HLL aggregators
-  - DataSketches Quantiles aggregators
-  - Documentation also discusses older approximate histogram and cardinality implementations.
-  - <https://druid.apache.org/docs/latest/querying/aggregations/>
-
-- Apache DataSketches:
-  - A production-quality sketch library rather than a complete AQP system.
-  - Provides sketch implementations and adaptors for multiple systems.
-    - Examples: Hive, Pig, PostgreSQL, BigQuery, and Druid.
-  - Provides cross-language implementations and binary compatibility goals.
-  - <https://datasketches.apache.org/>
-  - <https://datasketches.apache.org/docs/Architecture/SketchesByComponent.html>
-
-- Takeaway:
-  - Approximate functionality is common.
-  - The support is fragmented across several forms.
-    - System-specific functions.
-    - Sketch-state APIs.
-    - UDFs and extensions.
-    - Standalone sketch libraries.
-  - This motivates AQPBMV2's middle layer.
-    - Runnable approximate-function implementations.
-    - Benchmark-owned execution modes.
+- **DataFusion**: `approx_distinct`, `approx_median`, `approx_percentile_cont[_with_weight]` (t-digest). <https://datafusion.apache.org/user-guide/sql/aggregate_functions.html>
+- **Trino**: `approx_distinct`, `approx_most_frequent`, `approx_percentile`, `numeric_histogram`, HLL state functions (`approx_set`, `merge`). <https://trino.io/docs/current/functions/aggregate.html>
+- **Spark SQL**: `approx_count_distinct`, `approx_percentile`, `count_min_sketch`, HLL and KLL sketch functions. <https://spark.apache.org/docs/latest/api/sql/index.html>
+- **BigQuery**: `APPROX_COUNT_DISTINCT`, `APPROX_QUANTILES`, `APPROX_TOP_COUNT`, `APPROX_TOP_SUM`. <https://docs.cloud.google.com/bigquery/docs/reference/standard-sql/approximate_aggregate_functions>
+- **ClickHouse**: `uniq` / `uniqCombined` / `uniqHLL12` / `uniqTheta` (+ `uniqThetaIntersect/Union/Not`); t-digest and GK quantiles. <https://clickhouse.com/docs/sql-reference/aggregate-functions/reference>
+- **Snowflake**: HLL, MinHash/similarity, approximate top-k and percentile, accumulate/combine/estimate style. <https://docs.snowflake.com/en/sql-reference/functions-aggregation>
+- **Druid**: DataSketches Theta / HLL / Quantiles aggregators. <https://druid.apache.org/docs/latest/querying/aggregations/>
