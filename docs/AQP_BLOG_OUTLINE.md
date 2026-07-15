@@ -18,8 +18,8 @@ Example queries (each follows the 5-part template: SQL, intent, physical plan, a
 - [Example 6: median event time per site — partitioning decides the answer](#example-6-median-event-time-per-site--partitioning-decides-the-answer)
 - [Example 7: p99 latency per site — the benchmark's own metric picks the winner](#example-7-p99-latency-per-site--the-benchmarks-own-metric-picks-the-winner)
 - [Example 8: audience overlap — excellent sketches, worthless answer](#example-8-audience-overlap--excellent-sketches-worthless-answer)
-- [Example 9: top-10 search phrases by distinct users — the cheap plan is not just approximate, it is wrong](#example-9-top-10-search-phrases-by-distinct-users--the-cheap-plan-is-not-just-approximate-it-is-wrong)
-- [Example 10: merge does not compose with join](#example-10-merge-does-not-compose-with-join)
+- [Example 9: top-10 search phrases by distinct users — a provably sound cheap plan](#example-9-top-10-search-phrases-by-distinct-users--a-provably-sound-cheap-plan)
+- [Example 10: a fan-out join is safe for count-distinct but corrupts quantile](#example-10-a-fan-out-join-is-safe-for-count-distinct-but-corrupts-quantile)
 
 ## Abstract
 
@@ -142,21 +142,41 @@ trait ApproxFunction {
 
 ## Table Header
 
-The following exampls will rely on the ClickBench table.
-There are 2 benefits:
+The examples are anchored to a real table's header for one reason only: to avoid inventing
+columns off the top of our head.
+The point is the header, not the rows — a concrete, real column list lets us ask "given these
+columns, what example query can I write", and column cardinality is what decides whether the
+middle layer shows up at all.
+Nothing here commits us to this table; the data can be synthesized later.
+The header just keeps the examples honest.
 
-- It has public playground to quickly test for queries.
-- It is from real data.
+We use the ClickBench `hits` table (a real, anonymized web-analytics log, heavy-tailed).
+Two practical benefits: it is real data, and it has a public playground where queries can be
+tried and exact ground truth (`uniqExact`, `quantileExact`) and physical plans (`EXPLAIN`) can
+be measured directly.
 
-- Tables to look for examples on:
-  - The point is the header, not the row count.
-  - A concrete header makes it possible to ask: given this table, what example query can I write?
-  - Column cardinality is what decides whether the middle layer shows up at all.
+References (present so that no claim below is made off the top of our head):
 
-  - ClickBench `hits` (real web-log table, heavy-tailed).
-  - Cardinalities below are measured on the real 100M-row table, not guessed from the type.
-    - Source: ClickHouse public playground, `https://play.clickhouse.com/?user=explorer`.
-    - Total rows: 99,997,497.
+- Canonical schema (the column list): ClickBench `create.sql` —
+  `https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/create.sql`.
+- Dataset docs: ClickHouse example datasets, "Anonymized Web Analytics (Metrica)" —
+  `https://clickhouse.com/docs/getting-started/example-datasets/metrica`.
+  Note: this page lists the columns but gives **no per-column descriptions**.
+- Playground where every number below was measured —
+  `https://play.clickhouse.com/?user=explorer`.
+
+What is cited vs. measured vs. inferred:
+
+- **Cited**: the column names and declared types come from the schema above.
+- **Measured** on the playground (100M-row table, total rows 99,997,497): every cardinality,
+  distribution, quantile, and physical plan quoted in the examples.
+- **Inferred, not authoritative**: the *meaning* of a column. The docs describe none, and the
+  data is anonymized, so any semantic label (e.g. calling `ResponseEndTiming` a latency, or
+  `MobilePhone` a phone-vendor id) is a guess from the name plus the measured distribution.
+  Guessing meaning from the name already produced wrong examples more than once (`Income`,
+  `MobilePhone`), so semantic labels below are deliberately hedged.
+
+The header below is a selected subset of the ~100 columns, annotated with measured cardinality:
 
 ```sql
 WatchID            Int64      -- near-unique per row
@@ -183,7 +203,7 @@ Income             Int16      -- 4 distinct: {0, 1, 2, 3} (bucketed level, 0 loo
 Interests          Int16      -- 9,834 distinct (looks like a bitmask, not an ordinal)
 IsRefresh          Int16      -- 0/1
 IsMobile           Int16      -- 0/1
-ResponseEndTiming  Int32      -- latency, heavy-tailed, 28,376 distinct
+ResponseEndTiming  Int32      -- numeric timing column (ms), heavy-tailed; 74.6% are 0, 28,376 distinct among >0
 SendTiming         Int32
 ConnectTiming      Int32
 ```
@@ -714,7 +734,7 @@ Aggregating (Aggregates: uniq(UserID))
     Both are invisible to a raw sketch benchmark, which only ever reports the ~1%.
   - Together they are the strongest argument that the *implementation*, not the sketch, is the thing that has to be measured.
 
-### Example 9: top-10 search phrases by distinct users — the cheap plan is not just approximate, it is wrong
+### Example 9: top-10 search phrases by distinct users — a provably sound cheap plan
 
 ```sql
 SELECT SearchPhrase, COUNT(DISTINCT UserID) AS users
@@ -730,6 +750,9 @@ Report the 10 search phrases with the most distinct users.
 - **What it does, and who asks it:**
   - "What are people searching for", ranked by **unique users** rather than raw hits, precisely so that one bot hammering a single phrase does not dominate the report.
     Ranking by distinct users instead of by hits is the standard de-botting move.
+  - Caveat on the group key: `SearchPhrase` is raw text, so `"смотреть онлайн"` and `"смотреть онлайн "` are different groups.
+    A real pipeline normalizes (lowercase, trim, stem) upstream.
+    That is a data-cleaning step, identical for exact and approximate plans, and orthogonal to everything below.
 
 - **Physical plan (from ClickHouse `EXPLAIN`):**
 
@@ -740,108 +763,101 @@ Limit 10
          └─ ReadFromMergeTree (Prewhere: notEmpty(SearchPhrase))
 ```
 
-  - The plan keeps one count-distinct state **per phrase**, and `SearchPhrase` is a very high-cardinality key — millions of groups.
-    That is what makes the naive approximate plan unaffordable, and what tempts everyone into a cheaper, unsound plan.
+  - The plan keeps one count-distinct state **per phrase**, and `SearchPhrase` is a very high-cardinality key.
+    Measured: 6,019,102 distinct non-empty phrases.
+    One HLL per phrase is millions of 16KB states — not affordable — so the naive one-state-per-group plan is off the table, and a two-level plan is forced.
 
-- **How approximation plays here — the cheap plan is not just approximate, it is wrong:**
-  - One HLL per phrase means millions of 16KB states — not affordable.
-    So the plan everyone reaches for is two-level: first use a cheap heavy-hitter sketch on **hit counts** to find candidate phrases, then build HLLs only for those candidates.
-    This assumes hit count is a usable proxy for distinct-user count.
-    **It is not.**
-  - Measured.
-    Top-10 by distinct users, with each phrase's rank by hit count:
+- **How approximation plays here — a composed plan that is cheap *and* provably correct:**
+  - The two-level plan: first run a cheap frequency sketch on **hit counts** to shortlist candidate phrases, then build an HLL only for each candidate, then take the top-10 by HLL distinct-user estimate.
+  - The reason this is sound is a hard bound: for any phrase, `distinct_users <= hits`.
+    Hit count is therefore an **upper bound** on distinct-user count, so a shortlist "phrases with hits >= t" can never drop a phrase whose distinct-user count is >= t.
+    The frequency prefilter yields a *safe superset*, never a lossy filter.
+  - This gives a sound adaptive stopping rule (a threshold-algorithm argument): walk phrases in descending hit order, building HLLs; stop once the 10th-best HLL estimate so far is >= the hit count of the next un-examined phrase, because no un-examined phrase can then beat it.
+  - Measured, the shortlist is tiny.
+    The 10th-largest distinct-user count is 7,572, and only **17** of the 6,019,102 phrases have hits >= 7,572.
+    So building ~17 HLLs (a few hundred to be safe) instead of 6 million answers the query exactly, with a correctness guarantee.
 
-| rank by users | phrase | users | hits | **rank by hits** |
+| rank by users | phrase | users | hits | rank by hits |
 | --- | --- | --- | --- | --- |
 | 1 | карелки | 23,673 | 70,263 | 1 |
-| 2 | смотреть онлайн | 19,747 | 24,580 | 3 |
-| 3 | албатрутдин | 18,394 | 34,675 | 2 |
-| 4 | смотреть онлайн бесплатно | 17,553 | 21,647 | 4 |
 | 5 | смотреть | 14,603 | 19,707 | 5 |
-| 6 | экзоидные | 14,529 | 16,620 | 9 |
-| 7 | мангу в зарабей грама | 14,198 | 19,195 | 6 |
-| 8 | сколько мытищи | 9,007 | 12,317 | 10 |
-| 9 | дружке помещение | 8,792 | 17,284 | 7 |
-| 10 | комбинирование смотреть | 7,572 | 9,545 | **12** |
+| 10 | комбинирование смотреть | 7,572 | 9,545 | 12 |
 
-  - The true #10 by distinct users sits at rank **12** by hits.
-  - A candidate set of "top-10 by hits" therefore **misses a true top-10 answer**.
-  - It also wastes candidates: `galaxy table` is rank 8 by hits but has only 7,088 users, and `3dnewsru` is rank 20 by hits with just 2,698 users.
-  - The ranking is also reordered inside the top 5: `албатрутдин` is #2 by hits but #3 by users.
-
-- Why it breaks: the hits-per-user ratio is not constant.
-  - `карелки`: 3.0 hits/user.
-    `экзоидные`: 1.14 hits/user.
-    `3dnewsru`: 2.7 hits/user.
-  - A ~2.6x spread across phrases.
-  - Hit count is therefore **not a monotone proxy** for distinct-user count, so a prefilter on hit count cannot be trusted to contain the true top-k by users.
-
-- The finding:
-  - The memory-saving plan is not merely *less accurate*.
-    It can return a **flatly wrong answer**, and it will do so silently.
-  - To make it safe you must widen the candidate set — and how far you must widen depends on the maximum hits-per-user spread in the data, which you do not know in advance and which would take a *different* sketch to measure.
-  - So the plan choice, its soundness, and the data property that decides its soundness all live in the middle layer.
-    None of them are visible from the sketch API.
-
-### Example 10: merge does not compose with join
-
-```sql
--- hits joined to a small site dimension table, grouped by the site's category
-SELECT d.category,
-       COUNT(DISTINCT h.UserID)              AS users,
-       quantile(0.99)(h.ResponseEndTiming)   AS p99
-FROM   hits h
-JOIN   site_dim d ON h.CounterID = d.CounterID
-GROUP BY d.category;
-```
-
-Join `hits` to a small site dimension table and, per site category, report both the distinct users and the p99 latency.
-
-- **What it does, and who asks it:**
-  - Rolling a fact table up to a business dimension ("group sites by category, then aggregate") is the normal shape of a warehouse query.
-    A fact table joined to small dimension tables is the standard star-schema pattern, not a contrivance.
-  - This is the one example that steps outside the single ClickBench table, because it needs a dimension table (`site_dim`) to join against.
-
-- **Physical plan (described, not run — the playground has no `site_dim`):**
-
-```text
-Aggregating (Keys: d.category; Aggregates: uniq(h.UserID), quantile(0.99)(h.ResponseEndTiming))
- └─ Join (h.CounterID = d.CounterID)
-    ├─ ReadFromMergeTree (default.hits)
-    └─ ReadFromMemory (site_dim)
-```
-
-  - The standard optimization here is **eager aggregation**: push the aggregation below the join.
-    Pre-compute one sketch per `CounterID`, then per category `merge` the sketches of the `CounterID`s in that category — avoiding a re-scan of `hits` per category.
-    This is exactly what a pre-aggregated sketch cube (Druid-style rollup) exists to do.
-
-- **How approximation plays here — the rewrite is safe for one column and wrong for the other:**
-  - `merge` in the sketch world implicitly assumes its inputs are **disjoint partitions**.
-    A join does not respect that: if a `CounterID` maps to more than one category, or the dimension table has more than one row per `CounterID`, the same partial state gets folded in more than once.
-  - **HLL merge is idempotent.** Registers are max-ed, so `merge(H, H) = H`.
-    Double-folding the same state changes nothing — the `COUNT(DISTINCT)` column survives.
-  - **KLL, t-digest, and CMS merge are not idempotent.** They are multiset unions: `merge(K, K)` doubles the weight.
-    Double-folding silently corrupts the answer — the `quantile` column does **not** survive.
+  - The ranking does reshuffle (the true #10 by users is #12 by hits, since the hits-per-user ratio varies ~2.6x across phrases), so the frequency order is *not* the final answer.
+    But because it is a safe superset, the HLL pass over the shortlist recovers the exact top-10.
 
 - **What the benchmark measures, and why it is AQP BM:**
-  - The same query plan is **correct for the `COUNT(DISTINCT)` column and wrong for the `quantile` column**, in the same query, over the same join.
-    The word `merge` is hiding two different algebras: a set union (idempotent) and a multiset union (not idempotent).
-  - The current trait has exactly one `merge` signature:
+  - This is the one positive composition in the set: a plan that no single sketch expresses, that is far cheaper than the naive plan, and that is **provably correct** rather than merely close.
+  - The soundness rests entirely on a middle-layer fact — the `distinct_users <= hits` bound relating two different aggregates — plus the stopping rule built on it.
+    The sketch API knows nothing about this bound; it only knows how to estimate one aggregate at a time.
+  - So the benchmark measures the composed plan's cost against the naive plan, and, unlike every negative example here, certifies its answer as exact.
+    A raw sketch benchmark cannot even state the plan, let alone its correctness argument.
+
+### Example 10: a fan-out join is safe for count-distinct but corrupts quantile
+
+```sql
+-- cohort = users who EVER visited on mobile; then summarize ALL their pageviews
+SELECT COUNT(DISTINCT h.UserID)            AS cohort_users,
+       quantile(0.99)(h.ResponseEndTiming) AS p99
+FROM   hits h
+JOIN  (SELECT UserID FROM hits WHERE IsMobile = 1) m   -- a bag: one row per mobile pageview, NOT distinct
+  ON   h.UserID = m.UserID
+WHERE  h.ResponseEndTiming > 0;
+```
+
+Both sides come from `hits`; there is no invented table.
+The right side is a cohort of users (those who ever went mobile), and the query reports how many such users there are and the p99 page-load time across all of their pageviews.
+
+- **What it does, and who asks it:**
+  - Cohort analytics: take the users who ever did X, then summarize all of their behaviour.
+    Here X is "visited on mobile at least once".
+  - This is the normal shape of a retention or segment query, and it is naturally a join of the fact table to a user cohort — both drawn from the same log.
+
+- **The footgun that makes it interesting:**
+  - The cohort is meant to be a *set* of users.
+    The correct form is a semi-join: `WHERE h.UserID IN (SELECT UserID FROM hits WHERE IsMobile = 1)`, or `SELECT DISTINCT UserID`.
+  - Written as `JOIN (SELECT UserID FROM hits WHERE IsMobile = 1)` without `DISTINCT`, the right side is a *bag*: one row per mobile pageview.
+    So each `hits` row fans out by the number of mobile pageviews that user made.
+  - Measured, that fan-out is real and non-uniform: the cohort is 2,208,170 users over 10,172,424 mobile pageviews, and per-user multiplicity is median 2, p99 47, max 2,489.
+
+- **Physical plan (described):**
+
+```text
+Aggregating (Aggregates: uniq(h.UserID), quantile(0.99)(h.ResponseEndTiming))
+ └─ Join (h.UserID = m.UserID)                       -- fan-out: the right side is a bag
+    ├─ ReadFromMergeTree (default.hits)
+    └─ ReadFromMergeTree (default.hits, Prewhere: IsMobile = 1)
+```
+
+  - The eager-aggregation rewrite (push the aggregate below the join, the reason mergeable sketches are attractive at all) would pre-compute one sketch per `UserID`, then fold each user's state in once per matching right row — i.e. fold it (that user's mobile-pageview count) times.
+
+- **How approximation plays here — the same join is safe for one column and wrong for the other. Measured:**
+  - `COUNT(DISTINCT h.UserID)` is 2,208,170 with or without the fan-out.
+    A set does not care that a user's rows were duplicated; the duplicates collapse.
+  - `quantile(0.99)(h.ResponseEndTiming)` moves from **29,095** (each pageview counted once) to **22,223** under the fan-out weighting — a **23.6%** error — because heavy-activity users are now counted dozens of times and drag the distribution down.
+  - The sketch layer mirrors this exactly: HLL merge is idempotent (`merge(H, H) = H`), so folding a user's state more than once is harmless; KLL and t-digest merge is additive (`merge(K, K)` doubles the weight), so folding more than once corrupts the quantile.
+
+- **What the benchmark measures, and why it is AQP BM:**
+  - The same plan is **correct for the `COUNT(DISTINCT)` column and wrong for the `quantile` column**, in one query, over one join, on one table.
+    The word `merge` is hiding two different algebras: an idempotent set union and an additive multiset union.
+  - The current trait has exactly one `merge` signature, which cannot say which algebra it implements:
 
 ```rust
 fn merge(&self, left: &mut Self::State, right: Self::State);
 ```
 
-  - That signature cannot express which algebra it implements, so the middle layer cannot tell a planner which merges are safe to reorder, duplicate, or push below a join.
-    This is stronger than "merge loses accuracy": **merge does not have a single well-defined semantics across functionality classes, and the interface pretends it does.** Measuring this needs a query with a join and two different aggregates — precisely what a raw sketch benchmark never has.
+  - Sketches are attractive precisely because they are mergeable — pre-aggregate once, merge everywhere (the sketch-cube / rollup promise).
+    This example is the governance rule on that promise: reuse-by-merge is safe under fan-out only for idempotent merges.
+    The middle layer needs to carry the merge algebra so a planner knows which push-downs are sound; the sketch API alone does not expose it.
+    Seeing this needs a fan-out join and two different aggregates side by side — which a raw sketch benchmark never has.
 
 - Open questions this raises:
-  - Should the interface expose the merge algebra (idempotent / additive / lossy) as a property?
+  - Should the interface expose the merge algebra (idempotent / additive) as a property, so a planner knows which push-downs are safe?
   - Theta sketches carry a richer algebra (union, intersection, difference).
-    Are they the only family whose merge actually composes with relational operators?
-  - Does any of this change if the join is a strict 1:1 dimension lookup?
-    (Probably yes — the unsafe case needs fan-out.
-    That would make fan-out itself a benchmark knob.)
+    Are they the only count-distinct family whose merge composes with relational operators?
+  - The exact baseline is not immune: an exact multiset quantile is corrupted by the same fan-out (29,095 -> 22,223).
+    The corruption is a property of the aggregate's algebra, not of approximation — which is itself the point.
+    The sketch merely inherits whichever algebra its state has.
 
 ### Middle-layer finding: filter cardinality decides whether one pass is possible
 
