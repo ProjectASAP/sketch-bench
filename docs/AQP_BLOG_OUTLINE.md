@@ -8,6 +8,37 @@
 >
 > Goal: explain the problem scope of AQPBM and the contribution of the current AQPBMV2 design.
 
+## Concrete Problem Definition
+
+AQPBM is trying to understand how much speedup and memory reduction can be gained, and how much accuracy needs to lose, from introducing approximation into queries.
+
+### Components
+
+#### Data Source
+
+- Synthetic data generation under different distribution.
+- Effect of order of data is unknown.
+- Real data set
+
+#### Queries
+
+- Real queries
+- Hand-made representative queries
+
+#### Physical Layer / Execution Plan
+
+- multiple possible physical layer for each query in previous section
+  - **Notice**: the physical layer is **not** automatically translated from queries in previous section
+    - if the translation is automatic, **that's great**s (i.e., ASAPController)
+    - after all, hand written physical layer is fine
+
+#### Monitor
+
+- Performance: throughput/latency/wall clock/etc.
+- Accuracy: relative error/rank error (when applicable)/etc.
+- Resource: storage overhead/memory usage/etc.
+- **Interpreter of Physical Layer**: if this is avoidable, definitely avoid this; how to monitor previous metrics, I have no idea at this moment
+
 ## Quick Access
 
 Example queries (each follows the 5-part template: SQL, intent, physical plan, approximate plan, what the benchmark measures):
