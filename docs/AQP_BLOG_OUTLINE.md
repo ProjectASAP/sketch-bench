@@ -21,7 +21,7 @@ Example queries (each follows the 5-part template: SQL, intent, physical plan, a
 - [Example 7: p99 latency per site — the benchmark's own metric picks the winner](#example-7-p99-latency-per-site--the-benchmarks-own-metric-picks-the-winner)
 - [Example 8: audience overlap — excellent sketches, worthless answer](#example-8-audience-overlap--excellent-sketches-worthless-answer)
 - [Example 9: top-10 search phrases by distinct users — a provably sound cheap plan](#example-9-top-10-search-phrases-by-distinct-users--a-provably-sound-cheap-plan)
-- [Example 10: a fan-out join is safe for count-distinct but corrupts quantile](#example-10-a-fan-out-join-is-safe-for-count-distinct-but-corrupts-quantile)
+<!-- - [Example 10: a fan-out join is safe for count-distinct but corrupts quantile](#example-10-a-fan-out-join-is-safe-for-count-distinct-but-corrupts-quantile) -->
 
 ## TL;DR
 
@@ -594,7 +594,7 @@ Aggregating
 
 - One plan is correct for `COUNT(DISTINCT)` and wrong for `quantile` — so the middle layer must know each state's merge algebra (idempotent vs additive) to tell which plan rewrites are safe. -->
 
-
+<!-- 
 ### Middle-layer finding: filter cardinality decides whether one pass is possible
 
 > Status: this came out of Example 2. Recorded here because it may be worth more
@@ -699,7 +699,7 @@ Aggregating
 
   - Every count-distinct and quantile group is within threshold; every heavy-hitter run returns the true top-k with none missing.
 - **What it does / does not prove**: the wiring works and libraries compare under the same modes; it does **not** show one library is better, that AQPBMV2 is benchmark-grade, or that it reveals anything a raw sketch benchmark misses — the generated data is too easy.
-- **Next**: replace toy generators with real workloads (Uniform / Zipf / Lognormal / Pareto; knobs for group cardinality, size skew, tail, top-k gap, filter selectivity, key–value correlation, partition/merge shape) and add resource/performance measurement (throughput, latencies, state size).
+- **Next**: replace toy generators with real workloads (Uniform / Zipf / Lognormal / Pareto; knobs for group cardinality, size skew, tail, top-k gap, filter selectivity, key–value correlation, partition/merge shape) and add resource/performance measurement (throughput, latencies, state size). -->
 
 ## Previous AQPBMV1
 
