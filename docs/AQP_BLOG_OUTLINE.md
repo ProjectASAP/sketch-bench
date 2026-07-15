@@ -25,26 +25,21 @@ Example queries (each follows the 5-part template: SQL, intent, physical plan, a
 
 ## TL;DR
 
-**The middle layer is the physical plan, and AQPBMV2 measures it.**
-A sketch is a *leaf* — create / update / merge / finalize over one state — and an exact `HashSet` has the same shape, so leaves are interchangeable components, not the subject.
-The *plan* is the subject: the graph around the leaves — how many states and keyed by what, how many passes, how partial states are partitioned and merged, which side of a join the aggregate sits on, how results compose.
-A raw sketch benchmark tests one leaf over one stream; a system benchmark tests a whole engine; neither tests the plan.
+**The middle layer is around the physical plan, and AQPBMV2 measures it.**
 
-**Why the plan is the interesting unit under approximation.**
-Classic optimizers assume every physical plan of a query returns the same answer and differs only in cost; under approximation the answers differ, with different error — so there is no single optimal plan, only a (cost, error) frontier, and some rewrites (e.g. pushing an aggregate below a join) are sound for one leaf (idempotent HLL merge) and silently wrong for another (additive quantile merge).
-The plan matters only when the answer is *not* already precomputable: a global `COUNT(DISTINCT)` is a stored sketch (nothing to benchmark), but the same aggregate per group is a live computation (the benchmark's territory).
+- Sketch or exact data structures are interchangeable.
+- How sketch or exact data structures together serve some functionality is the middle layer.
+- A physical plan is a good fit: already optimized, but not executed.
 
-**What the middle layer / toolkit must have:**
+**Why the plan matters under approximation.**
 
-- an **IR** reusing a conventional plan representation — reuse a query engine's frontend for `SQL -> logical plan`, then build our own physical IR and interpreter (the Arroyo pattern), not the engine's executor;
-- a **leaf plug-in** (`create/update/merge/finalize`) holding an exact or sketch state, plus **node annotations** the exact world never needed: merge algebra (idempotent / additive) and error metric (rank / value);
-- an **interpreter** that pins the execution details determining the answer (partition topology, merge order for order-sensitive sketches) and reproduces them faithfully;
-- **monitoring** reporting each plan on three tiers of portability:
-  1. plan-intrinsic — total state size, passes, merges, error vs. an exact baseline;
-  2. interpreter-affinity — parallel width and merge algebra → which interpreter *class* the plan favours (a directional hypothesis, to be validated, deletable);
-  3. interpreter-dependent — wall-clock etc., with the interpreter an explicit dimension (>=2 interpreters that accept an injected plan, plan held fixed).
+- Different physical plans of one query may give answers with different error.
+- It's just how different sketches are composed together and how error builds up.
 
-Today this is a problem definition and a measurement model, worked out through the ten example queries below on real data; the running toolkit is still preliminary.
+**What the toolkit must have:**
+
+- an **IR**: physical plan + our annotation/metrics + interpreter (possible, likely to be necessary)
+- benchmark tool: how the **IR** actually performs, if it is executed "somehow"
 
 ## Table Header
 
@@ -110,53 +105,46 @@ FROM   hits
 GROUP BY RegionID, OS;
 ```
 
+#### One line explanation
+
 Count the distinct users in each (region, operating system) cell.
 
-- **What it does, and who asks it:**
-  - "How many unique users per region, per operating system" is a normal web-analytics question.
-    The group key is a 2-column composite, so the input is already multi-dimensional.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- a normal web-analytics question.
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Aggregating (Keys: RegionID, OS; Aggregates: uniq(UserID))
- └─ ReadFromMergeTree (default.hits)
+Output: RegionID, OS, uniqExact(UserID)
 
-Pipeline:
-  MergeTreeSelect x192      -- 192 parallel scan streams
-   └─ AggregatingTransform x192   -- each stream builds its own per-group states
-       └─ Resize 24 -> 24         -- partial states merged down to final
+Aggregating
+│  Keys: RegionID, OS
+│  Aggregates: uniqExact(UserID)
+│  Skip merging: 0
+└──ReadFromMergeTree (default.hits)
+      Read type: Default
+      Parts: 3 | Granules: 12323
+      Output: RegionID, OS, UserID
 ```
 
-  - This is the shape the abstract calls "many partial states merged across a shuffle": each scan stream keeps one aggregate state per group it sees, and those partial states are merged per group at the end.
-  - `uniq` here is the aggregate.
-    The exact baseline uses an exact set as the state; every candidate swaps in a different state type behind the same plan.
+#### How approximation can play
 
-- **How approximation plays here:**
-  - The naive approximate plan: one HLL per `(RegionID, OS)` group, updated with every `UserID` in the group, finalized to one cardinality per group.
+- Option: one HLL per `(RegionID, OS)` group, updated with every `UserID` in the group, finalized to one cardinality per group.
   - But the group sizes decide whether that is a good idea.
-    Measured on the real table:
+  Measured on the real table:
     - Group count: 63,467.
     - Median rows per group: 9.
       Groups with fewer than 100 rows: 52,709 (83%).
     - Largest group: 9,724,473 rows, 1,429,492 distinct users (`RegionID=229, OS=44`).
-    - So a handful of huge groups sit on top of a long tail of tiny ones.
-  - For a 9-row group: the exact set is free and always correct.
-    An HLL there costs *more* memory than the exact set and is less accurate.
-    Approximation is a strict loss.
-  - For the 9.7M-row group: the exact set must store 1.43M distinct user ids — tens of MB.
-    The HLL is 16KB no matter how many distinct users there are.
-    **That memory cap is why the large group wants a sketch**: the sketch's cost does not grow with cardinality, the exact set's does.
-  - So the honest plan is a hybrid: exact state for small groups, sketch state for large ones.
-    The per-group decision is "which state type", made at runtime from the group's size.
-  - Real HLL implementations already do a miniature version of this internally, called **sparse-to-dense promotion**: while a group has few distinct values, the HLL is stored as a short list of the registers that were actually touched (cheap); once it fills up, it is promoted to the full fixed-size dense array.
-    That is the same "small = cheap/exact-ish, large = sketch" idea, automated inside one sketch.
+- A better option: exact state for small groups, sketch state for large ones.
+- Another better option: exact state for all groups, and bumps to sketch when the exact state grows.
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - Run all-exact, all-HLL, and the size-aware hybrid through the same plan, and report per-group memory and error.
-    The interesting output is the crossover: the group size above which the sketch starts paying off.
-  - That crossover, and the policy that acts on it, live *above* the sketch API — the sketch does not know how many groups there are or how big each is.
-    A raw sketch benchmark has one state and one stream, so it cannot see this at all.
+#### What the benchmark can measure
+
+- Run all-exact, all-HLL, and the size-aware hybrid through the same plan, and report per-group memory and error.
+- Overall query throughput.
+
 
 ### Example 2: top-5 regions by distinct users, over the middle 50% of page loads
 
@@ -171,45 +159,49 @@ ORDER BY u DESC
 LIMIT 5;
 ```
 
+#### One line explanation
+
 Drop the fastest 25% and the slowest 25% of page loads, then report the 5 regions with the most unique users among what is left.
 
-- **What it does, and who asks it:**
-  - The real intent is "which regions have the biggest *typical* audience".
-    An analyst does not want the count polluted by non-representative page loads: the fastest quarter are often bot hits or cache hits that never rendered a real page, and the slowest quarter are timeouts and broken sessions.
-    Trimming both tails by response time keeps the ordinary page loads, and the per-region distinct-user count over *those* is the number that goes on the dashboard.
-  - Trimming both tails before aggregating is a common de-noising pattern.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- "Which regions have the biggest typical audience"
+  - trimming both tails drops bot/cache hits and timeouts, a common de-noising pattern.
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
--- the two quantile subqueries are evaluated FIRST, as scalar constants:
-Prewhere filter column: ResponseEndTiming >= 15 AND ResponseEndTiming <= 231
+Output: RegionID, uniqExact(UserID)
 
-Limit 5
- └─ Sorting (uniq(UserID) DESC, Limit 5)
-     └─ Aggregating (Keys: RegionID; Aggregates: uniq(UserID))
-         └─ ReadFromMergeTree (default.hits)   -- with the prewhere above
+Limit (preliminary LIMIT)
+│  Limit 5
+│  Offset 0
+└──Sorting (Sorting for ORDER BY)
+   │  Sort description: uniqExact(UserID) DESC
+   │  Limit 5
+   └──Aggregating
+      │  Keys: RegionID
+      │  Aggregates: uniqExact(UserID)
+      │  Skip merging: 0
+      └──ReadFromMergeTree (default.hits)
+            Read type: Default
+            Parts: 3 | Granules: 12323
+            Output: RegionID, UserID
+            Prewhere filter
+            Prewhere filter column:  ResponseEndTiming <= 231.25 AND ResponseEndTiming >= 15.
 ```
 
-  - Note what ClickHouse actually did: it computed `lo=15` and `hi=231` in a **separate pass** over the data, folded them into a constant predicate, and only then ran the main aggregation.
-    The two-pass structure is not a design choice we imposed; the engine's own plan has it.
+#### How approximation can play
 
-- **How approximation plays here — this is a three-stage composition:**
-  - a quantile sketch over `ResponseEndTiming` produces the thresholds `lo`, `hi`;
-  - those thresholds become a filter predicate;
-  - the surviving rows feed one count-distinct state per region;
-  - the estimated cardinalities feed a top-5 ranking.
-  - So one approximate state's *output* becomes another approximate state's *input condition*, and the final correctness question is about the *ranking*, not about relative error on any one number.
-    None of this is expressible as "one sketch over one stream".
+- quantile can benefit from sketch
+- cardinality can benefit from sketch
+- but I don't have idea how to composite together yet
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - The interface strain: the `create / update / merge / finalize` trait assumes a single pass, but here the filter predicate does not exist until the quantile state is finalized.
-    Expressing this query forces the middle-layer abstraction to grow a second pass (or the fan-out trick in `Middle-layer finding: filter cardinality decides whether one pass is possible`).
-  - The benchmark measures the end-to-end cost of the whole composition and whether the top-5 ranking survives approximation — not the accuracy of any single sketch.
-    That end-to-end, cross-stage view is exactly what a raw sketch benchmark cannot assemble.
-  - Example 5 is the deliberate control for this one: same shape, but a predicate that is known before the scan, which isolates the cost of a predicate *derived from* a sketch.
+#### What the benchmark can measure
 
-### Example 3: top-5 most active users per region — and the same query on `URL`
+- End-to-end cost of the composition and whether the top-5 ranking survives approximation.
+
+### Example 3: top-5 most active users per region
 
 ```sql
 -- 3a: top 5 users by hit count, per region
@@ -221,81 +213,76 @@ SELECT RegionID, URL, count() AS c FROM hits GROUP BY RegionID, URL
 --     ... keep the top 5 rows per RegionID
 ```
 
+#### One line explanation
+
 For each region, report the 5 most frequent values of a column — users in 3a, URLs in 3b.
 
-- **What it does, and who asks it:**
-  - Top-k most active users per region: bot and abuse detection, power-user identification.
-  - Top-k URLs per region: bread-and-butter web analytics ("most-visited pages here").
-  - Both are per-group heavy hitters.
-    Same query shape.
-    Only the target column differs.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- Top-k users per region: bot/abuse detection, power-user identification.
+- Top-k URLs per region: bread-and-butter web analytics. Same query shape, only the target column differs.
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Aggregating (Keys: RegionID; Aggregates: topK(5)(UserID))
- └─ ReadFromMergeTree (default.hits)
+Output: RegionID, topK(5)(UserID)
+
+Aggregating
+│  Keys: RegionID
+│  Aggregates: topK(5)(UserID)
+│  Skip merging: 0
+└──ReadFromMergeTree (default.hits)
+      Read type: Default
+      Parts: 3 | Granules: 12323
+      Output: RegionID, UserID
 ```
 
-  - The exact plan is different and heavier: `GROUP BY RegionID, UserID` to count every (region, user) pair, then keep the top 5 per region — a state proportional to the number of distinct users per region.
-  - ClickHouse's `topK` is *already* a heavy-hitter sketch (SpaceSaving).
-    So the exact-vs-sketch choice is not hypothetical here; it is literally two different aggregate functions the engine ships, behind the same `Aggregating` operator.
+#### How approximation can play
 
-- **How approximation plays here — same sketch, opposite outcomes on two columns:**
-  - A frequency sketch (SpaceSaving, Frequent-Items, CMS) has count error bounded by `N/k`, where `N` = stream length of the group and `k` = number of counters.
-  - Measured on region 229 (the largest region, 18,295,832 rows):
+- ClickHouse's `topK` is *already* a heavy-hitter sketch (SpaceSaving)
 
-| top-5 target | 5th place count | share of the region's stream | 5th vs 6th |
-| --- | --- | --- | --- |
-| `UserID` | 3,448 | 0.019% | 3,448 vs 3,120 (9.5% apart) |
-| `URL` | 114,482 | 0.626% | 114,482 vs 97,884 (17% apart) |
+#### What the benchmark can measure
 
-  - The ground truth is well-defined in both cases: no mass ties at the top.
-    Median user in region 229 appears only 2 times; the top user appears 10,597 times.
-  - For **top-5 URLs**: to resolve 5th place (114,482 hits) needs `18.3M / k < 114,482`, so `k > 160`; to separate 5th from 6th, `k > 2,205`.
-    Cheap.
-    The sketch wins easily.
-  - For **top-5 users**: to resolve 5th place (3,448 hits) needs `k > 5,307`; to separate 5th from 6th (a gap of only 328) needs `k > 111,560`.
-    At the common default `k = 1,000` the error bound is 18,300 — **5x larger than the count of the item being ranked**.
-    The guarantee is vacuous.
-  - Same query shape, same sketch, same region.
-    Swap the target column and the answer flips: one needs 160 counters, the other needs 111,560.
+- the data distribution can affect the accuracy
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - Whether a heavy-hitter sketch works is **not a property of the sketch**.
-    It is a property of the target column's frequency distribution relative to the stream length — and that is visible only when the sketch runs on the real column inside the real query.
-  - A raw sketch benchmark feeds a synthetic Zipf stream and reports `error = N/k`.
-    It structurally cannot tell you top-5-URL is easy while top-5-user is hopeless.
-  - Note this breaks the naive plan in a **different place than Example 1**: Example 1 fails on the many *tiny* groups (state wasted); Example 3a fails on the single *largest* group (the error bound is meaningless there).
-
-### Example 4: how many users are on mobile — the negative control
+### Example 4: how many users are on mobile
 
 ```sql
 SELECT IsMobile, COUNT(DISTINCT UserID) FROM hits GROUP BY IsMobile;
 ```
 
+#### One line explanation
+
 Split users into mobile vs. non-mobile and count the distinct users on each side.
 
-- **What it does, and who asks it:**
-  - "How many unique users are on mobile" — a headline metric on any product dashboard.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
-  - `Aggregating (Keys: IsMobile; Aggregates: uniq(UserID))` over a MergeTree scan.
-  - Two groups, so two states.
-    Nothing else in the plan.
+- "How many unique users are on mobile" — a headline metric on any product dashboard.
 
-- **How approximation plays here:**
-  - Approximation wins overwhelmingly: an exact `HashSet` over 17.6M users costs hundreds of MB per group; an HLL costs about 16KB and is accurate to ~1%.
-  - But there is exactly **one** sensible plan.
-    No state-allocation decision (2 groups), no merge strategy to pick, no composition.
-    The middle layer contributes nothing.
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
-- **What the benchmark measures, and why it is AQP BM — it is the negative control:**
-  - This is AQPBMV1 with two states instead of one, and that is the point of including it.
-  - It marks the other side of the boundary: a real query where the middle layer is provably irrelevant.
-    Having it in the set makes the examples where the middle layer *does* matter sharper, and gives the benchmark a case whose "correct" answer is "just use the sketch, there is nothing to decide".
+```text
+Output: IsMobile, uniqExact(UserID)
 
-### Example 5: which regions have the most mobile users — the control for Example 2
+Aggregating
+│  Keys: IsMobile
+│  Aggregates: uniqExact(UserID)
+│  Skip merging: 0
+└──ReadFromMergeTree (default.hits)
+      Read type: Default
+      Parts: 3 | Granules: 12323
+      Output: IsMobile, UserID
+```
+
+#### How approximation can play
+
+- HLL or other sketch for approximate distince
+
+#### What the benchmark can measure
+
+- just another normal query, nothing special, not rely on AQPBMV2
+
+### Example 5: which regions have the most mobile users
 
 ```sql
 SELECT RegionID, COUNT(DISTINCT UserID) AS mobile_users
@@ -306,43 +293,55 @@ ORDER BY mobile_users DESC
 LIMIT 5;
 ```
 
+#### One line explanation
+
 Among mobile visits only, report the 5 regions with the most unique users.
 
-- **What it does, and who asks it:**
-  - "Where is my mobile audience biggest" — a standard segmentation question.
-  - Note on the column: `MobilePhone` is a phone vendor/brand id (used with `MobilePhoneModel`), not a phone number.
-    Measured, `MobilePhone = 0` covers 92,775,562 rows (**92.78%**), so `MobilePhone != 0` is a mobile-visit filter that keeps only 7.22% of rows.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- "Where is my mobile audience biggest"
+- `MobilePhone` is a vendor/brand id, not a phone number. Measured, `MobilePhone = 0` covers 92,775,562 rows (**92.78%**), so `MobilePhone != 0` keeps only 7.22% of rows.
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Limit 5
- └─ Sorting (uniq(UserID) DESC, Limit 5)
-     └─ Aggregating (Keys: RegionID; Aggregates: uniq(UserID))
-         └─ ReadFromMergeTree (Prewhere: MobilePhone != 0)
+Output: RegionID, uniqExact(UserID)
+
+Limit (preliminary LIMIT)
+│  Limit 5
+│  Offset 0
+└──Sorting (Sorting for ORDER BY)
+   │  Sort description: uniqExact(UserID) DESC
+   │  Limit 5
+   └──Aggregating
+      │  Keys: RegionID
+      │  Aggregates: uniqExact(UserID)
+      │  Skip merging: 0
+      └──ReadFromMergeTree (default.hits)
+            Read type: Default
+            Parts: 3 | Granules: 12323
+            Output: RegionID, UserID
+            Prewhere filter
+            Prewhere filter column:  MobilePhone != 0
 ```
 
-  - The predicate is a plain constant, so it is pushed into the scan as a prewhere and applied in a **single pass**.
-    Compare this directly to Example 2's plan, where the predicate constants had to be computed in a separate pass first.
+#### How approximation can play
 
-- **How approximation plays here:**
-  - Same as Example 2 downstream of the filter: one count-distinct state per region, then a top-5.
-  - The one difference is upstream: the predicate is known before the scan, so there is no quantile stage and no second pass.
+- Top-K and cardinality can be benefitted from approximation
 
-- **What the benchmark measures, and why it is AQP BM — it is the control for Example 2:**
-  - The query shape is identical to Example 2 (filter, count-distinct per region, top-5).
-    The only difference is where the predicate comes from:
+#### What the benchmark can measure
+
+- how is this different from example 2?
 
 | | Example 5 | Example 2 |
 | --- | --- | --- |
 | predicate | `MobilePhone != 0` | `ResponseEndTiming BETWEEN lo AND hi` |
-| known before the scan? | yes — a constant, pushed down | no — `lo`/`hi` do not exist until a quantile state is finalized |
+| known before the scan? | yes — a constant | no — `lo`/`hi` do not exist until a quantile state is finalized |
 | passes required | one | two, or one with state fan-out |
 
-  - Same shape, same sketches, same output type, so the cost difference isolates exactly one thing: **the price of a predicate derived from an approximate state**.
-    Without Example 5 as a baseline, Example 2's cost is not attributable to anything.
+- then, what can benchmark show?
 
-### Example 6: median event time per site — partitioning decides the answer
+### Example 6: median event time per site
 
 ```sql
 SELECT CounterID, quantile(0.5)(EventTime) AS median_t
@@ -350,38 +349,38 @@ FROM   hits
 GROUP BY CounterID;
 ```
 
+#### One line explanation
+
 For each site, find the median moment of its traffic during the month.
 
-- **What it does, and who asks it:**
-  - "When during the month was this site's traffic centred" — a real question for a site-analytics product (e.g. spotting sites whose activity clusters around a launch).
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- "When during the month was this site's traffic centred" — a real site-analytics question (e.g. spotting activity clustered around a launch).
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Aggregating (Keys: CounterID; Aggregates: quantile(0.5)(EventTime))
- └─ ReadFromMergeTree (default.hits)
+Output: CounterID, quantile(0.5)(EventTime)
+
+Aggregating
+│  Keys: CounterID
+│  Aggregates: quantile(0.5)(EventTime)
+│  Skip merging: 0
+└──ReadFromMergeTree (default.hits)
+      Read type: Default
+      Parts: 3 | Granules: 12323
+      Output: CounterID, EventTime
 ```
 
-  - The plan looks trivial, but the *interesting* physical detail is not printed by `EXPLAIN`: how the scan is split into partitions, and how the partial states are merged.
-    That choice is what changes the answer here.
+#### How approximation can play
 
-- **How approximation plays here — the table's physical order is the whole story:**
-  - Declared sorting key: `CounterID, EventDate, UserID, EventTime, WatchID`.
-    Verified on the real table, not just read from metadata:
-    - The table has 3 parts; the largest holds 99,368,738 of 99,997,497 rows (99.4%).
-    - Sampling `CounterID` by physical offset in that part shows it is **strictly non-decreasing** across all 99M rows (`17 -> 3,922 -> 7,525 -> ... -> 258,631`); descents over the first 2M physical rows: **0**.
-    - `EventTime` is **not** globally sorted — `EventDate` is only the second sort key, so it is sorted only within a `CounterID`.
-      Sampling shows `EventDate` jumping around (07-15, 07-03, 07-31, ...) as physical offset increases.
-  - **Partition by physical range** (what an engine does when it splits a scan): because the table is sorted by `CounterID`, each group lives entirely inside one partition, so `merge` degenerates to a no-op, and inside a group the rows arrive in `EventTime` order — the quantile sketch sees **perfectly sorted input**.
-  - **Partition by hash of the group key**: each group's rows scatter across all P partitions, every group needs a real P-way merge of partial states, and each partial state sees a random sample rather than a sorted run.
-  - t-digest and KLL are both sensitive to arrival order, so the two partitioning schemes do **not** produce the same answer.
+- quantile sketch
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - Same query, same sketch, same data — change only the partitioning scheme, and both cost (no shuffle vs. full shuffle; zero merges vs. one merge per group) and accuracy (sorted vs. random input; no merge error vs. accumulated merge error) change.
-  - The partitioning scheme is chosen by the middle layer, not by the sketch.
-    This is exactly what the existing `partitioned_merge` execution mode should measure, and it is invisible to a raw sketch benchmark fed a single random stream.
+#### What the benchmark can measure
 
-### Example 7: p99 latency per site — the benchmark's own metric picks the winner
+- the quantile sketch have different behavior
+
+### Example 7: p99 latency per site
 
 ```sql
 SELECT CounterID, quantile(0.99)(ResponseEndTiming) AS p99
@@ -390,76 +389,43 @@ WHERE  ResponseEndTiming > 0
 GROUP BY CounterID;
 ```
 
+#### One line explanation
+
 For each site, estimate the 99th-percentile page-load time.
 
-- **What it does, and who asks it:**
-  - Per-site tail latency is the canonical SLO query.
-    Every latency dashboard is this query, and nobody doubts that people ask for p99.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- latency dashboard
 
-```text
-Aggregating (Keys: CounterID; Aggregates: quantile(0.99)(ResponseEndTiming))
- └─ ReadFromMergeTree (Prewhere: ResponseEndTiming > 0)
-```
-
-  - One quantile state per site.
-    The exact baseline holds all values (or a full sorted array) per group; every candidate swaps in a different quantile sketch behind the same operator.
-
-- **How approximation plays here — two sketches that guarantee different things:**
-  - KLL guarantees **rank error**: the returned value's true rank is within `q ± eps`.
-    Space is `O(1/eps)`, independent of the distribution.
-    It makes **no promise** about how far the returned *value* is from the true value.
-  - DDSketch guarantees **relative value error**: `|v_hat - v| / v <= alpha`, uniformly at every quantile including the tail.
-    Space depends on the *dynamic range* of the values, not the row count.
-    It makes **no promise** about rank.
-  - Why that difference is invisible at p50 and catastrophic at p99:
-  - A rank error translates into a value error through the slope of the quantile function, which is `1 / density`.
-    Where the data is dense, rank error is harmless.
-    Where the data is sparse (the tail), rank error explodes into value error.
-  - Measured exactly on the 25,438,863 rows with `ResponseEndTiming > 0`:
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-p0.1   p1   p10  p25  p50  p75  p90  p95   p98   p99   p99.5   p99.9
-   1    1     4   15   68  233  704  1398  3433  6600  12329   30000
+Output: CounterID, quantile(0.99)(ResponseEndTiming)
+
+Aggregating
+│  Keys: CounterID
+│  Aggregates: quantile(0.99)(ResponseEndTiming)
+│  Skip merging: 0
+└──ReadFromMergeTree (default.hits)
+      Read type: Default
+      Parts: 3 | Granules: 12323
+      Output: ResponseEndTiming, CounterID
+      Prewhere filter
+      Prewhere filter column:  ResponseEndTiming > 0
 ```
 
-  - Reading a 1% rank error off that table as a *value* error:
+#### How approximation can play
 
-| target quantile | value moves | relative value error from a 1% rank error |
-| --- | --- | --- |
-| p10 | 4 -> 4 | 0% |
-| p25 | 15 -> 16 | 6.7% |
-| p50 | 68 -> 73 | 7.4% |
-| p75 | 233 -> 242 | 3.9% |
-| p90 | 704 -> 792 | 12.5% |
-| p95 | 1,398 -> 1,735 | 24.1% |
-| **p98 -> p99** | 3,433 -> 6,600 | **92.2%** |
+- One quantile state per site; candidates differ in what they guarantee.
+- KLL guarantees **rank error**, no promise on value; DDSketch guarantees **relative value error**, no promise on rank.
+- On this right-skewed latency a 1% rank error is harmless at p50 but blows up to ~**92%** *value* error at p99 (the tail is sparse)
 
-  - So a KLL with a perfectly respectable 1% rank guarantee can return a p99 latency that is off by nearly 2x in value.
-    Its guarantee is intact.
-    It is simply not the guarantee the query needed.
-  - Note the *low* tail is not the problem here: p0.1 through p2 are all `1`, because the data is quantized and dense there.
-    A rank error at the bottom costs almost nothing.
-  - The general rule is about **density**, not about "small values": rank error is fatal wherever the density is low.
-    For right-skewed latency that is the right tail.
-    For a left-skewed column it would be the left tail.
+#### What the benchmark can measure
 
-- **The finding, and it is about the benchmark itself:**
-  - If AQPBMV2 reports "relative error of the returned value", KLL looks catastrophic at p99 and DDSketch looks perfect.
-  - If AQPBMV2 reports "rank error", KLL is comfortably within spec and DDSketch offers no guarantee at all.
-  - **Neither metric is wrong.
-    They measure different contracts.**
-  - So the benchmark's choice of metric silently decides the winner.
-  - A raw sketch benchmark that reports one accuracy number is making an unstated choice about which guarantee matters — and that choice belongs to the *query*, which a raw sketch benchmark does not have.
-  - This is the most direct answer so far to the open question "what should be considered as output": for quantiles, accuracy is not one number, and picking one number is already taking a side.
+- same as example 6
+- but, the data shape can matter
 
-- What AQPBMV2 must therefore do:
-  - Report rank error **and** relative value error, per quantile level, not just at p50.
-  - Let the example query declare which guarantee it actually needs.
-  - Treat "which metric does this query care about" as part of the query definition, not as a benchmark-wide constant.
-
-### Example 8: audience overlap — excellent sketches, worthless answer
+### Example 8: audience overlap
 
 ```sql
 -- distinct users who visited BOTH site A and site B
@@ -470,73 +436,50 @@ SELECT COUNT(DISTINCT UserID) FROM (
 );
 ```
 
+#### One line explanation
+
 Count the distinct users who visited **both** site A and site B.
 
-- **What it does, and who asks it:**
-  - Audience overlap between two properties is a standard ad-targeting and cross-site question: "how many of my users also use their site" is asked constantly.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- Audience overlap between two properties
 
-```text
-Aggregating (Aggregates: uniq(UserID))
- └─ IntersectOrExcept
-    ├─ ReadFromMergeTree (Prewhere: CounterID = 199550)   -- set A
-    └─ ReadFromMergeTree (Prewhere: CounterID = 105857)   -- set B
-```
-
-  - The exact plan needs a genuine physical set intersection: materialize both user sets, intersect them, then count.
-    The sketch plan cannot use this operator at all — it has to compute the intersection a completely different way, which is the whole point.
-
-- **How approximation plays here:**
-  - HLL supports **union** (registers are max-ed) but has **no intersection operator**.
-    The only route is inclusion-exclusion, `|A n B| = |A| + |B| - |A u B|`, so the answer is a *difference of three separate estimates*.
-  - Measured on the two largest sites:
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-|A|        = 3,498,632     (CounterID = 199550)
-|B|        = 2,234,995     (CounterID = 105857)
-|A u B|    = 5,615,904
-|A n B|    =   117,723     <- only 2.1% of the union
+Output: uniqExact(UserID)
+
+Aggregating
+│  Keys:
+│  Aggregates: uniqExact(UserID)
+│  Skip merging: 0
+└──IntersectOrExcept
+   ├──ReadFromMergeTree (default.hits)
+   │     Read type: Default
+   │     Parts: 2 | Granules: 875
+   │     Output: UserID
+   │     Prewhere filter
+   │     Prewhere filter column:  CounterID = 199550
+   └──ReadFromMergeTree (default.hits)
+         Read type: Default
+         Parts: 2 | Granules: 708
+         Output: UserID
+         Prewhere filter
+         Prewhere filter column:  CounterID = 105857
 ```
 
-- What inclusion-exclusion does to a *good* HLL.
-  **Measured**, using ClickHouse's own `uniqHLL12` and `uniqTheta` against `uniqExact` as ground truth:
+#### How approximation can play
 
-```text
-                        estimate      exact       error
-|A|       uniqHLL12    3,459,552   3,498,632      1.12%
-|B|       uniqHLL12    2,240,716   2,234,995      0.26%
-|A u B|   uniqHLL12    5,651,422   5,615,904      0.63%
-------------------------------------------------------------
-|A n B|   inclusion-exclusion from the three HLLs above:
-                          48,846     117,723     58.51%
-|A n B|   uniqTheta, native intersection:
-                          84,998     117,723     27.80%
-```
+- HLL has **union** (registers max-ed) but **no intersection**
+  - one route is inclusion-exclusion `|A∩B| = |A|+|B|-|A∪B|`
+- Measured on the two largest sites: each HLL is accurate to ~1%, but the intersection (only 2.1% of the union) comes out **58.5%** off (needs manual check the data)
+- Theta has a *native* intersection (~2x better) but is still **27.8%** off (needs manual check the data)
 
-- The finding:
-  - Each individual HLL is accurate to between **0.26% and 1.12%**.
-    These are good sketches.
-  - The intersection derived from them is off by **58.5%** — it reports 48,846 where the truth is 117,723, missing more than half the audience.
-  - The error is amplified roughly **50x**, purely by the subtraction.
-  - The cause is structural: the intersection is only 2.1% of the union, so the subtraction cancels the signal and leaves nothing but the accumulated noise of the three estimates.
+#### What the benchmark can measure
 
-- And the honest part: **Theta does not rescue this query either.**
-  - Theta has a native intersection operator, and it is about **2x better** than inclusion-exclusion.
-  - But it is still **27.8%** off.
-  - So the conclusion is not "use Theta and you are fine".
-    It is that a small intersection relative to the sets is hard for *every* count-distinct sketch, and the benchmark should say so.
-  - This is still a discriminating result — Theta beats HLL by 2x here — but the more important result is that **both fail**, which is exactly the kind of thing an honest benchmark exists to report.
+- End-to-end intersection error vs single sketch error and HLL-inclusion-exclusion vs Theta-native
 
-- Note this is the **exact inverse** of the mental experiment recorded earlier in this document:
-  - That one says: individually bad sketches (30% error each) can still yield a good final answer (1%).
-  - This one says: individually excellent sketches (~1% error each) can yield a worthless final answer (58.5% off), and this one is measured rather than imagined.
-  - Both are true.
-    Both are invisible to a raw sketch benchmark, which only ever reports the ~1%.
-  - Together they are the strongest argument that the *implementation*, not the sketch, is the thing that has to be measured.
-
-### Example 9: top-10 search phrases by distinct users — a provably sound cheap plan
-
+### Example 9: top-10 search phrases by distinct users
 ```sql
 SELECT SearchPhrase, COUNT(DISTINCT UserID) AS users
 FROM   hits
@@ -546,55 +489,48 @@ ORDER BY users DESC
 LIMIT 10;
 ```
 
+#### One line explanation
+
 Report the 10 search phrases with the most distinct users.
 
-- **What it does, and who asks it:**
-  - "What are people searching for", ranked by **unique users** rather than raw hits, precisely so that one bot hammering a single phrase does not dominate the report.
-    Ranking by distinct users instead of by hits is the standard de-botting move.
-  - Caveat on the group key: `SearchPhrase` is raw text, so `"смотреть онлайн"` and `"смотреть онлайн "` are different groups.
-    A real pipeline normalizes (lowercase, trim, stem) upstream.
-    That is a data-cleaning step, identical for exact and approximate plans, and orthogonal to everything below.
+#### Who asks it
 
-- **Physical plan (from ClickHouse `EXPLAIN`):**
+- "What are people searching for", ranked by **unique users** not raw hits, so one bot hammering a phrase does not dominate
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Limit 10
- └─ Sorting (uniq(UserID) DESC, Limit 10)
-     └─ Aggregating (Keys: SearchPhrase; Aggregates: uniq(UserID))
-         └─ ReadFromMergeTree (Prewhere: notEmpty(SearchPhrase))
+Output: SearchPhrase, uniqExact(UserID)
+
+Limit (preliminary LIMIT)
+│  Limit 10
+│  Offset 0
+└──Sorting (Sorting for ORDER BY)
+   │  Sort description: uniqExact(UserID) DESC
+   │  Limit 10
+   └──Aggregating
+      │  Keys: SearchPhrase
+      │  Aggregates: uniqExact(UserID)
+      │  Skip merging: 0
+      └──ReadFromMergeTree (default.hits)
+            Read type: Default
+            Parts: 3 | Granules: 12323
+            Output: SearchPhrase, UserID
+            Prewhere filter
+            Prewhere filter column:  notEmpty(SearchPhrase)
 ```
 
-  - The plan keeps one count-distinct state **per phrase**, and `SearchPhrase` is a very high-cardinality key.
-    Measured: 6,019,102 distinct non-empty phrases.
-    One HLL per phrase is millions of 16KB states — not affordable — so the naive one-state-per-group plan is off the table, and a two-level plan is forced.
+#### How approximation can play
 
-- **How approximation plays here — a composed plan that is cheap *and* provably correct:**
-  - The two-level plan: first run a cheap frequency sketch on **hit counts** to shortlist candidate phrases, then build an HLL only for each candidate, then take the top-10 by HLL distinct-user estimate.
-  - The reason this is sound is a hard bound: for any phrase, `distinct_users <= hits`.
-    Hit count is therefore an **upper bound** on distinct-user count, so a shortlist "phrases with hits >= t" can never drop a phrase whose distinct-user count is >= t.
-    The frequency prefilter yields a *safe superset*, never a lossy filter.
-  - This gives a sound adaptive stopping rule (a threshold-algorithm argument): walk phrases in descending hit order, building HLLs; stop once the 10th-best HLL estimate so far is >= the hit count of the next un-examined phrase, because no un-examined phrase can then beat it.
-  - Measured, the shortlist is tiny.
-    The 10th-largest distinct-user count is 7,572, and only **17** of the 6,019,102 phrases have hits >= 7,572.
-    So building ~17 HLLs (a few hundred to be safe) instead of 6 million answers the query exactly, with a correctness guarantee.
+- cardinality sketch and top-k sketch
+- but when to create the sketch is a question
+  - creating a hll for each SearchPhrase is not good
 
-| rank by users | phrase | users | hits | rank by hits |
-| --- | --- | --- | --- | --- |
-| 1 | карелки | 23,673 | 70,263 | 1 |
-| 5 | смотреть | 14,603 | 19,707 | 5 |
-| 10 | комбинирование смотреть | 7,572 | 9,545 | 12 |
+#### What the benchmark can measure
 
-  - The ranking does reshuffle (the true #10 by users is #12 by hits, since the hits-per-user ratio varies ~2.6x across phrases), so the frequency order is *not* the final answer.
-    But because it is a safe superset, the HLL pass over the shortlist recovers the exact top-10.
+- sketch composition methods may affect the result
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - This is the one positive composition in the set: a plan that no single sketch expresses, that is far cheaper than the naive plan, and that is **provably correct** rather than merely close.
-  - The soundness rests entirely on a middle-layer fact — the `distinct_users <= hits` bound relating two different aggregates — plus the stopping rule built on it.
-    The sketch API knows nothing about this bound; it only knows how to estimate one aggregate at a time.
-  - So the benchmark measures the composed plan's cost against the naive plan, and, unlike every negative example here, certifies its answer as exact.
-    A raw sketch benchmark cannot even state the plan, let alone its correctness argument.
-
-### Example 10: a fan-out join is safe for count-distinct but corrupts quantile
+<!-- ### Example 10: a fan-out join is safe for count-distinct but corrupts quantile
 
 ```sql
 -- cohort = users who EVER visited on mobile; then summarize ALL their pageviews
@@ -606,59 +542,57 @@ JOIN  (SELECT UserID FROM hits WHERE IsMobile = 1) m   -- a bag: one row per mob
 WHERE  h.ResponseEndTiming > 0;
 ```
 
-Both sides come from `hits`; there is no invented table.
-The right side is a cohort of users (those who ever went mobile), and the query reports how many such users there are and the p99 page-load time across all of their pageviews.
+#### One line explanation
 
-- **What it does, and who asks it:**
-  - Cohort analytics: take the users who ever did X, then summarize all of their behaviour.
-    Here X is "visited on mobile at least once".
-  - This is the normal shape of a retention or segment query, and it is naturally a join of the fact table to a user cohort — both drawn from the same log.
+For users who ever visited on mobile, count them and report the p99 of all their page loads. Both sides come from `hits` — the fact table joined to the mobile-user cohort.
 
-- **The footgun that makes it interesting:**
-  - The cohort is meant to be a *set* of users.
-    The correct form is a semi-join: `WHERE h.UserID IN (SELECT UserID FROM hits WHERE IsMobile = 1)`, or `SELECT DISTINCT UserID`.
-  - Written as `JOIN (SELECT UserID FROM hits WHERE IsMobile = 1)` without `DISTINCT`, the right side is a *bag*: one row per mobile pageview.
-    So each `hits` row fans out by the number of mobile pageviews that user made.
-  - Measured, that fan-out is real and non-uniform: the cohort is 2,208,170 users over 10,172,424 mobile pageviews, and per-user multiplicity is median 2, p99 47, max 2,489.
+#### Who asks it
 
-- **Physical plan (described):**
+- Cohort analytics: pick users by one behaviour, then summarize all their activity.
+- Footgun: the cohort should be a *set*, but `JOIN (SELECT UserID ... WHERE IsMobile=1)` without `DISTINCT` is a *bag* — one row per mobile page-view — so each user's rows get duplicated by how many mobile visits they made (measured: up to 2,489× for one user).
+
+#### Physical plan (from ClickHouse `EXPLAIN`)
 
 ```text
-Aggregating (Aggregates: uniq(h.UserID), quantile(0.99)(h.ResponseEndTiming))
- └─ Join (h.UserID = m.UserID)                       -- fan-out: the right side is a bag
-    ├─ ReadFromMergeTree (default.hits)
-    └─ ReadFromMergeTree (default.hits, Prewhere: IsMobile = 1)
+Output: uniqExact(UserID), quantile(0.99)(ResponseEndTiming)
+
+Aggregating
+│  Keys:
+│  Aggregates: uniqExact(UserID), quantile(0.99)(ResponseEndTiming)
+│  Skip merging: 0
+└──Join (JOIN FillRightFirst)
+   │  h ⋈ m
+   │  Type: inner | Strictness: all | Algorithm: SpillingHashJoin(ConcurrentHashJoin)
+   │  Join conditions: UserID = UserID
+   │  Output:
+   │    Left:  UserID, ResponseEndTiming
+   │    Right: Empty
+   ├──ReadFromMergeTree (default.hits)
+   │     Read type: Default
+   │     Parts: 3 | Granules: 12323
+   │     Output: UserID, ResponseEndTiming
+   │     Prewhere filter
+   │     Prewhere filter column:  ResponseEndTiming > 0
+   │     Runtime filters: RF1(UserID, UserID from default.hits)
+   └──BuildRuntimeFilter (Build runtime join filter on UserID)
+      │  Filter id: RF1
+      │  Source table: default.hits
+      └──ReadFromMergeTree (default.hits)
+            Read type: Default
+            Parts: 3 | Granules: 12323
+            Output: UserID
+            Prewhere filter
+            Prewhere filter column:  IsMobile = 1
 ```
 
-  - The eager-aggregation rewrite (push the aggregate below the join, the reason mergeable sketches are attractive at all) would pre-compute one sketch per `UserID`, then fold each user's state in once per matching right row — i.e. fold it (that user's mobile-pageview count) times.
+#### How approximation can play
 
-- **How approximation plays here — the same join is safe for one column and wrong for the other. Measured:**
-  - `COUNT(DISTINCT h.UserID)` is 2,208,170 with or without the fan-out.
-    A set does not care that a user's rows were duplicated; the duplicates collapse.
-  - `quantile(0.99)(h.ResponseEndTiming)` moves from **29,095** (each pageview counted once) to **22,223** under the fan-out weighting — a **23.6%** error — because heavy-activity users are now counted dozens of times and drag the distribution down.
-  - The sketch layer mirrors this exactly: HLL merge is idempotent (`merge(H, H) = H`), so folding a user's state more than once is harmless; KLL and t-digest merge is additive (`merge(K, K)` doubles the weight), so folding more than once corrupts the quantile.
+- The duplication hits the two aggregates differently. `COUNT(DISTINCT)` ignores it (a set drops duplicates — 2,208,170 either way); `quantile(0.99)` is corrupted, 29,095 → 22,223 (**23.6%** off), because heavy users now count many times.
+- Sketches inherit this: HLL merge is idempotent, so double-counting a state is harmless; a quantile sketch's merge is additive, so double-counting corrupts it.
 
-- **What the benchmark measures, and why it is AQP BM:**
-  - The same plan is **correct for the `COUNT(DISTINCT)` column and wrong for the `quantile` column**, in one query, over one join, on one table.
-    The word `merge` is hiding two different algebras: an idempotent set union and an additive multiset union.
-  - The current trait has exactly one `merge` signature, which cannot say which algebra it implements:
+#### What the benchmark can measure
 
-```rust
-fn merge(&self, left: &mut Self::State, right: Self::State);
-```
-
-  - Sketches are attractive precisely because they are mergeable — pre-aggregate once, merge everywhere (the sketch-cube / rollup promise).
-    This example is the governance rule on that promise: reuse-by-merge is safe under fan-out only for idempotent merges.
-    The middle layer needs to carry the merge algebra so a planner knows which push-downs are sound; the sketch API alone does not expose it.
-    Seeing this needs a fan-out join and two different aggregates side by side — which a raw sketch benchmark never has.
-
-- Open questions this raises:
-  - Should the interface expose the merge algebra (idempotent / additive) as a property, so a planner knows which push-downs are safe?
-  - Theta sketches carry a richer algebra (union, intersection, difference).
-    Are they the only count-distinct family whose merge composes with relational operators?
-  - The exact baseline is not immune: an exact multiset quantile is corrupted by the same fan-out (29,095 -> 22,223).
-    The corruption is a property of the aggregate's algebra, not of approximation — which is itself the point.
-    The sketch merely inherits whichever algebra its state has.
+- One plan is correct for `COUNT(DISTINCT)` and wrong for `quantile` — so the middle layer must know each state's merge algebra (idempotent vs additive) to tell which plan rewrites are safe. -->
 
 
 ### Middle-layer finding: filter cardinality decides whether one pass is possible
