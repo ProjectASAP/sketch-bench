@@ -73,7 +73,7 @@ Gated on `sketch-runtime` landing first.
 
 ### Minor polish (not paper-blocking)
 
-- [ ] Add a `sketchlib workload generate|describe` subcommand (MERGE_PLAN Phase 7)
+- [x] Add a `sketchlib workload generate|describe` subcommand (MERGE_PLAN Phase 7) — see `docs/DATAGEN.md`. Shapes: uniform, zipf, monotonic-timestamp, skewed-categorical; dtypes i64/u64/f64; `.meta.json` sidecar.
 - [ ] Criterion microbench proving `Probe<_, NoopSink>` is a no-op (MERGE_PLAN Phase 4, last bullet)
 - [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`) — superset of `bench-sweep`
 - [ ] Retire the private warning on `WorkloadAny` (dispatch.rs) by making the type `pub(crate)` visible across the module boundary
