@@ -38,7 +38,15 @@ fn default_min_gap() -> u64 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Shape {
-    /// Uniform over `[0, cardinality)`.
+    /// Uniform over the `cardinality` distinct keys `[0, cardinality)`.
+    ///
+    /// `cardinality` means the same thing for every `dtype`: the number
+    /// of distinct values drawn from. `f64` therefore emits whole
+    /// numbers (`0.0`, `1.0`, …), not a continuous range — the same
+    /// logical values as `i64`/`u64`, differing only in physical
+    /// encoding, so a benchmark can vary `dtype` alone. A genuinely
+    /// continuous real-valued shape (for quantile sketches) belongs in
+    /// its own variant rather than overloading this one.
     Uniform {
         cardinality: u64,
         #[serde(default)]
@@ -211,8 +219,14 @@ impl ColumnGenerator for UniformGen {
                 Column::U64((0..n).map(|_| dist.sample(rng)).collect())
             }
             DType::F64 => {
-                let dist = Uniform::new(0.0f64, self.cardinality as f64);
-                Column::F64((0..n).map(|_| dist.sample(rng)).collect())
+                // Deliberately the *same* discrete draw as i64/u64, not
+                // a continuous `Uniform::new(0.0, cardinality)`. See the
+                // `Shape::Uniform` docs: `cardinality` must mean the
+                // distinct-key count for every dtype, and holding the
+                // logical values fixed across dtypes is what makes
+                // dtype a controlled variable in a benchmark.
+                let dist = Uniform::new(0u64, self.cardinality);
+                Column::F64((0..n).map(|_| dist.sample(rng) as f64).collect())
             }
         })
     }

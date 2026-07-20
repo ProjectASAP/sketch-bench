@@ -300,6 +300,68 @@ mod tests {
     }
 
     #[test]
+    fn uniform_cardinality_means_distinct_count_for_every_dtype() {
+        // `cardinality` must not silently change meaning with dtype:
+        // a continuous f64 range would yield ~n distinct values instead
+        // of `cardinality`, quietly invalidating the one parameter a
+        // sketch benchmark cares most about.
+        let card = 100u64;
+        let col = |dtype| {
+            spec(
+                Shape::Uniform {
+                    cardinality: card,
+                    dtype,
+                },
+                10_000,
+                42,
+            )
+            .generate()
+            .unwrap()
+        };
+        let f64s = match col(DType::F64) {
+            Column::F64(v) => v,
+            _ => panic!("expected f64 column"),
+        };
+        let distinct = f64s
+            .iter()
+            .map(|x| x.to_bits())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert_eq!(distinct, card as usize, "f64 must draw from `cardinality` keys");
+        assert!(
+            f64s.iter().all(|x| x.fract() == 0.0 && (0.0..card as f64).contains(x)),
+            "f64 values must be whole numbers in [0, cardinality)"
+        );
+    }
+
+    #[test]
+    fn dtype_changes_encoding_not_logical_values() {
+        // Holding shape+size+seed fixed, every dtype must produce the
+        // same logical sequence — that is what makes dtype a controlled
+        // variable when comparing benchmark runs.
+        let s = |dtype| {
+            spec(
+                Shape::Uniform {
+                    cardinality: 500,
+                    dtype,
+                },
+                1_000,
+                7,
+            )
+            .generate()
+            .unwrap()
+        };
+        let (i, u, f) = (s(DType::I64), s(DType::U64), s(DType::F64));
+        match (i, u, f) {
+            (Column::I64(i), Column::U64(u), Column::F64(f)) => {
+                assert!(i.iter().zip(&u).all(|(a, b)| *a as u64 == *b));
+                assert!(i.iter().zip(&f).all(|(a, b)| *a as f64 == *b));
+            }
+            _ => panic!("unexpected column types"),
+        }
+    }
+
+    #[test]
     fn zero_cardinality_is_rejected() {
         let err = Shape::Uniform {
             cardinality: 0,

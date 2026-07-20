@@ -34,6 +34,24 @@ sketchlib bench --sketch cms --impl datasketches --input input/zipf_1m.bin
 Only `i64` files are consumable by `bench` today. `u64`/`f64` are
 written for other tooling; the logical dtype lives in the sidecar.
 
+Because the `.bin` stream is header-less it cannot describe itself — a
+`u64`/`f64` file is byte-indistinguishable from an `i64` one. Passing
+one to `bench --input` would reinterpret each 8-byte word as an `i64`
+(the IEEE-754 pattern of `0.093` reads back as `4591388162153532928`)
+and still emit a well-formed, plausible-looking report. The loader
+therefore reads the sidecar and **refuses** any `.bin` whose declared
+dtype is not `i64`. Files with no sidecar — every legacy
+`input/benchmark_data_*.bin` — are still assumed `i64` and load
+unchanged.
+
+`cardinality` means the same thing for every dtype: the number of
+distinct keys. `--dtype f64` emits whole numbers (`0.0`, `1.0`, …), not
+a continuous range, so a fixed `(shape, size, seed)` yields the same
+logical values under every dtype and only the physical encoding
+changes. A genuinely continuous real-valued shape (for quantile
+sketches) would be a new `Shape` variant, not a reinterpretation of
+this flag.
+
 ## Shapes
 
 | shape | flags | notes |
