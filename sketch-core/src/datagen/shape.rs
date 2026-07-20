@@ -33,6 +33,21 @@ fn default_min_gap() -> u64 {
     1
 }
 
+/// `f64` represents integers exactly only up to 2^53. Past that, a
+/// `cardinality`-sized key space would silently collapse onto rounded
+/// values — the same class of quiet wrongness the dtype guard in
+/// [`crate::workload::FileI64`] exists to prevent — so reject it.
+fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchCoreError> {
+    const LIMIT: u64 = 1 << 53;
+    if dtype == DType::F64 && cardinality > LIMIT {
+        return Err(SketchCoreError::BadParam(format!(
+            "dtype f64 cannot hold {cardinality} distinct integers exactly \
+             (limit 2^53 = {LIMIT}); values would round silently"
+        )));
+    }
+    Ok(())
+}
+
 /// A distribution plus its parameters. `#[serde(tag = "shape")]` makes
 /// this the canonical (de)serialized form used by `GenSpec`/`GenMeta`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,6 +128,7 @@ impl Shape {
                         "uniform: cardinality must be > 0".into(),
                     ));
                 }
+                reject_inexact_f64(*dtype, *cardinality)?;
                 Ok(Box::new(UniformGen {
                     cardinality: *cardinality,
                     dtype: *dtype,
@@ -128,6 +144,7 @@ impl Shape {
                         "zipf: cardinality must be > 0".into(),
                     ));
                 }
+                reject_inexact_f64(*dtype, *cardinality)?;
                 // Surface an invalid `s` now rather than mid-generation.
                 Zipf::new(*cardinality, *s)
                     .map_err(|e| SketchCoreError::BadParam(format!("zipf: {e}")))?;

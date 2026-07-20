@@ -177,11 +177,16 @@ impl FileI64 {
 /// number that is silently wrong is worse than no number at all, so
 /// this fails loudly instead.
 ///
-/// Files with no sidecar (every legacy `input/benchmark_data_*.bin`)
-/// are accepted unchanged: absence of provenance means "assume i64",
-/// which is the historical contract.
+/// Absence of usable provenance means "assume i64", the historical
+/// contract — so a missing sidecar (every legacy
+/// `input/benchmark_data_*.bin`) loads unchanged, and an unreadable one
+/// (foreign file, or a future schema this binary predates) degrades to
+/// the same path rather than failing a file that used to load. Only a
+/// sidecar we can actually parse is allowed to veto. `describe`, where
+/// the user asked about the sidecar specifically, keeps the strict
+/// [`crate::datagen::io::read_meta`] error.
 fn reject_non_i64_bin(path: &Path) -> Result<(), SketchCoreError> {
-    let Some(meta) = crate::datagen::io::read_meta(path)? else {
+    let Ok(Some(meta)) = crate::datagen::io::read_meta(path) else {
         return Ok(());
     };
     if meta.dtype != crate::datagen::DType::I64 {
@@ -489,6 +494,22 @@ mod tests {
         let w = FileI64::load(&path).expect("no sidecar => assume i64");
         assert_eq!(w.items(), &[7, 8, 9]);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn unreadable_sidecar_does_not_break_a_loadable_bin() {
+        // A foreign `.meta.json`, or one from a future schema, must not
+        // fail a file that loaded fine before the guard existed.
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_bad_sidecar.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&5i64.to_le_bytes()).unwrap();
+        drop(f);
+        std::fs::write(crate::datagen::io::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
+        let w = FileI64::load(&path).expect("unparseable sidecar => fall back to i64");
+        assert_eq!(w.items(), &[5]);
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(crate::datagen::io::sidecar_path(&path)).ok();
     }
 
     #[test]

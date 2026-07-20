@@ -362,6 +362,23 @@ mod tests {
     }
 
     #[test]
+    fn f64_cardinality_past_2p53_is_rejected() {
+        // Beyond 2^53 the `as f64` cast rounds, so the key space would
+        // silently differ from the i64 run it is meant to mirror.
+        let build = |dtype, cardinality| Shape::Uniform { cardinality, dtype }.build();
+        assert!(build(DType::F64, (1u64 << 53) + 1).is_err());
+        assert!(build(DType::F64, 1u64 << 53).is_ok(), "the limit itself is exact");
+        assert!(build(DType::I64, u64::MAX).is_ok(), "i64 is unaffected");
+        assert!(Shape::Zipf {
+            cardinality: (1u64 << 53) + 1,
+            s: 1.1,
+            dtype: DType::F64,
+        }
+        .build()
+        .is_err(), "zipf shares the limit");
+    }
+
+    #[test]
     fn zero_cardinality_is_rejected() {
         let err = Shape::Uniform {
             cardinality: 0,
