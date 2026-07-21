@@ -174,12 +174,10 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         "uniform" => Shape::Keys {
             cardinality: a.cardinality,
             dist: Distribution::Uniform,
-            dtype,
         },
         "zipf" => Shape::Keys {
             cardinality: a.cardinality,
             dist: Distribution::Zipf { s: a.zipf_s },
-            dtype,
         },
         "monotonic-timestamp" | "timestamp" => {
             let gap = a
@@ -194,7 +192,6 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
                 unit: parse_unit(&a.unit)?,
                 gap,
                 min_gap: a.min_gap,
-                dtype,
             }
         }
         "skewed-categorical" | "categorical" => {
@@ -218,6 +215,7 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         shape,
         size: a.size,
         seed: a.seed,
+        dtype,
     })
 }
 
@@ -250,7 +248,7 @@ fn generate(a: GenerateArgs) -> Result<()> {
         spec.generate_into(&mut sink, datagen::DEFAULT_CHUNK)
             .with_context(|| format!("generating into {}", out.display()))
     }
-    let meta = match spec.shape.dtype() {
+    let meta = match spec.dtype {
         datagen::DType::I64 => stream::<i64>(&spec, out)?,
         datagen::DType::U64 => stream::<u64>(&spec, out)?,
         datagen::DType::F64 => stream::<f64>(&spec, out)?,

@@ -305,11 +305,11 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
         // the user's file from the command line; silently ignoring `--dtype`
         // would run a different measurement than the one asked for. Neither is
         // recoverable from the output, so disagreeing is an error.
-        if spec.shape.dtype() != dtype {
+        if spec.dtype != dtype {
             bail!(
                 "--dtype {} but {path} generates {}; drop --dtype or edit the spec",
                 dtype.as_str(),
-                spec.shape.dtype().as_str(),
+                spec.dtype.as_str(),
             );
         }
         return Ok(WorkloadSpec::Generated(spec));
@@ -323,10 +323,10 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
         shape: Shape::Keys {
             cardinality: args.cardinality,
             dist,
-            dtype,
         },
         size: args.size,
         seed: args.seed,
+        dtype,
     }))
 }
 

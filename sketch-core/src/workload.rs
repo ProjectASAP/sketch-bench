@@ -72,7 +72,8 @@ impl WorkloadDesc {
     /// backwards — the generator has no business knowing a report exists, and
     /// that single reference was the only thing preventing `sketch-datagen`
     /// from standing on its own.
-    pub fn from_shape(shape: &Shape, size: usize, seed: u64) -> Self {
+    pub fn from_spec(spec: &GenSpec) -> Self {
+        let (shape, size, seed) = (&spec.shape, spec.size, spec.seed);
         let (cardinality, zipf_s) = match shape {
             Shape::Keys {
                 cardinality, dist, ..
@@ -98,7 +99,7 @@ impl WorkloadDesc {
             } else {
                 serde_json::to_value(shape).ok()
             },
-            dtype: shape.dtype(),
+            dtype: spec.dtype,
         }
     }
 }
@@ -234,7 +235,7 @@ impl<T: GenValue> NumericWorkload<T> {
     /// well-formed report, and — for the ordered families — would hide an
     /// integer-to-float conversion inside a run labelled `f64`.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
-        let desc = WorkloadDesc::from_shape(&spec.shape, spec.size, spec.seed);
+        let desc = WorkloadDesc::from_spec(spec);
         let mut wk = Self::new(spec.generate::<T>()?, desc);
         wk.spec = Some(spec.clone());
         Ok(wk)
@@ -246,10 +247,10 @@ impl<T: GenValue> NumericWorkload<T> {
             shape: Shape::Keys {
                 cardinality,
                 dist: Distribution::Uniform,
-                dtype: T::DTYPE,
             },
             size,
             seed,
+            dtype: T::DTYPE,
         })
         .expect("uniform keys over a non-zero cardinality always generate")
     }
@@ -261,10 +262,10 @@ impl<T: GenValue> NumericWorkload<T> {
             shape: Shape::Keys {
                 cardinality,
                 dist: Distribution::Zipf { s },
-                dtype: T::DTYPE,
             },
             size,
             seed,
+            dtype: T::DTYPE,
         })
     }
 }
@@ -637,10 +638,10 @@ mod tests {
             shape: Shape::Keys {
                 cardinality: 64,
                 dist: Distribution::Uniform,
-                dtype,
             },
             size: 32,
             seed: 1,
+            dtype,
         };
         // The one shape a run-time dtype takes now: a `match` that picks the
         // type parameter, with every arm one line. No `_` arm, so adding a
@@ -760,10 +761,10 @@ mod resample_tests {
             shape: Shape::Keys {
                 cardinality: 1000,
                 dist: Distribution::Zipf { s: 1.1 },
-                dtype: DType::I64,
             },
             size: 2000,
             seed,
+            dtype: DType::I64,
         }
     }
 
@@ -830,10 +831,10 @@ mod sink_tests {
             shape: Shape::Keys {
                 cardinality: 500,
                 dist: Distribution::Zipf { s: 1.3 },
-                dtype: DType::I64,
             },
             size: 3_000,
             seed: 7,
+            dtype: DType::I64,
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
 
@@ -857,10 +858,10 @@ mod dtype_tests {
             shape: Shape::Keys {
                 cardinality: 100,
                 dist: Distribution::Uniform,
-                dtype,
             },
             size: 500,
             seed: 7,
+            dtype,
         }
     }
 

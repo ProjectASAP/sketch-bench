@@ -71,8 +71,6 @@ pub enum Shape {
         cardinality: u64,
         #[serde(default = "default_dist")]
         dist: Distribution,
-        #[serde(default)]
-        dtype: DType,
     },
     /// A finite domain of category ids, drawn per `dist` (uniform / zipf
     /// / explicit weights). Always emits `i64`.
@@ -93,20 +91,10 @@ pub enum Shape {
         gap: Distribution,
         #[serde(default = "default_min_gap")]
         min_gap: u64,
-        #[serde(default)]
-        dtype: DType,
     },
 }
 
 impl Shape {
-    /// The physical output type this shape emits.
-    pub fn dtype(&self) -> DType {
-        match self {
-            Shape::Keys { dtype, .. } | Shape::Monotonic { dtype, .. } => *dtype,
-            Shape::Categorical { .. } => DType::I64,
-        }
-    }
-
     /// The label used in reports and CLI output. This is a
     /// back-compat shim, **not** a clean structural tag: for `Keys` it
     /// returns the *distribution* name (`"uniform"`/`"zipf"`/…) so
@@ -126,17 +114,13 @@ impl Shape {
     /// bad specs fail before any allocation.
     pub fn build<T: GenValue>(&self) -> Result<Generator<T>, SketchError> {
         match self {
-            Shape::Keys {
-                cardinality,
-                dist,
-                dtype,
-            } => {
+            Shape::Keys { cardinality, dist } => {
                 if *cardinality == 0 {
                     return Err(SketchError::BadParam(
                         "keys: cardinality must be > 0".into(),
                     ));
                 }
-                reject_inexact_f64(*dtype, *cardinality)?;
+                reject_inexact_f64(T::DTYPE, *cardinality)?;
                 Ok(Generator::Keys(KeysGen {
                     sampler: dist.key_sampler(*cardinality)?,
                     _item: PhantomData,
@@ -161,10 +145,9 @@ impl Shape {
                 start,
                 gap,
                 min_gap,
-                dtype,
                 unit: _,
             } => {
-                if *dtype == DType::F64 {
+                if T::DTYPE == DType::F64 {
                     return Err(SketchError::BadParam(
                         "monotonic: dtype f64 unsupported; use i64 or u64".into(),
                     ));
@@ -247,10 +230,10 @@ pub struct CategoricalGen<T> {
 impl<T: GenValue> CategoricalGen<T> {
     /// Category ids are authored as `i64` in the spec, so they are narrowed
     /// through [`GenValue::from_acc`] rather than rendered from a draw — an
-    /// id is a value the user wrote down, not a sample. `Shape::dtype`
-    /// reports `i64` for this shape, so `generate_into`'s check already
-    /// pins `T = i64`; the conversion is what makes that expressible in
-    /// generic code without an unchecked cast.
+    /// id is a value the user wrote down, not a sample. `from_acc` is
+    /// fallible, which is what makes `dtype: u64` over negative ids an error
+    /// rather than a wrap; there is no longer a `Shape::dtype()` pinning this
+    /// shape to `i64` in advance.
     fn generate(
         &mut self,
         n: usize,

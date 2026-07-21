@@ -1454,10 +1454,10 @@ mod registry_tests {
             shape: aqpbm_datagen::Shape::Keys {
                 cardinality: 64,
                 dist: aqpbm_datagen::Distribution::Uniform,
-                dtype,
             },
             size: 256,
             seed: 1,
+            dtype,
         };
         WorkloadSpec::Generated(spec).build(dtype).unwrap()
     }

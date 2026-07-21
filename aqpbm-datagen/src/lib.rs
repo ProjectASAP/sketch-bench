@@ -232,6 +232,20 @@ pub struct GenSpec {
     pub size: usize,
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// Physical encoding of the generated values.
+    ///
+    /// Sits here rather than inside [`Shape`] because it is not a property of
+    /// what the values *mean*. It used to live on two of the three `Shape`
+    /// variants and be implied on the third, so `Shape::dtype()` had to
+    /// special-case `Categorical`, and once the value type became a type
+    /// parameter it was a second source of truth that had to be checked
+    /// against the first. One home, no check.
+    ///
+    /// `Shape` is `#[serde(flatten)]`ed into this struct, so `dtype` was
+    /// already a sibling of `size`/`seed` on the wire — moving it changes no
+    /// spec file. `a_spec_file_is_unchanged_by_the_move` pins that.
+    #[serde(default)]
+    pub dtype: DType,
 }
 
 impl GenSpec {
@@ -303,10 +317,10 @@ impl GenSpec {
         // would ignore `--dtype`, and obeying `T` would edit the user's spec
         // file from the command line. Checked here, before any allocation,
         // rather than by unwrapping the finished data as it used to be.
-        if T::DTYPE != self.shape.dtype() {
+        if T::DTYPE != self.dtype {
             return Err(SketchError::BadParam(format!(
                 "spec generates {}, but {} was requested",
-                self.shape.dtype().as_str(),
+                self.dtype.as_str(),
                 T::DTYPE.as_str(),
             )));
         }
@@ -373,20 +387,25 @@ mod tests {
     use rand::SeedableRng;
 
     fn spec(shape: Shape, size: usize, seed: u64) -> GenSpec {
-        GenSpec { shape, size, seed }
+        spec_dt(shape, size, seed, DType::I64)
     }
 
-    fn keys(cardinality: u64, dist: Distribution, dtype: DType) -> Shape {
-        Shape::Keys {
-            cardinality,
-            dist,
+    fn spec_dt(shape: Shape, size: usize, seed: u64, dtype: DType) -> GenSpec {
+        GenSpec {
+            shape,
+            size,
+            seed,
             dtype,
         }
     }
 
+    fn keys(cardinality: u64, dist: Distribution) -> Shape {
+        Shape::Keys { cardinality, dist }
+    }
+
     #[test]
     fn uniform_is_reproducible_and_in_range() {
-        let s = spec(keys(1000, Distribution::Uniform, DType::I64), 500, 42);
+        let s = spec(keys(1000, Distribution::Uniform), 500, 42);
         let a = s.generate::<i64>().unwrap();
         let b = s.generate::<i64>().unwrap();
         assert_eq!(a, b, "same spec+seed must be byte-identical");
@@ -396,11 +415,7 @@ mod tests {
 
     #[test]
     fn zipf_ranks_in_expected_range() {
-        let s = spec(
-            keys(100, Distribution::Zipf { s: 1.1 }, DType::I64),
-            1000,
-            7,
-        );
+        let s = spec(keys(100, Distribution::Zipf { s: 1.1 }), 1000, 7);
         let v = s.generate::<i64>().unwrap();
         assert!(v.iter().all(|x| (1..=100).contains(x)));
     }
@@ -412,7 +427,7 @@ mod tests {
         // one is a compile error and there is nothing left to assert about
         // which variant came back.
         fn written<T: GenValue + FixedWidth>(dtype: DType) -> usize {
-            let v: Vec<T> = spec(keys(256, Distribution::Uniform, dtype), 64, 1)
+            let v: Vec<T> = spec_dt(keys(256, Distribution::Uniform), 64, 1, dtype)
                 .generate()
                 .unwrap();
             let mut buf = Vec::new();
@@ -431,7 +446,7 @@ mod tests {
         // The guard that `Column::into_i64` used to perform after the fact.
         // Doing it up front means no data is generated to be thrown away,
         // and the message names both sides.
-        let s = spec(keys(256, Distribution::Uniform, DType::I64), 64, 1);
+        let s = spec(keys(256, Distribution::Uniform), 64, 1);
         let err = s.generate::<f64>().unwrap_err().to_string();
         assert!(err.contains("i64") && err.contains("f64"), "{err}");
         assert!(s.generate::<i64>().is_ok());
@@ -444,7 +459,7 @@ mod tests {
         // of `cardinality`, quietly invalidating the one parameter a
         // sketch benchmark cares most about.
         let card = 100u64;
-        let f64s: Vec<f64> = spec(keys(card, Distribution::Uniform, DType::F64), 10_000, 42)
+        let f64s: Vec<f64> = spec_dt(keys(card, Distribution::Uniform), 10_000, 42, DType::F64)
             .generate()
             .unwrap();
         let distinct = f64s
@@ -469,7 +484,7 @@ mod tests {
         // same logical sequence — that is what makes dtype a controlled
         // variable when comparing benchmark runs.
         fn draw<T: GenValue>(dtype: DType) -> Vec<T> {
-            spec(keys(500, Distribution::Uniform, dtype), 1_000, 7)
+            spec_dt(keys(500, Distribution::Uniform), 1_000, 7, dtype)
                 .generate()
                 .unwrap()
         }
@@ -484,18 +499,15 @@ mod tests {
     fn f64_cardinality_past_2p53_is_rejected() {
         // Beyond 2^53 the `as f64` cast rounds, so the key space would
         // silently differ from the i64 run it is meant to mirror.
-        let f64_build =
-            |cardinality| keys(cardinality, Distribution::Uniform, DType::F64).build::<f64>();
+        let f64_build = |cardinality| keys(cardinality, Distribution::Uniform).build::<f64>();
         assert!(f64_build((1u64 << 53) + 1).is_err());
         assert!(f64_build(1u64 << 53).is_ok(), "the limit itself is exact");
         assert!(
-            keys(u64::MAX, Distribution::Uniform, DType::I64)
-                .build::<i64>()
-                .is_ok(),
+            keys(u64::MAX, Distribution::Uniform).build::<i64>().is_ok(),
             "i64 is unaffected"
         );
         assert!(
-            keys((1u64 << 53) + 1, Distribution::Zipf { s: 1.1 }, DType::F64)
+            keys((1u64 << 53) + 1, Distribution::Zipf { s: 1.1 })
                 .build::<f64>()
                 .is_err(),
             "zipf shares the limit"
@@ -504,22 +516,20 @@ mod tests {
 
     #[test]
     fn zero_cardinality_is_rejected() {
-        assert!(keys(0, Distribution::Uniform, DType::I64)
-            .build::<i64>()
-            .is_err());
+        assert!(keys(0, Distribution::Uniform).build::<i64>().is_err());
     }
 
     #[test]
     fn keys_reject_non_range_distribution() {
         // Geometric/poisson/explicit have no meaning as a key sampler.
-        assert!(keys(100, Distribution::Poisson { lambda: 3.0 }, DType::I64)
+        assert!(keys(100, Distribution::Poisson { lambda: 3.0 })
             .build::<i64>()
             .is_err());
     }
 
     #[test]
     fn meta_round_trips_through_json() {
-        let s = spec(keys(50, Distribution::Zipf { s: 1.2 }, DType::U64), 100, 9);
+        let s = spec_dt(keys(50, Distribution::Zipf { s: 1.2 }), 100, 9, DType::U64);
         let col = s.generate::<u64>().unwrap();
         let meta = GenMeta::new(&s, &col);
         let json = serde_json::to_string(&meta).unwrap();
@@ -527,6 +537,25 @@ mod tests {
         assert_eq!(back.shape, s.shape);
         assert_eq!(back.dtype, DType::U64);
         assert_eq!(back.count, 100);
+    }
+
+    /// Moving `dtype` off `Shape` and onto `GenSpec` must not change a single
+    /// spec file. `Shape` is `#[serde(flatten)]`ed, so `dtype` was already a
+    /// sibling of `size`/`seed` on the wire — the move is invisible there,
+    /// and this is the assertion that keeps it that way.
+    #[test]
+    fn a_spec_file_is_unchanged_by_the_move() {
+        let yaml = "shape: monotonic\nstart: 1700000000000\nunit: millis\ngap:\n  kind: exponential\n  lambda: 0.5\nmin_gap: 1\ndtype: i64\nsize: 1000\nseed: 42\n";
+        let spec: GenSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.dtype, DType::I64);
+        assert_eq!(spec.size, 1000);
+        assert!(matches!(spec.shape, Shape::Monotonic { min_gap: 1, .. }));
+
+        // And a keys spec with a non-default dtype, the other shape that
+        // used to carry the field.
+        let json = r#"{"shape":"keys","cardinality":100,"dist":{"kind":"uniform"},"dtype":"f64","size":10,"seed":3}"#;
+        let spec: GenSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.dtype, DType::F64);
     }
 
     #[test]
@@ -566,7 +595,6 @@ mod tests {
                 unit: TimeUnit::Nanos,
                 gap: Distribution::Geometric { p: 0.01 },
                 min_gap: 1,
-                dtype: DType::I64,
             },
             5000,
             42,
@@ -581,16 +609,16 @@ mod tests {
 
     #[test]
     fn timestamp_min_gap_zero_allows_duplicates() {
-        let s = spec(
+        let s = spec_dt(
             Shape::Monotonic {
                 start: 0,
                 unit: TimeUnit::Secs,
                 gap: Distribution::Constant { value: 0 },
                 min_gap: 0,
-                dtype: DType::U64,
             },
             10,
             1,
+            DType::U64,
         );
         let v = s.generate::<u64>().unwrap();
         assert!(v.iter().all(|&x| x == 0), "constant-0 gap stays flat");
@@ -604,7 +632,6 @@ mod tests {
                 unit: TimeUnit::Nanos,
                 gap: Distribution::Constant { value: 100 },
                 min_gap: 1,
-                dtype: DType::I64,
             },
             100,
             1,
@@ -656,7 +683,7 @@ mod tests {
     #[test]
     fn chunk_size_does_not_change_output() {
         let shapes = [
-            keys(1000, Distribution::Zipf { s: 1.1 }, DType::I64),
+            keys(1000, Distribution::Zipf { s: 1.1 }),
             Shape::Categorical {
                 categories: (0..16).collect(),
                 dist: Distribution::Zipf { s: 1.2 },
@@ -668,7 +695,6 @@ mod tests {
                 unit: TimeUnit::Millis,
                 gap: Distribution::Exponential { lambda: 0.5 },
                 min_gap: 1,
-                dtype: DType::I64,
             },
         ];
         for shape in shapes {
