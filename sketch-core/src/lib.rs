@@ -28,5 +28,5 @@ pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,
     Record, RunStats, Source, SCHEMA_VERSION,
 };
-pub use sketch::Sketch;
+pub use sketch::{MergeUnsupported, Sketch};
 pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDesc};

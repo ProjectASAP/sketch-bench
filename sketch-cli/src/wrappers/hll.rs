@@ -3,9 +3,11 @@
 //! `Answer = f64`, `Query = ()`.
 
 use sketch_core::config::HllParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
 // sketch_oxide routes `.estimate()` through its `Sketch` trait.
 use sketch_oxide::Sketch as OxideSketch;
+// `merge` lives on sketch_oxide's `Mergeable`, not on its `Sketch`.
+use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide HLL ----------
 pub struct HllOxide {
@@ -37,6 +39,16 @@ impl Sketch for HllOxide {
     fn memory_bytes(&self) -> usize {
         // sketch_oxide stores registers as Vec<u8>: 1 byte/register.
         1usize << self.lg_k
+    }
+
+    /// Register-wise max. Exact for equal `lg_k`: the merged sketch is
+    /// bit-identical to one fed the whole stream, so any error the merge
+    /// benchmark reports beyond the single-pass figure is a real defect.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner
+            .merge(&other.inner)
+            .expect("both operands built from one ParamSet, so lg_k matches");
+        Ok(())
     }
 }
 
@@ -79,6 +91,18 @@ impl Sketch for HllDatasketches {
             datasketches::hll::HllType::Hll8 => m,
         }
     }
+
+    /// Apache DataSketches routes HLL merging through a `Union` gadget rather
+    /// than a method on the sketch, so this rebuilds `self` from the union's
+    /// result. Note the union is what the library documents as the correct
+    /// path even for equal `lg_k`.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        let mut union = datasketches::hll::HllUnion::new(self.lg_k);
+        union.update(&self.inner);
+        union.update(&other.inner);
+        self.inner = union.get_result(self.hll_type);
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib HLL ----------
@@ -113,6 +137,11 @@ impl Sketch for HllLib {
         // Implementation is fixed at P14 — register count is 2^14
         // regardless of `HllParams::lg_k`, 1 byte per register.
         1usize << 14
+    }
+
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
     }
 }
 

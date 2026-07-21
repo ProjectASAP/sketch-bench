@@ -9,7 +9,7 @@
 //! with KLL).
 
 use sketch_core::config::{CmsParams, CountSketchParams, DdParams, HllParams};
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 pub use sketch_bench::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
 
@@ -116,6 +116,12 @@ impl Sketch for NullFrequency {
     fn memory_bytes(&self) -> usize {
         0
     }
+
+    /// Merging two empty summaries yields an empty summary. Supported so the
+    /// null row still anchors the 1.0 reference in a merge sweep.
+    fn merge(&mut self, _other: &Self) -> Result<(), MergeUnsupported> {
+        Ok(())
+    }
 }
 
 /// Same, registered under CountSketch's `ParamSet` variant.
@@ -140,6 +146,12 @@ impl Sketch for NullFrequencyCs {
     fn memory_bytes(&self) -> usize {
         0
     }
+
+    /// Merging two empty summaries yields an empty summary. Supported so the
+    /// null row still anchors the 1.0 reference in a merge sweep.
+    fn merge(&mut self, _other: &Self) -> Result<(), MergeUnsupported> {
+        Ok(())
+    }
 }
 
 /// Cardinality: the estimate is always zero, so relative error is 1.0.
@@ -163,5 +175,11 @@ impl Sketch for NullCardinality {
     }
     fn memory_bytes(&self) -> usize {
         0
+    }
+
+    /// Merging two empty summaries yields an empty summary. Supported so the
+    /// null row still anchors the 1.0 reference in a merge sweep.
+    fn merge(&mut self, _other: &Self) -> Result<(), MergeUnsupported> {
+        Ok(())
     }
 }

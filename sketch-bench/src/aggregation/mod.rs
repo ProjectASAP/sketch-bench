@@ -135,6 +135,10 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         heap_allocated_kb,
         memory_bytes,
         accuracy,
+        // Filled in by the merge pass, which owns these.
+        merge_time_ms: None,
+        merge_shards: None,
+        merge_supported: None,
     }
 }
 

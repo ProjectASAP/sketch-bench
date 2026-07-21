@@ -143,8 +143,20 @@ struct BenchArgs {
     /// single-threaded behaviour.
     #[arg(long, default_value_t = 1)]
     workers: usize,
-    /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy.
-    /// Default: all.
+    /// Split the stream into this many shards, build one sketch per shard,
+    /// and time folding them into one — then compare the merged result
+    /// against the whole stream. `1` (default) skips the merge pass.
+    ///
+    /// Mergeability is what lets a sketch be computed per shard, per node or
+    /// per time window and combined later, and it is close to unmeasured in
+    /// the literature: papers prove it and then evaluate insert and query.
+    /// For linear sketches (Count-Min, Count Sketch, HLL at equal lg_k) the
+    /// merge is exact, so accuracy here must match the single-pass figure and
+    /// a gap is a defect. For KLL it is lossy, and the gap is the result.
+    #[arg(long, default_value_t = 1)]
+    merge_shards: usize,
+    /// Comma-separated metric flags: throughput,latency,cpu,memory,accuracy,merge.
+    /// Default: all except merge (merge needs `--merge-shards`).
     #[arg(long)]
     metrics: Option<String>,
     /// Sweep grid override. Format: `'k1=v1,v2 k2=v3,v4'`
@@ -193,6 +205,7 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
             "cpu" => MetricsMask::CPU,
             "memory" => MetricsMask::MEMORY,
             "accuracy" => MetricsMask::ACCURACY,
+            "merge" => MetricsMask::MERGE,
             "all" => MetricsMask::all(),
             "" => MetricsMask::empty(),
             other => {
@@ -347,6 +360,12 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     }
     let spec = workload_spec(&args)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
+    if args.merge_shards > 1 {
+        metrics_mask |= MetricsMask::MERGE;
+    }
+    // No `else` clearing the bit: `BenchRunner::run` already skips a merge
+    // pass with fewer than two shards, so one guard covers CLI and library
+    // callers alike.
     if args.accuracy {
         // --accuracy implies the accuracy mask bit, regardless of
         // what --metrics said. Otherwise the runner would build the
@@ -359,6 +378,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         metrics: metrics_mask,
         query_count: None,
         threads: args.workers.max(1),
+        merge_shards: args.merge_shards,
         seed: args.seed,
     };
     let accuracy_cfg = AccuracyCfg {
