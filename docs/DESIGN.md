@@ -152,7 +152,7 @@ config intent.
   "mode": "bench",              // or "profile"
   "runs": 10,
   "bench": {
-    "throughput_items_per_sec": {"mean": 4.2e7, "stddev": 1.1e6, "ci95": [4.15e7, 4.25e7]},
+    "throughput_items_per_sec": {"mean": 4.2e7, "stddev": 1.1e6, "n": 10},
     "latency_ns":   {"p50": 21, "p95": 48, "p99": 120},
     "cpu_time_ms":  {"user": 231, "sys": 12},
     "rss_peak_kb":  18340,
@@ -439,7 +439,7 @@ Emitted JSONL (abbreviated):
   "workload":{"shape":"zipf","s":1.1,"size":1000000},
   "mode":"bench", "runs":10,
   "bench":{
-    "throughput_items_per_sec":{"mean":4.2e7,"stddev":1.1e6,"ci95":[4.15e7,4.25e7]},
+    "throughput_items_per_sec":{"mean":4.2e7,"stddev":1.1e6,"n":10},
     "latency_ns":{"p50":21,"p95":48,"p99":120},
     "cpu_time_ms":{"user":231,"sys":12},
     "rss_peak_kb":18340, "heap_peak_kb":null,

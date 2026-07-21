@@ -58,11 +58,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
         .iter()
         .find(|r| r.bench.throughput_items_per_sec.is_some())
         .expect("a throughput pass exists");
-    let tp = throughput
-        .bench
-        .throughput_items_per_sec
-        .as_ref()
-        .unwrap();
+    let tp = throughput.bench.throughput_items_per_sec.as_ref().unwrap();
     assert!(tp.mean > 0.0);
     assert_eq!(tp.n, 3);
 

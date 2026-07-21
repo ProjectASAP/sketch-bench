@@ -19,7 +19,7 @@ pub use config::{
     ParamSet, UnivMonParams,
 };
 pub use datagen::{
-    BasicStats, Column, DType, Distribution, Generator, GenMeta, GenSpec, Shape, TimeUnit,
+    BasicStats, Column, DType, Distribution, GenMeta, GenSpec, Generator, Shape, TimeUnit,
     GEN_META_SCHEMA_VERSION,
 };
 pub use error::SketchCoreError;

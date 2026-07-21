@@ -275,7 +275,11 @@ impl GenSpec {
         }
         sink.flush()?;
 
-        Ok(GenMeta::from_parts(self, self.shape.dtype(), stats.finish()))
+        Ok(GenMeta::from_parts(
+            self,
+            self.shape.dtype(),
+            stats.finish(),
+        ))
     }
 }
 
@@ -348,7 +352,11 @@ mod tests {
 
     #[test]
     fn zipf_ranks_in_expected_range() {
-        let s = spec(keys(100, Distribution::Zipf { s: 1.1 }, DType::I64), 1000, 7);
+        let s = spec(
+            keys(100, Distribution::Zipf { s: 1.1 }, DType::I64),
+            1000,
+            7,
+        );
         match s.generate().unwrap() {
             Column::I64(v) => assert!(v.iter().all(|x| (1..=100).contains(x))),
             _ => panic!("expected i64 column"),
@@ -394,9 +402,13 @@ mod tests {
             .map(|x| x.to_bits())
             .collect::<std::collections::HashSet<_>>()
             .len();
-        assert_eq!(distinct, card as usize, "f64 must draw from `cardinality` keys");
+        assert_eq!(
+            distinct, card as usize,
+            "f64 must draw from `cardinality` keys"
+        );
         assert!(
-            f64s.iter().all(|x| x.fract() == 0.0 && (0.0..card as f64).contains(x)),
+            f64s.iter()
+                .all(|x| x.fract() == 0.0 && (0.0..card as f64).contains(x)),
             "f64 values must be whole numbers in [0, cardinality)"
         );
     }
@@ -427,7 +439,10 @@ mod tests {
         // silently differ from the i64 run it is meant to mirror.
         let build = |dtype, cardinality| keys(cardinality, Distribution::Uniform, dtype).build();
         assert!(build(DType::F64, (1u64 << 53) + 1).is_err());
-        assert!(build(DType::F64, 1u64 << 53).is_ok(), "the limit itself is exact");
+        assert!(
+            build(DType::F64, 1u64 << 53).is_ok(),
+            "the limit itself is exact"
+        );
         assert!(build(DType::I64, u64::MAX).is_ok(), "i64 is unaffected");
         assert!(
             keys((1u64 << 53) + 1, Distribution::Zipf { s: 1.1 }, DType::F64)
@@ -464,8 +479,7 @@ mod tests {
 
     #[test]
     fn genspec_deserializes_flattened_shape() {
-        let json =
-            r#"{"shape":"keys","cardinality":1000,"dist":{"kind":"zipf","s":1.1},"size":10,"seed":3}"#;
+        let json = r#"{"shape":"keys","cardinality":1000,"dist":{"kind":"zipf","s":1.1},"size":10,"seed":3}"#;
         let spec: GenSpec = serde_json::from_str(json).unwrap();
         assert_eq!(spec.size, 10);
         assert_eq!(spec.seed, 3);
@@ -549,7 +563,10 @@ mod tests {
             100,
             1,
         );
-        assert!(s.generate().is_err(), "accumulation past i64::MAX must error");
+        assert!(
+            s.generate().is_err(),
+            "accumulation past i64::MAX must error"
+        );
     }
 
     #[test]
@@ -628,7 +645,11 @@ mod tests {
                     "chunk={chunk} changed the values for {shape:?}"
                 );
                 assert_eq!(meta.count, 5_000, "chunk={chunk} lost rows");
-                assert_eq!(meta.stats, one_shot.stats(), "chunk={chunk} skewed the summary");
+                assert_eq!(
+                    meta.stats,
+                    one_shot.stats(),
+                    "chunk={chunk} skewed the summary"
+                );
             }
         }
     }
@@ -638,7 +659,11 @@ mod tests {
         // `workload generate` (file sink) and `bench --spec` (memory
         // sink) must be the same workload, or a run cannot be
         // reproduced from the file it was supposedly generated into.
-        let s = spec(keys(500, Distribution::Zipf { s: 1.3 }, DType::I64), 3_000, 7);
+        let s = spec(
+            keys(500, Distribution::Zipf { s: 1.3 }, DType::I64),
+            3_000,
+            7,
+        );
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
 
         let mut file_sink = crate::datagen::FileSink::create(&path).unwrap();

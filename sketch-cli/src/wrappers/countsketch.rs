@@ -7,7 +7,7 @@ use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
 use crate::wrappers::cms::{
-    CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS, CountMinMatrix5x32K,
+    CountMinMatrix5x32K, CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS,
 };
 
 // sketch_oxide::frequency::CountSketch sizes its table as

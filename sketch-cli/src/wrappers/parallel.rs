@@ -143,8 +143,7 @@ impl Sketch for ParallelHllFastPath {
         // Each worker holds an HLL with ErtlMLE registers — leave
         // it at a coarse upper bound (P14 default for the
         // sketchlib HLL ≈ 16k regs × 1 byte).
-        self.workers * (1 << 14)
-            + self.buf.capacity() * std::mem::size_of::<i64>()
+        self.workers * (1 << 14) + self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
 
@@ -168,8 +167,7 @@ fn run_parallel_cms(items: &[i64], workers: usize) -> u128 {
             .map(|part| {
                 let barrier = &barrier;
                 s.spawn(move || {
-                    let mut sketch =
-                        CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                    let mut sketch = CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
                     barrier.wait();
                     let start = Instant::now();
                     for &v in *part {
@@ -182,7 +180,11 @@ fn run_parallel_cms(items: &[i64], workers: usize) -> u128 {
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).max().unwrap_or(0)
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .max()
+            .unwrap_or(0)
     })
 }
 
@@ -195,8 +197,7 @@ fn run_parallel_cs(items: &[i64], workers: usize) -> u128 {
             .map(|part| {
                 let barrier = &barrier;
                 s.spawn(move || {
-                    let mut sketch =
-                        Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                    let mut sketch = Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
                     barrier.wait();
                     let start = Instant::now();
                     for &v in *part {
@@ -209,7 +210,11 @@ fn run_parallel_cs(items: &[i64], workers: usize) -> u128 {
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).max().unwrap_or(0)
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .max()
+            .unwrap_or(0)
     })
 }
 
@@ -235,6 +240,10 @@ fn run_parallel_hll(items: &[i64], workers: usize) -> u128 {
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).max().unwrap_or(0)
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .max()
+            .unwrap_or(0)
     })
 }

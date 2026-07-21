@@ -36,7 +36,11 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
                 samples.push(v);
             }
         }
-        let s = if samples.is_empty() { None } else { Some(samples) };
+        let s = if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        };
         (maybe_runstats(w), s)
     } else {
         (None, None)
@@ -160,7 +164,9 @@ fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     let mut acc: BTreeMap<&str, Welford> = BTreeMap::new();
     let mut n_runs = 0usize;
     for r in runs {
-        let Some(m) = r.accuracy.as_ref() else { continue };
+        let Some(m) = r.accuracy.as_ref() else {
+            continue;
+        };
         n_runs += 1;
         for (k, v) in m {
             acc.entry(k.as_str()).or_insert_with(Welford::new).push(*v);
@@ -172,7 +178,11 @@ fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     let mut out = serde_json::Map::new();
     for (k, w) in acc {
         out.insert(k.to_string(), json_num(w.mean()));
-        if w.n() > 1 {
+        // A `_stddev` of exactly zero carries no information and most of
+        // these keys are configuration constants (`probes_top10`,
+        // `grid_points`, `items`) that only ride along in the metric map.
+        // Emitting a companion for each doubled the payload with zeros.
+        if w.n() > 1 && w.stddev() != 0.0 {
             out.insert(format!("{k}_stddev"), json_num(w.stddev()));
         }
     }

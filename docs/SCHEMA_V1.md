@@ -48,14 +48,21 @@ because every optional field deserialises from `null` to `None`.
 
 ```jsonc
 {
-  "throughput_items_per_sec": { "mean": 4.2e7, "stddev": 1.1e6, "ci95": [4.15e7, 4.25e7], "n": 10 },
+  "throughput_items_per_sec": { "mean": 4.2e7, "stddev": 1.1e6, "n": 10 },
   "latency_ns":               { "p50": 17, "p95": 41, "p99": 60, "p999": 95, "max": 312, "count": 1000000 },
   "accuracy":                 { /* family-specific, see below */ }
 }
 ```
 
-`RunStats` (mean/stddev/ci95/n): both ends of `ci95` are absolute
-values (not deltas). `n` matches the top-level `runs`.
+`RunStats` is `mean` / `stddev` / `n`, plus an **optional** `ci95`.
+
+`ci95` is present only when the tool had statistically independent samples
+to compute it from — i.e. `sketchlib bench --repeats R` with `R > 1`, which
+re-executes the binary R times and takes each process's mean as one sample.
+Its absence is the normal case and means "no interval could be computed
+honestly here", not "zero spread". Both ends are absolute values, not deltas.
+`n` is the number of samples behind `mean`: iterations within one process
+when `ci95` is absent, independent processes when it is present.
 
 ## `accuracy` payload — cross-language convention
 

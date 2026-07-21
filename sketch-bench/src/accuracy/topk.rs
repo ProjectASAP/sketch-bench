@@ -1,8 +1,8 @@
 //! Top-k family ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
-use std::collections::BTreeMap;
 use sketch_core::sketch::Sketch;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::Instant;
@@ -47,7 +47,15 @@ where
         };
 
         Comparison {
-            metrics: [("k".to_string(), (self.k) as f64), ("precision_at_k".to_string(), (precision) as f64), ("recall_at_k".to_string(), (recall) as f64), ("true_top_k_count".to_string(), (truth_set.len()) as f64), ("est_top_k_count".to_string(), (est.len()) as f64)].into_iter().collect::<BTreeMap<String, f64>>(),
+            metrics: [
+                ("k".to_string(), (self.k) as f64),
+                ("precision_at_k".to_string(), (precision) as f64),
+                ("recall_at_k".to_string(), (recall) as f64),
+                ("true_top_k_count".to_string(), (truth_set.len()) as f64),
+                ("est_top_k_count".to_string(), (est.len()) as f64),
+            ]
+            .into_iter()
+            .collect::<BTreeMap<String, f64>>(),
             queries: 1,
             query_wall_ns: q_ns,
             query_calls: None,
