@@ -51,11 +51,12 @@ void write_double(std::ostringstream& o, double v) {
 }
 
 void write_run_stats(std::ostringstream& o, const RunStats& s) {
+    // No "ci95": these runs share one process, so no honest confidence
+    // interval can be computed from them. See RunStats::ci95 on the Rust
+    // side — the field is optional and absent means "not computable here".
     o << "{\"mean\":";    write_double(o, s.mean);
     o << ",\"stddev\":";  write_double(o, s.stddev);
-    o << ",\"ci95\":[";   write_double(o, s.ci95_lo);
-    o << ',';             write_double(o, s.ci95_hi);
-    o << "],\"n\":" << s.n << '}';
+    o << ",\"n\":" << s.n << '}';
 }
 
 void write_latency(std::ostringstream& o, const LatencySummary& l) {

@@ -26,16 +26,14 @@ RunStats compute_run_stats(const std::vector<double>& samples) {
         }
         // Sample stddev (Bessel).
         s.stddev = std::sqrt(sq / static_cast<double>(s.n - 1));
-        // 95% CI on the mean assuming normality: ±1.96 * stddev / sqrt(n).
-        // Plenty for n=10 and a quick visualization; not a publication
-        // claim about the underlying distribution.
-        const double half = 1.96 * s.stddev / std::sqrt(static_cast<double>(s.n));
-        s.ci95_lo = s.mean - half;
-        s.ci95_hi = s.mean + half;
+        // No confidence interval is computed here. These samples are
+        // iterations inside one process — one allocator arena, one
+        // address-space layout, one governor ramp — so they are not
+        // independent draws of this implementation's throughput, and
+        // mean +- 1.96*stddev/sqrt(n) over them yields an interval far
+        // tighter than the command's own run-to-run reproducibility.
     } else {
         s.stddev = 0.0;
-        s.ci95_lo = s.mean;
-        s.ci95_hi = s.mean;
     }
     return s;
 }

@@ -7,6 +7,7 @@
 mod dispatch;
 mod params;
 mod raw_csv;
+mod repeat;
 mod sweep;
 mod workload_cmd;
 mod wrappers;
@@ -73,9 +74,22 @@ struct BenchArgs {
     /// `all` (the default). `list-impls` shows choices.
     #[arg(long = "impl", default_value = "all")]
     impl_name: String,
-    /// Number of measured runs per `(impl, config)` pair.
+    /// Number of measured iterations per `(impl, config)` pair, inside one
+    /// process. Summarised as mean / stddev / `throughput_samples`. These
+    /// iterations share a process, so they do **not** support a confidence
+    /// interval — see `--repeats`.
     #[arg(long, default_value_t = 10)]
     runs: usize,
+    /// Re-execute the whole benchmark in this many **separate processes** and
+    /// report the 95% confidence interval over their per-process means.
+    ///
+    /// This is the only setting that makes `ci95` appear in the output: a
+    /// fresh process is what varies the allocator arena, address-space layout,
+    /// governor ramp and page-cache state that `--runs` holds constant. Left
+    /// at 1 (the default) no interval is claimed, because none can be computed
+    /// honestly. Costs R times the wall clock.
+    #[arg(long, default_value_t = 1)]
+    repeats: usize,
     /// Warm-up runs before measurement.
     #[arg(long, default_value_t = 3)]
     warmup_runs: usize,
@@ -218,6 +232,12 @@ enum ReportSink {
 
 impl ReportSink {
     fn open(spec: Option<&str>) -> Result<Self> {
+        // A repeat child always writes to stdout: the parent captures it and
+        // owns the real `--report` destination. Otherwise each child would
+        // also append its own unmerged records to that file.
+        if repeat::is_child() {
+            return Ok(ReportSink::Stdout);
+        }
         match spec {
             None | Some("-") => Ok(ReportSink::Stdout),
             Some(path) => Ok(ReportSink::File(
@@ -300,6 +320,26 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
 const DEFAULT_WARMUP_SECS: &str = "10";
 
 fn run_bench(args: BenchArgs) -> Result<()> {
+    if args.repeats == 0 {
+        bail!("--repeats must be >= 1");
+    }
+    // Parent role: spawn the repeats, merge, emit. A child (marked by the
+    // env var) falls through and runs the measurement itself.
+    if args.repeats > 1 && !repeat::is_child() {
+        if args.raw_csv.is_some() {
+            bail!(
+                "--raw-csv cannot be combined with --repeats: the legacy CSV shape has no \
+                 repeat column, so every repeat would append indistinguishable rows"
+            );
+        }
+        let records = repeat::run_repeats(args.repeats)?;
+        let mut sink = ReportSink::open(args.report.as_deref())?;
+        for r in &records {
+            sink.write_line(&r.to_jsonl())?;
+        }
+        eprintln!("sketchlib: merged {} repeats into {} record(s)", args.repeats, records.len());
+        return Ok(());
+    }
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
         // SAFETY-equivalent note: single-threaded, before any bench thread
         // is spawned, and only when the operator has not chosen a value.

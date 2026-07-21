@@ -359,7 +359,7 @@ Built-in families:
 
 Downstream apps can implement their own `GroundTruth` for domain-specific comparisons.
 
-### 5.7 Aggregation — Welford + 95% CI
+### 5.7 Aggregation — Welford, and where a CI may come from
 
 `aggregation/welford.rs` is a numerically-stable online accumulator; called once per metric across the N post-warmup runs:
 
@@ -367,13 +367,35 @@ Downstream apps can implement their own `GroundTruth` for domain-specific compar
 pub struct RunStats {
     pub n: usize,
     pub mean: f64,
-    pub stddev: f64,        // sample stddev (n-1 divisor)
-    pub ci95_lo: f64,       // mean - 1.96 * stddev / sqrt(n)
-    pub ci95_hi: f64,
+    pub stddev: f64,           // sample stddev (n-1 divisor)
+    pub ci95: Option<[f64; 2]>, // present only across processes — see below
 }
 ```
 
-CI uses the normal approximation (z = 1.96). For N < 30 the interval is approximate — documented, and easy to tighten by raising `BenchConfig::runs`.
+**`ci95` is absent unless `sketchlib bench --repeats R` (R > 1) produced it.**
+
+This section used to prescribe the opposite: it computed the interval over the
+N post-warmup runs of a single invocation and told the reader that a wide
+interval was "easy to tighten by raising `BenchConfig::runs`". That advice was
+backwards. Those N runs share one process — one allocator arena, one
+address-space layout, one governor ramp, one already-resident item slice — so
+they are not independent samples of the implementation's throughput. They
+estimate how much the last few seconds of that process wobbled. Dividing their
+spread by `sqrt(N)` produced an interval far tighter than the command's own
+reproducibility, and raising N made it narrower and *more* wrong. Four
+identical invocations produced four mutually disjoint 95% intervals; measured
+on `cms/lib-fixedmatrix-fast-32k`, the cross-process stddev was **3x** the
+within-process stddev.
+
+So a repeat is a whole process (`sketch-cli/src/repeat.rs`): `--repeats R`
+re-executes this binary R times over byte-identical argv and computes the
+interval from the R per-process means, with `n = R`. Within one process,
+`--runs N` still reports `mean` / `stddev` / `throughput_samples` — none of
+which claim to be an inference about a population — and no interval.
+
+Accuracy does not use this axis: a sketch's error is a deterministic function
+of (data, parameters) with no process-level variance to sample. Its
+repetitions vary the data instead.
 
 ### 5.8 Relationship to `sketch-runtime`
 
