@@ -1,7 +1,7 @@
 //! Cardinality-family ground truth (HLL). Exact distinct
 //! count from `items`; reports relative error.
 
-use serde_json::json;
+use std::collections::BTreeMap;
 use sketch_core::sketch::Sketch;
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -76,13 +76,19 @@ where
             None
         };
 
+        // The null estimator for cardinality answers 0, giving
+        // `relative_error = 1.0` exactly — the same constant the frequency
+        // comparator documents. Any implementation scoring above 1.0 is
+        // worse than doing no work.
+        let metrics = BTreeMap::from([
+            ("truth".to_string(), truth),
+            ("estimate".to_string(), est),
+            ("absolute_error".to_string(), abs_err),
+            ("relative_error".to_string(), rel_err),
+        ]);
+
         Comparison {
-            json: json!({
-                "truth": truth,
-                "estimate": est,
-                "absolute_error": abs_err,
-                "relative_error": rel_err,
-            }),
+            metrics,
             queries: QUERY_TIMING_REPEATS as u64,
             query_wall_ns: q_ns,
             query_calls,

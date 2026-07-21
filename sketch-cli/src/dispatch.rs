@@ -7,7 +7,6 @@
 //! optionally compute per-family ground-truth accuracy through
 //! the same table.
 
-use std::collections::HashSet;
 use std::hash::Hash;
 
 use anyhow::Result;
@@ -218,6 +217,14 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "hll",
+        impl_name: "null",
+        description: "null baseline: cardinality estimate is 0 — pins relative error = 1.0",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Cardinality,
+        run: run_hll_null,
+    },
+    ImplEntry {
+        family: "hll",
         impl_name: "polars",
         description: "polars exact: DataFrame.n_unique() (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
@@ -341,6 +348,14 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "cms",
+        impl_name: "null",
+        description: "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cms_null,
+    },
+    ImplEntry {
+        family: "cms",
         impl_name: "polars",
         description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
@@ -409,6 +424,14 @@ pub const IMPLS: &[ImplEntry] = &[
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_exact,
+    },
+    ImplEntry {
+        family: "countsketch",
+        impl_name: "null",
+        description: "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
+        constraint: Constraint::Unparameterized,
+        accuracy_kind: AccuracyKind::Frequency,
+        run: run_cs_null,
     },
     ImplEntry {
         family: "countsketch",
@@ -567,16 +590,15 @@ fn bench_freq_gt<S, W>(
 ) -> Vec<BenchReport>
 where
     W: Workload,
-    W::Item: Clone + Eq + Hash,
+    W::Item: Clone + Eq + Hash + Ord,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
 {
-    let keys_to_probe = sample_distinct(wk.items(), max_probes);
     let gt = FrequencyGT {
-        keys_to_probe,
+        max_probes,
         min_true_count,
     };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, FrequencyGT<W::Item>, _>(factory, insert_body, Some(&gt))
+        .run::<S, _, FrequencyGT, _>(factory, insert_body, Some(&gt))
 }
 
 fn bench_card_gt<S, W>(
@@ -631,39 +653,6 @@ where
     let gt = RelativeErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
         .run::<S, _, RelativeErrorGT, _>(factory, insert_body, Some(&gt))
-}
-
-/// Collect distinct keys from `items` and return them in a
-/// **uniformly shuffled** order, capped at `max_probes` (`0` =
-/// no cap). The shuffle defeats the cache locality the encounter
-/// order would have given the exact-baseline HashMap probe (under
-/// Zipf the heavy hitters appear first, so probing in encounter
-/// order keeps them L1-resident); shuffling models a uniform
-/// random query workload over the distinct-key set, which is
-/// what an offline accuracy bench should be measuring.
-///
-/// Seeded with a fixed value so the probe order is reproducible
-/// across runs of the same workload.
-fn sample_distinct<K>(items: &[K], max_probes: usize) -> Vec<K>
-where
-    K: Clone + Eq + Hash,
-{
-    use rand::seq::SliceRandom;
-    use rand::SeedableRng;
-
-    let mut seen: HashSet<K> = HashSet::new();
-    let mut out: Vec<K> = Vec::new();
-    for it in items {
-        if seen.insert(it.clone()) {
-            out.push(it.clone());
-        }
-    }
-    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
-    out.shuffle(&mut rng);
-    if max_probes != 0 && out.len() > max_probes {
-        out.truncate(max_probes);
-    }
-    out
 }
 
 // ---------- dispatch macros ----------
@@ -815,6 +804,7 @@ run_impl!(run_hll_datasketches, hll::HllDatasketches, "hll", "datasketches", Hll
 run_impl!(run_hll_lib, hll::HllLib, "hll", "lib", Hll, i64, card);
 run_impl!(run_hll_lib_hip, hll::HllLibHip, "hll", "lib-hip", Hll, i64, card);
 run_impl!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll, i64, card);
+run_impl!(run_hll_null, exact::NullCardinality, "hll", "null", Hll, i64, card);
 
 // -- KLL --
 run_impl!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll, i64, quant);
@@ -870,6 +860,7 @@ run_impl!(
     freq
 );
 run_impl!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms, i64, freq);
+run_impl!(run_cms_null, exact::NullFrequency, "cms", "null", Cms, i64, freq);
 
 // -- CountSketch --
 run_impl!(run_cs_oxide, countsketch::CsOxide, "countsketch", "oxide", Countsketch, i64, freq);
@@ -910,6 +901,7 @@ run_impl!(
     freq
 );
 run_impl!(run_cs_exact, exact::ExactFrequencyCs, "countsketch", "exact", Countsketch, i64, freq);
+run_impl!(run_cs_null, exact::NullFrequencyCs, "countsketch", "null", Countsketch, i64, freq);
 
 // -- DDSketch --
 run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", Dd, i64, quant_rel);
