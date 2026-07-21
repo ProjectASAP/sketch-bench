@@ -261,6 +261,7 @@ fn source_label(src: sketch_core::report::Source) -> String {
         AsapFusion => "asap-fusion",
         DataCollector => "data-collector",
         AsapQuery => "asap-query",
+        CppBench => "cpp-bench",
     }
     .to_string()
 }

@@ -16,7 +16,7 @@ use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
-use sketch_core::workload::{BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, ZipfI64};
+use sketch_core::workload::{BytesWorkload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
     cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
@@ -83,61 +83,25 @@ pub enum WorkloadSpec {
 }
 
 impl WorkloadSpec {
-    pub fn build_i64(self) -> Result<WorkloadAny> {
-        Ok(match self {
+    pub fn build_i64(self) -> Result<I64Workload> {
+        match self {
             WorkloadSpec::Uniform {
                 size,
                 cardinality,
                 seed,
-            } => WorkloadAny::I64(UniformI64::new(size, cardinality, seed)),
+            } => Ok(I64Workload::uniform(size, cardinality, seed)),
             WorkloadSpec::Zipf {
                 size,
                 cardinality,
                 s,
                 seed,
-            } => WorkloadAny::Zipf(
-                ZipfI64::new(size, cardinality, s, seed).map_err(|e| anyhow::anyhow!("{}", e))?,
-            ),
-            WorkloadSpec::File { path } => WorkloadAny::File(
-                FileI64::load(std::path::Path::new(&path))
-                    .map_err(|e| anyhow::anyhow!("{}", e))?,
-            ),
-        })
-    }
-}
-
-pub enum WorkloadAny {
-    I64(UniformI64),
-    Zipf(ZipfI64),
-    File(FileI64),
-}
-
-impl WorkloadAny {
-    fn to_string_wk(&self) -> StringWk {
-        match self {
-            WorkloadAny::I64(w) => StringWk::FromUniform(StringFromI64::new(w)),
-            WorkloadAny::Zipf(w) => StringWk::FromZipf(StringFromI64::new(w)),
-            WorkloadAny::File(w) => StringWk::FromFile(StringFromI64::new(w)),
+            } => I64Workload::zipf(size, cardinality, s, seed)
+                .map_err(|e| anyhow::anyhow!("{}", e)),
+            WorkloadSpec::File { path } => {
+                I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
+            }
         }
     }
-    fn to_bytes_wk(&self) -> BytesWk {
-        match self {
-            WorkloadAny::I64(w) => BytesWk::FromUniform(BytesFromI64::new(w)),
-            WorkloadAny::Zipf(w) => BytesWk::FromZipf(BytesFromI64::new(w)),
-            WorkloadAny::File(w) => BytesWk::FromFile(BytesFromI64::new(w)),
-        }
-    }
-}
-
-enum StringWk {
-    FromUniform(StringFromI64<UniformI64>),
-    FromZipf(StringFromI64<ZipfI64>),
-    FromFile(StringFromI64<FileI64>),
-}
-enum BytesWk {
-    FromUniform(BytesFromI64<UniformI64>),
-    FromZipf(BytesFromI64<ZipfI64>),
-    FromFile(BytesFromI64<FileI64>),
 }
 
 /// Constraint that a given impl places on the `ParamSet` it
@@ -195,7 +159,7 @@ pub struct ImplEntry {
     pub accuracy_kind: AccuracyKind,
     run: fn(
         cfg: &BenchConfig,
-        wk: &WorkloadAny,
+        wk: &I64Workload,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
     ) -> Vec<BenchReport>,
@@ -209,7 +173,7 @@ impl ImplEntry {
     pub fn run(
         &self,
         cfg: &BenchConfig,
-        wk: &WorkloadAny,
+        wk: &I64Workload,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
     ) -> Vec<BenchReport> {
@@ -709,544 +673,290 @@ where
     out
 }
 
-// ---------- per-family dispatch macros ----------
+// ---------- dispatch macros ----------
 //
-// One macro per (key-type × GT-family) pair. The macro fans the
-// WorkloadAny variants into typed `bench_*_gt` calls. When
-// `accuracy.enabled` is false we fall through to `bench_no_gt`.
+// A dispatch row differs from its neighbours along exactly three axes:
+// the wrapper type, how the workload's `i64` items are viewed by that
+// wrapper (raw / decimal string / decimal bytes), and which
+// ground-truth comparator its family supports. `run_impl!` takes those
+// as tokens and expands the single `fn` shape they all share, so
+// adding an impl is one line and adding an axis value is one macro
+// arm — rather than one macro per (view × GT) pair.
 
-macro_rules! run_i64_freq {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (WorkloadAny::Zipf(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (WorkloadAny::File(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (WorkloadAny::I64(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
+/// Unwrap the family-typed params. A mismatch means the dispatch table
+/// wired a row to the wrong `ParamSet` variant — a build-time wiring
+/// bug, not user input — so it panics rather than degrading.
+macro_rules! params_of {
+    ($variant:ident, $params:expr, $impl:expr) => {
+        match $params {
+            ParamSet::$variant(p) => *p,
+            other => panic!("dispatch::{} wrong family: {:?}", $impl, other.family()),
         }
     };
 }
 
-macro_rules! run_i64_card {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::Zipf(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::File(w), true) => bench_card_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::I64(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
+/// The item view a wrapper consumes. `string` / `bytes` materialise a
+/// derived workload; binding the result with `let` extends the
+/// temporary's lifetime over the benchmark call.
+macro_rules! wk_view {
+    (i64, $wk:expr) => {
+        $wk
+    };
+    (string, $wk:expr) => {
+        &StringWorkload::from_i64($wk)
+    };
+    (bytes, $wk:expr) => {
+        &BytesWorkload::from_i64($wk)
     };
 }
 
-macro_rules! run_i64_quant {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::Zipf(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::File(w), true) => bench_quant_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::I64(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
+/// The ground-truth comparator a family supports, and the extra
+/// `AccuracyCfg` knobs that comparator honours.
+macro_rules! gt_bench {
+    (freq, $wrapper:ty, $cfg:expr, $w:expr, $family:expr, $impl:expr, $p:expr, $acc:expr) => {
+        bench_freq_gt::<$wrapper, _>(
+            $cfg,
+            $w,
+            $family,
+            $impl,
+            || <$wrapper>::new(&$p),
+            $acc.max_probes,
+            $acc.min_true_count,
+        )
+    };
+    (card, $wrapper:ty, $cfg:expr, $w:expr, $family:expr, $impl:expr, $p:expr, $acc:expr) => {
+        bench_card_gt::<$wrapper, _>(
+            $cfg,
+            $w,
+            $family,
+            $impl,
+            || <$wrapper>::new(&$p),
+            $acc.record_query_calls,
+        )
+    };
+    (quant, $wrapper:ty, $cfg:expr, $w:expr, $family:expr, $impl:expr, $p:expr, $acc:expr) => {
+        bench_quant_gt::<$wrapper, _>(
+            $cfg,
+            $w,
+            $family,
+            $impl,
+            || <$wrapper>::new(&$p),
+            $acc.record_query_calls,
+        )
+    };
+    (quant_rel, $wrapper:ty, $cfg:expr, $w:expr, $family:expr, $impl:expr, $p:expr, $acc:expr) => {
+        bench_quant_rel_gt::<$wrapper, _>(
+            $cfg,
+            $w,
+            $family,
+            $impl,
+            || <$wrapper>::new(&$p),
+            $acc.record_query_calls,
+        )
     };
 }
 
-macro_rules! run_i64_quant_rel {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
+/// Define one dispatch row's `run` fn.
+///
+/// `$view` ∈ `i64 | string | bytes`; `$gt` ∈ `freq | card | quant |
+/// quant_rel | none`. `none` marks a family whose wrapper `query` is a
+/// stub (Nitro / UnivMon): a comparator there would report ~100% error
+/// against a hardcoded 0, which is worse than no number, so those rows
+/// ignore `--accuracy` entirely.
+macro_rules! run_impl {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident, $view:ident, none) => {
         fn $fn_name(
             cfg: &BenchConfig,
-            wk: &WorkloadAny,
+            wk: &I64Workload,
+            params: &ParamSet,
+            _accuracy: &AccuracyCfg,
+        ) -> Vec<BenchReport> {
+            let p = params_of!($variant, params, $impl);
+            let w = wk_view!($view, wk);
+            bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+        }
+    };
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident, $view:ident, $gt:ident) => {
+        fn $fn_name(
+            cfg: &BenchConfig,
+            wk: &I64Workload,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
         ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk, accuracy.enabled) {
-                (WorkloadAny::I64(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::Zipf(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::File(w), true) => bench_quant_rel_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, || <$wrapper>::new(&p),
-                    accuracy.record_query_calls,
-                ),
-                (WorkloadAny::I64(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::Zipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (WorkloadAny::File(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
+            let p = params_of!($variant, params, $impl);
+            let w = wk_view!($view, wk);
+            if accuracy.enabled {
+                gt_bench!($gt, $wrapper, cfg, w, $family, $impl, p, accuracy)
+            } else {
+                bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
             }
         }
     };
 }
 
 /// Parallel-insert impls (`lib-fastpath-parallel` under cms /
-/// countsketch / hll). Threads come from `cfg.threads` (driven
-/// by `--workers N`); accuracy is None because the partitions
-/// are intentionally not merged (matches legacy octo).
-macro_rules! run_i64_parallel {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
+/// countsketch / hll). Separate from `run_impl!` only because the
+/// wrapper ctor takes a second `workers` argument (from `--workers N`).
+/// Accuracy is `None` because the partitions are intentionally not
+/// merged (matches legacy octo).
+macro_rules! run_parallel_impl {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident) => {
         fn $fn_name(
             cfg: &BenchConfig,
-            wk: &WorkloadAny,
+            wk: &I64Workload,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
         ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
+            let p = params_of!($variant, params, $impl);
             let workers = cfg.threads;
-            match wk {
-                WorkloadAny::I64(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
-                WorkloadAny::Zipf(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
-                WorkloadAny::File(w) => bench_no_gt::<$wrapper, _>(
-                    cfg, w, $family, $impl, move || <$wrapper>::new(&p, workers),
-                ),
-            }
-        }
-    };
-}
-
-/// For Nitro lib: `Query = i64` but `query()` returns a stub
-/// 0 — a frequency GT would report 100% error, which is
-/// misleading. Always run with NoGT.
-macro_rules! run_i64_none {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            _accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match wk {
-                WorkloadAny::I64(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                WorkloadAny::Zipf(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                WorkloadAny::File(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
-    };
-}
-
-macro_rules! run_string_freq {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk.to_string_wk(), accuracy.enabled) {
-                (StringWk::FromUniform(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (StringWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (StringWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (StringWk::FromUniform(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (StringWk::FromZipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (StringWk::FromFile(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
-    };
-}
-
-macro_rules! run_bytes_freq {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match (wk.to_bytes_wk(), accuracy.enabled) {
-                (BytesWk::FromUniform(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (BytesWk::FromZipf(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (BytesWk::FromFile(w), true) => bench_freq_gt::<$wrapper, _>(
-                    cfg,
-                    &w,
-                    $family,
-                    $impl,
-                    || <$wrapper>::new(&p),
-                    accuracy.max_probes, accuracy.min_true_count,
-                ),
-                (BytesWk::FromUniform(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (BytesWk::FromZipf(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                (BytesWk::FromFile(w), false) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
-    };
-}
-
-macro_rules! run_string_none {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            _accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match wk.to_string_wk() {
-                StringWk::FromUniform(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                StringWk::FromZipf(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                StringWk::FromFile(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
-        }
-    };
-}
-
-macro_rules! run_bytes_none {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $param_variant:ident) => {
-        fn $fn_name(
-            cfg: &BenchConfig,
-            wk: &WorkloadAny,
-            params: &ParamSet,
-            _accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
-            let p = match params {
-                ParamSet::$param_variant(p) => *p,
-                _ => panic!("dispatch::{} wrong family: {:?}", $impl, params.family()),
-            };
-            match wk.to_bytes_wk() {
-                BytesWk::FromUniform(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                BytesWk::FromZipf(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-                BytesWk::FromFile(w) => {
-                    bench_no_gt::<$wrapper, _>(cfg, &w, $family, $impl, || <$wrapper>::new(&p))
-                }
-            }
+            bench_no_gt::<$wrapper, _>(cfg, wk, $family, $impl, move || {
+                <$wrapper>::new(&p, workers)
+            })
         }
     };
 }
 
 // -- HLL --
-run_i64_card!(run_hll_oxide, hll::HllOxide, "hll", "oxide", Hll);
-run_i64_card!(
-    run_hll_datasketches,
-    hll::HllDatasketches,
-    "hll",
-    "datasketches",
-    Hll
-);
-run_i64_card!(run_hll_lib, hll::HllLib, "hll", "lib", Hll);
-run_i64_card!(run_hll_lib_hip, hll::HllLibHip, "hll", "lib-hip", Hll);
-run_i64_card!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll);
+run_impl!(run_hll_oxide, hll::HllOxide, "hll", "oxide", Hll, i64, card);
+run_impl!(run_hll_datasketches, hll::HllDatasketches, "hll", "datasketches", Hll, i64, card);
+run_impl!(run_hll_lib, hll::HllLib, "hll", "lib", Hll, i64, card);
+run_impl!(run_hll_lib_hip, hll::HllLibHip, "hll", "lib-hip", Hll, i64, card);
+run_impl!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll, i64, card);
 
 // -- KLL --
-run_i64_quant!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll);
-run_i64_quant!(run_kll_lib, kll::KllLib, "kll", "lib", Kll);
-run_i64_quant!(run_kll_exact, exact::ExactQuantile, "kll", "exact", Kll);
+run_impl!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll, i64, quant);
+run_impl!(run_kll_lib, kll::KllLib, "kll", "lib", Kll, i64, quant);
+run_impl!(run_kll_exact, exact::ExactQuantile, "kll", "exact", Kll, i64, quant);
 
 // -- CMS --
-run_i64_freq!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms);
-run_i64_freq!(
-    run_cms_datasketches,
-    cms::CmsDatasketches,
-    "cms",
-    "datasketches",
-    Cms
-);
-run_i64_freq!(
+run_impl!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms, i64, freq);
+run_impl!(run_cms_datasketches, cms::CmsDatasketches, "cms", "datasketches", Cms, i64, freq);
+run_impl!(
     run_cms_lib_fixedmatrix_custom_fast,
     cms::CmsLibFixedmatrixCustomFast,
     "cms",
     "lib-fixedmatrix-custom-fast",
-    Cms
+    Cms,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cms_lib_fixedmatrix_fast,
     cms::CmsLibFixedmatrixFast,
     "cms",
     "lib-fixedmatrix-fast",
-    Cms
+    Cms,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cms_lib_fixedmatrix_fast_32k,
     cms::CmsLibFixedmatrixFast32k,
     "cms",
     "lib-fixedmatrix-fast-32k",
-    Cms
+    Cms,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cms_lib_vector2d_fast,
     cms::CmsLibVector2dFast,
     "cms",
     "lib-vector2d-fast",
-    Cms
+    Cms,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cms_lib_vector2d_regular,
     cms::CmsLibVector2dRegular,
     "cms",
     "lib-vector2d-regular",
-    Cms
+    Cms,
+    i64,
+    freq
 );
-run_i64_freq!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms);
+run_impl!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms, i64, freq);
 
 // -- CountSketch --
-run_i64_freq!(
-    run_cs_oxide,
-    countsketch::CsOxide,
-    "countsketch",
-    "oxide",
-    Countsketch
-);
-run_i64_freq!(
+run_impl!(run_cs_oxide, countsketch::CsOxide, "countsketch", "oxide", Countsketch, i64, freq);
+run_impl!(
     run_cs_lib_fixedmatrix_fast,
     countsketch::CsLibFixedmatrixFast,
     "countsketch",
     "lib-fixedmatrix-fast",
-    Countsketch
+    Countsketch,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cs_lib_fixedmatrix_fast_32k,
     countsketch::CsLibFixedmatrixFast32k,
     "countsketch",
     "lib-fixedmatrix-fast-32k",
-    Countsketch
+    Countsketch,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cs_lib_vector2d_fast,
     countsketch::CsLibVector2dFast,
     "countsketch",
     "lib-vector2d-fast",
-    Countsketch
+    Countsketch,
+    i64,
+    freq
 );
-run_i64_freq!(
+run_impl!(
     run_cs_lib_vector2d_regular,
     countsketch::CsLibVector2dRegular,
     "countsketch",
     "lib-vector2d-regular",
-    Countsketch
+    Countsketch,
+    i64,
+    freq
 );
-
-run_i64_freq!(
-    run_cs_exact,
-    exact::ExactFrequencyCs,
-    "countsketch",
-    "exact",
-    Countsketch
-);
+run_impl!(run_cs_exact, exact::ExactFrequencyCs, "countsketch", "exact", Countsketch, i64, freq);
 
 // -- DDSketch --
-run_i64_quant_rel!(run_dd_lib, dd::DdLib, "dd", "lib", Dd);
-run_i64_quant_rel!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd);
+run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", Dd, i64, quant_rel);
+run_impl!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd, i64, quant_rel);
 
 // -- Polars-backed baselines (one per family). Same `Sketch`
 //    contract as the in-tree exact baselines; the legacy
 //    `throughput/polars_*/` binaries are folded into these.
-run_i64_card!(run_hll_polars, polars::PolarsCardinality, "hll", "polars", Hll);
-run_i64_quant!(run_kll_polars, polars::PolarsQuantileKll, "kll", "polars", Kll);
-run_i64_quant_rel!(run_dd_polars, polars::PolarsQuantileDd, "dd", "polars", Dd);
-run_i64_freq!(run_cms_polars, polars::PolarsFrequencyCms, "cms", "polars", Cms);
-run_i64_freq!(
+run_impl!(run_hll_polars, polars::PolarsCardinality, "hll", "polars", Hll, i64, card);
+run_impl!(run_kll_polars, polars::PolarsQuantileKll, "kll", "polars", Kll, i64, quant);
+run_impl!(run_dd_polars, polars::PolarsQuantileDd, "dd", "polars", Dd, i64, quant_rel);
+run_impl!(run_cms_polars, polars::PolarsFrequencyCms, "cms", "polars", Cms, i64, freq);
+run_impl!(
     run_cs_polars,
     polars::PolarsFrequencyCs,
     "countsketch",
     "polars",
-    Countsketch
+    Countsketch,
+    i64,
+    freq
 );
 
 // -- Parallel-insert FastPath baselines (one per family). Workers
 //    are read from `cfg.threads` (= `--workers N`). Folds the
 //    legacy `throughput/octo/` binary into sketch-cli.
-run_i64_parallel!(
+run_parallel_impl!(
     run_cms_lib_fastpath_parallel,
     parallel::ParallelCmsFastPath,
     "cms",
     "lib-fastpath-parallel",
     Cms
 );
-run_i64_parallel!(
+run_parallel_impl!(
     run_cs_lib_fastpath_parallel,
     parallel::ParallelCsFastPath,
     "countsketch",
     "lib-fastpath-parallel",
     Countsketch
 );
-run_i64_parallel!(
+run_parallel_impl!(
     run_hll_lib_fastpath_parallel,
     parallel::ParallelHllFastPath,
     "hll",
@@ -1255,46 +965,14 @@ run_i64_parallel!(
 );
 
 // -- Elastic --
-run_string_freq!(
-    run_elastic_lib,
-    elastic::ElasticLib,
-    "elastic",
-    "lib",
-    Elastic
-);
-run_bytes_freq!(
-    run_elastic_oxide,
-    elastic::ElasticOxide,
-    "elastic",
-    "oxide",
-    Elastic
-);
+run_impl!(run_elastic_lib, elastic::ElasticLib, "elastic", "lib", Elastic, string, freq);
+run_impl!(run_elastic_oxide, elastic::ElasticOxide, "elastic", "oxide", Elastic, bytes, freq);
 
-// -- Nitro --
-run_i64_none!(run_nitro_lib, nitro::NitroLib, "nitro", "lib", Nitro);
-run_bytes_none!(
-    run_nitro_oxide,
-    nitro::NitroOxide,
-    "nitro",
-    "oxide",
-    Nitro
-);
-
-// -- UnivMon --
-run_string_none!(
-    run_univmon_lib,
-    univmon::UnivMonLib,
-    "univmon",
-    "lib",
-    Univmon
-);
-run_bytes_none!(
-    run_univmon_oxide,
-    univmon::UnivMonOxide,
-    "univmon",
-    "oxide",
-    Univmon
-);
+// -- Nitro / UnivMon: wrapper `query` is a stub, so no comparator.
+run_impl!(run_nitro_lib, nitro::NitroLib, "nitro", "lib", Nitro, i64, none);
+run_impl!(run_nitro_oxide, nitro::NitroOxide, "nitro", "oxide", Nitro, bytes, none);
+run_impl!(run_univmon_lib, univmon::UnivMonLib, "univmon", "lib", Univmon, string, none);
+run_impl!(run_univmon_oxide, univmon::UnivMonOxide, "univmon", "oxide", Univmon, bytes, none);
 
 #[allow(dead_code)]
 fn _silence_unused_warnings(_: CmsParams, _: CountSketchParams) {}

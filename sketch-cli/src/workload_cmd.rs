@@ -267,8 +267,8 @@ fn describe(a: DescribeArgs) -> Result<()> {
         }
         None => {
             // No sidecar: fall back to the raw i64 loader.
-            use sketch_core::workload::{FileI64, Workload};
-            let wk = FileI64::load(path)
+            use sketch_core::workload::{I64Workload, Workload};
+            let wk = I64Workload::load(path)
                 .with_context(|| format!("loading {} (no sidecar found)", a.path))?;
             let items = wk.items();
             println!("path:   {}", a.path);

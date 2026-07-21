@@ -29,6 +29,4 @@ pub use report::{
     Record, RunStats, Source, SCHEMA_VERSION,
 };
 pub use sketch::Sketch;
-pub use workload::{
-    BytesFromI64, FileI64, StringFromI64, UniformI64, Workload, WorkloadDesc, ZipfI64,
-};
+pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDesc};
