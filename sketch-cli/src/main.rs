@@ -104,14 +104,21 @@ struct BenchArgs {
     /// Zipf `s` exponent (only used when `--workload zipf`).
     #[arg(long, default_value_t = 1.1)]
     zipf_s: f64,
-    /// Item type the sketches ingest: `i64` (default) or `f64`.
+    /// Item type the sketches ingest: `i64` (default), `f64`, or `string`.
     ///
-    /// Only the ordered families (`kll`, `dd`) accept `f64`; every
-    /// hash-based row is skipped with a reason, because `f64` is not
-    /// `Hash` in Rust and hashing its bits would repeat the `i64` curve.
+    /// `f64` runs the ordered families (`kll`, `dd`); every hash-based row is
+    /// skipped with a reason, because `f64` is not `Hash` in Rust and hashing
+    /// its bits would repeat the `i64` curve.
     ///
-    /// The values themselves do not change — `Shape::Keys` emits the same
-    /// logical keys at every dtype — so this varies the encoding alone.
+    /// `string` runs the rows whose wrappers take text (`elastic`, `nitro`,
+    /// `univmon`) over **generated** strings — configurable alphabet, varying
+    /// length. Those same rows run under `i64` too, but there they consume
+    /// decimal-formatted integers, which is a different and much narrower
+    /// workload. Comparing the two is the point.
+    ///
+    /// For `i64` and `f64` the values themselves do not change, only their
+    /// encoding. `string` is the exception: the rank is rendered rather than
+    /// cast, so the byte content is genuinely new.
     #[arg(long, default_value = "i64")]
     dtype: String,
     /// Seed for reproducibility.
@@ -371,7 +378,8 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     let dtype = match args.dtype.as_str() {
         "i64" => DType::I64,
         "f64" => DType::F64,
-        other => bail!("unknown --dtype: {other} (expected i64|f64)"),
+        "string" => DType::Str,
+        other => bail!("unknown --dtype: {other} (expected i64|f64|string)"),
     };
     let spec = workload_spec(&args, dtype)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());

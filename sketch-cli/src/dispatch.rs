@@ -86,6 +86,9 @@ impl WorkloadSpec {
             (WorkloadSpec::Generated(spec), DType::F64) => F64Workload::generate(&spec)
                 .map(Items::F64)
                 .map_err(|e| anyhow::anyhow!("{}", e)),
+            (WorkloadSpec::Generated(spec), DType::Str) => StringWorkload::generate(&spec)
+                .map(Items::Str)
+                .map_err(|e| anyhow::anyhow!("{}", e)),
             (WorkloadSpec::Generated(spec), _) => I64Workload::generate(&spec)
                 .map(Items::I64)
                 .map_err(|e| anyhow::anyhow!("{}", e)),
@@ -115,6 +118,7 @@ impl WorkloadSpec {
 pub enum Items {
     I64(I64Workload),
     F64(F64Workload),
+    Str(StringWorkload),
 }
 
 impl Items {
@@ -122,6 +126,7 @@ impl Items {
         match self {
             Items::I64(_) => DType::I64,
             Items::F64(_) => DType::F64,
+            Items::Str(_) => DType::Str,
         }
     }
 }
@@ -851,15 +856,29 @@ macro_rules! params_of {
 /// The item view a wrapper consumes. `string` / `bytes` materialise a
 /// derived workload; binding the result with `let` extends the
 /// temporary's lifetime over the benchmark call.
+/// Pick the extractor a row's view needs. `i64` rows take the workload by
+/// reference; text rows may have to materialise one, so they own it.
+macro_rules! wk_source {
+    (i64, $items:expr) => {
+        keys_only!($items)
+    };
+    (string, $items:expr) => {
+        text_workload!($items)
+    };
+    (bytes, $items:expr) => {
+        text_workload!($items)
+    };
+}
+
 macro_rules! wk_view {
     (i64, $wk:expr) => {
         $wk
     };
     (string, $wk:expr) => {
-        &StringWorkload::from_i64($wk)
+        &$wk
     };
     (bytes, $wk:expr) => {
-        &BytesWorkload::from_i64($wk)
+        &BytesWorkload::from_strings(&$wk)
     };
 }
 
@@ -871,6 +890,28 @@ macro_rules! wk_view {
 /// the same bits as hashing an `i64` — a second curve that could only ever
 /// retrace the first. The `string` / `bytes` views derive from this workload
 /// too, so they inherit the same constraint.
+/// Narrow [`Items`] to a `String` workload for a row whose wrapper takes text.
+///
+/// Accepts both origins. An `i64` workload is decimal-formatted, which is
+/// what these rows have always consumed and keeps them in the default
+/// matrix; a `string` workload is passed through untouched. Both are the
+/// same type, so the two arms unify and the row's benchmark call does not
+/// branch.
+macro_rules! text_workload {
+    ($items:expr) => {
+        match $items {
+            Items::I64(wk) => StringWorkload::from_i64(wk),
+            Items::Str(wk) => wk.clone(),
+            other => {
+                return Err(DtypeMismatch {
+                    wanted: &[DType::I64, DType::Str],
+                    got: other.dtype(),
+                })
+            }
+        }
+    };
+}
+
 macro_rules! keys_only {
     ($items:expr) => {
         match $items {
@@ -946,7 +987,7 @@ macro_rules! run_impl {
             _accuracy: &AccuracyCfg,
         ) -> Result<Vec<BenchReport>, DtypeMismatch> {
             let p = params_of!($params_ty, params, $impl);
-            let wk = keys_only!(items);
+            let wk = wk_source!($view, items);
             let w = wk_view!($view, wk);
             Ok(bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || {
                 <$wrapper>::new(&p)
@@ -961,7 +1002,7 @@ macro_rules! run_impl {
             accuracy: &AccuracyCfg,
         ) -> Result<Vec<BenchReport>, DtypeMismatch> {
             let p = params_of!($params_ty, params, $impl);
-            let wk = keys_only!(items);
+            let wk = wk_source!($view, items);
             let w = wk_view!($view, wk);
             Ok(if accuracy.enabled {
                 gt_bench!($gt, $wrapper, cfg, w, $family, $impl, p, accuracy)
@@ -1003,6 +1044,15 @@ macro_rules! run_ordered_impl {
                     } else {
                         bench_no_gt::<$w_f64, _>(cfg, wk, $family, $impl, || <$w_f64>::new(&p))
                     }
+                }
+                // A quantile over strings would be a lexicographic quantile,
+                // which is a different question from the numeric one these
+                // rows answer -- not the same measurement on another encoding.
+                other => {
+                    return Err(DtypeMismatch {
+                        wanted: &[DType::I64, DType::F64],
+                        got: other.dtype(),
+                    })
                 }
             })
         }
@@ -1449,6 +1499,17 @@ mod registry_tests {
         ("dd", "exact"),
     ];
 
+    /// Exactly the rows whose wrapper takes text. Pinned as a set for the
+    /// same reason as `ORDERED_ROWS`: a row silently dropping out of the
+    /// string matrix, or a numeric row silently joining it, both matter.
+    const TEXT_ROWS: &[(&str, &str)] = &[
+        ("elastic", "lib"),
+        ("elastic", "oxide"),
+        ("nitro", "oxide"),
+        ("univmon", "lib"),
+        ("univmon", "oxide"),
+    ];
+
     fn tiny(dtype: DType) -> Items {
         let spec = aqpbm_datagen::GenSpec {
             shape: aqpbm_datagen::Shape::Keys {
@@ -1505,6 +1566,53 @@ mod registry_tests {
                         e.family, e.impl_name
                     );
                     assert_eq!(m.got, DType::F64);
+                }
+            }
+        }
+    }
+
+    /// The text rows must run on **both** `i64` (decimal-formatted integers,
+    /// what they have always consumed) and `string` (generated keys). Losing
+    /// either would be a silent change: dropping `i64` shrinks the default
+    /// matrix, and dropping `string` means the real string workload reaches
+    /// nothing.
+    #[test]
+    fn only_the_text_rows_accept_strings_and_they_keep_accepting_i64() {
+        let str_items = tiny(DType::Str);
+        let cfg = BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            ..Default::default()
+        };
+        let acc = AccuracyCfg {
+            enabled: false,
+            max_probes: 0,
+            record_query_calls: false,
+        };
+        for e in IMPLS {
+            let params = (e.params.default_grid)().remove(0);
+            let expected = TEXT_ROWS.contains(&(e.family, e.impl_name));
+            match e.run(&cfg, &str_items, &params, &acc) {
+                Ok(reports) => {
+                    assert!(
+                        expected,
+                        "{}/{} accepted a string workload but is not a text row",
+                        e.family, e.impl_name
+                    );
+                    assert!(
+                        !reports.is_empty(),
+                        "{}/{} accepted strings but produced no report",
+                        e.family,
+                        e.impl_name
+                    );
+                }
+                Err(m) => {
+                    assert!(
+                        !expected,
+                        "{}/{} must accept strings, got: {m}",
+                        e.family, e.impl_name
+                    );
+                    assert_eq!(m.got, DType::Str);
                 }
             }
         }

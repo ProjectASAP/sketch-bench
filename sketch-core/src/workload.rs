@@ -505,39 +505,50 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
     Some(u32::from_be_bytes([ip[12], ip[13], ip[14], ip[15]]))
 }
 
-// ---------- derived workloads for string / bytes impls ----------
+// ---------- string / bytes workloads ----------
 
-/// A `String` workload derived from an [`I64Workload`] by
-/// decimal-formatting each item. Lets the `Elastic`/`UnivMon` string
-/// sketches reuse the same distributions without forking the
-/// generators. Carries the source workload's `desc` unchanged — the
-/// item encoding is a wrapper concern, not workload provenance.
-#[derive(Debug, Clone)]
-pub struct StringWorkload {
-    items: Vec<String>,
-    desc: WorkloadDesc,
-}
+/// A `String` workload.
+///
+/// Two origins, deliberately distinguishable in the report:
+///
+/// * **Generated** — `NumericWorkload::generate` at `dtype: string`. Real
+///   keys: length varies, the alphabet is configurable, and the rendering is
+///   injective over `cardinality`. `desc.dtype` says `string`.
+/// * **Derived** — [`Self::from_i64`], decimal-formatting an `i64` workload.
+///   1-7 characters over 10 symbols, length dictated by the key's magnitude.
+///   `desc` is the source workload's, so it still says `i64`.
+///
+/// Keeping the descriptors different is the point: the two measure different
+/// things, and a groupby that pooled them would average a real string
+/// workload with a fake one.
+pub type StringWorkload = NumericWorkload<String>;
 
-impl StringWorkload {
+impl NumericWorkload<String> {
+    /// Decimal-format an `i64` workload.
+    ///
+    /// This is what the `elastic` / `univmon` rows have always consumed, and
+    /// it stays so the default matrix does not shrink when a real string
+    /// workload becomes available. It is not a string workload in any
+    /// meaningful sense — hash cost and length distribution are what such a
+    /// workload exists to vary, and here both follow from the integer.
+    ///
+    /// No `spec`, so [`Workload::resample`] returns `None` exactly as before:
+    /// a derived workload has no distribution of its own to redraw from.
     pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
             items: inner.items().iter().map(|v| v.to_string()).collect(),
             desc: inner.desc(),
+            spec: None,
         }
     }
 }
 
-impl Workload for StringWorkload {
-    type Item = String;
-    fn desc(&self) -> WorkloadDesc {
-        self.desc.clone()
-    }
-    fn items(&self) -> &[String] {
-        &self.items
-    }
-}
-
 /// Same, but `Vec<u8>` for impls that want `&[u8]`.
+///
+/// Not a [`NumericWorkload`]: `Vec<u8>` is not a `GenValue`, and making it one
+/// would mean deciding what a "byte-string dtype" draws — which is the string
+/// question again with no new answer. These rows take the bytes of whichever
+/// string workload is in play.
 #[derive(Debug, Clone)]
 pub struct BytesWorkload {
     items: Vec<Vec<u8>>,
@@ -551,6 +562,20 @@ impl BytesWorkload {
                 .items()
                 .iter()
                 .map(|v| v.to_string().into_bytes())
+                .collect(),
+            desc: inner.desc(),
+        }
+    }
+
+    /// Bytes of an existing string workload, generated or derived. Carries
+    /// its `desc`, so a run over real strings stays distinguishable from one
+    /// over decimal-formatted integers.
+    pub fn from_strings(inner: &StringWorkload) -> Self {
+        Self {
+            items: inner
+                .items()
+                .iter()
+                .map(|s| s.clone().into_bytes())
                 .collect(),
             desc: inner.desc(),
         }
