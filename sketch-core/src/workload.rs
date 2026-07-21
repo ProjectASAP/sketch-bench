@@ -73,6 +73,16 @@ impl I64Workload {
     /// disagrees with the data it describes would silently corrupt
     /// every throughput denominator downstream.
     pub fn new(items: Vec<i64>, mut desc: WorkloadDesc) -> Self {
+        // `load` cannot know the count until it has read the file, so it
+        // passes 0 as a placeholder. Any other value is the caller *asserting*
+        // what was produced — a generator returning short would otherwise be
+        // relabelled into a smaller workload with no signal at all.
+        debug_assert!(
+            desc.size == 0 || desc.size == items.len(),
+            "workload desc claims {} items but carries {}",
+            desc.size,
+            items.len(),
+        );
         desc.size = items.len();
         Self { items, desc }
     }
@@ -410,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn desc_size_always_matches_item_count() {
+    fn placeholder_desc_size_is_filled_in() {
         // A desc that disagrees with the data would silently skew every
         // throughput denominator; `new` is the one place that can catch
         // it, so it always wins over the caller's claim.
@@ -418,7 +428,7 @@ mod tests {
             vec![1, 2, 3],
             WorkloadDesc {
                 shape: "custom".into(),
-                size: 999,
+                size: 0, // placeholder, as `load` passes
                 cardinality: None,
                 zipf_s: None,
                 source_path: None,

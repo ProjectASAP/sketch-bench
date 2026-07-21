@@ -292,7 +292,19 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     }))
 }
 
+/// Seconds of CPU burn before the first measured loop, so the cpufreq
+/// governor is at max turbo when timing starts. This default lives here
+/// rather than in `sketch-bench` because only a measurement run wants it:
+/// a test binary or an embedding application that links the runner should
+/// not pay ten seconds of spin merely for linking it.
+const DEFAULT_WARMUP_SECS: &str = "10";
+
 fn run_bench(args: BenchArgs) -> Result<()> {
+    if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
+        // SAFETY-equivalent note: single-threaded, before any bench thread
+        // is spawned, and only when the operator has not chosen a value.
+        std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
+    }
     let spec = workload_spec(&args)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.accuracy {

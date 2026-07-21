@@ -193,6 +193,10 @@ impl Shape {
             self,
             Shape::Keys {
                 dist: Distribution::Uniform | Distribution::Zipf { .. },
+                // dtype is part of what makes a shape reproducible, and the
+                // flat fields cannot express it. Only `i64` — the dtype those
+                // fields have always implied — round-trips without `spec`.
+                dtype: DType::I64,
                 ..
             }
         )

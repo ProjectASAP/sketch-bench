@@ -16,4 +16,4 @@ pub mod runner;
 
 pub use config::{BenchConfig, MetricsMask};
 pub use metrics::{FullSink, LatencySnapshot, RunMetrics};
-pub use runner::{run_without_accuracy, BenchReport, BenchRunner, NoGT};
+pub use runner::{BenchReport, BenchRunner, NoGT};

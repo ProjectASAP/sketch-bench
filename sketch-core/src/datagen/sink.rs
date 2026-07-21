@@ -116,30 +116,6 @@ impl Sink for FileSink {
     }
 }
 
-/// Writes the stream to any [`Write`] — stdout, a socket, a pipe into
-/// another loader. Same constant-memory property as [`FileSink`].
-pub struct WriterSink<W: Write> {
-    writer: W,
-}
-
-impl<W: Write> WriterSink<W> {
-    pub fn new(writer: W) -> Self {
-        Self { writer }
-    }
-}
-
-impl<W: Write> Sink for WriterSink<W> {
-    fn accept(&mut self, chunk: &Column) -> Result<(), SketchCoreError> {
-        chunk.write_le(&mut self.writer)?;
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<(), SketchCoreError> {
-        Write::flush(&mut self.writer)?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,18 +136,4 @@ mod tests {
         assert!(err.to_string().contains("dtype"));
     }
 
-    #[test]
-    fn writer_sink_emits_raw_le_bytes() {
-        let mut buf: Vec<u8> = Vec::new();
-        {
-            let mut s = WriterSink::new(&mut buf);
-            s.accept(&Column::I64(vec![1, -2])).unwrap();
-            s.flush().unwrap();
-        }
-        let mut expected = Vec::new();
-        for v in [1i64, -2] {
-            expected.extend_from_slice(&v.to_le_bytes());
-        }
-        assert_eq!(buf, expected);
-    }
 }
