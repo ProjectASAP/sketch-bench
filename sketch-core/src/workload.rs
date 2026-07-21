@@ -2,6 +2,18 @@
 //! test data.
 //!
 //! See `docs/DESIGN.md` §4.3.
+//!
+//! ## One type per item type, not one per source
+//!
+//! Every `i64` workload — generated or file-backed — is the same
+//! thing at runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`]
+//! that says where it came from. Modelling each *source* as its own
+//! `impl Workload` type forced every generic consumer to fan out over
+//! the source set (`sketch-cli`'s dispatch table carried a
+//! 3-variant `WorkloadAny` plus two derived 3-variant enums, and every
+//! dispatch macro repeated its body once per variant). Provenance is
+//! data, not a type parameter, so it lives in the `desc` field and the
+//! source only picks a constructor.
 
 use rand::SeedableRng;
 use rand_distr::{Distribution, Uniform, Zipf};
@@ -39,105 +51,76 @@ pub trait Workload {
 
 // ---------- i64 workloads ----------
 
-/// Uniform `i64` workload in `[0, cardinality)`.
+/// An `i64` workload: the materialised item stream plus its
+/// provenance. Construct it from a generator (`uniform` / `zipf`)
+/// or from a file (`load`); the source shows up in `desc`, not in
+/// the type.
 #[derive(Debug, Clone)]
-pub struct UniformI64 {
+pub struct I64Workload {
     items: Vec<i64>,
-    cardinality: u64,
-    seed: u64,
+    desc: WorkloadDesc,
 }
 
-impl UniformI64 {
-    pub fn new(size: usize, cardinality: u64, seed: u64) -> Self {
+impl I64Workload {
+    /// Wrap an already-materialised item stream with its provenance.
+    /// `desc.size` is forced to match `items.len()` — a desc that
+    /// disagrees with the data it describes would silently corrupt
+    /// every throughput denominator downstream.
+    pub fn new(items: Vec<i64>, mut desc: WorkloadDesc) -> Self {
+        desc.size = items.len();
+        Self { items, desc }
+    }
+
+    /// Uniform in `[0, cardinality)`.
+    pub fn uniform(size: usize, cardinality: u64, seed: u64) -> Self {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
         let dist = Uniform::new(0u64, cardinality);
         let items = (0..size).map(|_| dist.sample(&mut rng) as i64).collect();
-        Self {
+        Self::new(
             items,
-            cardinality,
-            seed,
-        }
+            WorkloadDesc {
+                shape: "uniform".into(),
+                size,
+                cardinality: Some(cardinality),
+                zipf_s: None,
+                source_path: None,
+                seed: Some(seed),
+            },
+        )
     }
-}
 
-impl Workload for UniformI64 {
-    type Item = i64;
-    fn desc(&self) -> WorkloadDesc {
-        WorkloadDesc {
-            shape: "uniform".into(),
-            size: self.items.len(),
-            cardinality: Some(self.cardinality),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(self.seed),
-        }
-    }
-    fn items(&self) -> &[i64] {
-        &self.items
-    }
-}
-
-/// Zipfian `i64` workload with `s`-parameter (skew exponent)
-/// over keys `[1, cardinality]`.
-#[derive(Debug, Clone)]
-pub struct ZipfI64 {
-    items: Vec<i64>,
-    cardinality: u64,
-    s: f64,
-    seed: u64,
-}
-
-impl ZipfI64 {
-    pub fn new(size: usize, cardinality: u64, s: f64, seed: u64) -> Result<Self, SketchCoreError> {
+    /// Zipfian with `s`-parameter (skew exponent) over ranks
+    /// `[1, cardinality]`.
+    pub fn zipf(size: usize, cardinality: u64, s: f64, seed: u64) -> Result<Self, SketchCoreError> {
         let dist = Zipf::new(cardinality, s)
             .map_err(|e| SketchCoreError::BadParam(format!("zipf: {e}")))?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
         let items = (0..size).map(|_| dist.sample(&mut rng) as i64).collect();
-        Ok(Self {
+        Ok(Self::new(
             items,
-            cardinality,
-            s,
-            seed,
-        })
+            WorkloadDesc {
+                shape: "zipf".into(),
+                size,
+                cardinality: Some(cardinality),
+                zipf_s: Some(s),
+                source_path: None,
+                seed: Some(seed),
+            },
+        ))
     }
-}
 
-impl Workload for ZipfI64 {
-    type Item = i64;
-    fn desc(&self) -> WorkloadDesc {
-        WorkloadDesc {
-            shape: "zipf".into(),
-            size: self.items.len(),
-            cardinality: Some(self.cardinality),
-            zipf_s: Some(self.s),
-            source_path: None,
-            seed: Some(self.seed),
-        }
-    }
-    fn items(&self) -> &[i64] {
-        &self.items
-    }
-}
-
-/// File-backed `i64` workload. Dispatches on extension:
-///
-/// * `.bin` (or anything else) — little-endian `int64` stream,
-///   matching the pre-existing `input/benchmark_data_*.bin`
-///   layout.
-/// * `.pcap` — libpcap capture. For each IPv4 packet the source
-///   address is read as a big-endian `u32` and sign-extended into
-///   an `i64`. Non-IPv4 packets are skipped. Used by the
-///   frequency-family accuracy harness against network traces.
-/// * `.csv` — CSV with a header row; the first column on every
-///   subsequent row is parsed as `i64`. Empty lines skipped.
-#[derive(Debug, Clone)]
-pub struct FileI64 {
-    items: Vec<i64>,
-    source_path: String,
-}
-
-impl FileI64 {
-    /// Auto-detect format from the file extension and load.
+    /// Load from a file, auto-detecting the format from its
+    /// extension:
+    ///
+    /// * `.bin` (or anything else) — little-endian `int64` stream,
+    ///   matching the pre-existing `input/benchmark_data_*.bin`
+    ///   layout.
+    /// * `.pcap` — libpcap capture. For each IPv4 packet the source
+    ///   address is read as a big-endian `u32` and sign-extended into
+    ///   an `i64`. Non-IPv4 packets are skipped. Used by the
+    ///   frequency-family accuracy harness against network traces.
+    /// * `.csv` — CSV with a header row; the first column on every
+    ///   subsequent row is parsed as `i64`. Empty lines skipped.
     pub fn load(path: &Path) -> Result<Self, SketchCoreError> {
         let items = match path
             .extension()
@@ -158,10 +141,27 @@ impl FileI64 {
                 path.display()
             )));
         }
-        Ok(Self {
+        Ok(Self::new(
             items,
-            source_path: path.display().to_string(),
-        })
+            WorkloadDesc {
+                shape: "file".into(),
+                size: 0, // overwritten by `new`
+                cardinality: None,
+                zipf_s: None,
+                source_path: Some(path.display().to_string()),
+                seed: None,
+            },
+        ))
+    }
+}
+
+impl Workload for I64Workload {
+    type Item = i64;
+    fn desc(&self) -> WorkloadDesc {
+        self.desc.clone()
+    }
+    fn items(&self) -> &[i64] {
+        &self.items
     }
 }
 
@@ -310,51 +310,32 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
     Some(u32::from_be_bytes([ip[12], ip[13], ip[14], ip[15]]))
 }
 
-impl Workload for FileI64 {
-    type Item = i64;
-    fn desc(&self) -> WorkloadDesc {
-        WorkloadDesc {
-            shape: "file".into(),
-            size: self.items.len(),
-            cardinality: None,
-            zipf_s: None,
-            source_path: Some(self.source_path.clone()),
-            seed: None,
-        }
-    }
-    fn items(&self) -> &[i64] {
-        &self.items
-    }
-}
-
 // ---------- derived workloads for string / bytes impls ----------
 
-/// Derive a `String` workload from any `i64` workload by
-/// decimal-formatting each item. Lets the existing
-/// `Elastic`/`UnivMon` string sketches reuse the same
-/// distributions without forking the generators.
+/// A `String` workload derived from an [`I64Workload`] by
+/// decimal-formatting each item. Lets the `Elastic`/`UnivMon` string
+/// sketches reuse the same distributions without forking the
+/// generators. Carries the source workload's `desc` unchanged — the
+/// item encoding is a wrapper concern, not workload provenance.
 #[derive(Debug, Clone)]
-pub struct StringFromI64<W: Workload<Item = i64>> {
+pub struct StringWorkload {
     items: Vec<String>,
-    inner_desc: WorkloadDesc,
-    _marker: std::marker::PhantomData<W>,
+    desc: WorkloadDesc,
 }
 
-impl<W: Workload<Item = i64>> StringFromI64<W> {
-    pub fn new(inner: &W) -> Self {
-        let items = inner.items().iter().map(|v| v.to_string()).collect();
+impl StringWorkload {
+    pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
-            items,
-            inner_desc: inner.desc(),
-            _marker: std::marker::PhantomData,
+            items: inner.items().iter().map(|v| v.to_string()).collect(),
+            desc: inner.desc(),
         }
     }
 }
 
-impl<W: Workload<Item = i64>> Workload for StringFromI64<W> {
+impl Workload for StringWorkload {
     type Item = String;
     fn desc(&self) -> WorkloadDesc {
-        self.inner_desc.clone()
+        self.desc.clone()
     }
     fn items(&self) -> &[String] {
         &self.items
@@ -363,31 +344,28 @@ impl<W: Workload<Item = i64>> Workload for StringFromI64<W> {
 
 /// Same, but `Vec<u8>` for impls that want `&[u8]`.
 #[derive(Debug, Clone)]
-pub struct BytesFromI64<W: Workload<Item = i64>> {
+pub struct BytesWorkload {
     items: Vec<Vec<u8>>,
-    inner_desc: WorkloadDesc,
-    _marker: std::marker::PhantomData<W>,
+    desc: WorkloadDesc,
 }
 
-impl<W: Workload<Item = i64>> BytesFromI64<W> {
-    pub fn new(inner: &W) -> Self {
-        let items = inner
-            .items()
-            .iter()
-            .map(|v| v.to_string().into_bytes())
-            .collect();
+impl BytesWorkload {
+    pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
-            items,
-            inner_desc: inner.desc(),
-            _marker: std::marker::PhantomData,
+            items: inner
+                .items()
+                .iter()
+                .map(|v| v.to_string().into_bytes())
+                .collect(),
+            desc: inner.desc(),
         }
     }
 }
 
-impl<W: Workload<Item = i64>> Workload for BytesFromI64<W> {
+impl Workload for BytesWorkload {
     type Item = Vec<u8>;
     fn desc(&self) -> WorkloadDesc {
-        self.inner_desc.clone()
+        self.desc.clone()
     }
     fn items(&self) -> &[Vec<u8>] {
         &self.items
@@ -400,14 +378,14 @@ mod tests {
 
     #[test]
     fn uniform_is_reproducible_from_seed() {
-        let a = UniformI64::new(100, 1000, 42);
-        let b = UniformI64::new(100, 1000, 42);
+        let a = I64Workload::uniform(100, 1000, 42);
+        let b = I64Workload::uniform(100, 1000, 42);
         assert_eq!(a.items(), b.items());
     }
 
     #[test]
     fn zipf_items_in_expected_range() {
-        let w = ZipfI64::new(1000, 100, 1.1, 7).unwrap();
+        let w = I64Workload::zipf(1000, 100, 1.1, 7).unwrap();
         for v in w.items() {
             assert!(*v >= 1 && *v <= 100);
         }
@@ -415,10 +393,29 @@ mod tests {
 
     #[test]
     fn string_workload_derived_length() {
-        let inner = UniformI64::new(50, 100, 1);
-        let s = StringFromI64::new(&inner);
+        let inner = I64Workload::uniform(50, 100, 1);
+        let s = StringWorkload::from_i64(&inner);
         assert_eq!(s.items().len(), 50);
         assert_eq!(s.desc().shape, "uniform");
+    }
+
+    #[test]
+    fn desc_size_always_matches_item_count() {
+        // A desc that disagrees with the data would silently skew every
+        // throughput denominator; `new` is the one place that can catch
+        // it, so it always wins over the caller's claim.
+        let w = I64Workload::new(
+            vec![1, 2, 3],
+            WorkloadDesc {
+                shape: "custom".into(),
+                size: 999,
+                cardinality: None,
+                zipf_s: None,
+                source_path: None,
+                seed: None,
+            },
+        );
+        assert_eq!(w.desc().size, 3);
     }
 
     #[test]
@@ -431,14 +428,18 @@ mod tests {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = FileI64::load(&path).unwrap();
+        let w = I64Workload::load(&path).unwrap();
         assert_eq!(w.items(), &[1, -2, 3, 4]);
         assert_eq!(w.desc().shape, "file");
+        assert_eq!(w.desc().size, 4);
         std::fs::remove_file(&path).ok();
     }
 
     /// Generate a `.bin` + sidecar of the given dtype and try to load it.
-    fn load_generated(dtype: crate::datagen::DType, tag: &str) -> Result<FileI64, SketchCoreError> {
+    fn load_generated(
+        dtype: crate::datagen::DType,
+        tag: &str,
+    ) -> Result<I64Workload, SketchCoreError> {
         use crate::datagen::{io, Distribution, GenMeta, GenSpec, Shape};
         let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
         let spec = GenSpec {
@@ -453,7 +454,7 @@ mod tests {
         let col = spec.generate().unwrap();
         io::write_bin(&path, &col).unwrap();
         io::write_meta(&path, &GenMeta::new(&spec, &col)).unwrap();
-        let out = FileI64::load(&path);
+        let out = I64Workload::load(&path);
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(io::sidecar_path(&path)).ok();
         out
@@ -492,7 +493,7 @@ mod tests {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = FileI64::load(&path).expect("no sidecar => assume i64");
+        let w = I64Workload::load(&path).expect("no sidecar => assume i64");
         assert_eq!(w.items(), &[7, 8, 9]);
         std::fs::remove_file(&path).ok();
     }
@@ -507,7 +508,7 @@ mod tests {
         f.write_all(&5i64.to_le_bytes()).unwrap();
         drop(f);
         std::fs::write(crate::datagen::io::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
-        let w = FileI64::load(&path).expect("unparseable sidecar => fall back to i64");
+        let w = I64Workload::load(&path).expect("unparseable sidecar => fall back to i64");
         assert_eq!(w.items(), &[5]);
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(crate::datagen::io::sidecar_path(&path)).ok();
@@ -523,7 +524,7 @@ mod tests {
         writeln!(f).unwrap();
         writeln!(f, "-5,second").unwrap();
         drop(f);
-        let w = FileI64::load(&path).unwrap();
+        let w = I64Workload::load(&path).unwrap();
         assert_eq!(w.items(), &[10, -5]);
         std::fs::remove_file(&path).ok();
     }
@@ -535,7 +536,7 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&[0u8; 32]).unwrap();
         drop(f);
-        let err = FileI64::load(&path).unwrap_err();
+        let err = I64Workload::load(&path).unwrap_err();
         assert!(err.to_string().contains("pcap magic"));
         std::fs::remove_file(&path).ok();
     }
