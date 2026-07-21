@@ -276,7 +276,11 @@ pub struct KeysGen {
 }
 
 impl KeysGen {
-    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+    ) -> Result<Column, SketchCoreError> {
         Ok(match self.dtype {
             DType::I64 => Column::I64((0..n).map(|_| self.sampler.sample(rng) as i64).collect()),
             DType::U64 => Column::U64((0..n).map(|_| self.sampler.sample(rng)).collect()),
@@ -292,7 +296,11 @@ pub struct CategoricalGen {
 }
 
 impl CategoricalGen {
-    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+    ) -> Result<Column, SketchCoreError> {
         Ok(Column::I64(
             (0..n)
                 .map(|_| self.categories[self.index.sample(rng)])

@@ -130,10 +130,7 @@ mod tests {
     #[test]
     fn passes_throughput_plus_latency_splits_into_two() {
         let p = (MetricsMask::THROUGHPUT | MetricsMask::LATENCY).passes();
-        assert_eq!(
-            p,
-            vec![MetricsMask::THROUGHPUT, MetricsMask::LATENCY],
-        );
+        assert_eq!(p, vec![MetricsMask::THROUGHPUT, MetricsMask::LATENCY],);
     }
 
     #[test]

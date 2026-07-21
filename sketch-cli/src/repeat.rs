@@ -59,11 +59,19 @@ enum Pass {
     Throughput,
     Latency,
     Accuracy,
+    Merge,
     Other,
 }
 
 fn pass_of(b: &BenchSection) -> Pass {
-    if b.throughput_items_per_sec.is_some() {
+    // Merge first: the merge pass publishes post-merge accuracy, so it also
+    // sets `accuracy` and would otherwise be indistinguishable from the
+    // accuracy pass — the two would share a group key, `merge` would keep one
+    // and discard the other, and `query_throughput` would average two
+    // different populations under one `n`.
+    if b.merge_shards.is_some() {
+        Pass::Merge
+    } else if b.throughput_items_per_sec.is_some() {
         Pass::Throughput
     } else if b.latency_ns.is_some() {
         Pass::Latency
@@ -139,15 +147,22 @@ fn across<'a>(
     if w.n() == 0 {
         return (None, samples);
     }
-    // n >= 2 is required for a sample stddev to exist at all; `run_repeats`
-    // is only reached with repeats > 1, so this holds whenever any repeat
-    // reported the statistic.
-    let (lo, hi) = w.ci95();
+    // A single sample is not an interval. Repeats need not all emit the same
+    // record set — an implementation can be skipped for one config, or a
+    // pass can produce nothing — so `n == 1` is reachable, and `Welford`
+    // would hand back a zero-width `[mean, mean]` under a field whose whole
+    // premise is that its presence means it can be trusted.
+    let ci95 = if w.n() >= 2 {
+        let (lo, hi) = w.ci95();
+        Some([lo, hi])
+    } else {
+        None
+    };
     (
         Some(RunStats {
             mean: w.mean(),
             stddev: w.stddev(),
-            ci95: Some([lo, hi]),
+            ci95,
             n: w.n(),
         }),
         samples,

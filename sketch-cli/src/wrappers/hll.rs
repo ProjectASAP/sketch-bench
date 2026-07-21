@@ -94,8 +94,19 @@ impl Sketch for HllDatasketches {
 
     /// Apache DataSketches routes HLL merging through a `Union` gadget rather
     /// than a method on the sketch, so this rebuilds `self` from the union's
-    /// result. Note the union is what the library documents as the correct
-    /// path even for equal `lg_k`.
+    /// result.
+    ///
+    /// **Known limitation, unresolved.** Every other HLL row folds registers
+    /// in place and the merge benchmark reports it lossless, as theory
+    /// requires for equal `lg_k`. This row reports *lossy*, and its
+    /// `merge_time_ms` runs ~2x the others. Both are plausibly artifacts of
+    /// this wrapper rather than of the library: a pairwise `merge` signature
+    /// forces a fresh `HllUnion` and a `get_result` representation round-trip
+    /// on **every** fold, so K-1 unions are built and K-1 conversions happen,
+    /// all inside the timed region. Fixing it properly needs a fold-shaped
+    /// hook (`merge_many`) so one union spans the whole fold. Until then this
+    /// row's merge numbers should not be compared against the others, and the
+    /// `merge_lossless: 0` it reports is not evidence about DataSketches.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         let mut union = datasketches::hll::HllUnion::new(self.lg_k);
         union.update(&self.inner);

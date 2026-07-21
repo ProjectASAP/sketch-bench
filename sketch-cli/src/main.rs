@@ -28,9 +28,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(all(feature = "heap-jemalloc", feature = "heap-track"))]
 #[global_allocator]
-static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<
-    tikv_jemallocator::Jemalloc,
-> = sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
+static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<tikv_jemallocator::Jemalloc> =
+    sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
 
 #[cfg(all(feature = "heap-track", not(feature = "heap-jemalloc")))]
 #[global_allocator]
@@ -179,17 +178,6 @@ struct BenchArgs {
     /// quantile comparators.
     #[arg(long, default_value_t = 100_000)]
     accuracy_probes: usize,
-    /// Heavy-hitter threshold for the frequency comparator.
-    /// Only keys whose true count is at least this value are
-    /// included in the mean / p99 relative-error metric. `0` =
-    /// no filter (probe every distinct key — the legacy
-    /// behaviour). Setting this >0 reports the metric on the
-    /// regime CMS / CountSketch are designed for; under heavy
-    /// Zipf with many count-1 rare keys, the unfiltered mean is
-    /// dominated by collision noise on those rare keys and is
-    /// not what the sketch was meant to bound.
-    #[arg(long, default_value_t = 0)]
-    accuracy_min_count: u64,
 }
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
@@ -254,10 +242,7 @@ impl ReportSink {
         match spec {
             None | Some("-") => Ok(ReportSink::Stdout),
             Some(path) => Ok(ReportSink::File(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)?,
+                OpenOptions::new().create(true).append(true).open(path)?,
             )),
         }
     }
@@ -350,7 +335,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         for r in &records {
             sink.write_line(&r.to_jsonl())?;
         }
-        eprintln!("sketchlib: merged {} repeats into {} record(s)", args.repeats, records.len());
+        eprintln!(
+            "sketchlib: merged {} repeats into {} record(s)",
+            args.repeats,
+            records.len()
+        );
         return Ok(());
     }
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
@@ -384,7 +373,6 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     let accuracy_cfg = AccuracyCfg {
         enabled: args.accuracy,
         max_probes: args.accuracy_probes,
-        min_true_count: args.accuracy_min_count,
         // Per-call CSV (hll/kll/dd) is only emittable when both
         // `--raw-csv` and `--accuracy` are on: the comparator is
         // what owns the query phase + per-call instrumentation.
@@ -507,9 +495,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         }
     }
 
-    eprintln!(
-        "sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",
-    );
+    eprintln!("sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",);
     Ok(())
 }
 

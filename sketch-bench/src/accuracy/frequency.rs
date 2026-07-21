@@ -62,11 +62,6 @@ pub struct FrequencyGT {
     /// every distinct key. The top-k prefixes are never capped by this: they
     /// are the k heaviest keys, which is a bounded set by definition.
     pub max_probes: usize,
-    /// Legacy heavy-hitter filter for the `*_all` population: keys below this
-    /// true count are excluded. `0` = no filter. Superseded by the top-k
-    /// curve, which answers the same question without needing a threshold
-    /// chosen in advance.
-    pub min_true_count: u64,
 }
 
 impl<S, K> GroundTruth<S> for FrequencyGT
@@ -91,14 +86,19 @@ where
         // order does not hand the exact-baseline HashMap the cache locality
         // that encounter order would (under Zipf the heavy hitters arrive
         // first), then capped. Fixed seed so the choice is reproducible.
-        let all_probes = sample_distinct(&ranked, self.max_probes, self.min_true_count);
+        let all_probes = sample_distinct(&ranked, self.max_probes);
 
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         let mut queries = 0u64;
         let mut query_ns = 0u64;
 
-        // Every probe below is one `sketch.query` per key; only that boundary
-        // is timed, so query throughput excludes the ground-truth build.
+        // Query throughput is attributed to the `all` sweep only. Every
+        // top-k prefix re-queries keys the `all` sweep already covers — the
+        // heaviest key would be probed five times — so counting them would
+        // report ops/sec over a multiset that is ~40% repeated hot keys
+        // sitting in L1, would not be comparable across versions, and would
+        // move whenever `TOP_K_REPORTED` changed. Accuracy still uses every
+        // prefix; only the timing population is pinned.
         let mut probe = |keys: &[&K], label: &str, metrics: &mut BTreeMap<String, f64>| {
             if keys.is_empty() {
                 return;
@@ -108,8 +108,10 @@ where
             for k in keys {
                 estimates.push(sketch.query((*k).clone()));
             }
-            query_ns += start.elapsed().as_nanos() as u64;
-            queries += keys.len() as u64;
+            if label == "all" {
+                query_ns += start.elapsed().as_nanos() as u64;
+                queries += keys.len() as u64;
+            }
 
             let (mut are, mut aae, mut l1, mut l2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
             let mut counted = 0usize;
@@ -125,7 +127,14 @@ where
                 }
             }
             let n = keys.len() as f64;
-            metrics.insert(format!("are_{label}"), if counted > 0 { are / counted as f64 } else { 0.0 });
+            metrics.insert(
+                format!("are_{label}"),
+                if counted > 0 {
+                    are / counted as f64
+                } else {
+                    0.0
+                },
+            );
             metrics.insert(format!("aae_{label}"), aae / n);
             metrics.insert(format!("probes_{label}"), n);
             if label == "all" {
@@ -156,7 +165,6 @@ where
         if let Some(v) = metrics.get("probes_all").copied() {
             metrics.insert("probes".into(), v);
         }
-        metrics.insert("min_true_count".into(), self.min_true_count as f64);
         metrics.insert(
             "relative_error_p99".into(),
             p99_relative_error(sketch, &all_probes, &exact),
@@ -194,22 +202,18 @@ where
     percentile(&errs, 0.99)
 }
 
-/// The distinct keys, optionally filtered by true count, shuffled, then
-/// capped at `max_probes` (`0` = no cap).
-fn sample_distinct<'a, K>(ranked: &[(&'a K, u64)], max_probes: usize, min_true_count: u64) -> Vec<&'a K> {
+/// The distinct keys, shuffled, then capped at `max_probes` (`0` = no cap).
+///
+/// The `min_true_count` filter this used to take is gone: it asked the
+/// operator to pick a heavy-hitter threshold in advance, and its
+/// empty-result fallback silently substituted a different population under
+/// the same metric name. The top-k prefixes answer the same question without
+/// either problem.
+fn sample_distinct<'a, K>(ranked: &[(&'a K, u64)], max_probes: usize) -> Vec<&'a K> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
-    let mut out: Vec<&K> = ranked
-        .iter()
-        .filter(|(_, c)| *c >= min_true_count)
-        .map(|(k, _)| *k)
-        .collect();
-    if out.is_empty() {
-        // A filter that removes everything would report zero probes rather
-        // than a metric; fall back to the unfiltered set.
-        out = ranked.iter().map(|(k, _)| *k).collect();
-    }
+    let mut out: Vec<&K> = ranked.iter().map(|(k, _)| *k).collect();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
     out.shuffle(&mut rng);
     if max_probes != 0 && out.len() > max_probes {
@@ -252,10 +256,7 @@ mod tests {
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();
-        let gt = FrequencyGT {
-            max_probes: 0,
-            min_true_count: 0,
-        };
+        let gt = FrequencyGT { max_probes: 0 };
         let cmp = gt.compare(&NullFreq, &items);
         for key in ["are_all", "are_top1", "are_top10"] {
             let v = cmp.metrics[key];
@@ -276,10 +277,7 @@ mod tests {
         items.extend(std::iter::repeat(1).take(100));
         items.extend(std::iter::repeat(2).take(50));
         items.extend(3..=200);
-        let gt = FrequencyGT {
-            max_probes: 0,
-            min_true_count: 0,
-        };
+        let gt = FrequencyGT { max_probes: 0 };
         let cmp = gt.compare(&NullFreq, &items);
         // top1 is key 1, so AAE over it is exactly its true count.
         assert_eq!(cmp.metrics["aae_top1"], 100.0);

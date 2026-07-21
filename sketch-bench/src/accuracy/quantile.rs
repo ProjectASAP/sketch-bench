@@ -24,8 +24,8 @@
 //! universal number reflects how each sketch's correctness
 //! bound is actually defined in its paper.
 
-use std::collections::BTreeMap;
 use sketch_core::sketch::Sketch;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::{Comparison, GroundTruth, QueryCallSample};

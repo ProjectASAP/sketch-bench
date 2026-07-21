@@ -106,7 +106,11 @@ mod tests {
         for chunk in all.chunks(7) {
             acc.push_slice(chunk, |x| *x as f64);
         }
-        assert_eq!(acc.finish(), whole, "chunk size must not change the summary");
+        assert_eq!(
+            acc.finish(),
+            whole,
+            "chunk size must not change the summary"
+        );
     }
 
     #[test]

@@ -33,13 +33,6 @@ pub struct AccuracyCfg {
     /// Ignored by cardinality / quantile comparators (they're
     /// single-shot).
     pub max_probes: usize,
-    /// Minimum true count for a key to be included in the
-    /// frequency comparator's mean / p99 rel-err. `0` = probe
-    /// every distinct key (legacy behaviour). Setting this >0
-    /// restricts the metric to heavy hitters, which is the
-    /// regime CMS / CountSketch are designed for. Ignored by
-    /// cardinality / quantile comparators.
-    pub min_true_count: u64,
     /// Ask the comparator to record per-call `(call_index, ns,
     /// estimate, percentile, repeat)` samples — the data the
     /// legacy `throughput/{hll,kll,dd}/rust/src/bin/query.rs`
@@ -99,8 +92,14 @@ impl WorkloadSpec {
 #[derive(Debug, Clone, Copy)]
 pub enum Constraint {
     Tunable,
-    FixedCms { rows: usize, cols: usize },
-    FixedCountSketch { rows: usize, cols: usize },
+    FixedCms {
+        rows: usize,
+        cols: usize,
+    },
+    FixedCountSketch {
+        rows: usize,
+        cols: usize,
+    },
     /// Exact baselines — they ignore the family's `ParamSet`. The
     /// sweep driver runs them at most once per invocation instead
     /// of once per config.
@@ -234,7 +233,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "hll",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
+        description:
+            "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_hll_lib_fastpath_parallel,
@@ -349,7 +349,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "cms",
         impl_name: "null",
-        description: "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
+        description:
+            "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cms_null,
@@ -365,7 +366,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "cms",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
+        description:
+            "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_cms_lib_fastpath_parallel,
@@ -428,7 +430,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "countsketch",
         impl_name: "null",
-        description: "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
+        description:
+            "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
         run: run_cs_null,
@@ -444,7 +447,8 @@ pub const IMPLS: &[ImplEntry] = &[
     ImplEntry {
         family: "countsketch",
         impl_name: "lib-fastpath-parallel",
-        description: "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
+        description:
+            "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
         run: run_cs_lib_fastpath_parallel,
@@ -563,8 +567,11 @@ where
     W::Item: Clone,
     S: sketch_core::sketch::Sketch<Item = W::Item>,
 {
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, sketch_bench::NoGT, _>(factory, insert_body, None)
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, sketch_bench::NoGT, _>(
+        factory,
+        insert_body,
+        None,
+    )
 }
 
 /// The hot-loop body for every dispatch row.
@@ -586,19 +593,18 @@ fn bench_freq_gt<S, W>(
     impl_name: &str,
     factory: impl FnMut() -> S,
     max_probes: usize,
-    min_true_count: u64,
 ) -> Vec<BenchReport>
 where
     W: Workload,
     W::Item: Clone + Eq + Hash + Ord,
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
 {
-    let gt = FrequencyGT {
-        max_probes,
-        min_true_count,
-    };
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, FrequencyGT, _>(factory, insert_body, Some(&gt))
+    let gt = FrequencyGT { max_probes };
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, FrequencyGT, _>(
+        factory,
+        insert_body,
+        Some(&gt),
+    )
 }
 
 fn bench_card_gt<S, W>(
@@ -615,8 +621,11 @@ where
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = (), Answer = f64>,
 {
     let gt = CardinalityGT { record_calls };
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, CardinalityGT, _>(factory, insert_body, Some(&gt))
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, CardinalityGT, _>(
+        factory,
+        insert_body,
+        Some(&gt),
+    )
 }
 
 fn bench_quant_gt<S, W>(
@@ -633,8 +642,11 @@ where
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
     let gt = RankErrorGT { record_calls };
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, RankErrorGT, _>(factory, insert_body, Some(&gt))
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, RankErrorGT, _>(
+        factory,
+        insert_body,
+        Some(&gt),
+    )
 }
 
 fn bench_quant_rel_gt<S, W>(
@@ -651,8 +663,11 @@ where
     S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
     let gt = RelativeErrorGT { record_calls };
-    BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, RelativeErrorGT, _>(factory, insert_body, Some(&gt))
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, RelativeErrorGT, _>(
+        factory,
+        insert_body,
+        Some(&gt),
+    )
 }
 
 // ---------- dispatch macros ----------
@@ -703,7 +718,6 @@ macro_rules! gt_bench {
             $impl,
             || <$wrapper>::new(&$p),
             $acc.max_probes,
-            $acc.min_true_count,
         )
     };
     (card, $wrapper:ty, $cfg:expr, $w:expr, $family:expr, $impl:expr, $p:expr, $acc:expr) => {
@@ -800,20 +814,76 @@ macro_rules! run_parallel_impl {
 
 // -- HLL --
 run_impl!(run_hll_oxide, hll::HllOxide, "hll", "oxide", Hll, i64, card);
-run_impl!(run_hll_datasketches, hll::HllDatasketches, "hll", "datasketches", Hll, i64, card);
+run_impl!(
+    run_hll_datasketches,
+    hll::HllDatasketches,
+    "hll",
+    "datasketches",
+    Hll,
+    i64,
+    card
+);
 run_impl!(run_hll_lib, hll::HllLib, "hll", "lib", Hll, i64, card);
-run_impl!(run_hll_lib_hip, hll::HllLibHip, "hll", "lib-hip", Hll, i64, card);
-run_impl!(run_hll_exact, exact::ExactCardinality, "hll", "exact", Hll, i64, card);
-run_impl!(run_hll_null, exact::NullCardinality, "hll", "null", Hll, i64, card);
+run_impl!(
+    run_hll_lib_hip,
+    hll::HllLibHip,
+    "hll",
+    "lib-hip",
+    Hll,
+    i64,
+    card
+);
+run_impl!(
+    run_hll_exact,
+    exact::ExactCardinality,
+    "hll",
+    "exact",
+    Hll,
+    i64,
+    card
+);
+run_impl!(
+    run_hll_null,
+    exact::NullCardinality,
+    "hll",
+    "null",
+    Hll,
+    i64,
+    card
+);
 
 // -- KLL --
-run_impl!(run_kll_oxide, kll::KllOxide, "kll", "oxide", Kll, i64, quant);
+run_impl!(
+    run_kll_oxide,
+    kll::KllOxide,
+    "kll",
+    "oxide",
+    Kll,
+    i64,
+    quant
+);
 run_impl!(run_kll_lib, kll::KllLib, "kll", "lib", Kll, i64, quant);
-run_impl!(run_kll_exact, exact::ExactQuantile, "kll", "exact", Kll, i64, quant);
+run_impl!(
+    run_kll_exact,
+    exact::ExactQuantile,
+    "kll",
+    "exact",
+    Kll,
+    i64,
+    quant
+);
 
 // -- CMS --
 run_impl!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms, i64, freq);
-run_impl!(run_cms_datasketches, cms::CmsDatasketches, "cms", "datasketches", Cms, i64, freq);
+run_impl!(
+    run_cms_datasketches,
+    cms::CmsDatasketches,
+    "cms",
+    "datasketches",
+    Cms,
+    i64,
+    freq
+);
 run_impl!(
     run_cms_lib_fixedmatrix_custom_fast,
     cms::CmsLibFixedmatrixCustomFast,
@@ -859,11 +929,35 @@ run_impl!(
     i64,
     freq
 );
-run_impl!(run_cms_exact, exact::ExactFrequency, "cms", "exact", Cms, i64, freq);
-run_impl!(run_cms_null, exact::NullFrequency, "cms", "null", Cms, i64, freq);
+run_impl!(
+    run_cms_exact,
+    exact::ExactFrequency,
+    "cms",
+    "exact",
+    Cms,
+    i64,
+    freq
+);
+run_impl!(
+    run_cms_null,
+    exact::NullFrequency,
+    "cms",
+    "null",
+    Cms,
+    i64,
+    freq
+);
 
 // -- CountSketch --
-run_impl!(run_cs_oxide, countsketch::CsOxide, "countsketch", "oxide", Countsketch, i64, freq);
+run_impl!(
+    run_cs_oxide,
+    countsketch::CsOxide,
+    "countsketch",
+    "oxide",
+    Countsketch,
+    i64,
+    freq
+);
 run_impl!(
     run_cs_lib_fixedmatrix_fast,
     countsketch::CsLibFixedmatrixFast,
@@ -900,20 +994,76 @@ run_impl!(
     i64,
     freq
 );
-run_impl!(run_cs_exact, exact::ExactFrequencyCs, "countsketch", "exact", Countsketch, i64, freq);
-run_impl!(run_cs_null, exact::NullFrequencyCs, "countsketch", "null", Countsketch, i64, freq);
+run_impl!(
+    run_cs_exact,
+    exact::ExactFrequencyCs,
+    "countsketch",
+    "exact",
+    Countsketch,
+    i64,
+    freq
+);
+run_impl!(
+    run_cs_null,
+    exact::NullFrequencyCs,
+    "countsketch",
+    "null",
+    Countsketch,
+    i64,
+    freq
+);
 
 // -- DDSketch --
 run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", Dd, i64, quant_rel);
-run_impl!(run_dd_exact, exact::ExactQuantileDd, "dd", "exact", Dd, i64, quant_rel);
+run_impl!(
+    run_dd_exact,
+    exact::ExactQuantileDd,
+    "dd",
+    "exact",
+    Dd,
+    i64,
+    quant_rel
+);
 
 // -- Polars-backed baselines (one per family). Same `Sketch`
 //    contract as the in-tree exact baselines; the legacy
 //    `throughput/polars_*/` binaries are folded into these.
-run_impl!(run_hll_polars, polars::PolarsCardinality, "hll", "polars", Hll, i64, card);
-run_impl!(run_kll_polars, polars::PolarsQuantileKll, "kll", "polars", Kll, i64, quant);
-run_impl!(run_dd_polars, polars::PolarsQuantileDd, "dd", "polars", Dd, i64, quant_rel);
-run_impl!(run_cms_polars, polars::PolarsFrequencyCms, "cms", "polars", Cms, i64, freq);
+run_impl!(
+    run_hll_polars,
+    polars::PolarsCardinality,
+    "hll",
+    "polars",
+    Hll,
+    i64,
+    card
+);
+run_impl!(
+    run_kll_polars,
+    polars::PolarsQuantileKll,
+    "kll",
+    "polars",
+    Kll,
+    i64,
+    quant
+);
+run_impl!(
+    run_dd_polars,
+    polars::PolarsQuantileDd,
+    "dd",
+    "polars",
+    Dd,
+    i64,
+    quant_rel
+);
+run_impl!(
+    run_cms_polars,
+    polars::PolarsFrequencyCms,
+    "cms",
+    "polars",
+    Cms,
+    i64,
+    freq
+);
 run_impl!(
     run_cs_polars,
     polars::PolarsFrequencyCs,
@@ -950,14 +1100,62 @@ run_parallel_impl!(
 );
 
 // -- Elastic --
-run_impl!(run_elastic_lib, elastic::ElasticLib, "elastic", "lib", Elastic, string, freq);
-run_impl!(run_elastic_oxide, elastic::ElasticOxide, "elastic", "oxide", Elastic, bytes, freq);
+run_impl!(
+    run_elastic_lib,
+    elastic::ElasticLib,
+    "elastic",
+    "lib",
+    Elastic,
+    string,
+    freq
+);
+run_impl!(
+    run_elastic_oxide,
+    elastic::ElasticOxide,
+    "elastic",
+    "oxide",
+    Elastic,
+    bytes,
+    freq
+);
 
 // -- Nitro / UnivMon: wrapper `query` is a stub, so no comparator.
-run_impl!(run_nitro_lib, nitro::NitroLib, "nitro", "lib", Nitro, i64, none);
-run_impl!(run_nitro_oxide, nitro::NitroOxide, "nitro", "oxide", Nitro, bytes, none);
-run_impl!(run_univmon_lib, univmon::UnivMonLib, "univmon", "lib", Univmon, string, none);
-run_impl!(run_univmon_oxide, univmon::UnivMonOxide, "univmon", "oxide", Univmon, bytes, none);
+run_impl!(
+    run_nitro_lib,
+    nitro::NitroLib,
+    "nitro",
+    "lib",
+    Nitro,
+    i64,
+    none
+);
+run_impl!(
+    run_nitro_oxide,
+    nitro::NitroOxide,
+    "nitro",
+    "oxide",
+    Nitro,
+    bytes,
+    none
+);
+run_impl!(
+    run_univmon_lib,
+    univmon::UnivMonLib,
+    "univmon",
+    "lib",
+    Univmon,
+    string,
+    none
+);
+run_impl!(
+    run_univmon_oxide,
+    univmon::UnivMonOxide,
+    "univmon",
+    "oxide",
+    Univmon,
+    bytes,
+    none
+);
 
 #[allow(dead_code)]
 fn _silence_unused_warnings(_: CmsParams, _: CountSketchParams) {}
