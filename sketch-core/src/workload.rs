@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use aqpbm_datagen::{Column, DType, Distribution, GenSpec, Shape, SketchError};
+use aqpbm_datagen::{DType, Distribution, GenSpec, GenValue, Shape, SketchError};
 
 /// Human-friendly description of a workload — serialised into
 /// every report so a JSONL record can be re-run without
@@ -171,31 +171,12 @@ pub trait Workload: Sized {
 
 // ---------- numeric workloads ----------
 
-/// An item type a [`NumericWorkload`] can be built from.
-///
-/// Exists so `i64` and `f64` workloads are one type rather than two
-/// near-identical ones. The only thing that actually differs between them is
-/// which [`Column`] variant they accept, and refusing the others is the
-/// point — see [`Column::into_f64`].
-pub trait NumericItem: Clone + Sized {
-    /// The dtype a generator must be configured with to feed this item type.
-    const DTYPE: DType;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchError>;
-}
-
-impl NumericItem for i64 {
-    const DTYPE: DType = DType::I64;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchError> {
-        c.into_i64()
-    }
-}
-
-impl NumericItem for f64 {
-    const DTYPE: DType = DType::F64;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchError> {
-        c.into_f64()
-    }
-}
+// The `NumericItem` trait that used to live here is gone. Its whole job was
+// `from_column` — unwrapping the generator's run-time-tagged `Column` into a
+// concrete `Vec<T>` and refusing the other variants. The generator is generic
+// now, so it hands back a `Vec<T>` directly and there is nothing to unwrap:
+// `aqpbm_datagen::GenValue` already carries the `DTYPE` constant this needed,
+// and the mismatch check moved into `generate_into`, before any data exists.
 
 /// A numeric workload: the materialised item stream plus its
 /// provenance. Construct it from a generator (`uniform` / `zipf`)
@@ -219,7 +200,7 @@ pub type I64Workload = NumericWorkload<i64>;
 /// libraries are `f64`-native.
 pub type F64Workload = NumericWorkload<f64>;
 
-impl<T: NumericItem> NumericWorkload<T> {
+impl<T: GenValue> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
     /// `desc.size` is forced to match `items.len()` — a desc that
     /// disagrees with the data it describes would silently corrupt
@@ -254,7 +235,7 @@ impl<T: NumericItem> NumericWorkload<T> {
     /// integer-to-float conversion inside a run labelled `f64`.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
         let desc = WorkloadDesc::from_shape(&spec.shape, spec.size, spec.seed);
-        let mut wk = Self::new(T::from_column(spec.generate()?)?, desc);
+        let mut wk = Self::new(spec.generate::<T>()?, desc);
         wk.spec = Some(spec.clone());
         Ok(wk)
     }
@@ -337,7 +318,7 @@ impl NumericWorkload<i64> {
     }
 }
 
-impl<T: NumericItem> Workload for NumericWorkload<T> {
+impl<T: GenValue> Workload for NumericWorkload<T> {
     type Item = T;
     fn desc(&self) -> WorkloadDesc {
         self.desc.clone()
@@ -661,9 +642,23 @@ mod tests {
             size: 32,
             seed: 1,
         };
-        let col = spec.generate().unwrap();
-        io::write_bin(&path, &col).unwrap();
-        io::write_meta(&path, &GenMeta::new(&spec, &col)).unwrap();
+        // The one shape a run-time dtype takes now: a `match` that picks the
+        // type parameter, with every arm one line. No `_` arm, so adding a
+        // `DType` variant fails to compile here rather than silently missing
+        // a case.
+        fn write<T: aqpbm_datagen::GenValue + aqpbm_datagen::FixedWidth>(
+            path: &std::path::Path,
+            spec: &GenSpec,
+        ) {
+            let col = spec.generate::<T>().unwrap();
+            io::write_bin(path, &col).unwrap();
+            io::write_meta(path, &GenMeta::new(spec, &col)).unwrap();
+        }
+        match dtype {
+            aqpbm_datagen::DType::I64 => write::<i64>(&path, &spec),
+            aqpbm_datagen::DType::U64 => write::<u64>(&path, &spec),
+            aqpbm_datagen::DType::F64 => write::<f64>(&path, &spec),
+        }
         let out = I64Workload::load(&path);
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(io::sidecar_path(&path)).ok();
@@ -819,7 +814,7 @@ mod resample_tests {
 #[cfg(test)]
 mod sink_tests {
     use super::*;
-    use aqpbm_datagen::{Distribution, FileSink, GenSpec, Shape};
+    use aqpbm_datagen::{BinSink, Distribution, GenSpec, Shape};
 
     /// `workload generate` (file sink) and `bench --spec` (memory sink) must
     /// be the same workload, or a run cannot be reproduced from the file it
@@ -842,7 +837,7 @@ mod sink_tests {
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
 
-        let mut file_sink = FileSink::create(&path).unwrap();
+        let mut file_sink = BinSink::<i64>::create(&path).unwrap();
         s.generate_into(&mut file_sink, 64).unwrap();
 
         let from_file = I64Workload::load(&path).unwrap();

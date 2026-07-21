@@ -22,8 +22,8 @@ pub use config::{
 // knowledge of sketches. Re-exported here so the names stay where callers
 // already look for them.
 pub use aqpbm_datagen::{
-    BasicStats, Column, DType, Distribution, GenMeta, GenSpec, Generator, Shape, SketchError,
-    TimeUnit, GEN_META_SCHEMA_VERSION,
+    BasicStats, DType, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
+    SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
 };
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{

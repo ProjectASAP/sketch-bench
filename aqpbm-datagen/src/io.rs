@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::SketchError;
 
-use super::{Column, GenMeta};
+use super::{FixedWidth, GenMeta};
 
 /// Sidecar path for a `.bin` output: `foo.bin` -> `foo.bin.meta.json`.
 ///
@@ -23,14 +23,14 @@ pub fn sidecar_path(bin_path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Write an already-materialised column as a raw little-endian stream
+/// Write already-materialised values as a raw little-endian stream
 /// (no header). Streaming generation should go through
-/// [`super::FileSink`] instead — this is the one-shot convenience for
+/// [`super::BinSink`] instead — this is the one-shot convenience for
 /// callers that already hold the whole column.
-pub fn write_bin(path: &Path, col: &Column) -> Result<(), SketchError> {
+pub fn write_bin<T: FixedWidth>(path: &Path, values: &[T]) -> Result<(), SketchError> {
     use super::Sink;
-    let mut sink = super::FileSink::create(path)?;
-    sink.accept(col)?;
+    let mut sink = super::BinSink::<T>::create(path)?;
+    sink.accept(values)?;
     sink.flush()
 }
 

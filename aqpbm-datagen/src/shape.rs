@@ -11,10 +11,12 @@ use rand_distr::Distribution as _;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
+use std::marker::PhantomData;
+
 use crate::error::SketchError;
 
 use super::dist::{Distribution, GapSampler, KeySampler};
-use super::{Column, DType};
+use super::{DType, GenValue};
 
 /// A semantic label for the units of a timestamp column. Metadata only:
 /// it does not rescale generated values (gaps are measured in these
@@ -122,7 +124,7 @@ impl Shape {
 
     /// Build the concrete generator, validating parameters eagerly so
     /// bad specs fail before any allocation.
-    pub fn build(&self) -> Result<Generator, SketchError> {
+    pub fn build<T: GenValue>(&self) -> Result<Generator<T>, SketchError> {
         match self {
             Shape::Keys {
                 cardinality,
@@ -137,7 +139,7 @@ impl Shape {
                 reject_inexact_f64(*dtype, *cardinality)?;
                 Ok(Generator::Keys(KeysGen {
                     sampler: dist.key_sampler(*cardinality)?,
-                    dtype: *dtype,
+                    _item: PhantomData,
                 }))
             }
             Shape::Categorical { categories, dist } => {
@@ -152,6 +154,7 @@ impl Shape {
                 Ok(Generator::Categorical(CategoricalGen {
                     categories: categories.clone(),
                     index,
+                    _item: PhantomData,
                 }))
             }
             Shape::Monotonic {
@@ -169,9 +172,9 @@ impl Shape {
                 Ok(Generator::Monotonic(MonotonicGen {
                     gap: gap.gap_sampler()?,
                     min_gap: *min_gap,
-                    dtype: *dtype,
                     acc: *start as i128,
                     started: false,
+                    _item: PhantomData,
                 }))
             }
         }
@@ -183,13 +186,13 @@ impl Shape {
 /// An enum rather than a trait object — the set is closed and
 /// crate-private, matching how every other datagen concern
 /// ([`Distribution`], [`Column`], [`Shape`]) is modelled.
-pub enum Generator {
-    Keys(KeysGen),
-    Categorical(CategoricalGen),
-    Monotonic(MonotonicGen),
+pub enum Generator<T> {
+    Keys(KeysGen<T>),
+    Categorical(CategoricalGen<T>),
+    Monotonic(MonotonicGen<T>),
 }
 
-impl Generator {
+impl<T: GenValue> Generator<T> {
     /// Produce the next `n` values.
     ///
     /// Takes `&mut self` because a structure may carry state *between*
@@ -197,15 +200,19 @@ impl Generator {
     /// chunked generation identical to one-shot generation: N calls of
     /// `n` and one call of `N*n` consume the same RNG draws and
     /// continue the same series.
+    /// Appends to `out` rather than returning a fresh `Vec`, so the chunked
+    /// driver reuses one buffer for the whole run instead of allocating per
+    /// chunk. `out` is cleared by the caller.
     pub fn generate(
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchError> {
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
         match self {
-            Generator::Keys(g) => g.generate(n, rng),
-            Generator::Categorical(g) => g.generate(n, rng),
-            Generator::Monotonic(g) => g.generate(n, rng),
+            Generator::Keys(g) => g.generate(n, rng, out),
+            Generator::Categorical(g) => g.generate(n, rng, out),
+            Generator::Monotonic(g) => g.generate(n, rng, out),
         }
     }
 }
@@ -213,34 +220,49 @@ impl Generator {
 /// Keys drawn over the sampler's domain, emitted in the requested
 /// physical dtype. Every dtype casts the *same* `u64` draw, so a fixed
 /// `(shape, size, seed)` is dtype-invariant in its logical values.
-pub struct KeysGen {
+pub struct KeysGen<T> {
     sampler: KeySampler,
-    dtype: DType,
+    _item: PhantomData<T>,
 }
 
-impl KeysGen {
-    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
-        Ok(match self.dtype {
-            DType::I64 => Column::I64((0..n).map(|_| self.sampler.sample(rng) as i64).collect()),
-            DType::U64 => Column::U64((0..n).map(|_| self.sampler.sample(rng)).collect()),
-            DType::F64 => Column::F64((0..n).map(|_| self.sampler.sample(rng) as f64).collect()),
-        })
+impl<T: GenValue> KeysGen<T> {
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        out.extend((0..n).map(|_| T::from_draw(self.sampler.sample(rng))));
+        Ok(())
     }
 }
 
 /// Draws category ids from a fixed domain with a configurable skew.
-pub struct CategoricalGen {
+pub struct CategoricalGen<T> {
     categories: Vec<i64>,
     index: WeightedIndex<f64>,
+    _item: PhantomData<T>,
 }
 
-impl CategoricalGen {
-    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
-        Ok(Column::I64(
-            (0..n)
-                .map(|_| self.categories[self.index.sample(rng)])
-                .collect(),
-        ))
+impl<T: GenValue> CategoricalGen<T> {
+    /// Category ids are authored as `i64` in the spec, so they are narrowed
+    /// through [`GenValue::from_acc`] rather than rendered from a draw — an
+    /// id is a value the user wrote down, not a sample. `Shape::dtype`
+    /// reports `i64` for this shape, so `generate_into`'s check already
+    /// pins `T = i64`; the conversion is what makes that expressible in
+    /// generic code without an unchecked cast.
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        for _ in 0..n {
+            out.push(T::from_acc(
+                self.categories[self.index.sample(rng)] as i128,
+            )?);
+        }
+        Ok(())
     }
 }
 
@@ -251,45 +273,37 @@ impl CategoricalGen {
 /// once per [`super::GenSpec::generate_into`]) starts at `start` and
 /// each subsequent call resumes where the last left off. Overflow past
 /// the target type is a hard error.
-pub struct MonotonicGen {
+pub struct MonotonicGen<T> {
     gap: GapSampler,
     min_gap: u64,
-    dtype: DType,
     /// Running value; seeded with `start` at build time.
     acc: i128,
     /// Whether any value has been emitted yet. The very first value of
     /// the series is `start` itself, with no gap applied — that must
     /// hold for the series, not for each chunk.
     started: bool,
+    _item: PhantomData<T>,
 }
 
-impl MonotonicGen {
-    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
-        // Accumulate in the widest integer, then narrow to the target
-        // dtype in a single trailing match — no per-dtype loop.
-        let raw: Vec<i128> = (0..n)
-            .map(|_| {
-                if self.started {
-                    self.acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
-                } else {
-                    self.started = true;
-                }
-                self.acc
-            })
-            .collect();
-        let overflow = || SketchError::BadParam("monotonic: value overflow".into());
-        Ok(match self.dtype {
-            DType::U64 => Column::U64(
-                raw.iter()
-                    .map(|&a| u64::try_from(a).map_err(|_| overflow()))
-                    .collect::<Result<_, _>>()?,
-            ),
-            // f64 is rejected in `build`; treat anything non-u64 as i64.
-            _ => Column::I64(
-                raw.iter()
-                    .map(|&a| i64::try_from(a).map_err(|_| overflow()))
-                    .collect::<Result<_, _>>()?,
-            ),
-        })
+impl<T: GenValue> MonotonicGen<T> {
+    /// Accumulates in the widest integer and narrows per value. The
+    /// intermediate `Vec<i128>` this used to build is gone: it existed only
+    /// so the per-dtype narrowing could happen in one trailing match, and
+    /// there is no match left.
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        for _ in 0..n {
+            if self.started {
+                self.acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
+            } else {
+                self.started = true;
+            }
+            out.push(T::from_acc(self.acc)?);
+        }
+        Ok(())
     }
 }

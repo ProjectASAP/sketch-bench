@@ -231,12 +231,30 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    // Stream through a FileSink: peak memory is one chunk, not the
-    // whole dataset, so `--size` is bounded by disk rather than RAM.
-    let mut sink = datagen::FileSink::create(out).with_context(|| format!("creating {}", a.out))?;
-    let meta = spec
-        .generate_into(&mut sink, datagen::DEFAULT_CHUNK)
-        .with_context(|| format!("generating into {}", a.out))?;
+    // The one place in the tool where a run-time dtype has to become a type
+    // parameter: `--dtype`/`--spec` is a string, and everything downstream of
+    // this `match` is monomorphic. The generator used to carry the choice all
+    // the way through as a tagged `Column`, which is what made every stage
+    // handle every variant.
+    //
+    // No `_` arm: adding a `DType` variant fails to compile here, which is
+    // the whole point of keeping the dispatch in one spot.
+    fn stream<T: datagen::GenValue + datagen::FixedWidth>(
+        spec: &datagen::GenSpec,
+        out: &Path,
+    ) -> Result<datagen::GenMeta> {
+        // Stream through a BinSink: peak memory is one chunk, not the whole
+        // dataset, so `--size` is bounded by disk rather than RAM.
+        let mut sink = datagen::BinSink::<T>::create(out)
+            .with_context(|| format!("creating {}", out.display()))?;
+        spec.generate_into(&mut sink, datagen::DEFAULT_CHUNK)
+            .with_context(|| format!("generating into {}", out.display()))
+    }
+    let meta = match spec.shape.dtype() {
+        datagen::DType::I64 => stream::<i64>(&spec, out)?,
+        datagen::DType::U64 => stream::<u64>(&spec, out)?,
+        datagen::DType::F64 => stream::<f64>(&spec, out)?,
+    };
 
     let sidecar = if a.no_meta {
         None
