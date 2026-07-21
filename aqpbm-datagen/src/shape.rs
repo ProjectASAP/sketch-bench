@@ -11,8 +11,6 @@ use rand_distr::Distribution as _;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use std::marker::PhantomData;
-
 use crate::error::SketchError;
 
 use super::dist::{Distribution, GapSampler, KeySampler};
@@ -95,6 +93,22 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// How many distinct values this shape can produce, when that is
+    /// bounded.
+    ///
+    /// Unlike the `dtype()` that used to sit here, this really is a property
+    /// of the shape: it is about what the values *mean*, not how they are
+    /// encoded. `string` needs it to size the prefix that keeps rendering
+    /// injective, and `Monotonic` has no answer — which is why a monotonic
+    /// string series is refused rather than approximated.
+    pub fn domain_size(&self) -> Option<u64> {
+        match self {
+            Shape::Keys { cardinality, .. } => Some(*cardinality),
+            Shape::Categorical { categories, .. } => Some(categories.len() as u64),
+            Shape::Monotonic { .. } => None,
+        }
+    }
+
     /// The label used in reports and CLI output. This is a
     /// back-compat shim, **not** a clean structural tag: for `Keys` it
     /// returns the *distribution* name (`"uniform"`/`"zipf"`/…) so
@@ -112,7 +126,7 @@ impl Shape {
 
     /// Build the concrete generator, validating parameters eagerly so
     /// bad specs fail before any allocation.
-    pub fn build<T: GenValue>(&self) -> Result<Generator<T>, SketchError> {
+    pub fn build<T: GenValue>(&self, cfg: T::Cfg) -> Result<Generator<T>, SketchError> {
         match self {
             Shape::Keys { cardinality, dist } => {
                 if *cardinality == 0 {
@@ -123,7 +137,7 @@ impl Shape {
                 reject_inexact_f64(T::DTYPE, *cardinality)?;
                 Ok(Generator::Keys(KeysGen {
                     sampler: dist.key_sampler(*cardinality)?,
-                    _item: PhantomData,
+                    cfg,
                 }))
             }
             Shape::Categorical { categories, dist } => {
@@ -138,7 +152,7 @@ impl Shape {
                 Ok(Generator::Categorical(CategoricalGen {
                     categories: categories.clone(),
                     index,
-                    _item: PhantomData,
+                    cfg,
                 }))
             }
             Shape::Monotonic {
@@ -157,7 +171,7 @@ impl Shape {
                     min_gap: *min_gap,
                     acc: *start as i128,
                     started: false,
-                    _item: PhantomData,
+                    cfg,
                 }))
             }
         }
@@ -169,7 +183,7 @@ impl Shape {
 /// An enum rather than a trait object — the set is closed and
 /// crate-private, matching how every other datagen concern
 /// ([`Distribution`], [`Column`], [`Shape`]) is modelled.
-pub enum Generator<T> {
+pub enum Generator<T: GenValue> {
     Keys(KeysGen<T>),
     Categorical(CategoricalGen<T>),
     Monotonic(MonotonicGen<T>),
@@ -203,9 +217,9 @@ impl<T: GenValue> Generator<T> {
 /// Keys drawn over the sampler's domain, emitted in the requested
 /// physical dtype. Every dtype casts the *same* `u64` draw, so a fixed
 /// `(shape, size, seed)` is dtype-invariant in its logical values.
-pub struct KeysGen<T> {
+pub struct KeysGen<T: GenValue> {
     sampler: KeySampler,
-    _item: PhantomData<T>,
+    cfg: T::Cfg,
 }
 
 impl<T: GenValue> KeysGen<T> {
@@ -215,16 +229,16 @@ impl<T: GenValue> KeysGen<T> {
         rng: &mut Xoshiro256PlusPlus,
         out: &mut Vec<T>,
     ) -> Result<(), SketchError> {
-        out.extend((0..n).map(|_| T::from_draw(self.sampler.sample(rng))));
+        out.extend((0..n).map(|_| T::from_draw(self.sampler.sample(rng), &self.cfg)));
         Ok(())
     }
 }
 
 /// Draws category ids from a fixed domain with a configurable skew.
-pub struct CategoricalGen<T> {
+pub struct CategoricalGen<T: GenValue> {
     categories: Vec<i64>,
     index: WeightedIndex<f64>,
-    _item: PhantomData<T>,
+    cfg: T::Cfg,
 }
 
 impl<T: GenValue> CategoricalGen<T> {
@@ -243,6 +257,7 @@ impl<T: GenValue> CategoricalGen<T> {
         for _ in 0..n {
             out.push(T::from_acc(
                 self.categories[self.index.sample(rng)] as i128,
+                &self.cfg,
             )?);
         }
         Ok(())
@@ -256,7 +271,7 @@ impl<T: GenValue> CategoricalGen<T> {
 /// once per [`super::GenSpec::generate_into`]) starts at `start` and
 /// each subsequent call resumes where the last left off. Overflow past
 /// the target type is a hard error.
-pub struct MonotonicGen<T> {
+pub struct MonotonicGen<T: GenValue> {
     gap: GapSampler,
     min_gap: u64,
     /// Running value; seeded with `start` at build time.
@@ -265,7 +280,7 @@ pub struct MonotonicGen<T> {
     /// the series is `start` itself, with no gap applied — that must
     /// hold for the series, not for each chunk.
     started: bool,
-    _item: PhantomData<T>,
+    cfg: T::Cfg,
 }
 
 impl<T: GenValue> MonotonicGen<T> {
@@ -285,7 +300,7 @@ impl<T: GenValue> MonotonicGen<T> {
             } else {
                 self.started = true;
             }
-            out.push(T::from_acc(self.acc)?);
+            out.push(T::from_acc(self.acc, &self.cfg)?);
         }
         Ok(())
     }

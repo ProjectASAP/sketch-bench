@@ -327,6 +327,7 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
         size: args.size,
         seed: args.seed,
         dtype,
+        string: None,
     }))
 }
 

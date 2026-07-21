@@ -110,7 +110,8 @@ fn parse_dtype(s: &str) -> Result<DType> {
         "i64" => Ok(DType::I64),
         "u64" => Ok(DType::U64),
         "f64" => Ok(DType::F64),
-        other => bail!("unknown dtype: {other} (expected i64|u64|f64)"),
+        "string" | "str" => Ok(DType::Str),
+        other => bail!("unknown dtype: {other} (expected i64|u64|f64|string)"),
     }
 }
 
@@ -216,6 +217,11 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         size: a.size,
         seed: a.seed,
         dtype,
+        // No flags for the string options: the only sink that exists is
+        // `.bin`, which cannot hold strings, so a `--alphabet` flag would
+        // configure a path that always errors. `--spec` can already set
+        // them for callers using the library.
+        string: None,
     })
 }
 
@@ -252,6 +258,15 @@ fn generate(a: GenerateArgs) -> Result<()> {
         datagen::DType::I64 => stream::<i64>(&spec, out)?,
         datagen::DType::U64 => stream::<u64>(&spec, out)?,
         datagen::DType::F64 => stream::<f64>(&spec, out)?,
+        // Not an oversight and not a `_` arm: `String` is not `FixedWidth`,
+        // so `stream::<String>` would not compile. The `.bin` layout is a
+        // bare sequence of equal-width values with nowhere to record a
+        // length. Strings generate fine in-process; what is missing is a
+        // sink that can hold them.
+        datagen::DType::Str => bail!(
+            "dtype string cannot be written to a .bin file: the format has no length field. \
+             Strings are generated in-process today; a CSV sink is what would give them a file"
+        ),
     };
 
     let sidecar = if a.no_meta {

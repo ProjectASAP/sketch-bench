@@ -251,6 +251,7 @@ impl<T: GenValue> NumericWorkload<T> {
             size,
             seed,
             dtype: T::DTYPE,
+            string: None,
         })
         .expect("uniform keys over a non-zero cardinality always generate")
     }
@@ -266,6 +267,7 @@ impl<T: GenValue> NumericWorkload<T> {
             size,
             seed,
             dtype: T::DTYPE,
+            string: None,
         })
     }
 }
@@ -642,6 +644,7 @@ mod tests {
             size: 32,
             seed: 1,
             dtype,
+            string: None,
         };
         // The one shape a run-time dtype takes now: a `match` that picks the
         // type parameter, with every arm one line. No `_` arm, so adding a
@@ -659,6 +662,10 @@ mod tests {
             aqpbm_datagen::DType::I64 => write::<i64>(&path, &spec),
             aqpbm_datagen::DType::U64 => write::<u64>(&path, &spec),
             aqpbm_datagen::DType::F64 => write::<f64>(&path, &spec),
+            // `String` is not `FixedWidth`, so this arm cannot call `write`.
+            // The guard under test is about `.bin` files, which strings do
+            // not have.
+            aqpbm_datagen::DType::Str => unreachable!("no .bin path for strings"),
         }
         let out = I64Workload::load(&path);
         std::fs::remove_file(&path).ok();
@@ -765,6 +772,7 @@ mod resample_tests {
             size: 2000,
             seed,
             dtype: DType::I64,
+            string: None,
         }
     }
 
@@ -835,6 +843,7 @@ mod sink_tests {
             size: 3_000,
             seed: 7,
             dtype: DType::I64,
+            string: None,
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
 
@@ -862,6 +871,7 @@ mod dtype_tests {
             size: 500,
             seed: 7,
             dtype,
+            string: None,
         }
     }
 

@@ -79,7 +79,7 @@ impl<T> MemorySink<T> {
     }
 }
 
-impl<T: Copy> Sink<T> for MemorySink<T> {
+impl<T: Clone> Sink<T> for MemorySink<T> {
     fn accept(&mut self, chunk: &[T]) -> Result<(), SketchError> {
         self.values.extend_from_slice(chunk);
         Ok(())

@@ -1458,6 +1458,7 @@ mod registry_tests {
             size: 256,
             seed: 1,
             dtype,
+            string: None,
         };
         WorkloadSpec::Generated(spec).build(dtype).unwrap()
     }
