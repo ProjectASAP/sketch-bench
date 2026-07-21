@@ -4,6 +4,8 @@
 //!
 //! See `docs/DESIGN.md` §5.6.
 
+use std::collections::BTreeMap;
+
 use sketch_core::sketch::Sketch;
 
 pub mod cardinality;
@@ -22,7 +24,19 @@ pub mod topk;
 /// meaningful as "ops/sec the sketch can answer".
 #[derive(Debug, Clone, Default)]
 pub struct Comparison {
-    pub json: serde_json::Value,
+    /// Named scalars, not an opaque JSON blob.
+    ///
+    /// A blob could only be aggregated across runs by code that knew each
+    /// family's shape, which is why `aggregate` used to give up and publish
+    /// the last run's numbers verbatim — ten repetitions reported as one.
+    /// A flat `name -> f64` map aggregates generically: the runner runs each
+    /// repetition on an independent draw of the data, and `aggregate` folds
+    /// every key through the same Welford. Comparators name their own keys;
+    /// the name must state the population the number is over (`are_top10`,
+    /// `are_all`), because an average relative error over heavy hitters and
+    /// one over every distinct key are different numbers that have been
+    /// published under the same word in the literature.
+    pub metrics: BTreeMap<String, f64>,
     pub queries: u64,
     pub query_wall_ns: u64,
     /// Optional per-call samples — populated only when the

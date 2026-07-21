@@ -249,11 +249,37 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
-        let items = self.workload.items();
-        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(pass_cfg.runs);
-        let total_runs = pass_cfg.runs + pass_cfg.warmup_runs;
+        let accuracy_pass = pass_cfg.metrics.contains(MetricsMask::ACCURACY);
+
+        // On the accuracy pass a repetition is only worth running if it draws
+        // its own sample: a sketch's error is deterministic given (data,
+        // parameters), so N repetitions over one fixed workload produce N
+        // identical numbers and any spread computed from them is fabricated.
+        // A workload that cannot be redrawn — a file on disk is one fixed
+        // sample — therefore gets exactly **one** measured run, and reports
+        // `n = 1`, instead of N copies of the same number.
+        let measured_runs = if accuracy_pass && !self.workload.can_resample() {
+            1
+        } else {
+            pass_cfg.runs
+        };
+        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(measured_runs);
+        let total_runs = measured_runs + pass_cfg.warmup_runs;
 
         for run_idx in 0..total_runs {
+            // Warm-ups reuse the base workload (their results are discarded,
+            // so generating a fresh one would be pure cost); measured run 0
+            // uses it too, and each later measured run draws its own.
+            let measured_idx = run_idx.checked_sub(pass_cfg.warmup_runs);
+            let resampled: Option<W> = match measured_idx {
+                Some(j) if accuracy_pass && j > 0 => self
+                    .workload
+                    .resample(pass_cfg.seed.wrapping_add(j as u64)),
+                _ => None,
+            };
+            let workload: &W = resampled.as_ref().unwrap_or(self.workload);
+            let items = workload.items();
+
             let (metrics, final_sketch) = if pass_cfg.metrics.contains(MetricsMask::LATENCY) {
                 // The latency pass deliberately does NOT use `insert`: its
                 // instrument *is* the per-update `Probe` boundary, and it
@@ -265,20 +291,27 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 run_once_clean(factory, insert, items, &pass_cfg)
             };
 
+            // The comparator owns the query phase, so it must run on warm-up
+            // iterations too: skipping it there left the first *measured*
+            // query phase as the first query phase ever executed — cold
+            // branch predictors, cold probe array, cold query path — while
+            // `--warmup-runs` was protecting only the insert side.
+            let comparison = if accuracy_pass {
+                ground_truth.map(|gt| gt.compare(&final_sketch, items))
+            } else {
+                None
+            };
+
             if run_idx >= pass_cfg.warmup_runs {
                 let mut metrics = metrics;
-                if pass_cfg.metrics.contains(MetricsMask::ACCURACY) {
-                    if let Some(gt) = ground_truth {
-                        let cmp = gt.compare(&final_sketch, items);
-                        // Query phase ran inside the comparator; pull
-                        // its timing into the run's metrics so
-                        // aggregation surfaces query_throughput
-                        // alongside insertion throughput.
-                        metrics.queries_executed = cmp.queries;
-                        metrics.query_wall_time_ns = cmp.query_wall_ns;
-                        metrics.accuracy = Some(cmp.json);
-                        metrics.query_calls = cmp.query_calls;
-                    }
+                if let Some(cmp) = comparison {
+                    // Query phase ran inside the comparator; pull its timing
+                    // into the run's metrics so aggregation surfaces
+                    // query_throughput alongside insertion throughput.
+                    metrics.queries_executed = cmp.queries;
+                    metrics.query_wall_time_ns = cmp.query_wall_ns;
+                    metrics.accuracy = Some(cmp.metrics);
+                    metrics.query_calls = cmp.query_calls;
                 }
                 metrics.memory_bytes = Some(final_sketch.memory_bytes() as u64);
                 per_run.push(metrics);

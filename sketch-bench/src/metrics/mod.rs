@@ -62,7 +62,10 @@ pub struct RunMetrics {
     /// Accuracy comparator output, carried opaquely as JSON so
     /// different ground-truth families can emit their own shape
     /// without leaking into the common metric struct.
-    pub accuracy: Option<serde_json::Value>,
+    /// Named accuracy scalars from this run's comparator. Flat rather
+    /// than an opaque JSON blob so `aggregate` can fold every key across
+    /// runs without knowing any family's shape — see `accuracy::Comparison`.
+    pub accuracy: Option<std::collections::BTreeMap<String, f64>>,
     /// Per-call query samples — `Some` only when the dispatch
     /// requested `record_calls` on a comparator that supports
     /// it. Consumed by `sketch-cli/raw_csv` to back the legacy

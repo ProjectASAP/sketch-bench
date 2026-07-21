@@ -49,10 +49,35 @@ pub struct WorkloadDesc {
 /// The abstract contract for a workload a `BenchRunner` can
 /// consume. An implementation produces an ordered `Vec<Item>`
 /// plus an optional query stream.
-pub trait Workload {
+pub trait Workload: Sized {
     type Item: Clone;
     fn desc(&self) -> WorkloadDesc;
     fn items(&self) -> &[Self::Item];
+
+    /// An **independent draw** from the same distribution, for a repetition
+    /// that must not reuse the previous one.
+    ///
+    /// Accuracy is a deterministic function of (data, parameters): re-running
+    /// a sketch over the same items with the same seed produces the identical
+    /// error, so N repetitions over one fixed workload yield N identical
+    /// numbers and any spread reported from them is fabricated. Varying the
+    /// *data* is what the literature does (Harmouch: 10 independent datasets
+    /// per point; Heule: 5000; Ertl and DataSketches: fresh values per trial).
+    ///
+    /// `None` means this workload has no distribution to redraw from — a file
+    /// on disk is one fixed sample. Callers must then run **one** repetition
+    /// and report `n = 1`, not N copies of it.
+    fn resample(&self, _seed: u64) -> Option<Self> {
+        None
+    }
+
+    /// Whether [`Self::resample`] can produce anything, without paying for a
+    /// generation to find out. The runner needs this *before* it decides how
+    /// many repetitions to run, and probing by calling `resample` would
+    /// generate a full workload only to discard it.
+    fn can_resample(&self) -> bool {
+        false
+    }
 }
 
 // ---------- i64 workloads ----------
@@ -65,6 +90,10 @@ pub trait Workload {
 pub struct I64Workload {
     items: Vec<i64>,
     desc: WorkloadDesc,
+    /// The spec this was generated from, when it was generated. Retained so
+    /// [`Workload::resample`] can draw again from the same distribution.
+    /// `None` for file-backed workloads: a file is one fixed sample.
+    spec: Option<GenSpec>,
 }
 
 impl I64Workload {
@@ -84,7 +113,11 @@ impl I64Workload {
             items.len(),
         );
         desc.size = items.len();
-        Self { items, desc }
+        Self {
+            items,
+            desc,
+            spec: None,
+        }
     }
 
     /// Generate in-process from a [`GenSpec`] — the one generator in
@@ -97,7 +130,9 @@ impl I64Workload {
     /// meaningless keys behind a well-formed report.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchCoreError> {
         let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
-        Ok(Self::new(spec.generate()?.into_i64()?, desc))
+        let mut wk = Self::new(spec.generate()?.into_i64()?, desc);
+        wk.spec = Some(spec.clone());
+        Ok(wk)
     }
 
     /// Uniform in `[0, cardinality)`. Convenience over [`Self::generate`].
@@ -182,6 +217,22 @@ impl Workload for I64Workload {
     }
     fn items(&self) -> &[i64] {
         &self.items
+    }
+
+    /// Regenerate from the retained spec with `seed` substituted. A spec that
+    /// generated once cannot fail on a different seed — every validation in
+    /// `Shape::build` is seed-independent — so a failure here would be a bug,
+    /// and returning `None` degrades to "cannot vary", which the caller
+    /// already handles honestly.
+    fn can_resample(&self) -> bool {
+        self.spec.is_some()
+    }
+
+    fn resample(&self, seed: u64) -> Option<Self> {
+        let spec = self.spec.as_ref()?;
+        let mut respec = spec.clone();
+        respec.seed = seed;
+        Self::generate(&respec).ok()
     }
 }
 

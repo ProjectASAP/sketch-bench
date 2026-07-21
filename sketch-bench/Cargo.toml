@@ -24,6 +24,9 @@ heap-track = []
 accuracy-topk = []
 
 [dependencies]
+# Fixed-seed shuffle of the probe set, so probe order is reproducible.
+rand = { workspace = true }
+rand_xoshiro = { workspace = true }
 sketch-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
