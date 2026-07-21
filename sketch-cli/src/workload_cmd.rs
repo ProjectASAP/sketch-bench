@@ -240,7 +240,7 @@ fn generate(a: GenerateArgs) -> Result<()> {
 
     eprintln!(
         "sketchlib: generated shape={} dtype={} count={} -> {}",
-        spec.shape.tag(),
+        spec.shape.report_label(),
         col.dtype().as_str(),
         col.len(),
         a.out,
@@ -258,7 +258,7 @@ fn describe(a: DescribeArgs) -> Result<()> {
             println!("path:              {}", a.path);
             println!("schema_version:    {}", meta.schema_version);
             println!("generator_version: {}", meta.generator_version);
-            println!("shape:             {}", meta.shape.tag());
+            println!("shape:             {}", meta.shape.report_label());
             println!("shape_params:      {}", serde_json::to_string(&meta.shape)?);
             println!("dtype:             {}", meta.dtype.as_str());
             println!("count:             {}", meta.count);

@@ -17,8 +17,8 @@
 //! * New distribution → add a [`dist::Distribution`] variant plus the
 //!   arm(s) in whichever realization it supports (`key_sampler` /
 //!   `weights` / `gap_sampler`). Every structure picks it up for free.
-//! * New structure → add a `struct` implementing [`ColumnGenerator`], a
-//!   variant to [`shape::Shape`], and one arm to `Shape::build`.
+//! * New structure → add a `*Gen` struct, a [`shape::Generator`]
+//!   variant, and a variant + build arm to [`shape::Shape`].
 //! * New physical type → add a [`DType`] variant and a [`Column`] arm.
 //!
 //! ## Reproducibility
@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::SketchCoreError;
 
 pub use dist::Distribution;
-pub use shape::{Shape, TimeUnit};
+pub use shape::{Generator, Shape, TimeUnit};
 pub use stats::BasicStats;
 
 /// Schema version of the `.meta.json` sidecar. Bumped to 2 when the
@@ -143,16 +143,6 @@ impl Column {
     }
 }
 
-/// The abstract generator contract. Implementors own their parameters;
-/// `generate` is a pure function of `(self, n, rng)`.
-pub trait ColumnGenerator {
-    fn generate(&self, n: usize, rng: &mut Xoshiro256PlusPlus)
-        -> Result<Column, SketchCoreError>;
-
-    /// The physical type `generate` will emit.
-    fn dtype(&self) -> DType;
-}
-
 fn default_seed() -> u64 {
     42
 }
@@ -174,9 +164,9 @@ impl GenSpec {
     /// `size`/`seed`, e.g.:
     ///
     /// ```yaml
-    /// shape: zipf
+    /// shape: keys
     /// cardinality: 100000
-    /// s: 1.1
+    /// dist: { kind: zipf, s: 1.1 }
     /// dtype: i64
     /// size: 1000000
     /// seed: 42

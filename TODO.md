@@ -77,3 +77,4 @@ Gated on `sketch-runtime` landing first.
 - [ ] Criterion microbench proving `Probe<_, NoopSink>` is a no-op (MERGE_PLAN Phase 4, last bullet)
 - [ ] YAML sweep-matrix config loader (borrowed pattern from asap-fusion `experiments/configs/`) — superset of `bench-sweep`
 - [ ] Retire the private warning on `WorkloadAny` (dispatch.rs) by making the type `pub(crate)` visible across the module boundary
+- [ ] Reconcile `workload::UniformI64`/`ZipfI64` with datagen's `Keys` + `Distribution`. Uniform/zipf i64 key generation is currently declared twice (both encode `[0,card)` / `[1,card]` independently → drift risk). datagen is the intended single source of truth; make `UniformI64`/`ZipfI64` thin `Workload` adapters over a `KeySampler`. Deferred because both are wired into the live bench path via `dispatch.rs` + the `StringFromI64`/`BytesFromI64` adapters.
