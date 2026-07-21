@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use sketch_core::datagen::{self, DType, GapDist, GenMeta, GenSpec, Shape, TimeUnit, WeightSpec};
+use sketch_core::datagen::{self, DType, Distribution, GenMeta, GenSpec, Shape, TimeUnit};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -120,8 +120,9 @@ fn parse_unit(s: &str) -> Result<TimeUnit> {
     }
 }
 
-/// Parse a `kind:param` gap spec, e.g. `geometric:0.01`, `const:1000`.
-fn parse_gap(s: &str) -> Result<GapDist> {
+/// Parse a `kind:param` gap distribution, e.g. `geometric:0.01`,
+/// `const:1000`.
+fn parse_gap(s: &str) -> Result<Distribution> {
     let (kind, param) = s
         .split_once(':')
         .ok_or_else(|| anyhow!("--gap must be `kind:param`, e.g. geometric:0.01"))?;
@@ -131,26 +132,26 @@ fn parse_gap(s: &str) -> Result<GapDist> {
             .map_err(|_| anyhow!("invalid gap param '{param}' for '{kind}'"))
     };
     match kind.to_ascii_lowercase().as_str() {
-        "const" | "constant" => Ok(GapDist::Constant {
-            step: param
+        "const" | "constant" => Ok(Distribution::Constant {
+            value: param
                 .parse::<u64>()
                 .map_err(|_| anyhow!("invalid const step '{param}'"))?,
         }),
-        "geometric" | "geo" => Ok(GapDist::Geometric { p: num()? }),
-        "exp" | "exponential" => Ok(GapDist::Exponential { lambda: num()? }),
-        "poisson" => Ok(GapDist::Poisson { lambda: num()? }),
+        "geometric" | "geo" => Ok(Distribution::Geometric { p: num()? }),
+        "exp" | "exponential" => Ok(Distribution::Exponential { lambda: num()? }),
+        "poisson" => Ok(Distribution::Poisson { lambda: num()? }),
         other => bail!("unknown gap kind: {other} (expected const|geometric|exp|poisson)"),
     }
 }
 
-/// Parse a weight scheme: `uniform` or `zipf:s`. Explicit weights are
-/// only available via `--spec`.
-fn parse_weights(s: &str) -> Result<WeightSpec> {
+/// Parse a categorical weight scheme: `uniform` or `zipf:s`. Explicit
+/// weights are only available via `--spec`.
+fn parse_weights(s: &str) -> Result<Distribution> {
     if s.eq_ignore_ascii_case("uniform") {
-        return Ok(WeightSpec::Uniform);
+        return Ok(Distribution::Uniform);
     }
     if let Some(param) = s.strip_prefix("zipf:") {
-        return Ok(WeightSpec::Zipf {
+        return Ok(Distribution::Zipf {
             s: param
                 .parse::<f64>()
                 .map_err(|_| anyhow!("invalid zipf weight exponent '{param}'"))?,
@@ -167,13 +168,14 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
     }
     let dtype = parse_dtype(&a.dtype)?;
     let shape = match a.shape.as_str() {
-        "uniform" => Shape::Uniform {
+        "uniform" => Shape::Keys {
             cardinality: a.cardinality,
+            dist: Distribution::Uniform,
             dtype,
         },
-        "zipf" => Shape::Zipf {
+        "zipf" => Shape::Keys {
             cardinality: a.cardinality,
-            s: a.zipf_s,
+            dist: Distribution::Zipf { s: a.zipf_s },
             dtype,
         },
         "monotonic-timestamp" | "timestamp" => {
@@ -184,7 +186,7 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
                     anyhow!("--gap is required for monotonic-timestamp (e.g. --gap geometric:0.01)")
                 })
                 .and_then(parse_gap)?;
-            Shape::MonotonicTimestamp {
+            Shape::Monotonic {
                 start: a.start,
                 unit: parse_unit(&a.unit)?,
                 gap,
@@ -199,9 +201,9 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
             if n == 0 {
                 bail!("--categories must be > 0");
             }
-            Shape::SkewedCategorical {
+            Shape::Categorical {
                 categories: (0..n as i64).collect(),
-                weights: parse_weights(&a.weights)?,
+                dist: parse_weights(&a.weights)?,
             }
         }
         other => bail!(

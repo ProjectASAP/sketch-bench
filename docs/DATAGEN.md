@@ -81,19 +81,54 @@ sketchlib workload generate --shape skewed-categorical \
 
 ## Spec files (`--spec`)
 
-For full generality (explicit weights, complex gap trees) pass a
-`.yaml`/`.yml` or `.json` spec; it overrides `--shape` and its flags.
-The shape's tagged fields sit alongside `size`/`seed`. Examples live in
-`configs/datagen/`.
+For full generality (explicit weights, distributions the CLI flags
+don't expose) pass a `.yaml`/`.yml` or `.json` spec; it overrides
+`--shape` and its flags. Examples live in `configs/datagen/`.
 
-```bash
-sketchlib workload generate --spec configs/datagen/os_types.yaml \
-    --out input/os_types.bin
+A spec is a **structure** (`keys` / `categorical` / `monotonic`) plus a
+**distribution** that structure draws over — the two axes are
+orthogonal, so the same `dist` block is reused across structures:
+
+```yaml
+# keys: a large key space drawn zipf
+shape: keys
+cardinality: 1000000
+dist: { kind: zipf, s: 1.1 }
+dtype: i64
+size: 1000000
+seed: 42
 ```
+```yaml
+# categorical: a finite id domain with explicit weights
+shape: categorical
+categories: [0, 1, 2, 3, 4, 5, 6, 7]
+dist: { kind: explicit, weights: [40, 25, 15, 8, 5, 3, 2, 2] }
+size: 1000000
+```
+```yaml
+# monotonic: cumulative non-negative gaps
+shape: monotonic
+start: 1700000000000
+unit: millis
+gap: { kind: exponential, lambda: 0.5 }
+min_gap: 1
+dtype: i64
+size: 1000000
+```
+
+The CLI presets map onto these: `--shape uniform`/`zipf` →
+`keys` with the matching `dist`; `--shape monotonic-timestamp` →
+`monotonic`; `--shape skewed-categorical` → `categorical`.
 
 ## Extending
 
-- **New distribution:** add a struct implementing
+Distribution (*how* values spread) and structure (*what* they mean) are
+separate axes:
+
+- **New distribution:** add a `datagen::Distribution` variant plus the
+  arm(s) in whichever realization it supports (`key_sampler` /
+  `weights` / `gap_sampler`). Every structure picks it up for free.
+- **New structure:** add a struct implementing
   `datagen::ColumnGenerator`, a variant to `datagen::shape::Shape`, and
   one arm to `Shape::build`. Nothing in the benchmark changes.
 - **New physical type:** add a `datagen::DType` variant and a

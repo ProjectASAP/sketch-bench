@@ -3,7 +3,7 @@
 # stream is strictly increasing.
 # Generate with:
 #   sketchlib workload generate --spec configs/datagen/events_timestamp.yaml --out input/events_ts.bin
-shape: monotonic_timestamp
+shape: monotonic
 start: 1700000000000
 unit: millis
 gap:

@@ -439,11 +439,12 @@ mod tests {
 
     /// Generate a `.bin` + sidecar of the given dtype and try to load it.
     fn load_generated(dtype: crate::datagen::DType, tag: &str) -> Result<FileI64, SketchCoreError> {
-        use crate::datagen::{io, GenMeta, GenSpec, Shape};
+        use crate::datagen::{io, Distribution, GenMeta, GenSpec, Shape};
         let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
         let spec = GenSpec {
-            shape: Shape::Uniform {
+            shape: Shape::Keys {
                 cardinality: 64,
+                dist: Distribution::Uniform,
                 dtype,
             },
             size: 32,

@@ -11,8 +11,14 @@
 //!
 //! ## Extending
 //!
-//! * New distribution → add a `struct` implementing [`ColumnGenerator`],
-//!   a variant to [`shape::Shape`], and one arm to `Shape::build`.
+//! Distribution (*how* values spread) and structure (*what* they mean)
+//! are orthogonal axes:
+//!
+//! * New distribution → add a [`dist::Distribution`] variant plus the
+//!   arm(s) in whichever realization it supports (`key_sampler` /
+//!   `weights` / `gap_sampler`). Every structure picks it up for free.
+//! * New structure → add a `struct` implementing [`ColumnGenerator`], a
+//!   variant to [`shape::Shape`], and one arm to `Shape::build`.
 //! * New physical type → add a [`DType`] variant and a [`Column`] arm.
 //!
 //! ## Reproducibility
@@ -22,11 +28,10 @@
 //! (e.g. a timestamp accumulator) as a call-local, so the same inputs
 //! always yield byte-identical output.
 
-pub mod gap;
+pub mod dist;
 pub mod io;
 pub mod shape;
 pub mod stats;
-pub mod weights;
 
 use std::io::Write;
 use std::path::Path;
@@ -36,13 +41,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SketchCoreError;
 
-pub use gap::GapDist;
+pub use dist::Distribution;
 pub use shape::{Shape, TimeUnit};
 pub use stats::BasicStats;
-pub use weights::WeightSpec;
 
-/// Schema version of the `.meta.json` sidecar.
-pub const GEN_META_SCHEMA_VERSION: u32 = 1;
+/// Schema version of the `.meta.json` sidecar. Bumped to 2 when the
+/// `shape` representation was refactored into orthogonal
+/// structure/`Distribution` axes; v1 sidecars (flattened `uniform`/
+/// `zipf`/`monotonic_timestamp`/`skewed_categorical` shapes) no longer
+/// deserialize.
+pub const GEN_META_SCHEMA_VERSION: u32 = 2;
 
 /// Physical output type of a generated column. The `.bin` stream is a
 /// raw little-endian sequence of this type; the logical dtype is
@@ -235,16 +243,17 @@ mod tests {
         GenSpec { shape, size, seed }
     }
 
+    fn keys(cardinality: u64, dist: Distribution, dtype: DType) -> Shape {
+        Shape::Keys {
+            cardinality,
+            dist,
+            dtype,
+        }
+    }
+
     #[test]
     fn uniform_is_reproducible_and_in_range() {
-        let s = spec(
-            Shape::Uniform {
-                cardinality: 1000,
-                dtype: DType::I64,
-            },
-            500,
-            42,
-        );
+        let s = spec(keys(1000, Distribution::Uniform, DType::I64), 500, 42);
         let a = s.generate().unwrap();
         let b = s.generate().unwrap();
         assert_eq!(a, b, "same spec+seed must be byte-identical");
@@ -259,15 +268,7 @@ mod tests {
 
     #[test]
     fn zipf_ranks_in_expected_range() {
-        let s = spec(
-            Shape::Zipf {
-                cardinality: 100,
-                s: 1.1,
-                dtype: DType::I64,
-            },
-            1000,
-            7,
-        );
+        let s = spec(keys(100, Distribution::Zipf { s: 1.1 }, DType::I64), 1000, 7);
         match s.generate().unwrap() {
             Column::I64(v) => assert!(v.iter().all(|x| (1..=100).contains(x))),
             _ => panic!("expected i64 column"),
@@ -277,16 +278,9 @@ mod tests {
     #[test]
     fn dtype_selects_physical_width() {
         let base = |dtype| {
-            spec(
-                Shape::Uniform {
-                    cardinality: 256,
-                    dtype,
-                },
-                64,
-                1,
-            )
-            .generate()
-            .unwrap()
+            spec(keys(256, Distribution::Uniform, dtype), 64, 1)
+                .generate()
+                .unwrap()
         };
         assert!(matches!(base(DType::I64), Column::I64(_)));
         assert!(matches!(base(DType::U64), Column::U64(_)));
@@ -307,16 +301,9 @@ mod tests {
         // sketch benchmark cares most about.
         let card = 100u64;
         let col = |dtype| {
-            spec(
-                Shape::Uniform {
-                    cardinality: card,
-                    dtype,
-                },
-                10_000,
-                42,
-            )
-            .generate()
-            .unwrap()
+            spec(keys(card, Distribution::Uniform, dtype), 10_000, 42)
+                .generate()
+                .unwrap()
         };
         let f64s = match col(DType::F64) {
             Column::F64(v) => v,
@@ -340,16 +327,9 @@ mod tests {
         // same logical sequence — that is what makes dtype a controlled
         // variable when comparing benchmark runs.
         let s = |dtype| {
-            spec(
-                Shape::Uniform {
-                    cardinality: 500,
-                    dtype,
-                },
-                1_000,
-                7,
-            )
-            .generate()
-            .unwrap()
+            spec(keys(500, Distribution::Uniform, dtype), 1_000, 7)
+                .generate()
+                .unwrap()
         };
         let (i, u, f) = (s(DType::I64), s(DType::U64), s(DType::F64));
         match (i, u, f) {
@@ -365,40 +345,34 @@ mod tests {
     fn f64_cardinality_past_2p53_is_rejected() {
         // Beyond 2^53 the `as f64` cast rounds, so the key space would
         // silently differ from the i64 run it is meant to mirror.
-        let build = |dtype, cardinality| Shape::Uniform { cardinality, dtype }.build();
+        let build = |dtype, cardinality| keys(cardinality, Distribution::Uniform, dtype).build();
         assert!(build(DType::F64, (1u64 << 53) + 1).is_err());
         assert!(build(DType::F64, 1u64 << 53).is_ok(), "the limit itself is exact");
         assert!(build(DType::I64, u64::MAX).is_ok(), "i64 is unaffected");
-        assert!(Shape::Zipf {
-            cardinality: (1u64 << 53) + 1,
-            s: 1.1,
-            dtype: DType::F64,
-        }
-        .build()
-        .is_err(), "zipf shares the limit");
+        assert!(
+            keys((1u64 << 53) + 1, Distribution::Zipf { s: 1.1 }, DType::F64)
+                .build()
+                .is_err(),
+            "zipf shares the limit"
+        );
     }
 
     #[test]
     fn zero_cardinality_is_rejected() {
-        let err = Shape::Uniform {
-            cardinality: 0,
-            dtype: DType::I64,
-        }
-        .build();
-        assert!(err.is_err());
+        assert!(keys(0, Distribution::Uniform, DType::I64).build().is_err());
+    }
+
+    #[test]
+    fn keys_reject_non_range_distribution() {
+        // Geometric/poisson/explicit have no meaning as a key sampler.
+        assert!(keys(100, Distribution::Poisson { lambda: 3.0 }, DType::I64)
+            .build()
+            .is_err());
     }
 
     #[test]
     fn meta_round_trips_through_json() {
-        let s = spec(
-            Shape::Zipf {
-                cardinality: 50,
-                s: 1.2,
-                dtype: DType::U64,
-            },
-            100,
-            9,
-        );
+        let s = spec(keys(50, Distribution::Zipf { s: 1.2 }, DType::U64), 100, 9);
         let col = s.generate().unwrap();
         let meta = GenMeta::new(&s, &col);
         let json = serde_json::to_string(&meta).unwrap();
@@ -410,21 +384,41 @@ mod tests {
 
     #[test]
     fn genspec_deserializes_flattened_shape() {
-        let json = r#"{"shape":"zipf","cardinality":1000,"s":1.1,"size":10,"seed":3}"#;
+        let json =
+            r#"{"shape":"keys","cardinality":1000,"dist":{"kind":"zipf","s":1.1},"size":10,"seed":3}"#;
         let spec: GenSpec = serde_json::from_str(json).unwrap();
         assert_eq!(spec.size, 10);
         assert_eq!(spec.seed, 3);
-        assert!(matches!(spec.shape, Shape::Zipf { cardinality: 1000, .. }));
+        assert!(matches!(
+            spec.shape,
+            Shape::Keys {
+                cardinality: 1000,
+                dist: Distribution::Zipf { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dist_defaults_to_uniform_when_omitted() {
+        let spec: GenSpec =
+            serde_json::from_str(r#"{"shape":"keys","cardinality":8,"size":4}"#).unwrap();
+        assert!(matches!(
+            spec.shape,
+            Shape::Keys {
+                dist: Distribution::Uniform,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn timestamp_is_monotonic_and_starts_at_start() {
-        use gap::GapDist;
         let s = spec(
-            Shape::MonotonicTimestamp {
+            Shape::Monotonic {
                 start: 1000,
                 unit: TimeUnit::Nanos,
-                gap: GapDist::Geometric { p: 0.01 },
+                gap: Distribution::Geometric { p: 0.01 },
                 min_gap: 1,
                 dtype: DType::I64,
             },
@@ -445,12 +439,11 @@ mod tests {
 
     #[test]
     fn timestamp_min_gap_zero_allows_duplicates() {
-        use gap::GapDist;
         let s = spec(
-            Shape::MonotonicTimestamp {
+            Shape::Monotonic {
                 start: 0,
                 unit: TimeUnit::Secs,
-                gap: GapDist::Constant { step: 0 },
+                gap: Distribution::Constant { value: 0 },
                 min_gap: 0,
                 dtype: DType::U64,
             },
@@ -465,12 +458,11 @@ mod tests {
 
     #[test]
     fn timestamp_overflow_is_an_error() {
-        use gap::GapDist;
         let s = spec(
-            Shape::MonotonicTimestamp {
+            Shape::Monotonic {
                 start: i64::MAX - 5,
                 unit: TimeUnit::Nanos,
-                gap: GapDist::Constant { step: 100 },
+                gap: Distribution::Constant { value: 100 },
                 min_gap: 1,
                 dtype: DType::I64,
             },
@@ -482,12 +474,11 @@ mod tests {
 
     #[test]
     fn categorical_stays_in_domain_and_respects_skew() {
-        use weights::WeightSpec;
         let categories: Vec<i64> = (0..40).collect();
         let s = spec(
-            Shape::SkewedCategorical {
+            Shape::Categorical {
                 categories: categories.clone(),
-                weights: WeightSpec::Zipf { s: 1.3 },
+                dist: Distribution::Zipf { s: 1.3 },
             },
             50_000,
             42,
@@ -510,10 +501,9 @@ mod tests {
 
     #[test]
     fn categorical_explicit_length_mismatch_errors() {
-        use weights::WeightSpec;
-        let err = Shape::SkewedCategorical {
+        let err = Shape::Categorical {
             categories: vec![1, 2, 3],
-            weights: WeightSpec::Explicit {
+            dist: Distribution::Explicit {
                 weights: vec![1.0, 2.0],
             },
         }

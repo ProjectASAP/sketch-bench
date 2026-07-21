@@ -19,8 +19,8 @@ pub use config::{
     ParamSet, UnivMonParams,
 };
 pub use datagen::{
-    BasicStats, Column, ColumnGenerator, DType, GapDist, GenMeta, GenSpec, Shape, TimeUnit,
-    WeightSpec, GEN_META_SCHEMA_VERSION,
+    BasicStats, Column, ColumnGenerator, DType, Distribution, GenMeta, GenSpec, Shape, TimeUnit,
+    GEN_META_SCHEMA_VERSION,
 };
 pub use error::SketchCoreError;
 pub use probe::{MetricsSink, NoopSink, Probe};
