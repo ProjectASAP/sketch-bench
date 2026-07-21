@@ -282,43 +282,43 @@ impl ParamCols {
             }
             return Self { cols };
         }
-        match (family, params) {
-            ("hll", Some(ParamSet::Hll(p))) => {
-                cols.push(("lg_k", p.lg_k.to_string()));
-                cols.push(("registers", (1usize << p.lg_k).to_string()));
+        // Values come from the params object generically; only the two
+        // places where the legacy CSV header is *not* a list of parameters
+        // need naming. The rest used to be one match arm per family, kept in
+        // step with `param_header` by hand.
+        let params = params.expect("None handled above");
+        match family {
+            // `registers` is derived from `lg_k`, not a parameter.
+            "hll" => {
+                let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
+                if let Some((_, v)) = lg_k {
+                    let bits: u32 = v.parse().unwrap_or(0);
+                    cols.push(("lg_k", v));
+                    cols.push(("registers", (1usize << bits).to_string()));
+                }
             }
-            ("kll", Some(ParamSet::Kll(p))) => {
-                cols.push(("k", p.k.to_string()));
-            }
-            ("cms", Some(ParamSet::Cms(p))) => {
-                cols.push(("rows", p.rows.to_string()));
-                cols.push(("cols", p.cols.to_string()));
-            }
-            ("countsketch", Some(ParamSet::Countsketch(p))) => {
-                cols.push(("rows", p.rows.to_string()));
-                cols.push(("cols", p.cols.to_string()));
-            }
-            ("dd", Some(ParamSet::Dd(p))) => {
-                cols.push(("alpha", format!("{:.6}", p.alpha)));
-            }
-            ("nitro", Some(ParamSet::Nitro(p))) => {
-                // Nitro's legacy CSV carries rows/cols too, but the
-                // sketch-cli ParamSet only owns the rate knob — the
-                // rows/cols are baked into each impl. Emit 0 for them
-                // and let the rate column carry the swept dimension.
+            // Nitro's legacy CSV carries rows/cols, but the sketch-cli params
+            // only own `rate` — the matrix shape is baked into each impl.
+            // Sentinel 0s keep the row width legal.
+            "nitro" => {
                 cols.push(("rows", "0".to_string()));
                 cols.push(("cols", "0".to_string()));
-                cols.push(("rate", format!("{:.6}", p.rate)));
+                for (_, v) in params.fields() {
+                    cols.push(("rate", v));
+                }
             }
-            ("elastic", Some(ParamSet::Elastic(p))) => {
-                cols.push(("buckets", p.buckets.to_string()));
-                cols.push(("depth", p.depth.to_string()));
+            _ => {
+                for (name, v) in params.fields() {
+                    // Header order is fixed by `legacy_param_columns`; look up
+                    // the static name so the tuple keeps its `'static` type.
+                    if let Some(col) = legacy_param_columns(family)
+                        .iter()
+                        .find(|c| **c == name.as_str())
+                    {
+                        cols.push((col, v));
+                    }
+                }
             }
-            ("univmon", Some(ParamSet::Univmon(p))) => {
-                cols.push(("layers", p.layers.to_string()));
-                cols.push(("max_stream", p.max_stream.to_string()));
-            }
-            _ => {}
         }
         Self { cols }
     }
@@ -382,6 +382,14 @@ fn leading_label(family: &str) -> &'static str {
     }
 }
 
+/// The legacy CSV header, verbatim.
+///
+/// This stays a per-family table on purpose: it encodes an **external file
+/// format** that plot scripts read with `csv.DictReader`, not an abstraction
+/// over sketch families. Deriving it from the params object would silently
+/// change the header — `registers` is derived rather than a parameter, and
+/// nitro's `rows`/`cols` are sentinels — and break those readers. The values
+/// beneath it are now produced generically; only the column names are pinned.
 fn param_header(family: &str) -> &'static str {
     match family {
         "hll" => "lg_k,registers",
