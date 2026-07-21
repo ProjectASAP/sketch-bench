@@ -168,17 +168,39 @@ impl Shape {
                     ));
                 }
                 Ok(Generator::Monotonic(MonotonicGen {
-                    start: *start,
                     gap: gap.gap_sampler()?,
                     min_gap: *min_gap,
                     dtype: *dtype,
+                    acc: *start as i128,
+                    started: false,
                 }))
             }
         }
     }
 
-    /// Lossy projection into the report-facing [`WorkloadDesc`] so JSONL
-    /// records stay well-formed regardless of shape.
+    /// Whether [`WorkloadDesc`]'s flat `cardinality` / `zipf_s` fields
+    /// fully describe this shape.
+    ///
+    /// True only for the two shapes that predate the generator
+    /// (`keys` drawn uniform or zipf) — those round-trip through the
+    /// legacy fields exactly, so their records stay byte-identical to
+    /// what `--workload uniform|zipf` has always emitted. Everything
+    /// else is lossy there and needs the full spec carried alongside,
+    /// which is the one condition under which `WorkloadDesc::spec` is
+    /// populated.
+    fn fits_legacy_desc(&self) -> bool {
+        matches!(
+            self,
+            Shape::Keys {
+                dist: Distribution::Uniform | Distribution::Zipf { .. },
+                ..
+            }
+        )
+    }
+
+    /// Projection into the report-facing [`WorkloadDesc`] so JSONL
+    /// records stay well-formed regardless of shape. Shapes the flat
+    /// fields cannot express carry their full spec in `desc.spec`.
     pub fn to_workload_desc(&self, size: usize, seed: u64) -> WorkloadDesc {
         let (cardinality, zipf_s) = match self {
             Shape::Keys {
@@ -200,6 +222,11 @@ impl Shape {
             zipf_s,
             source_path: None,
             seed: Some(seed),
+            spec: if self.fits_legacy_desc() {
+                None
+            } else {
+                serde_json::to_value(self).ok()
+            },
         }
     }
 }
@@ -216,7 +243,18 @@ pub enum Generator {
 }
 
 impl Generator {
-    pub fn generate(&self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
+    /// Produce the next `n` values.
+    ///
+    /// Takes `&mut self` because a structure may carry state *between*
+    /// calls (the monotonic accumulator does). That is what makes
+    /// chunked generation identical to one-shot generation: N calls of
+    /// `n` and one call of `N*n` consume the same RNG draws and
+    /// continue the same series.
+    pub fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+    ) -> Result<Column, SketchCoreError> {
         match self {
             Generator::Keys(g) => g.generate(n, rng),
             Generator::Categorical(g) => g.generate(n, rng),
@@ -234,7 +272,7 @@ pub struct KeysGen {
 }
 
 impl KeysGen {
-    fn generate(&self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
+    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
         Ok(match self.dtype {
             DType::I64 => Column::I64((0..n).map(|_| self.sampler.sample(rng) as i64).collect()),
             DType::U64 => Column::U64((0..n).map(|_| self.sampler.sample(rng)).collect()),
@@ -250,7 +288,7 @@ pub struct CategoricalGen {
 }
 
 impl CategoricalGen {
-    fn generate(&self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
+    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
         Ok(Column::I64(
             (0..n)
                 .map(|_| self.categories[self.index.sample(rng)])
@@ -259,27 +297,41 @@ impl CategoricalGen {
     }
 }
 
-/// Monotonically non-decreasing values built by accumulating gaps. The
-/// accumulator is an `i128` call-local so a fresh-seeded call is
-/// bit-reproducible; overflow past the target type is a hard error.
+/// Monotonically non-decreasing values built by accumulating gaps.
+///
+/// The accumulator is an `i128` **field**, not a call-local: the series
+/// has to continue across chunk boundaries, so a fresh generator (built
+/// once per [`super::GenSpec::generate_into`]) starts at `start` and
+/// each subsequent call resumes where the last left off. Overflow past
+/// the target type is a hard error.
 pub struct MonotonicGen {
-    start: i64,
     gap: GapSampler,
     min_gap: u64,
     dtype: DType,
+    /// Running value; seeded with `start` at build time.
+    acc: i128,
+    /// Whether any value has been emitted yet. The very first value of
+    /// the series is `start` itself, with no gap applied — that must
+    /// hold for the series, not for each chunk.
+    started: bool,
 }
 
 impl MonotonicGen {
-    fn generate(&self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchCoreError> {
-        // Accumulate once in the widest integer, then narrow to the
-        // target dtype in a single trailing match — no per-dtype loop.
-        let mut acc: i128 = self.start as i128;
+    fn generate(
+        &mut self,
+        n: usize,
+        rng: &mut Xoshiro256PlusPlus,
+    ) -> Result<Column, SketchCoreError> {
+        // Accumulate in the widest integer, then narrow to the target
+        // dtype in a single trailing match — no per-dtype loop.
         let raw: Vec<i128> = (0..n)
-            .map(|i| {
-                if i > 0 {
-                    acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
+            .map(|_| {
+                if self.started {
+                    self.acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
+                } else {
+                    self.started = true;
                 }
-                acc
+                self.acc
             })
             .collect();
         let overflow = || SketchCoreError::BadParam("monotonic: value overflow".into());

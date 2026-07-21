@@ -42,6 +42,7 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
+use sketch_core::datagen::{DType, Distribution, GenSpec, Shape};
 
 use dispatch::{AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
 
@@ -102,6 +103,15 @@ struct BenchArgs {
     /// --cardinality/--zipf-s/--seed`.
     #[arg(long)]
     input: Option<String>,
+    /// Generate the workload in-process from a `datagen` spec file
+    /// (`.yaml`/`.yml`/`.json`, same format `workload generate --spec`
+    /// takes; examples in `configs/datagen/`). Unlocks every generator
+    /// shape — categorical id domains, monotonic timestamp series —
+    /// without a round-trip through disk. Overrides
+    /// `--workload/--size/--cardinality/--zipf-s/--seed`; `--input`
+    /// wins over it.
+    #[arg(long)]
+    spec: Option<String>,
     /// Path to append JSONL records to. `-` or omitted → stdout.
     #[arg(long)]
     report: Option<String>,
@@ -248,27 +258,42 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_bench(args: BenchArgs) -> Result<()> {
-    let spec = if let Some(path) = args.input.as_deref() {
-        WorkloadSpec::File {
+/// Resolve where this run's items come from, in precedence order:
+/// `--input` (a file on disk) > `--spec` (a full generator spec) >
+/// the `--workload` flags.
+///
+/// The flag path builds the same `GenSpec` the spec path would, so
+/// `--workload zipf --cardinality N --zipf-s S` is exactly sugar for a
+/// `keys`/`zipf` spec — one generator, not two.
+fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
+    if let Some(path) = args.input.as_deref() {
+        return Ok(WorkloadSpec::File {
             path: path.to_string(),
-        }
-    } else {
-        match args.workload.as_str() {
-            "uniform" => WorkloadSpec::Uniform {
-                size: args.size,
-                cardinality: args.cardinality,
-                seed: args.seed,
-            },
-            "zipf" => WorkloadSpec::Zipf {
-                size: args.size,
-                cardinality: args.cardinality,
-                s: args.zipf_s,
-                seed: args.seed,
-            },
-            other => bail!("unknown workload shape: {other} (expected uniform|zipf)"),
-        }
+        });
+    }
+    if let Some(path) = args.spec.as_deref() {
+        let spec = GenSpec::from_path(std::path::Path::new(path))
+            .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
+        return Ok(WorkloadSpec::Generated(spec));
+    }
+    let dist = match args.workload.as_str() {
+        "uniform" => Distribution::Uniform,
+        "zipf" => Distribution::Zipf { s: args.zipf_s },
+        other => bail!("unknown workload shape: {other} (expected uniform|zipf, or use --spec)"),
     };
+    Ok(WorkloadSpec::Generated(GenSpec {
+        shape: Shape::Keys {
+            cardinality: args.cardinality,
+            dist,
+            dtype: DType::I64,
+        },
+        size: args.size,
+        seed: args.seed,
+    }))
+}
+
+fn run_bench(args: BenchArgs) -> Result<()> {
+    let spec = workload_spec(&args)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.accuracy {
         // --accuracy implies the accuracy mask bit, regardless of

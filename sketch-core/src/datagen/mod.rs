@@ -31,6 +31,7 @@
 pub mod dist;
 pub mod io;
 pub mod shape;
+pub mod sink;
 pub mod stats;
 
 use std::io::Write;
@@ -43,7 +44,16 @@ use crate::error::SketchCoreError;
 
 pub use dist::Distribution;
 pub use shape::{Generator, Shape, TimeUnit};
-pub use stats::BasicStats;
+pub use sink::{FileSink, MemorySink, Sink, WriterSink};
+pub use stats::{BasicStats, StatsAcc};
+
+/// Values produced per [`Sink::accept`] call by [`GenSpec::generate_into`].
+///
+/// Bounds a streaming sink's memory (64Ki × 8B = 512KiB per chunk) while
+/// staying large enough that the per-chunk dispatch is noise next to the
+/// per-value sampling. It is a transport detail only: output is
+/// byte-identical at any chunk size.
+pub const DEFAULT_CHUNK: usize = 1 << 16;
 
 /// Schema version of the `.meta.json` sidecar. Bumped to 2 when the
 /// `shape` representation was refactored into orthogonal
@@ -135,10 +145,34 @@ impl Column {
 
     /// Descriptive summary for the sidecar / `describe`.
     pub fn stats(&self) -> BasicStats {
+        let mut acc = StatsAcc::new();
+        self.accumulate_stats(&mut acc);
+        acc.finish()
+    }
+
+    /// Fold this chunk into a running summary. Used by the chunked
+    /// driver, where no single slice holds the whole column.
+    pub(crate) fn accumulate_stats(&self, acc: &mut StatsAcc) {
         match self {
-            Column::I64(v) => BasicStats::summarize(v, |x| *x as f64),
-            Column::U64(v) => BasicStats::summarize(v, |x| *x as f64),
-            Column::F64(v) => BasicStats::summarize(v, |x| *x),
+            Column::I64(v) => acc.push_slice(v, |x| *x as f64),
+            Column::U64(v) => acc.push_slice(v, |x| *x as f64),
+            Column::F64(v) => acc.push_slice(v, |x| *x),
+        }
+    }
+
+    /// Take the values as `i64`, or fail if this column is another
+    /// dtype. The benchmark only consumes `i64`; reinterpreting a
+    /// `u64`/`f64` bit pattern as `i64` would produce meaningless keys
+    /// and a plausible-looking report, so this refuses rather than
+    /// casts (same contract as the `.bin` sidecar guard in
+    /// `crate::workload`).
+    pub fn into_i64(self) -> Result<Vec<i64>, SketchCoreError> {
+        match self {
+            Column::I64(v) => Ok(v),
+            other => Err(SketchCoreError::BadParam(format!(
+                "workload must be i64, got {}; re-generate with dtype i64",
+                other.dtype().as_str()
+            ))),
         }
     }
 }
@@ -185,13 +219,50 @@ impl GenSpec {
         }
     }
 
-    /// Build the generator and produce the column from a freshly seeded
-    /// RNG. This is the single entry point callers should use.
+    /// Generate the whole column into memory.
+    ///
+    /// Convenience wrapper over [`Self::generate_into`] with a
+    /// [`MemorySink`], for callers that want the values resident (the
+    /// benchmark runner replays one slice per measured run) and know
+    /// the dataset fits.
     pub fn generate(&self) -> Result<Column, SketchCoreError> {
+        let mut sink = MemorySink::new();
+        self.generate_into(&mut sink, DEFAULT_CHUNK)?;
+        Ok(sink.into_column().unwrap_or(Column::I64(Vec::new())))
+    }
+
+    /// Generate into `sink`, `chunk` values at a time, and return the
+    /// provenance record for what was written.
+    ///
+    /// The chunking is what decouples dataset size from memory: a
+    /// [`FileSink`] streams a dataset far larger than RAM, while a
+    /// [`MemorySink`] reassembles the same bytes. `chunk` therefore
+    /// affects only peak memory and never the output — see
+    /// `chunk_size_does_not_change_output`.
+    pub fn generate_into<S: Sink>(
+        &self,
+        sink: &mut S,
+        chunk: usize,
+    ) -> Result<GenMeta, SketchCoreError> {
         use rand::SeedableRng;
-        let generator = self.shape.build()?;
+        if chunk == 0 {
+            return Err(SketchCoreError::BadParam("chunk size must be > 0".into()));
+        }
+        let mut generator = self.shape.build()?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(self.seed);
-        generator.generate(self.size, &mut rng)
+        let mut stats = StatsAcc::new();
+
+        let mut remaining = self.size;
+        while remaining > 0 {
+            let n = remaining.min(chunk);
+            let col = generator.generate(n, &mut rng)?;
+            col.accumulate_stats(&mut stats);
+            sink.accept(&col)?;
+            remaining -= n;
+        }
+        sink.flush()?;
+
+        Ok(GenMeta::from_parts(self, self.shape.dtype(), stats.finish()))
     }
 }
 
@@ -212,14 +283,20 @@ pub struct GenMeta {
 impl GenMeta {
     /// Assemble the sidecar record for a generated column.
     pub fn new(spec: &GenSpec, col: &Column) -> Self {
+        Self::from_parts(spec, col.dtype(), col.stats())
+    }
+
+    /// Assemble the sidecar record from a streamed generation, where no
+    /// single `Column` ever existed to describe.
+    pub fn from_parts(spec: &GenSpec, dtype: DType, stats: BasicStats) -> Self {
         GenMeta {
             schema_version: GEN_META_SCHEMA_VERSION,
             generator_version: env!("CARGO_PKG_VERSION").to_string(),
-            dtype: col.dtype(),
-            count: col.len(),
+            dtype,
+            count: stats.count,
             seed: spec.seed,
             shape: spec.shape.clone(),
-            stats: col.stats(),
+            stats,
         }
     }
 }
@@ -499,6 +576,66 @@ mod tests {
         }
         .build();
         assert!(err.is_err());
+    }
+
+    /// Chunking is a property of the *transport*, never of the data.
+    /// If it were not, the file sink and the in-memory benchmark path
+    /// would silently disagree about what "the same workload" means.
+    #[test]
+    fn chunk_size_does_not_change_output() {
+        let shapes = [
+            keys(1000, Distribution::Zipf { s: 1.1 }, DType::I64),
+            Shape::Categorical {
+                categories: (0..16).collect(),
+                dist: Distribution::Zipf { s: 1.2 },
+            },
+            // The monotonic accumulator is the one stateful generator:
+            // a chunk boundary must not restart the series.
+            Shape::Monotonic {
+                start: 1_700_000_000_000,
+                unit: TimeUnit::Millis,
+                gap: Distribution::Exponential { lambda: 0.5 },
+                min_gap: 1,
+                dtype: DType::I64,
+            },
+        ];
+        for shape in shapes {
+            let s = spec(shape.clone(), 5_000, 42);
+            let one_shot = {
+                let mut sink = MemorySink::new();
+                s.generate_into(&mut sink, 1 << 20).unwrap();
+                sink.into_column().unwrap()
+            };
+            for chunk in [1usize, 7, 512, 4999, 5000] {
+                let mut sink = MemorySink::new();
+                let meta = s.generate_into(&mut sink, chunk).unwrap();
+                assert_eq!(
+                    sink.into_column().unwrap(),
+                    one_shot,
+                    "chunk={chunk} changed the values for {shape:?}"
+                );
+                assert_eq!(meta.count, 5_000, "chunk={chunk} lost rows");
+                assert_eq!(meta.stats, one_shot.stats(), "chunk={chunk} skewed the summary");
+            }
+        }
+    }
+
+    #[test]
+    fn file_and_memory_sinks_agree() {
+        // `workload generate` (file sink) and `bench --spec` (memory
+        // sink) must be the same workload, or a run cannot be
+        // reproduced from the file it was supposedly generated into.
+        let s = spec(keys(500, Distribution::Zipf { s: 1.3 }, DType::I64), 3_000, 7);
+        let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
+
+        let mut file_sink = crate::datagen::FileSink::create(&path).unwrap();
+        s.generate_into(&mut file_sink, 64).unwrap();
+
+        let from_file = crate::workload::I64Workload::load(&path).unwrap();
+        let from_memory = crate::workload::I64Workload::generate(&s).unwrap();
+        use crate::workload::Workload as _;
+        assert_eq!(from_file.items(), from_memory.items());
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

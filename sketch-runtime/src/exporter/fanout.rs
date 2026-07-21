@@ -74,6 +74,7 @@ mod tests {
                 zipf_s: None,
                 source_path: None,
                 seed: None,
+                spec: None,
             },
             Mode::Runtime,
             1,

@@ -26,8 +26,69 @@ pub struct BasicStats {
 impl BasicStats {
     /// Summarize a slice, projecting each element to `f64` via `to_f64`.
     pub(crate) fn summarize<T, F: Fn(&T) -> f64>(values: &[T], to_f64: F) -> Self {
+        let mut acc = StatsAcc::default();
+        acc.push_slice(values, to_f64);
+        acc.finish()
+    }
+}
+
+/// Running summary over a chunked value stream.
+///
+/// The generator can emit a column in pieces (see
+/// [`crate::datagen::Sink`]), so the sidecar's summary has to be
+/// accumulated rather than computed from a whole slice. Every field is
+/// order-independent except `first`/`last`, which is why chunks must be
+/// pushed in emission order.
+#[derive(Debug, Clone, Default)]
+pub struct StatsAcc {
+    count: usize,
+    min: f64,
+    max: f64,
+    first: Option<f64>,
+    last: Option<f64>,
+}
+
+impl StatsAcc {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            first: None,
+            last: None,
+        }
+    }
+
+    /// Fold one chunk in. Must be called in emission order.
+    pub(crate) fn push_slice<T, F: Fn(&T) -> f64>(&mut self, values: &[T], to_f64: F) {
+        if self.count == 0 && self.first.is_none() {
+            // `Default` leaves min/max at 0.0; seed them properly on
+            // first use so a default-constructed acc behaves like `new`.
+            self.min = f64::INFINITY;
+            self.max = f64::NEG_INFINITY;
+        }
         if values.is_empty() {
-            return Self {
+            return;
+        }
+        for v in values {
+            let x = to_f64(v);
+            if x < self.min {
+                self.min = x;
+            }
+            if x > self.max {
+                self.max = x;
+            }
+        }
+        if self.first.is_none() {
+            self.first = Some(to_f64(&values[0]));
+        }
+        self.last = Some(to_f64(&values[values.len() - 1]));
+        self.count += values.len();
+    }
+
+    pub fn finish(self) -> BasicStats {
+        if self.count == 0 {
+            return BasicStats {
                 count: 0,
                 min: None,
                 max: None,
@@ -35,23 +96,36 @@ impl BasicStats {
                 last: None,
             };
         }
-        let mut min = f64::INFINITY;
-        let mut max = f64::NEG_INFINITY;
-        for v in values {
-            let x = to_f64(v);
-            if x < min {
-                min = x;
-            }
-            if x > max {
-                max = x;
-            }
+        BasicStats {
+            count: self.count,
+            min: Some(self.min),
+            max: Some(self.max),
+            first: self.first,
+            last: self.last,
         }
-        Self {
-            count: values.len(),
-            min: Some(min),
-            max: Some(max),
-            first: Some(to_f64(&values[0])),
-            last: Some(to_f64(&values[values.len() - 1])),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunked_accumulation_matches_whole_slice() {
+        let all: Vec<i64> = (0..100).map(|i| (i * 37) % 61).collect();
+        let whole = BasicStats::summarize(&all, |x| *x as f64);
+
+        let mut acc = StatsAcc::new();
+        for chunk in all.chunks(7) {
+            acc.push_slice(chunk, |x| *x as f64);
         }
+        assert_eq!(acc.finish(), whole, "chunk size must not change the summary");
+    }
+
+    #[test]
+    fn empty_stream_has_no_extremes() {
+        let s = StatsAcc::new().finish();
+        assert_eq!(s.count, 0);
+        assert!(s.min.is_none() && s.max.is_none());
     }
 }

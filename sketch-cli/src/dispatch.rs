@@ -16,6 +16,7 @@ use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
+use sketch_core::datagen::GenSpec;
 use sketch_core::workload::{BytesWorkload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
@@ -64,39 +65,31 @@ pub enum AccuracyKind {
     None,
 }
 
+/// Where a benchmark's items come from: generated in-process by
+/// `datagen`, or loaded from a file.
+///
+/// There is exactly one generator in the tool — `sketchlib workload
+/// generate` and `sketchlib bench` drive the same `GenSpec` through the
+/// same samplers, differing only in the [`Sink`](sketch_core::datagen::Sink)
+/// they push into (file vs memory). A shape reachable from one is
+/// reachable from the other by construction.
 #[derive(Debug, Clone)]
 pub enum WorkloadSpec {
-    Uniform {
-        size: usize,
-        cardinality: u64,
-        seed: u64,
-    },
-    Zipf {
-        size: usize,
-        cardinality: u64,
-        s: f64,
-        seed: u64,
-    },
-    File {
-        path: String,
-    },
+    Generated(GenSpec),
+    File { path: String },
 }
 
 impl WorkloadSpec {
     pub fn build_i64(self) -> Result<I64Workload> {
         match self {
-            WorkloadSpec::Uniform {
-                size,
-                cardinality,
-                seed,
-            } => Ok(I64Workload::uniform(size, cardinality, seed)),
-            WorkloadSpec::Zipf {
-                size,
-                cardinality,
-                s,
-                seed,
-            } => I64Workload::zipf(size, cardinality, s, seed)
-                .map_err(|e| anyhow::anyhow!("{}", e)),
+            WorkloadSpec::Generated(spec) => {
+                let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
+                let items = spec
+                    .generate()
+                    .and_then(|col| col.into_i64())
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                Ok(I64Workload::new(items, desc))
+            }
             WorkloadSpec::File { path } => {
                 I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
             }
