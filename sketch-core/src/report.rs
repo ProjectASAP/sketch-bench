@@ -145,12 +145,34 @@ pub struct ExternalReports {
     pub heaptrack_report: Option<String>,
 }
 
-/// Aggregate across N runs: mean / stddev / 95% CI.
+/// Aggregate across N samples: mean / stddev / optional 95% CI.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RunStats {
     pub mean: f64,
     pub stddev: f64,
-    pub ci95: [f64; 2],
+    /// 95% confidence interval on the mean — **present only when the samples
+    /// it summarises are statistically independent**, i.e. when
+    /// `sketchlib bench --repeats R` (R > 1) measured R separate processes.
+    ///
+    /// It used to be emitted unconditionally, computed over the N iterations
+    /// of a single `--runs N`. Those iterations share one process: one
+    /// allocator arena, one address-space layout, one governor ramp, one
+    /// already-resident item slice. They estimate how much the last few
+    /// seconds of that process wobbled, not how much the implementation's
+    /// throughput varies — and `mean ± 1.96·stddev/√n` over correlated
+    /// samples yields an interval far tighter than the command's own
+    /// reproducibility. Four identical invocations produced four *disjoint*
+    /// 95% intervals. Raising `--runs`, which the design doc once recommended
+    /// as the remedy, makes that worse rather than better.
+    ///
+    /// So it is absent unless it can be computed honestly. Anything that
+    /// reads this field can trust it; `mean` / `stddev` / `n` and the raw
+    /// `throughput_samples` remain available either way, and make no claim
+    /// about a population.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci95: Option<[f64; 2]>,
+    /// Number of samples behind `mean`. Iterations within one process when
+    /// `ci95` is absent; independent processes when it is present.
     pub n: usize,
 }
 
@@ -222,7 +244,7 @@ mod tests {
             throughput_items_per_sec: Some(RunStats {
                 mean: 4.2e7,
                 stddev: 1.1e6,
-                ci95: [4.15e7, 4.25e7],
+                ci95: None,
                 n: 10,
             }),
             ..Default::default()

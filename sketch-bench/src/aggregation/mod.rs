@@ -151,12 +151,17 @@ fn maybe_runstats(w: Welford) -> Option<RunStats> {
     }
 }
 
+/// Summarise the post-warmup iterations of one process.
+///
+/// `ci95` is deliberately `None`: these iterations are not independent
+/// samples of the implementation's throughput, so no interval computed from
+/// them would mean what an interval claims. `sketchlib bench --repeats R`
+/// fills it in from R separate processes. See `RunStats::ci95`.
 fn runstats_from(w: Welford) -> RunStats {
-    let (lo, hi) = w.ci95();
     RunStats {
         mean: w.mean(),
         stddev: w.stddev(),
-        ci95: [lo, hi],
+        ci95: None,
         n: w.n(),
     }
 }

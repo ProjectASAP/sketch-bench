@@ -198,14 +198,15 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 samples.push(v);
             }
         }
+        // No `ci95`: these are iterations of one process, not independent
+        // samples of this implementation. See `RunStats::ci95`.
         let throughput = if w.n() == 0 {
             None
         } else {
-            let (lo, hi) = w.ci95();
             Some(RunStats {
                 mean: w.mean(),
                 stddev: w.stddev(),
-                ci95: [lo, hi],
+                ci95: None,
                 n: w.n(),
             })
         };

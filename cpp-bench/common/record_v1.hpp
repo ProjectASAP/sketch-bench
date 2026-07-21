@@ -16,8 +16,6 @@ namespace cpp_bench {
 struct RunStats {
     double mean   = 0.0;
     double stddev = 0.0;
-    double ci95_lo = 0.0;
-    double ci95_hi = 0.0;
     std::size_t n = 0;
 };
 
