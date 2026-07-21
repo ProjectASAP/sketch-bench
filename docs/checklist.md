@@ -24,30 +24,43 @@
     - report the shard count actually folded, not the one requested
     - unsupported sketch will be reported as unsupported
 - Data Type is an open axis, not a fixed list
-    - generator: i64, u64, f64. adding one is a `DType` variant, a `GenValue`
-      impl, and one arm in the dispatch `match` -- which has no `_`, so a
-      missing arm does not compile. it used to be 14 scattered edits
-    - variable-width types are not blocked by the design. `.bin` cannot hold
-      them (no length field), but that constraint sits on that one sink:
-      `BinSink::<String>` will not compile, memory and CSV are unaffected
-    - benchmark: i64 everywhere, f64 on the ordered families (kll, dd) via
-      `--dtype`. hash families stay i64-only on purpose -- f64 is not `Hash`
-      in Rust and hashing its bits would retrace the i64 curve
+    - generator: i64, u64, f64, string. adding one is a `DType` variant, a
+      `GenValue` impl, and one arm in the dispatch `match` -- which has no
+      `_`, so a missing arm does not compile. it used to be 14 scattered edits
+    - benchmark: i64 everywhere; f64 on the ordered families (kll, dd);
+      string on the text rows (elastic, nitro, univmon). all via `--dtype`
+    - hash families stay i64-only for f64 on purpose -- f64 is not `Hash` in
+      Rust and hashing its bits would retrace the i64 curve. quantile rows
+      refuse strings: a lexicographic quantile is a different question
     - u64 generates but nothing consumes it
     - a row that cannot take the dtype is skipped with a reason, and a sweep
       where everything skipped is an error, not an empty file
-    - dtype changes the encoding, not which values are drawn, so it is a
-      controlled variable rather than a second dataset
+    - for i64/f64 the drawn values are identical and only the encoding
+      differs, so dtype is a controlled variable. string is the exception:
+      the rank is rendered rather than cast, so the bytes are genuinely new
+- Real string workloads
+    - generated, not `i64::to_string()`: configurable alphabet, length varies
+      per key within `[min_len, max_len]`
+    - rendering is injective over `cardinality` by construction (the leading
+      characters positionally encode the rank), so a run asking for N distinct
+      keys gets N. without that every per-key error is divided by the wrong
+      denominator
+    - a key renders the same way every time it is drawn, so a repeated key is
+      a repeated key
+    - the old decimal-formatted path is kept under `--dtype i64`, so the two
+      are directly comparable rather than one replacing the other
 
 ## Partial / Not what it looks like
 
-- String / Bytes Data Type
-    - not generated -- they are i64 decimal-formatted, so ~1-7 bytes over a
-      10-char alphabet. Not a real string workload; hash cost and length
-      distribution are the whole point and neither varies
-    - no longer blocked by the generator's shape: a `GenValue` impl plus a
-      dispatch arm is all it takes. what is missing is the value domain
-      (alphabet, length distribution), which is a `Shape` question
+- strings have no file format
+    - `.bin` is a bare sequence of equal-width values with nowhere to record a
+      length, so `workload generate --dtype string` refuses rather than
+      writing something unreadable. strings only exist in-process until there
+      is a CSV sink
+- Bytes are derived from strings, not drawn
+    - the `Vec<u8>` rows take the bytes of whichever string workload is in
+      play. fine for now, but it means there is no byte-string value domain
+      of its own (e.g. arbitrary non-UTF8 keys)
 - the generator owns the `.bin` format but can only write it
     - reading is `I64Workload::load`, up in `sketch-core`, so `aqpbm-datagen`
       cannot round-trip its own format or check it in its own tests
@@ -55,7 +68,6 @@
 
 ## No / In-Progress
 
-- real string generator (length distribution + alphabet)
 - a continuous value domain for the quantile families
     - every shape draws from a finite `cardinality`, so kll/dd are always
       scored on tied data whatever the dtype
