@@ -113,7 +113,7 @@ sketch-core` cannot match today:
    equivalent pinning hooks have not yet been ported.
 9. **Parametric naming convention** — `throughput/cms32k/`, `cs32k/` carry
    the parameter in the directory name; new stack expresses this via
-   `--config 'cols=32768'` but the plot scripts/CSV conventions haven't
+   `--config 'rows=5 cols=32768'  # every key is required; see docs/BENCH_SWEEP.md` but the plot scripts/CSV conventions haven't
    migrated.
 
 ## 4. Where each gap should land

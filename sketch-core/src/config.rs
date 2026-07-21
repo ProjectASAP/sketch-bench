@@ -15,9 +15,17 @@
 //! one obvious. So the family axis is open: [`ParamSet`] carries the family
 //! name and its parameters as JSON, and each parameter type declares its own
 //! name, its own default grid, and — through serde — its own parsing and its
-//! own field names. The wire format is unchanged
-//! (`{"family":"cms","params":{"rows":5,"cols":2048}}`), so records written
-//! before this are still records written after it.
+//! own field names.
+//!
+//! The record shape is **field-for-field compatible** — still
+//! `{"family": "...", "params": {...}}`, and every pre-existing record still
+//! deserialises — but it is not byte-identical: the enum serialised the params
+//! struct directly, so keys came out in declaration order, while a
+//! `serde_json::Value` is a `BTreeMap` and sorts them. `{"rows":5,"cols":2048}`
+//! now reads `{"cols":2048,"rows":5}`. In-repo consumers are unaffected
+//! (`scripts/merge_passes.py` sorts keys before comparing), but external
+//! tooling that diffs or dedups `sketch_config` as a raw string will see every
+//! config as new across this boundary.
 //!
 //! Adding a family is now: one params struct with `#[derive(Serialize,
 //! Deserialize)]`, one `impl SketchParams`, and the dispatch row that names
@@ -253,17 +261,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wire_format_is_unchanged() {
-        // A v2 record's `sketch_config` has always looked like this; the
-        // closed-enum representation produced the identical bytes.
+    fn serialises_to_the_documented_bytes() {
+        // Pinned exactly, so a future representation change cannot silently
+        // alter the record shape the way the enum -> Value move altered key
+        // order. Asserting only field *values* would not have caught that.
         let p = ParamSet::of(&CmsParams {
             rows: 5,
             cols: 2048,
         });
-        let v = p.to_json_value();
-        assert_eq!(v["family"], "cms");
-        assert_eq!(v["params"]["rows"], 5);
-        assert_eq!(v["params"]["cols"], 2048);
+        assert_eq!(
+            serde_json::to_string(&p).unwrap(),
+            r#"{"family":"cms","params":{"cols":2048,"rows":5}}"#
+        );
+    }
+
+    #[test]
+    fn records_written_before_the_open_representation_still_parse() {
+        // Declaration order, as the closed enum emitted it.
+        for (json, family) in [
+            (r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
+            (r#"{"family":"hll","params":{"lg_k":14}}"#, "hll"),
+            (
+                r#"{"family":"countsketch","params":{"rows":3,"cols":4096}}"#,
+                "countsketch",
+            ),
+            (
+                r#"{"family":"univmon","params":{"layers":8,"max_stream":256}}"#,
+                "univmon",
+            ),
+        ] {
+            let p: ParamSet = serde_json::from_str(json).unwrap();
+            assert_eq!(p.family(), family);
+        }
+        let cms: ParamSet =
+            serde_json::from_str(r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#).unwrap();
+        assert_eq!(
+            cms.parse::<CmsParams>().unwrap(),
+            CmsParams {
+                rows: 5,
+                cols: 2048
+            }
+        );
     }
 
     #[test]

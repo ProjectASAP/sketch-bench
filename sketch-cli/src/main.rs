@@ -391,9 +391,13 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // than reaching the dispatch row and tripping the panic that guards
     // against a wiring bug. Validating against the first row of the family is
     // enough — every row of a family shares its params type.
-    if let Some(entry) = impls.first() {
+    {
+        // `select_impls` guarantees a non-empty selection, all of one family.
+        // Indexing rather than `if let Some(..)` keeps "validate nothing" from
+        // being a reachable state of a safety check.
+        let entry = impls[0];
         for params in &grid {
-            if let Err(e) = (entry.validate)(params) {
+            if let Err(e) = (entry.params.validate)(params) {
                 bail!("--config: {e}");
             }
         }

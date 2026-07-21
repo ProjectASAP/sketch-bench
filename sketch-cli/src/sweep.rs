@@ -28,7 +28,7 @@ pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
         .into_iter()
         .next()
         .ok_or_else(|| anyhow!("unknown sketch family: {family}"))?;
-    Ok((entry.default_grid)())
+    Ok((entry.params.default_grid)())
 }
 
 /// Expand `--config` into one `ParamSet` per grid point.
@@ -38,6 +38,13 @@ pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
 /// parser feed eight differently-shaped params structs — serde does the final
 /// coercion and rejects mismatches by field name.
 pub fn parse_config(family: &str, spec: &str) -> Result<Vec<ParamSet>> {
+    // The old per-family dispatch rejected an unknown family here. The CLI
+    // also bails earlier, in `select_impls`, but this is `pub` and the
+    // guarantee should live in the function rather than in the order its
+    // callers happen to run.
+    if crate::dispatch::impls_for_family(family).is_empty() {
+        bail!("unknown sketch family: {family}");
+    }
     let kvs = parse_kvs(spec)?;
     let mut grid: Vec<Map<String, Value>> = vec![Map::new()];
     for (key, values) in &kvs {
@@ -140,6 +147,11 @@ mod tests {
         let typed: Vec<DdParams> = grid.iter().map(|p| p.parse().unwrap()).collect();
         assert_eq!(typed.len(), 2);
         assert!((typed[0].alpha - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_unknown_family_is_rejected() {
+        assert!(parse_config("not_a_family", "k=1").is_err());
     }
 
     #[test]

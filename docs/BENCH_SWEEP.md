@@ -97,7 +97,7 @@ CmsOxide::new()
 CmsOxide::new(&CmsParams { rows: 5, cols: 2048 })
 ```
 
-`ParamSet` lives in `sketch-core::config` — one enum variant per family, `serde` round-tripping. `params.rs` becomes a `fn default_params_for(family) -> ParamSet` helper used by the single-config path.
+`ParamSet` lives in `sketch-core::config` — `{family, params}`, with the params type per family implementing `SketchParams`, `serde` round-tripping. `params.rs` becomes a `fn default_params_for(family) -> ParamSet` helper used by the single-config path.
 
 Impact: all 21 wrappers get a signature change. Mechanical, one commit.
 
@@ -144,3 +144,18 @@ Only two worth confirming before coding:
 2. **Default grid sizes (§3).** The table above is a straw-man. Which configs does the paper actually want plotted? Answer pins the defaults; picking now avoids churn later.
 
 Everything else defers to the impl PR.
+
+
+## `--config` requires every key
+
+`--config` no longer fills in an axis you leave out. `--config 'rows=5'` for
+cms is an error naming the missing field, rather than silently pairing your
+`rows` with a built-in `cols` default:
+
+```
+Error: --config: bad parameter: cms params: missing field `cols`
+```
+
+Omitting `--config` entirely still sweeps the family's default grid. The
+change is deliberate: a partially-specified grid produced a config the
+operator never wrote, under a report that looked fully specified.
