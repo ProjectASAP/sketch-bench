@@ -44,6 +44,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
         || ExactCounter {
             seen: Default::default(),
         },
+        |s, it| s.update(it),
         Some(&CardinalityGT::default()),
     );
 
@@ -93,6 +94,7 @@ fn runner_respects_mask_noop_when_empty() {
         || ExactCounter {
             seen: Default::default(),
         },
+        |s, it| s.update(it),
         None::<&CardinalityGT>,
     );
     // Empty mask ⇒ no passes ⇒ no reports.
