@@ -18,8 +18,8 @@ use sketch_core::config::{
     CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
     ParamSet, SketchParams, UnivMonParams,
 };
-use sketch_core::datagen::GenSpec;
-use sketch_core::workload::{BytesWorkload, I64Workload, StringWorkload, Workload};
+use sketch_core::datagen::{DType, GenSpec};
+use sketch_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
     cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
@@ -75,15 +75,79 @@ pub enum WorkloadSpec {
 }
 
 impl WorkloadSpec {
-    pub fn build_i64(self) -> Result<I64Workload> {
-        match self {
-            WorkloadSpec::Generated(spec) => {
-                I64Workload::generate(&spec).map_err(|e| anyhow::anyhow!("{}", e))
+    /// Materialise the items at the requested `dtype`.
+    ///
+    /// The dtype is not inferred from the spec, it is *checked* against it:
+    /// `NumericWorkload::generate` refuses a column of the wrong type rather
+    /// than widening it, so `--dtype f64` over an `i64` spec is an error and
+    /// never a silent `as f64` on the insert path.
+    pub fn build(self, dtype: DType) -> Result<Items> {
+        match (self, dtype) {
+            (WorkloadSpec::Generated(spec), DType::F64) => F64Workload::generate(&spec)
+                .map(Items::F64)
+                .map_err(|e| anyhow::anyhow!("{}", e)),
+            (WorkloadSpec::Generated(spec), _) => I64Workload::generate(&spec)
+                .map(Items::I64)
+                .map_err(|e| anyhow::anyhow!("{}", e)),
+            // The file loaders read `.bin`/`.csv`/`.pcap` as `i64` streams and
+            // the `.bin` sidecar check already rejects a non-`i64` file, so
+            // there is nothing to widen here either.
+            (WorkloadSpec::File { path }, DType::I64) => {
+                I64Workload::load(std::path::Path::new(&path))
+                    .map(Items::I64)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
             }
-            WorkloadSpec::File { path } => {
-                I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
-            }
+            (WorkloadSpec::File { path }, other) => Err(anyhow::anyhow!(
+                "--input {path} is read as an i64 stream, but --dtype {} was requested; \
+                 generate the workload instead (--spec / --workload) to benchmark {}",
+                other.as_str(),
+                other.as_str(),
+            )),
         }
+    }
+}
+
+/// The materialised workload, at whichever dtype was asked for.
+///
+/// A benchmark row consumes exactly one item type — `type Item` is fixed per
+/// wrapper — so this is the point where the run-time dtype meets the
+/// compile-time one, and the only place allowed to decide they disagree.
+pub enum Items {
+    I64(I64Workload),
+    F64(F64Workload),
+}
+
+impl Items {
+    pub fn dtype(&self) -> DType {
+        match self {
+            Items::I64(_) => DType::I64,
+            Items::F64(_) => DType::F64,
+        }
+    }
+}
+
+/// A row was handed a workload whose item type it cannot ingest.
+///
+/// Returned rather than reported as an empty result set, because "produced no
+/// reports" and "cannot run at all" are different outcomes that look identical
+/// in the output. A row that quietly returned nothing here would drop out of
+/// the matrix without ever saying so — the same failure as a dispatch table
+/// that silently loses rows.
+#[derive(Debug, Clone)]
+pub struct DtypeMismatch {
+    pub wanted: &'static [DType],
+    pub got: DType,
+}
+
+impl std::fmt::Display for DtypeMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let wanted: Vec<&str> = self.wanted.iter().map(DType::as_str).collect();
+        write!(
+            f,
+            "consumes {} items, workload is {}",
+            wanted.join(" or "),
+            self.got.as_str()
+        )
     }
 }
 
@@ -191,10 +255,10 @@ pub struct ImplEntry {
     pub params: ParamsVTable,
     run: fn(
         cfg: &BenchConfig,
-        wk: &I64Workload,
+        items: &Items,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
-    ) -> Vec<BenchReport>,
+    ) -> Result<Vec<BenchReport>, DtypeMismatch>,
 }
 
 impl ImplEntry {
@@ -205,11 +269,11 @@ impl ImplEntry {
     pub fn run(
         &self,
         cfg: &BenchConfig,
-        wk: &I64Workload,
+        items: &Items,
         params: &ParamSet,
         accuracy: &AccuracyCfg,
-    ) -> Vec<BenchReport> {
-        (self.run)(cfg, wk, params, accuracy)
+    ) -> Result<Vec<BenchReport>, DtypeMismatch> {
+        (self.run)(cfg, items, params, accuracy)
     }
     pub fn accepts(&self, params: &ParamSet) -> bool {
         self.constraint.accepts(params)
@@ -799,6 +863,28 @@ macro_rules! wk_view {
     };
 }
 
+/// Narrow [`Items`] to the `i64` workload a key-shaped row needs, or report
+/// the mismatch.
+///
+/// Every hash-based family lands here: their key is hashed, `f64` is not
+/// `Hash` in Rust, and hashing its bit pattern would be the same operation on
+/// the same bits as hashing an `i64` — a second curve that could only ever
+/// retrace the first. The `string` / `bytes` views derive from this workload
+/// too, so they inherit the same constraint.
+macro_rules! keys_only {
+    ($items:expr) => {
+        match $items {
+            Items::I64(wk) => wk,
+            other => {
+                return Err(DtypeMismatch {
+                    wanted: &[DType::I64],
+                    got: other.dtype(),
+                })
+            }
+        }
+    };
+}
+
 /// The ground-truth comparator a family supports, and the extra
 /// `AccuracyCfg` knobs that comparator honours.
 macro_rules! gt_bench {
@@ -855,29 +941,70 @@ macro_rules! run_impl {
     ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty, $view:ident, none) => {
         fn $fn_name(
             cfg: &BenchConfig,
-            wk: &I64Workload,
+            items: &Items,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
+        ) -> Result<Vec<BenchReport>, DtypeMismatch> {
             let p = params_of!($params_ty, params, $impl);
+            let wk = keys_only!(items);
             let w = wk_view!($view, wk);
-            bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
+            Ok(bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || {
+                <$wrapper>::new(&p)
+            }))
         }
     };
     ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty, $view:ident, $gt:ident) => {
         fn $fn_name(
             cfg: &BenchConfig,
-            wk: &I64Workload,
+            items: &Items,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
+        ) -> Result<Vec<BenchReport>, DtypeMismatch> {
             let p = params_of!($params_ty, params, $impl);
+            let wk = keys_only!(items);
             let w = wk_view!($view, wk);
-            if accuracy.enabled {
+            Ok(if accuracy.enabled {
                 gt_bench!($gt, $wrapper, cfg, w, $family, $impl, p, accuracy)
             } else {
                 bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
-            }
+            })
+        }
+    };
+}
+
+/// Define a row for an **ordered** family (kll, dd), which runs on either
+/// side of the dtype axis.
+///
+/// Takes the wrapper twice, once per instantiation, instead of one generic
+/// path the macro appends `<i64>` / `<f64>` to: `macro_rules!` cannot build a
+/// type by pasting arguments onto a `:ty` fragment. Spelling both out is more
+/// characters but the compiler checks each of them, which a token-pasting
+/// trick would not have made any safer.
+macro_rules! run_ordered_impl {
+    ($fn_name:ident, $w_i64:ty, $w_f64:ty, $family:expr, $impl:expr, $params_ty:ty, $gt:ident) => {
+        fn $fn_name(
+            cfg: &BenchConfig,
+            items: &Items,
+            params: &ParamSet,
+            accuracy: &AccuracyCfg,
+        ) -> Result<Vec<BenchReport>, DtypeMismatch> {
+            let p = params_of!($params_ty, params, $impl);
+            Ok(match items {
+                Items::I64(wk) => {
+                    if accuracy.enabled {
+                        gt_bench!($gt, $w_i64, cfg, wk, $family, $impl, p, accuracy)
+                    } else {
+                        bench_no_gt::<$w_i64, _>(cfg, wk, $family, $impl, || <$w_i64>::new(&p))
+                    }
+                }
+                Items::F64(wk) => {
+                    if accuracy.enabled {
+                        gt_bench!($gt, $w_f64, cfg, wk, $family, $impl, p, accuracy)
+                    } else {
+                        bench_no_gt::<$w_f64, _>(cfg, wk, $family, $impl, || <$w_f64>::new(&p))
+                    }
+                }
+            })
         }
     };
 }
@@ -891,15 +1018,20 @@ macro_rules! run_parallel_impl {
     ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty) => {
         fn $fn_name(
             cfg: &BenchConfig,
-            wk: &I64Workload,
+            items: &Items,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
-        ) -> Vec<BenchReport> {
+        ) -> Result<Vec<BenchReport>, DtypeMismatch> {
             let p = params_of!($params_ty, params, $impl);
+            let wk = keys_only!(items);
             let workers = cfg.threads;
-            bench_no_gt::<$wrapper, _>(cfg, wk, $family, $impl, move || {
-                <$wrapper>::new(&p, workers)
-            })
+            Ok(bench_no_gt::<$wrapper, _>(
+                cfg,
+                wk,
+                $family,
+                $impl,
+                move || <$wrapper>::new(&p, workers),
+            ))
         }
     };
 }
@@ -953,31 +1085,31 @@ run_impl!(
 );
 
 // -- KLL --
-run_impl!(
+run_ordered_impl!(
     run_kll_oxide,
-    kll::KllOxide,
+    kll::KllOxide<i64>,
+    kll::KllOxide<f64>,
     "kll",
     "oxide",
     KllParams,
-    i64,
     quant
 );
-run_impl!(
+run_ordered_impl!(
     run_kll_lib,
-    kll::KllLib,
+    kll::KllLib<i64>,
+    kll::KllLib<f64>,
     "kll",
     "lib",
     KllParams,
-    i64,
     quant
 );
-run_impl!(
+run_ordered_impl!(
     run_kll_exact,
-    exact::ExactQuantile,
+    exact::ExactQuantile<i64>,
+    exact::ExactQuantile<f64>,
     "kll",
     "exact",
     KllParams,
-    i64,
     quant
 );
 
@@ -1130,14 +1262,22 @@ run_impl!(
 );
 
 // -- DDSketch --
-run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", DdParams, i64, quant_rel);
-run_impl!(
+run_ordered_impl!(
+    run_dd_lib,
+    dd::DdLib<i64>,
+    dd::DdLib<f64>,
+    "dd",
+    "lib",
+    DdParams,
+    quant_rel
+);
+run_ordered_impl!(
     run_dd_exact,
-    exact::ExactQuantileDd,
+    exact::ExactQuantileDd<i64>,
+    exact::ExactQuantileDd<f64>,
     "dd",
     "exact",
     DdParams,
-    i64,
     quant_rel
 );
 
@@ -1294,6 +1434,105 @@ mod registry_tests {
             EXPECTED_ROWS,
             "dispatch table changed size; update EXPECTED_ROWS if deliberate"
         );
+    }
+
+    /// Exactly these rows consume `f64`. Pinned as a set rather than a count,
+    /// so both directions are caught: a row that quietly stops accepting
+    /// `f64`, and a hash-based row that starts accepting it (which would be
+    /// wrong — `f64` is not `Hash`, and its bit pattern is the same input the
+    /// `i64` run already hashed).
+    const ORDERED_ROWS: &[(&str, &str)] = &[
+        ("kll", "oxide"),
+        ("kll", "lib"),
+        ("kll", "exact"),
+        ("dd", "lib"),
+        ("dd", "exact"),
+    ];
+
+    fn tiny(dtype: DType) -> Items {
+        let spec = sketch_core::datagen::GenSpec {
+            shape: sketch_core::datagen::Shape::Keys {
+                cardinality: 64,
+                dist: sketch_core::datagen::Distribution::Uniform,
+                dtype,
+            },
+            size: 256,
+            seed: 1,
+        };
+        WorkloadSpec::Generated(spec).build(dtype).unwrap()
+    }
+
+    /// The guard that matters most here. `keys_only!` could be "simplified"
+    /// into returning an empty report vec instead of an error, and nothing
+    /// else in the build would notice: the sweep would still exit 0, still
+    /// write a file, and simply contain fewer rows than it claimed to run.
+    /// That is the same failure as the refactor that deleted 32 rows.
+    #[test]
+    fn only_the_ordered_rows_accept_f64_and_they_really_run() {
+        let f64_items = tiny(DType::F64);
+        let cfg = BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            ..Default::default()
+        };
+        let acc = AccuracyCfg {
+            enabled: false,
+            max_probes: 0,
+            record_query_calls: false,
+        };
+        for e in IMPLS {
+            let params = (e.params.default_grid)().remove(0);
+            let expected = ORDERED_ROWS.contains(&(e.family, e.impl_name));
+            match e.run(&cfg, &f64_items, &params, &acc) {
+                Ok(reports) => {
+                    assert!(
+                        expected,
+                        "{}/{} accepted an f64 workload but is not an ordered row",
+                        e.family, e.impl_name
+                    );
+                    assert!(
+                        !reports.is_empty(),
+                        "{}/{} accepted f64 but produced no report — a skip in disguise",
+                        e.family,
+                        e.impl_name
+                    );
+                }
+                Err(m) => {
+                    assert!(
+                        !expected,
+                        "{}/{} must accept f64, got: {m}",
+                        e.family, e.impl_name
+                    );
+                    assert_eq!(m.got, DType::F64);
+                }
+            }
+        }
+    }
+
+    /// Every row still runs on `i64`, so adding the axis did not quietly
+    /// narrow the existing matrix.
+    #[test]
+    fn every_row_still_accepts_i64() {
+        let i64_items = tiny(DType::I64);
+        let cfg = BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            ..Default::default()
+        };
+        let acc = AccuracyCfg {
+            enabled: false,
+            max_probes: 0,
+            record_query_calls: false,
+        };
+        for e in IMPLS {
+            let params = (e.params.default_grid)().remove(0);
+            assert!(
+                e.run(&cfg, &i64_items, &params, &acc).is_ok(),
+                "{}/{} stopped accepting i64",
+                e.family,
+                e.impl_name
+            );
+        }
     }
 
     #[test]

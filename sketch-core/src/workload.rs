@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::datagen::{DType, Distribution, GenSpec, Shape};
+use crate::datagen::{Column, DType, Distribution, GenSpec, Shape};
 use crate::error::SketchCoreError;
 
 /// Human-friendly description of a workload — serialised into
@@ -44,6 +44,22 @@ pub struct WorkloadDesc {
     /// See `Shape::to_workload_desc`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<serde_json::Value>,
+
+    /// The item type the sketch actually ingested.
+    ///
+    /// Without this field an `i64` run and an `f64` run of the same shape,
+    /// size and seed produce **identical** descriptors, so anything that
+    /// groups by workload — `--repeats`, `scripts/merge_passes.py`, a
+    /// `groupby` over `--raw-csv` — pools two different measurements under
+    /// one key and averages them. The dtype is not cosmetic: for the
+    /// quantile families it decides whether the library compares integers or
+    /// floats, which is the thing being compared.
+    ///
+    /// Omitted when `i64`, so every record written before this field existed
+    /// stays byte-identical and still parses — those runs were all `i64`, so
+    /// the default is their true value rather than a guess.
+    #[serde(default, skip_serializing_if = "DType::is_i64")]
+    pub dtype: DType,
 }
 
 /// The abstract contract for a workload a `BenchRunner` can
@@ -90,15 +106,41 @@ pub trait Workload: Sized {
     }
 }
 
-// ---------- i64 workloads ----------
+// ---------- numeric workloads ----------
 
-/// An `i64` workload: the materialised item stream plus its
+/// An item type a [`NumericWorkload`] can be built from.
+///
+/// Exists so `i64` and `f64` workloads are one type rather than two
+/// near-identical ones. The only thing that actually differs between them is
+/// which [`Column`] variant they accept, and refusing the others is the
+/// point — see [`Column::into_f64`].
+pub trait NumericItem: Clone + Sized {
+    /// The dtype a generator must be configured with to feed this item type.
+    const DTYPE: DType;
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError>;
+}
+
+impl NumericItem for i64 {
+    const DTYPE: DType = DType::I64;
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError> {
+        c.into_i64()
+    }
+}
+
+impl NumericItem for f64 {
+    const DTYPE: DType = DType::F64;
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError> {
+        c.into_f64()
+    }
+}
+
+/// A numeric workload: the materialised item stream plus its
 /// provenance. Construct it from a generator (`uniform` / `zipf`)
 /// or from a file (`load`); the source shows up in `desc`, not in
 /// the type.
 #[derive(Debug, Clone)]
-pub struct I64Workload {
-    items: Vec<i64>,
+pub struct NumericWorkload<T> {
+    items: Vec<T>,
     desc: WorkloadDesc,
     /// The spec this was generated from, when it was generated. Retained so
     /// [`Workload::resample`] can draw again from the same distribution.
@@ -106,12 +148,20 @@ pub struct I64Workload {
     spec: Option<GenSpec>,
 }
 
-impl I64Workload {
+/// The key-shaped workload: every hash-based family (cms, countsketch, hll,
+/// elastic, …) ingests these, and the `String`/`Bytes` views derive from it.
+pub type I64Workload = NumericWorkload<i64>;
+
+/// The float workload, consumed by the ordered families (kll, dd) whose
+/// libraries are `f64`-native.
+pub type F64Workload = NumericWorkload<f64>;
+
+impl<T: NumericItem> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
     /// `desc.size` is forced to match `items.len()` — a desc that
     /// disagrees with the data it describes would silently corrupt
     /// every throughput denominator downstream.
-    pub fn new(items: Vec<i64>, mut desc: WorkloadDesc) -> Self {
+    pub fn new(items: Vec<T>, mut desc: WorkloadDesc) -> Self {
         // `load` cannot know the count until it has read the file, so it
         // passes 0 as a placeholder. Any other value is the caller *asserting*
         // what was produced — a generator returning short would otherwise be
@@ -135,12 +185,13 @@ impl I64Workload {
     /// through a file sink; this runs it through a memory sink, so a
     /// shape reachable on disk is reachable here by construction.
     ///
-    /// Fails if the spec's dtype is not `i64`: the benchmark consumes
-    /// `i64` keys, and reinterpreting a `u64`/`f64` stream would yield
-    /// meaningless keys behind a well-formed report.
+    /// Fails if the spec's dtype does not match `T`: reinterpreting one
+    /// numeric encoding as another would yield meaningless items behind a
+    /// well-formed report, and — for the ordered families — would hide an
+    /// integer-to-float conversion inside a run labelled `f64`.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchCoreError> {
         let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
-        let mut wk = Self::new(spec.generate()?.into_i64()?, desc);
+        let mut wk = Self::new(T::from_column(spec.generate()?)?, desc);
         wk.spec = Some(spec.clone());
         Ok(wk)
     }
@@ -151,7 +202,7 @@ impl I64Workload {
             shape: Shape::Keys {
                 cardinality,
                 dist: Distribution::Uniform,
-                dtype: DType::I64,
+                dtype: T::DTYPE,
             },
             size,
             seed,
@@ -166,13 +217,15 @@ impl I64Workload {
             shape: Shape::Keys {
                 cardinality,
                 dist: Distribution::Zipf { s },
-                dtype: DType::I64,
+                dtype: T::DTYPE,
             },
             size,
             seed,
         })
     }
+}
 
+impl NumericWorkload<i64> {
     /// Load from a file, auto-detecting the format from its
     /// extension:
     ///
@@ -215,17 +268,18 @@ impl I64Workload {
                 source_path: Some(path.display().to_string()),
                 seed: None,
                 spec: None,
+                dtype: DType::I64,
             },
         ))
     }
 }
 
-impl Workload for I64Workload {
-    type Item = i64;
+impl<T: NumericItem> Workload for NumericWorkload<T> {
+    type Item = T;
     fn desc(&self) -> WorkloadDesc {
         self.desc.clone()
     }
-    fn items(&self) -> &[i64] {
+    fn items(&self) -> &[T] {
         &self.items
     }
 
@@ -508,6 +562,7 @@ mod tests {
                 source_path: None,
                 seed: None,
                 spec: None,
+                dtype: DType::I64,
             },
         );
         assert_eq!(w.desc().size, 3);
@@ -702,5 +757,74 @@ mod resample_tests {
         assert!(!w.can_resample(), "a file is one fixed sample");
         assert!(w.resample(1).is_none());
         std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod dtype_tests {
+    use super::*;
+    use crate::datagen::{Distribution, GenSpec, Shape};
+
+    fn keys_spec(dtype: DType) -> GenSpec {
+        GenSpec {
+            shape: Shape::Keys {
+                cardinality: 100,
+                dist: Distribution::Uniform,
+                dtype,
+            },
+            size: 500,
+            seed: 7,
+        }
+    }
+
+    /// The dtype axis is only worth having if the two runs are
+    /// distinguishable downstream. `--repeats`, `merge_passes.py` and any
+    /// `groupby` over the CSV key on the serialised workload, so if these two
+    /// descriptors matched, an i64 and an f64 measurement would be averaged
+    /// together under one row.
+    #[test]
+    fn i64_and_f64_descriptors_are_distinguishable() {
+        let a = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
+        let b = F64Workload::generate(&keys_spec(DType::F64)).unwrap();
+        let (ja, jb) = (
+            serde_json::to_string(&a.desc()).unwrap(),
+            serde_json::to_string(&b.desc()).unwrap(),
+        );
+        assert_ne!(ja, jb, "i64 and f64 workloads must not share a group key");
+        assert!(jb.contains(r#""dtype":"f64""#), "{jb}");
+    }
+
+    /// Every record ever written was i64, so the field is omitted at that
+    /// value: old files stay byte-identical and new i64 runs still compare
+    /// equal to them.
+    #[test]
+    fn an_i64_descriptor_keeps_the_bytes_it_had_before_the_field_existed() {
+        let wk = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
+        let json = serde_json::to_string(&wk.desc()).unwrap();
+        assert!(
+            !json.contains("dtype"),
+            "i64 must not emit the field: {json}"
+        );
+    }
+
+    #[test]
+    fn a_descriptor_without_dtype_reads_back_as_i64() {
+        let old = r#"{"shape":"uniform","size":500,"cardinality":100,"seed":7}"#;
+        let desc: WorkloadDesc = serde_json::from_str(old).unwrap();
+        assert_eq!(desc.dtype, DType::I64);
+    }
+
+    /// The one thing this axis must never do: quietly widen integers into the
+    /// float path. That would put an `as f64` back on the insert loop while
+    /// the report claims the workload was f64 — the measurement error the
+    /// dtype axis exists to expose.
+    #[test]
+    fn a_float_workload_refuses_an_integer_spec() {
+        let err = F64Workload::generate(&keys_spec(DType::I64))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("f64") && err.contains("i64"), "{err}");
+        // And the converse, so neither direction converts.
+        assert!(I64Workload::generate(&keys_spec(DType::F64)).is_err());
     }
 }

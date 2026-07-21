@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 
+use sketch_bench::accuracy::quantile::QuantileValue;
 use sketch_core::config::KllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
@@ -20,27 +21,35 @@ use sketch_oxide::Mergeable as _;
 // (no `new(k)` constructor exposed through the stable surface).
 // We store the requested `k` so `memory_bytes` is sensible; the
 // sweep driver marks oxide KLL as fixed-shape in the dispatch.
-pub struct KllOxide {
+///
+/// Generic over the item type. The inner sketch is `f64`-native, so `T = f64`
+/// monomorphises `to_f64` to the identity and the insert path holds no
+/// conversion at all; `T = i64` keeps the `as f64` it always had. That
+/// difference is the measurement — before this was generic only the `i64`
+/// side existed, so the conversion was unavoidable and therefore invisible.
+pub struct KllOxide<T = i64> {
     inner: RefCell<sketch_oxide::quantiles::KllSketch>,
     k: u32,
+    _item: std::marker::PhantomData<T>,
 }
 
-impl KllOxide {
+impl<T: QuantileValue> KllOxide<T> {
     pub fn new(p: &KllParams) -> Self {
         Self {
             inner: RefCell::new(sketch_oxide::quantiles::KllSketch::default()),
             k: p.k,
+            _item: std::marker::PhantomData,
         }
     }
 }
 
-impl Sketch for KllOxide {
-    type Item = i64;
+impl<T: QuantileValue> Sketch for KllOxide<T> {
+    type Item = T;
     type Query = f64;
     type Answer = f64;
     #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.get_mut().update(*v as f64);
+    fn update(&mut self, v: &T) {
+        self.inner.get_mut().update(v.to_f64());
     }
     fn query(&self, q: f64) -> f64 {
         self.inner.borrow_mut().quantile(q).unwrap_or(f64::NAN)
@@ -76,28 +85,38 @@ impl Sketch for KllOxide {
 // the insert phase has ended, and never re-inserts afterwards. A
 // per-update RefCell::borrow() check is a measurable cost on a
 // hot 10ns/op insert path; we drop it on the throughput path.
-pub struct KllLib {
-    inner: asap_sketchlib::KLL<i64>,
+///
+/// Unlike the oxide and DDSketch wrappers, this one is generic *in the
+/// library*: `asap_sketchlib::KLL<T: NumericalValue>` stores `T` and orders it
+/// with `T::total_cmp`, so nothing is converted on either side of the axis.
+/// `KLL<i64>` compares integers, `KLL<f64>` compares floats. That makes it the
+/// row where the dtype axis measures the library's own choice rather than a
+/// wrapper's cast.
+pub struct KllLib<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
+    inner: asap_sketchlib::KLL<T>,
     k: u32,
     cdf: RefCell<Option<asap_sketchlib::sketches::kll::Cdf>>,
 }
 
-impl KllLib {
+impl<T: asap_sketchlib::common::numerical::NumericalValue> KllLib<T> {
     pub fn new(p: &KllParams) -> Self {
         Self {
-            inner: asap_sketchlib::KLL::<i64>::init_kll(p.k as i32),
+            inner: asap_sketchlib::KLL::<T>::init_kll(p.k as i32),
             k: p.k,
             cdf: RefCell::new(None),
         }
     }
 }
 
-impl Sketch for KllLib {
-    type Item = i64;
+impl<T> Sketch for KllLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    type Item = T;
     type Query = f64;
     type Answer = f64;
     #[inline(always)]
-    fn update(&mut self, v: &i64) {
+    fn update(&mut self, v: &T) {
         self.inner.update(v);
     }
     fn query(&self, q: f64) -> f64 {
@@ -107,7 +126,7 @@ impl Sketch for KllLib {
         self.inner.quantile(q)
     }
     fn memory_bytes(&self) -> usize {
-        (self.k as usize) * std::mem::size_of::<i64>() * 4
+        (self.k as usize) * std::mem::size_of::<T>() * 4
     }
 
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {

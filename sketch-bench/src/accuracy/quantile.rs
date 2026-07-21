@@ -75,6 +75,31 @@ impl ToF64 for u32 {
     }
 }
 
+/// A value an ordered (quantile) sketch can ingest.
+///
+/// The extra requirement over [`ToF64`] is a **total** order. `f64` has only a
+/// partial one, so sorting a buffer of them through `partial_cmp().unwrap()`
+/// panics the moment a NaN reaches it — and a benchmark that dies on one bad
+/// input value is worse than one that orders it consistently. `f64::total_cmp`
+/// is the standard-library answer; for integers it is just `Ord::cmp`.
+pub trait QuantileValue: ToF64 + Copy {
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
+}
+
+impl QuantileValue for i64 {
+    #[inline(always)]
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        Ord::cmp(self, other)
+    }
+}
+
+impl QuantileValue for f64 {
+    #[inline(always)]
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        f64::total_cmp(self, other)
+    }
+}
+
 // ---------- KLL: rank error ----------
 
 /// Rank-error comparator for KLL-style sketches.

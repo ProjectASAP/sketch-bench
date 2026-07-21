@@ -8,6 +8,7 @@
 //! `ExactFrequency` with CMS; DDSketch shares `ExactQuantile`
 //! with KLL).
 
+use sketch_bench::accuracy::quantile::QuantileValue;
 use sketch_core::config::{CmsParams, CountSketchParams, DdParams, HllParams};
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
@@ -48,21 +49,27 @@ impl Sketch for ExactFrequencyCs {
 /// DDSketch view of [`ExactQuantile`]. Same sorted-stream
 /// algorithm as the KLL exact baseline; wraps it so the dispatch
 /// macro can construct it from `&DdParams`.
-#[derive(Debug, Default)]
-pub struct ExactQuantileDd(pub ExactQuantile);
+#[derive(Debug)]
+pub struct ExactQuantileDd<T = i64>(pub ExactQuantile<T>);
 
-impl ExactQuantileDd {
+impl<T> Default for ExactQuantileDd<T> {
+    fn default() -> Self {
+        Self(ExactQuantile::default())
+    }
+}
+
+impl<T: QuantileValue> ExactQuantileDd<T> {
     pub fn new(_p: &DdParams) -> Self {
         Self(ExactQuantile::default())
     }
 }
 
-impl Sketch for ExactQuantileDd {
-    type Item = i64;
+impl<T: QuantileValue> Sketch for ExactQuantileDd<T> {
+    type Item = T;
     type Query = f64;
     type Answer = f64;
     #[inline(always)]
-    fn update(&mut self, v: &i64) {
+    fn update(&mut self, v: &T) {
         self.0.update(v);
     }
     fn query(&self, q: f64) -> f64 {

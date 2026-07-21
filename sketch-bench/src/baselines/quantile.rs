@@ -1,4 +1,4 @@
-//! Exact quantile baseline — `Vec<i64>` sorted on first query.
+//! Exact quantile baseline — a `Vec<T>` sorted on first query.
 //! Provides ground truth for any sketch family that answers a
 //! quantile / rank query. Shared between all quantile sketches.
 //!
@@ -17,13 +17,32 @@ use std::cell::{Cell, RefCell};
 use sketch_core::config::KllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
-#[derive(Debug, Default)]
-pub struct ExactQuantile {
-    buf: RefCell<Vec<i64>>,
+use crate::accuracy::quantile::QuantileValue;
+
+/// Generic over the item type so the exact baseline exists on both sides of
+/// the dtype axis. An `i64`-only baseline would leave the `f64` rows with
+/// nothing to be scored against — and a baseline that took `f64` and let the
+/// `i64` rows cast into it would make the ground truth itself the thing doing
+/// the conversion under test.
+#[derive(Debug)]
+pub struct ExactQuantile<T = i64> {
+    buf: RefCell<Vec<T>>,
     sorted: Cell<bool>,
 }
 
-impl ExactQuantile {
+/// Hand-written rather than derived: `derive(Default)` would demand
+/// `T: Default`, which an empty buffer plainly does not need, and that bound
+/// then leaks out to every caller that only wants to construct one.
+impl<T> Default for ExactQuantile<T> {
+    fn default() -> Self {
+        Self {
+            buf: RefCell::new(Vec::new()),
+            sorted: Cell::new(false),
+        }
+    }
+}
+
+impl<T: QuantileValue> ExactQuantile<T> {
     /// Accepts a `KllParams` for dispatch-macro uniformity; the
     /// value is ignored — an exact sorted stream has no k.
     pub fn new(_p: &KllParams) -> Self {
@@ -36,9 +55,9 @@ impl ExactQuantile {
     /// Batch ingest. Sorts eagerly so subsequent quantile calls
     /// are amortised — matches how `accuracy/{kll,dd}` pre-sorted
     /// in `BaselineData`.
-    pub fn ingest_all(values: &[i64]) -> Self {
+    pub fn ingest_all(values: &[T]) -> Self {
         let mut buf = values.to_vec();
-        buf.sort_unstable();
+        buf.sort_unstable_by(T::total_cmp);
         Self {
             buf: RefCell::new(buf),
             sorted: Cell::new(true),
@@ -60,7 +79,7 @@ impl ExactQuantile {
             return f64::NAN;
         }
         if !self.sorted.get() {
-            buf.sort_unstable();
+            buf.sort_unstable_by(T::total_cmp);
             self.sorted.set(true);
         }
         if q.is_nan() {
@@ -77,8 +96,8 @@ impl ExactQuantile {
         let lower = rank.floor() as usize;
         let upper = (lower + 1).min(n - 1);
         let weight = rank - rank.floor();
-        let lo = buf[lower] as f64;
-        let hi = buf[upper] as f64;
+        let lo = buf[lower].to_f64();
+        let hi = buf[upper].to_f64();
         lo * (1.0 - weight) + hi * weight
     }
 
@@ -87,12 +106,13 @@ impl ExactQuantile {
     }
 }
 
-impl Sketch for ExactQuantile {
-    type Item = i64;
+impl<T: QuantileValue> Sketch for ExactQuantile<T> {
+    type Item = T;
     type Query = f64;
     type Answer = f64;
 
-    fn update(&mut self, v: &i64) {
+    #[inline(always)]
+    fn update(&mut self, v: &T) {
         self.buf.get_mut().push(*v);
         self.sorted.set(false);
     }
@@ -102,7 +122,7 @@ impl Sketch for ExactQuantile {
     }
 
     fn memory_bytes(&self) -> usize {
-        self.buf.borrow().capacity() * std::mem::size_of::<i64>()
+        self.buf.borrow().capacity() * std::mem::size_of::<T>()
     }
 
     /// Concatenate the retained values. Exact: the multiset union of two
@@ -119,7 +139,7 @@ impl Sketch for ExactQuantile {
     /// structure during update.
     fn finalize_for_query(&mut self) {
         if !self.sorted.get() {
-            self.buf.get_mut().sort_unstable();
+            self.buf.get_mut().sort_unstable_by(T::total_cmp);
             self.sorted.set(true);
         }
     }
@@ -154,7 +174,7 @@ mod tests {
     fn streamed_quantile_matches_batch() {
         let vals: Vec<i64> = (0..1000).rev().collect();
         let batch = ExactQuantile::ingest_all(&vals);
-        let mut streamed = ExactQuantile::new(&KllParams { k: 200 });
+        let mut streamed = ExactQuantile::<i64>::new(&KllParams { k: 200 });
         for v in &vals {
             streamed.update(v);
         }

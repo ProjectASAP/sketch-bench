@@ -22,18 +22,25 @@
 ## Partial / Not what it looks like
 
 - Multiple Data Type
-    - generator emits i64 / u64 / f64 columns
-    - but `bench` consumes i64 only; f64 spec is rejected, not converted
-    - String / Bytes are not generated -- they are i64 decimal-formatted,
+    - i64 and f64 both run, via `--dtype`. ordered families (kll, dd) take
+      both; hash families are i64-only on purpose, since f64 is not `Hash` in
+      Rust and hashing its bits would retrace the i64 curve
+    - rows that cannot take the dtype are skipped with a reason, and a sweep
+      where everything skipped is an error, not an empty file
+    - but f64 keys are the same logical values as i64, only encoded
+      differently. so this measures encoding, and quantile accuracy is still
+      scored on integer-valued data with lots of ties
+    - String / Bytes are still not generated -- they are i64 decimal-formatted,
       so ~1-7 bytes over a 10-char alphabet. Not a real string workload;
       hash cost and length distribution are the whole point and neither varies
-    - KLL / DDSketch are fed integers
 - HLL(our wrapper for datasketches) merge is broken
 
 ## No / In-Progress
 
-- f64 into BM
 - real string generator (length distribution + alphabet)
+- a continuous value domain for the quantile families
+    - every shape draws from a finite `cardinality`, so kll/dd are always
+      scored on tied data whatever the dtype
 - range constraint on the key space (currently always `[0, cardinality)`)
 - manual code review
 - Potentially more code refactor / removal

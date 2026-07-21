@@ -78,6 +78,12 @@ pub enum DType {
 }
 
 impl DType {
+    /// Used by `WorkloadDesc`'s `skip_serializing_if` so an `i64` record keeps
+    /// the exact bytes it had before the field existed.
+    pub fn is_i64(&self) -> bool {
+        matches!(self, DType::I64)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             DType::I64 => "i64",
@@ -169,11 +175,29 @@ impl Column {
     pub fn into_i64(self) -> Result<Vec<i64>, SketchCoreError> {
         match self {
             Column::I64(v) => Ok(v),
-            other => Err(SketchCoreError::BadParam(format!(
-                "workload must be i64, got {}; re-generate with dtype i64",
-                other.dtype().as_str()
-            ))),
+            other => Err(Self::wrong_dtype(other.dtype(), DType::I64)),
         }
+    }
+
+    /// Deliberately **not** a conversion. An `I64` column here is a caller
+    /// that asked for float items and got integer ones; widening it silently
+    /// would put an `as f64` back on the insert path under a report that says
+    /// the workload was `f64`, which is the exact thing the dtype axis exists
+    /// to distinguish.
+    pub fn into_f64(self) -> Result<Vec<f64>, SketchCoreError> {
+        match self {
+            Column::F64(v) => Ok(v),
+            other => Err(Self::wrong_dtype(other.dtype(), DType::F64)),
+        }
+    }
+
+    fn wrong_dtype(got: DType, want: DType) -> SketchCoreError {
+        SketchCoreError::BadParam(format!(
+            "workload must be {}, got {}; re-generate with dtype {}",
+            want.as_str(),
+            got.as_str(),
+            want.as_str(),
+        ))
     }
 }
 

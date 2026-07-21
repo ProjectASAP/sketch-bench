@@ -193,10 +193,11 @@ impl Shape {
             self,
             Shape::Keys {
                 dist: Distribution::Uniform | Distribution::Zipf { .. },
-                // dtype is part of what makes a shape reproducible, and the
-                // flat fields cannot express it. Only `i64` — the dtype those
-                // fields have always implied — round-trips without `spec`.
-                dtype: DType::I64,
+                // `dtype` used to be excluded here, because it was part of what
+                // makes a shape reproducible and the flat fields could not
+                // express it. `WorkloadDesc::dtype` now carries it, so a
+                // non-`i64` keys shape round-trips flat like any other and does
+                // not need the `spec` blob.
                 ..
             }
         )
@@ -231,6 +232,7 @@ impl Shape {
             } else {
                 serde_json::to_value(self).ok()
             },
+            dtype: self.dtype(),
         }
     }
 }
