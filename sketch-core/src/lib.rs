@@ -16,7 +16,7 @@ pub mod workload;
 
 pub use config::{
     CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-    ParamSet, UnivMonParams,
+    ParamSet, SketchParams, UnivMonParams,
 };
 pub use datagen::{
     BasicStats, Column, DType, Distribution, GenMeta, GenSpec, Generator, Shape, TimeUnit,
