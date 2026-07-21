@@ -23,10 +23,10 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
+use aqpbm_datagen::DType;
 use sketch_bench::runner::BenchReport;
 use sketch_bench::MetricsMask;
 use sketch_core::config::ParamSet;
-use sketch_core::datagen::DType;
 
 use crate::dispatch::ImplEntry;
 

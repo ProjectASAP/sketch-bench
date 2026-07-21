@@ -39,9 +39,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
+use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
-use sketch_core::datagen::{DType, Distribution, GenSpec, Shape};
 
 use dispatch::{AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
 

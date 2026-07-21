@@ -242,7 +242,7 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datagen::DType;
+    use aqpbm_datagen::DType;
 
     #[test]
     fn record_roundtrips_through_json() {

@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::error::SketchCoreError;
+use crate::error::SketchError;
 
 use super::{Column, GenMeta};
 
@@ -27,7 +27,7 @@ pub fn sidecar_path(bin_path: &Path) -> PathBuf {
 /// (no header). Streaming generation should go through
 /// [`super::FileSink`] instead — this is the one-shot convenience for
 /// callers that already hold the whole column.
-pub fn write_bin(path: &Path, col: &Column) -> Result<(), SketchCoreError> {
+pub fn write_bin(path: &Path, col: &Column) -> Result<(), SketchError> {
     use super::Sink;
     let mut sink = super::FileSink::create(path)?;
     sink.accept(col)?;
@@ -35,22 +35,22 @@ pub fn write_bin(path: &Path, col: &Column) -> Result<(), SketchCoreError> {
 }
 
 /// Write the provenance sidecar next to `bin_path`. Returns its path.
-pub fn write_meta(bin_path: &Path, meta: &GenMeta) -> Result<PathBuf, SketchCoreError> {
+pub fn write_meta(bin_path: &Path, meta: &GenMeta) -> Result<PathBuf, SketchError> {
     let path = sidecar_path(bin_path);
     let json = serde_json::to_string_pretty(meta)
-        .map_err(|e| SketchCoreError::BadParam(format!("meta serialize: {e}")))?;
+        .map_err(|e| SketchError::BadParam(format!("meta serialize: {e}")))?;
     std::fs::write(&path, json)?;
     Ok(path)
 }
 
 /// Read the provenance sidecar for `bin_path`, if one exists.
-pub fn read_meta(bin_path: &Path) -> Result<Option<GenMeta>, SketchCoreError> {
+pub fn read_meta(bin_path: &Path) -> Result<Option<GenMeta>, SketchError> {
     let path = sidecar_path(bin_path);
     if !path.exists() {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)?;
     let meta = serde_json::from_str(&text)
-        .map_err(|e| SketchCoreError::BadParam(format!("meta parse: {e}")))?;
+        .map_err(|e| SketchError::BadParam(format!("meta parse: {e}")))?;
     Ok(Some(meta))
 }

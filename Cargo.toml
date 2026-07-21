@@ -7,6 +7,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "aqpbm-datagen",
     "sketch-core",
     "sketch-bench",
     "sketch-runtime",
@@ -58,6 +59,7 @@ datasketches = "0.2.0"
 asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 
 # Internal workspace crates.
+aqpbm-datagen = { path = "aqpbm-datagen" }
 sketch-core = { path = "sketch-core" }
 sketch-bench = { path = "sketch-bench" }
 sketch-runtime = { path = "sketch-runtime" }

@@ -22,7 +22,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use crate::error::SketchCoreError;
+use crate::error::SketchError;
 
 use super::Column;
 
@@ -32,11 +32,11 @@ use super::Column;
 /// it. `flush` is called exactly once, after the last chunk.
 pub trait Sink {
     /// Accept the next chunk of generated values.
-    fn accept(&mut self, chunk: &Column) -> Result<(), SketchCoreError>;
+    fn accept(&mut self, chunk: &Column) -> Result<(), SketchError>;
 
     /// Finalise the destination. Default no-op; override for sinks
     /// holding a buffered resource.
-    fn flush(&mut self) -> Result<(), SketchCoreError> {
+    fn flush(&mut self) -> Result<(), SketchError> {
         Ok(())
     }
 }
@@ -65,7 +65,7 @@ impl MemorySink {
 }
 
 impl Sink for MemorySink {
-    fn accept(&mut self, chunk: &Column) -> Result<(), SketchCoreError> {
+    fn accept(&mut self, chunk: &Column) -> Result<(), SketchError> {
         match (&mut self.column, chunk) {
             (None, c) => self.column = Some(c.clone()),
             (Some(Column::I64(dst)), Column::I64(src)) => dst.extend_from_slice(src),
@@ -75,7 +75,7 @@ impl Sink for MemorySink {
                 // A generator switching dtype mid-stream is a bug in the
                 // generator, not bad user input — but silently producing
                 // a column of mixed provenance would be worse.
-                return Err(SketchCoreError::BadParam(format!(
+                return Err(SketchError::BadParam(format!(
                     "sink: chunk dtype {} does not match stream dtype {}",
                     src.dtype().as_str(),
                     dst.dtype().as_str(),
@@ -97,7 +97,7 @@ pub struct FileSink {
 }
 
 impl FileSink {
-    pub fn create(path: &Path) -> Result<Self, SketchCoreError> {
+    pub fn create(path: &Path) -> Result<Self, SketchError> {
         Ok(Self {
             writer: BufWriter::new(File::create(path)?),
         })
@@ -105,12 +105,12 @@ impl FileSink {
 }
 
 impl Sink for FileSink {
-    fn accept(&mut self, chunk: &Column) -> Result<(), SketchCoreError> {
+    fn accept(&mut self, chunk: &Column) -> Result<(), SketchError> {
         chunk.write_le(&mut self.writer)?;
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), SketchCoreError> {
+    fn flush(&mut self) -> Result<(), SketchError> {
         self.writer.flush()?;
         Ok(())
     }

@@ -18,10 +18,10 @@ use rand_distr::{Distribution as _, Exp, Geometric, Poisson, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
+use crate::error::SketchError;
 
-fn bad(msg: String) -> SketchCoreError {
-    SketchCoreError::BadParam(msg)
+fn bad(msg: String) -> SketchError {
+    SketchError::BadParam(msg)
 }
 
 /// A statistical shape, independent of the domain it is drawn over.
@@ -65,7 +65,7 @@ impl Distribution {
     /// Realization for the **keys** structure: sample directly over a
     /// large `[0, cardinality)` domain, with no per-value table. Only
     /// the range-valued distributions apply here.
-    pub fn key_sampler(&self, cardinality: u64) -> Result<KeySampler, SketchCoreError> {
+    pub fn key_sampler(&self, cardinality: u64) -> Result<KeySampler, SketchError> {
         match self {
             Distribution::Uniform => Ok(KeySampler::Uniform(Uniform::new(0u64, cardinality))),
             Distribution::Zipf { s } => Ok(KeySampler::Zipf(
@@ -82,7 +82,7 @@ impl Distribution {
     /// Realization for the **categorical** structure: resolve to exactly
     /// `k` positive, finite weights over a small finite domain. Only the
     /// finitely-supported distributions apply here.
-    pub fn weights(&self, k: usize) -> Result<Vec<f64>, SketchCoreError> {
+    pub fn weights(&self, k: usize) -> Result<Vec<f64>, SketchError> {
         let weights = match self {
             Distribution::Uniform => vec![1.0; k],
             // Zipf pmf evaluated analytically at k points — bounded to
@@ -112,7 +112,7 @@ impl Distribution {
 
     /// Realization for the **monotonic** structure: a non-negative
     /// integer gap sampler. Only the count/interval distributions apply.
-    pub fn gap_sampler(&self) -> Result<GapSampler, SketchCoreError> {
+    pub fn gap_sampler(&self) -> Result<GapSampler, SketchError> {
         Ok(match *self {
             Distribution::Constant { value } => GapSampler::Constant(value),
             Distribution::Geometric { p } => GapSampler::Geometric(

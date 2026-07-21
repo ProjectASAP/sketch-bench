@@ -10,6 +10,7 @@
 use std::hash::Hash;
 
 use anyhow::Result;
+use aqpbm_datagen::{DType, GenSpec};
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
@@ -18,7 +19,6 @@ use sketch_core::config::{
     CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
     ParamSet, SketchParams, UnivMonParams,
 };
-use sketch_core::datagen::{DType, GenSpec};
 use sketch_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
@@ -65,7 +65,7 @@ pub enum AccuracyKind {
 ///
 /// There is exactly one generator in the tool — `sketchlib workload
 /// generate` and `sketchlib bench` drive the same `GenSpec` through the
-/// same samplers, differing only in the [`Sink`](sketch_core::datagen::Sink)
+/// same samplers, differing only in the [`Sink`](aqpbm_datagen::Sink)
 /// they push into (file vs memory). A shape reachable from one is
 /// reachable from the other by construction.
 #[derive(Debug, Clone)]
@@ -1450,10 +1450,10 @@ mod registry_tests {
     ];
 
     fn tiny(dtype: DType) -> Items {
-        let spec = sketch_core::datagen::GenSpec {
-            shape: sketch_core::datagen::Shape::Keys {
+        let spec = aqpbm_datagen::GenSpec {
+            shape: aqpbm_datagen::Shape::Keys {
                 cardinality: 64,
-                dist: sketch_core::datagen::Distribution::Uniform,
+                dist: aqpbm_datagen::Distribution::Uniform,
                 dtype,
             },
             size: 256,

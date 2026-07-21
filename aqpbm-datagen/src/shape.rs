@@ -11,8 +11,7 @@ use rand_distr::Distribution as _;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
-use crate::workload::WorkloadDesc;
+use crate::error::SketchError;
 
 use super::dist::{Distribution, GapSampler, KeySampler};
 use super::{Column, DType};
@@ -41,10 +40,10 @@ fn default_dist() -> Distribution {
 /// `cardinality`-sized key space would silently collapse onto rounded
 /// values — the same class of quiet wrongness the dtype guard in
 /// [`crate::workload::FileI64`] exists to prevent — so reject it.
-fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchCoreError> {
+fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchError> {
     const LIMIT: u64 = 1 << 53;
     if dtype == DType::F64 && cardinality > LIMIT {
-        return Err(SketchCoreError::BadParam(format!(
+        return Err(SketchError::BadParam(format!(
             "dtype f64 cannot hold {cardinality} distinct integers exactly \
              (limit 2^53 = {LIMIT}); values would round silently"
         )));
@@ -123,7 +122,7 @@ impl Shape {
 
     /// Build the concrete generator, validating parameters eagerly so
     /// bad specs fail before any allocation.
-    pub fn build(&self) -> Result<Generator, SketchCoreError> {
+    pub fn build(&self) -> Result<Generator, SketchError> {
         match self {
             Shape::Keys {
                 cardinality,
@@ -131,7 +130,7 @@ impl Shape {
                 dtype,
             } => {
                 if *cardinality == 0 {
-                    return Err(SketchCoreError::BadParam(
+                    return Err(SketchError::BadParam(
                         "keys: cardinality must be > 0".into(),
                     ));
                 }
@@ -143,13 +142,13 @@ impl Shape {
             }
             Shape::Categorical { categories, dist } => {
                 if categories.is_empty() {
-                    return Err(SketchCoreError::BadParam(
+                    return Err(SketchError::BadParam(
                         "categorical: categories must be non-empty".into(),
                     ));
                 }
                 let weights = dist.weights(categories.len())?;
                 let index = WeightedIndex::new(&weights)
-                    .map_err(|e| SketchCoreError::BadParam(format!("weighted index: {e}")))?;
+                    .map_err(|e| SketchError::BadParam(format!("weighted index: {e}")))?;
                 Ok(Generator::Categorical(CategoricalGen {
                     categories: categories.clone(),
                     index,
@@ -163,7 +162,7 @@ impl Shape {
                 unit: _,
             } => {
                 if *dtype == DType::F64 {
-                    return Err(SketchCoreError::BadParam(
+                    return Err(SketchError::BadParam(
                         "monotonic: dtype f64 unsupported; use i64 or u64".into(),
                     ));
                 }
@@ -175,64 +174,6 @@ impl Shape {
                     started: false,
                 }))
             }
-        }
-    }
-
-    /// Whether [`WorkloadDesc`]'s flat `cardinality` / `zipf_s` fields
-    /// fully describe this shape.
-    ///
-    /// True only for the two shapes that predate the generator
-    /// (`keys` drawn uniform or zipf) — those round-trip through the
-    /// legacy fields exactly, so their records stay byte-identical to
-    /// what `--workload uniform|zipf` has always emitted. Everything
-    /// else is lossy there and needs the full spec carried alongside,
-    /// which is the one condition under which `WorkloadDesc::spec` is
-    /// populated.
-    fn fits_legacy_desc(&self) -> bool {
-        matches!(
-            self,
-            Shape::Keys {
-                dist: Distribution::Uniform | Distribution::Zipf { .. },
-                // `dtype` used to be excluded here, because it was part of what
-                // makes a shape reproducible and the flat fields could not
-                // express it. `WorkloadDesc::dtype` now carries it, so a
-                // non-`i64` keys shape round-trips flat like any other and does
-                // not need the `spec` blob.
-                ..
-            }
-        )
-    }
-
-    /// Projection into the report-facing [`WorkloadDesc`] so JSONL
-    /// records stay well-formed regardless of shape. Shapes the flat
-    /// fields cannot express carry their full spec in `desc.spec`.
-    pub fn to_workload_desc(&self, size: usize, seed: u64) -> WorkloadDesc {
-        let (cardinality, zipf_s) = match self {
-            Shape::Keys {
-                cardinality, dist, ..
-            } => (
-                Some(*cardinality),
-                match dist {
-                    Distribution::Zipf { s } => Some(*s),
-                    _ => None,
-                },
-            ),
-            Shape::Categorical { categories, .. } => (Some(categories.len() as u64), None),
-            Shape::Monotonic { .. } => (None, None),
-        };
-        WorkloadDesc {
-            shape: self.report_label().to_string(),
-            size,
-            cardinality,
-            zipf_s,
-            source_path: None,
-            seed: Some(seed),
-            spec: if self.fits_legacy_desc() {
-                None
-            } else {
-                serde_json::to_value(self).ok()
-            },
-            dtype: self.dtype(),
         }
     }
 }
@@ -260,7 +201,7 @@ impl Generator {
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
+    ) -> Result<Column, SketchError> {
         match self {
             Generator::Keys(g) => g.generate(n, rng),
             Generator::Categorical(g) => g.generate(n, rng),
@@ -278,11 +219,7 @@ pub struct KeysGen {
 }
 
 impl KeysGen {
-    fn generate(
-        &mut self,
-        n: usize,
-        rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
+    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
         Ok(match self.dtype {
             DType::I64 => Column::I64((0..n).map(|_| self.sampler.sample(rng) as i64).collect()),
             DType::U64 => Column::U64((0..n).map(|_| self.sampler.sample(rng)).collect()),
@@ -298,11 +235,7 @@ pub struct CategoricalGen {
 }
 
 impl CategoricalGen {
-    fn generate(
-        &mut self,
-        n: usize,
-        rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
+    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
         Ok(Column::I64(
             (0..n)
                 .map(|_| self.categories[self.index.sample(rng)])
@@ -331,11 +264,7 @@ pub struct MonotonicGen {
 }
 
 impl MonotonicGen {
-    fn generate(
-        &mut self,
-        n: usize,
-        rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
+    fn generate(&mut self, n: usize, rng: &mut Xoshiro256PlusPlus) -> Result<Column, SketchError> {
         // Accumulate in the widest integer, then narrow to the target
         // dtype in a single trailing match — no per-dtype loop.
         let raw: Vec<i128> = (0..n)
@@ -348,7 +277,7 @@ impl MonotonicGen {
                 self.acc
             })
             .collect();
-        let overflow = || SketchCoreError::BadParam("monotonic: value overflow".into());
+        let overflow = || SketchError::BadParam("monotonic: value overflow".into());
         Ok(match self.dtype {
             DType::U64 => Column::U64(
                 raw.iter()

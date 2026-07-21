@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use sketch_core::datagen::{self, DType, Distribution, GenSpec, Shape, TimeUnit};
+use aqpbm_datagen::{self as datagen, DType, Distribution, GenSpec, Shape, TimeUnit};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -45,8 +45,11 @@ pub struct GenerateArgs {
     /// Output `.bin` path. Parent directories are created if missing.
     #[arg(long)]
     out: String,
-    /// Physical output type: i64 | u64 | f64. Only i64 is consumable by
-    /// `bench` today; u64/f64 files are written for other tooling.
+    /// Physical output type: i64 | u64 | f64.
+    ///
+    /// `bench --input` reads i64 files only. f64 is benchmarkable, but
+    /// through `bench --dtype f64`, which generates in-process rather than
+    /// reading a file. u64 has no consumer in this repo at all.
     #[arg(long, default_value = "i64")]
     dtype: String,
     /// Uniform: max key (exclusive). Zipf: key-space size.

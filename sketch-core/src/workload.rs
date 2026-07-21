@@ -18,8 +18,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::datagen::{Column, DType, Distribution, GenSpec, Shape};
-use crate::error::SketchCoreError;
+use aqpbm_datagen::{Column, DType, Distribution, GenSpec, Shape, SketchError};
 
 /// Human-friendly description of a workload — serialised into
 /// every report so a JSONL record can be re-run without
@@ -60,6 +59,70 @@ pub struct WorkloadDesc {
     /// the default is their true value rather than a guess.
     #[serde(default, skip_serializing_if = "DType::is_i64")]
     pub dtype: DType,
+}
+
+impl WorkloadDesc {
+    /// Projection of a generator [`Shape`] into the report-facing descriptor,
+    /// so JSONL records stay well-formed regardless of shape. Shapes the flat
+    /// fields cannot express carry their full spec in `spec`.
+    ///
+    /// Lives here rather than on `Shape` because it is a question about *this*
+    /// type: which of the descriptor's fields can hold a given shape. Keeping
+    /// it on `Shape` made the generator reference the report schema, which is
+    /// backwards — the generator has no business knowing a report exists, and
+    /// that single reference was the only thing preventing `sketch-datagen`
+    /// from standing on its own.
+    pub fn from_shape(shape: &Shape, size: usize, seed: u64) -> Self {
+        let (cardinality, zipf_s) = match shape {
+            Shape::Keys {
+                cardinality, dist, ..
+            } => (
+                Some(*cardinality),
+                match dist {
+                    Distribution::Zipf { s } => Some(*s),
+                    _ => None,
+                },
+            ),
+            Shape::Categorical { categories, .. } => (Some(categories.len() as u64), None),
+            Shape::Monotonic { .. } => (None, None),
+        };
+        WorkloadDesc {
+            shape: shape.report_label().to_string(),
+            size,
+            cardinality,
+            zipf_s,
+            source_path: None,
+            seed: Some(seed),
+            spec: if fits_legacy_desc(shape) {
+                None
+            } else {
+                serde_json::to_value(shape).ok()
+            },
+            dtype: shape.dtype(),
+        }
+    }
+}
+
+/// Whether the flat `cardinality` / `zipf_s` fields fully describe `shape`.
+///
+/// True only for the two shapes that predate the generator (`keys` drawn
+/// uniform or zipf) — those round-trip through the legacy fields exactly, so
+/// their records stay byte-identical to what `--workload uniform|zipf` has
+/// always emitted. Everything else is lossy there and needs the full spec
+/// carried alongside, which is the one condition under which
+/// [`WorkloadDesc::spec`] is populated.
+fn fits_legacy_desc(shape: &Shape) -> bool {
+    matches!(
+        shape,
+        Shape::Keys {
+            dist: Distribution::Uniform | Distribution::Zipf { .. },
+            // `dtype` used to be excluded here, because it was part of what
+            // makes a shape reproducible and the flat fields could not express
+            // it. `WorkloadDesc::dtype` now carries it, so a non-`i64` keys
+            // shape round-trips flat like any other and does not need `spec`.
+            ..
+        }
+    )
 }
 
 /// The abstract contract for a workload a `BenchRunner` can
@@ -117,19 +180,19 @@ pub trait Workload: Sized {
 pub trait NumericItem: Clone + Sized {
     /// The dtype a generator must be configured with to feed this item type.
     const DTYPE: DType;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError>;
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchError>;
 }
 
 impl NumericItem for i64 {
     const DTYPE: DType = DType::I64;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError> {
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchError> {
         c.into_i64()
     }
 }
 
 impl NumericItem for f64 {
     const DTYPE: DType = DType::F64;
-    fn from_column(c: Column) -> Result<Vec<Self>, SketchCoreError> {
+    fn from_column(c: Column) -> Result<Vec<Self>, SketchError> {
         c.into_f64()
     }
 }
@@ -189,8 +252,8 @@ impl<T: NumericItem> NumericWorkload<T> {
     /// numeric encoding as another would yield meaningless items behind a
     /// well-formed report, and — for the ordered families — would hide an
     /// integer-to-float conversion inside a run labelled `f64`.
-    pub fn generate(spec: &GenSpec) -> Result<Self, SketchCoreError> {
-        let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
+    pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
+        let desc = WorkloadDesc::from_shape(&spec.shape, spec.size, spec.seed);
         let mut wk = Self::new(T::from_column(spec.generate()?)?, desc);
         wk.spec = Some(spec.clone());
         Ok(wk)
@@ -212,7 +275,7 @@ impl<T: NumericItem> NumericWorkload<T> {
 
     /// Zipfian with `s`-parameter (skew exponent) over ranks
     /// `[1, cardinality]`. Convenience over [`Self::generate`].
-    pub fn zipf(size: usize, cardinality: u64, s: f64, seed: u64) -> Result<Self, SketchCoreError> {
+    pub fn zipf(size: usize, cardinality: u64, s: f64, seed: u64) -> Result<Self, SketchError> {
         Self::generate(&GenSpec {
             shape: Shape::Keys {
                 cardinality,
@@ -238,7 +301,7 @@ impl NumericWorkload<i64> {
     ///   frequency-family accuracy harness against network traces.
     /// * `.csv` — CSV with a header row; the first column on every
     ///   subsequent row is parsed as `i64`. Empty lines skipped.
-    pub fn load(path: &Path) -> Result<Self, SketchCoreError> {
+    pub fn load(path: &Path) -> Result<Self, SketchError> {
         let items = match path
             .extension()
             .and_then(|e| e.to_str())
@@ -253,7 +316,7 @@ impl NumericWorkload<i64> {
             }
         };
         if items.is_empty() {
-            return Err(SketchCoreError::BadParam(format!(
+            return Err(SketchError::BadParam(format!(
                 "file contained zero items: {}",
                 path.display()
             )));
@@ -332,13 +395,13 @@ impl<T: NumericItem> Workload for NumericWorkload<T> {
 /// the same path rather than failing a file that used to load. Only a
 /// sidecar we can actually parse is allowed to veto. `describe`, where
 /// the user asked about the sidecar specifically, keeps the strict
-/// [`crate::datagen::io::read_meta`] error.
-fn reject_non_i64_bin(path: &Path) -> Result<(), SketchCoreError> {
-    let Ok(Some(meta)) = crate::datagen::io::read_meta(path) else {
+/// [`aqpbm_datagen::io::read_meta`] error.
+fn reject_non_i64_bin(path: &Path) -> Result<(), SketchError> {
+    let Ok(Some(meta)) = aqpbm_datagen::io::read_meta(path) else {
         return Ok(());
     };
-    if meta.dtype != crate::datagen::DType::I64 {
-        return Err(SketchCoreError::BadParam(format!(
+    if meta.dtype != aqpbm_datagen::DType::I64 {
+        return Err(SketchError::BadParam(format!(
             "{}: sidecar declares dtype {}, but the benchmark only consumes i64. \
              Re-generate with `--dtype i64`; reading it as i64 would silently \
              reinterpret the raw bytes and produce meaningless keys.",
@@ -349,10 +412,10 @@ fn reject_non_i64_bin(path: &Path) -> Result<(), SketchCoreError> {
     Ok(())
 }
 
-fn load_bin(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
-    let bytes = std::fs::read(path).map_err(SketchCoreError::Io)?;
+fn load_bin(path: &Path) -> Result<Vec<i64>, SketchError> {
+    let bytes = std::fs::read(path).map_err(SketchError::Io)?;
     if bytes.len() % 8 != 0 {
-        return Err(SketchCoreError::BadParam(format!(
+        return Err(SketchError::BadParam(format!(
             "{}: size {} not a multiple of 8",
             path.display(),
             bytes.len()
@@ -364,12 +427,12 @@ fn load_bin(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
         .collect())
 }
 
-fn load_csv(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
+fn load_csv(path: &Path) -> Result<Vec<i64>, SketchError> {
     use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path).map_err(SketchCoreError::Io)?;
+    let file = std::fs::File::open(path).map_err(SketchError::Io)?;
     let mut items = Vec::new();
     for (idx, line) in BufReader::new(file).lines().enumerate() {
-        let line = line.map_err(SketchCoreError::Io)?;
+        let line = line.map_err(SketchError::Io)?;
         if idx == 0 {
             // Header row.
             continue;
@@ -379,7 +442,7 @@ fn load_csv(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
             continue;
         }
         let v: i64 = field.parse().map_err(|e| {
-            SketchCoreError::BadParam(format!(
+            SketchError::BadParam(format!(
                 "{}: bad i64 on line {}: {e}",
                 path.display(),
                 idx + 1
@@ -390,13 +453,13 @@ fn load_csv(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
     Ok(items)
 }
 
-fn load_pcap(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
+fn load_pcap(path: &Path) -> Result<Vec<i64>, SketchError> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(SketchCoreError::Io)?;
+    let mut file = std::fs::File::open(path).map_err(SketchError::Io)?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).map_err(SketchCoreError::Io)?;
+    file.read_to_end(&mut buf).map_err(SketchError::Io)?;
     if buf.len() < 24 {
-        return Err(SketchCoreError::BadParam(format!(
+        return Err(SketchError::BadParam(format!(
             "{}: pcap smaller than header",
             path.display()
         )));
@@ -405,7 +468,7 @@ fn load_pcap(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
         [0xd4, 0xc3, 0xb2, 0xa1] | [0x4d, 0x3c, 0xb2, 0xa1] => false,
         [0xa1, 0xb2, 0xc3, 0xd4] | [0xa1, 0xb2, 0x3c, 0x4d] => true,
         _ => {
-            return Err(SketchCoreError::BadParam(format!(
+            return Err(SketchError::BadParam(format!(
                 "{}: unsupported pcap magic",
                 path.display()
             )))
@@ -426,7 +489,7 @@ fn load_pcap(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
         let incl_len = read_u32(&buf[off + 8..off + 12]) as usize;
         off += 16;
         if off + incl_len > buf.len() {
-            return Err(SketchCoreError::BadParam(format!(
+            return Err(SketchError::BadParam(format!(
                 "{}: truncated pcap record",
                 path.display()
             )));
@@ -586,11 +649,8 @@ mod tests {
     }
 
     /// Generate a `.bin` + sidecar of the given dtype and try to load it.
-    fn load_generated(
-        dtype: crate::datagen::DType,
-        tag: &str,
-    ) -> Result<I64Workload, SketchCoreError> {
-        use crate::datagen::{io, Distribution, GenMeta, GenSpec, Shape};
+    fn load_generated(dtype: aqpbm_datagen::DType, tag: &str) -> Result<I64Workload, SketchError> {
+        use aqpbm_datagen::{io, Distribution, GenMeta, GenSpec, Shape};
         let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
         let spec = GenSpec {
             shape: Shape::Keys {
@@ -612,7 +672,7 @@ mod tests {
 
     #[test]
     fn bin_with_i64_sidecar_loads() {
-        let w = load_generated(crate::datagen::DType::I64, "i64").expect("i64 must load");
+        let w = load_generated(aqpbm_datagen::DType::I64, "i64").expect("i64 must load");
         assert_eq!(w.items().len(), 32);
     }
 
@@ -622,8 +682,8 @@ mod tests {
         // loading it would silently produce garbage keys rather than
         // fail. The sidecar is the only thing that can catch it.
         for (dtype, tag) in [
-            (crate::datagen::DType::F64, "f64"),
-            (crate::datagen::DType::U64, "u64"),
+            (aqpbm_datagen::DType::F64, "f64"),
+            (aqpbm_datagen::DType::U64, "u64"),
         ] {
             let err = load_generated(dtype, tag)
                 .expect_err("non-i64 dtype must be rejected, not silently misread");
@@ -660,15 +720,11 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&5i64.to_le_bytes()).unwrap();
         drop(f);
-        std::fs::write(
-            crate::datagen::io::sidecar_path(&path),
-            "{\"not\":\"ours\"}",
-        )
-        .unwrap();
+        std::fs::write(aqpbm_datagen::io::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
         let w = I64Workload::load(&path).expect("unparseable sidecar => fall back to i64");
         assert_eq!(w.items(), &[5]);
         std::fs::remove_file(&path).ok();
-        std::fs::remove_file(crate::datagen::io::sidecar_path(&path)).ok();
+        std::fs::remove_file(aqpbm_datagen::io::sidecar_path(&path)).ok();
     }
 
     #[test]
@@ -702,7 +758,7 @@ mod tests {
 #[cfg(test)]
 mod resample_tests {
     use super::*;
-    use crate::datagen::{DType, Distribution, GenSpec, Shape};
+    use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
 
     fn spec(seed: u64) -> GenSpec {
         GenSpec {
@@ -761,9 +817,45 @@ mod resample_tests {
 }
 
 #[cfg(test)]
+mod sink_tests {
+    use super::*;
+    use aqpbm_datagen::{Distribution, FileSink, GenSpec, Shape};
+
+    /// `workload generate` (file sink) and `bench --spec` (memory sink) must
+    /// be the same workload, or a run cannot be reproduced from the file it
+    /// was supposedly generated into.
+    ///
+    /// Lives here rather than in `sketch-datagen` because reading a `.bin`
+    /// back is `I64Workload::load`. The generator crate can write the format
+    /// but not read it, so it cannot check its own round trip — worth fixing,
+    /// but not by leaving the assertion unmade.
+    #[test]
+    fn file_and_memory_sinks_agree() {
+        let s = GenSpec {
+            shape: Shape::Keys {
+                cardinality: 500,
+                dist: Distribution::Zipf { s: 1.3 },
+                dtype: DType::I64,
+            },
+            size: 3_000,
+            seed: 7,
+        };
+        let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
+
+        let mut file_sink = FileSink::create(&path).unwrap();
+        s.generate_into(&mut file_sink, 64).unwrap();
+
+        let from_file = I64Workload::load(&path).unwrap();
+        let from_memory = I64Workload::generate(&s).unwrap();
+        assert_eq!(from_file.items(), from_memory.items());
+        std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
 mod dtype_tests {
     use super::*;
-    use crate::datagen::{Distribution, GenSpec, Shape};
+    use aqpbm_datagen::{Distribution, GenSpec, Shape};
 
     fn keys_spec(dtype: DType) -> GenSpec {
         GenSpec {

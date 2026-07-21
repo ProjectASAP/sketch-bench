@@ -4,10 +4,15 @@
 //! raw little-endian `.bin` files (consumed by `sketchlib bench
 //! --input`) alongside a self-describing `.meta.json` sidecar.
 //!
-//! The design is intentionally decoupled from the benchmark: generators
-//! write files, the benchmark reads them through the existing
-//! [`crate::workload::FileI64`] loader, so no dispatch machinery has to
-//! know a new distribution exists. See `docs/DESIGN.md` §4.3.
+//! The design is intentionally decoupled from any particular benchmark:
+//! generators write columns into a [`sink::Sink`], and a consumer reads
+//! them back through the `.bin` + sidecar format, so no dispatch machinery
+//! has to know a new distribution exists.
+//!
+//! This crate depends on nothing else in the workspace. The sketch
+//! benchmark is its first consumer, not its owner -- which is why it is
+//! named for the program it belongs to rather than for the sketches that
+//! happen to read it today. See `docs/DESIGN.md` §4.3.
 //!
 //! ## Extending
 //!
@@ -29,6 +34,7 @@
 //! always yield byte-identical output.
 
 pub mod dist;
+pub mod error;
 pub mod io;
 pub mod shape;
 pub mod sink;
@@ -40,7 +46,7 @@ use std::path::Path;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
+pub use crate::error::SketchError;
 
 pub use dist::Distribution;
 pub use shape::{Generator, Shape, TimeUnit};
@@ -172,7 +178,7 @@ impl Column {
     /// and a plausible-looking report, so this refuses rather than
     /// casts (same contract as the `.bin` sidecar guard in
     /// `crate::workload`).
-    pub fn into_i64(self) -> Result<Vec<i64>, SketchCoreError> {
+    pub fn into_i64(self) -> Result<Vec<i64>, SketchError> {
         match self {
             Column::I64(v) => Ok(v),
             other => Err(Self::wrong_dtype(other.dtype(), DType::I64)),
@@ -184,15 +190,15 @@ impl Column {
     /// would put an `as f64` back on the insert path under a report that says
     /// the workload was `f64`, which is the exact thing the dtype axis exists
     /// to distinguish.
-    pub fn into_f64(self) -> Result<Vec<f64>, SketchCoreError> {
+    pub fn into_f64(self) -> Result<Vec<f64>, SketchError> {
         match self {
             Column::F64(v) => Ok(v),
             other => Err(Self::wrong_dtype(other.dtype(), DType::F64)),
         }
     }
 
-    fn wrong_dtype(got: DType, want: DType) -> SketchCoreError {
-        SketchCoreError::BadParam(format!(
+    fn wrong_dtype(got: DType, want: DType) -> SketchError {
+        SketchError::BadParam(format!(
             "workload must be {}, got {}; re-generate with dtype {}",
             want.as_str(),
             got.as_str(),
@@ -229,7 +235,7 @@ impl GenSpec {
     /// size: 1000000
     /// seed: 42
     /// ```
-    pub fn from_path(path: &Path) -> Result<Self, SketchCoreError> {
+    pub fn from_path(path: &Path) -> Result<Self, SketchError> {
         let text = std::fs::read_to_string(path)?;
         let ext = path
             .extension()
@@ -237,9 +243,9 @@ impl GenSpec {
             .map(|e| e.to_ascii_lowercase());
         match ext.as_deref() {
             Some("yaml") | Some("yml") => serde_yaml::from_str(&text)
-                .map_err(|e| SketchCoreError::BadParam(format!("spec yaml: {e}"))),
+                .map_err(|e| SketchError::BadParam(format!("spec yaml: {e}"))),
             _ => serde_json::from_str(&text)
-                .map_err(|e| SketchCoreError::BadParam(format!("spec json: {e}"))),
+                .map_err(|e| SketchError::BadParam(format!("spec json: {e}"))),
         }
     }
 
@@ -249,7 +255,7 @@ impl GenSpec {
     /// [`MemorySink`], for callers that want the values resident (the
     /// benchmark runner replays one slice per measured run) and know
     /// the dataset fits.
-    pub fn generate(&self) -> Result<Column, SketchCoreError> {
+    pub fn generate(&self) -> Result<Column, SketchError> {
         let mut sink = MemorySink::new();
         self.generate_into(&mut sink, DEFAULT_CHUNK)?;
         // `generate_into` rejects `size == 0`, so a chunk always arrived and
@@ -257,7 +263,7 @@ impl GenSpec {
         // column here instead would launder an `f64` spec into something
         // `Column::into_i64` accepts, defeating the dtype guard.
         sink.into_column()
-            .ok_or_else(|| SketchCoreError::BadParam("generator produced no values".into()))
+            .ok_or_else(|| SketchError::BadParam("generator produced no values".into()))
     }
 
     /// Generate into `sink`, `chunk` values at a time, and return the
@@ -272,10 +278,10 @@ impl GenSpec {
         &self,
         sink: &mut S,
         chunk: usize,
-    ) -> Result<GenMeta, SketchCoreError> {
+    ) -> Result<GenMeta, SketchError> {
         use rand::SeedableRng;
         if chunk == 0 {
-            return Err(SketchCoreError::BadParam("chunk size must be > 0".into()));
+            return Err(SketchError::BadParam("chunk size must be > 0".into()));
         }
         // An empty workload benchmarks nothing, but every downstream stage
         // accepts it: the runner times an empty loop and reports `0.0
@@ -283,7 +289,7 @@ impl GenSpec {
         // already refuses a zero-item file; refuse the generated case here so
         // both sources agree.
         if self.size == 0 {
-            return Err(SketchCoreError::BadParam("size must be > 0".into()));
+            return Err(SketchError::BadParam("size must be > 0".into()));
         }
         let mut generator = self.shape.build()?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(self.seed);
@@ -676,28 +682,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn file_and_memory_sinks_agree() {
-        // `workload generate` (file sink) and `bench --spec` (memory
-        // sink) must be the same workload, or a run cannot be
-        // reproduced from the file it was supposedly generated into.
-        let s = spec(
-            keys(500, Distribution::Zipf { s: 1.3 }, DType::I64),
-            3_000,
-            7,
-        );
-        let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
-
-        let mut file_sink = crate::datagen::FileSink::create(&path).unwrap();
-        s.generate_into(&mut file_sink, 64).unwrap();
-
-        let from_file = crate::workload::I64Workload::load(&path).unwrap();
-        let from_memory = crate::workload::I64Workload::generate(&s).unwrap();
-        use crate::workload::Workload as _;
-        assert_eq!(from_file.items(), from_memory.items());
-        std::fs::remove_file(&path).ok();
     }
 
     #[test]

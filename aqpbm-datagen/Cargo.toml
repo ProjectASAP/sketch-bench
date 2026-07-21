@@ -1,17 +1,15 @@
 [package]
-name = "sketch-core"
+name = "aqpbm-datagen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types (Sketch trait, Probe, Workload, v1 report schema) shared by sketch-bench, sketch-profile, sketch-runtime, and downstream ASAP apps."
+description = "Synthetic workload generator for the AQPBM benchmarks: distributions, shapes, typed columns, and the on-disk `.bin` + sidecar format. Depends on nothing in the workspace and knows nothing about sketches -- the sketch benchmark is its first consumer, not its owner."
 
 [dependencies]
-aqpbm-datagen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-chrono.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
 rand_xoshiro.workspace = true

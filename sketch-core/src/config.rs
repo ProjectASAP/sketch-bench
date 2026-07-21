@@ -34,7 +34,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
+use aqpbm_datagen::SketchError;
 
 /// Construction parameters for one sketch family.
 ///
@@ -77,16 +77,16 @@ impl ParamSet {
     /// Fails if this set belongs to another family, or if the JSON does not
     /// match `P` — which is how an unknown or misspelled `--config` key is
     /// reported, with serde naming the key and listing the valid ones.
-    pub fn parse<P: SketchParams>(&self) -> Result<P, SketchCoreError> {
+    pub fn parse<P: SketchParams>(&self) -> Result<P, SketchError> {
         if self.family != P::FAMILY {
-            return Err(SketchCoreError::BadParam(format!(
+            return Err(SketchError::BadParam(format!(
                 "params are for family '{}', not '{}'",
                 self.family,
                 P::FAMILY
             )));
         }
         serde_json::from_value(self.params.clone())
-            .map_err(|e| SketchCoreError::BadParam(format!("{} params: {e}", P::FAMILY)))
+            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", P::FAMILY)))
     }
 
     pub fn family(&self) -> &str {
