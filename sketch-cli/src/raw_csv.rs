@@ -308,14 +308,15 @@ impl ParamCols {
                 }
             }
             _ => {
-                for (name, v) in params.fields() {
-                    // Header order is fixed by `legacy_param_columns`; look up
-                    // the static name so the tuple keeps its `'static` type.
-                    if let Some(col) = legacy_param_columns(family)
-                        .iter()
-                        .find(|c| **c == name.as_str())
-                    {
-                        cols.push((col, v));
+                // Iterate the **header**, looking each column's value up —
+                // not the params object, which is ordered alphabetically.
+                // Driving the loop from `fields()` emitted cms as `2048,5`
+                // under a header reading `rows,cols`: a silent column/value
+                // swap in a file that plot scripts read positionally.
+                let fields = params.fields();
+                for col in legacy_param_columns(family) {
+                    if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
+                        cols.push((col, v.clone()));
                     }
                 }
             }
@@ -514,6 +515,78 @@ mod tests {
         assert_eq!(
             query_header("kll"),
             "implementation,language,run,k,total_items,total_queries,total_nanoseconds,throughput_queries_per_sec"
+        );
+    }
+}
+
+#[cfg(test)]
+mod param_column_order_tests {
+    use super::*;
+    use sketch_core::config::{CmsParams, ElasticParams, HllParams, UnivMonParams};
+
+    /// Values must line up with the header, which is *not* alphabetical.
+    ///
+    /// The generic value path once iterated the params object — ordered by
+    /// key — while the header stayed in its legacy order, so cms wrote
+    /// `2048,5` under `rows,cols`. The CSV is read positionally, so nothing
+    /// downstream could have noticed.
+    #[test]
+    fn values_follow_the_header_not_the_key_order() {
+        let cases: Vec<(&str, ParamSet, Vec<&str>)> = vec![
+            (
+                "cms",
+                ParamSet::of(&CmsParams {
+                    rows: 5,
+                    cols: 2048,
+                }),
+                vec!["5", "2048"],
+            ),
+            (
+                "countsketch",
+                ParamSet::of(&sketch_core::config::CountSketchParams {
+                    rows: 3,
+                    cols: 4096,
+                }),
+                vec!["3", "4096"],
+            ),
+            (
+                "elastic",
+                ParamSet::of(&ElasticParams {
+                    buckets: 1024,
+                    depth: 3,
+                }),
+                vec!["1024", "3"],
+            ),
+            (
+                "univmon",
+                ParamSet::of(&UnivMonParams {
+                    layers: 8,
+                    max_stream: 256,
+                }),
+                vec!["8", "256"],
+            ),
+        ];
+        for (family, params, expected) in cases {
+            let cols = ParamCols::from(family, Some(&params));
+            let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
+            let header: Vec<&str> = param_header(family).split(',').collect();
+            assert_eq!(names, header, "{family}: column order must match header");
+            let values: Vec<&str> = cols.cols.iter().map(|(_, v)| v.as_str()).collect();
+            assert_eq!(values, expected, "{family}: values misaligned");
+        }
+    }
+
+    /// `registers` is derived from `lg_k`, not a parameter — the one place the
+    /// header is not simply a list of fields.
+    #[test]
+    fn hll_still_emits_the_derived_register_count() {
+        let cols = ParamCols::from("hll", Some(&ParamSet::of(&HllParams { lg_k: 14 })));
+        assert_eq!(
+            cols.cols,
+            vec![
+                ("lg_k", "14".to_string()),
+                ("registers", "16384".to_string())
+            ]
         );
     }
 }
