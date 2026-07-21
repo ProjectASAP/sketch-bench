@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 
 use sketch_core::config::HllParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 #[derive(Debug, Default, Clone)]
 pub struct ExactCardinality {
@@ -64,6 +64,12 @@ impl Sketch for ExactCardinality {
 
     fn memory_bytes(&self) -> usize {
         self.set.capacity() * (std::mem::size_of::<i64>() + 1)
+    }
+
+    /// Set union — exact, like the HLL merge it is the baseline for.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.set.extend(other.set.iter().copied());
+        Ok(())
     }
 }
 

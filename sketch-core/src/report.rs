@@ -104,6 +104,21 @@ pub struct BenchSection {
     pub memory_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
+    /// Wall time to fold `merge_shards` shard sketches into one, per run.
+    /// Absent unless the merge pass ran. Scales with sketch *state* size, not
+    /// stream length, so compare it against `memory_bytes` rather than
+    /// against insert throughput.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_time_ms: Option<RunStats>,
+    /// How many shards were folded. Present whenever the merge pass ran, even
+    /// if the implementation turned out not to support merging.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_shards: Option<usize>,
+    /// `false` when the implementation provides no merge. Recorded rather
+    /// than omitted so a sweep's capability gaps are visible in the output
+    /// instead of showing up as missing rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_supported: Option<bool>,
 }
 
 /// MICRO (profile) section of a record — filled by

@@ -12,7 +12,8 @@
 use std::cell::RefCell;
 
 use sketch_core::config::KllParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
+use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide KLL ----------
 // `KllSketch::default()` constructs with the crate's built-in `k`
@@ -46,6 +47,18 @@ impl Sketch for KllOxide {
     }
     fn memory_bytes(&self) -> usize {
         (self.k as usize) * std::mem::size_of::<f64>() * 4
+    }
+
+    /// Unlike HLL, KLL's merge is **lossy**: combining compactors adds error
+    /// beyond a single pass over the same data, and the result depends on the
+    /// merge order. That is precisely why the merge benchmark measures
+    /// accuracy after merging rather than asserting it.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner
+            .borrow_mut()
+            .merge(&other.inner.borrow())
+            .expect("both operands built from one ParamSet, so k matches");
+        Ok(())
     }
 }
 
@@ -95,6 +108,13 @@ impl Sketch for KllLib {
     }
     fn memory_bytes(&self) -> usize {
         (self.k as usize) * std::mem::size_of::<i64>() * 4
+    }
+
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        // A merged sketch invalidates any CDF cached from the pre-merge state.
+        *self.cdf.borrow_mut() = None;
+        Ok(())
     }
     fn finalize_for_query(&mut self) {
         *self.cdf.borrow_mut() = Some(self.inner.cdf());

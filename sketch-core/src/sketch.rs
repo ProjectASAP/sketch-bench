@@ -55,6 +55,29 @@ pub trait Sketch {
     /// to the bench (the operator can log the constant instead).
     fn memory_bytes(&self) -> usize;
 
+    /// Absorb another sketch of the same type and configuration.
+    ///
+    /// Mergeability is what makes a summary a *sketch* rather than a
+    /// stopwatch: it is why one can be computed per shard, per node, or per
+    /// time window and combined afterwards. So it belongs here on the base
+    /// trait, not in a separate opt-in capability trait — modelling it as
+    /// optional would say merging is exotic, and it is the common case.
+    ///
+    /// The `Result` is **not** about dimension mismatch. The benchmark always
+    /// constructs both operands from one `ParamSet`, so mismatched shapes
+    /// cannot arise, and a wrapper whose library returns a `Result` for that
+    /// reason should `expect()` it. The error exists for the other question:
+    /// *this implementation does not provide a merge at all*. Three of this
+    /// repo's rows are in that position (Nitro's and UnivMon's wrappers, whose
+    /// `query` is already a stub; the parallel-insert rows, which are N
+    /// deliberately unmerged shards and are arguably not one sketch). The
+    /// default therefore reports unsupported rather than panicking, so a
+    /// merge sweep records a row saying so instead of dying — the capability
+    /// matrix is itself a result worth publishing.
+    fn merge(&mut self, _other: &Self) -> Result<(), MergeUnsupported> {
+        Err(MergeUnsupported)
+    }
+
     /// One-shot transition from "ingesting" to "queryable".
     /// Called once between the last `update` and the first
     /// `query`. Default no-op.
@@ -69,3 +92,20 @@ pub trait Sketch {
     /// "ready-to-answer" state.
     fn finalize_for_query(&mut self) {}
 }
+
+/// Returned by [`Sketch::merge`] when an implementation provides no merge.
+///
+/// Deliberately a unit type with no variants for "shapes differ" or "seeds
+/// differ": the benchmark builds both operands from one `ParamSet`, so those
+/// cannot happen, and inventing variants for them would suggest the caller
+/// has a decision to make where it does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeUnsupported;
+
+impl std::fmt::Display for MergeUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "this implementation provides no merge")
+    }
+}
+
+impl std::error::Error for MergeUnsupported {}

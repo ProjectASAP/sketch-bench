@@ -9,7 +9,7 @@
 use hashbrown::HashMap;
 
 use sketch_core::config::CmsParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 /// Heavy-hitter threshold — matches the value the legacy
 /// `accuracy/cms/rust/src/baseline.rs` used. Keys with true
@@ -81,6 +81,14 @@ impl Sketch for ExactFrequency {
         // struct's stack footprint, which is fine — `memory_bytes`
         // is documented as the heap-resident core (see Sketch).
         self.map.allocation_size()
+    }
+
+    /// Counter-wise addition, exactly what a linear frequency sketch does.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        for (k, v) in other.map.iter() {
+            *self.map.entry(*k).or_insert(0) += *v;
+        }
+        Ok(())
     }
 }
 
