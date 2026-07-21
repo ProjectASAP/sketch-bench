@@ -1,0 +1,15 @@
+# Monotonic event timestamps (millis since epoch) with Poisson-process
+# arrivals: inter-arrival gaps are exponential, floored at 1ms so the
+# stream is strictly increasing.
+# Generate with:
+#   sketchlib workload generate --spec configs/datagen/events_timestamp.yaml --out input/events_ts.bin
+shape: monotonic
+start: 1700000000000
+unit: millis
+gap:
+  kind: exponential
+  lambda: 0.5
+min_gap: 1
+dtype: i64
+size: 1000000
+seed: 42

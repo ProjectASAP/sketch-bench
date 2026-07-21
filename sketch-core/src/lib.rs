@@ -7,6 +7,7 @@
 //! for the full dependency-direction diagram.
 
 pub mod config;
+pub mod datagen;
 pub mod error;
 pub mod probe;
 pub mod report;
@@ -16,6 +17,10 @@ pub mod workload;
 pub use config::{
     CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
     ParamSet, UnivMonParams,
+};
+pub use datagen::{
+    BasicStats, Column, DType, Distribution, Generator, GenMeta, GenSpec, Shape, TimeUnit,
+    GEN_META_SCHEMA_VERSION,
 };
 pub use error::SketchCoreError;
 pub use probe::{MetricsSink, NoopSink, Probe};

@@ -8,6 +8,7 @@ mod dispatch;
 mod params;
 mod raw_csv;
 mod sweep;
+mod workload_cmd;
 mod wrappers;
 
 // Global allocator selection. Four combinations of two feature
@@ -57,6 +58,8 @@ enum Cmd {
     Bench(BenchArgs),
     /// List every `(family, impl)` pair the CLI can drive.
     ListImpls,
+    /// Generate or inspect synthetic `.bin` workloads.
+    Workload(workload_cmd::WorkloadArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -241,6 +244,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Bench(args) => run_bench(args),
+        Cmd::Workload(args) => workload_cmd::run(args),
     }
 }
 

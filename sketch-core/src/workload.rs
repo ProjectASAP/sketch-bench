@@ -147,7 +147,10 @@ impl FileI64 {
         {
             Some("pcap") => load_pcap(path)?,
             Some("csv") => load_csv(path)?,
-            _ => load_bin(path)?,
+            _ => {
+                reject_non_i64_bin(path)?;
+                load_bin(path)?
+            }
         };
         if items.is_empty() {
             return Err(SketchCoreError::BadParam(format!(
@@ -160,6 +163,42 @@ impl FileI64 {
             source_path: path.display().to_string(),
         })
     }
+}
+
+/// Reject a `.bin` whose sidecar declares a dtype this loader cannot
+/// read.
+///
+/// The `.bin` stream is header-less, so it cannot describe itself: a
+/// `u64`/`f64` file is byte-indistinguishable from an `i64` one and
+/// [`load_bin`] would happily reinterpret every 8-byte word as an
+/// `i64`. For `f64` that is catastrophic — the IEEE-754 bit pattern of
+/// `0.093` reads back as `4591388162153532928` — and the run would
+/// still emit a well-formed, plausible-looking report. A benchmark
+/// number that is silently wrong is worse than no number at all, so
+/// this fails loudly instead.
+///
+/// Absence of usable provenance means "assume i64", the historical
+/// contract — so a missing sidecar (every legacy
+/// `input/benchmark_data_*.bin`) loads unchanged, and an unreadable one
+/// (foreign file, or a future schema this binary predates) degrades to
+/// the same path rather than failing a file that used to load. Only a
+/// sidecar we can actually parse is allowed to veto. `describe`, where
+/// the user asked about the sidecar specifically, keeps the strict
+/// [`crate::datagen::io::read_meta`] error.
+fn reject_non_i64_bin(path: &Path) -> Result<(), SketchCoreError> {
+    let Ok(Some(meta)) = crate::datagen::io::read_meta(path) else {
+        return Ok(());
+    };
+    if meta.dtype != crate::datagen::DType::I64 {
+        return Err(SketchCoreError::BadParam(format!(
+            "{}: sidecar declares dtype {}, but the benchmark only consumes i64. \
+             Re-generate with `--dtype i64`; reading it as i64 would silently \
+             reinterpret the raw bytes and produce meaningless keys.",
+            path.display(),
+            meta.dtype.as_str(),
+        )));
+    }
+    Ok(())
 }
 
 fn load_bin(path: &Path) -> Result<Vec<i64>, SketchCoreError> {
@@ -396,6 +435,82 @@ mod tests {
         assert_eq!(w.items(), &[1, -2, 3, 4]);
         assert_eq!(w.desc().shape, "file");
         std::fs::remove_file(&path).ok();
+    }
+
+    /// Generate a `.bin` + sidecar of the given dtype and try to load it.
+    fn load_generated(dtype: crate::datagen::DType, tag: &str) -> Result<FileI64, SketchCoreError> {
+        use crate::datagen::{io, Distribution, GenMeta, GenSpec, Shape};
+        let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
+        let spec = GenSpec {
+            shape: Shape::Keys {
+                cardinality: 64,
+                dist: Distribution::Uniform,
+                dtype,
+            },
+            size: 32,
+            seed: 1,
+        };
+        let col = spec.generate().unwrap();
+        io::write_bin(&path, &col).unwrap();
+        io::write_meta(&path, &GenMeta::new(&spec, &col)).unwrap();
+        let out = FileI64::load(&path);
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(io::sidecar_path(&path)).ok();
+        out
+    }
+
+    #[test]
+    fn bin_with_i64_sidecar_loads() {
+        let w = load_generated(crate::datagen::DType::I64, "i64").expect("i64 must load");
+        assert_eq!(w.items().len(), 32);
+    }
+
+    #[test]
+    fn bin_with_non_i64_sidecar_is_rejected() {
+        // An f64/u64 stream is byte-indistinguishable from i64, so
+        // loading it would silently produce garbage keys rather than
+        // fail. The sidecar is the only thing that can catch it.
+        for (dtype, tag) in [
+            (crate::datagen::DType::F64, "f64"),
+            (crate::datagen::DType::U64, "u64"),
+        ] {
+            let err = load_generated(dtype, tag)
+                .expect_err("non-i64 dtype must be rejected, not silently misread");
+            let msg = err.to_string();
+            assert!(msg.contains(tag), "error should name the offending dtype: {msg}");
+        }
+    }
+
+    #[test]
+    fn bin_without_sidecar_is_assumed_i64() {
+        // Legacy `input/benchmark_data_*.bin` files have no sidecar and
+        // must keep loading unchanged.
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_no_sidecar.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for v in [7i64, 8, 9] {
+            f.write_all(&v.to_le_bytes()).unwrap();
+        }
+        drop(f);
+        let w = FileI64::load(&path).expect("no sidecar => assume i64");
+        assert_eq!(w.items(), &[7, 8, 9]);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn unreadable_sidecar_does_not_break_a_loadable_bin() {
+        // A foreign `.meta.json`, or one from a future schema, must not
+        // fail a file that loaded fine before the guard existed.
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_bad_sidecar.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&5i64.to_le_bytes()).unwrap();
+        drop(f);
+        std::fs::write(crate::datagen::io::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
+        let w = FileI64::load(&path).expect("unparseable sidecar => fall back to i64");
+        assert_eq!(w.items(), &[5]);
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(crate::datagen::io::sidecar_path(&path)).ok();
     }
 
     #[test]

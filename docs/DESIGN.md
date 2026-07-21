@@ -132,6 +132,15 @@ Absorbed from `sketch-profiler`'s `data_gen/`:
 - YAML config loader (pattern borrowed from asap-fusion `experiments/configs/`, with `{SIZE}` placeholder expansion)
 - Distribution generators: uniform, Zipf (s-parameter), custom shape
 
+**Implemented** as the `sketch_core::datagen` module + the `sketchlib
+workload generate|describe` subcommand — see `docs/DATAGEN.md`. The
+extensible `Shape` registry currently ships uniform, Zipf,
+monotonic-timestamp (inter-arrival gaps), and skewed-categorical
+(finite-domain) shapes over i64/u64/f64 output, written as a raw
+little-endian `.bin` (consumed by `bench --input`) plus a `.meta.json`
+provenance sidecar. YAML/JSON specs cover the `{SIZE}`/custom-shape
+config intent.
+
 ### 4.4 Report schema (JSONL, one record per run)
 
 ```json
