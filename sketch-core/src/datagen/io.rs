@@ -7,8 +7,6 @@
 //! `cpp-bench` loader). All provenance — dtype included — lives in the
 //! sidecar, which those readers ignore.
 
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::SketchCoreError;
@@ -25,13 +23,15 @@ pub fn sidecar_path(bin_path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Write a column as a raw little-endian stream (no header).
+/// Write an already-materialised column as a raw little-endian stream
+/// (no header). Streaming generation should go through
+/// [`super::FileSink`] instead — this is the one-shot convenience for
+/// callers that already hold the whole column.
 pub fn write_bin(path: &Path, col: &Column) -> Result<(), SketchCoreError> {
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-    col.write_le(&mut writer)?;
-    writer.flush()?;
-    Ok(())
+    use super::Sink;
+    let mut sink = super::FileSink::create(path)?;
+    sink.accept(col)?;
+    sink.flush()
 }
 
 /// Write the provenance sidecar next to `bin_path`. Returns its path.
