@@ -83,12 +83,7 @@ impl WorkloadSpec {
     pub fn build_i64(self) -> Result<I64Workload> {
         match self {
             WorkloadSpec::Generated(spec) => {
-                let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
-                let items = spec
-                    .generate()
-                    .and_then(|col| col.into_i64())
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                Ok(I64Workload::new(items, desc))
+                I64Workload::generate(&spec).map_err(|e| anyhow::anyhow!("{}", e))
             }
             WorkloadSpec::File { path } => {
                 I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))

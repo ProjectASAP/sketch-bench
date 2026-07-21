@@ -23,15 +23,6 @@ pub struct BasicStats {
     pub last: Option<f64>,
 }
 
-impl BasicStats {
-    /// Summarize a slice, projecting each element to `f64` via `to_f64`.
-    pub(crate) fn summarize<T, F: Fn(&T) -> f64>(values: &[T], to_f64: F) -> Self {
-        let mut acc = StatsAcc::default();
-        acc.push_slice(values, to_f64);
-        acc.finish()
-    }
-}
-
 /// Running summary over a chunked value stream.
 ///
 /// The generator can emit a column in pieces (see
@@ -39,7 +30,7 @@ impl BasicStats {
 /// accumulated rather than computed from a whole slice. Every field is
 /// order-independent except `first`/`last`, which is why chunks must be
 /// pushed in emission order.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct StatsAcc {
     count: usize,
     min: f64,
@@ -61,12 +52,6 @@ impl StatsAcc {
 
     /// Fold one chunk in. Must be called in emission order.
     pub(crate) fn push_slice<T, F: Fn(&T) -> f64>(&mut self, values: &[T], to_f64: F) {
-        if self.count == 0 && self.first.is_none() {
-            // `Default` leaves min/max at 0.0; seed them properly on
-            // first use so a default-constructed acc behaves like `new`.
-            self.min = f64::INFINITY;
-            self.max = f64::NEG_INFINITY;
-        }
         if values.is_empty() {
             return;
         }
@@ -113,7 +98,9 @@ mod tests {
     #[test]
     fn chunked_accumulation_matches_whole_slice() {
         let all: Vec<i64> = (0..100).map(|i| (i * 37) % 61).collect();
-        let whole = BasicStats::summarize(&all, |x| *x as f64);
+        let mut whole_acc = StatsAcc::new();
+        whole_acc.push_slice(&all, |x| *x as f64);
+        let whole = whole_acc.finish();
 
         let mut acc = StatsAcc::new();
         for chunk in all.chunks(7) {

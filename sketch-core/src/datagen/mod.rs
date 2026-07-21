@@ -44,7 +44,7 @@ use crate::error::SketchCoreError;
 
 pub use dist::Distribution;
 pub use shape::{Generator, Shape, TimeUnit};
-pub use sink::{FileSink, MemorySink, Sink, WriterSink};
+pub use sink::{FileSink, MemorySink, Sink};
 pub use stats::{BasicStats, StatsAcc};
 
 /// Values produced per [`Sink::accept`] call by [`GenSpec::generate_into`].
@@ -228,7 +228,12 @@ impl GenSpec {
     pub fn generate(&self) -> Result<Column, SketchCoreError> {
         let mut sink = MemorySink::new();
         self.generate_into(&mut sink, DEFAULT_CHUNK)?;
-        Ok(sink.into_column().unwrap_or(Column::I64(Vec::new())))
+        // `generate_into` rejects `size == 0`, so a chunk always arrived and
+        // the column carries the shape's real dtype. Defaulting to an `I64`
+        // column here instead would launder an `f64` spec into something
+        // `Column::into_i64` accepts, defeating the dtype guard.
+        sink.into_column()
+            .ok_or_else(|| SketchCoreError::BadParam("generator produced no values".into()))
     }
 
     /// Generate into `sink`, `chunk` values at a time, and return the
@@ -247,6 +252,14 @@ impl GenSpec {
         use rand::SeedableRng;
         if chunk == 0 {
             return Err(SketchCoreError::BadParam("chunk size must be > 0".into()));
+        }
+        // An empty workload benchmarks nothing, but every downstream stage
+        // accepts it: the runner times an empty loop and reports `0.0
+        // items/sec` with a confidence interval around it. `I64Workload::load`
+        // already refuses a zero-item file; refuse the generated case here so
+        // both sources agree.
+        if self.size == 0 {
+            return Err(SketchCoreError::BadParam("size must be > 0".into()));
         }
         let mut generator = self.shape.build()?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(self.seed);

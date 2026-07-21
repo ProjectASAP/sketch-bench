@@ -28,12 +28,17 @@ fn warmup_cpu_once() {
 /// the governor can drop frequency during the bench process's exec/startup
 /// window.
 ///
-/// Duration is read from `BENCH_WARMUP_SECS` (default 10s). Set to 0 to skip.
+/// Duration is read from `BENCH_WARMUP_SECS`. **Defaults to 0** — a library
+/// must not burn ten seconds of a caller's CPU because it was linked. The
+/// measurement default lives in `sketchlib`'s `main`, which sets the variable
+/// when the operator hasn't; every integration test and downstream embedder
+/// therefore pays nothing. (`cfg!(test)` cannot express this: an integration
+/// test links this crate as a plain dependency, compiled without `cfg(test)`.)
 fn warmup_cpu_from_env() {
     let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(0);
     if secs == 0 {
         return;
     }
@@ -155,7 +160,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     fn run_throughput_pass_with<S, F, Insert>(
         &self,
         factory: &mut F,
-        mut insert: Insert,
+        // `&mut Insert`, not `Insert`: `run_pass` -> `run_once_clean` also
+        // reaches `insert_loop` through one `&mut`, so taking it by value
+        // here would instantiate `insert_loop::<_, &mut &mut Insert>` on this
+        // path and `insert_loop::<_, &mut Insert>` on the other. They fold
+        // today, but only because of `#[inline(always)]` + LTO — the exact
+        // mechanism whose failure caused the 5.1% split this fix exists to
+        // close. Same type on both paths makes it structural instead.
+        insert: &mut Insert,
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
@@ -171,7 +183,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
         for trial in 0..total {
             let mut sketch = factory();
-            let ns = insert_loop(&mut sketch, items, &mut insert);
+            let ns = insert_loop(&mut sketch, items, insert);
             if trial >= pass_cfg.warmup_runs {
                 ns_list.push(ns);
             }
@@ -519,31 +531,8 @@ impl BenchReport {
     }
 }
 
-/// Run a bench without a `GroundTruth`. Helper that pins the
-/// `G` parameter to a zero-sized marker so the main API stays
-/// generic but callers who don't want accuracy don't have to
-/// invent a type.
-pub fn run_without_accuracy<S, W, F, Insert>(
-    cfg: BenchConfig,
-    workload: &W,
-    sketch_name: impl Into<String>,
-    impl_name: impl Into<String>,
-    factory: F,
-    insert: Insert,
-) -> Vec<BenchReport>
-where
-    W: Workload,
-    W::Item: Clone,
-    S: Sketch<Item = W::Item>,
-    F: FnMut() -> S,
-    Insert: FnMut(&mut S, &W::Item),
-{
-    let runner = BenchRunner::new(cfg, workload, sketch_name, impl_name);
-    runner.run::<S, F, NoGT, Insert>(factory, insert, None)
-}
-
-/// Placeholder `GroundTruth` used when `run_without_accuracy`
-/// supplies `None`. Never called; `compare` is a safe default.
+/// Placeholder `GroundTruth` for dispatch rows that run without a
+/// comparator. Never called; `compare` is a safe default.
 pub struct NoGT;
 impl<S: Sketch> GroundTruth<S> for NoGT {
     fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
