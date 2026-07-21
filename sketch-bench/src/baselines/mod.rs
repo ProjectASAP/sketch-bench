@@ -68,8 +68,3 @@ impl Statistic {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

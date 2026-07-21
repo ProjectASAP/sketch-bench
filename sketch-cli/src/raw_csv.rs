@@ -304,7 +304,7 @@ impl ParamCols {
                 cols.push(("rows", "0".to_string()));
                 cols.push(("cols", "0".to_string()));
                 for (_, v) in params.fields() {
-                    cols.push(("rate", v));
+                    cols.push(("rate", legacy_float_format(&v)));
                 }
             }
             _ => {
@@ -316,7 +316,7 @@ impl ParamCols {
                 let fields = params.fields();
                 for col in legacy_param_columns(family) {
                     if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
-                        cols.push((col, v.clone()));
+                        cols.push((col, legacy_float_format(v)));
                     }
                 }
             }
@@ -380,6 +380,20 @@ fn leading_label(family: &str) -> &'static str {
     match family {
         "cms" | "countsketch" => "seed",
         _ => "run",
+    }
+}
+
+/// Render a value the way the pre-generic writer did.
+///
+/// `--raw-csv` **appends**, so a formatting change splits one series in two:
+/// `alpha = 0.01` written as `0.010000` by earlier runs and `0.01` by later
+/// ones makes `groupby(row["alpha"])` produce two points with half the samples
+/// each. Integers were always rendered plainly; floats always with six
+/// decimals, and they still are.
+fn legacy_float_format(v: &str) -> String {
+    match v.parse::<f64>() {
+        Ok(f) if v.contains('.') || v.contains('e') || v.contains('E') => format!("{f:.6}"),
+        _ => v.to_string(),
     }
 }
 
