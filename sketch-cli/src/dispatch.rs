@@ -16,6 +16,7 @@ use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
+use sketch_core::datagen::GenSpec;
 use sketch_core::workload::{BytesWorkload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
@@ -64,39 +65,26 @@ pub enum AccuracyKind {
     None,
 }
 
+/// Where a benchmark's items come from: generated in-process by
+/// `datagen`, or loaded from a file.
+///
+/// There is exactly one generator in the tool — `sketchlib workload
+/// generate` and `sketchlib bench` drive the same `GenSpec` through the
+/// same samplers, differing only in the [`Sink`](sketch_core::datagen::Sink)
+/// they push into (file vs memory). A shape reachable from one is
+/// reachable from the other by construction.
 #[derive(Debug, Clone)]
 pub enum WorkloadSpec {
-    Uniform {
-        size: usize,
-        cardinality: u64,
-        seed: u64,
-    },
-    Zipf {
-        size: usize,
-        cardinality: u64,
-        s: f64,
-        seed: u64,
-    },
-    File {
-        path: String,
-    },
+    Generated(GenSpec),
+    File { path: String },
 }
 
 impl WorkloadSpec {
     pub fn build_i64(self) -> Result<I64Workload> {
         match self {
-            WorkloadSpec::Uniform {
-                size,
-                cardinality,
-                seed,
-            } => Ok(I64Workload::uniform(size, cardinality, seed)),
-            WorkloadSpec::Zipf {
-                size,
-                cardinality,
-                s,
-                seed,
-            } => I64Workload::zipf(size, cardinality, s, seed)
-                .map_err(|e| anyhow::anyhow!("{}", e)),
+            WorkloadSpec::Generated(spec) => {
+                I64Workload::generate(&spec).map_err(|e| anyhow::anyhow!("{}", e))
+            }
             WorkloadSpec::File { path } => {
                 I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
             }
@@ -552,15 +540,20 @@ where
     W::Item: Clone,
     S: sketch_core::sketch::Sketch<Item = W::Item>,
 {
-    let runner = BenchRunner::new(cfg.clone(), wk, family, impl_name);
-    // Throughput-only short-circuit: pass an `insert` closure
-    // defined here in sketch-cli so the wrapper's `update` body
-    // (also in sketch-cli) is in the same crate as the closure
-    // body at codegen time.
-    if cfg.metrics == sketch_bench::MetricsMask::THROUGHPUT {
-        return vec![runner.run_throughput(factory, |s, it| s.update(it))];
-    }
-    runner.run::<S, _, sketch_bench::NoGT>(factory, None)
+    BenchRunner::new(cfg.clone(), wk, family, impl_name)
+        .run::<S, _, sketch_bench::NoGT, _>(factory, insert_body, None)
+}
+
+/// The hot-loop body for every dispatch row.
+///
+/// Defined here in `sketch-cli`, the crate that also defines the wrappers,
+/// so the wrapper's `update` and this call site land in the same codegen
+/// unit and LLVM can fold the update into the loop. Handing this to the
+/// runner — rather than letting the runner call `sketch.update(it)` from
+/// inside `sketch-bench` — is what keeps `lib-fixedmatrix-fast-*` unrolled.
+#[inline(always)]
+fn insert_body<S: sketch_core::sketch::Sketch>(s: &mut S, it: &S::Item) {
+    s.update(it);
 }
 
 fn bench_freq_gt<S, W>(
@@ -583,7 +576,7 @@ where
         min_true_count,
     };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, FrequencyGT<W::Item>>(factory, Some(&gt))
+        .run::<S, _, FrequencyGT<W::Item>, _>(factory, insert_body, Some(&gt))
 }
 
 fn bench_card_gt<S, W>(
@@ -601,7 +594,7 @@ where
 {
     let gt = CardinalityGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, CardinalityGT>(factory, Some(&gt))
+        .run::<S, _, CardinalityGT, _>(factory, insert_body, Some(&gt))
 }
 
 fn bench_quant_gt<S, W>(
@@ -619,7 +612,7 @@ where
 {
     let gt = RankErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, RankErrorGT>(factory, Some(&gt))
+        .run::<S, _, RankErrorGT, _>(factory, insert_body, Some(&gt))
 }
 
 fn bench_quant_rel_gt<S, W>(
@@ -637,7 +630,7 @@ where
 {
     let gt = RelativeErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name)
-        .run::<S, _, RelativeErrorGT>(factory, Some(&gt))
+        .run::<S, _, RelativeErrorGT, _>(factory, insert_body, Some(&gt))
 }
 
 /// Collect distinct keys from `items` and return them in a

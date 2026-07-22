@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use sketch_core::datagen::{self, DType, Distribution, GenMeta, GenSpec, Shape, TimeUnit};
+use sketch_core::datagen::{self, DType, Distribution, GenSpec, Shape, TimeUnit};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -228,10 +228,14 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    let col = spec.generate().context("generating column")?;
-    datagen::io::write_bin(out, &col).with_context(|| format!("writing {}", a.out))?;
+    // Stream through a FileSink: peak memory is one chunk, not the
+    // whole dataset, so `--size` is bounded by disk rather than RAM.
+    let mut sink = datagen::FileSink::create(out)
+        .with_context(|| format!("creating {}", a.out))?;
+    let meta = spec
+        .generate_into(&mut sink, datagen::DEFAULT_CHUNK)
+        .with_context(|| format!("generating into {}", a.out))?;
 
-    let meta = GenMeta::new(&spec, &col);
     let sidecar = if a.no_meta {
         None
     } else {
@@ -241,8 +245,8 @@ fn generate(a: GenerateArgs) -> Result<()> {
     eprintln!(
         "sketchlib: generated shape={} dtype={} count={} -> {}",
         spec.shape.report_label(),
-        col.dtype().as_str(),
-        col.len(),
+        meta.dtype.as_str(),
+        meta.count,
         a.out,
     );
     if let Some(p) = sidecar {

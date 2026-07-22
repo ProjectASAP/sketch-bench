@@ -355,6 +355,8 @@ impl<E: Exporter> Sampler<E> {
             zipf_s: None,
             source_path: None,
             seed: None,
+            // Live traffic has no generator spec to record.
+            spec: None,
         };
         let mut rec = Record::new(
             self.tag.sketch.clone(),

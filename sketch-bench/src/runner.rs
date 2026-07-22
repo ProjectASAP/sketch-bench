@@ -4,19 +4,41 @@
 //!
 //! See `docs/DESIGN.md` §5.3 + §5.4.
 
+use std::sync::Once;
 use std::time::{Duration, Instant};
+
+/// Ramp the CPU **once per process**, before the first measured loop of any
+/// pass.
+///
+/// This used to be called from the throughput fast path only, which made the
+/// warm-up an accident of which `--metrics` flags were passed: a THROUGHPUT
+/// pass that also carried the CPU/MEMORY bits took the other branch and was
+/// timed with no governor ramp at all. Two passes measured at two different
+/// clock states is not a comparison. Gating on `Once` also stops a sweep from
+/// burning the warm-up duration once per (impl, config) pair — for a 63-pair
+/// sweep that was ten minutes of spinning for a ramp that only the first pair
+/// actually needed.
+fn warmup_cpu_once() {
+    static WARMED: Once = Once::new();
+    WARMED.call_once(warmup_cpu_from_env);
+}
 
 /// Burn CPU on the current core so the cpufreq governor ramps to max turbo
 /// before timing starts. External shell warmups don't work reliably because
 /// the governor can drop frequency during the bench process's exec/startup
 /// window.
 ///
-/// Duration is read from `BENCH_WARMUP_SECS` (default 10s). Set to 0 to skip.
+/// Duration is read from `BENCH_WARMUP_SECS`. **Defaults to 0** — a library
+/// must not burn ten seconds of a caller's CPU because it was linked. The
+/// measurement default lives in `sketchlib`'s `main`, which sets the variable
+/// when the operator hasn't; every integration test and downstream embedder
+/// therefore pays nothing. (`cfg!(test)` cannot express this: an integration
+/// test links this crate as a plain dependency, compiled without `cfg(test)`.)
 fn warmup_cpu_from_env() {
     let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(0);
     if secs == 0 {
         return;
     }
@@ -87,83 +109,47 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// measured) **per pass** — each run must see independent
     /// state or the aggregated CI is meaningless.
     /// `ground_truth` is consulted only in the ACCURACY pass.
-    pub fn run<S, F, G>(&self, mut factory: F, ground_truth: Option<&G>) -> Vec<BenchReport>
+    /// `insert` is the hot-loop body. It is a caller-supplied closure —
+    /// **not** a `sketch.update(it)` call written here — so that it
+    /// monomorphizes in the crate that defines the wrapper, letting LLVM
+    /// fold the wrapper's `update` into the loop. Every pass that reports
+    /// throughput drives this same closure, so the number cannot depend on
+    /// which `--metrics` flags were passed. See `insert_loop`.
+    pub fn run<S, F, G, Insert>(
+        &self,
+        mut factory: F,
+        mut insert: Insert,
+        ground_truth: Option<&G>,
+    ) -> Vec<BenchReport>
     where
         S: Sketch<Item = W::Item>,
         W::Item: Clone,
         F: FnMut() -> S,
+        Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
         let passes = self.config.metrics.passes();
         if passes.is_empty() {
             return Vec::new();
         }
+        warmup_cpu_once();
         let mut reports = Vec::with_capacity(passes.len());
         for pass_mask in passes {
             let mut pass_cfg = self.config.clone();
             pass_cfg.metrics = pass_mask;
-            // Throughput-only pass (no secondary CPU/MEMORY bits) takes a
+            // A throughput pass with no secondary CPU/MEMORY bits takes a
             // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
-            // finalize_for_query, memory_bytes, and Welford-via-aggregate
-            // — just times the hot loop.
-            //
-            // Hot loop calls `sketch.update(it)` through the Sketch trait;
-            // monomorphization + #[inline] on the impl gets the wrapper
-            // body inlined into the loop. Callers who want a fully
-            // monomorphized closure-driven hot loop can call
-            // `run_throughput_pass_with` directly with a closure defined
-            // in their own crate.
+            // finalize_for_query, memory_bytes, and Welford-via-aggregate.
+            // Both paths run the identical `insert` closure over the
+            // identical slice and time only that loop, so the choice
+            // affects what else is collected — never the throughput.
             if pass_mask == MetricsMask::THROUGHPUT {
-                reports.push(self.run_throughput_pass(&mut factory, pass_cfg));
+                reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
             } else {
-                reports.push(self.run_pass(&mut factory, ground_truth, pass_cfg));
+                reports.push(self.run_pass(&mut factory, &mut insert, ground_truth, pass_cfg));
             }
         }
         reports
-    }
-
-    /// Public throughput-only entry point. Callers that want the
-    /// wrapper `update` body inlined into the hot loop should use
-    /// this and pass `|s, it| s.update(it)` as `insert` — the
-    /// closure body then monomorphizes at the caller's crate.
-    /// Returns one `BenchReport` (single-pass throughput).
-    #[inline(always)]
-    pub fn run_throughput<S, F, Insert>(
-        &self,
-        mut factory: F,
-        insert: Insert,
-    ) -> BenchReport
-    where
-        S: Sketch<Item = W::Item>,
-        W::Item: Clone,
-        F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-    {
-        let mut pass_cfg = self.config.clone();
-        pass_cfg.metrics = MetricsMask::THROUGHPUT;
-        self.run_throughput_pass_with(&mut factory, insert, pass_cfg)
-    }
-
-    /// Throughput-only fast path: fresh sketch per trial, time the
-    /// insert loop with `Instant::now`, no other instrumentation.
-    fn run_throughput_pass<S, F>(
-        &self,
-        factory: &mut F,
-        pass_cfg: BenchConfig,
-    ) -> BenchReport
-    where
-        S: Sketch<Item = W::Item>,
-        W::Item: Clone,
-        F: FnMut() -> S,
-    {
-        // Default closure body for callers who don't want to plumb
-        // their own. Note this still uses trait dispatch
-        // (`<S as Sketch>::update`); the closure body lives in
-        // sketch-bench so the wrapper's `update` impl is one crate
-        // away. For maximum inlining, callers in sketch-cli should
-        // call `run_throughput_pass_with` directly with a closure
-        // defined in their own crate.
-        self.run_throughput_pass_with(factory, |s, it| s.update(it), pass_cfg)
     }
 
     /// Throughput-only fast path with an explicit insert closure.
@@ -171,10 +157,17 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// giving LLVM a direct shot at folding the wrapper's update
     /// into the hot loop.
     #[inline(always)]
-    pub fn run_throughput_pass_with<S, F, Insert>(
+    fn run_throughput_pass_with<S, F, Insert>(
         &self,
         factory: &mut F,
-        mut insert: Insert,
+        // `&mut Insert`, not `Insert`: `run_pass` -> `run_once_clean` also
+        // reaches `insert_loop` through one `&mut`, so taking it by value
+        // here would instantiate `insert_loop::<_, &mut &mut Insert>` on this
+        // path and `insert_loop::<_, &mut Insert>` on the other. They fold
+        // today, but only because of `#[inline(always)]` + LTO — the exact
+        // mechanism whose failure caused the 5.1% split this fix exists to
+        // close. Same type on both paths makes it structural instead.
+        insert: &mut Insert,
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
@@ -188,16 +181,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         let total = pass_cfg.runs + pass_cfg.warmup_runs;
         let mut ns_list: Vec<u64> = Vec::with_capacity(pass_cfg.runs);
 
-        warmup_cpu_from_env();
-
         for trial in 0..total {
             let mut sketch = factory();
-            let start = Instant::now();
-            for it in items {
-                insert(&mut sketch, it);
-            }
-            std::hint::black_box(&sketch);
-            let ns = start.elapsed().as_nanos() as u64;
+            let ns = insert_loop(&mut sketch, items, insert);
             if trial >= pass_cfg.warmup_runs {
                 ns_list.push(ns);
             }
@@ -248,9 +234,10 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    fn run_pass<S, F, G>(
+    fn run_pass<S, F, G, Insert>(
         &self,
         factory: &mut F,
+        insert: &mut Insert,
         ground_truth: Option<&G>,
         pass_cfg: BenchConfig,
     ) -> BenchReport
@@ -258,6 +245,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         S: Sketch<Item = W::Item>,
         W::Item: Clone,
         F: FnMut() -> S,
+        Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
         let items = self.workload.items();
@@ -266,10 +254,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
         for run_idx in 0..total_runs {
             let (metrics, final_sketch) = if pass_cfg.metrics.contains(MetricsMask::LATENCY) {
+                // The latency pass deliberately does NOT use `insert`: its
+                // instrument *is* the per-update `Probe` boundary, and it
+                // reports latency, not throughput. `aggregate` suppresses
+                // throughput for this pass because the mask lacks the bit.
                 let sink = FullSink::new(pass_cfg.metrics);
                 run_once(factory, sink, items, &pass_cfg)
             } else {
-                run_once_clean(factory, items, &pass_cfg)
+                run_once_clean(factory, insert, items, &pass_cfg)
             };
 
             if run_idx >= pass_cfg.warmup_runs {
@@ -302,6 +294,41 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             config: pass_cfg,
         }
     }
+}
+
+/// **The** insert loop. Times `insert` over every item and returns the
+/// elapsed nanoseconds.
+///
+/// Every pass that reports throughput goes through here, and nothing else
+/// is inside the timed region — no metric snapshot, no `finalize_for_query`,
+/// no `memory_bytes`. This function existing exactly once is a correctness
+/// property, not tidiness:
+///
+/// The throughput fast path and the CPU/MEMORY path used to carry their own
+/// copies of this loop, one calling a closure supplied by `sketch-cli` and
+/// the other calling `sketch.update(it)` from inside `sketch-bench`. Both
+/// timed the right region, so the bug was invisible to review — but the
+/// cross-crate call in the second copy cost the asap_sketchlib FixedMatrix
+/// FastPath its inlining, and `cms/lib-fixedmatrix-fast-32k` reported
+/// **5.1% lower throughput** under `--metrics throughput,cpu,memory` than
+/// under `--metrics throughput` (5 alternating rounds, non-overlapping
+/// ranges). The penalty scaled with how much an implementation relies on
+/// inlining — ~1.5% for `hll/oxide` — so it did not cancel out: it changed
+/// the ranking *between* implementations, and the slow path is the one the
+/// default `--metrics` selects.
+#[inline(always)]
+fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
+where
+    S: Sketch,
+    Insert: FnMut(&mut S, &S::Item),
+{
+    let start = Instant::now();
+    for it in items {
+        insert(sketch, it);
+    }
+    let ns = start.elapsed().as_nanos() as u64;
+    std::hint::black_box(&*sketch);
+    ns
 }
 
 /// One measured run: install `FullSink`, time insert (+
@@ -386,8 +413,9 @@ where
 /// metrics (CPU / MEMORY / heap-track) still attach via direct
 /// primitives instead of going through `FullSink`.
 #[inline(always)]
-fn run_once_clean<S, F>(
+fn run_once_clean<S, F, Insert>(
     factory: &mut F,
+    insert: &mut Insert,
     items: &[S::Item],
     config: &BenchConfig,
 ) -> (RunMetrics, S)
@@ -395,6 +423,7 @@ where
     S: Sketch,
     S::Item: Clone,
     F: FnMut() -> S,
+    Insert: FnMut(&mut S, &S::Item),
 {
     let wall = WallClock::start();
     let mut cpu = if config.metrics.contains(MetricsMask::CPU) {
@@ -411,12 +440,10 @@ where
 
     let mut sketch = factory();
 
-    let insert_wall = WallClock::start();
-    for it in items {
-        sketch.update(it);
-    }
-    std::hint::black_box(&sketch);
-    let insert_wall_time_ns = insert_wall.elapsed_ns();
+    // Same `insert_loop` the throughput fast path uses, driving the same
+    // caller-supplied closure — the two paths must not be able to disagree
+    // about what an insert costs.
+    let insert_wall_time_ns = insert_loop(&mut sketch, items, insert);
     let finalize_wall = WallClock::start();
     sketch.finalize_for_query();
     std::hint::black_box(&sketch);
@@ -504,29 +531,8 @@ impl BenchReport {
     }
 }
 
-/// Run a bench without a `GroundTruth`. Helper that pins the
-/// `G` parameter to a zero-sized marker so the main API stays
-/// generic but callers who don't want accuracy don't have to
-/// invent a type.
-pub fn run_without_accuracy<S, W, F>(
-    cfg: BenchConfig,
-    workload: &W,
-    sketch_name: impl Into<String>,
-    impl_name: impl Into<String>,
-    factory: F,
-) -> Vec<BenchReport>
-where
-    W: Workload,
-    W::Item: Clone,
-    S: Sketch<Item = W::Item>,
-    F: FnMut() -> S,
-{
-    let runner = BenchRunner::new(cfg, workload, sketch_name, impl_name);
-    runner.run::<S, F, NoGT>(factory, None)
-}
-
-/// Placeholder `GroundTruth` used when `run_without_accuracy`
-/// supplies `None`. Never called; `compare` is a safe default.
+/// Placeholder `GroundTruth` for dispatch rows that run without a
+/// comparator. Never called; `compare` is a safe default.
 pub struct NoGT;
 impl<S: Sketch> GroundTruth<S> for NoGT {
     fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {

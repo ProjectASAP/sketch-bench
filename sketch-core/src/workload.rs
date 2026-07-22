@@ -15,12 +15,10 @@
 //! data, not a type parameter, so it lives in the `desc` field and the
 //! source only picks a constructor.
 
-use rand::SeedableRng;
-use rand_distr::{Distribution, Uniform, Zipf};
-use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::datagen::{DType, Distribution, GenSpec, Shape};
 use crate::error::SketchCoreError;
 
 /// Human-friendly description of a workload — serialised into
@@ -38,6 +36,14 @@ pub struct WorkloadDesc {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// Full `datagen` spec, when the flat fields above cannot express
+    /// the shape (categorical weights, timestamp gap distributions, …).
+    /// Absent for `uniform` / `zipf` / `file`, whose flat fields already
+    /// round-trip — so records from those paths are byte-identical to
+    /// what shipped before the generator was wired into `bench`.
+    /// See `Shape::to_workload_desc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec: Option<serde_json::Value>,
 }
 
 /// The abstract contract for a workload a `BenchRunner` can
@@ -67,46 +73,59 @@ impl I64Workload {
     /// disagrees with the data it describes would silently corrupt
     /// every throughput denominator downstream.
     pub fn new(items: Vec<i64>, mut desc: WorkloadDesc) -> Self {
+        // `load` cannot know the count until it has read the file, so it
+        // passes 0 as a placeholder. Any other value is the caller *asserting*
+        // what was produced — a generator returning short would otherwise be
+        // relabelled into a smaller workload with no signal at all.
+        debug_assert!(
+            desc.size == 0 || desc.size == items.len(),
+            "workload desc claims {} items but carries {}",
+            desc.size,
+            items.len(),
+        );
         desc.size = items.len();
         Self { items, desc }
     }
 
-    /// Uniform in `[0, cardinality)`.
+    /// Generate in-process from a [`GenSpec`] — the one generator in
+    /// the tool. `sketchlib workload generate` runs the same spec
+    /// through a file sink; this runs it through a memory sink, so a
+    /// shape reachable on disk is reachable here by construction.
+    ///
+    /// Fails if the spec's dtype is not `i64`: the benchmark consumes
+    /// `i64` keys, and reinterpreting a `u64`/`f64` stream would yield
+    /// meaningless keys behind a well-formed report.
+    pub fn generate(spec: &GenSpec) -> Result<Self, SketchCoreError> {
+        let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
+        Ok(Self::new(spec.generate()?.into_i64()?, desc))
+    }
+
+    /// Uniform in `[0, cardinality)`. Convenience over [`Self::generate`].
     pub fn uniform(size: usize, cardinality: u64, seed: u64) -> Self {
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-        let dist = Uniform::new(0u64, cardinality);
-        let items = (0..size).map(|_| dist.sample(&mut rng) as i64).collect();
-        Self::new(
-            items,
-            WorkloadDesc {
-                shape: "uniform".into(),
-                size,
-                cardinality: Some(cardinality),
-                zipf_s: None,
-                source_path: None,
-                seed: Some(seed),
+        Self::generate(&GenSpec {
+            shape: Shape::Keys {
+                cardinality,
+                dist: Distribution::Uniform,
+                dtype: DType::I64,
             },
-        )
+            size,
+            seed,
+        })
+        .expect("uniform keys over a non-zero cardinality always generate")
     }
 
     /// Zipfian with `s`-parameter (skew exponent) over ranks
-    /// `[1, cardinality]`.
+    /// `[1, cardinality]`. Convenience over [`Self::generate`].
     pub fn zipf(size: usize, cardinality: u64, s: f64, seed: u64) -> Result<Self, SketchCoreError> {
-        let dist = Zipf::new(cardinality, s)
-            .map_err(|e| SketchCoreError::BadParam(format!("zipf: {e}")))?;
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
-        let items = (0..size).map(|_| dist.sample(&mut rng) as i64).collect();
-        Ok(Self::new(
-            items,
-            WorkloadDesc {
-                shape: "zipf".into(),
-                size,
-                cardinality: Some(cardinality),
-                zipf_s: Some(s),
-                source_path: None,
-                seed: Some(seed),
+        Self::generate(&GenSpec {
+            shape: Shape::Keys {
+                cardinality,
+                dist: Distribution::Zipf { s },
+                dtype: DType::I64,
             },
-        ))
+            size,
+            seed,
+        })
     }
 
     /// Load from a file, auto-detecting the format from its
@@ -150,6 +169,7 @@ impl I64Workload {
                 zipf_s: None,
                 source_path: Some(path.display().to_string()),
                 seed: None,
+                spec: None,
             },
         ))
     }
@@ -400,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn desc_size_always_matches_item_count() {
+    fn placeholder_desc_size_is_filled_in() {
         // A desc that disagrees with the data would silently skew every
         // throughput denominator; `new` is the one place that can catch
         // it, so it always wins over the caller's claim.
@@ -408,11 +428,12 @@ mod tests {
             vec![1, 2, 3],
             WorkloadDesc {
                 shape: "custom".into(),
-                size: 999,
+                size: 0, // placeholder, as `load` passes
                 cardinality: None,
                 zipf_s: None,
                 source_path: None,
                 seed: None,
+                spec: None,
             },
         );
         assert_eq!(w.desc().size, 3);
