@@ -12,7 +12,7 @@
 //!   size is within ~1.5× of JSON+zstd for this traffic shape
 //!   but schema gains outweigh the small bytes-on-wire cost.
 //! * **Schema evolution** — `payload_json` carries the
-//!   `sketch-core::Record`'s full shape as JSON, so new
+//!   `aqpbm-core::Record`'s full shape as JSON, so new
 //!   `Record` fields flow through without a proto rebump.
 //!   The `schema_version` field marks breaking changes.
 //!
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sketch_core::report::Record;
+use aqpbm_core::report::Record;
 use tokio::sync::mpsc;
 use tonic::transport::{Channel, Endpoint};
 
@@ -254,8 +254,8 @@ fn client_for(channel: Channel, compress: bool) -> RuntimeSamplesClient<Channel>
     c
 }
 
-fn source_label(src: sketch_core::report::Source) -> String {
-    use sketch_core::report::Source::*;
+fn source_label(src: aqpbm_core::report::Source) -> String {
+    use aqpbm_core::report::Source::*;
     match src {
         Cli => "cli",
         AsapFusion => "asap-fusion",

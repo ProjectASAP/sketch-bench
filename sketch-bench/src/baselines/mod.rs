@@ -9,7 +9,7 @@
 //! | `frequency.rs`      | frequency     | `HashMap<i64, u64>`    | `cms`, `countsketch`, `elastic`     |
 //! | `quantile.rs`       | quantile      | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)              |
 //!
-//! Each baseline implements [`sketch_core::sketch::Sketch`] so
+//! Each baseline implements [`aqpbm_core::sketch::Sketch`] so
 //! the bench runner drives it on the exact same insert / query
 //! path as a sketch — `sketchlib bench --sketch hll --impl
 //! exact,oxide,…` produces one v1 JSONL row per variant with

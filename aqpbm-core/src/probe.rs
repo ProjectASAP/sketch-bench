@@ -17,7 +17,7 @@ use crate::sketch::Sketch;
 
 /// A handler for benchmark/runtime metrics events.
 ///
-/// Lives here in `sketch-core` so `Probe` can depend on the
+/// Lives here in `aqpbm-core` so `Probe` can depend on the
 /// trait without depending on the concrete metric code in
 /// `sketch-bench`. Concrete impls (`NoopSink`, `FullSink`,
 /// `SampledSink`) ship in `sketch-bench` and `sketch-runtime`.
@@ -28,7 +28,7 @@ pub trait MetricsSink {
     fn on_query_end(&mut self);
 }
 
-/// A no-op `MetricsSink` provided by `sketch-core` so `Probe`
+/// A no-op `MetricsSink` provided by `aqpbm-core` so `Probe`
 /// is usable even from crates that don't pull in `sketch-bench`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopSink;

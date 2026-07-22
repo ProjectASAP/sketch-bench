@@ -1,7 +1,7 @@
 //! Cardinality-family ground truth (HLL). Exact distinct
 //! count from `items`; reports relative error.
 
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::hash::Hash;

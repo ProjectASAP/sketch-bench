@@ -12,8 +12,8 @@
 use std::cell::RefCell;
 
 use crate::params::KllParams;
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use sketch_bench::accuracy::quantile::QuantileValue;
-use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide KLL ----------

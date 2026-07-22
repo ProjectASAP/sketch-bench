@@ -4,15 +4,15 @@
 //! public `Sampler` type comes from this module. It is a
 //! zero-sized newtype whose `MetricsSink` impl is four empty
 //! methods the compiler inlines to nothing — identical
-//! behaviour to `sketch_core::NoopSink`. The knobs
+//! behaviour to `aqpbm_core::NoopSink`. The knobs
 //! (`sample_every_n`, `window`, etc.) stay in the API signature
 //! so downstream code compiles identically; they're just
 //! ignored at runtime.
 
 use std::time::Duration;
 
-use sketch_core::probe::MetricsSink;
-use sketch_core::report::Source;
+use aqpbm_core::probe::MetricsSink;
+use aqpbm_core::report::Source;
 
 use crate::exporter::Exporter;
 use crate::switch::RuntimeSwitch;

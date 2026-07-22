@@ -1,7 +1,7 @@
 //! Discard-everything exporter. Useful as a placeholder in
 //! tests or when the `sample_every_n` dial is set to zero.
 
-use sketch_core::report::Record;
+use aqpbm_core::report::Record;
 
 use super::Exporter;
 

@@ -14,7 +14,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use sketch_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 use crate::accuracy::quantile::QuantileValue;
 

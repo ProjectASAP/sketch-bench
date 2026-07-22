@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Mutex;
 
-use sketch_core::report::Record;
+use aqpbm_core::report::Record;
 
 use super::Exporter;
 

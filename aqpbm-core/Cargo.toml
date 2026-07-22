@@ -1,5 +1,5 @@
 [package]
-name = "sketch-core"
+name = "aqpbm-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ description = "Core types (Sketch trait, Probe, Workload, MetricsMask, v1 report
 # is a counter-only shim and `hdrhistogram` is not linked. On by
 # default so `sketch-bench` and `sketch-runtime` behave as they
 # did when the recorder lived in `sketch-bench`; embedded
-# consumers that want neither can take sketch-core with
+# consumers that want neither can take aqpbm-core with
 # `default-features = false`.
 default = ["hdrhist"]
 hdrhist = ["dep:hdrhistogram"]

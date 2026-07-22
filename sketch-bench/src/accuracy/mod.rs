@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 
 pub mod cardinality;
 pub mod frequency;

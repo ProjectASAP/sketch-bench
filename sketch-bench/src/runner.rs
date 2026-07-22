@@ -54,10 +54,10 @@ fn warmup_cpu_from_env() {
     }
 }
 
-use sketch_core::probe::NoopSink;
-use sketch_core::report::{BenchSection, Mode, Record, RunStats, Source};
-use sketch_core::sketch::Sketch;
-use sketch_core::workload::{Workload, WorkloadDesc};
+use aqpbm_core::probe::NoopSink;
+use aqpbm_core::report::{BenchSection, Mode, Record, RunStats, Source};
+use aqpbm_core::sketch::Sketch;
+use aqpbm_core::workload::{Workload, WorkloadDesc};
 
 use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
@@ -570,7 +570,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 /// property, not tidiness:
 ///
 /// The throughput fast path and the CPU/MEMORY path used to carry their own
-/// copies of this loop, one calling a closure supplied by `sketch-cli` and
+/// copies of this loop, one calling a closure supplied by `aqpbm-cli` and
 /// the other calling `sketch.update(it)` from inside `sketch-bench`. Both
 /// timed the right region, so the bug was invisible to review — but the
 /// cross-crate call in the second copy cost the asap_sketchlib FixedMatrix
@@ -631,7 +631,7 @@ where
     // Insert phase.
     sink.begin_insert_phase();
     let mut sketch = {
-        use sketch_core::probe::Probe;
+        use aqpbm_core::probe::Probe;
         let mut probe: Probe<S, &mut FullSink> = Probe::new(factory_sketch, &mut sink);
         for it in items {
             probe.update(it);
@@ -761,14 +761,14 @@ where
 }
 
 /// Output of a `BenchRunner::run`. Convertible to the v1 JSONL
-/// record defined in `sketch-core`.
+/// record defined in `aqpbm-core`.
 #[derive(Debug, Clone)]
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
     pub workload: WorkloadDesc,
     pub per_run: Vec<RunMetrics>,
-    pub bench: sketch_core::report::BenchSection,
+    pub bench: aqpbm_core::report::BenchSection,
     pub config: BenchConfig,
 }
 

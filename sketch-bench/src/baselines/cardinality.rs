@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 
-use sketch_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 #[derive(Debug, Default, Clone)]
 pub struct ExactCardinality {

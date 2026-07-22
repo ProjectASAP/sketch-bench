@@ -24,7 +24,7 @@ pub use grpc::{GrpcConfig, GrpcExporter, GrpcStats, GrpcStatsSnapshot};
 pub use noop::NoopExporter;
 pub use stdout::StdoutExporter;
 
-use sketch_core::report::Record;
+use aqpbm_core::report::Record;
 
 /// Handler for v1 JSONL records produced by the embedded
 /// [`Sampler`](crate::sampler::Sampler).

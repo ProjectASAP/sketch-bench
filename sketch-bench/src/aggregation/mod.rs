@@ -3,7 +3,7 @@
 
 pub mod welford;
 
-use sketch_core::report::{BenchSection, CpuTime, LatencySummary, RunStats};
+use aqpbm_core::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
 use super::config::MetricsMask;
 use super::metrics::{ItemsPerSec, RunMetrics};

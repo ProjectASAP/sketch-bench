@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 
 use crate::params::ElasticParams;
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 
 // ---------- asap_sketchlib Elastic ----------
 //

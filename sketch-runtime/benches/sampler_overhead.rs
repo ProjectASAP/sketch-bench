@@ -7,10 +7,10 @@
 
 use std::hint::black_box;
 
+use aqpbm_core::probe::{NoopSink, Probe};
+use aqpbm_core::report::Source;
+use aqpbm_core::sketch::Sketch;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use sketch_core::probe::{NoopSink, Probe};
-use sketch_core::report::Source;
-use sketch_core::sketch::Sketch;
 use sketch_runtime::exporter::NoopExporter;
 use sketch_runtime::sampler::{Sampler, Tag};
 

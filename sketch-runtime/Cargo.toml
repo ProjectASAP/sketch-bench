@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Embedded sketch-benchmark layer — `Sampler` + `Exporter` so downstream apps (asap-fusion, DataCollector, ASAPQuery) can always-on report sketch metrics to ASAPController using the v1 JSONL schema from sketch-core."
+description = "Embedded sketch-benchmark layer — `Sampler` + `Exporter` so downstream apps (asap-fusion, DataCollector, ASAPQuery) can always-on report sketch metrics to ASAPController using the v1 JSONL schema from aqpbm-core."
 build = "build.rs"
 
 [features]
@@ -19,12 +19,12 @@ enabled = []
 grpc = ["dep:tonic", "dep:prost", "dep:tokio"]
 
 [dependencies]
-# sketch-core only. This crate deliberately does NOT depend on
+# aqpbm-core only. This crate deliberately does NOT depend on
 # sketch-bench: it is linked into always-on downstream apps
 # (DataCollector, asap-fusion), and the offline benchmark library
 # — runner, baselines, accuracy comparators, jemalloc-ctl — has
 # no business in that binary. See docs/DESIGN.md §3.1.
-sketch-core = { workspace = true, features = ["hdrhist"] }
+aqpbm-core = { workspace = true, features = ["hdrhist"] }
 serde.workspace = true
 serde_json.workspace = true
 tonic = { version = "0.12", features = ["gzip"], optional = true }

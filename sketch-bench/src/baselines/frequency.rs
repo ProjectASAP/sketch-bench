@@ -8,7 +8,7 @@
 
 use hashbrown::HashMap;
 
-use sketch_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 /// Heavy-hitter threshold — matches the value the legacy
 /// `accuracy/cms/rust/src/baseline.rs` used. Keys with true

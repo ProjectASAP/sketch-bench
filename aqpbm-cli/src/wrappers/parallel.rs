@@ -19,10 +19,10 @@ use std::sync::Barrier;
 use std::time::Instant;
 
 use crate::params::{CmsParams, CountSketchParams, HllParams};
+use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::{
     impl_fixed_matrix, Count, CountMin, DataInput, ErtlMLE, FastPath, HyperLogLog,
 };
-use sketch_core::sketch::Sketch;
 
 impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 

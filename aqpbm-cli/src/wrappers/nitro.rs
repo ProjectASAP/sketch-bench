@@ -9,8 +9,8 @@
 //! a fixed (5, 2048) — future work can expose those knobs too.
 
 use crate::params::NitroParams;
+use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::{NitroBatch, Vector2D};
-use sketch_core::sketch::Sketch;
 
 const NITRO_CMS_ROWS: usize = 5;
 const NITRO_CMS_COLS: usize = 2048;

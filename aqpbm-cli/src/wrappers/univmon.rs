@@ -8,7 +8,7 @@
 //! underlying CMS is sized at a fixed (5, 2048).
 
 use crate::params::UnivMonParams;
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 
 const UNIVMON_CMS_ROWS: usize = 5;
 const UNIVMON_CMS_COLS: usize = 2048;

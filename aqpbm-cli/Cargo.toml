@@ -1,5 +1,5 @@
 [package]
-name = "sketch-cli"
+name = "aqpbm-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -25,7 +25,7 @@ heap-track = ["sketch-bench/heap-track"]
 
 [dependencies]
 aqpbm-datagen.workspace = true
-sketch-core.workspace = true
+aqpbm-core.workspace = true
 sketch-bench.workspace = true
 clap.workspace = true
 serde.workspace = true

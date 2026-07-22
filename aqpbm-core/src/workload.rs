@@ -9,7 +9,7 @@
 //! thing at runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`]
 //! that says where it came from. Modelling each *source* as its own
 //! `impl Workload` type forced every generic consumer to fan out over
-//! the source set (`sketch-cli`'s dispatch table carried a
+//! the source set (`aqpbm-cli`'s dispatch table carried a
 //! 3-variant `WorkloadAny` plus two derived 3-variant enums, and every
 //! dispatch macro repeated its body once per variant). Provenance is
 //! data, not a type parameter, so it lives in the `desc` field and the

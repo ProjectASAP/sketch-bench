@@ -2,10 +2,10 @@
 //! counting sketch. Proves: sketch construction → N-run +
 //! warmup loop → metrics aggregation → v1 JSONL record.
 
+use aqpbm_core::sketch::Sketch;
+use aqpbm_core::workload::I64Workload;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
-use sketch_core::sketch::Sketch;
-use sketch_core::workload::I64Workload;
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
 /// exercises the full trait + runner machinery against a known
@@ -69,7 +69,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
 
     // v1 JSONL record round-trips for each pass.
     let jsonl = accuracy.to_jsonl();
-    let back: sketch_core::Record = serde_json::from_str(&jsonl).unwrap();
+    let back: aqpbm_core::Record = serde_json::from_str(&jsonl).unwrap();
     assert_eq!(back.sketch, "exact");
     assert_eq!(back.impl_name, "smoke");
     assert_eq!(back.runs, 3);

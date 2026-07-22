@@ -14,12 +14,12 @@ use crate::params::{
     ParamSet, SketchParams, UnivMonParams,
 };
 use anyhow::Result;
+use aqpbm_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 use aqpbm_datagen::{DType, GenSpec};
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
-use sketch_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{
     cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
@@ -721,7 +721,7 @@ fn bench_no_gt<S, W>(
 where
     W: Workload,
     W::Item: Clone,
-    S: sketch_core::sketch::Sketch<Item = W::Item>,
+    S: aqpbm_core::sketch::Sketch<Item = W::Item>,
 {
     BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, sketch_bench::NoGT, _>(
         factory,
@@ -732,13 +732,13 @@ where
 
 /// The hot-loop body for every dispatch row.
 ///
-/// Defined here in `sketch-cli`, the crate that also defines the wrappers,
+/// Defined here in `aqpbm-cli`, the crate that also defines the wrappers,
 /// so the wrapper's `update` and this call site land in the same codegen
 /// unit and LLVM can fold the update into the loop. Handing this to the
 /// runner — rather than letting the runner call `sketch.update(it)` from
 /// inside `sketch-bench` — is what keeps `lib-fixedmatrix-fast-*` unrolled.
 #[inline(always)]
-fn insert_body<S: sketch_core::sketch::Sketch>(s: &mut S, it: &S::Item) {
+fn insert_body<S: aqpbm_core::sketch::Sketch>(s: &mut S, it: &S::Item) {
     s.update(it);
 }
 
@@ -753,7 +753,7 @@ fn bench_freq_gt<S, W>(
 where
     W: Workload,
     W::Item: Clone + Eq + Hash + Ord,
-    S: sketch_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
+    S: aqpbm_core::sketch::Sketch<Item = W::Item, Query = W::Item, Answer = u64>,
 {
     let gt = FrequencyGT { max_probes };
     BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, FrequencyGT, _>(
@@ -774,7 +774,7 @@ fn bench_card_gt<S, W>(
 where
     W: Workload,
     W::Item: Clone + Eq + Hash,
-    S: sketch_core::sketch::Sketch<Item = W::Item, Query = (), Answer = f64>,
+    S: aqpbm_core::sketch::Sketch<Item = W::Item, Query = (), Answer = f64>,
 {
     let gt = CardinalityGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, CardinalityGT, _>(
@@ -795,7 +795,7 @@ fn bench_quant_gt<S, W>(
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
-    S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
+    S: aqpbm_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
     let gt = RankErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, RankErrorGT, _>(
@@ -816,7 +816,7 @@ fn bench_quant_rel_gt<S, W>(
 where
     W: Workload,
     W::Item: Clone + PartialOrd + ToF64,
-    S: sketch_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
+    S: aqpbm_core::sketch::Sketch<Item = W::Item, Query = f64, Answer = f64>,
 {
     let gt = RelativeErrorGT { record_calls };
     BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, RelativeErrorGT, _>(
@@ -1382,7 +1382,7 @@ run_impl!(
 
 // -- Parallel-insert FastPath baselines (one per family). Workers
 //    are read from `cfg.threads` (= `--workers N`). Folds the
-//    legacy `throughput/octo/` binary into sketch-cli.
+//    legacy `throughput/octo/` binary into aqpbm-cli.
 run_parallel_impl!(
     run_cms_lib_fastpath_parallel,
     parallel::ParallelCmsFastPath,

@@ -14,9 +14,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use sketch_core::probe::Probe;
-use sketch_core::report::{Record, Source};
-use sketch_core::sketch::Sketch;
+use aqpbm_core::probe::Probe;
+use aqpbm_core::report::{Record, Source};
+use aqpbm_core::sketch::Sketch;
 use sketch_runtime::exporter::Exporter;
 use sketch_runtime::sampler::{Sampler, Tag};
 use sketch_runtime::switch::RuntimeSwitch;
@@ -218,7 +218,7 @@ fn drop_mid_window_is_safe() {
 
 #[test]
 fn metrics_sink_blanket_impl_works_through_and() {
-    // The `&mut T: MetricsSink` blanket impl in sketch-core
+    // The `&mut T: MetricsSink` blanket impl in aqpbm-core
     // means Probe can wrap a sampler behind a mutable ref —
     // check the chain compiles + runs.
     //

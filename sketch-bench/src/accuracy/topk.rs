@@ -1,7 +1,7 @@
 //! Top-k family ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;

@@ -1,4 +1,4 @@
-//! `sketch-core` — shared types across the sketchlib-tool crates.
+//! `aqpbm-core` — shared types across the sketchlib-tool crates.
 //!
 //! Contains the `Sketch` trait (§4.1), the `Probe` decorator
 //! (§4.2), the materialised workload types (§4.3), and the v1
@@ -16,8 +16,8 @@ pub mod sketch;
 pub mod workload;
 
 // Only the open axis. The concrete per-family params structs live
-// with the implementations that consume them, in `sketch-cli::params`
-// — `sketch-core` names no sketch family.
+// with the implementations that consume them, in `aqpbm-cli::params`
+// — `aqpbm-core` names no sketch family.
 pub use config::{ParamSet, SketchParams};
 // The generator is its own crate: it has an independent product surface
 // (`sketchlib workload generate`), an on-disk format contract, and no

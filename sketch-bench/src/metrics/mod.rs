@@ -8,15 +8,15 @@ pub mod memory;
 pub mod throughput;
 pub mod time;
 
-use sketch_core::probe::MetricsSink;
+use aqpbm_core::probe::MetricsSink;
 
 use crate::config::MetricsMask;
 
-// The latency recorder moved to `sketch-core::latency` — the
+// The latency recorder moved to `aqpbm-core::latency` — the
 // embedded `sketch-runtime::Sampler` records latency too, and
 // pulling it from here forced a dep on this whole crate.
+pub use aqpbm_core::latency::{LatencyRecorder, LatencySnapshot};
 pub use memory::{JemallocAllocated, Rss};
-pub use sketch_core::latency::{LatencyRecorder, LatencySnapshot};
 pub use throughput::ItemsPerSec;
 pub use time::{CpuTimeSample, CpuTimeSampler, WallClock};
 
@@ -67,7 +67,7 @@ pub struct RunMetrics {
     pub accuracy: Option<std::collections::BTreeMap<String, f64>>,
     /// Per-call query samples — `Some` only when the dispatch
     /// requested `record_calls` on a comparator that supports
-    /// it. Consumed by `sketch-cli/raw_csv` to back the legacy
+    /// it. Consumed by `aqpbm-cli/raw_csv` to back the legacy
     /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
     /// not surfaced in the v2 JSONL record.
     pub query_calls: Option<Vec<crate::accuracy::QueryCallSample>>,

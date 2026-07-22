@@ -13,13 +13,13 @@
 
 use std::time::{Duration, Instant};
 
-use sketch_core::latency::LatencyRecorder;
-use sketch_core::metrics::MetricsMask;
-use sketch_core::probe::MetricsSink;
-use sketch_core::report::{
+use aqpbm_core::latency::LatencyRecorder;
+use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::probe::MetricsSink;
+use aqpbm_core::report::{
     BenchSection, LatencySummary, Mode as RecordMode, Record, RunStats, Source,
 };
-use sketch_core::workload::WorkloadDesc;
+use aqpbm_core::workload::WorkloadDesc;
 
 use crate::exporter::Exporter;
 use crate::switch::RuntimeSwitch;

@@ -3,7 +3,7 @@
 //! `Answer = f64`, `Query = ()`.
 
 use crate::params::HllParams;
-use sketch_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 // sketch_oxide routes `.estimate()` through its `Sketch` trait.
 use sketch_oxide::Sketch as OxideSketch;
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Sketch`.

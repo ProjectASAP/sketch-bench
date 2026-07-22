@@ -9,9 +9,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use sketch_core::probe::Probe;
-use sketch_core::report::{Source, SCHEMA_VERSION};
-use sketch_core::sketch::Sketch;
+use aqpbm_core::probe::Probe;
+use aqpbm_core::report::{Source, SCHEMA_VERSION};
+use aqpbm_core::sketch::Sketch;
 use sketch_runtime::sampler::{Sampler, Tag};
 use sketch_runtime::{GrpcConfig, GrpcExporter};
 
@@ -126,7 +126,7 @@ async fn grpc_exporter_pushes_compressed_batch_to_server() {
     // the exporter *passes the version through* — same number on the
     // wire, in the proto field and inside the payload. Pinning the
     // number itself is a separate job, done by
-    // `sketch_core::report::tests::schema_version_is_v2`, which
+    // `aqpbm_core::report::tests::schema_version_is_v2`, which
     // explains why it matters. A literal here duplicated that gate
     // badly: it went red on the 1 → 2 bump with nothing to say for
     // itself, and got written off as a broken test.

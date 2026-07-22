@@ -9,8 +9,8 @@
 //! with KLL).
 
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use sketch_bench::accuracy::quantile::QuantileValue;
-use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 pub use sketch_bench::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
 

@@ -124,9 +124,9 @@ mod tests {
     use super::*;
 
     /// Families declared right here, so these tests exercise the open
-    /// axis without `sketch-core` knowing any real family. That the
+    /// axis without `aqpbm-core` knowing any real family. That the
     /// axis can be exercised this way *is* the property under test:
-    /// the concrete families live in `sketch-cli::params`.
+    /// the concrete families live in `aqpbm-cli::params`.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct FakeParams {

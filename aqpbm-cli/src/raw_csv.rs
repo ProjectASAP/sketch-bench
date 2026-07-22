@@ -11,7 +11,7 @@
 //! `repeat, percentile`) when `--accuracy` is also set — that
 //! flag is what gates the comparator that owns the query phase
 //! and now stashes per-call samples. Without `--accuracy`,
-//! sketch-cli skips the query phase entirely and only the
+//! aqpbm-cli skips the query phase entirely and only the
 //! insert CSV is written.
 //!
 //! Limitations:
@@ -148,7 +148,7 @@ pub fn write_runs(
 /// `sketch_type,implementation,num_workers,run,total_items,total_nanoseconds,throughput_items_per_sec`.
 /// Used by `throughput/scripts/plot_octo_throughput.py`. We emit
 /// `implementation = "octo"` (the legacy label for the parallel
-/// path) regardless of the sketch-cli impl name; the `sketch_type`
+/// path) regardless of the aqpbm-cli impl name; the `sketch_type`
 /// column carries the family.
 fn write_octo_runs(
     dir: &Path,
@@ -171,7 +171,7 @@ fn write_octo_runs(
     append_csv(&path, header, rows)
 }
 
-/// Map sketch-cli's family name to the legacy `sketch_type`
+/// Map aqpbm-cli's family name to the legacy `sketch_type`
 /// column value used by `plot_octo_throughput.py`.
 fn legacy_sketch_type(family: &str) -> &'static str {
     match family {
@@ -301,7 +301,7 @@ impl ParamCols {
                     cols.push(("registers", (1usize << bits).to_string()));
                 }
             }
-            // Nitro's legacy CSV carries rows/cols, but the sketch-cli params
+            // Nitro's legacy CSV carries rows/cols, but the aqpbm-cli params
             // only own `rate` — the matrix shape is baked into each impl.
             // Sentinel 0s keep the row width legal.
             "nitro" => {

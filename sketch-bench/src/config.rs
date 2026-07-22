@@ -1,13 +1,13 @@
 //! `BenchConfig` — knobs the caller sets before running a
-//! benchmark. `MetricsMask` is re-exported from `sketch-core`.
+//! benchmark. `MetricsMask` is re-exported from `aqpbm-core`.
 //!
 //! See `docs/DESIGN.md` §5.3.
 
-// `MetricsMask` moved to `sketch-core::metrics` so that
+// `MetricsMask` moved to `aqpbm-core::metrics` so that
 // `sketch-runtime` can name it without depending on this whole
 // crate. Re-exported here: `sketch_bench::MetricsMask` and
 // `sketch_bench::config::MetricsMask` still resolve.
-pub use sketch_core::metrics::MetricsMask;
+pub use aqpbm_core::metrics::MetricsMask;
 
 /// Configuration for one `BenchRunner` invocation.
 #[derive(Debug, Clone)]

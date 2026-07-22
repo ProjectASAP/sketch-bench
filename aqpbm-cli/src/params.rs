@@ -1,20 +1,20 @@
 //! Construction parameters for each sketch family.
 //!
 //! These live next to the wrappers that consume them, not in
-//! `sketch-core`. `sketch-core` owns the *open* family axis —
+//! `aqpbm-core`. `aqpbm-core` owns the *open* family axis —
 //! the `SketchParams` trait and the type-erased `ParamSet` — and
 //! deliberately knows no family names. Concrete families are
 //! declared by whoever ships the implementations, which is this
 //! crate.
 //!
-//! See `sketch_core::config` for why the axis is open at all.
+//! See `aqpbm_core::config` for why the axis is open at all.
 
 use serde::{Deserialize, Serialize};
 
 // Re-exported so callers reach the whole parameter vocabulary —
-// the open axis from `sketch-core` plus this crate's families —
+// the open axis from `aqpbm-core` plus this crate's families —
 // through one module.
-pub use sketch_core::config::{ParamSet, SketchParams};
+pub use aqpbm_core::config::{ParamSet, SketchParams};
 
 macro_rules! sketch_params {
     ($ty:ident, $family:literal, $grid:expr) => {

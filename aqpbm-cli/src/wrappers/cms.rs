@@ -12,7 +12,7 @@
 //! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
 use crate::params::CmsParams;
-use sketch_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
 use asap_sketchlib::{

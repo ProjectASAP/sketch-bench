@@ -24,7 +24,7 @@
 //! universal number reflects how each sketch's correctness
 //! bound is actually defined in its paper.
 
-use sketch_core::sketch::Sketch;
+use aqpbm_core::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::time::Instant;
 

@@ -8,7 +8,7 @@
 //! paper story, and nesting (`FanOutExporter<A, FanOutExporter<B, C>>`)
 //! is a pass-through one-liner if more branches are ever needed.
 
-use sketch_core::report::Record;
+use aqpbm_core::report::Record;
 
 use super::Exporter;
 
@@ -62,8 +62,8 @@ mod tests {
     }
 
     fn sample_record() -> Record {
-        use sketch_core::report::Mode;
-        use sketch_core::workload::WorkloadDesc;
+        use aqpbm_core::report::Mode;
+        use aqpbm_core::workload::WorkloadDesc;
         Record::new(
             "hll",
             "oxide",

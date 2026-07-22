@@ -18,8 +18,8 @@
 use std::collections::HashMap;
 
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams};
+use aqpbm_core::sketch::Sketch;
 use polars::prelude::*;
-use sketch_core::sketch::Sketch;
 
 /// `hll/polars` — distinct count via `n_unique`.
 pub struct PolarsCardinality {

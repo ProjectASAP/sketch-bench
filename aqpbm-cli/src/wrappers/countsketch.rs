@@ -2,8 +2,8 @@
 //! Same family as CMS: `Query = i64`, `Answer = u64`.
 
 use crate::params::CountSketchParams;
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
-use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
 use crate::wrappers::cms::{
