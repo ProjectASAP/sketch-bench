@@ -4,7 +4,6 @@
 
 #[cfg(feature = "heap-track")]
 pub mod heap_track;
-pub mod latency;
 pub mod memory;
 pub mod throughput;
 pub mod time;
@@ -13,8 +12,11 @@ use sketch_core::probe::MetricsSink;
 
 use crate::config::MetricsMask;
 
-pub use latency::LatencyRecorder;
+// The latency recorder moved to `sketch-core::latency` — the
+// embedded `sketch-runtime::Sampler` records latency too, and
+// pulling it from here forced a dep on this whole crate.
 pub use memory::{JemallocAllocated, Rss};
+pub use sketch_core::latency::{LatencyRecorder, LatencySnapshot};
 pub use throughput::ItemsPerSec;
 pub use time::{CpuTimeSample, CpuTimeSampler, WallClock};
 
@@ -94,16 +96,6 @@ impl RunMetrics {
             query_calls: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct LatencySnapshot {
-    pub p50: u64,
-    pub p95: u64,
-    pub p99: u64,
-    pub p999: u64,
-    pub max: u64,
-    pub count: u64,
 }
 
 /// Concrete sink for offline benchmark runs. Holds each

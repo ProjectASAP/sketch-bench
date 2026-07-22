@@ -87,7 +87,7 @@ Target module layout: DESIGN §5.2. Target API: DESIGN §5.3.
 - [ ] Port `sketchlib_kll_vtune.rs` harness from asap-fusion into `sketch-profile/vtune/` (L3 flush buffer + warmup + priming pattern).
 - [ ] Add `external/` shellout wrappers for `perf record`, `cachegrind`, `heaptrack`; capture report paths in JSONL.
 - [ ] Port `experiments/analyze_alloc_callstacks.py` to Rust under `sketch-profile/vtune/callstack.rs`.
-- [ ] CI lint: forbid `sketch-profile` from being a dep of `sketch-runtime`.
+- [ ] CI lint: forbid `sketch-profile` and `sketch-bench` from being deps of `sketch-runtime`.
 
 ### Phase 6 — Populate `sketch-runtime`
 

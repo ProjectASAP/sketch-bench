@@ -8,6 +8,8 @@
 //! for the full dependency-direction diagram.
 
 pub mod config;
+pub mod latency;
+pub mod metrics;
 pub mod probe;
 pub mod report;
 pub mod sketch;
@@ -25,6 +27,8 @@ pub use aqpbm_datagen::{
     BasicStats, DType, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
     SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
 };
+pub use latency::{LatencyRecorder, LatencySnapshot};
+pub use metrics::MetricsMask;
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,

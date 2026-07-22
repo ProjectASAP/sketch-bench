@@ -9,8 +9,9 @@ description = "Macro-metric benchmark library for sketch algorithms (throughput,
 [features]
 default = ["hdrhist", "accuracy-topk"]
 # Enable the hdrhistogram-backed latency recorder. Off → the
-# LATENCY mask bit is a no-op that costs nothing.
-hdrhist = ["dep:hdrhistogram"]
+# LATENCY mask bit is a no-op that costs nothing. The recorder
+# itself lives in sketch-core now; this forwards.
+hdrhist = ["sketch-core/hdrhist"]
 # Enable tikv-jemalloc-ctl `stats.allocated` sampling. Forces
 # jemalloc on the linking binary — opt-in only. Off →
 # heap_allocated_kb = None.
@@ -31,10 +32,8 @@ sketch-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-bitflags.workspace = true
 hashbrown.workspace = true
 thiserror.workspace = true
-hdrhistogram = { workspace = true, optional = true }
 tikv-jemalloc-ctl = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]

@@ -104,7 +104,7 @@ sketch-bench/
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
 ```
 
-Downstream apps depend on `sketch-core + sketch-bench + sketch-runtime` — not on `sketch-profile`, which is CLI-only.
+Downstream apps depend on `sketch-core + sketch-runtime` — not on `sketch-bench` (the offline benchmark library) and not on `sketch-profile` (CLI-only).
 
 ## Documents
 

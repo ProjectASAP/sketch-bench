@@ -13,8 +13,8 @@
 
 use std::time::{Duration, Instant};
 
-use sketch_bench::metrics::LatencyRecorder;
-use sketch_bench::MetricsMask;
+use sketch_core::latency::LatencyRecorder;
+use sketch_core::metrics::MetricsMask;
 use sketch_core::probe::MetricsSink;
 use sketch_core::report::{
     BenchSection, LatencySummary, Mode as RecordMode, Record, RunStats, Source,

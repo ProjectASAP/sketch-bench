@@ -4,10 +4,22 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types (Sketch trait, Probe, Workload, v1 report schema) shared by sketch-bench, sketch-profile, sketch-runtime, and downstream ASAP apps."
+description = "Core types (Sketch trait, Probe, Workload, MetricsMask, v1 report schema) shared by sketch-bench, sketch-profile, sketch-runtime, and downstream ASAP apps."
+
+[features]
+# Back the `LatencyRecorder` with a real hdrhistogram. Off → it
+# is a counter-only shim and `hdrhistogram` is not linked. On by
+# default so `sketch-bench` and `sketch-runtime` behave as they
+# did when the recorder lived in `sketch-bench`; embedded
+# consumers that want neither can take sketch-core with
+# `default-features = false`.
+default = ["hdrhist"]
+hdrhist = ["dep:hdrhistogram"]
 
 [dependencies]
 aqpbm-datagen.workspace = true
+bitflags.workspace = true
+hdrhistogram = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
