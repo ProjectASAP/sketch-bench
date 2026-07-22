@@ -59,16 +59,41 @@ pub struct RunMetrics {
     /// Latency histogram samples (ns/op) for the insert phase.
     /// None when `MetricsMask::LATENCY` unset.
     pub latency_ns: Option<LatencySnapshot>,
-    /// Accuracy comparator output, carried opaquely as JSON so
-    /// different ground-truth families can emit their own shape
-    /// without leaking into the common metric struct.
-    pub accuracy: Option<serde_json::Value>,
+    /// Named accuracy scalars from this run's comparator. Flat rather
+    /// than an opaque JSON blob so `aggregate` can fold every key across
+    /// runs without knowing any family's shape — see `accuracy::Comparison`.
+    pub accuracy: Option<std::collections::BTreeMap<String, f64>>,
     /// Per-call query samples — `Some` only when the dispatch
     /// requested `record_calls` on a comparator that supports
     /// it. Consumed by `sketch-cli/raw_csv` to back the legacy
     /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
     /// not surfaced in the v2 JSONL record.
     pub query_calls: Option<Vec<crate::accuracy::QueryCallSample>>,
+}
+
+impl RunMetrics {
+    /// All-zero metrics, for a pass that measures something other than the
+    /// insert phase (the merge pass times a fold, not a loop over items).
+    pub fn empty() -> Self {
+        Self {
+            items_inserted: 0,
+            queries_executed: 0,
+            wall_time_ns: 0,
+            insert_wall_time_ns: 0,
+            finalize_wall_time_ns: 0,
+            query_wall_time_ns: 0,
+            cpu_user_ns: None,
+            cpu_sys_ns: None,
+            rss_peak_kb: None,
+            heap_allocated_kb: None,
+            memory_bytes: None,
+            heap_bytes_net: None,
+            heap_bytes_peak: None,
+            latency_ns: None,
+            accuracy: None,
+            query_calls: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

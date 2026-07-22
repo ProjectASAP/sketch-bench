@@ -19,6 +19,9 @@ bitflags! {
         const CPU        = 1 << 2;
         const MEMORY     = 1 << 3;
         const ACCURACY   = 1 << 4;
+        /// Build K shard sketches, time folding them into one, then compare
+        /// the merged result against the whole stream.
+        const MERGE      = 1 << 5;
     }
 }
 
@@ -38,7 +41,7 @@ impl MetricsMask {
     /// to see the same sketch state a clean-throughput run
     /// produces.
     pub const PRIMARY: MetricsMask = MetricsMask::from_bits_truncate(
-        Self::THROUGHPUT.bits() | Self::LATENCY.bits() | Self::ACCURACY.bits(),
+        Self::THROUGHPUT.bits() | Self::LATENCY.bits() | Self::ACCURACY.bits() | Self::MERGE.bits(),
     );
 
     /// Bits that record at phase boundaries only (start / finish
@@ -55,7 +58,7 @@ impl MetricsMask {
     pub fn passes(self) -> Vec<MetricsMask> {
         let secondary = self & Self::SECONDARY;
         let mut out = Vec::new();
-        for primary in [Self::THROUGHPUT, Self::LATENCY, Self::ACCURACY] {
+        for primary in [Self::THROUGHPUT, Self::LATENCY, Self::ACCURACY, Self::MERGE] {
             if self.contains(primary) {
                 out.push(primary | secondary);
             }
@@ -87,6 +90,13 @@ pub struct BenchConfig {
     /// Threads used for the insert phase. `1` is the default;
     /// multi-threaded support is planned but not wired.
     pub threads: usize,
+    /// Number of shards the merge pass splits the stream into. `1` means the
+    /// merge pass has nothing to fold and is skipped. Contiguous ranges, and
+    /// folded sequentially into one accumulator — the partitioning scheme and
+    /// the fold topology are both real experimental axes (a KLL's error
+    /// depends on both), but v1 fixes them and names them here rather than
+    /// pretending the choice does not exist.
+    pub merge_shards: usize,
     /// Seeds the sink's randomness (latency sampling boundary,
     /// future sampled ground-truth comparators, ...). Does NOT
     /// seed the workload — workloads own their own seed.
@@ -101,6 +111,7 @@ impl Default for BenchConfig {
             metrics: MetricsMask::all(),
             query_count: None,
             threads: 1,
+            merge_shards: 1,
             seed: 0,
         }
     }
@@ -119,16 +130,13 @@ mod tests {
     #[test]
     fn passes_throughput_plus_latency_splits_into_two() {
         let p = (MetricsMask::THROUGHPUT | MetricsMask::LATENCY).passes();
-        assert_eq!(
-            p,
-            vec![MetricsMask::THROUGHPUT, MetricsMask::LATENCY],
-        );
+        assert_eq!(p, vec![MetricsMask::THROUGHPUT, MetricsMask::LATENCY],);
     }
 
     #[test]
     fn passes_attaches_memory_cpu_to_every_primary() {
         let p = MetricsMask::all().passes();
-        assert_eq!(p.len(), 3);
+        assert_eq!(p.len(), 4);
         for m in &p {
             assert!(m.contains(MetricsMask::CPU));
             assert!(m.contains(MetricsMask::MEMORY));

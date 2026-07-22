@@ -135,5 +135,4 @@ mod tests {
         let err = s.accept(&Column::F64(vec![1.0])).unwrap_err();
         assert!(err.to_string().contains("dtype"));
     }
-
 }

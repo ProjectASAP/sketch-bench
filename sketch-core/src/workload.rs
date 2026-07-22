@@ -49,10 +49,45 @@ pub struct WorkloadDesc {
 /// The abstract contract for a workload a `BenchRunner` can
 /// consume. An implementation produces an ordered `Vec<Item>`
 /// plus an optional query stream.
-pub trait Workload {
+pub trait Workload: Sized {
     type Item: Clone;
     fn desc(&self) -> WorkloadDesc;
     fn items(&self) -> &[Self::Item];
+
+    /// An **independent draw** from the same distribution, for a repetition
+    /// that must not reuse the previous one.
+    ///
+    /// Accuracy is a deterministic function of (data, parameters): re-running
+    /// a sketch over the same items with the same seed produces the identical
+    /// error, so N repetitions over one fixed workload yield N identical
+    /// numbers and any spread reported from them is fabricated. Varying the
+    /// *data* is what the literature does (Harmouch: 10 independent datasets
+    /// per point; Heule: 5000; Ertl and DataSketches: fresh values per trial).
+    ///
+    /// Takes the **1-based repetition index**, not a seed. The seed has to be
+    /// derived from the workload's own generation seed, because deriving it
+    /// from anything else can silently reproduce the original draw: an
+    /// earlier version mixed in `BenchConfig::seed`, which is unrelated to a
+    /// `--spec` file's seed, so `spec.seed = 43` with `--seed 42` made
+    /// repetition 1 bit-identical to repetition 0 and collapsed the reported
+    /// stddev to exactly 0 — the defect this method exists to prevent,
+    /// reintroduced silently. Indices start at 1 so a redraw can never
+    /// collide with the base draw.
+    ///
+    /// `None` means this workload has no distribution to redraw from — a file
+    /// on disk is one fixed sample. Callers must then run **one** repetition
+    /// and report `n = 1`, not N copies of it.
+    fn resample(&self, _repetition: usize) -> Option<Self> {
+        None
+    }
+
+    /// Whether [`Self::resample`] can produce anything, without paying for a
+    /// generation to find out. The runner needs this *before* it decides how
+    /// many repetitions to run, and probing by calling `resample` would
+    /// generate a full workload only to discard it.
+    fn can_resample(&self) -> bool {
+        false
+    }
 }
 
 // ---------- i64 workloads ----------
@@ -65,6 +100,10 @@ pub trait Workload {
 pub struct I64Workload {
     items: Vec<i64>,
     desc: WorkloadDesc,
+    /// The spec this was generated from, when it was generated. Retained so
+    /// [`Workload::resample`] can draw again from the same distribution.
+    /// `None` for file-backed workloads: a file is one fixed sample.
+    spec: Option<GenSpec>,
 }
 
 impl I64Workload {
@@ -84,7 +123,11 @@ impl I64Workload {
             items.len(),
         );
         desc.size = items.len();
-        Self { items, desc }
+        Self {
+            items,
+            desc,
+            spec: None,
+        }
     }
 
     /// Generate in-process from a [`GenSpec`] — the one generator in
@@ -97,7 +140,9 @@ impl I64Workload {
     /// meaningless keys behind a well-formed report.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchCoreError> {
         let desc = spec.shape.to_workload_desc(spec.size, spec.seed);
-        Ok(Self::new(spec.generate()?.into_i64()?, desc))
+        let mut wk = Self::new(spec.generate()?.into_i64()?, desc);
+        wk.spec = Some(spec.clone());
+        Ok(wk)
     }
 
     /// Uniform in `[0, cardinality)`. Convenience over [`Self::generate`].
@@ -182,6 +227,35 @@ impl Workload for I64Workload {
     }
     fn items(&self) -> &[i64] {
         &self.items
+    }
+
+    /// Regenerate from the retained spec with `seed` substituted. A spec that
+    /// generated once cannot fail on a different seed — every validation in
+    /// `Shape::build` is seed-independent — so a failure here would be a bug,
+    /// and returning `None` degrades to "cannot vary", which the caller
+    /// already handles honestly.
+    fn can_resample(&self) -> bool {
+        self.spec.is_some()
+    }
+
+    /// Regenerate from the retained spec at `spec.seed + repetition`. The
+    /// offset is taken from the **spec's own** seed and `repetition >= 1`, so
+    /// a redraw can never equal the base draw. Deriving it from anything else
+    /// is how this silently breaks: an earlier version mixed in
+    /// `BenchConfig::seed`, which is unrelated to a `--spec` file's seed, so
+    /// `spec.seed = 43` with `--seed 42` made repetition 1 bit-identical to
+    /// repetition 0 and collapsed the reported stddev to exactly 0.
+    ///
+    /// A spec that generated once cannot fail on a different seed — every
+    /// validation in `Shape::build` is seed-independent — so a failure here
+    /// would be a bug, and `None` degrades to "cannot vary", which the caller
+    /// already handles honestly.
+    fn resample(&self, repetition: usize) -> Option<Self> {
+        debug_assert!(repetition >= 1, "repetition 0 is the base draw");
+        let spec = self.spec.as_ref()?;
+        let mut respec = spec.clone();
+        respec.seed = spec.seed.wrapping_add(repetition as u64);
+        Self::generate(&respec).ok()
     }
 }
 
@@ -499,7 +573,10 @@ mod tests {
             let err = load_generated(dtype, tag)
                 .expect_err("non-i64 dtype must be rejected, not silently misread");
             let msg = err.to_string();
-            assert!(msg.contains(tag), "error should name the offending dtype: {msg}");
+            assert!(
+                msg.contains(tag),
+                "error should name the offending dtype: {msg}"
+            );
         }
     }
 
@@ -528,7 +605,11 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&5i64.to_le_bytes()).unwrap();
         drop(f);
-        std::fs::write(crate::datagen::io::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
+        std::fs::write(
+            crate::datagen::io::sidecar_path(&path),
+            "{\"not\":\"ours\"}",
+        )
+        .unwrap();
         let w = I64Workload::load(&path).expect("unparseable sidecar => fall back to i64");
         assert_eq!(w.items(), &[5]);
         std::fs::remove_file(&path).ok();
@@ -559,6 +640,67 @@ mod tests {
         drop(f);
         let err = I64Workload::load(&path).unwrap_err();
         assert!(err.to_string().contains("pcap magic"));
+        std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod resample_tests {
+    use super::*;
+    use crate::datagen::{DType, Distribution, GenSpec, Shape};
+
+    fn spec(seed: u64) -> GenSpec {
+        GenSpec {
+            shape: Shape::Keys {
+                cardinality: 1000,
+                dist: Distribution::Zipf { s: 1.1 },
+                dtype: DType::I64,
+            },
+            size: 2000,
+            seed,
+        }
+    }
+
+    /// The property the accuracy pass depends on: no repetition may reproduce
+    /// the base draw. A previous version derived the redraw seed from
+    /// `BenchConfig::seed`, unrelated to the spec's own seed, so a spec seed
+    /// one greater than the CLI seed made repetition 1 identical to
+    /// repetition 0 — reported as `accuracy_runs: 2, stddev: 0.0`.
+    #[test]
+    fn no_repetition_reproduces_the_base_draw() {
+        for base_seed in [0u64, 1, 42, 43, u64::MAX] {
+            let w = I64Workload::generate(&spec(base_seed)).unwrap();
+            for rep in 1..=8usize {
+                let r = w.resample(rep).expect("generated workloads resample");
+                assert_ne!(
+                    r.items(),
+                    w.items(),
+                    "repetition {rep} reproduced the base draw at seed {base_seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repetitions_differ_from_each_other() {
+        let w = I64Workload::generate(&spec(7)).unwrap();
+        let a = w.resample(1).unwrap();
+        let b = w.resample(2).unwrap();
+        assert_ne!(a.items(), b.items());
+    }
+
+    #[test]
+    fn file_backed_workloads_cannot_resample() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join("sketchlib_resample_file.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        for v in [1i64, 2, 3, 4] {
+            f.write_all(&v.to_le_bytes()).unwrap();
+        }
+        drop(f);
+        let w = I64Workload::load(&path).unwrap();
+        assert!(!w.can_resample(), "a file is one fixed sample");
+        assert!(w.resample(1).is_none());
         std::fs::remove_file(&path).ok();
     }
 }

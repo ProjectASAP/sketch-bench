@@ -15,7 +15,7 @@
 use std::cell::{Cell, RefCell};
 
 use sketch_core::config::KllParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 #[derive(Debug, Default)]
 pub struct ExactQuantile {
@@ -103,6 +103,15 @@ impl Sketch for ExactQuantile {
 
     fn memory_bytes(&self) -> usize {
         self.buf.borrow().capacity() * std::mem::size_of::<i64>()
+    }
+
+    /// Concatenate the retained values. Exact: the multiset union of two
+    /// samples is the sample of the union, so unlike KLL the baseline loses
+    /// nothing to merging and gives the merge benchmark a zero-error floor.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.buf.borrow_mut().extend_from_slice(&other.buf.borrow());
+        self.sorted.set(false);
+        Ok(())
     }
 
     /// Sort eagerly so the query phase only pays Type-7 lookup

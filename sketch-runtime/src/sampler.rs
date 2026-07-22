@@ -335,14 +335,14 @@ impl<E: Exporter> Sampler<E> {
             throughput_items_per_sec: Some(RunStats {
                 mean: throughput,
                 stddev: 0.0,
-                ci95: [throughput, throughput],
+                ci95: None,
                 n: 1,
             }),
             latency_ns: latency,
             wall_time_ms: Some(RunStats {
                 mean: (wall_ns as f64) / 1_000_000.0,
                 stddev: 0.0,
-                ci95: [0.0, 0.0],
+                ci95: None,
                 n: 1,
             }),
             ..Default::default()

@@ -12,7 +12,8 @@
 //! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
 use sketch_core::config::CmsParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
+use sketch_oxide::Mergeable as _;
 
 use asap_sketchlib::{
     impl_fixed_matrix, CountMin, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D,
@@ -62,6 +63,18 @@ impl Sketch for CmsOxide {
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<u32>()
     }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner
+            .merge(&other.inner)
+            .expect("both operands built from one ParamSet, so rows/cols match");
+        Ok(())
+    }
 }
 
 // ---------- datasketches ----------
@@ -94,6 +107,16 @@ impl Sketch for CmsDatasketches {
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<u64>()
+    }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
     }
 }
 
@@ -132,6 +155,16 @@ impl Sketch for CmsLibFixedmatrixCustomFast {
     fn memory_bytes(&self) -> usize {
         CMS_CUSTOM_FIXED_ROWS * CMS_CUSTOM_FIXED_COLS * std::mem::size_of::<i32>()
     }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
@@ -167,6 +200,16 @@ impl Sketch for CmsLibFixedmatrixFast32k {
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
     }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
@@ -197,6 +240,16 @@ impl Sketch for CmsLibFixedmatrixFast {
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<u32>()
+    }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
     }
 }
 
@@ -231,6 +284,16 @@ impl Sketch for CmsLibVector2dFast {
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
     }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
@@ -263,5 +326,15 @@ impl Sketch for CmsLibVector2dRegular {
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
+    }
+
+    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// merging shards is **exact**: the result is identical to one sketch fed
+    /// the whole stream. The merge benchmark therefore asserts that equality
+    /// rather than measuring a degradation — a difference would mean the
+    /// shards disagreed about hash seeds, or a counter saturated.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
     }
 }

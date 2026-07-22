@@ -58,10 +58,7 @@ pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
             let mut out = Vec::new();
             for &layers in &[6usize, 8, 10] {
                 for &max_stream in &[128u64, 256, 512] {
-                    out.push(ParamSet::Univmon(UnivMonParams {
-                        layers,
-                        max_stream,
-                    }));
+                    out.push(ParamSet::Univmon(UnivMonParams { layers, max_stream }));
                 }
             }
             out

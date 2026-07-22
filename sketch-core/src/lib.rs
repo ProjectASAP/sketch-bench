@@ -19,7 +19,7 @@ pub use config::{
     ParamSet, UnivMonParams,
 };
 pub use datagen::{
-    BasicStats, Column, DType, Distribution, Generator, GenMeta, GenSpec, Shape, TimeUnit,
+    BasicStats, Column, DType, Distribution, GenMeta, GenSpec, Generator, Shape, TimeUnit,
     GEN_META_SCHEMA_VERSION,
 };
 pub use error::SketchCoreError;
@@ -28,5 +28,5 @@ pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,
     Record, RunStats, Source, SCHEMA_VERSION,
 };
-pub use sketch::Sketch;
+pub use sketch::{MergeUnsupported, Sketch};
 pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDesc};

@@ -195,9 +195,9 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
             }
         }
         "skewed-categorical" | "categorical" => {
-            let n = a.categories.ok_or_else(|| {
-                anyhow!("--categories <n> is required for skewed-categorical")
-            })?;
+            let n = a
+                .categories
+                .ok_or_else(|| anyhow!("--categories <n> is required for skewed-categorical"))?;
             if n == 0 {
                 bail!("--categories must be > 0");
             }
@@ -230,8 +230,7 @@ fn generate(a: GenerateArgs) -> Result<()> {
 
     // Stream through a FileSink: peak memory is one chunk, not the
     // whole dataset, so `--size` is bounded by disk rather than RAM.
-    let mut sink = datagen::FileSink::create(out)
-        .with_context(|| format!("creating {}", a.out))?;
+    let mut sink = datagen::FileSink::create(out).with_context(|| format!("creating {}", a.out))?;
     let meta = spec
         .generate_into(&mut sink, datagen::DEFAULT_CHUNK)
         .with_context(|| format!("generating into {}", a.out))?;

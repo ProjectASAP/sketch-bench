@@ -46,7 +46,9 @@ fn warmup_cpu_from_env() {
     let mut x: u64 = 0xdeadbeef;
     while Instant::now() < deadline {
         for _ in 0..10_000 {
-            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
         }
         std::hint::black_box(x);
     }
@@ -62,7 +64,7 @@ use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::config::{BenchConfig, MetricsMask};
 use crate::metrics::{
-    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, RunMetrics, Rss, WallClock,
+    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, Rss, RunMetrics, WallClock,
 };
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
@@ -143,7 +145,21 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // Both paths run the identical `insert` closure over the
             // identical slice and time only that loop, so the choice
             // affects what else is collected — never the throughput.
-            if pass_mask == MetricsMask::THROUGHPUT {
+            // Folding a single shard measures nothing, and `MetricsMask::all()`
+            // sets the MERGE bit — so the guard belongs here, not only in the
+            // CLI: a library caller asking for "all metrics" must not silently
+            // acquire a pass that has no shards to fold.
+            if pass_mask.contains(MetricsMask::MERGE) && pass_cfg.merge_shards < 2 {
+                continue;
+            }
+            if pass_mask.contains(MetricsMask::MERGE) {
+                reports.push(self.run_merge_pass(
+                    &mut factory,
+                    &mut insert,
+                    ground_truth,
+                    pass_cfg,
+                ));
+            } else if pass_mask == MetricsMask::THROUGHPUT {
                 reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
             } else {
                 reports.push(self.run_pass(&mut factory, &mut insert, ground_truth, pass_cfg));
@@ -198,18 +214,23 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 samples.push(v);
             }
         }
+        // No `ci95`: these are iterations of one process, not independent
+        // samples of this implementation. See `RunStats::ci95`.
         let throughput = if w.n() == 0 {
             None
         } else {
-            let (lo, hi) = w.ci95();
             Some(RunStats {
                 mean: w.mean(),
                 stddev: w.stddev(),
-                ci95: [lo, hi],
+                ci95: None,
                 n: w.n(),
             })
         };
-        let throughput_samples = if samples.is_empty() { None } else { Some(samples) };
+        let throughput_samples = if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        };
 
         let bench = BenchSection {
             throughput_items_per_sec: throughput,
@@ -222,6 +243,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             heap_allocated_kb: None,
             memory_bytes: None,
             accuracy: None,
+            merge_time_ms: None,
+            merge_shards: None,
+            merge_supported: None,
         };
 
         BenchReport {
@@ -229,6 +253,210 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             impl_name: self.impl_name.clone(),
             workload: self.workload.desc(),
             per_run: Vec::new(),
+            bench,
+            config: pass_cfg,
+        }
+    }
+
+    /// Build `merge_shards` sketches over contiguous slices of the stream,
+    /// fold them into one, and compare the result against the whole stream.
+    ///
+    /// Only the fold is timed. Filling the shards is ordinary insert work
+    /// already measured by the throughput pass, and including it would bury
+    /// the merge cost — which scales with sketch *state*, not stream length —
+    /// under it.
+    ///
+    /// What the comparison means depends on the family, and the difference is
+    /// the point of the experiment:
+    ///
+    /// * **Linear sketches** (Count-Min, Count Sketch, HLL at equal `lg_k`,
+    ///   and every exact baseline) merge without loss. The merged sketch is
+    ///   identical to one fed the whole stream, so their accuracy here must
+    ///   equal their single-pass accuracy. A gap is a defect — mismatched
+    ///   hash seeds across shards, or saturated counters — not a property of
+    ///   merging.
+    /// * **KLL** merges lossily: combining compactors adds error, and the
+    ///   result depends on the fold order. Its accuracy here is a genuine
+    ///   measurement, and the gap against its single-pass accuracy is the
+    ///   quantity nobody publishes.
+    fn run_merge_pass<S, F, G, Insert>(
+        &self,
+        factory: &mut F,
+        insert: &mut Insert,
+        ground_truth: Option<&G>,
+        pass_cfg: BenchConfig,
+    ) -> BenchReport
+    where
+        S: Sketch<Item = W::Item>,
+        W::Item: Clone,
+        F: FnMut() -> S,
+        Insert: FnMut(&mut S, &W::Item),
+        G: GroundTruth<S>,
+    {
+        let items = self.workload.items();
+        let shards = pass_cfg.merge_shards.max(2);
+        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(pass_cfg.runs);
+        let mut merge_ns: Vec<u64> = Vec::new();
+        let mut supported = true;
+        let mut folded_shards = shards;
+
+        for run_idx in 0..(pass_cfg.runs + pass_cfg.warmup_runs) {
+            // Contiguous partition. `chunks` leaves the last shard short when
+            // the split is uneven; that is a property of the data, not of the
+            // merge, and rounding it away would misreport shard count.
+            let per_shard = items.len().div_ceil(shards);
+            let mut sketches: Vec<S> = items
+                .chunks(per_shard.max(1))
+                .map(|chunk| {
+                    let mut sk = factory();
+                    for it in chunk {
+                        insert(&mut sk, it);
+                    }
+                    sk
+                })
+                .collect();
+
+            // `chunks` yields ceil(n / per_shard) pieces, which is <= the
+            // requested count and often strictly less (n=1000, shards=256 ->
+            // 250). Reporting the request would put merge cost against the
+            // wrong x on any cost-vs-shards plot, and a stream shorter than
+            // the shard count can yield a single chunk — zero folds — while
+            // still claiming a merge happened.
+            let actual_shards = sketches.len();
+            if actual_shards < 2 {
+                supported = false;
+                break;
+            }
+            let mut acc = sketches.remove(0);
+            let start = Instant::now();
+            for other in &sketches {
+                if acc.merge(other).is_err() {
+                    supported = false;
+                    break;
+                }
+            }
+            let ns = start.elapsed().as_nanos() as u64;
+            if !supported {
+                break;
+            }
+            folded_shards = actual_shards;
+            std::hint::black_box(&acc);
+            acc.finalize_for_query();
+
+            // Warm the query path before the one measured comparison, for the
+            // same reason `run_pass` does: otherwise the first comparator call
+            // is also the first query ever issued against this sketch, and its
+            // `query_throughput` measures a cold path.
+            if run_idx < pass_cfg.warmup_runs {
+                if let Some(gt) = ground_truth {
+                    std::hint::black_box(gt.compare(&acc, items));
+                }
+            }
+
+            if run_idx >= pass_cfg.warmup_runs {
+                merge_ns.push(ns);
+                let mut metrics = RunMetrics {
+                    items_inserted: items.len() as u64,
+                    memory_bytes: Some(acc.memory_bytes() as u64),
+                    ..RunMetrics::empty()
+                };
+                // Accuracy is attached on the first measured run only. Unlike
+                // the accuracy pass, this loop re-folds the **same** draw every
+                // iteration, so N copies would publish `accuracy_runs: N` with
+                // `_stddev: 0.0` under a contract that says those counts are
+                // independent draws. The later iterations still earn their keep
+                // for `merge_time_ms`, which is a legitimate N-sample timing.
+                if let (Some(gt), true) = (ground_truth, per_run.is_empty()) {
+                    let merged = gt.compare(&acc, items);
+                    metrics.queries_executed = merged.queries;
+                    metrics.query_wall_time_ns = merged.query_wall_ns;
+
+                    // Is merging lossless for this implementation?
+                    //
+                    // Comparing the merge pass's accuracy against the accuracy
+                    // pass's would answer nothing: those two passes now measure
+                    // different data (the accuracy pass draws a fresh sample per
+                    // repetition), so any difference is dominated by sampling.
+                    // The question is only meaningful *within* one draw, so the
+                    // single-pass reference is built here, over the same items,
+                    // and the two are compared on the same probe set.
+                    //
+                    // "Lossless" here means **indistinguishable on this probe
+                    // set**, which is weaker than "the merged state equals the
+                    // single-pass state". For frequency the fingerprint is
+                    // strong (~30 keys including per-key L1/L2 sums); for
+                    // cardinality it is four scalars derived from one estimate,
+                    // so a state difference that happens not to move the
+                    // estimate would read as lossless. Reported under that
+                    // reading, not as a claim about bytes.
+                    //
+                    // Exactly 1.0 is the correct answer for a linear sketch
+                    // (Count-Min, Count Sketch, HLL at equal lg_k, every exact
+                    // baseline): the merged state is identical to a single pass,
+                    // so anything less means the shards disagreed about hash
+                    // seeds or a counter saturated. For KLL it is expected to be
+                    // 0.0 — its compactor merge genuinely loses information —
+                    // and the size of the gap is the measurement.
+                    let mut single = factory();
+                    for it in items {
+                        insert(&mut single, it);
+                    }
+                    single.finalize_for_query();
+                    let reference = gt.compare(&single, items);
+                    // A non-finite metric would compare unequal to itself and
+                    // pin this to "lossy" forever, so treat it as unknown
+                    // rather than silently reporting a false negative.
+                    let comparable = merged
+                        .metrics
+                        .values()
+                        .chain(reference.metrics.values())
+                        .all(|v| v.is_finite());
+                    let lossless = comparable && merged.metrics == reference.metrics;
+
+                    let mut m = merged.metrics;
+                    if comparable {
+                        m.insert("merge_lossless".into(), if lossless { 1.0 } else { 0.0 });
+                    }
+                    metrics.accuracy = Some(m);
+                }
+                per_run.push(metrics);
+            }
+        }
+
+        // Post-merge accuracy is the *point* of this pass, but the pass mask
+        // carries only the MERGE bit, and `aggregate` suppresses any metric
+        // whose bit is absent. Add ACCURACY when a comparator actually ran,
+        // or the measurement would be computed and then dropped.
+        let agg_mask = if ground_truth.is_some() {
+            pass_cfg.metrics | MetricsMask::ACCURACY
+        } else {
+            pass_cfg.metrics
+        };
+        let mut bench = aggregate(&per_run, agg_mask);
+        // Nothing in this pass is timed end-to-end: shard filling is
+        // deliberately excluded and only the fold is measured, so a
+        // `wall_time_ms` of 0 would claim a measurement that was not taken.
+        bench.wall_time_ms = None;
+        bench.merge_shards = Some(folded_shards);
+        bench.merge_supported = Some(supported);
+        if supported && !merge_ns.is_empty() {
+            let mut w = Welford::new();
+            for ns in &merge_ns {
+                w.push(*ns as f64 / 1_000_000.0);
+            }
+            bench.merge_time_ms = Some(RunStats {
+                mean: w.mean(),
+                stddev: w.stddev(),
+                ci95: None,
+                n: w.n(),
+            });
+        }
+
+        BenchReport {
+            sketch: self.sketch_name.clone(),
+            impl_name: self.impl_name.clone(),
+            workload: self.workload.desc(),
+            per_run,
             bench,
             config: pass_cfg,
         }
@@ -248,11 +476,35 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
-        let items = self.workload.items();
-        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(pass_cfg.runs);
-        let total_runs = pass_cfg.runs + pass_cfg.warmup_runs;
+        let accuracy_pass = pass_cfg.metrics.contains(MetricsMask::ACCURACY);
+
+        // On the accuracy pass a repetition is only worth running if it draws
+        // its own sample: a sketch's error is deterministic given (data,
+        // parameters), so N repetitions over one fixed workload produce N
+        // identical numbers and any spread computed from them is fabricated.
+        // A workload that cannot be redrawn — a file on disk is one fixed
+        // sample — therefore gets exactly **one** measured run, and reports
+        // `n = 1`, instead of N copies of the same number.
+        let measured_runs = if accuracy_pass && !self.workload.can_resample() {
+            1
+        } else {
+            pass_cfg.runs
+        };
+        let mut per_run: Vec<RunMetrics> = Vec::with_capacity(measured_runs);
+        let total_runs = measured_runs + pass_cfg.warmup_runs;
 
         for run_idx in 0..total_runs {
+            // Warm-ups reuse the base workload (their results are discarded,
+            // so generating a fresh one would be pure cost); measured run 0
+            // uses it too, and each later measured run draws its own.
+            let measured_idx = run_idx.checked_sub(pass_cfg.warmup_runs);
+            let resampled: Option<W> = match measured_idx {
+                Some(j) if accuracy_pass && j > 0 => self.workload.resample(j),
+                _ => None,
+            };
+            let workload: &W = resampled.as_ref().unwrap_or(self.workload);
+            let items = workload.items();
+
             let (metrics, final_sketch) = if pass_cfg.metrics.contains(MetricsMask::LATENCY) {
                 // The latency pass deliberately does NOT use `insert`: its
                 // instrument *is* the per-update `Probe` boundary, and it
@@ -264,20 +516,27 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 run_once_clean(factory, insert, items, &pass_cfg)
             };
 
+            // The comparator owns the query phase, so it must run on warm-up
+            // iterations too: skipping it there left the first *measured*
+            // query phase as the first query phase ever executed — cold
+            // branch predictors, cold probe array, cold query path — while
+            // `--warmup-runs` was protecting only the insert side.
+            let comparison = if accuracy_pass {
+                ground_truth.map(|gt| gt.compare(&final_sketch, items))
+            } else {
+                None
+            };
+
             if run_idx >= pass_cfg.warmup_runs {
                 let mut metrics = metrics;
-                if pass_cfg.metrics.contains(MetricsMask::ACCURACY) {
-                    if let Some(gt) = ground_truth {
-                        let cmp = gt.compare(&final_sketch, items);
-                        // Query phase ran inside the comparator; pull
-                        // its timing into the run's metrics so
-                        // aggregation surfaces query_throughput
-                        // alongside insertion throughput.
-                        metrics.queries_executed = cmp.queries;
-                        metrics.query_wall_time_ns = cmp.query_wall_ns;
-                        metrics.accuracy = Some(cmp.json);
-                        metrics.query_calls = cmp.query_calls;
-                    }
+                if let Some(cmp) = comparison {
+                    // Query phase ran inside the comparator; pull its timing
+                    // into the run's metrics so aggregation surfaces
+                    // query_throughput alongside insertion throughput.
+                    metrics.queries_executed = cmp.queries;
+                    metrics.query_wall_time_ns = cmp.query_wall_ns;
+                    metrics.accuracy = Some(cmp.metrics);
+                    metrics.query_calls = cmp.query_calls;
                 }
                 metrics.memory_bytes = Some(final_sketch.memory_bytes() as u64);
                 per_run.push(metrics);
@@ -285,6 +544,12 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
 
         let bench = aggregate(&per_run, pass_cfg.metrics);
+        // `runs` must say how many runs were measured, not how many were
+        // asked for: a non-resamplable workload measures once, and a record
+        // reading `runs: 10` beside `accuracy_runs: 1` is self-contradictory
+        // and inflates any cost or confidence proxy taken from it.
+        let mut pass_cfg = pass_cfg;
+        pass_cfg.runs = per_run.len();
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
@@ -397,10 +662,8 @@ where
 
     #[cfg(feature = "heap-track")]
     {
-        metrics.heap_bytes_net =
-            Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
-        metrics.heap_bytes_peak =
-            Some((heap_after.peak - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_net = Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_peak = Some((heap_after.peak - heap_before.in_use).max(0) as u64);
     }
 
     (metrics, sketch)
@@ -490,10 +753,8 @@ where
 
     #[cfg(feature = "heap-track")]
     {
-        metrics.heap_bytes_net =
-            Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
-        metrics.heap_bytes_peak =
-            Some((heap_after.peak - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_net = Some((heap_after.in_use - heap_before.in_use).max(0) as u64);
+        metrics.heap_bytes_peak = Some((heap_after.peak - heap_before.in_use).max(0) as u64);
     }
 
     (metrics, sketch)

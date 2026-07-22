@@ -3,10 +3,11 @@
 
 use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
 use sketch_core::config::CountSketchParams;
-use sketch_core::sketch::Sketch;
+use sketch_core::sketch::{MergeUnsupported, Sketch};
+use sketch_oxide::Mergeable as _;
 
 use crate::wrappers::cms::{
-    CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS, CountMinMatrix5x32K,
+    CountMinMatrix5x32K, CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS,
 };
 
 // sketch_oxide::frequency::CountSketch sizes its table as
@@ -55,6 +56,14 @@ impl Sketch for CsOxide {
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i64>()
     }
+
+    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner
+            .merge(&other.inner)
+            .expect("both operands built from one ParamSet, so rows/cols match");
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
@@ -81,6 +90,12 @@ impl Sketch for CsLibFixedmatrixFast {
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
+    }
+
+    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
     }
 }
 
@@ -111,6 +126,12 @@ impl Sketch for CsLibFixedmatrixFast32k {
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
+    }
+
+    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
     }
 }
 
@@ -145,6 +166,12 @@ impl Sketch for CsLibVector2dFast {
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
     }
+
+    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
+    }
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
@@ -177,5 +204,11 @@ impl Sketch for CsLibVector2dRegular {
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
+    }
+
+    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
     }
 }

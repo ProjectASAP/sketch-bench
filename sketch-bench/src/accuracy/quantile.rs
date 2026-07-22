@@ -24,8 +24,8 @@
 //! universal number reflects how each sketch's correctness
 //! bound is actually defined in its paper.
 
-use serde_json::json;
 use sketch_core::sketch::Sketch;
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::{Comparison, GroundTruth, QueryCallSample};
@@ -94,7 +94,7 @@ where
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
         if items.is_empty() {
             return Comparison {
-                json: json!({ "items": 0, "mean_rank_err": 0.0 }),
+                metrics: metrics_from([("items", 0.0), ("mean_rank_err", 0.0)]),
                 queries: 0,
                 query_wall_ns: 0,
                 query_calls: None,
@@ -151,12 +151,12 @@ where
 
         let mean = sum_rank_err / estimates.len() as f64;
         Comparison {
-            json: json!({
-                "items": n,
-                "grid_points": 101,
-                "mean_rank_err": mean,
-                "max_rank_err": max_rank_err,
-            }),
+            metrics: metrics_from([
+                ("items", n as f64),
+                ("grid_points", NUM_PERCENTILES as f64),
+                ("mean_rank_err", mean),
+                ("max_rank_err", max_rank_err),
+            ]),
             queries: 101,
             query_wall_ns: q_ns,
             query_calls,
@@ -182,7 +182,7 @@ where
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
         if items.is_empty() {
             return Comparison {
-                json: json!({ "items": 0, "mean_relative_err": 0.0 }),
+                metrics: metrics_from([("items", 0.0), ("mean_relative_err", 0.0)]),
                 queries: 0,
                 query_wall_ns: 0,
                 query_calls: None,
@@ -231,13 +231,13 @@ where
         };
 
         Comparison {
-            json: json!({
-                "items": items.len(),
-                "grid_points": 101,
-                "evaluated_points": n_rel,
-                "mean_relative_err": mean,
-                "max_relative_err": max_rel_err,
-            }),
+            metrics: metrics_from([
+                ("items", items.len() as f64),
+                ("grid_points", NUM_PERCENTILES as f64),
+                ("evaluated_points", n_rel as f64),
+                ("mean_relative_err", mean),
+                ("max_relative_err", max_rel_err),
+            ]),
             queries: 101,
             query_wall_ns: q_ns,
             query_calls,
@@ -325,4 +325,9 @@ fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
     let upper = (lower + 1).min(n - 1);
     let weight = rank - rank.floor();
     sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+}
+
+/// Build the flat metric map a `Comparison` carries.
+fn metrics_from<const N: usize>(pairs: [(&str, f64); N]) -> BTreeMap<String, f64> {
+    pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }

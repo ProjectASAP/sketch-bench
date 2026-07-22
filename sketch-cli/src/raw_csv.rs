@@ -81,8 +81,10 @@ pub fn write_runs(
         // shape; takes precedence over the aggregate query CSV
         // for these three families because their plot scripts
         // read the per-call columns.
-        let query_path =
-            dir.join(format!("{}_throughput_query_results_rust.csv", entry.family));
+        let query_path = dir.join(format!(
+            "{}_throughput_query_results_rust.csv",
+            entry.family
+        ));
         let header = per_call_query_header(entry.family);
         let mut rows: Vec<String> = Vec::new();
         for (run_idx, run) in report.per_run.iter().enumerate() {
@@ -123,8 +125,10 @@ pub fn write_runs(
         }
     } else if report.per_run.iter().any(|r| r.queries_executed > 0) {
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
-        let query_path =
-            dir.join(format!("{}_throughput_query_results_rust.csv", entry.family));
+        let query_path = dir.join(format!(
+            "{}_throughput_query_results_rust.csv",
+            entry.family
+        ));
         append_csv(
             &query_path,
             &query_header(entry.family),
@@ -239,16 +243,10 @@ fn format_per_call_row(
             sample.call_index, sample.nanoseconds, sample.estimate
         ),
     };
-    format!(
-        "{legacy_impl},rust,{lead}{middle},{total_items},{tail}"
-    )
+    format!("{legacy_impl},rust,{lead}{middle},{total_items},{tail}")
 }
 
-fn append_csv<I: IntoIterator<Item = String>>(
-    path: &Path,
-    header: &str,
-    rows: I,
-) -> Result<()> {
+fn append_csv<I: IntoIterator<Item = String>>(path: &Path, header: &str, rows: I) -> Result<()> {
     let new_file = !path.exists();
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     if new_file {

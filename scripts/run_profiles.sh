@@ -29,14 +29,16 @@
 #
 # CPU (for cpu-accuracy curve):
 #   .bench.cpu_time_ms.user_ms.mean    CPU user time (ms, mean over runs)
-#   .bench.cpu_time_ms.user_ms.ci95    [lo, hi] 95% CI
+#   .bench.cpu_time_ms.user_ms.mean    [lo, hi] 95% CI
 #   .bench.cpu_time_ms.sys_ms.mean     CPU sys time (ms)
 #   .bench.wall_time_ms.mean           wall clock time (ms)
 #
 # Accuracy:
 #   HLL:           .bench.accuracy.relative_error
 #   KLL:           .bench.accuracy.mean_rank_err, .bench.accuracy.max_rank_err
-#   CMS/CS (freq): .bench.accuracy.relative_error_mean
+#   CMS/CS (freq): .bench.accuracy.are_top10 / are_top100  (per-top-k error;
+#                  are_all == the legacy relative_error_mean, dominated by
+#                  count-1 keys — compare against the `null` impl, which is 1.0)
 #                  .bench.accuracy.relative_error_p99
 #                  .bench.accuracy.l1_err
 #                  .bench.accuracy.min_true_count   (threshold applied)

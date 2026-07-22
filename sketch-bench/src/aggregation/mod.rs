@@ -36,7 +36,11 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
                 samples.push(v);
             }
         }
-        let s = if samples.is_empty() { None } else { Some(samples) };
+        let s = if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        };
         (maybe_runstats(w), s)
     } else {
         (None, None)
@@ -116,13 +120,8 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         None
     };
 
-    // Pick the last run's accuracy — all post-warmup runs share
-    // the same workload + ground truth, so any of them is
-    // representative. Averaging across accuracy samples needs a
-    // family-aware merge that each comparator defines; we do that
-    // per-family in `accuracy::` when it matters.
     let accuracy = if mask.contains(MetricsMask::ACCURACY) {
-        runs.iter().rev().find_map(|r| r.accuracy.clone())
+        merge_accuracy(runs)
     } else {
         None
     };
@@ -140,7 +139,64 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         heap_allocated_kb,
         memory_bytes,
         accuracy,
+        // Filled in by the merge pass, which owns these.
+        merge_time_ms: None,
+        merge_shards: None,
+        merge_supported: None,
     }
+}
+
+/// Fold every run's accuracy scalars into one object.
+///
+/// Each repetition of the accuracy pass measured an **independent draw** of
+/// the workload (see `BenchRunner::run_pass`), so these are genuine samples
+/// and the spread across them is real. Each key is emitted as its mean, with
+/// a `<key>_stddev` companion and one `accuracy_runs` count — scalars stay
+/// scalars, so a consumer reading `relative_error_mean` keeps working while
+/// gaining the ability to see how much it moved.
+///
+/// A key present in some runs but not others (a top-k prefix that only some
+/// draws had enough distinct keys for) is averaged over the runs that
+/// reported it; `accuracy_runs` is the maximum, so a reader can spot the
+/// difference.
+fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let mut acc: BTreeMap<&str, Welford> = BTreeMap::new();
+    let mut n_runs = 0usize;
+    for r in runs {
+        let Some(m) = r.accuracy.as_ref() else {
+            continue;
+        };
+        n_runs += 1;
+        for (k, v) in m {
+            acc.entry(k.as_str()).or_insert_with(Welford::new).push(*v);
+        }
+    }
+    if acc.is_empty() {
+        return None;
+    }
+    let mut out = serde_json::Map::new();
+    for (k, w) in acc {
+        out.insert(k.to_string(), json_num(w.mean()));
+        // A `_stddev` of exactly zero carries no information and most of
+        // these keys are configuration constants (`probes_top10`,
+        // `grid_points`, `items`) that only ride along in the metric map.
+        // Emitting a companion for each doubled the payload with zeros.
+        if w.n() > 1 && w.stddev() != 0.0 {
+            out.insert(format!("{k}_stddev"), json_num(w.stddev()));
+        }
+    }
+    out.insert("accuracy_runs".into(), serde_json::json!(n_runs));
+    Some(serde_json::Value::Object(out))
+}
+
+/// `serde_json` refuses non-finite floats; a NaN or inf here means a
+/// comparator divided by zero, and emitting `null` says so rather than
+/// failing the whole record.
+fn json_num(v: f64) -> serde_json::Value {
+    serde_json::Number::from_f64(v)
+        .map(serde_json::Value::Number)
+        .unwrap_or(serde_json::Value::Null)
 }
 
 fn maybe_runstats(w: Welford) -> Option<RunStats> {
@@ -151,12 +207,17 @@ fn maybe_runstats(w: Welford) -> Option<RunStats> {
     }
 }
 
+/// Summarise the post-warmup iterations of one process.
+///
+/// `ci95` is deliberately `None`: these iterations are not independent
+/// samples of the implementation's throughput, so no interval computed from
+/// them would mean what an interval claims. `sketchlib bench --repeats R`
+/// fills it in from R separate processes. See `RunStats::ci95`.
 fn runstats_from(w: Welford) -> RunStats {
-    let (lo, hi) = w.ci95();
     RunStats {
         mean: w.mean(),
         stddev: w.stddev(),
-        ci95: [lo, hi],
+        ci95: None,
         n: w.n(),
     }
 }

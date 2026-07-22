@@ -59,11 +59,7 @@ impl Sketch for PolarsCardinality {
             .expect("c column")
             .cast(&DataType::Float64)
             .expect("cast to f64");
-        self.estimate = c
-            .f64()
-            .expect("f64 chunked")
-            .get(0)
-            .unwrap_or(0.0);
+        self.estimate = c.f64().expect("f64 chunked").get(0).unwrap_or(0.0);
     }
 
     fn query(&self, _: ()) -> f64 {
