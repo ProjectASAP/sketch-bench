@@ -36,13 +36,15 @@ pub use cardinality::ExactCardinality;
 pub use frequency::ExactFrequency;
 pub use quantile::ExactQuantile;
 
-/// The statistic a sketch family answers. This is the
-/// canonical taxonomy used to pick a ground-truth baseline.
+/// The statistic a sketch family answers — the canonical taxonomy used to
+/// pick a ground-truth baseline.
 ///
-/// The mapping from sketch family → statistic is maintained by
-/// [`Statistic::for_family`]; keep it in sync with the
-/// `accuracy_kind` field on each `ImplEntry` in
-/// `sketch-cli/src/dispatch.rs`.
+/// There used to be a `Statistic::for_family(&str)` here whose doc comment
+/// asked the reader to "keep it in sync with the `accuracy_kind` field on
+/// each `ImplEntry`" by hand. Nothing enforced that, it had no production
+/// caller — only its own tests — and it was a second copy of a fact the
+/// dispatch row already states. The dispatch row is the single place a
+/// family's statistic is declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Statistic {
     /// Distinct-item count. Baseline: [`ExactCardinality`].
@@ -55,19 +57,6 @@ pub enum Statistic {
 }
 
 impl Statistic {
-    /// Which statistic the named sketch family answers, if any.
-    /// Returns `None` for families whose sketch query is a stub
-    /// (e.g. `nitro`, `univmon` as currently wrapped) and which
-    /// therefore have no viable exact baseline in this repo.
-    pub fn for_family(family: &str) -> Option<Self> {
-        match family {
-            "hll" => Some(Self::Cardinality),
-            "cms" | "countsketch" | "elastic" => Some(Self::Frequency),
-            "kll" | "dd" => Some(Self::Quantile),
-            _ => None,
-        }
-    }
-
     /// Human-readable label — the folder name under
     /// `sketch-bench/src/baselines/` that houses the ground-truth
     /// algorithm for this statistic.
@@ -77,25 +66,5 @@ impl Statistic {
             Self::Frequency => "frequency",
             Self::Quantile => "quantile",
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn family_to_statistic_mapping() {
-        assert_eq!(Statistic::for_family("hll"), Some(Statistic::Cardinality));
-        assert_eq!(Statistic::for_family("cms"), Some(Statistic::Frequency));
-        assert_eq!(
-            Statistic::for_family("countsketch"),
-            Some(Statistic::Frequency)
-        );
-        assert_eq!(Statistic::for_family("elastic"), Some(Statistic::Frequency));
-        assert_eq!(Statistic::for_family("kll"), Some(Statistic::Quantile));
-        assert_eq!(Statistic::for_family("dd"), Some(Statistic::Quantile));
-        assert_eq!(Statistic::for_family("nitro"), None);
-        assert_eq!(Statistic::for_family("univmon"), None);
     }
 }

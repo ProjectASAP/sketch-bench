@@ -1,94 +1,84 @@
-//! Config sweep support: per-family default grids and a parser
-//! for `--config 'k=v1,v2 k2=v3,v4'` strings that expands into a
-//! `Vec<ParamSet>` via Cartesian product.
+//! `--config 'k=v1,v2 k2=v3,v4'` → a Cartesian product of [`ParamSet`]s.
+//!
+//! This was eight `build_<family>` functions, each with a hand-written list of
+//! allowed keys, a hand-written arity check and a hand-written cross product —
+//! 51 branches that had to be extended for every new family, and whose failure
+//! mode was a `--config` key silently belonging to no family.
+//!
+//! None of that was family-specific work. Splitting `k=v1,v2` into a grid is
+//! the same operation whatever the keys mean; deciding whether a key exists
+//! and whether its value has the right type is what serde does, driven by the
+//! params struct itself. So the parser builds an untyped JSON object per grid
+//! point and hands it to [`ParamSet::parse`], performed by the caller against
+//! the concrete type. `deny_unknown_fields` turns a typo into an error naming
+//! the key and listing the valid ones — better than the old list, and nobody
+//! has to maintain it.
 //!
 //! See `docs/BENCH_SWEEP.md` §2 + §3.
 
 use anyhow::{anyhow, bail, Result};
-use sketch_core::config::{
-    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-    ParamSet, UnivMonParams,
-};
+use serde_json::{Map, Value};
+use sketch_core::config::ParamSet;
 
-/// Default grid for a family — used when `--config` is omitted.
-/// Numbers live here rather than in `docs/BENCH_SWEEP.md` so a
-/// `git blame` on the runtime value always matches the code.
+/// Default grid for a family, read from the dispatch table — which is where
+/// the family's params type is already named — rather than from a second
+/// table keyed by family string that could disagree with it.
 pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
-    Ok(match family {
-        "hll" => [10u8, 12, 14, 16]
-            .iter()
-            .map(|&lg_k| ParamSet::Hll(HllParams { lg_k }))
-            .collect(),
-        "kll" => [100u32, 200, 400, 800]
-            .iter()
-            .map(|&k| ParamSet::Kll(KllParams { k }))
-            .collect(),
-        "cms" => {
-            let mut out = Vec::new();
-            for &rows in &[3usize, 5, 7] {
-                for &cols in &[1024usize, 2048, 4096] {
-                    out.push(ParamSet::Cms(CmsParams { rows, cols }));
-                }
-            }
-            out
-        }
-        "countsketch" => {
-            let mut out = Vec::new();
-            for &rows in &[3usize, 5, 7] {
-                for &cols in &[1024usize, 2048, 4096] {
-                    out.push(ParamSet::Countsketch(CountSketchParams { rows, cols }));
-                }
-            }
-            out
-        }
-        "elastic" => {
-            let mut out = Vec::new();
-            for &buckets in &[512usize, 1024, 2048] {
-                for &depth in &[2usize, 3, 4] {
-                    out.push(ParamSet::Elastic(ElasticParams { buckets, depth }));
-                }
-            }
-            out
-        }
-        "nitro" => [0.01f64, 0.02, 0.05, 0.10]
-            .iter()
-            .map(|&rate| ParamSet::Nitro(NitroParams { rate }))
-            .collect(),
-        "univmon" => {
-            let mut out = Vec::new();
-            for &layers in &[6usize, 8, 10] {
-                for &max_stream in &[128u64, 256, 512] {
-                    out.push(ParamSet::Univmon(UnivMonParams { layers, max_stream }));
-                }
-            }
-            out
-        }
-        "dd" => [0.005f64, 0.01, 0.02, 0.05, 0.1]
-            .iter()
-            .map(|&alpha| ParamSet::Dd(DdParams { alpha }))
-            .collect(),
-        other => bail!("no default grid for sketch family: {other}"),
-    })
+    let entry = crate::dispatch::impls_for_family(family)
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("unknown sketch family: {family}"))?;
+    Ok((entry.params.default_grid)())
 }
 
-/// Parse a `--config 'k=v1,v2 k2=v3,v4'` string and expand to a
-/// Cartesian product. Whitespace separates keys; commas separate
-/// values within a key.
+/// Expand `--config` into one `ParamSet` per grid point.
 ///
-/// Example: `"rows=3,5 cols=1024,2048"` → 4 `CmsParams`.
+/// Values are typed by content: `5` becomes a JSON number, `1.1` a float,
+/// `true` a bool, anything else a string. That is what lets one untyped
+/// parser feed eight differently-shaped params structs — serde does the final
+/// coercion and rejects mismatches by field name.
 pub fn parse_config(family: &str, spec: &str) -> Result<Vec<ParamSet>> {
-    let kvs = parse_kvs(spec)?;
-    match family {
-        "hll" => build_hll(&kvs),
-        "kll" => build_kll(&kvs),
-        "cms" => build_cms(&kvs),
-        "countsketch" => build_countsketch(&kvs),
-        "elastic" => build_elastic(&kvs),
-        "nitro" => build_nitro(&kvs),
-        "univmon" => build_univmon(&kvs),
-        "dd" => build_dd(&kvs),
-        other => bail!("unknown sketch family: {other}"),
+    // The old per-family dispatch rejected an unknown family here. The CLI
+    // also bails earlier, in `select_impls`, but this is `pub` and the
+    // guarantee should live in the function rather than in the order its
+    // callers happen to run.
+    if crate::dispatch::impls_for_family(family).is_empty() {
+        bail!("unknown sketch family: {family}");
     }
+    let kvs = parse_kvs(spec)?;
+    let mut grid: Vec<Map<String, Value>> = vec![Map::new()];
+    for (key, values) in &kvs {
+        let mut next = Vec::with_capacity(grid.len() * values.len());
+        for base in &grid {
+            for v in values {
+                let mut row = base.clone();
+                row.insert(key.clone(), typed(v));
+                next.push(row);
+            }
+        }
+        grid = next;
+    }
+    Ok(grid
+        .into_iter()
+        .map(|params| ParamSet {
+            family: family.to_string(),
+            params: Value::Object(params),
+        })
+        .collect())
+}
+
+/// `"5"` → number, `"1.1"` → float, `"true"` → bool, else string.
+fn typed(raw: &str) -> Value {
+    if let Ok(i) = raw.parse::<i64>() {
+        return Value::from(i);
+    }
+    if let Ok(f) = raw.parse::<f64>() {
+        return Value::from(f);
+    }
+    if let Ok(b) = raw.parse::<bool>() {
+        return Value::from(b);
+    }
+    Value::from(raw)
 }
 
 fn parse_kvs(spec: &str) -> Result<Vec<(String, Vec<String>)>> {
@@ -109,218 +99,65 @@ fn parse_kvs(spec: &str) -> Result<Vec<(String, Vec<String>)>> {
     Ok(out)
 }
 
-fn take_single_key<'a>(
-    kvs: &'a [(String, Vec<String>)],
-    family: &str,
-    allowed: &[&str],
-) -> Result<&'a [String]> {
-    check_allowed_keys(kvs, family, allowed)?;
-    if kvs.len() != 1 {
-        bail!("{family} takes exactly one key, got {}", kvs.len());
-    }
-    Ok(&kvs[0].1)
-}
-
-fn check_allowed_keys(kvs: &[(String, Vec<String>)], family: &str, allowed: &[&str]) -> Result<()> {
-    for (k, _) in kvs {
-        if !allowed.iter().any(|a| a == k) {
-            bail!(
-                "unknown key '{k}' for {family}; allowed: {}",
-                allowed.join(", ")
-            );
-        }
-    }
-    Ok(())
-}
-
-fn get_values<'a>(kvs: &'a [(String, Vec<String>)], key: &str) -> &'a [String] {
-    kvs.iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_slice())
-        .unwrap_or(&[])
-}
-
-// ---------- per-family builders ----------
-
-fn build_hll(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    let vals = take_single_key(kvs, "hll", &["lg_k"])?;
-    vals.iter()
-        .map(|v| {
-            let lg_k: u8 = v.parse().map_err(|_| anyhow!("bad lg_k value: {v}"))?;
-            Ok(ParamSet::Hll(HllParams { lg_k }))
-        })
-        .collect()
-}
-
-fn build_kll(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    let vals = take_single_key(kvs, "kll", &["k"])?;
-    vals.iter()
-        .map(|v| {
-            let k: u32 = v.parse().map_err(|_| anyhow!("bad k value: {v}"))?;
-            Ok(ParamSet::Kll(KllParams { k }))
-        })
-        .collect()
-}
-
-fn build_cms(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    check_allowed_keys(kvs, "cms", &["rows", "cols"])?;
-    let rows = parse_usize_list(get_values(kvs, "rows"), "rows", &[5])?;
-    let cols = parse_usize_list(get_values(kvs, "cols"), "cols", &[2048])?;
-    let mut out = Vec::new();
-    for &r in &rows {
-        for &c in &cols {
-            out.push(ParamSet::Cms(CmsParams { rows: r, cols: c }));
-        }
-    }
-    Ok(out)
-}
-
-fn build_countsketch(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    check_allowed_keys(kvs, "countsketch", &["rows", "cols"])?;
-    let rows = parse_usize_list(get_values(kvs, "rows"), "rows", &[5])?;
-    let cols = parse_usize_list(get_values(kvs, "cols"), "cols", &[2048])?;
-    let mut out = Vec::new();
-    for &r in &rows {
-        for &c in &cols {
-            out.push(ParamSet::Countsketch(CountSketchParams {
-                rows: r,
-                cols: c,
-            }));
-        }
-    }
-    Ok(out)
-}
-
-fn build_elastic(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    check_allowed_keys(kvs, "elastic", &["buckets", "depth"])?;
-    let buckets = parse_usize_list(get_values(kvs, "buckets"), "buckets", &[1024])?;
-    let depths = parse_usize_list(get_values(kvs, "depth"), "depth", &[3])?;
-    let mut out = Vec::new();
-    for &b in &buckets {
-        for &d in &depths {
-            out.push(ParamSet::Elastic(ElasticParams {
-                buckets: b,
-                depth: d,
-            }));
-        }
-    }
-    Ok(out)
-}
-
-fn build_nitro(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    let vals = take_single_key(kvs, "nitro", &["rate"])?;
-    vals.iter()
-        .map(|v| {
-            let rate: f64 = v.parse().map_err(|_| anyhow!("bad rate value: {v}"))?;
-            Ok(ParamSet::Nitro(NitroParams { rate }))
-        })
-        .collect()
-}
-
-fn build_univmon(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    check_allowed_keys(kvs, "univmon", &["layers", "max_stream"])?;
-    let layers = parse_usize_list(get_values(kvs, "layers"), "layers", &[8])?;
-    let max_stream_strs = get_values(kvs, "max_stream");
-    let max_stream = if max_stream_strs.is_empty() {
-        vec![256u64]
-    } else {
-        max_stream_strs
-            .iter()
-            .map(|v| v.parse::<u64>().map_err(|_| anyhow!("bad max_stream: {v}")))
-            .collect::<Result<Vec<_>>>()?
-    };
-    let mut out = Vec::new();
-    for &l in &layers {
-        for &m in &max_stream {
-            out.push(ParamSet::Univmon(UnivMonParams {
-                layers: l,
-                max_stream: m,
-            }));
-        }
-    }
-    Ok(out)
-}
-
-fn build_dd(kvs: &[(String, Vec<String>)]) -> Result<Vec<ParamSet>> {
-    let vals = take_single_key(kvs, "dd", &["alpha"])?;
-    vals.iter()
-        .map(|v| {
-            let alpha: f64 = v.parse().map_err(|_| anyhow!("bad alpha value: {v}"))?;
-            Ok(ParamSet::Dd(DdParams { alpha }))
-        })
-        .collect()
-}
-
-fn parse_usize_list(vals: &[String], key: &str, fallback: &[usize]) -> Result<Vec<usize>> {
-    if vals.is_empty() {
-        Ok(fallback.to_vec())
-    } else {
-        vals.iter()
-            .map(|v| v.parse::<usize>().map_err(|_| anyhow!("bad {key}: {v}")))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sketch_core::config::{CmsParams, DdParams, HllParams};
 
     #[test]
-    fn hll_default_grid_has_four_configs() {
-        let g = default_grid("hll").unwrap();
-        assert_eq!(g.len(), 4);
-        assert!(matches!(g[0], ParamSet::Hll(HllParams { lg_k: 10 })));
+    fn expands_a_cartesian_product() {
+        let grid = parse_config("cms", "rows=3,5 cols=1024,2048").unwrap();
+        assert_eq!(grid.len(), 4);
+        let typed: Vec<CmsParams> = grid.iter().map(|p| p.parse().unwrap()).collect();
+        assert!(typed.contains(&CmsParams {
+            rows: 3,
+            cols: 1024
+        }));
+        assert!(typed.contains(&CmsParams {
+            rows: 5,
+            cols: 2048
+        }));
     }
 
     #[test]
-    fn cms_default_grid_is_cartesian_3x3() {
-        let g = default_grid("cms").unwrap();
-        assert_eq!(g.len(), 9);
+    fn single_key_single_value() {
+        let grid = parse_config("hll", "lg_k=14").unwrap();
+        assert_eq!(grid.len(), 1);
+        assert_eq!(grid[0].parse::<HllParams>().unwrap().lg_k, 14);
     }
 
     #[test]
-    fn parse_hll_single_value() {
-        let g = parse_config("hll", "lg_k=14").unwrap();
-        assert_eq!(g, vec![ParamSet::Hll(HllParams { lg_k: 14 })]);
+    fn a_misspelled_key_is_rejected_by_name() {
+        // The job the per-family allowed-key lists used to do, now done by
+        // serde against the struct that defines the fields.
+        let grid = parse_config("cms", "rows=5 colz=1024").unwrap();
+        let err = grid[0].parse::<CmsParams>().unwrap_err().to_string();
+        assert!(err.contains("colz"), "{err}");
     }
 
     #[test]
-    fn parse_hll_multi_value() {
-        let g = parse_config("hll", "lg_k=10,12,14").unwrap();
-        assert_eq!(g.len(), 3);
+    fn a_wrongly_typed_value_is_rejected() {
+        let grid = parse_config("hll", "lg_k=huge").unwrap();
+        assert!(grid[0].parse::<HllParams>().is_err());
     }
 
     #[test]
-    fn parse_cms_cartesian() {
-        let g = parse_config("cms", "rows=3,5 cols=1024,2048").unwrap();
-        assert_eq!(g.len(), 4);
-        // Order: rows-major (outer), cols (inner).
-        if let ParamSet::Cms(p) = &g[0] {
-            assert_eq!(p.rows, 3);
-            assert_eq!(p.cols, 1024);
-        } else {
-            panic!("wrong variant");
-        }
+    fn floats_survive_the_untyped_hop() {
+        let grid = parse_config("dd", "alpha=0.01,0.05").unwrap();
+        let typed: Vec<DdParams> = grid.iter().map(|p| p.parse().unwrap()).collect();
+        assert_eq!(typed.len(), 2);
+        assert!((typed[0].alpha - 0.01).abs() < 1e-12);
     }
 
     #[test]
-    fn parse_rejects_unknown_key() {
-        let err = parse_config("cms", "magic=1").unwrap_err();
-        assert!(err.to_string().contains("unknown key"));
+    fn an_unknown_family_is_rejected() {
+        assert!(parse_config("not_a_family", "k=1").is_err());
     }
 
     #[test]
-    fn parse_cms_single_key_uses_fallback() {
-        // Only rows specified; cols defaults to [2048].
-        let g = parse_config("cms", "rows=3,5,7").unwrap();
-        assert_eq!(g.len(), 3);
-        if let ParamSet::Cms(p) = &g[0] {
-            assert_eq!(p.cols, 2048);
-        }
-    }
-
-    #[test]
-    fn parse_unknown_family() {
-        assert!(parse_config("whatever", "k=1").is_err());
+    fn malformed_specs_are_errors() {
+        assert!(parse_config("cms", "rows").is_err());
+        assert!(parse_config("cms", "rows=").is_err());
+        assert!(parse_config("cms", "").is_err());
     }
 }

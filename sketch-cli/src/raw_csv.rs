@@ -282,43 +282,44 @@ impl ParamCols {
             }
             return Self { cols };
         }
-        match (family, params) {
-            ("hll", Some(ParamSet::Hll(p))) => {
-                cols.push(("lg_k", p.lg_k.to_string()));
-                cols.push(("registers", (1usize << p.lg_k).to_string()));
+        // Values come from the params object generically; only the two
+        // places where the legacy CSV header is *not* a list of parameters
+        // need naming. The rest used to be one match arm per family, kept in
+        // step with `param_header` by hand.
+        let params = params.expect("None handled above");
+        match family {
+            // `registers` is derived from `lg_k`, not a parameter.
+            "hll" => {
+                let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
+                if let Some((_, v)) = lg_k {
+                    let bits: u32 = v.parse().unwrap_or(0);
+                    cols.push(("lg_k", v));
+                    cols.push(("registers", (1usize << bits).to_string()));
+                }
             }
-            ("kll", Some(ParamSet::Kll(p))) => {
-                cols.push(("k", p.k.to_string()));
-            }
-            ("cms", Some(ParamSet::Cms(p))) => {
-                cols.push(("rows", p.rows.to_string()));
-                cols.push(("cols", p.cols.to_string()));
-            }
-            ("countsketch", Some(ParamSet::Countsketch(p))) => {
-                cols.push(("rows", p.rows.to_string()));
-                cols.push(("cols", p.cols.to_string()));
-            }
-            ("dd", Some(ParamSet::Dd(p))) => {
-                cols.push(("alpha", format!("{:.6}", p.alpha)));
-            }
-            ("nitro", Some(ParamSet::Nitro(p))) => {
-                // Nitro's legacy CSV carries rows/cols too, but the
-                // sketch-cli ParamSet only owns the rate knob — the
-                // rows/cols are baked into each impl. Emit 0 for them
-                // and let the rate column carry the swept dimension.
+            // Nitro's legacy CSV carries rows/cols, but the sketch-cli params
+            // only own `rate` — the matrix shape is baked into each impl.
+            // Sentinel 0s keep the row width legal.
+            "nitro" => {
                 cols.push(("rows", "0".to_string()));
                 cols.push(("cols", "0".to_string()));
-                cols.push(("rate", format!("{:.6}", p.rate)));
+                for (_, v) in params.fields() {
+                    cols.push(("rate", legacy_float_format(&v)));
+                }
             }
-            ("elastic", Some(ParamSet::Elastic(p))) => {
-                cols.push(("buckets", p.buckets.to_string()));
-                cols.push(("depth", p.depth.to_string()));
+            _ => {
+                // Iterate the **header**, looking each column's value up —
+                // not the params object, which is ordered alphabetically.
+                // Driving the loop from `fields()` emitted cms as `2048,5`
+                // under a header reading `rows,cols`: a silent column/value
+                // swap in a file that plot scripts read positionally.
+                let fields = params.fields();
+                for col in legacy_param_columns(family) {
+                    if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
+                        cols.push((col, legacy_float_format(v)));
+                    }
+                }
             }
-            ("univmon", Some(ParamSet::Univmon(p))) => {
-                cols.push(("layers", p.layers.to_string()));
-                cols.push(("max_stream", p.max_stream.to_string()));
-            }
-            _ => {}
         }
         Self { cols }
     }
@@ -382,6 +383,28 @@ fn leading_label(family: &str) -> &'static str {
     }
 }
 
+/// Render a value the way the pre-generic writer did.
+///
+/// `--raw-csv` **appends**, so a formatting change splits one series in two:
+/// `alpha = 0.01` written as `0.010000` by earlier runs and `0.01` by later
+/// ones makes `groupby(row["alpha"])` produce two points with half the samples
+/// each. Integers were always rendered plainly; floats always with six
+/// decimals, and they still are.
+fn legacy_float_format(v: &str) -> String {
+    match v.parse::<f64>() {
+        Ok(f) if v.contains('.') || v.contains('e') || v.contains('E') => format!("{f:.6}"),
+        _ => v.to_string(),
+    }
+}
+
+/// The legacy CSV header, verbatim.
+///
+/// This stays a per-family table on purpose: it encodes an **external file
+/// format** that plot scripts read with `csv.DictReader`, not an abstraction
+/// over sketch families. Deriving it from the params object would silently
+/// change the header — `registers` is derived rather than a parameter, and
+/// nitro's `rows`/`cols` are sentinels — and break those readers. The values
+/// beneath it are now produced generically; only the column names are pinned.
 fn param_header(family: &str) -> &'static str {
     match family {
         "hll" => "lg_k,registers",
@@ -506,6 +529,78 @@ mod tests {
         assert_eq!(
             query_header("kll"),
             "implementation,language,run,k,total_items,total_queries,total_nanoseconds,throughput_queries_per_sec"
+        );
+    }
+}
+
+#[cfg(test)]
+mod param_column_order_tests {
+    use super::*;
+    use sketch_core::config::{CmsParams, ElasticParams, HllParams, UnivMonParams};
+
+    /// Values must line up with the header, which is *not* alphabetical.
+    ///
+    /// The generic value path once iterated the params object — ordered by
+    /// key — while the header stayed in its legacy order, so cms wrote
+    /// `2048,5` under `rows,cols`. The CSV is read positionally, so nothing
+    /// downstream could have noticed.
+    #[test]
+    fn values_follow_the_header_not_the_key_order() {
+        let cases: Vec<(&str, ParamSet, Vec<&str>)> = vec![
+            (
+                "cms",
+                ParamSet::of(&CmsParams {
+                    rows: 5,
+                    cols: 2048,
+                }),
+                vec!["5", "2048"],
+            ),
+            (
+                "countsketch",
+                ParamSet::of(&sketch_core::config::CountSketchParams {
+                    rows: 3,
+                    cols: 4096,
+                }),
+                vec!["3", "4096"],
+            ),
+            (
+                "elastic",
+                ParamSet::of(&ElasticParams {
+                    buckets: 1024,
+                    depth: 3,
+                }),
+                vec!["1024", "3"],
+            ),
+            (
+                "univmon",
+                ParamSet::of(&UnivMonParams {
+                    layers: 8,
+                    max_stream: 256,
+                }),
+                vec!["8", "256"],
+            ),
+        ];
+        for (family, params, expected) in cases {
+            let cols = ParamCols::from(family, Some(&params));
+            let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
+            let header: Vec<&str> = param_header(family).split(',').collect();
+            assert_eq!(names, header, "{family}: column order must match header");
+            let values: Vec<&str> = cols.cols.iter().map(|(_, v)| v.as_str()).collect();
+            assert_eq!(values, expected, "{family}: values misaligned");
+        }
+    }
+
+    /// `registers` is derived from `lg_k`, not a parameter — the one place the
+    /// header is not simply a list of fields.
+    #[test]
+    fn hll_still_emits_the_derived_register_count() {
+        let cols = ParamCols::from("hll", Some(&ParamSet::of(&HllParams { lg_k: 14 })));
+        assert_eq!(
+            cols.cols,
+            vec![
+                ("lg_k", "14".to_string()),
+                ("registers", "16384".to_string())
+            ]
         );
     }
 }

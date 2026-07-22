@@ -14,7 +14,10 @@ use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
-use sketch_core::config::{CmsParams, CountSketchParams, ParamSet};
+use sketch_core::config::{
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, SketchParams, UnivMonParams,
+};
 use sketch_core::datagen::GenSpec;
 use sketch_core::workload::{BytesWorkload, I64Workload, StringWorkload, Workload};
 
@@ -108,16 +111,19 @@ pub enum Constraint {
 
 impl Constraint {
     pub fn accepts(&self, params: &ParamSet) -> bool {
-        match (self, params) {
-            (Constraint::Tunable, _) => true,
-            (Constraint::FixedCms { rows, cols }, ParamSet::Cms(p)) => {
-                p.rows == *rows && p.cols == *cols
-            }
-            (Constraint::FixedCountSketch { rows, cols }, ParamSet::Countsketch(p)) => {
-                p.rows == *rows && p.cols == *cols
-            }
-            (Constraint::Unparameterized, _) => true,
-            _ => false,
+        match self {
+            Constraint::Tunable | Constraint::Unparameterized => true,
+            // Compile-time-fixed matrix shapes: the row can only run when the
+            // requested grid point happens to be its shape. Both families
+            // carry `rows`/`cols`, so one parse covers them — the enum-variant
+            // match this replaced needed one arm per family and silently
+            // returned `false` for any family it had not been taught about.
+            Constraint::FixedCms { rows, cols } => params
+                .parse::<CmsParams>()
+                .is_ok_and(|p| p.rows == *rows && p.cols == *cols),
+            Constraint::FixedCountSketch { rows, cols } => params
+                .parse::<CountSketchParams>()
+                .is_ok_and(|p| p.rows == *rows && p.cols == *cols),
         }
     }
 
@@ -137,12 +143,52 @@ impl Constraint {
     }
 }
 
+/// The operations a row needs from its params type, resolved from a single
+/// mention of that type.
+///
+/// These were two hand-written closures per row: 41 rows x 2 near-identical
+/// closures, and — worse — two independent places to get the type wrong.
+/// A countsketch row that still said `CmsParams` in its grid closure would
+/// have made that row's grid the whole family's default sweep, since
+/// `sweep::default_grid` reads a family's first row; it would have surfaced
+/// only at runtime, and only if the *other* closure had been pasted
+/// correctly. One mention makes the two structurally incapable of disagreeing.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamsVTable {
+    /// The family's sweep grid when `--config` is omitted.
+    pub default_grid: fn() -> Vec<ParamSet>,
+    /// Type-check a grid point without building anything. `--config` is user
+    /// input, so a misspelled key must produce an error naming it — not the
+    /// panic `params_of!` raises for a wiring bug. The CLI validates the whole
+    /// grid up front.
+    pub validate: fn(&ParamSet) -> Result<(), String>,
+}
+
+impl ParamsVTable {
+    pub const fn of<P: SketchParams>() -> Self {
+        Self {
+            default_grid: grid_of::<P>,
+            validate: validate_of::<P>,
+        }
+    }
+}
+
+fn grid_of<P: SketchParams>() -> Vec<ParamSet> {
+    P::default_grid().iter().map(ParamSet::of).collect()
+}
+
+fn validate_of<P: SketchParams>(p: &ParamSet) -> Result<(), String> {
+    p.parse::<P>().map(|_| ()).map_err(|e| e.to_string())
+}
+
 pub struct ImplEntry {
     pub family: &'static str,
     pub impl_name: &'static str,
     pub description: &'static str,
     pub constraint: Constraint,
     pub accuracy_kind: AccuracyKind,
+    /// Everything derived from this row's params type, named once.
+    pub params: ParamsVTable,
     run: fn(
         cfg: &BenchConfig,
         wk: &I64Workload,
@@ -180,6 +226,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::cardinality::HyperLogLog",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_oxide,
     },
     ImplEntry {
@@ -188,6 +235,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "datasketches::hll::HllSketch (Hll8)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_datasketches,
     },
     ImplEntry {
@@ -196,6 +244,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_lib,
     },
     ImplEntry {
@@ -204,6 +253,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate, slightly slower insert",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_lib_hip,
     },
     ImplEntry {
@@ -212,6 +262,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "exact baseline: HashSet<i64>, cardinality = set.len()",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_exact,
     },
     ImplEntry {
@@ -220,6 +271,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "null baseline: cardinality estimate is 0 — pins relative error = 1.0",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_null,
     },
     ImplEntry {
@@ -228,6 +280,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "polars exact: DataFrame.n_unique() (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Cardinality,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_polars,
     },
     ImplEntry {
@@ -237,6 +290,7 @@ pub const IMPLS: &[ImplEntry] = &[
             "asap_sketchlib HLL ErtlMLE, FastPath, parallel insert (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<HllParams>(),
         run: run_hll_lib_fastpath_parallel,
     },
     // -------- KLL --------
@@ -246,6 +300,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::quantiles::KllSketch",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<KllParams>(),
         run: run_kll_oxide,
     },
     ImplEntry {
@@ -254,6 +309,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::KLL<i64>",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<KllParams>(),
         run: run_kll_lib,
     },
     ImplEntry {
@@ -262,6 +318,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "exact baseline: Vec<i64> sorted, quantile = index lookup",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<KllParams>(),
         run: run_kll_exact,
     },
     ImplEntry {
@@ -270,6 +327,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<KllParams>(),
         run: run_kll_polars,
     },
     // -------- CMS --------
@@ -279,6 +337,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::frequency::CountMinSketch",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_oxide,
     },
     ImplEntry {
@@ -287,6 +346,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "datasketches::countmin::CountMinSketch",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_datasketches,
     },
     ImplEntry {
@@ -298,6 +358,7 @@ pub const IMPLS: &[ImplEntry] = &[
             cols: cms::CMS_CUSTOM_FIXED_COLS,
         },
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_fixedmatrix_custom_fast,
     },
     ImplEntry {
@@ -309,6 +370,7 @@ pub const IMPLS: &[ImplEntry] = &[
             cols: cms::CMS_FIXED_COLS,
         },
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_fixedmatrix_fast,
     },
     ImplEntry {
@@ -320,6 +382,7 @@ pub const IMPLS: &[ImplEntry] = &[
             cols: cms::CMS_FIXED_32K_COLS,
         },
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_fixedmatrix_fast_32k,
     },
     ImplEntry {
@@ -328,6 +391,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib CMS, Vector2D, FastPath",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_vector2d_fast,
     },
     ImplEntry {
@@ -336,6 +400,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib CMS, Vector2D, RegularPath",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_vector2d_regular,
     },
     ImplEntry {
@@ -344,6 +409,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_exact,
     },
     ImplEntry {
@@ -353,6 +419,7 @@ pub const IMPLS: &[ImplEntry] = &[
             "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_null,
     },
     ImplEntry {
@@ -361,6 +428,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_polars,
     },
     ImplEntry {
@@ -370,6 +438,7 @@ pub const IMPLS: &[ImplEntry] = &[
             "asap_sketchlib CMS, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_lib_fastpath_parallel,
     },
     // -------- CountSketch --------
@@ -379,6 +448,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::frequency::CountSketch",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_oxide,
     },
     ImplEntry {
@@ -390,6 +460,7 @@ pub const IMPLS: &[ImplEntry] = &[
             cols: cms::CMS_FIXED_COLS,
         },
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_lib_fixedmatrix_fast,
     },
     ImplEntry {
@@ -401,6 +472,7 @@ pub const IMPLS: &[ImplEntry] = &[
             cols: cms::CMS_FIXED_32K_COLS,
         },
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_lib_fixedmatrix_fast_32k,
     },
     ImplEntry {
@@ -409,6 +481,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib Count, Vector2D, FastPath",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_lib_vector2d_fast,
     },
     ImplEntry {
@@ -417,6 +490,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib Count, Vector2D, RegularPath",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_lib_vector2d_regular,
     },
     ImplEntry {
@@ -425,6 +499,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_exact,
     },
     ImplEntry {
@@ -434,6 +509,7 @@ pub const IMPLS: &[ImplEntry] = &[
             "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_null,
     },
     ImplEntry {
@@ -442,6 +518,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_polars,
     },
     ImplEntry {
@@ -451,6 +528,7 @@ pub const IMPLS: &[ImplEntry] = &[
             "asap_sketchlib Count, FastPath, parallel insert on M5x32K (workers from --workers)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_lib_fastpath_parallel,
     },
     // -------- DDSketch --------
@@ -460,6 +538,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::DDSketch (relative-error quantile)",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<DdParams>(),
         run: run_dd_lib,
     },
     ImplEntry {
@@ -468,6 +547,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "exact baseline: Vec<i64> sorted, quantile = Type-7 lookup",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<DdParams>(),
         run: run_dd_exact,
     },
     ImplEntry {
@@ -476,6 +556,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
         constraint: Constraint::Unparameterized,
         accuracy_kind: AccuracyKind::Quantile,
+        params: ParamsVTable::of::<DdParams>(),
         run: run_dd_polars,
     },
     // -------- Elastic --------
@@ -485,6 +566,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::Elastic<DefaultXxHasher>",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<ElasticParams>(),
         run: run_elastic_lib,
     },
     ImplEntry {
@@ -493,6 +575,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::frequency::ElasticSketch",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::Frequency,
+        params: ParamsVTable::of::<ElasticParams>(),
         run: run_elastic_oxide,
     },
     // -------- Nitro --------
@@ -504,6 +587,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::NitroBatch<Vector2D<u32>>",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<NitroParams>(),
         run: run_nitro_lib,
     },
     ImplEntry {
@@ -512,6 +596,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::frequency::NitroSketch<CountMinSketch>",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<NitroParams>(),
         run: run_nitro_oxide,
     },
     // -------- UnivMon --------
@@ -523,6 +608,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "asap_sketchlib::UnivMon",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<UnivMonParams>(),
         run: run_univmon_lib,
     },
     ImplEntry {
@@ -531,6 +617,7 @@ pub const IMPLS: &[ImplEntry] = &[
         description: "sketch_oxide::universal::UnivMon",
         constraint: Constraint::Tunable,
         accuracy_kind: AccuracyKind::None,
+        params: ParamsVTable::of::<UnivMonParams>(),
         run: run_univmon_oxide,
     },
 ];
@@ -683,11 +770,16 @@ where
 /// Unwrap the family-typed params. A mismatch means the dispatch table
 /// wired a row to the wrong `ParamSet` variant — a build-time wiring
 /// bug, not user input — so it panics rather than degrading.
+/// Recover this row's typed params.
+///
+/// A failure is a wiring bug (the sweep handed a row another family's set) or
+/// a user typo in `--config`; serde names the offending key either way, which
+/// is what replaced the hand-written per-family allowed-key lists.
 macro_rules! params_of {
-    ($variant:ident, $params:expr, $impl:expr) => {
-        match $params {
-            ParamSet::$variant(p) => *p,
-            other => panic!("dispatch::{} wrong family: {:?}", $impl, other.family()),
+    ($ty:ty, $params:expr, $impl:expr) => {
+        match $params.parse::<$ty>() {
+            Ok(p) => p,
+            Err(e) => panic!("dispatch::{}: {}", $impl, e),
         }
     };
 }
@@ -760,26 +852,26 @@ macro_rules! gt_bench {
 /// against a hardcoded 0, which is worse than no number, so those rows
 /// ignore `--accuracy` entirely.
 macro_rules! run_impl {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident, $view:ident, none) => {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty, $view:ident, none) => {
         fn $fn_name(
             cfg: &BenchConfig,
             wk: &I64Workload,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
         ) -> Vec<BenchReport> {
-            let p = params_of!($variant, params, $impl);
+            let p = params_of!($params_ty, params, $impl);
             let w = wk_view!($view, wk);
             bench_no_gt::<$wrapper, _>(cfg, w, $family, $impl, || <$wrapper>::new(&p))
         }
     };
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident, $view:ident, $gt:ident) => {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty, $view:ident, $gt:ident) => {
         fn $fn_name(
             cfg: &BenchConfig,
             wk: &I64Workload,
             params: &ParamSet,
             accuracy: &AccuracyCfg,
         ) -> Vec<BenchReport> {
-            let p = params_of!($variant, params, $impl);
+            let p = params_of!($params_ty, params, $impl);
             let w = wk_view!($view, wk);
             if accuracy.enabled {
                 gt_bench!($gt, $wrapper, cfg, w, $family, $impl, p, accuracy)
@@ -796,14 +888,14 @@ macro_rules! run_impl {
 /// Accuracy is `None` because the partitions are intentionally not
 /// merged (matches legacy octo).
 macro_rules! run_parallel_impl {
-    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $variant:ident) => {
+    ($fn_name:ident, $wrapper:ty, $family:expr, $impl:expr, $params_ty:ty) => {
         fn $fn_name(
             cfg: &BenchConfig,
             wk: &I64Workload,
             params: &ParamSet,
             _accuracy: &AccuracyCfg,
         ) -> Vec<BenchReport> {
-            let p = params_of!($variant, params, $impl);
+            let p = params_of!($params_ty, params, $impl);
             let workers = cfg.threads;
             bench_no_gt::<$wrapper, _>(cfg, wk, $family, $impl, move || {
                 <$wrapper>::new(&p, workers)
@@ -813,23 +905,31 @@ macro_rules! run_parallel_impl {
 }
 
 // -- HLL --
-run_impl!(run_hll_oxide, hll::HllOxide, "hll", "oxide", Hll, i64, card);
+run_impl!(
+    run_hll_oxide,
+    hll::HllOxide,
+    "hll",
+    "oxide",
+    HllParams,
+    i64,
+    card
+);
 run_impl!(
     run_hll_datasketches,
     hll::HllDatasketches,
     "hll",
     "datasketches",
-    Hll,
+    HllParams,
     i64,
     card
 );
-run_impl!(run_hll_lib, hll::HllLib, "hll", "lib", Hll, i64, card);
+run_impl!(run_hll_lib, hll::HllLib, "hll", "lib", HllParams, i64, card);
 run_impl!(
     run_hll_lib_hip,
     hll::HllLibHip,
     "hll",
     "lib-hip",
-    Hll,
+    HllParams,
     i64,
     card
 );
@@ -838,7 +938,7 @@ run_impl!(
     exact::ExactCardinality,
     "hll",
     "exact",
-    Hll,
+    HllParams,
     i64,
     card
 );
@@ -847,7 +947,7 @@ run_impl!(
     exact::NullCardinality,
     "hll",
     "null",
-    Hll,
+    HllParams,
     i64,
     card
 );
@@ -858,29 +958,45 @@ run_impl!(
     kll::KllOxide,
     "kll",
     "oxide",
-    Kll,
+    KllParams,
     i64,
     quant
 );
-run_impl!(run_kll_lib, kll::KllLib, "kll", "lib", Kll, i64, quant);
+run_impl!(
+    run_kll_lib,
+    kll::KllLib,
+    "kll",
+    "lib",
+    KllParams,
+    i64,
+    quant
+);
 run_impl!(
     run_kll_exact,
     exact::ExactQuantile,
     "kll",
     "exact",
-    Kll,
+    KllParams,
     i64,
     quant
 );
 
 // -- CMS --
-run_impl!(run_cms_oxide, cms::CmsOxide, "cms", "oxide", Cms, i64, freq);
+run_impl!(
+    run_cms_oxide,
+    cms::CmsOxide,
+    "cms",
+    "oxide",
+    CmsParams,
+    i64,
+    freq
+);
 run_impl!(
     run_cms_datasketches,
     cms::CmsDatasketches,
     "cms",
     "datasketches",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -889,7 +1005,7 @@ run_impl!(
     cms::CmsLibFixedmatrixCustomFast,
     "cms",
     "lib-fixedmatrix-custom-fast",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -898,7 +1014,7 @@ run_impl!(
     cms::CmsLibFixedmatrixFast,
     "cms",
     "lib-fixedmatrix-fast",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -907,7 +1023,7 @@ run_impl!(
     cms::CmsLibFixedmatrixFast32k,
     "cms",
     "lib-fixedmatrix-fast-32k",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -916,7 +1032,7 @@ run_impl!(
     cms::CmsLibVector2dFast,
     "cms",
     "lib-vector2d-fast",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -925,7 +1041,7 @@ run_impl!(
     cms::CmsLibVector2dRegular,
     "cms",
     "lib-vector2d-regular",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -934,7 +1050,7 @@ run_impl!(
     exact::ExactFrequency,
     "cms",
     "exact",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -943,7 +1059,7 @@ run_impl!(
     exact::NullFrequency,
     "cms",
     "null",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -954,7 +1070,7 @@ run_impl!(
     countsketch::CsOxide,
     "countsketch",
     "oxide",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -963,7 +1079,7 @@ run_impl!(
     countsketch::CsLibFixedmatrixFast,
     "countsketch",
     "lib-fixedmatrix-fast",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -972,7 +1088,7 @@ run_impl!(
     countsketch::CsLibFixedmatrixFast32k,
     "countsketch",
     "lib-fixedmatrix-fast-32k",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -981,7 +1097,7 @@ run_impl!(
     countsketch::CsLibVector2dFast,
     "countsketch",
     "lib-vector2d-fast",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -990,7 +1106,7 @@ run_impl!(
     countsketch::CsLibVector2dRegular,
     "countsketch",
     "lib-vector2d-regular",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -999,7 +1115,7 @@ run_impl!(
     exact::ExactFrequencyCs,
     "countsketch",
     "exact",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -1008,19 +1124,19 @@ run_impl!(
     exact::NullFrequencyCs,
     "countsketch",
     "null",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
 
 // -- DDSketch --
-run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", Dd, i64, quant_rel);
+run_impl!(run_dd_lib, dd::DdLib, "dd", "lib", DdParams, i64, quant_rel);
 run_impl!(
     run_dd_exact,
     exact::ExactQuantileDd,
     "dd",
     "exact",
-    Dd,
+    DdParams,
     i64,
     quant_rel
 );
@@ -1033,7 +1149,7 @@ run_impl!(
     polars::PolarsCardinality,
     "hll",
     "polars",
-    Hll,
+    HllParams,
     i64,
     card
 );
@@ -1042,7 +1158,7 @@ run_impl!(
     polars::PolarsQuantileKll,
     "kll",
     "polars",
-    Kll,
+    KllParams,
     i64,
     quant
 );
@@ -1051,7 +1167,7 @@ run_impl!(
     polars::PolarsQuantileDd,
     "dd",
     "polars",
-    Dd,
+    DdParams,
     i64,
     quant_rel
 );
@@ -1060,7 +1176,7 @@ run_impl!(
     polars::PolarsFrequencyCms,
     "cms",
     "polars",
-    Cms,
+    CmsParams,
     i64,
     freq
 );
@@ -1069,7 +1185,7 @@ run_impl!(
     polars::PolarsFrequencyCs,
     "countsketch",
     "polars",
-    Countsketch,
+    CountSketchParams,
     i64,
     freq
 );
@@ -1082,21 +1198,21 @@ run_parallel_impl!(
     parallel::ParallelCmsFastPath,
     "cms",
     "lib-fastpath-parallel",
-    Cms
+    CmsParams
 );
 run_parallel_impl!(
     run_cs_lib_fastpath_parallel,
     parallel::ParallelCsFastPath,
     "countsketch",
     "lib-fastpath-parallel",
-    Countsketch
+    CountSketchParams
 );
 run_parallel_impl!(
     run_hll_lib_fastpath_parallel,
     parallel::ParallelHllFastPath,
     "hll",
     "lib-fastpath-parallel",
-    Hll
+    HllParams
 );
 
 // -- Elastic --
@@ -1105,7 +1221,7 @@ run_impl!(
     elastic::ElasticLib,
     "elastic",
     "lib",
-    Elastic,
+    ElasticParams,
     string,
     freq
 );
@@ -1114,7 +1230,7 @@ run_impl!(
     elastic::ElasticOxide,
     "elastic",
     "oxide",
-    Elastic,
+    ElasticParams,
     bytes,
     freq
 );
@@ -1125,7 +1241,7 @@ run_impl!(
     nitro::NitroLib,
     "nitro",
     "lib",
-    Nitro,
+    NitroParams,
     i64,
     none
 );
@@ -1134,7 +1250,7 @@ run_impl!(
     nitro::NitroOxide,
     "nitro",
     "oxide",
-    Nitro,
+    NitroParams,
     bytes,
     none
 );
@@ -1143,7 +1259,7 @@ run_impl!(
     univmon::UnivMonLib,
     "univmon",
     "lib",
-    Univmon,
+    UnivMonParams,
     string,
     none
 );
@@ -1152,10 +1268,71 @@ run_impl!(
     univmon::UnivMonOxide,
     "univmon",
     "oxide",
-    Univmon,
+    UnivMonParams,
     bytes,
     none
 );
 
-#[allow(dead_code)]
-fn _silence_unused_warnings(_: CmsParams, _: CountSketchParams) {}
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// The registry's size, pinned.
+    ///
+    /// A refactor of this file once deleted 32 of its 41 rows and still
+    /// compiled, still passed every test, and still ran: nothing structurally
+    /// requires the array to have any particular length, so 32 implementations
+    /// silently left the benchmark. Bump this deliberately when adding or
+    /// removing a row.
+    const EXPECTED_ROWS: usize = 41;
+
+    #[test]
+    fn every_registered_implementation_is_still_registered() {
+        assert_eq!(
+            IMPLS.len(),
+            EXPECTED_ROWS,
+            "dispatch table changed size; update EXPECTED_ROWS if deliberate"
+        );
+    }
+
+    #[test]
+    fn family_impl_pairs_are_unique() {
+        let mut seen = BTreeSet::new();
+        for e in IMPLS {
+            assert!(
+                seen.insert((e.family, e.impl_name)),
+                "duplicate row {}/{}",
+                e.family,
+                e.impl_name
+            );
+        }
+    }
+
+    /// Each row's params vtable must belong to its own family. Getting this
+    /// wrong is invisible at compile time and would hand one family's default
+    /// grid to another.
+    #[test]
+    fn every_rows_params_match_its_family() {
+        for e in IMPLS {
+            let grid = (e.params.default_grid)();
+            assert!(!grid.is_empty(), "{}/{}: empty grid", e.family, e.impl_name);
+            for p in &grid {
+                assert_eq!(
+                    p.family(),
+                    e.family,
+                    "{}/{}: grid is for family '{}'",
+                    e.family,
+                    e.impl_name,
+                    p.family()
+                );
+                assert!(
+                    (e.params.validate)(p).is_ok(),
+                    "{}/{}: own default grid fails its own validate",
+                    e.family,
+                    e.impl_name
+                );
+            }
+        }
+    }
+}
