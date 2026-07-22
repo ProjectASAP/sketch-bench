@@ -3,10 +3,10 @@
 //! `Query = f64` (quantile in [0, 1]), `Answer = f64` (value
 //! at quantile).
 
+use crate::accuracy::quantile::QuantileValue;
 use crate::params::DdParams;
 use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::DDSketch;
-use sketch_bench::accuracy::quantile::QuantileValue;
 
 /// Generic over the item type. `DDSketch` buckets by `log(value)`, so it is
 /// `f64`-native: `T = f64` monomorphises the insert path down to `add`, while

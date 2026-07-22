@@ -8,11 +8,11 @@
 //! `ExactFrequency` with CMS; DDSketch shares `ExactQuantile`
 //! with KLL).
 
+use crate::accuracy::quantile::QuantileValue;
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams};
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
-use sketch_bench::accuracy::quantile::QuantileValue;
 
-pub use sketch_bench::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
+pub use crate::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
 
 /// CountSketch view of [`ExactFrequency`]. Same map-of-counts
 /// algorithm as the CMS exact baseline; the wrapper exists only

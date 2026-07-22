@@ -9,19 +9,19 @@
 
 use std::hash::Hash;
 
-use crate::params::{
-    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-    ParamSet, SketchParams, UnivMonParams,
-};
 use anyhow::Result;
 use aqpbm_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 use aqpbm_datagen::{DType, GenSpec};
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
+use sketch_bench::params::{
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, SketchParams, UnivMonParams,
+};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
 
-use crate::wrappers::{
+use sketch_bench::wrappers::{
     cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
 };
 
@@ -1509,9 +1509,9 @@ mod registry_tests {
     fn parse_config_expands_a_real_family() {
         let grid = parse_config("cms", "rows=3,5 cols=1024,2048").unwrap();
         assert_eq!(grid.len(), 4);
-        let typed: Vec<crate::params::CmsParams> =
+        let typed: Vec<sketch_bench::params::CmsParams> =
             grid.iter().map(|p| p.parse().unwrap()).collect();
-        assert!(typed.contains(&crate::params::CmsParams {
+        assert!(typed.contains(&sketch_bench::params::CmsParams {
             rows: 3,
             cols: 1024
         }));

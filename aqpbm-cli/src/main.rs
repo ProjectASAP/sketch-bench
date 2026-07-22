@@ -5,11 +5,9 @@
 //! `(family, impl)` pairs.
 
 mod dispatch;
-mod params;
 mod raw_csv;
 mod repeat;
 mod workload_cmd;
-mod wrappers;
 
 // Global allocator selection. Four combinations of two feature
 // flags (`heap-jemalloc`, `heap-track`):
@@ -577,7 +575,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     Ok(())
 }
 
-fn params_pretty(p: &crate::params::ParamSet) -> String {
+fn params_pretty(p: &sketch_bench::params::ParamSet) -> String {
     // Strip quotes around the params sub-object for tighter logs.
     let v = p.to_json_value();
     v.get("params")

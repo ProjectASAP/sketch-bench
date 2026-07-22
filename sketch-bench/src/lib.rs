@@ -12,7 +12,9 @@ pub mod aggregation;
 pub mod baselines;
 pub mod config;
 pub mod metrics;
+pub mod params;
 pub mod runner;
+pub mod wrappers;
 
 pub use config::{BenchConfig, MetricsMask};
 pub use metrics::{FullSink, LatencySnapshot, RunMetrics};
