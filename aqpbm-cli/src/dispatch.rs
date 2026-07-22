@@ -709,6 +709,34 @@ pub fn list() -> Vec<String> {
         .collect()
 }
 
+/// Default sweep grid for a family, read from the dispatch table — which is
+/// where the family's params type is already named — rather than from a
+/// second table keyed by family string that could disagree with it.
+pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
+    let entry = impls_for_family(family)
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("unknown sketch family: {family}"))?;
+    Ok((entry.params.default_grid)())
+}
+
+/// Expand `--config` into one `ParamSet` per grid point.
+///
+/// The expansion itself is `ParamSet::grid`, in `aqpbm-core`: splitting
+/// `k=v1,v2` into a Cartesian product is the same operation whatever the
+/// keys mean, and typing the values is serde's job driven by the params
+/// struct. What lives here is the one part that needs the family registry.
+///
+/// Checking the family is that part. The CLI also bails earlier, in
+/// `select_impls`, but this is `pub` and the guarantee should live in the
+/// function rather than in the order its callers happen to run.
+pub fn parse_config(family: &str, spec: &str) -> Result<Vec<ParamSet>> {
+    if impls_for_family(family).is_empty() {
+        anyhow::bail!("unknown sketch family: {family}");
+    }
+    ParamSet::grid(family, spec).map_err(Into::into)
+}
+
 // ---------- shared runners ----------
 
 fn bench_no_gt<S, W>(
@@ -1467,6 +1495,35 @@ run_impl!(
 mod registry_tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    /// The half of `--config` handling that stayed here: `ParamSet::grid`
+    /// cannot reject an unknown family, because `aqpbm-core` names none.
+    /// This crate owns the registry, so it owns the check.
+    #[test]
+    fn parse_config_rejects_an_unknown_family() {
+        assert!(parse_config("not_a_family", "k=1").is_err());
+        assert!(default_grid("not_a_family").is_err());
+    }
+
+    #[test]
+    fn parse_config_expands_a_real_family() {
+        let grid = parse_config("cms", "rows=3,5 cols=1024,2048").unwrap();
+        assert_eq!(grid.len(), 4);
+        let typed: Vec<crate::params::CmsParams> =
+            grid.iter().map(|p| p.parse().unwrap()).collect();
+        assert!(typed.contains(&crate::params::CmsParams {
+            rows: 3,
+            cols: 1024
+        }));
+    }
+
+    #[test]
+    fn default_grid_comes_from_the_dispatch_row() {
+        // Not from a second family -> grid table that could drift from it.
+        let grid = default_grid("hll").unwrap();
+        assert!(!grid.is_empty());
+        assert!(grid.iter().all(|p| p.family() == "hll"));
+    }
 
     /// The registry's size, pinned.
     ///

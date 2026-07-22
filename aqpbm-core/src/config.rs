@@ -98,6 +98,47 @@ impl ParamSet {
         serde_json::to_value(self).expect("ParamSet -> JSON should not fail")
     }
 
+    /// Expand a `'k=v1,v2 k2=v3,v4'` axis spec into one `ParamSet` per point
+    /// of the Cartesian product — the grid a sweep varies over.
+    ///
+    /// Whitespace separates axes, `=` separates an axis from its values, and
+    /// commas separate the values. `rows=3,5 cols=1024,2048` yields four sets.
+    ///
+    /// Values are typed by content: `5` becomes a JSON number, `1.1` a float,
+    /// `true` a bool, anything else a string. That is what lets one parser
+    /// that knows no family feed differently-shaped params structs — serde
+    /// does the final coercion when the caller calls [`ParamSet::parse`], and
+    /// `deny_unknown_fields` rejects a mismatch by field name.
+    ///
+    /// Deliberately **not** validated here beyond syntax: this function cannot
+    /// know whether `family` exists or whether the keys belong to it, because
+    /// `aqpbm-core` names no family. A caller that owns the family registry
+    /// should check membership before calling, and type-check each returned
+    /// set with [`ParamSet::parse`] before measuring anything.
+    pub fn grid(family: &str, spec: &str) -> Result<Vec<ParamSet>, SketchError> {
+        let axes = parse_axes(spec)?;
+        let mut grid: Vec<serde_json::Map<String, serde_json::Value>> =
+            vec![serde_json::Map::new()];
+        for (key, values) in &axes {
+            let mut next = Vec::with_capacity(grid.len() * values.len());
+            for base in &grid {
+                for v in values {
+                    let mut row = base.clone();
+                    row.insert(key.clone(), typed(v));
+                    next.push(row);
+                }
+            }
+            grid = next;
+        }
+        Ok(grid
+            .into_iter()
+            .map(|params| ParamSet {
+                family: family.to_string(),
+                params: serde_json::Value::Object(params),
+            })
+            .collect())
+    }
+
     /// `(key, value)` pairs of the parameters, ordered by key.
     ///
     /// Lets the CSV writer emit a header and a row for any family without a
@@ -117,6 +158,42 @@ impl ParamSet {
             })
             .collect()
     }
+}
+
+/// `"5"` → number, `"1.1"` → float, `"true"` → bool, else string.
+fn typed(raw: &str) -> serde_json::Value {
+    if let Ok(i) = raw.parse::<i64>() {
+        return serde_json::Value::from(i);
+    }
+    if let Ok(f) = raw.parse::<f64>() {
+        return serde_json::Value::from(f);
+    }
+    if let Ok(b) = raw.parse::<bool>() {
+        return serde_json::Value::from(b);
+    }
+    serde_json::Value::from(raw)
+}
+
+/// Split `'k=v1,v2 k2=v3'` into its axes, keeping their order so the
+/// expansion is deterministic.
+fn parse_axes(spec: &str) -> Result<Vec<(String, Vec<String>)>, SketchError> {
+    let mut out = Vec::new();
+    for tok in spec.split_whitespace() {
+        let (key, vals) = tok
+            .split_once('=')
+            .ok_or_else(|| SketchError::BadParam(format!("config token missing '=': {tok}")))?;
+        let vals: Vec<String> = vals.split(',').map(|s| s.trim().to_string()).collect();
+        if vals.is_empty() || vals.iter().any(|v| v.is_empty()) {
+            return Err(SketchError::BadParam(format!(
+                "config key '{key}' has an empty value list"
+            )));
+        }
+        out.push((key.trim().to_string(), vals));
+    }
+    if out.is_empty() {
+        return Err(SketchError::BadParam("config spec was empty".into()));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -155,6 +232,85 @@ mod tests {
         fn default_grid() -> Vec<Self> {
             vec![OtherParams { lg_k: 14 }]
         }
+    }
+
+    /// A float-valued axis, so the untyped hop is tested against the one
+    /// scalar kind `typed` can silently round to the wrong thing.
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct FloatParams {
+        alpha: f64,
+    }
+
+    impl SketchParams for FloatParams {
+        const FAMILY: &'static str = "float";
+        fn default_grid() -> Vec<Self> {
+            vec![FloatParams { alpha: 0.01 }]
+        }
+    }
+
+    #[test]
+    fn grid_expands_a_cartesian_product() {
+        let grid = ParamSet::grid("fake", "rows=3,5 cols=1024,2048").unwrap();
+        assert_eq!(grid.len(), 4);
+        let typed: Vec<FakeParams> = grid.iter().map(|p| p.parse().unwrap()).collect();
+        assert!(typed.contains(&FakeParams {
+            rows: 3,
+            cols: 1024
+        }));
+        assert!(typed.contains(&FakeParams {
+            rows: 5,
+            cols: 2048
+        }));
+    }
+
+    #[test]
+    fn grid_single_key_single_value() {
+        let grid = ParamSet::grid("other", "lg_k=14").unwrap();
+        assert_eq!(grid.len(), 1);
+        assert_eq!(grid[0].parse::<OtherParams>().unwrap().lg_k, 14);
+    }
+
+    #[test]
+    fn grid_defers_key_checking_to_parse() {
+        // `grid` knows no family, so a misspelled key survives expansion and
+        // is caught by serde against the struct that defines the fields.
+        let grid = ParamSet::grid("fake", "rows=5 colz=1024").unwrap();
+        let err = grid[0].parse::<FakeParams>().unwrap_err().to_string();
+        assert!(err.contains("colz"), "{err}");
+    }
+
+    #[test]
+    fn grid_defers_type_checking_to_parse() {
+        let grid = ParamSet::grid("other", "lg_k=huge").unwrap();
+        assert!(grid[0].parse::<OtherParams>().is_err());
+    }
+
+    #[test]
+    fn grid_floats_survive_the_untyped_hop() {
+        let grid = ParamSet::grid("float", "alpha=0.01,0.05").unwrap();
+        let typed: Vec<FloatParams> = grid.iter().map(|p| p.parse().unwrap()).collect();
+        assert_eq!(typed.len(), 2);
+        assert!((typed[0].alpha - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn grid_rejects_malformed_specs() {
+        assert!(ParamSet::grid("fake", "rows").is_err());
+        assert!(ParamSet::grid("fake", "rows=").is_err());
+        assert!(ParamSet::grid("fake", "").is_err());
+    }
+
+    #[test]
+    fn grid_order_of_axes_is_preserved() {
+        // Expansion order is part of the contract: a sweep's progress output
+        // and its record order should not depend on map iteration order.
+        let grid = ParamSet::grid("fake", "rows=1,2 cols=9").unwrap();
+        let rows: Vec<i64> = grid
+            .iter()
+            .map(|p| p.params["rows"].as_i64().unwrap())
+            .collect();
+        assert_eq!(rows, vec![1, 2]);
     }
 
     #[test]

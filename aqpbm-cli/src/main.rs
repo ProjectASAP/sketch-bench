@@ -8,7 +8,6 @@ mod dispatch;
 mod params;
 mod raw_csv;
 mod repeat;
-mod sweep;
 mod workload_cmd;
 mod wrappers;
 
@@ -416,8 +415,8 @@ fn run_bench(args: BenchArgs) -> Result<()> {
 
     let impls = select_impls(&args.sketch, &args.impl_name)?;
     let grid = match args.config.as_deref() {
-        Some(s) => sweep::parse_config(&args.sketch, s)?,
-        None => sweep::default_grid(&args.sketch)?,
+        Some(s) => dispatch::parse_config(&args.sketch, s)?,
+        None => dispatch::default_grid(&args.sketch)?,
     };
     if grid.is_empty() {
         bail!("empty config grid for family '{}'", args.sketch);
