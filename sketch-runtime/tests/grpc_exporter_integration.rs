@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sketch_core::probe::Probe;
-use sketch_core::report::Source;
+use sketch_core::report::{Source, SCHEMA_VERSION};
 use sketch_core::sketch::Sketch;
 use sketch_runtime::sampler::{Sampler, Tag};
 use sketch_runtime::{GrpcConfig, GrpcExporter};
@@ -122,10 +122,18 @@ async fn grpc_exporter_pushes_compressed_batch_to_server() {
     assert_eq!(rec.sketch, "hll");
     assert_eq!(rec.impl_name, "oxide");
     assert_eq!(rec.source, "data-collector");
-    assert_eq!(rec.schema_version, 1);
-    // payload_json is the full v1 Record — parse it back to prove.
+    // Against the constant, not a literal: what this test owns is that
+    // the exporter *passes the version through* — same number on the
+    // wire, in the proto field and inside the payload. Pinning the
+    // number itself is a separate job, done by
+    // `sketch_core::report::tests::schema_version_is_v2`, which
+    // explains why it matters. A literal here duplicated that gate
+    // badly: it went red on the 1 → 2 bump with nothing to say for
+    // itself, and got written off as a broken test.
+    assert_eq!(rec.schema_version, SCHEMA_VERSION);
+    // payload_json is the full Record — parse it back to prove.
     let parsed: serde_json::Value = serde_json::from_str(&rec.payload_json).unwrap();
-    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["schema_version"], SCHEMA_VERSION);
     assert_eq!(parsed["sketch"], "hll");
 }
 

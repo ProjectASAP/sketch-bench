@@ -5,7 +5,7 @@
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
 use sketch_core::sketch::Sketch;
-use sketch_core::workload::UniformI64;
+use sketch_core::workload::I64Workload;
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
 /// exercises the full trait + runner machinery against a known
@@ -31,7 +31,7 @@ impl Sketch for ExactCounter {
 
 #[test]
 fn runner_end_to_end_produces_valid_jsonl() {
-    let workload = UniformI64::new(10_000, 5_000, 42);
+    let workload = I64Workload::uniform(10_000, 5_000, 42);
     let cfg = BenchConfig {
         runs: 3,
         warmup_runs: 1,
@@ -81,7 +81,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
 
 #[test]
 fn runner_respects_mask_noop_when_empty() {
-    let workload = UniformI64::new(1_000, 100, 1);
+    let workload = I64Workload::uniform(1_000, 100, 1);
     let cfg = BenchConfig {
         runs: 2,
         warmup_runs: 0,
