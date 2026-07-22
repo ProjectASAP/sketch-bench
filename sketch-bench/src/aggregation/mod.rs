@@ -129,6 +129,7 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let _ = n; // n is implicit in each RunStats.n
 
     BenchSection {
+        pass: mask.pass_name().map(str::to_string),
         throughput_items_per_sec: throughput,
         throughput_samples,
         query_throughput_items_per_sec: query_throughput,

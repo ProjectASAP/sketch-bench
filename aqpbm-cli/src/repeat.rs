@@ -50,40 +50,20 @@ pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Which pass produced a record. `MetricsMask::passes()` guarantees a record
-/// carries at most one primary metric, so this is recoverable from content and
-/// needs no schema field. Records must be grouped by it before merging:
-/// throughput and latency records for the same impl describe different runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Pass {
-    Throughput,
-    Latency,
-    Accuracy,
-    Merge,
-    Other,
-}
-
-fn pass_of(b: &BenchSection) -> Pass {
-    // Merge first: the merge pass publishes post-merge accuracy, so it also
-    // sets `accuracy` and would otherwise be indistinguishable from the
-    // accuracy pass — the two would share a group key, `merge` would keep one
-    // and discard the other, and `query_throughput` would average two
-    // different populations under one `n`.
-    if b.merge_shards.is_some() {
-        Pass::Merge
-    } else if b.throughput_items_per_sec.is_some() {
-        Pass::Throughput
-    } else if b.latency_ns.is_some() {
-        Pass::Latency
-    } else if b.accuracy.is_some() {
-        Pass::Accuracy
-    } else {
-        Pass::Other
-    }
-}
-
 /// Identifies the measurement a record belongs to, across repeats.
-type GroupKey = (String, String, String, String, Pass);
+///
+/// element 1: sketch family — `hll`, `cms`, ...
+/// element 2: implementation within that family — `oxide`, `datasketches`, ...
+/// element 3: construction params as JSON; empty for the unparameterized rows
+/// element 4: the workload as JSON — shape, size, cardinality, seed
+/// element 5: which pass, read from `BenchSection::pass`
+///
+/// Only the last needs an argument. `MetricsMask::passes` runs each primary
+/// metric separately so their hot paths cannot contaminate each other, so one
+/// invocation emits several records sharing elements 1–4. They describe
+/// different runs: pooling a throughput record with a latency one would
+/// average two populations under a single `n`.
+type GroupKey = (String, String, String, String, String);
 
 fn group_key(r: &Record) -> GroupKey {
     (
@@ -94,7 +74,10 @@ fn group_key(r: &Record) -> GroupKey {
             .map(|v| v.to_string())
             .unwrap_or_default(),
         serde_json::to_string(&r.workload).unwrap_or_default(),
-        r.bench.as_ref().map(pass_of).unwrap_or(Pass::Other),
+        r.bench
+            .as_ref()
+            .and_then(|b| b.pass.clone())
+            .unwrap_or_default(),
     )
 }
 

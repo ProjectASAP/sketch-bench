@@ -2,7 +2,7 @@
 //! counting sketch. Proves: sketch construction → N-run +
 //! warmup loop → metrics aggregation → v1 JSONL record.
 
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use aqpbm_core::workload::I64Workload;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
@@ -26,6 +26,12 @@ impl Sketch for ExactCounter {
     }
     fn memory_bytes(&self) -> usize {
         self.seen.capacity() * std::mem::size_of::<i64>()
+    }
+    /// Set union — exact, so the merge pass can also check that merging
+    /// costs no accuracy, which is the property the pass exists to test.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.seen.extend(other.seen.iter().copied());
+        Ok(())
     }
 }
 
@@ -95,4 +101,50 @@ fn runner_respects_mask_noop_when_empty() {
     );
     // Empty mask ⇒ no passes ⇒ no reports.
     assert!(reports.is_empty());
+}
+
+/// The merge pass publishes post-merge accuracy, so it populates `accuracy`
+/// as well as its own fields. A consumer that grouped records by guessing the
+/// pass from which fields are set therefore could not tell it from the
+/// accuracy pass — `aqpbm-cli::repeat` merged the two and dropped one.
+///
+/// The record now states its pass, and this pins that it states the *pass*
+/// mask and not the aggregation mask: the runner widens the latter with a
+/// borrowed ACCURACY bit so the measurement is not suppressed, and reading
+/// that back would label this record "accuracy".
+#[test]
+fn the_merge_pass_is_labelled_merge_not_accuracy() {
+    let workload = I64Workload::uniform(4_000, 500, 7);
+    let cfg = BenchConfig {
+        runs: 2,
+        warmup_runs: 0,
+        metrics: MetricsMask::MERGE | MetricsMask::ACCURACY,
+        merge_shards: 4,
+        ..Default::default()
+    };
+    let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
+    let reports = runner.run(
+        || ExactCounter {
+            seen: Default::default(),
+        },
+        |s, it| s.update(it),
+        Some(&CardinalityGT::default()),
+    );
+
+    let merge = reports
+        .iter()
+        .find(|r| r.bench.merge_shards.is_some())
+        .expect("a merge pass ran");
+    assert!(
+        merge.bench.accuracy.is_some(),
+        "the merge pass should publish post-merge accuracy — otherwise this \
+         test is not exercising the collision it exists for"
+    );
+    assert_eq!(merge.bench.pass.as_deref(), Some("merge"));
+
+    let accuracy = reports
+        .iter()
+        .find(|r| r.bench.merge_shards.is_none())
+        .expect("an accuracy pass ran");
+    assert_eq!(accuracy.bench.pass.as_deref(), Some("accuracy"));
 }

@@ -332,6 +332,7 @@ impl<E: Exporter> Sampler<E> {
         });
 
         let bench = BenchSection {
+            pass: self.mask.pass_name().map(str::to_string),
             throughput_items_per_sec: Some(RunStats {
                 mean: throughput,
                 stddev: 0.0,

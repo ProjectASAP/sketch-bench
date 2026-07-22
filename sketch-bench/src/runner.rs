@@ -233,6 +233,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         };
 
         let bench = BenchSection {
+            pass: pass_cfg.metrics.pass_name().map(str::to_string),
             throughput_items_per_sec: throughput,
             throughput_samples,
             query_throughput_items_per_sec: None,
@@ -433,6 +434,11 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             pass_cfg.metrics
         };
         let mut bench = aggregate(&per_run, agg_mask);
+        // `agg_mask` says what to aggregate, not which pass ran — it carries
+        // the borrowed ACCURACY bit above. Pass identity is the pass mask, so
+        // restate it rather than let a record claim it came from the accuracy
+        // pass. Those are different runs and a consumer groups by this field.
+        bench.pass = pass_cfg.metrics.pass_name().map(str::to_string);
         // Nothing in this pass is timed end-to-end: shard filling is
         // deliberately excluded and only the fold is measured, so a
         // `wall_time_ms` of 0 would claim a measurement that was not taken.

@@ -32,28 +32,33 @@ bitflags! {
     }
 }
 
+/// Every primary pass, paired with the name that identifies it in a record.
+const PRIMARY_PASSES: [(MetricsMask, &str); 4] = [
+    (MetricsMask::THROUGHPUT, "throughput"),
+    (MetricsMask::LATENCY, "latency"),
+    (MetricsMask::ACCURACY, "accuracy"),
+    (MetricsMask::MERGE, "merge"),
+];
+
 impl MetricsMask {
-    /// Bits that share a hot path and therefore must be measured
-    /// in separate passes to avoid mutual contamination. Each one
-    /// gets its own `BenchRunner` pass with a fresh sketch.
+    /// Bits that each need their own pass over a fresh sketch, because they
+    /// share the per-`update` hot path and would contaminate each other:
+    /// bracketing every update with two `Instant::now()` calls for LATENCY
+    /// inflates the THROUGHPUT denominator by exactly that overhead.
     ///
-    /// THROUGHPUT and LATENCY both gate the per-`update` boundary:
-    /// throughput wants a clean hot path (just the inner sketch
-    /// `update`); latency needs to bracket every `update` with two
-    /// `Instant::now()` calls. Mixing them inflates the throughput
-    /// denominator by exactly the latency-recorder overhead.
-    ///
-    /// ACCURACY also gets its own pass to keep its insert phase
-    /// untainted, in case the user wants the accuracy comparator
-    /// to see the same sketch state a clean-throughput run
-    /// produces.
-    ///
-    /// This is a property of the metrics themselves, not of the
-    /// offline runner: an embedded sampler that enabled both bits
-    /// on one hot path would skew its throughput the same way.
-    pub const PRIMARY: MetricsMask = MetricsMask::from_bits_truncate(
-        Self::THROUGHPUT.bits() | Self::LATENCY.bits() | Self::ACCURACY.bits() | Self::MERGE.bits(),
-    );
+    /// A property of the metrics, not of the offline runner — an embedded
+    /// sampler enabling both on one path would skew the same way.
+    pub const PRIMARY: MetricsMask = {
+        // Folded from the table rather than re-listed, so the two cannot
+        // disagree about what "primary" means.
+        let mut bits = 0u32;
+        let mut i = 0;
+        while i < PRIMARY_PASSES.len() {
+            bits |= PRIMARY_PASSES[i].0.bits();
+            i += 1;
+        }
+        MetricsMask::from_bits_truncate(bits)
+    };
 
     /// Bits that record at phase boundaries only (start / finish
     /// of the insert phase, not per-update). Free to attach to
@@ -69,7 +74,7 @@ impl MetricsMask {
     pub fn passes(self) -> Vec<MetricsMask> {
         let secondary = self & Self::SECONDARY;
         let mut out = Vec::new();
-        for primary in [Self::THROUGHPUT, Self::LATENCY, Self::ACCURACY, Self::MERGE] {
+        for (primary, _) in PRIMARY_PASSES {
             if self.contains(primary) {
                 out.push(primary | secondary);
             }
@@ -78,6 +83,14 @@ impl MetricsMask {
             out.push(secondary);
         }
         out
+    }
+
+    /// PASS bit to str name
+    pub fn pass_name(self) -> Option<&'static str> {
+        PRIMARY_PASSES
+            .iter()
+            .find(|(bit, _)| self.contains(*bit))
+            .map(|(_, name)| *name)
     }
 }
 
@@ -116,5 +129,45 @@ mod tests {
     #[test]
     fn passes_empty_returns_empty() {
         assert!(MetricsMask::empty().passes().is_empty());
+    }
+
+    #[test]
+    fn every_pass_has_a_distinct_name() {
+        // The property consumers rely on: a record's `pass` identifies which
+        // run produced it, so two passes must never share a name.
+        let names: Vec<&str> = MetricsMask::all()
+            .passes()
+            .iter()
+            .map(|p| p.pass_name().expect("every pass has a primary bit"))
+            .collect();
+        let unique: std::collections::BTreeSet<_> = names.iter().collect();
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "duplicate pass name in {names:?}"
+        );
+    }
+
+    #[test]
+    fn primary_is_exactly_the_named_passes() {
+        // `PRIMARY` is folded from the same table `pass_name` reads, so this
+        // cannot drift — it pins that the fold is what we think it is, and
+        // that a bit added to the table lands in `PRIMARY` for free.
+        assert_eq!(
+            MetricsMask::PRIMARY,
+            MetricsMask::THROUGHPUT
+                | MetricsMask::LATENCY
+                | MetricsMask::ACCURACY
+                | MetricsMask::MERGE
+        );
+        assert_eq!(MetricsMask::all().passes().len(), PRIMARY_PASSES.len());
+    }
+
+    #[test]
+    fn a_secondary_only_pass_has_no_name() {
+        // CPU/MEMORY attach to a pass, they do not constitute one.
+        let secondary = (MetricsMask::CPU | MetricsMask::MEMORY).passes();
+        assert_eq!(secondary.len(), 1);
+        assert_eq!(secondary[0].pass_name(), None);
     }
 }

@@ -81,6 +81,15 @@ pub enum Source {
 /// placeholders.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchSection {
+    /// Which pass produced this record — `"throughput"`, `"latency"`,
+    /// `"accuracy"` or `"merge"`, from `MetricsMask::pass_name`.
+    ///
+    /// `MetricsMask::passes` runs each primary metric separately, so one
+    /// invocation emits several records per (sketch, impl, config, workload).
+    /// They describe different runs; group by this before pooling any of them.
+    /// Absent on records written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
     /// Per-run throughput samples (items/sec, one entry per measured run).
@@ -258,6 +267,7 @@ mod tests {
         };
         let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
         rec.bench = Some(BenchSection {
+            pass: None,
             throughput_items_per_sec: Some(RunStats {
                 mean: 4.2e7,
                 stddev: 1.1e6,
