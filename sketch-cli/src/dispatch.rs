@@ -9,16 +9,16 @@
 
 use std::hash::Hash;
 
+use crate::params::{
+    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
+    ParamSet, SketchParams, UnivMonParams,
+};
 use anyhow::Result;
 use aqpbm_datagen::{DType, GenSpec};
 use sketch_bench::accuracy::cardinality::CardinalityGT;
 use sketch_bench::accuracy::frequency::FrequencyGT;
 use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner};
-use sketch_core::config::{
-    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-    ParamSet, SketchParams, UnivMonParams,
-};
 use sketch_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
 
 use crate::wrappers::{

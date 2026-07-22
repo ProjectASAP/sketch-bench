@@ -3,9 +3,9 @@
 //! `Query = f64` (quantile in [0, 1]), `Answer = f64` (value
 //! at quantile).
 
+use crate::params::DdParams;
 use asap_sketchlib::DDSketch;
 use sketch_bench::accuracy::quantile::QuantileValue;
-use sketch_core::config::DdParams;
 use sketch_core::sketch::Sketch;
 
 /// Generic over the item type. `DDSketch` buckets by `log(value)`, so it is

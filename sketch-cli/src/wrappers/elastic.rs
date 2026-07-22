@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use sketch_core::config::ElasticParams;
+use crate::params::ElasticParams;
 use sketch_core::sketch::Sketch;
 
 // ---------- asap_sketchlib Elastic ----------

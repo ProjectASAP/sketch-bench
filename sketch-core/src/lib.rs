@@ -15,10 +15,10 @@ pub mod report;
 pub mod sketch;
 pub mod workload;
 
-pub use config::{
-    CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-    ParamSet, SketchParams, UnivMonParams,
-};
+// Only the open axis. The concrete per-family params structs live
+// with the implementations that consume them, in `sketch-cli::params`
+// — `sketch-core` names no sketch family.
+pub use config::{ParamSet, SketchParams};
 // The generator is its own crate: it has an independent product surface
 // (`sketchlib workload generate`), an on-disk format contract, and no
 // knowledge of sketches. Re-exported here so the names stay where callers

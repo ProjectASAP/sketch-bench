@@ -22,11 +22,11 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+use crate::params::ParamSet;
 use anyhow::Result;
 use aqpbm_datagen::DType;
 use sketch_bench::runner::BenchReport;
 use sketch_bench::MetricsMask;
-use sketch_core::config::ParamSet;
 
 use crate::dispatch::ImplEntry;
 
@@ -551,7 +551,7 @@ mod tests {
 #[cfg(test)]
 mod param_column_order_tests {
     use super::*;
-    use sketch_core::config::{CmsParams, ElasticParams, HllParams, UnivMonParams};
+    use crate::params::{CmsParams, ElasticParams, HllParams, UnivMonParams};
 
     /// Values must line up with the header, which is *not* alphabetical.
     ///
@@ -572,7 +572,7 @@ mod param_column_order_tests {
             ),
             (
                 "countsketch",
-                ParamSet::of(&sketch_core::config::CountSketchParams {
+                ParamSet::of(&crate::params::CountSketchParams {
                     rows: 3,
                     cols: 4096,
                 }),

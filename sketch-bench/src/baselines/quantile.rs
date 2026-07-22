@@ -14,7 +14,6 @@
 
 use std::cell::{Cell, RefCell};
 
-use sketch_core::config::KllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 use crate::accuracy::quantile::QuantileValue;
@@ -43,9 +42,10 @@ impl<T> Default for ExactQuantile<T> {
 }
 
 impl<T: QuantileValue> ExactQuantile<T> {
-    /// Accepts a `KllParams` for dispatch-macro uniformity; the
+    /// Accepts the family's params by reference, ignored, for
+    /// dispatch-macro uniformity; the
     /// value is ignored — an exact sorted stream has no k.
-    pub fn new(_p: &KllParams) -> Self {
+    pub fn new<P>(_p: &P) -> Self {
         Self {
             buf: RefCell::new(Vec::new()),
             sorted: Cell::new(false),
@@ -174,7 +174,7 @@ mod tests {
     fn streamed_quantile_matches_batch() {
         let vals: Vec<i64> = (0..1000).rev().collect();
         let batch = ExactQuantile::ingest_all(&vals);
-        let mut streamed = ExactQuantile::<i64>::new(&KllParams { k: 200 });
+        let mut streamed = ExactQuantile::<i64>::new(&());
         for v in &vals {
             streamed.update(v);
         }

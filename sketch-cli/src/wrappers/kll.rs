@@ -11,8 +11,8 @@
 
 use std::cell::RefCell;
 
+use crate::params::KllParams;
 use sketch_bench::accuracy::quantile::QuantileValue;
-use sketch_core::config::KllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 

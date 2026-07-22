@@ -8,8 +8,8 @@
 //! `ExactFrequency` with CMS; DDSketch shares `ExactQuantile`
 //! with KLL).
 
+use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams};
 use sketch_bench::accuracy::quantile::QuantileValue;
-use sketch_core::config::{CmsParams, CountSketchParams, DdParams, HllParams};
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 pub use sketch_bench::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};

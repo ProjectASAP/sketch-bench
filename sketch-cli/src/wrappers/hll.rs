@@ -2,7 +2,7 @@
 //! (a.k.a. asap_sketchlib). All three expose cardinality as
 //! `Answer = f64`, `Query = ()`.
 
-use sketch_core::config::HllParams;
+use crate::params::HllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 // sketch_oxide routes `.estimate()` through its `Sketch` trait.
 use sketch_oxide::Sketch as OxideSketch;

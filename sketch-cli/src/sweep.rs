@@ -16,9 +16,9 @@
 //!
 //! See `docs/BENCH_SWEEP.md` §2 + §3.
 
+use crate::params::ParamSet;
 use anyhow::{anyhow, bail, Result};
 use serde_json::{Map, Value};
-use sketch_core::config::ParamSet;
 
 /// Default grid for a family, read from the dispatch table — which is where
 /// the family's params type is already named — rather than from a second
@@ -102,7 +102,7 @@ fn parse_kvs(spec: &str) -> Result<Vec<(String, Vec<String>)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sketch_core::config::{CmsParams, DdParams, HllParams};
+    use crate::params::{CmsParams, DdParams, HllParams};
 
     #[test]
     fn expands_a_cartesian_product() {
