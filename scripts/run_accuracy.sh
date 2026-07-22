@@ -20,7 +20,6 @@ VARIANT="all"
 OUTPUT_DIR="${REPO_ROOT}/output/accuracy"
 DATA="${ACCURACY_DATASET:-${REPO_ROOT}/input/benchmark_data_10m_int64_zipf_s11_k100000.bin}"
 PROBES="${ACCURACY_PROBES:-100000}"
-MIN_TRUE_COUNT="${ACCURACY_MIN_TRUE_COUNT:-0}"
 RUNS="${ACCURACY_RUNS:-10}"
 WARMUP="${ACCURACY_WARMUP:-3}"
 
@@ -30,7 +29,15 @@ while [[ $# -gt 0 ]]; do
     --output-dir)      OUTPUT_DIR="$2"; shift 2 ;;
     --data)            DATA="$2"; shift 2 ;;
     --probes)          PROBES="$2"; shift 2 ;;
-    --min-true-count)  MIN_TRUE_COUNT="$2"; shift 2 ;;
+    # Removed with `--accuracy-min-count`: it asked for a heavy-hitter
+    # threshold chosen in advance, and its empty-result fallback
+    # substituted a different population under the same metric name.
+    # The `are_top1/10/100/1000` prefixes answer the same question
+    # without one. Fail loudly rather than ignore a filter someone
+    # believes is being applied.
+    --min-true-count)
+      echo "--min-true-count was removed; read .bench.accuracy.are_top10 / are_top100 instead" >&2
+      exit 1 ;;
     --runs)            RUNS="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^set/p' "$0" | sed -n 's/^# \{0,1\}//p'
@@ -59,7 +66,6 @@ run_family() {
     --sketch "${FAMILY}" --impl all \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     --accuracy --accuracy-probes "${PROBES}" \
-    --accuracy-min-count "${MIN_TRUE_COUNT}" \
     --raw-csv "${OUTPUT_DIR}" \
     --report "${REPORT}"
 }

@@ -29,7 +29,9 @@
 #
 # CPU (for cpu-accuracy curve):
 #   .bench.cpu_time_ms.user_ms.mean    CPU user time (ms, mean over runs)
-#   .bench.cpu_time_ms.user_ms.mean    [lo, hi] 95% CI
+#   .bench.cpu_time_ms.user_ms.ci95    [lo, hi] 95% CI — only under
+#                                      `--repeats N`, N >= 2. This script
+#                                      does not pass it, so expect it absent.
 #   .bench.cpu_time_ms.sys_ms.mean     CPU sys time (ms)
 #   .bench.wall_time_ms.mean           wall clock time (ms)
 #
@@ -41,8 +43,6 @@
 #                  count-1 keys — compare against the `null` impl, which is 1.0)
 #                  .bench.accuracy.relative_error_p99
 #                  .bench.accuracy.l1_err
-#                  .bench.accuracy.min_true_count   (threshold applied)
-#                  .bench.accuracy.filtered_out      (keys below threshold)
 #
 # Notes:
 # - lib-fastpath-parallel impls have no accuracy comparator; they appear
@@ -50,8 +50,11 @@
 # - polars impls are DataFrame batch-insert baselines, not streaming
 #   sketches; their memory/CPU cost is not directly comparable.
 # - exact impls are zero-error baselines (unparameterized; run once).
-# - For cms/countsketch under zipf, accuracy-min-count=10 restricts
-#   relative-error to the heavy-hitter regime. Under uniform, 0 is used.
+# - The heavy-hitter regime for cms/countsketch under zipf is read off
+#   the are_top1/10/100/1000 prefixes, not selected up front: the
+#   `--accuracy-min-count` threshold this script used to pass was
+#   removed because its empty-result fallback silently substituted a
+#   different population under the same metric name.
 # ───────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -74,12 +77,6 @@ ZIPF_S=1.1
 SEED=42
 METRICS="cpu,memory,accuracy,throughput"
 ACCURACY_PROBES=20000
-# Zipf: restrict frequency rel-err to keys with count >= this value.
-# Avoids count-1 rare-key noise dominating the mean rel-err for CMS/CS.
-# Ignored by hll (cardinality) and kll (quantile) comparators.
-ACCURACY_MIN_COUNT_ZIPF=10
-# Uniform / file: all keys have similar counts; no filter.
-ACCURACY_MIN_COUNT_OTHER=0
 # ────────────────────────────────────────────────────────────────
 
 OUT_DIR=output/profiles
@@ -108,7 +105,6 @@ rm -f "$OUT_DIR/all.jsonl"
 bench() {
     local family=$1; shift
     local label=$1; shift
-    local min_count=$1; shift
     echo ""
     echo "─── $family / $label ───────────────────────────────────"
     "$BINARY" bench \
@@ -118,14 +114,13 @@ bench() {
         --metrics   "$METRICS" \
         --accuracy \
         --accuracy-probes     "$ACCURACY_PROBES" \
-        --accuracy-min-count  "$min_count" \
         --report    "$OUT_DIR/${family}_${label}.jsonl" \
         "$@"
 }
 
 for FAMILY in $FAMILIES; do
-    # Zipf workload — heavy-hitter filter on for frequency sketches
-    bench "$FAMILY" zipf "$ACCURACY_MIN_COUNT_ZIPF" \
+    # Zipf workload — skewed, so the are_topN prefixes separate
+    bench "$FAMILY" zipf \
         --workload zipf \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
@@ -133,14 +128,14 @@ for FAMILY in $FAMILIES; do
         --seed "$SEED"
 
     # Uniform workload — all keys have similar counts
-    bench "$FAMILY" uniform "$ACCURACY_MIN_COUNT_OTHER" \
+    bench "$FAMILY" uniform \
         --workload uniform \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
         --seed "$SEED"
 
     # Pre-built binary file — 1M int64, seed 42
-    bench "$FAMILY" file "$ACCURACY_MIN_COUNT_OTHER" \
+    bench "$FAMILY" file \
         --input input/benchmark_data_1m_int64.bin
 done
 
