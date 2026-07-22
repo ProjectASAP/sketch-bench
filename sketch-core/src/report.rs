@@ -258,6 +258,29 @@ mod tests {
         assert_eq!(back.profile.unwrap().hw_counters.unwrap().ipc, Some(3.2));
     }
 
+    /// A gate, not a behaviour test. Bumping `SCHEMA_VERSION` turns
+    /// this red on purpose — change the literal deliberately, and
+    /// read this comment while you do.
+    ///
+    /// This number does not stay in the repo. It is stamped into every
+    /// JSONL record `sketchlib bench` writes (consumed by `scripts/`
+    /// and `visualization/`), and `sketch-runtime` puts it on the wire
+    /// as `RuntimeRecord.schema_version` in `proto/feedback.proto`.
+    ///
+    /// Today nothing outside this repo reads the wire field — the
+    /// controller side of that channel is unbuilt (MERGE_PLAN Phase 9).
+    /// So right now a bump only obliges you to check `scripts/` and
+    /// `visualization/`. Once something *is* listening, a bump becomes
+    /// a cross-repo contract change and this gate is where you find
+    /// that out.
+    ///
+    /// It has already earned its keep once and been ignored: the 1 → 2
+    /// bump in da61875 (2026-05-04, `heap_peak_kb` →
+    /// `heap_allocated_kb`) left a hardcoded `1` failing in
+    /// `sketch-runtime/tests/grpc_exporter_integration.rs` for two
+    /// months. That assertion carried no explanation, so when it
+    /// surfaced it was misread as noise and left alone. Hence this
+    /// comment.
     #[test]
     fn schema_version_is_v2() {
         assert_eq!(SCHEMA_VERSION, 2);
