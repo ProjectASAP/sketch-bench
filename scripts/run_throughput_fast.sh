@@ -64,7 +64,7 @@ config_for() {
 BIN_PATH="${REPO_ROOT}/target/release/sketchlib"
 if [[ ! -x "${BIN_PATH}" ]]; then
     echo "building sketchlib (release)..." >&2
-    (cd "${REPO_ROOT}" && cargo build --release -p sketch-cli >&2)
+    (cd "${REPO_ROOT}" && cargo build --release -p aqpbm-cli >&2)
 fi
 
 # --- environment lock-down ---

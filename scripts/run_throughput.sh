@@ -5,11 +5,11 @@
 # Replaces the per-family binaries that used to live under
 # `throughput/<family>/rust/` plus `throughput/polars_*/` and
 # `throughput/octo/`. All of those are now reachable through the
-# sketch-cli wrappers:
+# aqpbm-cli wrappers:
 #
-#   sketch-cli/src/wrappers/polars.rs    — *.polars   (exact baselines)
-#   sketch-cli/src/wrappers/parallel.rs  — *.lib-fastpath-parallel (octo)
-#   sketch-cli/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — regular impls
+#   sketch-bench/src/wrappers/polars.rs    — *.polars   (exact baselines)
+#   sketch-bench/src/wrappers/parallel.rs  — *.lib-fastpath-parallel (octo)
+#   sketch-bench/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — regular impls
 #
 # Output layout mirrors the legacy `throughput/<family>/output/`
 # shape so the plot scripts under `visualization/plots/throughput/`
@@ -77,7 +77,7 @@ run_family() {
   fi
   echo "===== throughput: ${FAMILY} (impl=${IMPL_FILTER}) ====="
   # shellcheck disable=SC2086
-  cargo run --release --quiet -p sketch-cli -- bench \
+  cargo run --release --quiet -p aqpbm-cli -- bench \
     --sketch "${FAMILY}" --impl "${IMPL_FILTER}" \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     ${ACCURACY} \
@@ -96,7 +96,7 @@ run_octo() {
       local FAM="${fam_cfg%%|*}"
       local CFG="${fam_cfg#*|}"
       echo "===== throughput: ${FAM}/lib-fastpath-parallel workers=${n} ====="
-      cargo run --release --quiet -p sketch-cli -- bench \
+      cargo run --release --quiet -p aqpbm-cli -- bench \
         --sketch "${FAM}" --impl lib-fastpath-parallel \
         --config "${CFG}" \
         --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \

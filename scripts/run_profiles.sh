@@ -84,7 +84,7 @@ mkdir -p "$OUT_DIR"
 
 if [[ $BUILD -eq 1 ]]; then
     echo "==> Building sketchlib (release)..."
-    cargo build -p sketch-cli --release
+    cargo build -p aqpbm-cli --release
 fi
 
 if [[ ! -x "$BINARY" ]]; then

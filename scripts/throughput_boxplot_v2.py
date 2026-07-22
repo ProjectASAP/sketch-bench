@@ -75,7 +75,7 @@ def taskset(cmd: list[str]) -> list[str]:
 def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
               warmup_runs: int = WARMUP_RUNS_DEFAULT,
               with_query: bool = True) -> tuple[Path, Path | None]:
-    """Run a sketch-cli bench. Returns (insert_csv, query_csv_or_None)."""
+    """Run a aqpbm-cli bench. Returns (insert_csv, query_csv_or_None)."""
     panel_dir.mkdir(parents=True, exist_ok=True)
     impl_dir = panel_dir / f"{family}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
     if impl_dir.exists():
@@ -83,7 +83,7 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
             f.unlink()
     impl_dir.mkdir(parents=True, exist_ok=True)
     cmd = taskset([
-        "cargo", "run", "--release", "--quiet", "-p", "sketch-cli", "--",
+        "cargo", "run", "--release", "--quiet", "-p", "aqpbm-cli", "--",
         "bench",
         "--sketch", family,
         "--impl", impl,

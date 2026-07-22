@@ -12,7 +12,7 @@
 #
 # Output path note: stage 4 deliberately writes to target/release-pgo/
 # rather than target/release/. cargo owns target/release/, so any later
-# `cargo build --release -p sketch-cli` (without --target) silently
+# `cargo build --release -p aqpbm-cli` (without --target) silently
 # overwrites the PGO binary with a fresh non-PGO build, and downstream
 # scripts then run ~30–60 % slower with no visible signal. Keeping the
 # PGO artefact in a path cargo never touches makes that footgun
@@ -86,7 +86,7 @@ rm -rf "${PGO_DIR}"
 mkdir -p "${PGO_DIR}"
 echo "# === stage 1: instrumented build ===" >&2
 RUSTFLAGS="-C target-cpu=native -Cprofile-generate=${PGO_DIR}" \
-    cargo build --release -p sketch-cli \
+    cargo build --release -p aqpbm-cli \
         --target "${HOST_TRIPLE}" >&2
 
 INSTRUMENTED_BIN="${REPO_ROOT}/target/${HOST_TRIPLE}/release/sketchlib"
@@ -129,7 +129,7 @@ echo "# merged profile: ${PROFDATA_OUT} ($(stat -c %s "${PROFDATA_OUT}") bytes)"
 # --- stage 4: optimised build --------------------------------------------
 echo "# === stage 4: optimised build ===" >&2
 RUSTFLAGS="-C target-cpu=native -Cprofile-use=${PROFDATA_OUT}" \
-    cargo build --release -p sketch-cli \
+    cargo build --release -p aqpbm-cli \
         --target "${HOST_TRIPLE}" >&2
 
 # Copy into target/release-pgo/ — a path cargo never writes to, so a

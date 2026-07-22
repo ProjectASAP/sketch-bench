@@ -52,7 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # where `cpp_dir` is the on-disk dir name in cpp-bench/ (which for the
 # countsketch family is "cs").
 DEFAULT_COMBOS: list[tuple[str, str, str]] = [
-    # Rust track — names from sketch-cli/src/dispatch.rs
+    # Rust track — names from aqpbm-cli/src/dispatch.rs
     ("rust", "kll",         "lib"),
     ("rust", "kll",         "oxide"),
     ("rust", "countsketch", "oxide"),
@@ -224,7 +224,7 @@ def main(argv: list[str]) -> int:
     if not args.dry_run:
         if any(t == "rust" for (t, _, _) in combos) and not args.rust_bin.is_file():
             print(f"[run_all] sketchlib not found at {args.rust_bin}; "
-                  "run `cargo build --release -p sketch-cli` first", file=sys.stderr)
+                  "run `cargo build --release -p aqpbm-cli` first", file=sys.stderr)
             return 2
         if any(t == "cpp" for (t, _, _) in combos) and not args.cpp_bin_dir.is_dir():
             print(f"[run_all] cpp-bench build dir not found at {args.cpp_bin_dir}; "

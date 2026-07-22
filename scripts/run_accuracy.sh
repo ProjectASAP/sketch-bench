@@ -3,7 +3,7 @@
 # emit the legacy long-format CSVs under `output/accuracy/`.
 #
 # Replaces `accuracy/<statistic>/rust/` per-statistic binaries.
-# Each family's comparator runs inside the sketch-cli runner; the
+# Each family's comparator runs inside the aqpbm-cli runner; the
 # per-call query CSV (hll/kll/dd) is enabled because `--accuracy`
 # + `--raw-csv` are paired here.
 #
@@ -62,7 +62,7 @@ fi
 run_family() {
   local FAMILY="$1"
   echo "===== accuracy: ${FAMILY} ====="
-  cargo run --release --quiet -p sketch-cli -- bench \
+  cargo run --release --quiet -p aqpbm-cli -- bench \
     --sketch "${FAMILY}" --impl all \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     --accuracy --accuracy-probes "${PROBES}" \

@@ -8,7 +8,7 @@ Panels (per the user's request; 10M zipf s=1.1 k=100K input):
   hll          : sketchlib(classic lib), oxide, datasketches(Rust), datasketches(C++) @ lg_k=14
   kll          : sketchlib, oxide, datasketches(C++), InsertOpt-Final                  @ k=200
 
-All sketch-cli impls use --runs 10 --warmup-runs 3.
+All aqpbm-cli impls use --runs 10 --warmup-runs 3.
 All cpp-bench binaries use --runs 10 --measure-items 10000000.
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ def run(cmd: list[str]) -> None:
 
 
 def cli_bench(family: str, impl: str, config: str, panel_dir: Path) -> Path:
-    """Run sketch-cli bench for one impl and return the per-run CSV path."""
+    """Run aqpbm-cli bench for one impl and return the per-run CSV path."""
     panel_dir.mkdir(parents=True, exist_ok=True)
     # raw-csv writes a fixed filename '<family>_throughput_results_rust.csv'
     # so we isolate per-impl runs into per-impl subdirs to avoid clobber.
@@ -53,7 +53,7 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path) -> Path:
             f.unlink()
     impl_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "cargo", "run", "--release", "--quiet", "-p", "sketch-cli", "--",
+        "cargo", "run", "--release", "--quiet", "-p", "aqpbm-cli", "--",
         "bench",
         "--sketch", family,
         "--impl", impl,

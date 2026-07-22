@@ -55,7 +55,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 # ----------------------------------------------------------------------
-# Family metadata. Kept in sync with sketch-cli/src/raw_csv.rs (dimension
+# Family metadata. Kept in sync with aqpbm-cli/src/raw_csv.rs (dimension
 # param columns) and sketch-bench/src/accuracy/*.rs (comparator json keys).
 # ----------------------------------------------------------------------
 FAMILY_GROUP = {

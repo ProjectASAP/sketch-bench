@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """4-family insert-throughput comparison (cms / countsketch / hll / kll).
 
-Reads JSONL records emitted by sketch-cli (`source: cli`) and cpp-bench
+Reads JSONL records emitted by aqpbm-cli (`source: cli`) and cpp-bench
 (`source: cpp-bench`) and renders one subplot per family. Each bar is
 one `(language, impl)` pair; height is `bench.throughput_items_per_sec.mean`.
 
