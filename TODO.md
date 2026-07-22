@@ -23,7 +23,7 @@ Track record against [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
 - `cachegrind` shell-out
 - `heaptrack` shell-out
 - VTune callstack CSV analyzer (Rust port of asap-fusion `analyze_alloc_callstacks.py`)
-- CI lint forbidding `sketch-profile` as a dep of `sketch-runtime`
+- CI lint forbidding `sketch-profile` **and `sketch-bench`** as deps of `sketch-runtime` (the `sketch-bench` edge was removed by moving `MetricsMask` + `LatencyRecorder` into `sketch-core`; nothing stops it coming back)
 
 **Why deferred**: `perf_event_open` needs elevated kernel perms + is Linux-only. Landing the library + bench story first unblocks the paper's accuracy-profile claim (ASAPQuery-backend #2) without cross-OS / privilege complications.
 

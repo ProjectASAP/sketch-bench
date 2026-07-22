@@ -34,7 +34,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
+use aqpbm_datagen::SketchError;
 
 /// Construction parameters for one sketch family.
 ///
@@ -77,16 +77,16 @@ impl ParamSet {
     /// Fails if this set belongs to another family, or if the JSON does not
     /// match `P` — which is how an unknown or misspelled `--config` key is
     /// reported, with serde naming the key and listing the valid ones.
-    pub fn parse<P: SketchParams>(&self) -> Result<P, SketchCoreError> {
+    pub fn parse<P: SketchParams>(&self) -> Result<P, SketchError> {
         if self.family != P::FAMILY {
-            return Err(SketchCoreError::BadParam(format!(
+            return Err(SketchError::BadParam(format!(
                 "params are for family '{}', not '{}'",
                 self.family,
                 P::FAMILY
             )));
         }
         serde_json::from_value(self.params.clone())
-            .map_err(|e| SketchCoreError::BadParam(format!("{} params: {e}", P::FAMILY)))
+            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", P::FAMILY)))
     }
 
     pub fn family(&self) -> &str {
@@ -119,231 +119,88 @@ impl ParamSet {
     }
 }
 
-macro_rules! sketch_params {
-    ($ty:ident, $family:literal, $grid:expr) => {
-        impl SketchParams for $ty {
-            const FAMILY: &'static str = $family;
-            fn default_grid() -> Vec<Self> {
-                $grid
-            }
-        }
-    };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HllParams {
-    pub lg_k: u8,
-}
-sketch_params!(
-    HllParams,
-    "hll",
-    [10u8, 12, 14, 16]
-        .iter()
-        .map(|&lg_k| HllParams { lg_k })
-        .collect()
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KllParams {
-    pub k: u32,
-}
-sketch_params!(
-    KllParams,
-    "kll",
-    [100u32, 200, 400, 800]
-        .iter()
-        .map(|&k| KllParams { k })
-        .collect()
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CmsParams {
-    pub rows: usize,
-    pub cols: usize,
-}
-sketch_params!(
-    CmsParams,
-    "cms",
-    grid2(&[3, 5, 7], &[1024, 2048, 4096], |rows, cols| CmsParams {
-        rows,
-        cols
-    })
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CountSketchParams {
-    pub rows: usize,
-    pub cols: usize,
-}
-sketch_params!(
-    CountSketchParams,
-    "countsketch",
-    grid2(&[3, 5, 7], &[1024, 2048, 4096], |rows, cols| {
-        CountSketchParams { rows, cols }
-    })
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ElasticParams {
-    pub buckets: usize,
-    pub depth: usize,
-}
-sketch_params!(
-    ElasticParams,
-    "elastic",
-    grid2(&[512, 1024, 2048], &[2, 3, 4], |buckets, depth| {
-        ElasticParams { buckets, depth }
-    })
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NitroParams {
-    pub rate: f64,
-}
-sketch_params!(
-    NitroParams,
-    "nitro",
-    [0.01f64, 0.02, 0.05, 0.10]
-        .iter()
-        .map(|&rate| NitroParams { rate })
-        .collect()
-);
-
-/// DDSketch's single tuning knob — the relative-error guarantee
-/// `alpha ∈ (0, 1)`. Smaller `alpha` ⇒ more buckets ⇒ tighter
-/// per-quantile error at the cost of memory.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DdParams {
-    pub alpha: f64,
-}
-sketch_params!(
-    DdParams,
-    "dd",
-    [0.005f64, 0.01, 0.02, 0.05, 0.1]
-        .iter()
-        .map(|&alpha| DdParams { alpha })
-        .collect()
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UnivMonParams {
-    pub layers: usize,
-    pub max_stream: u64,
-}
-sketch_params!(
-    UnivMonParams,
-    "univmon",
-    grid2(
-        &[6usize, 8, 10],
-        &[128u64, 256, 512],
-        |layers, max_stream| { UnivMonParams { layers, max_stream } }
-    )
-);
-
-/// Cartesian product of two axes — the shape most default grids have.
-fn grid2<A: Copy, B: Copy, T>(a: &[A], b: &[B], f: impl Fn(A, B) -> T) -> Vec<T> {
-    a.iter()
-        .flat_map(|&x| b.iter().map(move |&y| (x, y)))
-        .map(|(x, y)| f(x, y))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Families declared right here, so these tests exercise the open
+    /// axis without `sketch-core` knowing any real family. That the
+    /// axis can be exercised this way *is* the property under test:
+    /// the concrete families live in `sketch-cli::params`.
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct FakeParams {
+        rows: usize,
+        cols: usize,
+    }
+
+    impl SketchParams for FakeParams {
+        const FAMILY: &'static str = "fake";
+        fn default_grid() -> Vec<Self> {
+            vec![FakeParams {
+                rows: 5,
+                cols: 2048,
+            }]
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OtherParams {
+        lg_k: u8,
+    }
+
+    impl SketchParams for OtherParams {
+        const FAMILY: &'static str = "other";
+        fn default_grid() -> Vec<Self> {
+            vec![OtherParams { lg_k: 14 }]
+        }
+    }
 
     #[test]
     fn serialises_to_the_documented_bytes() {
         // Pinned exactly, so a future representation change cannot silently
         // alter the record shape the way the enum -> Value move altered key
         // order. Asserting only field *values* would not have caught that.
-        let p = ParamSet::of(&CmsParams {
+        let p = ParamSet::of(&FakeParams {
             rows: 5,
             cols: 2048,
         });
         assert_eq!(
             serde_json::to_string(&p).unwrap(),
-            r#"{"family":"cms","params":{"cols":2048,"rows":5}}"#
-        );
-    }
-
-    #[test]
-    fn records_written_before_the_open_representation_still_parse() {
-        // Declaration order, as the closed enum emitted it.
-        for (json, family) in [
-            (r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
-            (r#"{"family":"hll","params":{"lg_k":14}}"#, "hll"),
-            (
-                r#"{"family":"countsketch","params":{"rows":3,"cols":4096}}"#,
-                "countsketch",
-            ),
-            (
-                r#"{"family":"univmon","params":{"layers":8,"max_stream":256}}"#,
-                "univmon",
-            ),
-        ] {
-            let p: ParamSet = serde_json::from_str(json).unwrap();
-            assert_eq!(p.family(), family);
-        }
-        let cms: ParamSet =
-            serde_json::from_str(r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#).unwrap();
-        assert_eq!(
-            cms.parse::<CmsParams>().unwrap(),
-            CmsParams {
-                rows: 5,
-                cols: 2048
-            }
+            r#"{"family":"fake","params":{"cols":2048,"rows":5}}"#
         );
     }
 
     #[test]
     fn roundtrips_through_json() {
-        let p = ParamSet::of(&HllParams { lg_k: 14 });
+        let p = ParamSet::of(&OtherParams { lg_k: 14 });
         let back: ParamSet = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(p, back);
-        assert_eq!(back.parse::<HllParams>().unwrap().lg_k, 14);
+        assert_eq!(back.parse::<OtherParams>().unwrap().lg_k, 14);
     }
 
     #[test]
     fn parsing_as_the_wrong_family_fails() {
-        let p = ParamSet::of(&HllParams { lg_k: 14 });
-        let err = p.parse::<CmsParams>().unwrap_err().to_string();
-        assert!(err.contains("hll") && err.contains("cms"), "{err}");
+        let p = ParamSet::of(&OtherParams { lg_k: 14 });
+        let err = p.parse::<FakeParams>().unwrap_err().to_string();
+        assert!(err.contains("other") && err.contains("fake"), "{err}");
     }
 
     #[test]
     fn unknown_keys_are_rejected_by_name() {
         // What the hand-written per-family allowed-key lists used to do.
         let p = ParamSet {
-            family: "cms".into(),
+            family: "fake".into(),
             params: serde_json::json!({"rows": 5, "colz": 2048}),
         };
-        let err = p.parse::<CmsParams>().unwrap_err().to_string();
+        let err = p.parse::<FakeParams>().unwrap_err().to_string();
         assert!(err.contains("colz"), "error should name the bad key: {err}");
     }
 
     #[test]
-    fn every_family_ships_a_non_empty_default_grid() {
-        assert!(!HllParams::default_grid().is_empty());
-        assert!(!KllParams::default_grid().is_empty());
-        assert_eq!(CmsParams::default_grid().len(), 9);
-        assert_eq!(CountSketchParams::default_grid().len(), 9);
-        assert_eq!(ElasticParams::default_grid().len(), 9);
-        assert_eq!(UnivMonParams::default_grid().len(), 9);
-        assert_eq!(DdParams::default_grid().len(), 5);
-    }
-
-    #[test]
     fn fields_are_ordered_and_stringified() {
-        let p = ParamSet::of(&CmsParams {
+        let p = ParamSet::of(&FakeParams {
             rows: 5,
             cols: 2048,
         });

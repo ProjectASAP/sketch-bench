@@ -83,12 +83,16 @@ Top-level `Cargo.toml` becomes a workspace over the `sketch-*` crates plus the e
 ### 3.1 Dependency direction
 
 ```
-sketch-cli  →  sketch-bench, sketch-profile, sketch-runtime  →  sketch-core
-                                                  ↓
-                                   (downstream apps depend here)
+sketch-cli  →  sketch-bench, sketch-profile  →  sketch-core
+                                                     ↑
+                             sketch-runtime  ────────┘
+                                    ↑
+                     (downstream apps depend here)
 ```
 
-Downstream apps pull `sketch-core + sketch-bench + sketch-runtime` only. They do **not** take `sketch-profile` — its `perf_event_open` / VTune / cachegrind deps are CLI-only.
+Downstream apps pull `sketch-core + sketch-runtime` only. They take neither `sketch-profile` — its `perf_event_open` / VTune / cachegrind deps are CLI-only — nor `sketch-bench`.
+
+`sketch-runtime` depending on `sketch-bench` would defeat the split: the runtime is linked into always-on production binaries, and the offline benchmark library (runner, baselines, accuracy comparators, `tikv-jemalloc-ctl`) has no business in one. The two types both layers need — `MetricsMask` and `LatencyRecorder` — therefore live in `sketch-core`, not in `sketch-bench`.
 
 ---
 
@@ -399,7 +403,7 @@ repetitions vary the data instead.
 
 ### 5.8 Relationship to `sketch-runtime`
 
-`sketch-runtime` does **not** duplicate the metric implementations; it re-exports them and provides:
+`sketch-runtime` does **not** duplicate the metric implementations, and does not depend on `sketch-bench` to reach them — the recorders both layers share (`MetricsMask`, `LatencyRecorder`) live in `sketch-core` (§4). On top of those it provides:
 
 - `SampledSink`: a `MetricsSink` that only records on 1/N-th or time-windowed ops.
 - `Exporter` trait + `stdout | file | prometheus | grpc` implementations.
@@ -483,7 +487,7 @@ Both subcommands write the same JSONL schema, so `visualization/` consumes eithe
 
 ### 7.1 Embedded benchmarking (asap-fusion, DataCollector, ASAPQuery)
 
-**Scope: bench-mode metrics only.** The embedded path collects macro metrics (throughput, latency, CPU, memory, accuracy) — the same `RunMetrics` shape produced by `BenchRunner` (§5), just emitted per sampling window instead of per offline run. Profile-mode metrics (hw counters, cachegrind, heaptrack, perf record, VTune) are **not** available here: `sketch-profile` is CLI-only and forbidden as a dep of `sketch-runtime` (§3.1, §10). Those tools are too expensive for always-on embedding.
+**Scope: bench-mode metrics only.** The embedded path collects macro metrics (throughput, latency, CPU, memory, accuracy) — the same `RunMetrics` shape produced by `BenchRunner` (§5), just emitted per sampling window instead of per offline run. Profile-mode metrics (hw counters, cachegrind, heaptrack, perf record, VTune) are **not** available here: `sketch-profile` is CLI-only and forbidden as a dep of `sketch-runtime`, as is `sketch-bench` (§3.1, §10). Those tools are too expensive for always-on embedding.
 
 ```rust
 use sketch_core::Probe;

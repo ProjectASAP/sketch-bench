@@ -3,29 +3,38 @@
 //! `Query = f64` (quantile in [0, 1]), `Answer = f64` (value
 //! at quantile).
 
+use crate::params::DdParams;
 use asap_sketchlib::DDSketch;
-use sketch_core::config::DdParams;
+use sketch_bench::accuracy::quantile::QuantileValue;
 use sketch_core::sketch::Sketch;
 
-pub struct DdLib {
+/// Generic over the item type. `DDSketch` buckets by `log(value)`, so it is
+/// `f64`-native: `T = f64` monomorphises the insert path down to `add`, while
+/// `T = i64` keeps the widening cast. Same shape as [`KllOxide`], for the same
+/// reason.
+///
+/// [`KllOxide`]: crate::wrappers::kll::KllOxide
+pub struct DdLib<T = i64> {
     inner: DDSketch,
+    _item: std::marker::PhantomData<T>,
 }
 
-impl DdLib {
+impl<T: QuantileValue> DdLib<T> {
     pub fn new(p: &DdParams) -> Self {
         Self {
             inner: DDSketch::new(p.alpha),
+            _item: std::marker::PhantomData,
         }
     }
 }
 
-impl Sketch for DdLib {
-    type Item = i64;
+impl<T: QuantileValue> Sketch for DdLib<T> {
+    type Item = T;
     type Query = f64;
     type Answer = f64;
     #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.add(&(*v as f64));
+    fn update(&mut self, v: &T) {
+        self.inner.add(&v.to_f64());
     }
     fn query(&self, q: f64) -> f64 {
         self.inner.get_value_at_quantile(q).unwrap_or(f64::NAN)

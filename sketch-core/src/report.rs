@@ -242,6 +242,7 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aqpbm_datagen::DType;
 
     #[test]
     fn record_roundtrips_through_json() {
@@ -253,6 +254,7 @@ mod tests {
             source_path: None,
             seed: Some(42),
             spec: None,
+            dtype: DType::I64,
         };
         let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
         rec.bench = Some(BenchSection {
@@ -282,6 +284,7 @@ mod tests {
             source_path: None,
             seed: Some(1),
             spec: None,
+            dtype: DType::I64,
         };
         let mut rec = Record::new("cms", "oxide", wd, Mode::Profile, 1);
         rec.profile = Some(ProfileSection {
@@ -376,6 +379,7 @@ mod tests {
             source_path: Some("input/benchmark_data_1m_int64.bin".into()),
             seed: None,
             spec: None,
+            dtype: DType::I64,
         };
         let mut rec = Record::new("kll", "datasketches", wd, Mode::Bench, 10);
         rec.language = Language::Cpp;

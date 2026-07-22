@@ -22,10 +22,11 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+use crate::params::ParamSet;
 use anyhow::Result;
+use aqpbm_datagen::DType;
 use sketch_bench::runner::BenchReport;
 use sketch_bench::MetricsMask;
-use sketch_core::config::ParamSet;
 
 use crate::dispatch::ImplEntry;
 
@@ -35,9 +36,21 @@ pub fn write_runs(
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
+    dtype: DType,
     report: &BenchReport,
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
+    // Non-`i64` runs go to their own files rather than into the shared ones.
+    //
+    // These CSV headers are an external contract — `throughput/scripts/*.py`
+    // read the exact column list, and `append_csv` appends, so a run lands in
+    // whatever file already exists. Adding a `dtype` column would change the
+    // header for every existing consumer, including pure-`i64` users who did
+    // not ask for the axis; leaving it out would let an `f64` run interleave
+    // with `i64` rows that are indistinguishable from it, which is the exact
+    // pooling `WorkloadDesc::dtype` exists to prevent. A separate file breaks
+    // neither contract.
+    let fam = &family_file_stem(entry.family, dtype);
     // Parallel ("octo") impls go to a separate combined file with
     // the legacy `sketch_type, implementation, num_workers,...`
     // header — `throughput/scripts/plot_octo_throughput.py` reads
@@ -60,7 +73,7 @@ pub fn write_runs(
     // per-op timing; ACCURACY pass is clean but conceptually
     // belongs to the query CSV) would muddle the throughput plot.
     if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
-        let insert_path = dir.join(format!("{}_throughput_results_rust.csv", entry.family));
+        let insert_path = dir.join(format!("{fam}_throughput_results_rust.csv"));
         append_csv(
             &insert_path,
             &insert_header(entry.family),
@@ -81,10 +94,7 @@ pub fn write_runs(
         // shape; takes precedence over the aggregate query CSV
         // for these three families because their plot scripts
         // read the per-call columns.
-        let query_path = dir.join(format!(
-            "{}_throughput_query_results_rust.csv",
-            entry.family
-        ));
+        let query_path = dir.join(format!("{fam}_throughput_query_results_rust.csv"));
         let header = per_call_query_header(entry.family);
         let mut rows: Vec<String> = Vec::new();
         for (run_idx, run) in report.per_run.iter().enumerate() {
@@ -111,10 +121,7 @@ pub fn write_runs(
         // peer of cpp-bench's `--query-csv` and lets the throughput
         // bar charts compare without per-call timer overhead.
         if report.per_run.iter().any(|r| r.queries_executed > 0) {
-            let tight_path = dir.join(format!(
-                "{}_throughput_query_tight_results_rust.csv",
-                entry.family
-            ));
+            let tight_path = dir.join(format!("{fam}_throughput_query_tight_results_rust.csv"));
             append_csv(
                 &tight_path,
                 &query_header(entry.family),
@@ -125,10 +132,7 @@ pub fn write_runs(
         }
     } else if report.per_run.iter().any(|r| r.queries_executed > 0) {
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
-        let query_path = dir.join(format!(
-            "{}_throughput_query_results_rust.csv",
-            entry.family
-        ));
+        let query_path = dir.join(format!("{fam}_throughput_query_results_rust.csv"));
         append_csv(
             &query_path,
             &query_header(entry.family),
@@ -344,6 +348,17 @@ fn legacy_impl_name(family: &str, impl_name: &str) -> String {
     }
 }
 
+/// File stem for a family's CSVs. `i64` keeps the historical name so existing
+/// files keep accumulating and existing scripts keep resolving; anything else
+/// is suffixed.
+fn family_file_stem(family: &str, dtype: DType) -> String {
+    if dtype.is_i64() {
+        family.to_string()
+    } else {
+        format!("{family}_{}", dtype.as_str())
+    }
+}
+
 fn insert_header(family: &str) -> String {
     let lead = leading_label(family);
     let params = param_header(family);
@@ -536,7 +551,7 @@ mod tests {
 #[cfg(test)]
 mod param_column_order_tests {
     use super::*;
-    use sketch_core::config::{CmsParams, ElasticParams, HllParams, UnivMonParams};
+    use crate::params::{CmsParams, ElasticParams, HllParams, UnivMonParams};
 
     /// Values must line up with the header, which is *not* alphabetical.
     ///
@@ -557,7 +572,7 @@ mod param_column_order_tests {
             ),
             (
                 "countsketch",
-                ParamSet::of(&sketch_core::config::CountSketchParams {
+                ParamSet::of(&crate::params::CountSketchParams {
                     rows: 3,
                     cols: 4096,
                 }),

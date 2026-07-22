@@ -33,6 +33,9 @@ pub struct BasicStats {
 #[derive(Debug, Clone)]
 pub struct StatsAcc {
     count: usize,
+    /// How many values had a numeric summary. Differs from `count` only for
+    /// value types that have none.
+    numeric: usize,
     min: f64,
     max: f64,
     first: Option<f64>,
@@ -43,6 +46,7 @@ impl StatsAcc {
     pub fn new() -> Self {
         Self {
             count: 0,
+            numeric: 0,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
             first: None,
@@ -51,30 +55,37 @@ impl StatsAcc {
     }
 
     /// Fold one chunk in. Must be called in emission order.
-    pub(crate) fn push_slice<T, F: Fn(&T) -> f64>(&mut self, values: &[T], to_f64: F) {
+    ///
+    /// `to_f64` returns `None` for value types with no numeric summary — a
+    /// string column reports only its `count`, because min/max/first/last are
+    /// numbers and a string's length is not its value. `count` therefore
+    /// tracks every value while the numeric fields track only those that
+    /// have one.
+    pub(crate) fn push_slice<T, F: Fn(&T) -> Option<f64>>(&mut self, values: &[T], to_f64: F) {
         if values.is_empty() {
             return;
         }
+        self.count += values.len();
         for v in values {
-            let x = to_f64(v);
+            let Some(x) = to_f64(v) else { continue };
             if x < self.min {
                 self.min = x;
             }
             if x > self.max {
                 self.max = x;
             }
+            self.numeric += 1;
+            if self.first.is_none() {
+                self.first = Some(x);
+            }
+            self.last = Some(x);
         }
-        if self.first.is_none() {
-            self.first = Some(to_f64(&values[0]));
-        }
-        self.last = Some(to_f64(&values[values.len() - 1]));
-        self.count += values.len();
     }
 
     pub fn finish(self) -> BasicStats {
-        if self.count == 0 {
+        if self.numeric == 0 {
             return BasicStats {
-                count: 0,
+                count: self.count,
                 min: None,
                 max: None,
                 first: None,
@@ -99,12 +110,12 @@ mod tests {
     fn chunked_accumulation_matches_whole_slice() {
         let all: Vec<i64> = (0..100).map(|i| (i * 37) % 61).collect();
         let mut whole_acc = StatsAcc::new();
-        whole_acc.push_slice(&all, |x| *x as f64);
+        whole_acc.push_slice(&all, |x| Some(*x as f64));
         let whole = whole_acc.finish();
 
         let mut acc = StatsAcc::new();
         for chunk in all.chunks(7) {
-            acc.push_slice(chunk, |x| *x as f64);
+            acc.push_slice(chunk, |x| Some(*x as f64));
         }
         assert_eq!(
             acc.finish(),

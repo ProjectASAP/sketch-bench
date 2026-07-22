@@ -8,7 +8,6 @@
 
 use hashbrown::HashMap;
 
-use sketch_core::config::CmsParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 /// Heavy-hitter threshold — matches the value the legacy
@@ -22,9 +21,10 @@ pub struct ExactFrequency {
 }
 
 impl ExactFrequency {
-    /// Accepts a `CmsParams` for dispatch-macro uniformity; the
+    /// Accepts the family's params by reference, ignored, for
+    /// dispatch-macro uniformity; the
     /// value is ignored — an exact counter has no shape.
-    pub fn new(_p: &CmsParams) -> Self {
+    pub fn new<P>(_p: &P) -> Self {
         Self {
             map: HashMap::new(),
         }

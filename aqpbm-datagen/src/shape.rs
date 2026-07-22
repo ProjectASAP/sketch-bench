@@ -11,11 +11,10 @@ use rand_distr::Distribution as _;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchCoreError;
-use crate::workload::WorkloadDesc;
+use crate::error::SketchError;
 
 use super::dist::{Distribution, GapSampler, KeySampler};
-use super::{Column, DType};
+use super::{DType, GenValue};
 
 /// A semantic label for the units of a timestamp column. Metadata only:
 /// it does not rescale generated values (gaps are measured in these
@@ -41,10 +40,10 @@ fn default_dist() -> Distribution {
 /// `cardinality`-sized key space would silently collapse onto rounded
 /// values — the same class of quiet wrongness the dtype guard in
 /// [`crate::workload::FileI64`] exists to prevent — so reject it.
-fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchCoreError> {
+fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchError> {
     const LIMIT: u64 = 1 << 53;
     if dtype == DType::F64 && cardinality > LIMIT {
-        return Err(SketchCoreError::BadParam(format!(
+        return Err(SketchError::BadParam(format!(
             "dtype f64 cannot hold {cardinality} distinct integers exactly \
              (limit 2^53 = {LIMIT}); values would round silently"
         )));
@@ -70,8 +69,6 @@ pub enum Shape {
         cardinality: u64,
         #[serde(default = "default_dist")]
         dist: Distribution,
-        #[serde(default)]
-        dtype: DType,
     },
     /// A finite domain of category ids, drawn per `dist` (uniform / zipf
     /// / explicit weights). Always emits `i64`.
@@ -92,17 +89,23 @@ pub enum Shape {
         gap: Distribution,
         #[serde(default = "default_min_gap")]
         min_gap: u64,
-        #[serde(default)]
-        dtype: DType,
     },
 }
 
 impl Shape {
-    /// The physical output type this shape emits.
-    pub fn dtype(&self) -> DType {
+    /// How many distinct values this shape can produce, when that is
+    /// bounded.
+    ///
+    /// Unlike the `dtype()` that used to sit here, this really is a property
+    /// of the shape: it is about what the values *mean*, not how they are
+    /// encoded. `string` needs it to size the prefix that keeps rendering
+    /// injective, and `Monotonic` has no answer — which is why a monotonic
+    /// string series is refused rather than approximated.
+    pub fn domain_size(&self) -> Option<u64> {
         match self {
-            Shape::Keys { dtype, .. } | Shape::Monotonic { dtype, .. } => *dtype,
-            Shape::Categorical { .. } => DType::I64,
+            Shape::Keys { cardinality, .. } => Some(*cardinality),
+            Shape::Categorical { categories, .. } => Some(categories.len() as u64),
+            Shape::Monotonic { .. } => None,
         }
     }
 
@@ -123,114 +126,54 @@ impl Shape {
 
     /// Build the concrete generator, validating parameters eagerly so
     /// bad specs fail before any allocation.
-    pub fn build(&self) -> Result<Generator, SketchCoreError> {
+    pub fn build<T: GenValue>(&self, cfg: T::Cfg) -> Result<Generator<T>, SketchError> {
         match self {
-            Shape::Keys {
-                cardinality,
-                dist,
-                dtype,
-            } => {
+            Shape::Keys { cardinality, dist } => {
                 if *cardinality == 0 {
-                    return Err(SketchCoreError::BadParam(
+                    return Err(SketchError::BadParam(
                         "keys: cardinality must be > 0".into(),
                     ));
                 }
-                reject_inexact_f64(*dtype, *cardinality)?;
+                reject_inexact_f64(T::DTYPE, *cardinality)?;
                 Ok(Generator::Keys(KeysGen {
                     sampler: dist.key_sampler(*cardinality)?,
-                    dtype: *dtype,
+                    cfg,
                 }))
             }
             Shape::Categorical { categories, dist } => {
                 if categories.is_empty() {
-                    return Err(SketchCoreError::BadParam(
+                    return Err(SketchError::BadParam(
                         "categorical: categories must be non-empty".into(),
                     ));
                 }
                 let weights = dist.weights(categories.len())?;
                 let index = WeightedIndex::new(&weights)
-                    .map_err(|e| SketchCoreError::BadParam(format!("weighted index: {e}")))?;
+                    .map_err(|e| SketchError::BadParam(format!("weighted index: {e}")))?;
                 Ok(Generator::Categorical(CategoricalGen {
                     categories: categories.clone(),
                     index,
+                    cfg,
                 }))
             }
             Shape::Monotonic {
                 start,
                 gap,
                 min_gap,
-                dtype,
                 unit: _,
             } => {
-                if *dtype == DType::F64 {
-                    return Err(SketchCoreError::BadParam(
+                if T::DTYPE == DType::F64 {
+                    return Err(SketchError::BadParam(
                         "monotonic: dtype f64 unsupported; use i64 or u64".into(),
                     ));
                 }
                 Ok(Generator::Monotonic(MonotonicGen {
                     gap: gap.gap_sampler()?,
                     min_gap: *min_gap,
-                    dtype: *dtype,
                     acc: *start as i128,
                     started: false,
+                    cfg,
                 }))
             }
-        }
-    }
-
-    /// Whether [`WorkloadDesc`]'s flat `cardinality` / `zipf_s` fields
-    /// fully describe this shape.
-    ///
-    /// True only for the two shapes that predate the generator
-    /// (`keys` drawn uniform or zipf) — those round-trip through the
-    /// legacy fields exactly, so their records stay byte-identical to
-    /// what `--workload uniform|zipf` has always emitted. Everything
-    /// else is lossy there and needs the full spec carried alongside,
-    /// which is the one condition under which `WorkloadDesc::spec` is
-    /// populated.
-    fn fits_legacy_desc(&self) -> bool {
-        matches!(
-            self,
-            Shape::Keys {
-                dist: Distribution::Uniform | Distribution::Zipf { .. },
-                // dtype is part of what makes a shape reproducible, and the
-                // flat fields cannot express it. Only `i64` — the dtype those
-                // fields have always implied — round-trips without `spec`.
-                dtype: DType::I64,
-                ..
-            }
-        )
-    }
-
-    /// Projection into the report-facing [`WorkloadDesc`] so JSONL
-    /// records stay well-formed regardless of shape. Shapes the flat
-    /// fields cannot express carry their full spec in `desc.spec`.
-    pub fn to_workload_desc(&self, size: usize, seed: u64) -> WorkloadDesc {
-        let (cardinality, zipf_s) = match self {
-            Shape::Keys {
-                cardinality, dist, ..
-            } => (
-                Some(*cardinality),
-                match dist {
-                    Distribution::Zipf { s } => Some(*s),
-                    _ => None,
-                },
-            ),
-            Shape::Categorical { categories, .. } => (Some(categories.len() as u64), None),
-            Shape::Monotonic { .. } => (None, None),
-        };
-        WorkloadDesc {
-            shape: self.report_label().to_string(),
-            size,
-            cardinality,
-            zipf_s,
-            source_path: None,
-            seed: Some(seed),
-            spec: if self.fits_legacy_desc() {
-                None
-            } else {
-                serde_json::to_value(self).ok()
-            },
         }
     }
 }
@@ -240,13 +183,13 @@ impl Shape {
 /// An enum rather than a trait object — the set is closed and
 /// crate-private, matching how every other datagen concern
 /// ([`Distribution`], [`Column`], [`Shape`]) is modelled.
-pub enum Generator {
-    Keys(KeysGen),
-    Categorical(CategoricalGen),
-    Monotonic(MonotonicGen),
+pub enum Generator<T: GenValue> {
+    Keys(KeysGen<T>),
+    Categorical(CategoricalGen<T>),
+    Monotonic(MonotonicGen<T>),
 }
 
-impl Generator {
+impl<T: GenValue> Generator<T> {
     /// Produce the next `n` values.
     ///
     /// Takes `&mut self` because a structure may carry state *between*
@@ -254,15 +197,19 @@ impl Generator {
     /// chunked generation identical to one-shot generation: N calls of
     /// `n` and one call of `N*n` consume the same RNG draws and
     /// continue the same series.
+    /// Appends to `out` rather than returning a fresh `Vec`, so the chunked
+    /// driver reuses one buffer for the whole run instead of allocating per
+    /// chunk. `out` is cleared by the caller.
     pub fn generate(
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
         match self {
-            Generator::Keys(g) => g.generate(n, rng),
-            Generator::Categorical(g) => g.generate(n, rng),
-            Generator::Monotonic(g) => g.generate(n, rng),
+            Generator::Keys(g) => g.generate(n, rng, out),
+            Generator::Categorical(g) => g.generate(n, rng, out),
+            Generator::Monotonic(g) => g.generate(n, rng, out),
         }
     }
 }
@@ -270,42 +217,50 @@ impl Generator {
 /// Keys drawn over the sampler's domain, emitted in the requested
 /// physical dtype. Every dtype casts the *same* `u64` draw, so a fixed
 /// `(shape, size, seed)` is dtype-invariant in its logical values.
-pub struct KeysGen {
+pub struct KeysGen<T: GenValue> {
     sampler: KeySampler,
-    dtype: DType,
+    cfg: T::Cfg,
 }
 
-impl KeysGen {
+impl<T: GenValue> KeysGen<T> {
     fn generate(
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
-        Ok(match self.dtype {
-            DType::I64 => Column::I64((0..n).map(|_| self.sampler.sample(rng) as i64).collect()),
-            DType::U64 => Column::U64((0..n).map(|_| self.sampler.sample(rng)).collect()),
-            DType::F64 => Column::F64((0..n).map(|_| self.sampler.sample(rng) as f64).collect()),
-        })
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        out.extend((0..n).map(|_| T::from_draw(self.sampler.sample(rng), &self.cfg)));
+        Ok(())
     }
 }
 
 /// Draws category ids from a fixed domain with a configurable skew.
-pub struct CategoricalGen {
+pub struct CategoricalGen<T: GenValue> {
     categories: Vec<i64>,
     index: WeightedIndex<f64>,
+    cfg: T::Cfg,
 }
 
-impl CategoricalGen {
+impl<T: GenValue> CategoricalGen<T> {
+    /// Category ids are authored as `i64` in the spec, so they are narrowed
+    /// through [`GenValue::from_acc`] rather than rendered from a draw — an
+    /// id is a value the user wrote down, not a sample. `from_acc` is
+    /// fallible, which is what makes `dtype: u64` over negative ids an error
+    /// rather than a wrap; there is no longer a `Shape::dtype()` pinning this
+    /// shape to `i64` in advance.
     fn generate(
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
-        Ok(Column::I64(
-            (0..n)
-                .map(|_| self.categories[self.index.sample(rng)])
-                .collect(),
-        ))
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        for _ in 0..n {
+            out.push(T::from_acc(
+                self.categories[self.index.sample(rng)] as i128,
+                &self.cfg,
+            )?);
+        }
+        Ok(())
     }
 }
 
@@ -316,49 +271,37 @@ impl CategoricalGen {
 /// once per [`super::GenSpec::generate_into`]) starts at `start` and
 /// each subsequent call resumes where the last left off. Overflow past
 /// the target type is a hard error.
-pub struct MonotonicGen {
+pub struct MonotonicGen<T: GenValue> {
     gap: GapSampler,
     min_gap: u64,
-    dtype: DType,
     /// Running value; seeded with `start` at build time.
     acc: i128,
     /// Whether any value has been emitted yet. The very first value of
     /// the series is `start` itself, with no gap applied — that must
     /// hold for the series, not for each chunk.
     started: bool,
+    cfg: T::Cfg,
 }
 
-impl MonotonicGen {
+impl<T: GenValue> MonotonicGen<T> {
+    /// Accumulates in the widest integer and narrows per value. The
+    /// intermediate `Vec<i128>` this used to build is gone: it existed only
+    /// so the per-dtype narrowing could happen in one trailing match, and
+    /// there is no match left.
     fn generate(
         &mut self,
         n: usize,
         rng: &mut Xoshiro256PlusPlus,
-    ) -> Result<Column, SketchCoreError> {
-        // Accumulate in the widest integer, then narrow to the target
-        // dtype in a single trailing match — no per-dtype loop.
-        let raw: Vec<i128> = (0..n)
-            .map(|_| {
-                if self.started {
-                    self.acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
-                } else {
-                    self.started = true;
-                }
-                self.acc
-            })
-            .collect();
-        let overflow = || SketchCoreError::BadParam("monotonic: value overflow".into());
-        Ok(match self.dtype {
-            DType::U64 => Column::U64(
-                raw.iter()
-                    .map(|&a| u64::try_from(a).map_err(|_| overflow()))
-                    .collect::<Result<_, _>>()?,
-            ),
-            // f64 is rejected in `build`; treat anything non-u64 as i64.
-            _ => Column::I64(
-                raw.iter()
-                    .map(|&a| i64::try_from(a).map_err(|_| overflow()))
-                    .collect::<Result<_, _>>()?,
-            ),
-        })
+        out: &mut Vec<T>,
+    ) -> Result<(), SketchError> {
+        for _ in 0..n {
+            if self.started {
+                self.acc += self.gap.sample_ticks(rng).max(self.min_gap) as i128;
+            } else {
+                self.started = true;
+            }
+            out.push(T::from_acc(self.acc, &self.cfg)?);
+        }
+        Ok(())
     }
 }

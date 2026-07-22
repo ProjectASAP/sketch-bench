@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use sketch_core::datagen::{self, DType, Distribution, GenSpec, Shape, TimeUnit};
+use aqpbm_datagen::{self as datagen, DType, Distribution, GenSpec, Shape, TimeUnit};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -45,8 +45,11 @@ pub struct GenerateArgs {
     /// Output `.bin` path. Parent directories are created if missing.
     #[arg(long)]
     out: String,
-    /// Physical output type: i64 | u64 | f64. Only i64 is consumable by
-    /// `bench` today; u64/f64 files are written for other tooling.
+    /// Physical output type: i64 | u64 | f64.
+    ///
+    /// `bench --input` reads i64 files only. f64 is benchmarkable, but
+    /// through `bench --dtype f64`, which generates in-process rather than
+    /// reading a file. u64 has no consumer in this repo at all.
     #[arg(long, default_value = "i64")]
     dtype: String,
     /// Uniform: max key (exclusive). Zipf: key-space size.
@@ -107,7 +110,8 @@ fn parse_dtype(s: &str) -> Result<DType> {
         "i64" => Ok(DType::I64),
         "u64" => Ok(DType::U64),
         "f64" => Ok(DType::F64),
-        other => bail!("unknown dtype: {other} (expected i64|u64|f64)"),
+        "string" | "str" => Ok(DType::Str),
+        other => bail!("unknown dtype: {other} (expected i64|u64|f64|string)"),
     }
 }
 
@@ -171,12 +175,10 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         "uniform" => Shape::Keys {
             cardinality: a.cardinality,
             dist: Distribution::Uniform,
-            dtype,
         },
         "zipf" => Shape::Keys {
             cardinality: a.cardinality,
             dist: Distribution::Zipf { s: a.zipf_s },
-            dtype,
         },
         "monotonic-timestamp" | "timestamp" => {
             let gap = a
@@ -191,7 +193,6 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
                 unit: parse_unit(&a.unit)?,
                 gap,
                 min_gap: a.min_gap,
-                dtype,
             }
         }
         "skewed-categorical" | "categorical" => {
@@ -215,6 +216,12 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         shape,
         size: a.size,
         seed: a.seed,
+        dtype,
+        // No flags for the string options: the only sink that exists is
+        // `.bin`, which cannot hold strings, so a `--alphabet` flag would
+        // configure a path that always errors. `--spec` can already set
+        // them for callers using the library.
+        string: None,
     })
 }
 
@@ -228,12 +235,39 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    // Stream through a FileSink: peak memory is one chunk, not the
-    // whole dataset, so `--size` is bounded by disk rather than RAM.
-    let mut sink = datagen::FileSink::create(out).with_context(|| format!("creating {}", a.out))?;
-    let meta = spec
-        .generate_into(&mut sink, datagen::DEFAULT_CHUNK)
-        .with_context(|| format!("generating into {}", a.out))?;
+    // The one place in the tool where a run-time dtype has to become a type
+    // parameter: `--dtype`/`--spec` is a string, and everything downstream of
+    // this `match` is monomorphic. The generator used to carry the choice all
+    // the way through as a tagged `Column`, which is what made every stage
+    // handle every variant.
+    //
+    // No `_` arm: adding a `DType` variant fails to compile here, which is
+    // the whole point of keeping the dispatch in one spot.
+    fn stream<T: datagen::GenValue + datagen::FixedWidth>(
+        spec: &datagen::GenSpec,
+        out: &Path,
+    ) -> Result<datagen::GenMeta> {
+        // Stream through a BinSink: peak memory is one chunk, not the whole
+        // dataset, so `--size` is bounded by disk rather than RAM.
+        let mut sink = datagen::BinSink::<T>::create(out)
+            .with_context(|| format!("creating {}", out.display()))?;
+        spec.generate_into(&mut sink, datagen::DEFAULT_CHUNK)
+            .with_context(|| format!("generating into {}", out.display()))
+    }
+    let meta = match spec.dtype {
+        datagen::DType::I64 => stream::<i64>(&spec, out)?,
+        datagen::DType::U64 => stream::<u64>(&spec, out)?,
+        datagen::DType::F64 => stream::<f64>(&spec, out)?,
+        // Not an oversight and not a `_` arm: `String` is not `FixedWidth`,
+        // so `stream::<String>` would not compile. The `.bin` layout is a
+        // bare sequence of equal-width values with nowhere to record a
+        // length. Strings generate fine in-process; what is missing is a
+        // sink that can hold them.
+        datagen::DType::Str => bail!(
+            "dtype string cannot be written to a .bin file: the format has no length field. \
+             Strings are generated in-process today; a CSV sink is what would give them a file"
+        ),
+    };
 
     let sidecar = if a.no_meta {
         None

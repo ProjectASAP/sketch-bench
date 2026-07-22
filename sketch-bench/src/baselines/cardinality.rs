@@ -13,7 +13,6 @@
 
 use std::collections::HashSet;
 
-use sketch_core::config::HllParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 
 #[derive(Debug, Default, Clone)]
@@ -22,10 +21,11 @@ pub struct ExactCardinality {
 }
 
 impl ExactCardinality {
-    /// Accepts an `HllParams` so it slots into the same dispatch
+    /// Accepts the family's params by reference, ignored, so it slots
+    /// into the same dispatch
     /// macros as the sketch impls. The value is ignored — an
     /// exact cardinality count has no tuning knobs.
-    pub fn new(_p: &HllParams) -> Self {
+    pub fn new<P>(_p: &P) -> Self {
         Self {
             set: HashSet::new(),
         }
@@ -89,7 +89,7 @@ mod tests {
     fn update_and_batch_agree() {
         let vals: Vec<i64> = (0..1000).flat_map(|i| [i, i, i]).collect();
         let batch = ExactCardinality::ingest_all(&vals);
-        let mut streamed = ExactCardinality::new(&HllParams { lg_k: 14 });
+        let mut streamed = ExactCardinality::new(&());
         for v in &vals {
             streamed.update(v);
         }

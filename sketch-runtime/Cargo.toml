@@ -19,8 +19,12 @@ enabled = []
 grpc = ["dep:tonic", "dep:prost", "dep:tokio"]
 
 [dependencies]
-sketch-core.workspace = true
-sketch-bench.workspace = true
+# sketch-core only. This crate deliberately does NOT depend on
+# sketch-bench: it is linked into always-on downstream apps
+# (DataCollector, asap-fusion), and the offline benchmark library
+# — runner, baselines, accuracy comparators, jemalloc-ctl — has
+# no business in that binary. See docs/DESIGN.md §3.1.
+sketch-core = { workspace = true, features = ["hdrhist"] }
 serde.workspace = true
 serde_json.workspace = true
 tonic = { version = "0.12", features = ["gzip"], optional = true }

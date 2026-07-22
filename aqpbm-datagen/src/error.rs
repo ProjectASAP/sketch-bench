@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum SketchCoreError {
+pub enum SketchError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("bad parameter: {0}")]

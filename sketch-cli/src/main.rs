@@ -5,6 +5,7 @@
 //! `(family, impl)` pairs.
 
 mod dispatch;
+mod params;
 mod raw_csv;
 mod repeat;
 mod sweep;
@@ -39,9 +40,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
+use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
 use clap::{Parser, Subcommand};
 use sketch_bench::{BenchConfig, MetricsMask};
-use sketch_core::datagen::{DType, Distribution, GenSpec, Shape};
 
 use dispatch::{AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
 
@@ -104,6 +105,23 @@ struct BenchArgs {
     /// Zipf `s` exponent (only used when `--workload zipf`).
     #[arg(long, default_value_t = 1.1)]
     zipf_s: f64,
+    /// Item type the sketches ingest: `i64` (default), `f64`, or `string`.
+    ///
+    /// `f64` runs the ordered families (`kll`, `dd`); every hash-based row is
+    /// skipped with a reason, because `f64` is not `Hash` in Rust and hashing
+    /// its bits would repeat the `i64` curve.
+    ///
+    /// `string` runs the rows whose wrappers take text (`elastic`, `nitro`,
+    /// `univmon`) over **generated** strings — configurable alphabet, varying
+    /// length. Those same rows run under `i64` too, but there they consume
+    /// decimal-formatted integers, which is a different and much narrower
+    /// workload. Comparing the two is the point.
+    ///
+    /// For `i64` and `f64` the values themselves do not change, only their
+    /// encoding. `string` is the exception: the rank is rendered rather than
+    /// cast, so the byte content is genuinely new.
+    #[arg(long, default_value = "i64")]
+    dtype: String,
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42)]
     seed: u64,
@@ -282,7 +300,7 @@ fn main() -> Result<()> {
 /// The flag path builds the same `GenSpec` the spec path would, so
 /// `--workload zipf --cardinality N --zipf-s S` is exactly sugar for a
 /// `keys`/`zipf` spec — one generator, not two.
-fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
+fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
     if let Some(path) = args.input.as_deref() {
         return Ok(WorkloadSpec::File {
             path: path.to_string(),
@@ -291,6 +309,17 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.spec.as_deref() {
         let spec = GenSpec::from_path(std::path::Path::new(path))
             .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
+        // A spec file names its own dtype. Silently overriding it would edit
+        // the user's file from the command line; silently ignoring `--dtype`
+        // would run a different measurement than the one asked for. Neither is
+        // recoverable from the output, so disagreeing is an error.
+        if spec.dtype != dtype {
+            bail!(
+                "--dtype {} but {path} generates {}; drop --dtype or edit the spec",
+                dtype.as_str(),
+                spec.dtype.as_str(),
+            );
+        }
         return Ok(WorkloadSpec::Generated(spec));
     }
     let dist = match args.workload.as_str() {
@@ -302,10 +331,11 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
         shape: Shape::Keys {
             cardinality: args.cardinality,
             dist,
-            dtype: DType::I64,
         },
         size: args.size,
         seed: args.seed,
+        dtype,
+        string: None,
     }))
 }
 
@@ -346,7 +376,13 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    let spec = workload_spec(&args)?;
+    let dtype = match args.dtype.as_str() {
+        "i64" => DType::I64,
+        "f64" => DType::F64,
+        "string" => DType::Str,
+        other => bail!("unknown --dtype: {other} (expected i64|f64|string)"),
+    };
+    let spec = workload_spec(&args, dtype)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.merge_shards > 1 {
         metrics_mask |= MetricsMask::MERGE;
@@ -404,7 +440,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     }
 
     // Build the workload once — it's shared across all (impl, config) pairs.
-    let workload = spec.build_i64()?;
+    let workload = spec.build(dtype)?;
 
     // Unparameterized impls (e.g. exact baselines) run once per
     // sweep, not once per config.
@@ -432,6 +468,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     );
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
+    // `attempted` drives the progress line, `emitted` counts rows that
+    // actually produced reports. They are separate because a row can be
+    // rejected after it is announced — the dtype check lives inside the
+    // dispatch macro, which is the only place that knows what a row ingests.
+    let mut attempted = 0usize;
     let mut emitted = 0usize;
     let mut skipped = 0usize;
 
@@ -467,14 +508,14 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 skipped += 1;
                 continue;
             }
-            emitted += 1;
+            attempted += 1;
             let cfg_label = if entry.constraint.is_unparameterized() {
                 "exact".to_string()
             } else {
                 params_pretty(params)
             };
             eprintln!(
-                "sketchlib: [{emitted}/{total}] {}/{} config={} runs={} warmup={}",
+                "sketchlib: [{attempted}/{total}] {}/{} config={} runs={} warmup={}",
                 entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
             );
             // Each `entry.run` call returns one report per metric
@@ -482,7 +523,18 @@ fn run_bench(args: BenchArgs) -> Result<()> {
             // own JSONL line and its own CSV row group. Downstream
             // group-by on (sketch, impl, sketch_config, workload)
             // merges them back.
-            let reports = entry.run(&cfg, &workload, params, &accuracy_cfg);
+            let reports = match entry.run(&cfg, &workload, params, &accuracy_cfg) {
+                Ok(r) => r,
+                Err(mismatch) => {
+                    eprintln!(
+                        "sketchlib: skip {}/{} — {mismatch}",
+                        entry.family, entry.impl_name,
+                    );
+                    skipped += 1;
+                    continue;
+                }
+            };
+            emitted += 1;
             for report in &reports {
                 if let Some(dir) = args.raw_csv.as_deref() {
                     let params_opt = if entry.constraint.is_unparameterized() {
@@ -496,6 +548,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                         params_opt,
                         cfg.seed,
                         cfg.threads,
+                        dtype,
                         report,
                     )?;
                 }
@@ -511,10 +564,21 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     }
 
     eprintln!("sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",);
+    // A sweep where every row was skipped exits 0 with an empty report file,
+    // which reads exactly like a sweep that ran and found nothing. The usual
+    // way to get here is `--dtype f64` against a hash-based family, so say so.
+    if emitted == 0 {
+        bail!(
+            "no implementation ran: all {total} planned (impl, config) pairs were skipped \
+             — {} rows do not accept a {} workload",
+            args.sketch,
+            dtype.as_str(),
+        );
+    }
     Ok(())
 }
 
-fn params_pretty(p: &sketch_core::config::ParamSet) -> String {
+fn params_pretty(p: &crate::params::ParamSet) -> String {
     // Strip quotes around the params sub-object for tighter logs.
     let v = p.to_json_value();
     v.get("params")

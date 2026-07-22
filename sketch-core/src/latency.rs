@@ -4,11 +4,26 @@
 //! If the feature is off, `LatencyRecorder` is a tiny no-op
 //! shim that keeps the rest of the code agnostic to the
 //! optional dep.
-
-use super::LatencySnapshot;
+//!
+//! Lives here rather than in `sketch-bench` because
+//! `sketch-runtime::Sampler` records latency on the embedded hot
+//! path too — see [`crate::metrics`] for the same argument about
+//! `MetricsMask`.
 
 #[cfg(feature = "hdrhist")]
 use hdrhistogram::Histogram;
+
+/// Quantiles read off a [`LatencyRecorder`] at finalize time.
+/// Feeds `report::LatencySummary` on its way into the v1 record.
+#[derive(Debug, Clone, Default)]
+pub struct LatencySnapshot {
+    pub p50: u64,
+    pub p95: u64,
+    pub p99: u64,
+    pub p999: u64,
+    pub max: u64,
+    pub count: u64,
+}
 
 pub struct LatencyRecorder {
     #[cfg(feature = "hdrhist")]

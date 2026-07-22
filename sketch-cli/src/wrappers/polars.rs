@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 
+use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams};
 use polars::prelude::*;
-use sketch_core::config::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams};
 use sketch_core::sketch::Sketch;
 
 /// `hll/polars` — distinct count via `n_unique`.

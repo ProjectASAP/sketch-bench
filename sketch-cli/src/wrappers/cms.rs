@@ -11,7 +11,7 @@
 //! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath (tunable)
 //! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
-use sketch_core::config::CmsParams;
+use crate::params::CmsParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 

@@ -1,8 +1,8 @@
 //! CountSketch wrappers — 4 variants (`oxide` + 3× sketchlib).
 //! Same family as CMS: `Query = i64`, `Answer = u64`.
 
+use crate::params::CountSketchParams;
 use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
-use sketch_core::config::CountSketchParams;
 use sketch_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 

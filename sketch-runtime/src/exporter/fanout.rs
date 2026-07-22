@@ -75,6 +75,7 @@ mod tests {
                 source_path: None,
                 seed: None,
                 spec: None,
+                dtype: Default::default(),
             },
             Mode::Runtime,
             1,

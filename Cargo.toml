@@ -7,6 +7,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "aqpbm-datagen",
     "sketch-core",
     "sketch-bench",
     "sketch-runtime",
@@ -58,7 +59,11 @@ datasketches = "0.2.0"
 asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 
 # Internal workspace crates.
-sketch-core = { path = "sketch-core" }
+aqpbm-datagen = { path = "aqpbm-datagen" }
+# default-features off at the workspace level so each consumer states
+# whether it wants the hdrhistogram-backed LatencyRecorder: sketch-bench
+# forwards its own `hdrhist` feature, sketch-runtime takes it outright.
+sketch-core = { path = "sketch-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
 sketch-runtime = { path = "sketch-runtime" }
 

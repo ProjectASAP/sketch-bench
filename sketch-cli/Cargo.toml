@@ -24,6 +24,7 @@ heap-jemalloc = ["sketch-bench/heap-jemalloc", "dep:tikv-jemallocator"]
 heap-track = ["sketch-bench/heap-track"]
 
 [dependencies]
+aqpbm-datagen.workspace = true
 sketch-core.workspace = true
 sketch-bench.workspace = true
 clap.workspace = true
