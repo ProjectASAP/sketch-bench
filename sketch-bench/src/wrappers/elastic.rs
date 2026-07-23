@@ -3,7 +3,9 @@
 
 use std::cell::RefCell;
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::ElasticParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 
 // ---------- asap_sketchlib Elastic ----------
@@ -22,16 +24,17 @@ pub struct ElasticLib {
     buckets: usize,
 }
 
-impl ElasticLib {
-    pub fn new(p: &ElasticParams) -> Self {
-        Self {
+impl InitSketch for ElasticLib {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: ElasticParams = config.parse()?;
+        Ok(Self {
             inner: RefCell::new(
                 asap_sketchlib::Elastic::<asap_sketchlib::DefaultXxHasher>::init_with_length(
                     p.buckets as i32,
                 ),
             ),
             buckets: p.buckets,
-        }
+        })
     }
 }
 
@@ -58,14 +61,21 @@ pub struct ElasticOxide {
     depth: usize,
 }
 
-impl ElasticOxide {
-    pub fn new(p: &ElasticParams) -> Self {
-        Self {
-            inner: sketch_oxide::frequency::ElasticSketch::new(p.buckets, p.depth)
-                .expect("valid Elastic parameters"),
+impl InitSketch for ElasticOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: ElasticParams = config.parse()?;
+        let inner =
+            sketch_oxide::frequency::ElasticSketch::new(p.buckets, p.depth).map_err(|e| {
+                BuildError(format!(
+                    "oxide Elastic rejected buckets={} depth={}: {e:?}",
+                    p.buckets, p.depth
+                ))
+            })?;
+        Ok(Self {
+            inner,
             buckets: p.buckets,
             depth: p.depth,
-        }
+        })
     }
 }
 

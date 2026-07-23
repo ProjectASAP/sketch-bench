@@ -11,11 +11,13 @@ pub mod accuracy;
 pub mod aggregation;
 pub mod baselines;
 pub mod config;
+pub mod init;
 pub mod metrics;
 pub mod params;
 pub mod runner;
 pub mod wrappers;
 
 pub use config::{BenchConfig, MetricsMask};
+pub use init::{BuildError, InitSketch};
 pub use metrics::{FullSink, LatencySnapshot, RunMetrics};
 pub use runner::{BenchReport, BenchRunner, NoGT};

@@ -8,7 +8,9 @@
 //! The tunable param is `rate`; the underlying CMS is sized at
 //! a fixed (5, 2048) — future work can expose those knobs too.
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::NitroParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::{NitroBatch, Vector2D};
 
@@ -20,12 +22,13 @@ pub struct NitroLib {
     inner: NitroBatch<Vector2D<u32>>,
 }
 
-impl NitroLib {
-    pub fn new(p: &NitroParams) -> Self {
+impl InitSketch for NitroLib {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: NitroParams = config.parse()?;
         let mut sk = Vector2D::<u32>::init(NITRO_CMS_ROWS, NITRO_CMS_COLS);
         sk.fill(0_u32);
         let inner = NitroBatch::with_target(p.rate, sk);
-        Self { inner }
+        Ok(Self { inner })
     }
 }
 
@@ -55,16 +58,16 @@ pub struct NitroOxide(
     pub sketch_oxide::frequency::NitroSketch<sketch_oxide::frequency::CountMinSketch>,
 );
 
-impl NitroOxide {
-    pub fn new(p: &NitroParams) -> Self {
+impl InitSketch for NitroOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: NitroParams = config.parse()?;
         let epsilon = std::f64::consts::E / NITRO_CMS_COLS as f64;
         let delta = (-(NITRO_CMS_ROWS as f64)).exp();
         let base = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
-            .expect("valid CMS parameters");
-        Self(
-            sketch_oxide::frequency::NitroSketch::new(base, p.rate)
-                .expect("valid Nitro parameters"),
-        )
+            .map_err(|e| BuildError(format!("oxide CMS (nitro base) rejected: {e:?}")))?;
+        let inner = sketch_oxide::frequency::NitroSketch::new(base, p.rate)
+            .map_err(|e| BuildError(format!("oxide Nitro rejected rate={}: {e:?}", p.rate)))?;
+        Ok(Self(inner))
     }
 }
 

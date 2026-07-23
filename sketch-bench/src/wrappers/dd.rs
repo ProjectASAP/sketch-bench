@@ -4,7 +4,9 @@
 //! at quantile).
 
 use crate::accuracy::quantile::QuantileValue;
+use crate::init::{BuildError, InitSketch};
 use crate::params::DdParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::DDSketch;
 
@@ -19,12 +21,13 @@ pub struct DdLib<T = i64> {
     _item: std::marker::PhantomData<T>,
 }
 
-impl<T: QuantileValue> DdLib<T> {
-    pub fn new(p: &DdParams) -> Self {
-        Self {
+impl<T: QuantileValue> InitSketch for DdLib<T> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: DdParams = config.parse()?;
+        Ok(Self {
             inner: DDSketch::new(p.alpha),
             _item: std::marker::PhantomData,
-        }
+        })
     }
 }
 

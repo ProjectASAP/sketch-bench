@@ -7,7 +7,9 @@
 //! The tunable params are `layers` and `max_stream`; the
 //! underlying CMS is sized at a fixed (5, 2048).
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::UnivMonParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 
 const UNIVMON_CMS_ROWS: usize = 5;
@@ -19,9 +21,10 @@ pub struct UnivMonLib {
     layers: usize,
 }
 
-impl UnivMonLib {
-    pub fn new(p: &UnivMonParams) -> Self {
-        Self {
+impl InitSketch for UnivMonLib {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: UnivMonParams = config.parse()?;
+        Ok(Self {
             inner: asap_sketchlib::UnivMon::init_univmon(
                 p.max_stream as usize,
                 UNIVMON_CMS_ROWS,
@@ -29,7 +32,7 @@ impl UnivMonLib {
                 p.layers,
             ),
             layers: p.layers,
-        }
+        })
     }
 }
 
@@ -56,15 +59,17 @@ pub struct UnivMonOxide {
     layers: usize,
 }
 
-impl UnivMonOxide {
-    pub fn new(p: &UnivMonParams) -> Self {
+impl InitSketch for UnivMonOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: UnivMonParams = config.parse()?;
         let epsilon = std::f64::consts::E / UNIVMON_CMS_COLS as f64;
         let delta = (-(UNIVMON_CMS_ROWS as f64)).exp();
-        Self {
-            inner: sketch_oxide::universal::UnivMon::new(p.max_stream, epsilon, delta)
-                .expect("valid UnivMon params"),
+        let inner = sketch_oxide::universal::UnivMon::new(p.max_stream, epsilon, delta)
+            .map_err(|e| BuildError(format!("oxide UnivMon rejected: {e:?}")))?;
+        Ok(Self {
+            inner,
             layers: p.layers,
-        }
+        })
     }
 }
 

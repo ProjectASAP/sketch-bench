@@ -9,7 +9,8 @@
 //! with KLL).
 
 use crate::accuracy::quantile::QuantileValue;
-use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams};
+use crate::init::{BuildError, InitSketch};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 pub use crate::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
@@ -21,9 +22,9 @@ pub use crate::baselines::{ExactCardinality, ExactFrequency, ExactQuantile};
 #[derive(Debug, Default)]
 pub struct ExactFrequencyCs(pub ExactFrequency);
 
-impl ExactFrequencyCs {
-    pub fn new(_p: &CountSketchParams) -> Self {
-        Self(ExactFrequency::default())
+impl InitSketch for ExactFrequencyCs {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -58,9 +59,9 @@ impl<T> Default for ExactQuantileDd<T> {
     }
 }
 
-impl<T: QuantileValue> ExactQuantileDd<T> {
-    pub fn new(_p: &DdParams) -> Self {
-        Self(ExactQuantile::default())
+impl<T: QuantileValue> InitSketch for ExactQuantileDd<T> {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -105,9 +106,9 @@ impl<T: QuantileValue> Sketch for ExactQuantileDd<T> {
 #[derive(Default)]
 pub struct NullFrequency;
 
-impl NullFrequency {
-    pub fn new(_p: &CmsParams) -> Self {
-        Self
+impl InitSketch for NullFrequency {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -135,9 +136,9 @@ impl Sketch for NullFrequency {
 #[derive(Default)]
 pub struct NullFrequencyCs;
 
-impl NullFrequencyCs {
-    pub fn new(_p: &CountSketchParams) -> Self {
-        Self
+impl InitSketch for NullFrequencyCs {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -165,9 +166,9 @@ impl Sketch for NullFrequencyCs {
 #[derive(Default)]
 pub struct NullCardinality;
 
-impl NullCardinality {
-    pub fn new(_p: &HllParams) -> Self {
-        Self
+impl InitSketch for NullCardinality {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 

@@ -13,6 +13,8 @@
 
 use std::collections::HashSet;
 
+use crate::init::{BuildError, InitSketch};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 #[derive(Debug, Default, Clone)]
@@ -70,6 +72,12 @@ impl Sketch for ExactCardinality {
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.set.extend(other.set.iter().copied());
         Ok(())
+    }
+}
+
+impl InitSketch for ExactCardinality {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 

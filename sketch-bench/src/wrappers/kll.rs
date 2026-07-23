@@ -12,7 +12,9 @@
 use std::cell::RefCell;
 
 use crate::accuracy::quantile::QuantileValue;
+use crate::init::{BuildError, InitSketch};
 use crate::params::KllParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
@@ -33,13 +35,14 @@ pub struct KllOxide<T = i64> {
     _item: std::marker::PhantomData<T>,
 }
 
-impl<T: QuantileValue> KllOxide<T> {
-    pub fn new(p: &KllParams) -> Self {
-        Self {
+impl<T: QuantileValue> InitSketch for KllOxide<T> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: KllParams = config.parse()?;
+        Ok(Self {
             inner: RefCell::new(sketch_oxide::quantiles::KllSketch::default()),
             k: p.k,
             _item: std::marker::PhantomData,
-        }
+        })
     }
 }
 
@@ -98,13 +101,17 @@ pub struct KllLib<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     cdf: RefCell<Option<asap_sketchlib::sketches::kll::Cdf>>,
 }
 
-impl<T: asap_sketchlib::common::numerical::NumericalValue> KllLib<T> {
-    pub fn new(p: &KllParams) -> Self {
-        Self {
+impl<T> InitSketch for KllLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: KllParams = config.parse()?;
+        Ok(Self {
             inner: asap_sketchlib::KLL::<T>::init_kll(p.k as i32),
             k: p.k,
             cdf: RefCell::new(None),
-        }
+        })
     }
 }
 

@@ -2,7 +2,9 @@
 //! (a.k.a. asap_sketchlib). All three expose cardinality as
 //! `Answer = f64`, `Query = ()`.
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::HllParams;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 // sketch_oxide routes `.estimate()` through its `Sketch` trait.
 use sketch_oxide::Sketch as OxideSketch;
@@ -15,13 +17,15 @@ pub struct HllOxide {
     lg_k: u8,
 }
 
-impl HllOxide {
-    pub fn new(p: &HllParams) -> Self {
-        Self {
-            inner: sketch_oxide::cardinality::HyperLogLog::new(p.lg_k)
-                .expect("valid HLL precision"),
+impl InitSketch for HllOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: HllParams = config.parse()?;
+        let inner = sketch_oxide::cardinality::HyperLogLog::new(p.lg_k)
+            .map_err(|e| BuildError(format!("oxide HLL rejected lg_k={}: {e:?}", p.lg_k)))?;
+        Ok(Self {
+            inner,
             lg_k: p.lg_k,
-        }
+        })
     }
 }
 
@@ -59,14 +63,15 @@ pub struct HllDatasketches {
     hll_type: datasketches::hll::HllType,
 }
 
-impl HllDatasketches {
-    pub fn new(p: &HllParams) -> Self {
+impl InitSketch for HllDatasketches {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: HllParams = config.parse()?;
         let hll_type = datasketches::hll::HllType::Hll8;
-        Self {
+        Ok(Self {
             inner: datasketches::hll::HllSketch::new(p.lg_k, hll_type),
             lg_k: p.lg_k,
             hll_type,
-        }
+        })
     }
 }
 
@@ -125,11 +130,12 @@ pub struct HllLib {
     inner: asap_sketchlib::HyperLogLog<asap_sketchlib::Classic>,
 }
 
-impl HllLib {
-    pub fn new(_p: &HllParams) -> Self {
-        Self {
+impl InitSketch for HllLib {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let _p: HllParams = config.parse()?;
+        Ok(Self {
             inner: asap_sketchlib::HyperLogLog::<asap_sketchlib::Classic>::new(),
-        }
+        })
     }
 }
 
@@ -167,11 +173,12 @@ pub struct HllLibHip {
     inner: asap_sketchlib::HyperLogLogHIP,
 }
 
-impl HllLibHip {
-    pub fn new(_p: &HllParams) -> Self {
-        Self {
+impl InitSketch for HllLibHip {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let _p: HllParams = config.parse()?;
+        Ok(Self {
             inner: asap_sketchlib::HyperLogLogHIP::new(),
-        }
+        })
     }
 }
 

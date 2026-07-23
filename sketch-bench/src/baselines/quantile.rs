@@ -14,6 +14,8 @@
 
 use std::cell::{Cell, RefCell};
 
+use crate::init::{BuildError, InitSketch};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 use crate::accuracy::quantile::QuantileValue;
@@ -142,6 +144,12 @@ impl<T: QuantileValue> Sketch for ExactQuantile<T> {
             self.buf.get_mut().sort_unstable_by(T::total_cmp);
             self.sorted.set(true);
         }
+    }
+}
+
+impl<T: QuantileValue> InitSketch for ExactQuantile<T> {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 

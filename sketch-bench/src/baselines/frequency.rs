@@ -8,6 +8,8 @@
 
 use hashbrown::HashMap;
 
+use crate::init::{BuildError, InitSketch};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 
 /// Heavy-hitter threshold — matches the value the legacy
@@ -89,6 +91,12 @@ impl Sketch for ExactFrequency {
             *self.map.entry(*k).or_insert(0) += *v;
         }
         Ok(())
+    }
+}
+
+impl InitSketch for ExactFrequency {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 

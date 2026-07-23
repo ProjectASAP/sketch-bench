@@ -11,7 +11,10 @@
 //! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath (tunable)
 //! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::CmsParams;
+use crate::wrappers::require_shape;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use sketch_oxide::Mergeable as _;
 
@@ -37,15 +40,18 @@ pub struct CmsOxide {
     cols: usize,
 }
 
-impl CmsOxide {
-    pub fn new(p: &CmsParams) -> Self {
+impl InitSketch for CmsOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        // Native API takes an error bound, not raw dimensions — translate.
         let (epsilon, delta) = dims_to_err(p.rows, p.cols);
-        Self {
-            inner: sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
-                .expect("valid CMS parameters"),
+        let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
+            .map_err(|e| BuildError(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}")))?;
+        Ok(Self {
+            inner,
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 
@@ -84,13 +90,14 @@ pub struct CmsDatasketches {
     cols: usize,
 }
 
-impl CmsDatasketches {
-    pub fn new(p: &CmsParams) -> Self {
-        Self {
+impl InitSketch for CmsDatasketches {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        Ok(Self {
             inner: datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32),
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 
@@ -131,13 +138,18 @@ pub const CMS_CUSTOM_FIXED_COLS: usize = 65538;
 
 pub struct CmsLibFixedmatrixCustomFast(pub CountMin<CustomCountMinMatrixI32U128, FastPath>);
 
-impl CmsLibFixedmatrixCustomFast {
-    pub fn new(_p: &CmsParams) -> Self {
-        Self(
+impl InitSketch for CmsLibFixedmatrixCustomFast {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        // The shape is baked into the type, so this impl exists only at one
+        // grid point. Reject the rest — this is what `Constraint` used to
+        // decide from outside; it belongs here, where the shape is known.
+        require_shape(p.rows, p.cols, CMS_CUSTOM_FIXED_ROWS, CMS_CUSTOM_FIXED_COLS)?;
+        Ok(Self(
             CountMin::<CustomCountMinMatrixI32U128, FastPath>::from_storage(
                 CustomCountMinMatrixI32U128::default(),
             ),
-        )
+        ))
     }
 }
 
@@ -178,10 +190,12 @@ pub const CMS_FIXED_32K_COLS: usize = 32768;
 
 pub struct CmsLibFixedmatrixFast32k(pub CountMin<CountMinMatrix5x32K, FastPath>);
 
-impl CmsLibFixedmatrixFast32k {
-    pub fn new(_p: &CmsParams) -> Self {
-        Self(CountMin::<CountMinMatrix5x32K, FastPath>::from_storage(
-            CountMinMatrix5x32K::default(),
+impl InitSketch for CmsLibFixedmatrixFast32k {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        require_shape(p.rows, p.cols, CMS_FIXED_32K_ROWS, CMS_FIXED_32K_COLS)?;
+        Ok(Self(
+            CountMin::<CountMinMatrix5x32K, FastPath>::from_storage(CountMinMatrix5x32K::default()),
         ))
     }
 }
@@ -221,9 +235,11 @@ pub const CMS_FIXED_COLS: usize = 2048;
 
 pub struct CmsLibFixedmatrixFast(pub CountMin<FixedMatrix, FastPath>);
 
-impl CmsLibFixedmatrixFast {
-    pub fn new(_p: &CmsParams) -> Self {
-        Self(CountMin::<FixedMatrix, FastPath>::default())
+impl InitSketch for CmsLibFixedmatrixFast {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        require_shape(p.rows, p.cols, CMS_FIXED_ROWS, CMS_FIXED_COLS)?;
+        Ok(Self(CountMin::<FixedMatrix, FastPath>::default()))
     }
 }
 
@@ -260,13 +276,14 @@ pub struct CmsLibVector2dFast {
     cols: usize,
 }
 
-impl CmsLibVector2dFast {
-    pub fn new(p: &CmsParams) -> Self {
-        Self {
+impl InitSketch for CmsLibVector2dFast {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        Ok(Self {
             inner: CountMin::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 
@@ -303,13 +320,14 @@ pub struct CmsLibVector2dRegular {
     cols: usize,
 }
 
-impl CmsLibVector2dRegular {
-    pub fn new(p: &CmsParams) -> Self {
-        Self {
+impl InitSketch for CmsLibVector2dRegular {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CmsParams = config.parse()?;
+        Ok(Self {
             inner: CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 

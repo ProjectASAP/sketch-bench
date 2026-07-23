@@ -439,18 +439,11 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // Build the workload once — it's shared across all (impl, config) pairs.
     let workload = spec.build(dtype)?;
 
-    // Unparameterized impls (e.g. exact baselines) run once per
-    // sweep, not once per config.
-    let total: usize = impls
-        .iter()
-        .map(|e| {
-            if e.constraint.is_unparameterized() {
-                1
-            } else {
-                grid.len()
-            }
-        })
-        .sum();
+    // Every impl is enumerated over the whole grid. Impls that cannot run at
+    // a given point — a fixed shape, or (for now) the parameter-free
+    // baselines whose `init` rejects any config — fail construction and are
+    // skipped below with a reason, not special-cased here.
+    let total: usize = impls.len() * grid.len();
     eprintln!(
         "sketchlib: {} family={} impls=[{}] configs={} total={}",
         "sweep",
@@ -487,30 +480,14 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         }
     }
 
-    for (idx_cfg, params) in grid.iter().enumerate() {
+    for params in grid.iter() {
         for entry in &impls {
-            // Unparameterized impls run once per sweep — skip all
-            // configs after the first.
-            if entry.constraint.is_unparameterized() && idx_cfg > 0 {
-                continue;
-            }
-            if !entry.accepts(params) {
-                eprintln!(
-                    "sketchlib: skip {}/{} — {} does not match {:?}",
-                    entry.family,
-                    entry.impl_name,
-                    entry.constraint.describe(),
-                    params,
-                );
-                skipped += 1;
-                continue;
-            }
+            // Whether this (impl, config) can run is decided at construction:
+            // `entry.run` builds the sketch and returns a reason if it can't
+            // (wrong dtype, a fixed shape the request misses, a baseline that
+            // takes no config). No pre-check here — announce, then run.
             attempted += 1;
-            let cfg_label = if entry.constraint.is_unparameterized() {
-                "exact".to_string()
-            } else {
-                params_pretty(params)
-            };
+            let cfg_label = params_pretty(params);
             eprintln!(
                 "sketchlib: [{attempted}/{total}] {}/{} config={} runs={} warmup={}",
                 entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
@@ -534,15 +511,10 @@ fn run_bench(args: BenchArgs) -> Result<()> {
             emitted += 1;
             for report in &reports {
                 if let Some(dir) = args.raw_csv.as_deref() {
-                    let params_opt = if entry.constraint.is_unparameterized() {
-                        None
-                    } else {
-                        Some(params)
-                    };
                     raw_csv::write_runs(
                         std::path::Path::new(dir),
                         entry,
-                        params_opt,
+                        Some(params),
                         cfg.seed,
                         cfg.threads,
                         dtype,
@@ -550,11 +522,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                     )?;
                 }
                 let mut record = report.to_record();
-                record.sketch_config = if entry.constraint.is_unparameterized() {
-                    None
-                } else {
-                    Some(params.to_json_value())
-                };
+                record.sketch_config = Some(params.to_json_value());
                 sink.write_line(&record.to_jsonl())?;
             }
         }

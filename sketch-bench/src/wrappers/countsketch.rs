@@ -1,7 +1,10 @@
 //! CountSketch wrappers — 4 variants (`oxide` + 3× sketchlib).
 //! Same family as CMS: `Query = i64`, `Answer = u64`.
 
+use crate::init::{BuildError, InitSketch};
 use crate::params::CountSketchParams;
+use crate::wrappers::require_shape;
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
 use sketch_oxide::Mergeable as _;
@@ -26,15 +29,20 @@ pub struct CsOxide {
     cols: usize,
 }
 
-impl CsOxide {
-    pub fn new(p: &CountSketchParams) -> Self {
+impl InitSketch for CsOxide {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
         let (epsilon, delta) = dims_to_err(p.rows, p.cols);
-        Self {
-            inner: sketch_oxide::frequency::CountSketch::new(epsilon, delta)
-                .expect("valid CountSketch parameters"),
+        let inner = sketch_oxide::frequency::CountSketch::new(epsilon, delta).map_err(|e| {
+            BuildError(format!(
+                "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
+            ))
+        })?;
+        Ok(Self {
+            inner,
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 
@@ -71,9 +79,11 @@ impl Sketch for CsOxide {
 // fixed-shape; sweep runs it only when requested shape matches.
 pub struct CsLibFixedmatrixFast(pub Count<FixedMatrix, FastPath>);
 
-impl CsLibFixedmatrixFast {
-    pub fn new(_p: &CountSketchParams) -> Self {
-        Self(Count::<FixedMatrix, FastPath>::default())
+impl InitSketch for CsLibFixedmatrixFast {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
+        require_shape(p.rows, p.cols, CMS_FIXED_ROWS, CMS_FIXED_COLS)?;
+        Ok(Self(Count::<FixedMatrix, FastPath>::default()))
     }
 }
 
@@ -105,11 +115,13 @@ impl Sketch for CsLibFixedmatrixFast {
 // `CountMinMatrix5x32K` shape declared in cms.rs.
 pub struct CsLibFixedmatrixFast32k(pub Count<CountMinMatrix5x32K, FastPath>);
 
-impl CsLibFixedmatrixFast32k {
-    pub fn new(_p: &CountSketchParams) -> Self {
-        Self(Count::<CountMinMatrix5x32K, FastPath>::from_storage(
+impl InitSketch for CsLibFixedmatrixFast32k {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
+        require_shape(p.rows, p.cols, CMS_FIXED_32K_ROWS, CMS_FIXED_32K_COLS)?;
+        Ok(Self(Count::<CountMinMatrix5x32K, FastPath>::from_storage(
             CountMinMatrix5x32K::default(),
-        ))
+        )))
     }
 }
 
@@ -142,13 +154,14 @@ pub struct CsLibVector2dFast {
     cols: usize,
 }
 
-impl CsLibVector2dFast {
-    pub fn new(p: &CountSketchParams) -> Self {
-        Self {
+impl InitSketch for CsLibVector2dFast {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
+        Ok(Self {
             inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 
@@ -181,13 +194,14 @@ pub struct CsLibVector2dRegular {
     cols: usize,
 }
 
-impl CsLibVector2dRegular {
-    pub fn new(p: &CountSketchParams) -> Self {
-        Self {
+impl InitSketch for CsLibVector2dRegular {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
+        Ok(Self {
             inner: Count::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
             cols: p.cols,
-        }
+        })
     }
 }
 

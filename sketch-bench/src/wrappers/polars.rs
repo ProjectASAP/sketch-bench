@@ -17,7 +17,8 @@
 
 use std::collections::HashMap;
 
-use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams};
+use crate::init::{BuildError, InitSketch};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 use polars::prelude::*;
 
@@ -27,12 +28,9 @@ pub struct PolarsCardinality {
     estimate: f64,
 }
 
-impl PolarsCardinality {
-    pub fn new(_p: &HllParams) -> Self {
-        Self {
-            buf: Vec::new(),
-            estimate: 0.0,
-        }
+impl InitSketch for PolarsCardinality {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -122,9 +120,9 @@ impl PolarsFrequencyCore {
 #[derive(Default)]
 pub struct PolarsFrequencyCms(PolarsFrequencyCore);
 
-impl PolarsFrequencyCms {
-    pub fn new(_p: &CmsParams) -> Self {
-        Self::default()
+impl InitSketch for PolarsFrequencyCms {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -151,9 +149,9 @@ impl Sketch for PolarsFrequencyCms {
 #[derive(Default)]
 pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 
-impl PolarsFrequencyCs {
-    pub fn new(_p: &CountSketchParams) -> Self {
-        Self::default()
+impl InitSketch for PolarsFrequencyCs {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -238,9 +236,9 @@ impl PolarsQuantileCore {
 #[derive(Default)]
 pub struct PolarsQuantileKll(PolarsQuantileCore);
 
-impl PolarsQuantileKll {
-    pub fn new(_p: &KllParams) -> Self {
-        Self::default()
+impl InitSketch for PolarsQuantileKll {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 
@@ -267,9 +265,9 @@ impl Sketch for PolarsQuantileKll {
 #[derive(Default)]
 pub struct PolarsQuantileDd(PolarsQuantileCore);
 
-impl PolarsQuantileDd {
-    pub fn new(_p: &DdParams) -> Self {
-        Self::default()
+impl InitSketch for PolarsQuantileDd {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
     }
 }
 

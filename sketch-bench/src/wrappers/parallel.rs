@@ -18,7 +18,9 @@
 use std::sync::Barrier;
 use std::time::Instant;
 
+use crate::init::BuildError;
 use crate::params::{CmsParams, CountSketchParams, HllParams};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 use asap_sketchlib::{
     impl_fixed_matrix, Count, CountMin, DataInput, ErtlMLE, FastPath, HyperLogLog,
@@ -33,11 +35,16 @@ pub struct ParallelCmsFastPath {
 }
 
 impl ParallelCmsFastPath {
-    pub fn new(_p: &CmsParams, workers: usize) -> Self {
-        Self {
+    /// Not an `InitSketch`: it needs the worker count, which is a run knob
+    /// (`--workers`), not a sketch parameter. Parses the config to reject a
+    /// malformed one, then ignores its values — this impl's shape is fixed
+    /// internally and it runs at every grid point.
+    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+        let _p: CmsParams = config.parse()?;
+        Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
-        }
+        })
     }
 }
 
@@ -74,11 +81,12 @@ pub struct ParallelCsFastPath {
 }
 
 impl ParallelCsFastPath {
-    pub fn new(_p: &CountSketchParams, workers: usize) -> Self {
-        Self {
+    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+        let _p: CountSketchParams = config.parse()?;
+        Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
-        }
+        })
     }
 }
 
@@ -113,11 +121,12 @@ pub struct ParallelHllFastPath {
 }
 
 impl ParallelHllFastPath {
-    pub fn new(_p: &HllParams, workers: usize) -> Self {
-        Self {
+    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+        let _p: HllParams = config.parse()?;
+        Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
-        }
+        })
     }
 }
 
