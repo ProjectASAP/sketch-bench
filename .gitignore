@@ -18,6 +18,7 @@ target/
 Cargo.lock
 rust-target/
 target-local/
+.cargo-target/
 
 # C++ build artifacts
 *.dSYM/
@@ -65,7 +66,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Accuracy plotting cache
+# Matplotlib config/font cache
+.mplconfig/
 accuracy/.mplconfig/
 accuracy/data/generate_zipf_data
 
