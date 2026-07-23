@@ -22,7 +22,7 @@ use sketch_bench::params::{
 use sketch_bench::{BenchConfig, BenchReport, BenchRunner, BuildError, InitSketch};
 
 use sketch_bench::wrappers::{
-    cms, countsketch, dd, elastic, exact, hll, kll, nitro, parallel, polars, univmon,
+    cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, univmon,
 };
 
 /// CLI-side accuracy settings. `enabled = false` → dispatch
@@ -303,24 +303,8 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "hll",
-        impl_name: "exact",
-        description: "exact baseline: HashSet<i64>, cardinality = set.len()",
-        accuracy_kind: AccuracyKind::Cardinality,
-        params: ParamsVTable::of::<HllParams>(),
-        run: run_hll_exact,
-    },
-    ImplEntry {
-        family: "hll",
-        impl_name: "null",
-        description: "null baseline: cardinality estimate is 0 — pins relative error = 1.0",
-        accuracy_kind: AccuracyKind::Cardinality,
-        params: ParamsVTable::of::<HllParams>(),
-        run: run_hll_null,
-    },
-    ImplEntry {
-        family: "hll",
         impl_name: "polars",
-        description: "polars exact: DataFrame.n_unique() (DataFrame baseline)",
+        description: "polars exact: DataFrame.n_unique() (DataFrame engine)",
         accuracy_kind: AccuracyKind::Cardinality,
         params: ParamsVTable::of::<HllParams>(),
         run: run_hll_polars,
@@ -353,16 +337,8 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "kll",
-        impl_name: "exact",
-        description: "exact baseline: Vec<i64> sorted, quantile = index lookup",
-        accuracy_kind: AccuracyKind::Quantile,
-        params: ParamsVTable::of::<KllParams>(),
-        run: run_kll_exact,
-    },
-    ImplEntry {
-        family: "kll",
         impl_name: "polars",
-        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
+        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame engine)",
         accuracy_kind: AccuracyKind::Quantile,
         params: ParamsVTable::of::<KllParams>(),
         run: run_kll_polars,
@@ -426,25 +402,8 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "cms",
-        impl_name: "exact",
-        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
-        accuracy_kind: AccuracyKind::Frequency,
-        params: ParamsVTable::of::<CmsParams>(),
-        run: run_cms_exact,
-    },
-    ImplEntry {
-        family: "cms",
-        impl_name: "null",
-        description:
-            "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
-        accuracy_kind: AccuracyKind::Frequency,
-        params: ParamsVTable::of::<CmsParams>(),
-        run: run_cms_null,
-    },
-    ImplEntry {
-        family: "cms",
         impl_name: "polars",
-        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
+        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame engine)",
         accuracy_kind: AccuracyKind::Frequency,
         params: ParamsVTable::of::<CmsParams>(),
         run: run_cms_polars,
@@ -501,25 +460,8 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "countsketch",
-        impl_name: "exact",
-        description: "exact baseline: HashMap<i64,u64>, freq = map.get(k)",
-        accuracy_kind: AccuracyKind::Frequency,
-        params: ParamsVTable::of::<CountSketchParams>(),
-        run: run_cs_exact,
-    },
-    ImplEntry {
-        family: "countsketch",
-        impl_name: "null",
-        description:
-            "null baseline: every count is 0 — pins ARE = 1.0, the disqualifying threshold",
-        accuracy_kind: AccuracyKind::Frequency,
-        params: ParamsVTable::of::<CountSketchParams>(),
-        run: run_cs_null,
-    },
-    ImplEntry {
-        family: "countsketch",
         impl_name: "polars",
-        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame baseline)",
+        description: "polars exact: group_by(v).agg(len) → HashMap (DataFrame engine)",
         accuracy_kind: AccuracyKind::Frequency,
         params: ParamsVTable::of::<CountSketchParams>(),
         run: run_cs_polars,
@@ -544,16 +486,8 @@ pub const IMPLS: &[ImplEntry] = &[
     },
     ImplEntry {
         family: "dd",
-        impl_name: "exact",
-        description: "exact baseline: Vec<i64> sorted, quantile = Type-7 lookup",
-        accuracy_kind: AccuracyKind::Quantile,
-        params: ParamsVTable::of::<DdParams>(),
-        run: run_dd_exact,
-    },
-    ImplEntry {
-        family: "dd",
         impl_name: "polars",
-        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame baseline)",
+        description: "polars exact: 101-point quantile grid via DataFrame (DataFrame engine)",
         accuracy_kind: AccuracyKind::Quantile,
         params: ParamsVTable::of::<DdParams>(),
         run: run_dd_polars,
@@ -1060,24 +994,6 @@ run_impl!(
     i64,
     card
 );
-run_impl!(
-    run_hll_exact,
-    exact::ExactCardinality,
-    "hll",
-    "exact",
-    HllParams,
-    i64,
-    card
-);
-run_impl!(
-    run_hll_null,
-    exact::NullCardinality,
-    "hll",
-    "null",
-    HllParams,
-    i64,
-    card
-);
 
 // -- KLL --
 run_ordered_impl!(
@@ -1095,15 +1011,6 @@ run_ordered_impl!(
     kll::KllLib<f64>,
     "kll",
     "lib",
-    KllParams,
-    quant
-);
-run_ordered_impl!(
-    run_kll_exact,
-    exact::ExactQuantile<i64>,
-    exact::ExactQuantile<f64>,
-    "kll",
-    "exact",
     KllParams,
     quant
 );
@@ -1172,24 +1079,6 @@ run_impl!(
     i64,
     freq
 );
-run_impl!(
-    run_cms_exact,
-    exact::ExactFrequency,
-    "cms",
-    "exact",
-    CmsParams,
-    i64,
-    freq
-);
-run_impl!(
-    run_cms_null,
-    exact::NullFrequency,
-    "cms",
-    "null",
-    CmsParams,
-    i64,
-    freq
-);
 
 // -- CountSketch --
 run_impl!(
@@ -1237,24 +1126,6 @@ run_impl!(
     i64,
     freq
 );
-run_impl!(
-    run_cs_exact,
-    exact::ExactFrequencyCs,
-    "countsketch",
-    "exact",
-    CountSketchParams,
-    i64,
-    freq
-);
-run_impl!(
-    run_cs_null,
-    exact::NullFrequencyCs,
-    "countsketch",
-    "null",
-    CountSketchParams,
-    i64,
-    freq
-);
 
 // -- DDSketch --
 run_ordered_impl!(
@@ -1266,19 +1137,11 @@ run_ordered_impl!(
     DdParams,
     quant_rel
 );
-run_ordered_impl!(
-    run_dd_exact,
-    exact::ExactQuantileDd<i64>,
-    exact::ExactQuantileDd<f64>,
-    "dd",
-    "exact",
-    DdParams,
-    quant_rel
-);
 
-// -- Polars-backed baselines (one per family). Same `Sketch`
-//    contract as the in-tree exact baselines; the legacy
-//    `throughput/polars_*/` binaries are folded into these.
+// -- Polars-backed impls (one per family). A DataFrame engine
+//    computing the exact answer; raced for throughput, not an
+//    accuracy baseline. Folds the legacy `throughput/polars_*/`
+//    binaries into aqpbm-cli.
 run_impl!(
     run_hll_polars,
     polars::PolarsCardinality,
@@ -1449,7 +1312,7 @@ mod registry_tests {
     /// requires the array to have any particular length, so 32 implementations
     /// silently left the benchmark. Bump this deliberately when adding or
     /// removing a row.
-    const EXPECTED_ROWS: usize = 41;
+    const EXPECTED_ROWS: usize = 33;
 
     #[test]
     fn every_registered_implementation_is_still_registered() {
@@ -1468,9 +1331,7 @@ mod registry_tests {
     const ORDERED_ROWS: &[(&str, &str)] = &[
         ("kll", "oxide"),
         ("kll", "lib"),
-        ("kll", "exact"),
         ("dd", "lib"),
-        ("dd", "exact"),
     ];
 
     /// Exactly the rows whose wrapper takes text. Pinned as a set for the
@@ -1503,12 +1364,6 @@ mod registry_tests {
     /// else in the build would notice: the sweep would still exit 0, still
     /// write a file, and simply contain fewer rows than it claimed to run.
     /// That is the same failure as the refactor that deleted 32 rows.
-    /// Impl names of the parameter-free baselines, disabled while they sit on
-    /// the family grid they don't belong on (`init` returns a `BuildError`).
-    /// Listed here so the matrix tests assert that temporary state rather than
-    /// silently passing when a baseline stops producing rows.
-    const DISABLED_BASELINES: &[&str] = &["exact", "null", "polars"];
-
     #[test]
     fn only_the_ordered_rows_accept_f64_and_they_really_run() {
         let f64_items = tiny(DType::F64);
@@ -1524,12 +1379,6 @@ mod registry_tests {
         };
         for e in IMPLS {
             let params = (e.params.default_grid)().remove(0);
-            // Disabled baselines are skipped: on f64 a non-ordered family
-            // fails the dtype check before construction is even probed, so
-            // their failure mode here is not the point this test pins.
-            if DISABLED_BASELINES.contains(&e.impl_name) {
-                continue;
-            }
             let expected = ORDERED_ROWS.contains(&(e.family, e.impl_name));
             match e.run(&cfg, &f64_items, &params, &acc) {
                 Ok(reports) => {
@@ -1626,12 +1475,11 @@ mod registry_tests {
             record_query_calls: false,
         };
         for e in IMPLS {
-            // Single-point impls don't build at an arbitrary grid point:
-            // fixed-matrix rows only accept their baked shape, and the
-            // parameter-free baselines are disabled. Both refuse to build
-            // here — a `RunError::Build`, not a narrowed dtype matrix.
-            let single_point =
-                DISABLED_BASELINES.contains(&e.impl_name) || e.impl_name.contains("fixedmatrix");
+            // Fixed-matrix rows only accept their baked shape, so at an
+            // arbitrary grid point they refuse to build — a `RunError::Build`,
+            // not a narrowed dtype matrix. (The `polars` rows ignore the grid
+            // and build unconditionally, so they are not single-point here.)
+            let single_point = e.impl_name.contains("fixedmatrix");
             let params = (e.params.default_grid)().remove(0);
             let got = e.run(&cfg, &i64_items, &params, &acc);
             if single_point {

@@ -16,9 +16,8 @@
 //!   `mean_relative_err` / `max_relative_err`: `|v_sketch -
 //!   v_truth| / |v_truth|`, where `v_truth` is the **Type-7
 //!   linear-interpolation** quantile (NumPy / R / Prometheus
-//!   default — same algorithm `ExactQuantile::quantile_fraction`
-//!   uses). This matches DDSketch's relative-error guarantee
-//!   and gives the exact baseline 0 error by construction.
+//!   default), computed here by [`type7_quantile`]. This matches
+//!   DDSketch's relative-error guarantee.
 //!
 //! Picking the metric per family rather than reporting one
 //! universal number reflects how each sketch's correctness
@@ -335,10 +334,9 @@ where
     samples
 }
 
-/// Type-7 linear interpolation on a pre-sorted f64 slice. Same
-/// formula `baselines::quantile::ExactQuantile::quantile_fraction`
-/// uses — keeping the two in lock-step is what makes the exact
-/// baseline land at zero relative-error here.
+/// Type-7 linear interpolation on a pre-sorted f64 slice — the
+/// NumPy / R / Prometheus default quantile. This is the ground
+/// truth `RelativeErrorGT` scores DDSketch against.
 fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;

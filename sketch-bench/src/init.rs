@@ -56,23 +56,6 @@ impl From<SketchError> for BuildError {
     }
 }
 
-/// Reason the parameter-free baselines (exact / null / polars) currently
-/// refuse to build. See `docs/component_walk_through.md`.
-///
-/// These baselines have an *empty* parameter space: they produce the exact
-/// reference answer regardless of any sketch's `(rows, cols)`. But the sweep
-/// today enumerates one grid per family and forces every impl onto it, so a
-/// baseline was handed a `CmsParams` it could only discard — "succeeding" by
-/// ignoring the config. That is a category error the old `unparameterized`
-/// flag papered over by un-sweeping these rows after the fact.
-///
-/// Rejecting construction here makes it honest: the benchmark runs without
-/// exact/null/polars baselines until they are modelled as a single empty
-/// grid point rather than special-cased off the family grid. Temporary.
-pub const BASELINE_NO_PARAM_SPACE: &str = "baseline has an empty parameter \
-    space and does not belong on the family's (rows, cols) grid; temporarily \
-    disabled pending per-impl grid enumeration";
-
 /// Build `Self` from the shared init config, or explain why not.
 ///
 /// `Self: Sketch` because the only thing worth building here is something the

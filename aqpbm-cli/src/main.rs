@@ -439,10 +439,9 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // Build the workload once — it's shared across all (impl, config) pairs.
     let workload = spec.build(dtype)?;
 
-    // Every impl is enumerated over the whole grid. Impls that cannot run at
-    // a given point — a fixed shape, or (for now) the parameter-free
-    // baselines whose `init` rejects any config — fail construction and are
-    // skipped below with a reason, not special-cased here.
+    // Every impl is enumerated over the whole grid. An impl that cannot run at
+    // a given point — e.g. a fixed-shape row the request misses — fails
+    // construction and is skipped below with a reason, not special-cased here.
     let total: usize = impls.len() * grid.len();
     eprintln!(
         "sketchlib: {} family={} impls=[{}] configs={} total={}",

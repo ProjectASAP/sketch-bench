@@ -1,6 +1,9 @@
-//! Polars-backed exact baselines, one impl per family
-//! (`hll/polars`, `cms/polars`, `countsketch/polars`,
-//! `kll/polars`, `dd/polars`).
+//! Polars-backed implementations, one per family (`hll/polars`,
+//! `cms/polars`, `countsketch/polars`, `kll/polars`, `dd/polars`).
+//! These are real `--impl` rows, not accuracy baselines: they
+//! compute the exact answer through a DataFrame engine, and the
+//! point of racing them is throughput. Their exactness is
+//! incidental — the accuracy ground truth lives in `accuracy/`.
 //!
 //! Mirrors the legacy `throughput/polars_{cardinality,freq,
 //! quantile}/` binaries: buffer the stream into a `Vec<i64>`,
@@ -29,8 +32,16 @@ pub struct PolarsCardinality {
 }
 
 impl InitSketch for PolarsCardinality {
+    /// Polars computes the exact answer; it has no `(rows, cols)` to tune, so
+    /// it ignores the `ParamSet` and builds unconditionally. Under a
+    /// multi-point `--config` sweep it therefore repeats the same numbers at
+    /// every grid point — a known rough edge, kept until an impl's own
+    /// (possibly empty) parameter space is modelled instead of the family's.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
-        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
+        Ok(Self {
+            buf: Vec::new(),
+            estimate: 0.0,
+        })
     }
 }
 
@@ -121,8 +132,9 @@ impl PolarsFrequencyCore {
 pub struct PolarsFrequencyCms(PolarsFrequencyCore);
 
 impl InitSketch for PolarsFrequencyCms {
+    /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
-        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
+        Ok(Self::default())
     }
 }
 
@@ -150,8 +162,9 @@ impl Sketch for PolarsFrequencyCms {
 pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 
 impl InitSketch for PolarsFrequencyCs {
+    /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
-        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
+        Ok(Self::default())
     }
 }
 
@@ -237,8 +250,9 @@ impl PolarsQuantileCore {
 pub struct PolarsQuantileKll(PolarsQuantileCore);
 
 impl InitSketch for PolarsQuantileKll {
+    /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
-        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
+        Ok(Self::default())
     }
 }
 
@@ -266,8 +280,9 @@ impl Sketch for PolarsQuantileKll {
 pub struct PolarsQuantileDd(PolarsQuantileCore);
 
 impl InitSketch for PolarsQuantileDd {
+    /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
-        Err(BuildError(crate::init::BASELINE_NO_PARAM_SPACE.into()))
+        Ok(Self::default())
     }
 }
 
