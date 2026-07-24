@@ -34,12 +34,12 @@ pub struct ParallelCmsFastPath {
     workers: usize,
 }
 
-impl ParallelCmsFastPath {
+impl crate::cell::ParallelInit for ParallelCmsFastPath {
     /// Not an `InitSketch`: it needs the worker count, which is a run knob
     /// (`--workers`), not a sketch parameter. Parses the config to reject a
     /// malformed one, then ignores its values — this impl's shape is fixed
     /// internally, so any well-formed config builds it.
-    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: CmsParams = config.parse()?;
         Ok(Self {
             buf: Vec::new(),
@@ -80,8 +80,8 @@ pub struct ParallelCsFastPath {
     workers: usize,
 }
 
-impl ParallelCsFastPath {
-    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+impl crate::cell::ParallelInit for ParallelCsFastPath {
+    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: CountSketchParams = config.parse()?;
         Ok(Self {
             buf: Vec::new(),
@@ -120,8 +120,8 @@ pub struct ParallelHllFastPath {
     workers: usize,
 }
 
-impl ParallelHllFastPath {
-    pub fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+impl crate::cell::ParallelInit for ParallelHllFastPath {
+    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: HllParams = config.parse()?;
         Ok(Self {
             buf: Vec::new(),

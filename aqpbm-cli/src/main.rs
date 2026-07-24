@@ -3,6 +3,7 @@
 //! `bench` measures one `(impl, config)` cell of a sketch family.
 //! `list-impls` enumerates registered `(family, impl)` pairs.
 
+mod catalog;
 mod cli;
 mod raw_csv;
 mod repeat;
@@ -42,7 +43,7 @@ use sketch_bench::params::ParamSet;
 use sketch_bench::{BenchConfig, MetricsMask};
 
 use cli::{BenchArgs, Cli, Cmd};
-use sketch_bench::dispatch::{self, AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
+use sketch_bench::cell::{AccuracyCfg, WorkloadSpec};
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
     let s = match s {
@@ -69,12 +70,12 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
     m
 }
 
-/// Resolve `--sketch`/`--impl` to the one dispatch row they name.
-fn select_impl(family: &str, impl_name: &str) -> Result<&'static ImplEntry> {
-    if dispatch::impls_for_family(family).is_empty() {
+/// Validate `--sketch`/`--impl` and report whether `--accuracy` can score it.
+fn select_impl(family: &str, impl_name: &str) -> Result<bool> {
+    if !catalog::family_exists(family) {
         bail!("unknown sketch family: {family}");
     }
-    dispatch::find(family, impl_name)
+    catalog::scores_accuracy(family, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))
 }
 
@@ -119,7 +120,7 @@ fn main() -> Result<()> {
     match cli.command {
         Cmd::ListImpls => {
             println!("# family       impl                         description");
-            for line in dispatch::list() {
+            for line in catalog::list() {
                 println!("{line}");
             }
             Ok(())
@@ -250,28 +251,28 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         record_query_calls: args.accuracy && args.raw_csv.is_some(),
     };
 
-    let entry = select_impl(&args.sketch, &args.impl_name)?;
+    let scores_accuracy = select_impl(&args.sketch, &args.impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
     // construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => dispatch::config_point(&args.sketch, s)?,
+        Some(s) => catalog::config_point(&args.sketch, s)?,
         None => ParamSet::empty(&args.sketch),
     };
 
     let workload = spec.build(dtype)?;
 
-    if accuracy_cfg.enabled && entry.accuracy_kind == AccuracyKind::None {
+    if accuracy_cfg.enabled && !scores_accuracy {
         eprintln!(
-            "sketchlib: --accuracy has no comparator for {}/{} (wrapper query is a stub) — running without ground truth",
-            entry.family, entry.impl_name
+            "sketchlib: --accuracy has no comparator for {}/{} (throughput-only row) — running without ground truth",
+            args.sketch, args.impl_name
         );
     }
 
     eprintln!(
         "sketchlib: {}/{} config={} runs={} warmup={}",
-        entry.family,
-        entry.impl_name,
+        args.sketch,
+        args.impl_name,
         params_pretty(&params),
         cfg.runs,
         cfg.warmup_runs,
@@ -281,9 +282,15 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // fixed shape the config misses, or a params struct missing a value all
     // surface here as an error — the tool ran exactly what it was asked and
     // that one thing could not run, so it fails rather than skipping on.
-    let reports = entry
-        .run(&cfg, &workload, &params, &accuracy_cfg)
-        .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", entry.family, entry.impl_name))?;
+    let reports = catalog::run(
+        &args.sketch,
+        &args.impl_name,
+        &cfg,
+        &workload,
+        &params,
+        &accuracy_cfg,
+    )
+    .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", args.sketch, args.impl_name))?;
 
     // Each `entry.run` call returns one report per metric pass (see
     // `MetricsMask::passes()`); emit each on its own JSONL line and its own
@@ -294,7 +301,8 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         if let Some(dir) = args.raw_csv.as_deref() {
             raw_csv::write_runs(
                 std::path::Path::new(dir),
-                entry,
+                &args.sketch,
+                &args.impl_name,
                 Some(&params),
                 cfg.seed,
                 cfg.threads,

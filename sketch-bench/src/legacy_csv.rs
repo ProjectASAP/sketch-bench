@@ -24,7 +24,6 @@
 
 use aqpbm_datagen::DType;
 
-use crate::dispatch::ImplEntry;
 use crate::params::ParamSet;
 use crate::runner::BenchReport;
 use crate::MetricsMask;
@@ -44,7 +43,8 @@ pub struct CsvFile {
 /// report carries no pass that maps to a legacy CSV (e.g. a lone LATENCY pass,
 /// whose per-op timer would muddle the throughput plot).
 pub fn render(
-    entry: &ImplEntry,
+    family: &str,
+    impl_name: &str,
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
@@ -62,7 +62,7 @@ pub fn render(
     // with `i64` rows that are indistinguishable from it, which is the exact
     // pooling `WorkloadDesc::dtype` exists to prevent. A separate file breaks
     // neither contract.
-    let fam = family_file_stem(entry.family, dtype);
+    let fam = family_file_stem(family, dtype);
 
     // Parallel ("octo") impls go to a separate combined file with the legacy
     // `sketch_type, implementation, num_workers,...` header —
@@ -70,15 +70,15 @@ pub fn render(
     // from a single file across cms/cs/hll. Only the THROUGHPUT pass emits, so
     // the insert_wall_time_ns column reflects a clean hot path, not the
     // latency-pass timer overhead.
-    if entry.impl_name == "lib-fastpath-parallel" {
+    if impl_name == "lib-fastpath-parallel" {
         if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
-            out.push(octo_file(entry, workers, report));
+            out.push(octo_file(family, workers, report));
         }
         return out;
     }
 
-    let legacy_impl = legacy_impl_name(entry.family, entry.impl_name);
-    let param_cols = ParamCols::from(entry.family, params);
+    let legacy_impl = legacy_impl_name(family, impl_name);
+    let param_cols = ParamCols::from(family, params);
 
     // Only the THROUGHPUT pass produces a clean insert-phase wall clock; rows
     // from other passes (LATENCY is inflated by per-op timing; ACCURACY is
@@ -87,13 +87,13 @@ pub fn render(
     if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
         out.push(CsvFile {
             name: format!("{fam}_throughput_results_rust.csv"),
-            header: insert_header(entry.family),
+            header: insert_header(family),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_insert_row(entry.family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_insert_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -115,7 +115,7 @@ pub fn render(
             if let Some(calls) = run.query_calls.as_ref() {
                 for sample in calls {
                     rows.push(format_per_call_row(
-                        entry.family,
+                        family,
                         &legacy_impl,
                         &param_cols,
                         run_no,
@@ -127,7 +127,7 @@ pub fn render(
         }
         out.push(CsvFile {
             name: format!("{fam}_throughput_query_results_rust.csv"),
-            header: per_call_query_header(entry.family),
+            header: per_call_query_header(family),
             rows,
         });
 
@@ -140,14 +140,14 @@ pub fn render(
         if report.per_run.iter().any(|r| r.queries_executed > 0) {
             out.push(CsvFile {
                 name: format!("{fam}_throughput_query_tight_results_rust.csv"),
-                header: query_header(entry.family),
+                header: query_header(family),
                 rows: report
                     .per_run
                     .iter()
                     .enumerate()
                     .map(|(idx, run)| {
                         format_query_row(
-                            entry.family,
+                            family,
                             &legacy_impl,
                             &param_cols,
                             seed,
@@ -162,13 +162,13 @@ pub fn render(
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
         out.push(CsvFile {
             name: format!("{fam}_throughput_query_results_rust.csv"),
-            header: query_header(entry.family),
+            header: query_header(family),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_query_row(entry.family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -181,8 +181,8 @@ pub fn render(
 /// Used by `throughput/scripts/plot_octo_throughput.py`. We emit
 /// `implementation = "octo"` (the legacy label for the parallel path)
 /// regardless of the impl name; the `sketch_type` column carries the family.
-fn octo_file(entry: &ImplEntry, workers: usize, report: &BenchReport) -> CsvFile {
-    let sketch_type = legacy_sketch_type(entry.family);
+fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
+    let sketch_type = legacy_sketch_type(family);
     let rows = report
         .per_run
         .iter()
