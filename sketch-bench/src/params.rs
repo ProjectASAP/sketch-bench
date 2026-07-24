@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 pub use aqpbm_core::config::{ParamSet, SketchParams};
 
 macro_rules! sketch_params {
-    ($ty:ident, $family:literal, $grid:expr) => {
+    ($ty:ident, $family:literal, $canonical:expr) => {
         impl SketchParams for $ty {
             const FAMILY: &'static str = $family;
-            fn default_grid() -> Vec<Self> {
-                $grid
+            fn canonical() -> Self {
+                $canonical
             }
         }
     };
@@ -32,28 +32,14 @@ macro_rules! sketch_params {
 pub struct HllParams {
     pub lg_k: u8,
 }
-sketch_params!(
-    HllParams,
-    "hll",
-    [10u8, 12, 14, 16]
-        .iter()
-        .map(|&lg_k| HllParams { lg_k })
-        .collect()
-);
+sketch_params!(HllParams, "hll", HllParams { lg_k: 10 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KllParams {
     pub k: u32,
 }
-sketch_params!(
-    KllParams,
-    "kll",
-    [100u32, 200, 400, 800]
-        .iter()
-        .map(|&k| KllParams { k })
-        .collect()
-);
+sketch_params!(KllParams, "kll", KllParams { k: 100 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,10 +50,10 @@ pub struct CmsParams {
 sketch_params!(
     CmsParams,
     "cms",
-    grid2(&[3, 5, 7], &[1024, 2048, 4096], |rows, cols| CmsParams {
-        rows,
-        cols
-    })
+    CmsParams {
+        rows: 3,
+        cols: 1024
+    }
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,9 +65,10 @@ pub struct CountSketchParams {
 sketch_params!(
     CountSketchParams,
     "countsketch",
-    grid2(&[3, 5, 7], &[1024, 2048, 4096], |rows, cols| {
-        CountSketchParams { rows, cols }
-    })
+    CountSketchParams {
+        rows: 3,
+        cols: 1024
+    }
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,9 +80,10 @@ pub struct ElasticParams {
 sketch_params!(
     ElasticParams,
     "elastic",
-    grid2(&[512, 1024, 2048], &[2, 3, 4], |buckets, depth| {
-        ElasticParams { buckets, depth }
-    })
+    ElasticParams {
+        buckets: 512,
+        depth: 2
+    }
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -103,14 +91,7 @@ sketch_params!(
 pub struct NitroParams {
     pub rate: f64,
 }
-sketch_params!(
-    NitroParams,
-    "nitro",
-    [0.01f64, 0.02, 0.05, 0.10]
-        .iter()
-        .map(|&rate| NitroParams { rate })
-        .collect()
-);
+sketch_params!(NitroParams, "nitro", NitroParams { rate: 0.01 });
 
 /// DDSketch's single tuning knob — the relative-error guarantee
 /// `alpha ∈ (0, 1)`. Smaller `alpha` ⇒ more buckets ⇒ tighter
@@ -120,14 +101,7 @@ sketch_params!(
 pub struct DdParams {
     pub alpha: f64,
 }
-sketch_params!(
-    DdParams,
-    "dd",
-    [0.005f64, 0.01, 0.02, 0.05, 0.1]
-        .iter()
-        .map(|&alpha| DdParams { alpha })
-        .collect()
-);
+sketch_params!(DdParams, "dd", DdParams { alpha: 0.005 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,20 +112,11 @@ pub struct UnivMonParams {
 sketch_params!(
     UnivMonParams,
     "univmon",
-    grid2(
-        &[6usize, 8, 10],
-        &[128u64, 256, 512],
-        |layers, max_stream| { UnivMonParams { layers, max_stream } }
-    )
+    UnivMonParams {
+        layers: 6,
+        max_stream: 128
+    }
 );
-
-/// Cartesian product of two axes — the shape most default grids have.
-fn grid2<A: Copy, B: Copy, T>(a: &[A], b: &[B], f: impl Fn(A, B) -> T) -> Vec<T> {
-    a.iter()
-        .flat_map(|&x| b.iter().map(move |&y| (x, y)))
-        .map(|(x, y)| f(x, y))
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -228,14 +193,24 @@ mod tests {
     }
 
     #[test]
-    fn every_family_ships_a_non_empty_default_grid() {
-        assert!(!HllParams::default_grid().is_empty());
-        assert!(!KllParams::default_grid().is_empty());
-        assert_eq!(CmsParams::default_grid().len(), 9);
-        assert_eq!(CountSketchParams::default_grid().len(), 9);
-        assert_eq!(ElasticParams::default_grid().len(), 9);
-        assert_eq!(UnivMonParams::default_grid().len(), 9);
-        assert_eq!(DdParams::default_grid().len(), 5);
+    fn every_family_ships_a_canonical_config_that_roundtrips() {
+        // The canonical config is one buildable point per family — the
+        // dtype-acceptance tests take it as a valid config per impl. It must
+        // erase to a `ParamSet` of its own family and parse back unchanged.
+        fn check<P: SketchParams + PartialEq + std::fmt::Debug>() {
+            let p = P::canonical();
+            let set = ParamSet::of(&p);
+            assert_eq!(set.family(), P::FAMILY);
+            assert_eq!(set.parse::<P>().unwrap(), p);
+        }
+        check::<HllParams>();
+        check::<KllParams>();
+        check::<CmsParams>();
+        check::<CountSketchParams>();
+        check::<ElasticParams>();
+        check::<UnivMonParams>();
+        check::<DdParams>();
+        check::<NitroParams>();
     }
 
     #[test]

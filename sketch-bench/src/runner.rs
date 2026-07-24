@@ -14,10 +14,9 @@ use std::time::{Duration, Instant};
 /// warm-up an accident of which `--metrics` flags were passed: a THROUGHPUT
 /// pass that also carried the CPU/MEMORY bits took the other branch and was
 /// timed with no governor ramp at all. Two passes measured at two different
-/// clock states is not a comparison. Gating on `Once` also stops a sweep from
-/// burning the warm-up duration once per (impl, config) pair — for a 63-pair
-/// sweep that was ten minutes of spinning for a ramp that only the first pair
-/// actually needed.
+/// clock states is not a comparison. Gating on `Once` also stops each of a
+/// cell's metric passes from re-burning the warm-up duration — the ramp only
+/// the first pass in the process actually needs.
 fn warmup_cpu_once() {
     static WARMED: Once = Once::new();
     WARMED.call_once(warmup_cpu_from_env);

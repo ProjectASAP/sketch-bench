@@ -18,7 +18,7 @@ use aqpbm_core::sketch::Sketch;
 //
 // The lib's constructor only accepts `buckets`; `depth` is fixed
 // internally, so we honour `buckets` and record both in the
-// sweep's JSONL config but `depth` has no effect on the build.
+// config, but `depth` has no effect on the build.
 pub struct ElasticLib {
     inner: RefCell<asap_sketchlib::Elastic<asap_sketchlib::DefaultXxHasher>>,
     buckets: usize,

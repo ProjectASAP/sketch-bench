@@ -32,8 +32,8 @@ use aqpbm_core::SketchError;
 
 /// Why a sketch could not be built from a given `ParamSet`.
 ///
-/// Carried back to the sweep so a skipped `(impl, config)` cell can say what
-/// was wrong: a config that did not parse, or a request an impl's fixed shape
+/// Surfaced as the invocation's error so a cell that cannot run says what was
+/// wrong: a config that did not parse, or a request an impl's fixed shape
 /// cannot satisfy. Plays the same role for the construction axis that
 /// `DtypeMismatch` plays for the data-type axis — a reason, not just a "no".
 #[derive(Debug, Clone)]

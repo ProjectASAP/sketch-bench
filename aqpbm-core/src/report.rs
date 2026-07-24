@@ -28,8 +28,8 @@ pub struct Record {
     #[serde(default)]
     pub language: Language,
     /// Family-specific construction params used for this run.
-    /// Populated by `bench` when it knows the `ParamSet`; absent
-    /// from legacy records. See `docs/BENCH_SWEEP.md` §5.
+    /// Populated by `bench` from the cell's `ParamSet`; absent
+    /// from legacy records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
     pub workload: WorkloadDesc,
@@ -124,8 +124,8 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
     /// `false` when the implementation provides no merge. Recorded rather
-    /// than omitted so a sweep's capability gaps are visible in the output
-    /// instead of showing up as missing rows.
+    /// than omitted so a capability gap is visible in the output instead of
+    /// showing up as a missing row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_supported: Option<bool>,
 }

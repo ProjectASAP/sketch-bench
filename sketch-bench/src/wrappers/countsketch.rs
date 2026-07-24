@@ -75,8 +75,8 @@ impl Sketch for CsOxide {
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
-// Compile-time fixed at (5, 2048). Dispatch marks this as
-// fixed-shape; sweep runs it only when requested shape matches.
+// Compile-time fixed at (5, 2048): builds only when the
+// requested config matches that shape, else a `BuildError`.
 pub struct CsLibFixedmatrixFast(pub Count<FixedMatrix, FastPath>);
 
 impl InitSketch for CsLibFixedmatrixFast {

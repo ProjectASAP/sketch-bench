@@ -1,8 +1,7 @@
 //! `sketchlib` — unified CLI for sketchlib-tool.
 //!
-//! `bench` runs a family of sketches across a config grid —
-//! see `docs/BENCH_SWEEP.md`. `list-impls` enumerates registered
-//! `(family, impl)` pairs.
+//! `bench` measures one `(impl, config)` cell of a sketch family.
+//! `list-impls` enumerates registered `(family, impl)` pairs.
 
 mod dispatch;
 mod raw_csv;
@@ -39,6 +38,7 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
 use clap::{Parser, Subcommand};
+use sketch_bench::params::ParamSet;
 use sketch_bench::{BenchConfig, MetricsMask};
 
 use dispatch::{AccuracyCfg, AccuracyKind, ImplEntry, WorkloadSpec};
@@ -52,7 +52,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
-    /// Run a benchmark across a sketch family's config grid.
+    /// Measure one `(impl, config)` cell of a sketch family.
     Bench(BenchArgs),
     /// List every `(family, impl)` pair the CLI can drive.
     ListImpls,
@@ -65,10 +65,10 @@ struct BenchArgs {
     /// Sketch family (hll, kll, cms, countsketch, elastic, nitro, univmon).
     #[arg(long)]
     sketch: String,
-    /// Implementation filter within the family. Accepts a single
-    /// name (`oxide`), a comma list (`oxide,datasketches`), or
-    /// `all` (the default). `list-impls` shows choices.
-    #[arg(long = "impl", default_value = "all")]
+    /// Implementation within the family — exactly one (`oxide`).
+    /// `list-impls` shows the choices. One invocation measures one
+    /// (impl, config) cell; to race several, invoke once per impl.
+    #[arg(long = "impl")]
     impl_name: String,
     /// Number of measured iterations per `(impl, config)` pair, inside one
     /// process. Summarised as mean / stddev / `throughput_samples`. These
@@ -172,10 +172,11 @@ struct BenchArgs {
     /// Default: all except merge (merge needs `--merge-shards`).
     #[arg(long)]
     metrics: Option<String>,
-    /// Sweep grid override. Format: `'k1=v1,v2 k2=v3,v4'`
-    /// (whitespace separates keys; commas separate values).
-    /// Example: `'rows=3,5 cols=1024,2048'` for cms. When
-    /// omitted, the family's default grid is used.
+    /// Construction config for this cell: `'k1=v1 k2=v2'`, one value
+    /// per key (e.g. `'rows=5 cols=2048'` for cms). Omitted → a
+    /// parameterless point, which impls with tunable knobs reject at
+    /// construction (naming the missing field). A comma list of values
+    /// is an error: one invocation is one cell, not a grid.
     #[arg(long)]
     config: Option<String>,
     /// Compute ground-truth accuracy per run. Implies
@@ -219,24 +220,13 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
     m
 }
 
-/// Resolve `--impl` into a concrete list of dispatch rows.
-fn select_impls(family: &str, filter: &str) -> Result<Vec<&'static ImplEntry>> {
-    let available = dispatch::impls_for_family(family);
-    if available.is_empty() {
+/// Resolve `--sketch`/`--impl` to the one dispatch row they name.
+fn select_impl(family: &str, impl_name: &str) -> Result<&'static ImplEntry> {
+    if dispatch::impls_for_family(family).is_empty() {
         bail!("unknown sketch family: {family}");
     }
-    if filter == "all" {
-        return Ok(available);
-    }
-    let wanted: Vec<&str> = filter.split(',').map(|s| s.trim()).collect();
-    let mut out = Vec::new();
-    for name in &wanted {
-        match available.iter().find(|e| e.impl_name == *name) {
-            Some(e) => out.push(*e),
-            None => bail!("no impl '{name}' for family '{family}'"),
-        }
-    }
-    Ok(out)
+    dispatch::find(family, impl_name)
+        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))
 }
 
 /// Open the `--report` destination. `None` or `"-"` → stdout.
@@ -411,133 +401,61 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         record_query_calls: args.accuracy && args.raw_csv.is_some(),
     };
 
-    let impls = select_impls(&args.sketch, &args.impl_name)?;
-    let grid = match args.config.as_deref() {
-        Some(s) => dispatch::parse_config(&args.sketch, s)?,
-        None => dispatch::default_grid(&args.sketch)?,
+    let entry = select_impl(&args.sketch, &args.impl_name)?;
+    // One cell = one (impl, config). `--config` is one point, or a
+    // parameterless point when omitted; keys are type-checked at
+    // construction, where the impl reads them.
+    let params = match args.config.as_deref() {
+        Some(s) => dispatch::config_point(&args.sketch, s)?,
+        None => ParamSet::empty(&args.sketch),
     };
-    if grid.is_empty() {
-        bail!("empty config grid for family '{}'", args.sketch);
-    }
-    // Type-check every grid point before measuring anything. `--config` is
-    // user input: a misspelled key should fail here, naming the key, rather
-    // than reaching the dispatch row and tripping the panic that guards
-    // against a wiring bug. Validating against the first row of the family is
-    // enough — every row of a family shares its params type.
-    {
-        // `select_impls` guarantees a non-empty selection, all of one family.
-        // Indexing rather than `if let Some(..)` keeps "validate nothing" from
-        // being a reachable state of a safety check.
-        let entry = impls[0];
-        for params in &grid {
-            if let Err(e) = (entry.params.validate)(params) {
-                bail!("--config: {e}");
-            }
-        }
-    }
 
-    // Build the workload once — it's shared across all (impl, config) pairs.
     let workload = spec.build(dtype)?;
 
-    // Every impl is enumerated over the whole grid. An impl that cannot run at
-    // a given point — e.g. a fixed-shape row the request misses — fails
-    // construction and is skipped below with a reason, not special-cased here.
-    let total: usize = impls.len() * grid.len();
+    if accuracy_cfg.enabled && entry.accuracy_kind == AccuracyKind::None {
+        eprintln!(
+            "sketchlib: --accuracy has no comparator for {}/{} (wrapper query is a stub) — running without ground truth",
+            entry.family, entry.impl_name
+        );
+    }
+
     eprintln!(
-        "sketchlib: {} family={} impls=[{}] configs={} total={}",
-        "sweep",
-        args.sketch,
-        impls
-            .iter()
-            .map(|e| e.impl_name)
-            .collect::<Vec<_>>()
-            .join(","),
-        grid.len(),
-        total,
+        "sketchlib: {}/{} config={} runs={} warmup={}",
+        entry.family,
+        entry.impl_name,
+        params_pretty(&params),
+        cfg.runs,
+        cfg.warmup_runs,
     );
 
+    // Whether this cell can run is decided at construction: a wrong dtype, a
+    // fixed shape the config misses, or a params struct missing a value all
+    // surface here as an error — the tool ran exactly what it was asked and
+    // that one thing could not run, so it fails rather than skipping on.
+    let reports = entry
+        .run(&cfg, &workload, &params, &accuracy_cfg)
+        .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", entry.family, entry.impl_name))?;
+
+    // Each `entry.run` call returns one report per metric pass (see
+    // `MetricsMask::passes()`); emit each on its own JSONL line and its own
+    // CSV row group. Downstream group-by on (sketch, impl, sketch_config,
+    // workload) merges them back.
     let mut sink = ReportSink::open(args.report.as_deref())?;
-    // `attempted` drives the progress line, `emitted` counts rows that
-    // actually produced reports. They are separate because a row can be
-    // rejected after it is announced — the dtype check lives inside the
-    // dispatch macro, which is the only place that knows what a row ingests.
-    let mut attempted = 0usize;
-    let mut emitted = 0usize;
-    let mut skipped = 0usize;
-
-    // One-time warning per impl when --accuracy is on but the
-    // family has no viable comparator — avoids a stderr line per
-    // config in a big sweep.
-    if accuracy_cfg.enabled {
-        for entry in &impls {
-            if entry.accuracy_kind == AccuracyKind::None {
-                eprintln!(
-                    "sketchlib: --accuracy has no comparator for {}/{} (wrapper query is a stub) — running without ground truth",
-                    entry.family, entry.impl_name
-                );
-            }
+    for report in &reports {
+        if let Some(dir) = args.raw_csv.as_deref() {
+            raw_csv::write_runs(
+                std::path::Path::new(dir),
+                entry,
+                Some(&params),
+                cfg.seed,
+                cfg.threads,
+                dtype,
+                report,
+            )?;
         }
-    }
-
-    for params in grid.iter() {
-        for entry in &impls {
-            // Whether this (impl, config) can run is decided at construction:
-            // `entry.run` builds the sketch and returns a reason if it can't
-            // (wrong dtype, a fixed shape the request misses, a baseline that
-            // takes no config). No pre-check here — announce, then run.
-            attempted += 1;
-            let cfg_label = params_pretty(params);
-            eprintln!(
-                "sketchlib: [{attempted}/{total}] {}/{} config={} runs={} warmup={}",
-                entry.family, entry.impl_name, cfg_label, cfg.runs, cfg.warmup_runs,
-            );
-            // Each `entry.run` call returns one report per metric
-            // pass (see `MetricsMask::passes()`); emit each on its
-            // own JSONL line and its own CSV row group. Downstream
-            // group-by on (sketch, impl, sketch_config, workload)
-            // merges them back.
-            let reports = match entry.run(&cfg, &workload, params, &accuracy_cfg) {
-                Ok(r) => r,
-                Err(mismatch) => {
-                    eprintln!(
-                        "sketchlib: skip {}/{} — {mismatch}",
-                        entry.family, entry.impl_name,
-                    );
-                    skipped += 1;
-                    continue;
-                }
-            };
-            emitted += 1;
-            for report in &reports {
-                if let Some(dir) = args.raw_csv.as_deref() {
-                    raw_csv::write_runs(
-                        std::path::Path::new(dir),
-                        entry,
-                        Some(params),
-                        cfg.seed,
-                        cfg.threads,
-                        dtype,
-                        report,
-                    )?;
-                }
-                let mut record = report.to_record();
-                record.sketch_config = Some(params.to_json_value());
-                sink.write_line(&record.to_jsonl())?;
-            }
-        }
-    }
-
-    eprintln!("sketchlib: done. emitted={emitted} skipped={skipped} total_planned={total}",);
-    // A sweep where every row was skipped exits 0 with an empty report file,
-    // which reads exactly like a sweep that ran and found nothing. The usual
-    // way to get here is `--dtype f64` against a hash-based family, so say so.
-    if emitted == 0 {
-        bail!(
-            "no implementation ran: all {total} planned (impl, config) pairs were skipped \
-             — {} rows do not accept a {} workload",
-            args.sketch,
-            dtype.as_str(),
-        );
+        let mut record = report.to_record();
+        record.sketch_config = Some(params.to_json_value());
+        sink.write_line(&record.to_jsonl())?;
     }
     Ok(())
 }

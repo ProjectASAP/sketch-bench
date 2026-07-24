@@ -3,8 +3,8 @@
 //! its `InitSketch` construction and the matching `Sketch` trait.
 //!
 //! Each row's `run` fn accepts a typed `&ParamSet` + an optional
-//! accuracy config so the CLI can sweep a grid of configs and
-//! optionally compute per-family ground-truth accuracy through
+//! accuracy config, so one CLI invocation measures one `(impl, config)`
+//! cell and optionally computes per-family ground-truth accuracy through
 //! the same table.
 
 use std::hash::Hash;
@@ -156,10 +156,11 @@ impl std::fmt::Display for DtypeMismatch {
     }
 }
 
-/// Why a `(impl, config)` cell did not run. Both variants say "cannot run,
-/// here is why", surfaced by the sweep as a skip line. One axis is the data
-/// type a wrapper ingests; the other is construction — a compile-time-fixed
-/// shape the request does not match, or a config that did not parse.
+/// Why a `(impl, config)` cell cannot run. Both variants say "cannot run,
+/// here is why"; the CLI surfaces either as the invocation's error. One axis
+/// is the data type a wrapper ingests; the other is construction — a
+/// compile-time-fixed shape the config does not match, or a config that did
+/// not parse.
 #[derive(Debug)]
 pub enum RunError {
     Dtype(DtypeMismatch),
@@ -196,38 +197,42 @@ fn built<S: InitSketch>(params: &ParamSet) -> S {
     S::init(params).expect("construction proven by the probe at the top of this run fn")
 }
 
-/// The operations a row needs from its params type, resolved from a single
-/// mention of that type.
+/// The operations a row can supply from its params type, resolved from a
+/// single mention of that type.
 ///
-/// These were two hand-written closures per row: 41 rows x 2 near-identical
-/// closures, and — worse — two independent places to get the type wrong.
-/// A countsketch row that still said `CmsParams` in its grid closure would
-/// have made that row's grid the whole family's default sweep, since
-/// `default_grid` reads a family's first row; it would have surfaced
-/// only at runtime, and only if the *other* closure had been pasted
-/// correctly. One mention makes the two structurally incapable of disagreeing.
+/// Both are now consumed **only by the dtype-acceptance tests** in this file:
+/// they need one valid, buildable config per impl to prove that (say) only the
+/// ordered rows accept `f64` and every row still accepts `i64`. Colocating the
+/// canonical config with the params type is why the tests never drift from the
+/// families — a row that named the wrong params type would build the wrong
+/// config and its own test would fail. The measurement path no longer reads
+/// either field: a single cell passes `--config` straight to `init`, which
+/// parses, validates and builds in one place. When the deferred expansion
+/// layer lands (running a series from one invocation), it is what will read
+/// `canonical` again.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // consumed by the tests below; see the type doc
 pub struct ParamsVTable {
-    /// The family's sweep grid when `--config` is omitted.
-    pub default_grid: fn() -> Vec<ParamSet>,
-    /// Type-check a grid point without building anything. `--config` is user
-    /// input, so a misspelled key must produce an error naming it, up front
-    /// for the whole grid, rather than surfacing mid-sweep once construction
-    /// reaches it.
+    /// The family's canonical config — one valid, buildable point the tests
+    /// build each impl from. Not a sweep grid: nothing in the measurement
+    /// path reads it.
+    pub canonical: fn() -> ParamSet,
+    /// Type-check a config point without building. Used by the test that
+    /// asserts each row's params vtable belongs to its own family.
     pub validate: fn(&ParamSet) -> Result<(), String>,
 }
 
 impl ParamsVTable {
     pub const fn of<P: SketchParams>() -> Self {
         Self {
-            default_grid: grid_of::<P>,
+            canonical: canonical_of::<P>,
             validate: validate_of::<P>,
         }
     }
 }
 
-fn grid_of<P: SketchParams>() -> Vec<ParamSet> {
-    P::default_grid().iter().map(ParamSet::of).collect()
+fn canonical_of<P: SketchParams>() -> ParamSet {
+    ParamSet::of(&P::canonical())
 }
 
 fn validate_of<P: SketchParams>(p: &ParamSet) -> Result<(), String> {
@@ -239,7 +244,10 @@ pub struct ImplEntry {
     pub impl_name: &'static str,
     pub description: &'static str,
     pub accuracy_kind: AccuracyKind,
-    /// Everything derived from this row's params type, named once.
+    /// The row's canonical config + validator, named once from its params
+    /// type. Read only by the tests (see [`ParamsVTable`]); the measurement
+    /// path passes `--config` straight to `init`.
+    #[allow(dead_code)]
     pub params: ParamsVTable,
     run: fn(
         cfg: &BenchConfig,
@@ -567,32 +575,19 @@ pub fn list() -> Vec<String> {
         .collect()
 }
 
-/// Default sweep grid for a family, read from the dispatch table — which is
-/// where the family's params type is already named — rather than from a
-/// second table keyed by family string that could disagree with it.
-pub fn default_grid(family: &str) -> Result<Vec<ParamSet>> {
-    let entry = impls_for_family(family)
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("unknown sketch family: {family}"))?;
-    Ok((entry.params.default_grid)())
-}
-
-/// Expand `--config` into one `ParamSet` per grid point.
+/// Parse the single `--config` point for a family.
 ///
-/// The expansion itself is `ParamSet::grid`, in `aqpbm-core`: splitting
-/// `k=v1,v2` into a Cartesian product is the same operation whatever the
-/// keys mean, and typing the values is serde's job driven by the params
-/// struct. What lives here is the one part that needs the family registry.
-///
-/// Checking the family is that part. The CLI also bails earlier, in
-/// `select_impls`, but this is `pub` and the guarantee should live in the
-/// function rather than in the order its callers happen to run.
-pub fn parse_config(family: &str, spec: &str) -> Result<Vec<ParamSet>> {
+/// The parse itself is `ParamSet::single`, in `aqpbm-core`: reading
+/// `k=v k2=v2` into one point is the same operation whatever the keys mean,
+/// and typing the values is serde's job driven by the params struct. What
+/// lives here is the one part that needs the family registry: checking that
+/// the family exists. The point's keys are type-checked later, at
+/// construction, where the impl reads them.
+pub fn config_point(family: &str, spec: &str) -> Result<ParamSet> {
     if impls_for_family(family).is_empty() {
         anyhow::bail!("unknown sketch family: {family}");
     }
-    ParamSet::grid(family, spec).map_err(Into::into)
+    ParamSet::single(family, spec).map_err(Into::into)
 }
 
 // ---------- shared runners ----------
@@ -1276,33 +1271,30 @@ mod registry_tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// The half of `--config` handling that stayed here: `ParamSet::grid`
+    /// The half of `--config` handling that stayed here: `ParamSet::single`
     /// cannot reject an unknown family, because `aqpbm-core` names none.
     /// This crate owns the registry, so it owns the check.
     #[test]
-    fn parse_config_rejects_an_unknown_family() {
-        assert!(parse_config("not_a_family", "k=1").is_err());
-        assert!(default_grid("not_a_family").is_err());
+    fn config_point_rejects_an_unknown_family() {
+        assert!(config_point("not_a_family", "k=1").is_err());
     }
 
     #[test]
-    fn parse_config_expands_a_real_family() {
-        let grid = parse_config("cms", "rows=3,5 cols=1024,2048").unwrap();
-        assert_eq!(grid.len(), 4);
-        let typed: Vec<sketch_bench::params::CmsParams> =
-            grid.iter().map(|p| p.parse().unwrap()).collect();
-        assert!(typed.contains(&sketch_bench::params::CmsParams {
-            rows: 3,
-            cols: 1024
-        }));
+    fn config_point_parses_a_real_family() {
+        let p = config_point("cms", "rows=3 cols=1024").unwrap();
+        assert_eq!(
+            p.parse::<sketch_bench::params::CmsParams>().unwrap(),
+            sketch_bench::params::CmsParams {
+                rows: 3,
+                cols: 1024
+            }
+        );
     }
 
     #[test]
-    fn default_grid_comes_from_the_dispatch_row() {
-        // Not from a second family -> grid table that could drift from it.
-        let grid = default_grid("hll").unwrap();
-        assert!(!grid.is_empty());
-        assert!(grid.iter().all(|p| p.family() == "hll"));
+    fn config_point_rejects_a_grid() {
+        // A comma list is a series; one invocation measures one cell.
+        assert!(config_point("cms", "rows=3,5 cols=1024").is_err());
     }
 
     /// The registry's size, pinned.
@@ -1328,11 +1320,7 @@ mod registry_tests {
     /// `f64`, and a hash-based row that starts accepting it (which would be
     /// wrong — `f64` is not `Hash`, and its bit pattern is the same input the
     /// `i64` run already hashed).
-    const ORDERED_ROWS: &[(&str, &str)] = &[
-        ("kll", "oxide"),
-        ("kll", "lib"),
-        ("dd", "lib"),
-    ];
+    const ORDERED_ROWS: &[(&str, &str)] = &[("kll", "oxide"), ("kll", "lib"), ("dd", "lib")];
 
     /// Exactly the rows whose wrapper takes text. Pinned as a set for the
     /// same reason as `ORDERED_ROWS`: a row silently dropping out of the
@@ -1361,9 +1349,9 @@ mod registry_tests {
 
     /// The guard that matters most here. `keys_only!` could be "simplified"
     /// into returning an empty report vec instead of an error, and nothing
-    /// else in the build would notice: the sweep would still exit 0, still
-    /// write a file, and simply contain fewer rows than it claimed to run.
-    /// That is the same failure as the refactor that deleted 32 rows.
+    /// else in the build would notice: the invocation would still exit 0,
+    /// still write a file, and simply contain fewer rows than it claimed to
+    /// run. That is the same failure as the refactor that deleted 32 rows.
     #[test]
     fn only_the_ordered_rows_accept_f64_and_they_really_run() {
         let f64_items = tiny(DType::F64);
@@ -1378,7 +1366,7 @@ mod registry_tests {
             record_query_calls: false,
         };
         for e in IMPLS {
-            let params = (e.params.default_grid)().remove(0);
+            let params = (e.params.canonical)();
             let expected = ORDERED_ROWS.contains(&(e.family, e.impl_name));
             match e.run(&cfg, &f64_items, &params, &acc) {
                 Ok(reports) => {
@@ -1428,7 +1416,7 @@ mod registry_tests {
             record_query_calls: false,
         };
         for e in IMPLS {
-            let params = (e.params.default_grid)().remove(0);
+            let params = (e.params.canonical)();
             let expected = TEXT_ROWS.contains(&(e.family, e.impl_name));
             match e.run(&cfg, &str_items, &params, &acc) {
                 Ok(reports) => {
@@ -1475,12 +1463,13 @@ mod registry_tests {
             record_query_calls: false,
         };
         for e in IMPLS {
-            // Fixed-matrix rows only accept their baked shape, so at an
-            // arbitrary grid point they refuse to build — a `RunError::Build`,
-            // not a narrowed dtype matrix. (The `polars` rows ignore the grid
-            // and build unconditionally, so they are not single-point here.)
+            // Fixed-matrix rows only accept their baked shape, so at the
+            // family's canonical config (off that shape) they refuse to build
+            // — a `RunError::Build`, not a narrowed dtype matrix. (The `polars`
+            // rows ignore the config and build unconditionally, so they build
+            // here rather than refusing.)
             let single_point = e.impl_name.contains("fixedmatrix");
-            let params = (e.params.default_grid)().remove(0);
+            let params = (e.params.canonical)();
             let got = e.run(&cfg, &i64_items, &params, &acc);
             if single_point {
                 assert!(
@@ -1514,29 +1503,26 @@ mod registry_tests {
     }
 
     /// Each row's params vtable must belong to its own family. Getting this
-    /// wrong is invisible at compile time and would hand one family's default
-    /// grid to another.
+    /// wrong is invisible at compile time and would hand one family's canonical
+    /// config to another.
     #[test]
     fn every_rows_params_match_its_family() {
         for e in IMPLS {
-            let grid = (e.params.default_grid)();
-            assert!(!grid.is_empty(), "{}/{}: empty grid", e.family, e.impl_name);
-            for p in &grid {
-                assert_eq!(
-                    p.family(),
-                    e.family,
-                    "{}/{}: grid is for family '{}'",
-                    e.family,
-                    e.impl_name,
-                    p.family()
-                );
-                assert!(
-                    (e.params.validate)(p).is_ok(),
-                    "{}/{}: own default grid fails its own validate",
-                    e.family,
-                    e.impl_name
-                );
-            }
+            let p = (e.params.canonical)();
+            assert_eq!(
+                p.family(),
+                e.family,
+                "{}/{}: canonical config is for family '{}'",
+                e.family,
+                e.impl_name,
+                p.family()
+            );
+            assert!(
+                (e.params.validate)(&p).is_ok(),
+                "{}/{}: own canonical config fails its own validate",
+                e.family,
+                e.impl_name
+            );
         }
     }
 }

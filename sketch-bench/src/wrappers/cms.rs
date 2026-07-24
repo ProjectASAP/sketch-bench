@@ -141,8 +141,8 @@ pub struct CmsLibFixedmatrixCustomFast(pub CountMin<CustomCountMinMatrixI32U128,
 impl InitSketch for CmsLibFixedmatrixCustomFast {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
-        // The shape is baked into the type, so this impl exists only at one
-        // grid point. Reject the rest — this is what `Constraint` used to
+        // The shape is baked into the type, so this impl exists at one shape
+        // only. Reject any other config — this is what `Constraint` used to
         // decide from outside; it belongs here, where the shape is known.
         require_shape(p.rows, p.cols, CMS_CUSTOM_FIXED_ROWS, CMS_CUSTOM_FIXED_COLS)?;
         Ok(Self(

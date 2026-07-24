@@ -33,10 +33,9 @@ pub struct PolarsCardinality {
 
 impl InitSketch for PolarsCardinality {
     /// Polars computes the exact answer; it has no `(rows, cols)` to tune, so
-    /// it ignores the `ParamSet` and builds unconditionally. Under a
-    /// multi-point `--config` sweep it therefore repeats the same numbers at
-    /// every grid point — a known rough edge, kept until an impl's own
-    /// (possibly empty) parameter space is modelled instead of the family's.
+    /// it ignores the `ParamSet` and builds unconditionally. Its record
+    /// therefore carries whatever config the cell was given — typically the
+    /// parameterless point, since there is nothing to set.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
         Ok(Self {
             buf: Vec::new(),

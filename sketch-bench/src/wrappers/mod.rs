@@ -17,8 +17,8 @@ pub mod univmon;
 use crate::init::BuildError;
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
-/// grid point; every other point of a sweep is a `BuildError` naming both
-/// shapes. Shared by the fixed CMS and CountSketch wrappers.
+/// shape; any other requested config is a `BuildError` naming both shapes.
+/// Shared by the fixed CMS and CountSketch wrappers.
 pub(crate) fn require_shape(
     rows: usize,
     cols: usize,
