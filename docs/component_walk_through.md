@@ -29,7 +29,7 @@ Dashed arrows are planned. An arrow points from a crate to what it depends on.
 
 ```mermaid
 flowchart TB
-        cli["<b>aqpbm-cli</b><br/><i>argument parsing, output</i>"]
+        cli["<b>aqpbm-cli</b><br/><i>argument parsing, calling necessary function from other crates, output</i>"]
 
         sb["<b>sketch-bench</b><br/><i>the sketch domain: implementations,<br/>params, comparators, exact baselines</i>"]
         ab["<b>aqp-bench</b><br/><i>V2 placeholder</i>"]
@@ -92,7 +92,11 @@ A common front-end that process input including command line argument and prefer
 **Target.** The only functionality of this crate is to invoke corresponding
 functionality of `sketch-bench` or `aqp-bench` or `other-bench`.
 
-**Today.** Holds functionalities that should go to other crates.
+**Today.** Cleaned up.
+- parse the command-line argument
+- call corresponding function in `sketch-bench`
+- operate datagen for workload passed to benchmark
+- write output received from `sketch-bench`
 
 Used to be `sketch-cli`.
 

@@ -2,31 +2,30 @@
 //! wrapped sketches and monomorphises a `BenchRunner` call over
 //! its `InitSketch` construction and the matching `Sketch` trait.
 //!
-//! Each row's `run` fn accepts a typed `&ParamSet` + an optional
-//! accuracy config, so one CLI invocation measures one `(impl, config)`
-//! cell and optionally computes per-family ground-truth accuracy through
-//! the same table.
+//! This is the benchmark's registry and execution engine — the bridge from
+//! a `(family, impl)` name to a real measurement. It lives beside the
+//! wrappers, comparators and `BenchRunner` it drives; a frontend (the
+//! `aqpbm-cli` binary today) resolves one row and calls its `run` fn to
+//! measure one `(impl, config)` cell, optionally with ground-truth accuracy.
 
 use std::hash::Hash;
 
-use anyhow::Result;
-use aqpbm_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
-use aqpbm_datagen::{DType, GenSpec};
-use sketch_bench::accuracy::cardinality::CardinalityGT;
-use sketch_bench::accuracy::frequency::FrequencyGT;
-use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
-use sketch_bench::params::{
+use crate::accuracy::cardinality::CardinalityGT;
+use crate::accuracy::frequency::FrequencyGT;
+use crate::accuracy::quantile::{RankErrorGT, RelativeErrorGT, ToF64};
+use crate::params::{
     CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
     ParamSet, SketchParams, UnivMonParams,
 };
-use sketch_bench::{BenchConfig, BenchReport, BenchRunner, BuildError, InitSketch};
+use crate::{BenchConfig, BenchReport, BenchRunner, BuildError, InitSketch};
+use anyhow::Result;
+use aqpbm_core::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
+use aqpbm_datagen::{DType, GenSpec};
 
-use sketch_bench::wrappers::{
-    cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, univmon,
-};
+use crate::wrappers::{cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, univmon};
 
-/// CLI-side accuracy settings. `enabled = false` → dispatch
-/// runs `NoGT` (no ground truth). `enabled = true` → each
+/// Accuracy settings the frontend fills in. `enabled = false` →
+/// dispatch runs `NoGT` (no ground truth). `enabled = true` → each
 /// family picks its own comparator (see `AccuracyKind`).
 #[derive(Debug, Clone, Copy)]
 pub struct AccuracyCfg {
@@ -200,7 +199,7 @@ fn built<S: InitSketch>(params: &ParamSet) -> S {
 /// The operations a row can supply from its params type, resolved from a
 /// single mention of that type.
 ///
-/// Both are now consumed **only by the dtype-acceptance tests** in this file:
+/// Both are consumed **only by the dtype-acceptance tests** in this file:
 /// they need one valid, buildable config per impl to prove that (say) only the
 /// ordered rows accept `f64` and every row still accepts `i64`. Colocating the
 /// canonical config with the params type is why the tests never drift from the
@@ -211,7 +210,6 @@ fn built<S: InitSketch>(params: &ParamSet) -> S {
 /// layer lands (running a series from one invocation), it is what will read
 /// `canonical` again.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // consumed by the tests below; see the type doc
 pub struct ParamsVTable {
     /// The family's canonical config — one valid, buildable point the tests
     /// build each impl from. Not a sweep grid: nothing in the measurement
@@ -247,7 +245,6 @@ pub struct ImplEntry {
     /// The row's canonical config + validator, named once from its params
     /// type. Read only by the tests (see [`ParamsVTable`]); the measurement
     /// path passes `--config` straight to `init`.
-    #[allow(dead_code)]
     pub params: ParamsVTable,
     run: fn(
         cfg: &BenchConfig,
@@ -259,7 +256,7 @@ pub struct ImplEntry {
 
 impl ImplEntry {
     /// Run the bench. Returns one `BenchReport` per metric pass —
-    /// see [`sketch_bench::MetricsMask::passes`]. Callers iterate
+    /// see [`crate::MetricsMask::passes`]. Callers iterate
     /// the Vec and emit each report on its own JSONL line / CSV
     /// row group.
     pub fn run(
@@ -561,7 +558,6 @@ pub fn impls_for_family(family: &str) -> Vec<&'static ImplEntry> {
     IMPLS.iter().filter(|e| e.family == family).collect()
 }
 
-#[allow(dead_code)]
 pub fn find(family: &str, impl_name: &str) -> Option<&'static ImplEntry> {
     IMPLS
         .iter()
@@ -604,7 +600,7 @@ where
     W::Item: Clone,
     S: aqpbm_core::sketch::Sketch<Item = W::Item>,
 {
-    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, sketch_bench::NoGT, _>(
+    BenchRunner::new(cfg.clone(), wk, family, impl_name).run::<S, _, crate::NoGT, _>(
         factory,
         insert_body,
         None,
@@ -613,11 +609,12 @@ where
 
 /// The hot-loop body for every dispatch row.
 ///
-/// Defined here in `aqpbm-cli`, the crate that also defines the wrappers,
+/// Defined here in `sketch-bench`, the crate that also defines the wrappers,
 /// so the wrapper's `update` and this call site land in the same codegen
 /// unit and LLVM can fold the update into the loop. Handing this to the
 /// runner — rather than letting the runner call `sketch.update(it)` from
-/// inside `sketch-bench` — is what keeps `lib-fixedmatrix-fast-*` unrolled.
+/// inside the generic `BenchRunner` — is what keeps `lib-fixedmatrix-fast-*`
+/// unrolled.
 #[inline(always)]
 fn insert_body<S: aqpbm_core::sketch::Sketch>(s: &mut S, it: &S::Item) {
     s.update(it);
@@ -1283,8 +1280,8 @@ mod registry_tests {
     fn config_point_parses_a_real_family() {
         let p = config_point("cms", "rows=3 cols=1024").unwrap();
         assert_eq!(
-            p.parse::<sketch_bench::params::CmsParams>().unwrap(),
-            sketch_bench::params::CmsParams {
+            p.parse::<crate::params::CmsParams>().unwrap(),
+            crate::params::CmsParams {
                 rows: 3,
                 cols: 1024
             }
