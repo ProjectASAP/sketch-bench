@@ -46,15 +46,22 @@ fn runner_end_to_end_produces_valid_jsonl() {
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    let reports = runner.run(
+    // The timed passes carry no ground truth; accuracy is scored separately.
+    let mut reports = runner.run_timed(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
-        Some(&CardinalityGT::default()),
     );
+    reports.extend(runner.run_accuracy(
+        || ExactCounter {
+            seen: Default::default(),
+        },
+        |s, it| s.update(it),
+        &CardinalityGT::default(),
+    ));
 
-    // `MetricsMask::all()` ⇒ 3 passes (throughput, latency, accuracy).
+    // `MetricsMask::all()` ⇒ throughput + latency (timed) + accuracy = 3 passes.
     assert_eq!(reports.len(), 3);
     for r in &reports {
         assert_eq!(r.per_run.len(), 3);
@@ -92,12 +99,11 @@ fn runner_respects_mask_noop_when_empty() {
         query_count: None,
         ..Default::default()
     };
-    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run(
+    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run_timed(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
-        None::<&CardinalityGT>,
     );
     // Empty mask ⇒ no passes ⇒ no reports.
     assert!(reports.is_empty());
@@ -123,12 +129,14 @@ fn the_merge_pass_is_labelled_merge_not_accuracy() {
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    let reports = runner.run(
+    // Both merge and accuracy compare against ground truth, so both belong to
+    // the accuracy half of the run.
+    let reports = runner.run_accuracy(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
-        Some(&CardinalityGT::default()),
+        &CardinalityGT::default(),
     );
 
     let merge = reports

@@ -116,11 +116,75 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// fold the wrapper's `update` into the loop. Every pass that reports
     /// throughput drives this same closure, so the number cannot depend on
     /// which `--metrics` flags were passed. See `insert_loop`.
-    pub fn run<S, F, G, Insert>(
+    /// The **timed** passes — throughput / latency / CPU / memory. No ground
+    /// truth: none of these measurements needs it, and keeping the oracle out
+    /// of this path is what lets the wrapper's `update` inline into the hot
+    /// loop unencumbered. Accuracy and merge (both of which compare against an
+    /// exact answer) run in [`run_accuracy`](Self::run_accuracy).
+    pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
+    where
+        S: Sketch<Item = W::Item>,
+        W::Item: Clone,
+        F: FnMut() -> S,
+        Insert: FnMut(&mut S, &W::Item),
+    {
+        let passes = self.config.metrics.passes();
+        if passes.is_empty() {
+            return Vec::new();
+        }
+        warmup_cpu_once();
+        let mut reports = Vec::with_capacity(passes.len());
+        for pass_mask in passes {
+            // Accuracy needs the ground truth; it belongs to `run_accuracy`.
+            if pass_mask.contains(MetricsMask::ACCURACY) {
+                continue;
+            }
+            let mut pass_cfg = self.config.clone();
+            pass_cfg.metrics = pass_mask;
+            if pass_mask.contains(MetricsMask::MERGE) {
+                // Merge lives on *both* sides: its fold is a timed measurement
+                // (here, with no oracle) and its post-merge correctness is an
+                // accuracy measurement (`run_accuracy`). Folding a single shard
+                // measures nothing, so skip it.
+                if pass_cfg.merge_shards < 2 {
+                    continue;
+                }
+                reports.push(self.run_merge_pass::<S, _, NoGT, _>(
+                    &mut factory,
+                    &mut insert,
+                    None,
+                    pass_cfg,
+                ));
+            } else if pass_mask == MetricsMask::THROUGHPUT {
+                // A throughput pass with no secondary CPU/MEMORY bits takes a
+                // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
+                // finalize_for_query, memory_bytes, and Welford-via-aggregate.
+                // Both paths time only the insert loop, so the choice affects
+                // what else is collected — never the throughput.
+                reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
+            } else {
+                // `NoGT` + `None`: these passes ignore ground truth. Naming the
+                // type here is what keeps `G` off the public signature.
+                reports.push(self.run_pass::<S, _, NoGT, _>(
+                    &mut factory,
+                    &mut insert,
+                    None,
+                    pass_cfg,
+                ));
+            }
+        }
+        reports
+    }
+
+    /// The **accuracy** passes — those that compare the sketch against an exact
+    /// answer: the accuracy pass itself, and the merge pass (whose headline
+    /// output is post-merge accuracy). Untimed relative to the hot loop, so
+    /// carrying the oracle `G` here costs the timed numbers nothing.
+    pub fn run_accuracy<S, F, G, Insert>(
         &self,
         mut factory: F,
         mut insert: Insert,
-        ground_truth: Option<&G>,
+        gt: &G,
     ) -> Vec<BenchReport>
     where
         S: Sketch<Item = W::Item>,
@@ -134,34 +198,28 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             return Vec::new();
         }
         warmup_cpu_once();
-        let mut reports = Vec::with_capacity(passes.len());
+        let mut reports = Vec::new();
         for pass_mask in passes {
             let mut pass_cfg = self.config.clone();
             pass_cfg.metrics = pass_mask;
-            // A throughput pass with no secondary CPU/MEMORY bits takes a
-            // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
-            // finalize_for_query, memory_bytes, and Welford-via-aggregate.
-            // Both paths run the identical `insert` closure over the
-            // identical slice and time only that loop, so the choice
-            // affects what else is collected — never the throughput.
-            // Folding a single shard measures nothing, and `MetricsMask::all()`
-            // sets the MERGE bit — so the guard belongs here, not only in the
-            // CLI: a library caller asking for "all metrics" must not silently
-            // acquire a pass that has no shards to fold.
-            if pass_mask.contains(MetricsMask::MERGE) && pass_cfg.merge_shards < 2 {
-                continue;
-            }
             if pass_mask.contains(MetricsMask::MERGE) {
-                reports.push(self.run_merge_pass(
-                    &mut factory,
-                    &mut insert,
-                    ground_truth,
-                    pass_cfg,
-                ));
-            } else if pass_mask == MetricsMask::THROUGHPUT {
-                reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
-            } else {
-                reports.push(self.run_pass(&mut factory, &mut insert, ground_truth, pass_cfg));
+                // Folding a single shard measures nothing, and
+                // `MetricsMask::all()` sets the MERGE bit — so the guard belongs
+                // here: a caller asking for "all metrics" must not silently
+                // acquire a pass that has no shards to fold.
+                if pass_cfg.merge_shards < 2 {
+                    continue;
+                }
+                let mut report =
+                    self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
+                // `run_timed` owns merge timing; this half keeps only the
+                // post-merge accuracy, so the two do not both claim a
+                // `merge_time_ms` (theirs is the clean one, this fold is timed
+                // only to produce a sketch to compare).
+                report.bench.merge_time_ms = None;
+                reports.push(report);
+            } else if pass_mask.contains(MetricsMask::ACCURACY) {
+                reports.push(self.run_pass(&mut factory, &mut insert, Some(gt), pass_cfg));
             }
         }
         reports

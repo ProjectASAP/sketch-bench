@@ -356,3 +356,4 @@ impl Sketch for CmsLibVector2dRegular {
         Ok(())
     }
 }
+

@@ -11,21 +11,22 @@ use std::path::Path;
 
 use anyhow::Result;
 use aqpbm_datagen::DType;
-use sketch_bench::dispatch::ImplEntry;
 use sketch_bench::legacy_csv;
 use sketch_bench::params::ParamSet;
 use sketch_bench::runner::BenchReport;
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_runs(
     dir: &Path,
-    entry: &ImplEntry,
+    family: &str,
+    impl_name: &str,
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
     dtype: DType,
     report: &BenchReport,
 ) -> Result<()> {
-    let files = legacy_csv::render(entry, params, seed, workers, dtype, report);
+    let files = legacy_csv::render(family, impl_name, params, seed, workers, dtype, report);
     if files.is_empty() {
         return Ok(());
     }

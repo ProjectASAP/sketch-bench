@@ -79,6 +79,7 @@ impl Sketch for PolarsCardinality {
     }
 }
 
+
 /// Polars-backed frequency: `group_by(v).agg(len)`, then cache
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
@@ -303,3 +304,4 @@ impl Sketch for PolarsQuantileDd {
         self.0.memory_bytes()
     }
 }
+

@@ -9,8 +9,8 @@
 
 pub mod accuracy;
 pub mod aggregation;
+pub mod cell;
 pub mod config;
-pub mod dispatch;
 pub mod init;
 pub mod legacy_csv;
 pub mod metrics;
