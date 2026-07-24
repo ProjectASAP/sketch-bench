@@ -68,7 +68,9 @@ This is where core functionality lives.
 - timing functionality
 - possibly more
 
-**Today.** None of the four have landed yet.
+**Today.** Two have partially landed, in `hot_loop`:
+- warm-up of cpu
+- the timed insert loop (a partial runner loop; the rest still in `sketch-bench`)
 
 Used to be `sketch-core`.
 

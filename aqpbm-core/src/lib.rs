@@ -8,6 +8,7 @@
 //! for the full dependency-direction diagram.
 
 pub mod config;
+pub mod hot_loop;
 pub mod latency;
 pub mod metrics;
 pub mod probe;
