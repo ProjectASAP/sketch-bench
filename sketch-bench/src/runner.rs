@@ -4,55 +4,14 @@
 //!
 //! See `docs/DESIGN.md` §5.3 + §5.4.
 
-use std::sync::Once;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-/// Ramp the CPU **once per process**, before the first measured loop of any
-/// pass.
-///
-/// This used to be called from the throughput fast path only, which made the
-/// warm-up an accident of which `--metrics` flags were passed: a THROUGHPUT
-/// pass that also carried the CPU/MEMORY bits took the other branch and was
-/// timed with no governor ramp at all. Two passes measured at two different
-/// clock states is not a comparison. Gating on `Once` also stops each of a
-/// cell's metric passes from re-burning the warm-up duration — the ramp only
-/// the first pass in the process actually needs.
-fn warmup_cpu_once() {
-    static WARMED: Once = Once::new();
-    WARMED.call_once(warmup_cpu_from_env);
-}
-
-/// Burn CPU on the current core so the cpufreq governor ramps to max turbo
-/// before timing starts. External shell warmups don't work reliably because
-/// the governor can drop frequency during the bench process's exec/startup
-/// window.
-///
-/// Duration is read from `BENCH_WARMUP_SECS`. **Defaults to 0** — a library
-/// must not burn ten seconds of a caller's CPU because it was linked. The
-/// measurement default lives in `sketchlib`'s `main`, which sets the variable
-/// when the operator hasn't; every integration test and downstream embedder
-/// therefore pays nothing. (`cfg!(test)` cannot express this: an integration
-/// test links this crate as a plain dependency, compiled without `cfg(test)`.)
-fn warmup_cpu_from_env() {
-    let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    if secs == 0 {
-        return;
-    }
-    let deadline = Instant::now() + Duration::from_secs(secs);
-    let mut x: u64 = 0xdeadbeef;
-    while Instant::now() < deadline {
-        for _ in 0..10_000 {
-            x = x
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-        }
-        std::hint::black_box(x);
-    }
-}
-
+// The CPU warm-up and the single timed insert loop moved to `aqpbm-core`:
+// they are generic over `Sketch` (already in core) and carry no sketch-domain
+// knowledge. `insert_loop` stays `#[inline(always)]`, so thin LTO folds the
+// wrapper's `update` into it exactly as before — the fold never depended on
+// co-location. See `aqpbm_core::hot_loop`.
+use aqpbm_core::hot_loop::{insert_loop, warmup_cpu_once};
 use aqpbm_core::probe::NoopSink;
 use aqpbm_core::report::{BenchSection, Mode, Record, RunStats, Source};
 use aqpbm_core::sketch::Sketch;
@@ -622,41 +581,6 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             config: pass_cfg,
         }
     }
-}
-
-/// **The** insert loop. Times `insert` over every item and returns the
-/// elapsed nanoseconds.
-///
-/// Every pass that reports throughput goes through here, and nothing else
-/// is inside the timed region — no metric snapshot, no `finalize_for_query`,
-/// no `memory_bytes`. This function existing exactly once is a correctness
-/// property, not tidiness:
-///
-/// The throughput fast path and the CPU/MEMORY path used to carry their own
-/// copies of this loop, one calling a closure supplied by `aqpbm-cli` and
-/// the other calling `sketch.update(it)` from inside `sketch-bench`. Both
-/// timed the right region, so the bug was invisible to review — but the
-/// cross-crate call in the second copy cost the asap_sketchlib FixedMatrix
-/// FastPath its inlining, and `cms/lib-fixedmatrix-fast-32k` reported
-/// **5.1% lower throughput** under `--metrics throughput,cpu,memory` than
-/// under `--metrics throughput` (5 alternating rounds, non-overlapping
-/// ranges). The penalty scaled with how much an implementation relies on
-/// inlining — ~1.5% for `hll/oxide` — so it did not cancel out: it changed
-/// the ranking *between* implementations, and the slow path is the one the
-/// default `--metrics` selects.
-#[inline(always)]
-fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
-where
-    S: Sketch,
-    Insert: FnMut(&mut S, &S::Item),
-{
-    let start = Instant::now();
-    for it in items {
-        insert(sketch, it);
-    }
-    let ns = start.elapsed().as_nanos() as u64;
-    std::hint::black_box(&*sketch);
-    ns
 }
 
 /// One measured run: install `FullSink`, time insert (+
