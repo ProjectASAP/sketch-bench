@@ -3,7 +3,6 @@
 //! `bench` measures one `(impl, config)` cell of a sketch family.
 //! `list-impls` enumerates registered `(family, impl)` pairs.
 
-mod catalog;
 mod cli;
 mod raw_csv;
 mod repeat;
@@ -43,6 +42,10 @@ use sketch_bench::params::ParamSet;
 use sketch_bench::{BenchConfig, MetricsMask};
 
 use cli::{BenchArgs, Cli, Cmd};
+// The catalog — which sketches exist, how to build them, which oracle scores
+// them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
+// not know the set; it asks. The existing `catalog::` call sites resolve here.
+use sketch_bench::catalog;
 use sketch_bench::cell::{AccuracyCfg, WorkloadSpec};
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {

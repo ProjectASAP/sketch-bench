@@ -9,6 +9,7 @@
 
 pub mod accuracy;
 pub mod aggregation;
+pub mod catalog;
 pub mod cell;
 pub mod config;
 pub mod init;
