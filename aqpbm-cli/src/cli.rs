@@ -1,5 +1,6 @@
 //! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_bench`, `workload_spec`) and `dispatch`.
+//! lives in `main.rs` (`run_bench`, `workload_spec`); the sketch catalog it
+//! dispatches through lives in `sketch_bench::catalog`.
 
 use clap::{Parser, Subcommand};
 

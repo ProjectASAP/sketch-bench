@@ -1,26 +1,31 @@
-//! The frontend catalog: the set of `(family, impl)` this CLI exposes, and the
+//! The catalog: the set of `(family, impl)` this crate exposes, and the
 //! `match` that resolves one to a concrete sketch type + its oracle.
 //!
-//! There is no registry table in the library — running a cell is a plain
-//! `cell::run_cell::<T>` (timed) plus, when `--accuracy` is on,
-//! `cell::score_cell::<T, Oracle>` (untimed). This module is where the runtime
-//! strings `("hll", "oxide")` bind to those monomorphised calls. [`IMPLS`] is
-//! the human-facing list (for `list-impls` and validation); [`run`] is the
-//! executable match. A test pins that the two agree.
+//! This is the sketch domain's registry, so it lives here, not in the CLI: the
+//! frontend does not know which sketches exist, how to build them, or which
+//! oracle scores them — it asks this module. A future parallel bench crate
+//! (`aqp-bench`) ships its own catalog, and the CLI multiplexes between them.
+//!
+//! There is no registry *table*: running a cell is a plain `cell::run_cell::<T>`
+//! (timed) plus, when `--accuracy` is on, `cell::score_cell::<T, Oracle>`
+//! (untimed). This module is where the runtime strings `("hll", "oxide")` bind
+//! to those monomorphised calls. [`IMPLS`] is the human-facing list (for
+//! `list-impls` and validation); [`run`] is the executable match. A test pins
+//! that the two agree.
 
 use anyhow::Result;
 use aqpbm_core::sketch::Sketch;
 use aqpbm_datagen::DType;
 
-use sketch_bench::accuracy::cardinality::CardinalityGT;
-use sketch_bench::accuracy::frequency::FrequencyGT;
-use sketch_bench::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
-use sketch_bench::accuracy::GroundTruth;
-use sketch_bench::cell::{self, AccuracyCfg, DtypeMismatch, FromItems, Items, RunError};
-use sketch_bench::init::InitSketch;
-use sketch_bench::params::ParamSet;
-use sketch_bench::wrappers::{cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, univmon};
-use sketch_bench::{BenchConfig, BenchReport};
+use crate::accuracy::cardinality::CardinalityGT;
+use crate::accuracy::frequency::FrequencyGT;
+use crate::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
+use crate::accuracy::GroundTruth;
+use crate::cell::{self, AccuracyCfg, DtypeMismatch, FromItems, Items, RunError};
+use crate::init::InitSketch;
+use crate::params::ParamSet;
+use crate::wrappers::{cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, univmon};
+use crate::{BenchConfig, BenchReport};
 
 /// One catalog entry: `(family, impl, description, scores_accuracy)`. Metadata
 /// only — the executable binding is in [`run`]. `scores_accuracy` is `false`
