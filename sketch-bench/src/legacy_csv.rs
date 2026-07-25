@@ -25,7 +25,7 @@
 use aqpbm_datagen::DType;
 
 use crate::params::ParamSet;
-use crate::runner::BenchReport;
+use crate::BenchReport;
 use crate::MetricsMask;
 
 /// One CSV file to write: its filename (relative to the `--raw-csv` dir), its

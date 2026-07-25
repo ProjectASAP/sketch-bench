@@ -11,9 +11,9 @@ use std::path::Path;
 
 use anyhow::Result;
 use aqpbm_datagen::DType;
+use aqpbm_core::runner::BenchReport;
 use sketch_bench::legacy_csv;
 use sketch_bench::params::ParamSet;
-use sketch_bench::runner::BenchReport;
 
 #[allow(clippy::too_many_arguments)]
 pub fn write_runs(

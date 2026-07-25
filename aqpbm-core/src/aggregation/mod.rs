@@ -169,7 +169,7 @@ fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
         };
         n_runs += 1;
         for (k, v) in m {
-            acc.entry(k.as_str()).or_insert_with(Welford::new).push(*v);
+            acc.entry(k.as_str()).or_default().push(*v);
         }
     }
     if acc.is_empty() {
