@@ -7,6 +7,7 @@
 //! downstream ASAP app depend here — see `docs/DESIGN.md` §3.1
 //! for the full dependency-direction diagram.
 
+pub mod aggregation;
 pub mod config;
 pub mod hot_loop;
 pub mod latency;

@@ -8,7 +8,6 @@
 //! See `docs/DESIGN.md` §5 for the full contract.
 
 pub mod accuracy;
-pub mod aggregation;
 pub mod catalog;
 pub mod cell;
 pub mod config;

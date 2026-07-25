@@ -17,13 +17,13 @@ use aqpbm_core::report::{BenchSection, Mode, Record, RunStats, Source};
 use aqpbm_core::sketch::Sketch;
 use aqpbm_core::workload::{Workload, WorkloadDesc};
 
+use aqpbm_core::aggregation::aggregate;
+use aqpbm_core::aggregation::welford::Welford;
 use aqpbm_core::metrics::{
     CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, Rss, RunMetrics, WallClock,
 };
 
 use crate::accuracy::{Comparison, GroundTruth};
-use crate::aggregation::aggregate;
-use crate::aggregation::welford::Welford;
 use crate::config::{BenchConfig, MetricsMask};
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
