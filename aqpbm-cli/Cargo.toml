@@ -21,7 +21,9 @@ heap-jemalloc = ["sketch-bench/heap-jemalloc", "dep:tikv-jemallocator"]
 # Wraps the global allocator in a counting shim so the runner can
 # attribute heap usage to a specific sketch's lifetime. Composes
 # with `heap-jemalloc` (then jemalloc is the inner allocator).
-heap-track = ["sketch-bench/heap-track"]
+# `TrackingAllocator` now lives in aqpbm-core (the CLI installs it
+# as `#[global_allocator]` directly), so enable it there too.
+heap-track = ["sketch-bench/heap-track", "aqpbm-core/heap-track"]
 
 [dependencies]
 aqpbm-datagen.workspace = true

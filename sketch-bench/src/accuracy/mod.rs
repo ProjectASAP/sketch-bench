@@ -8,6 +8,12 @@ use std::collections::BTreeMap;
 
 use aqpbm_core::sketch::Sketch;
 
+// Per-call query telemetry is a pure metric sample with no
+// sketch-domain knowledge, so its type lives in `aqpbm-core`
+// alongside `RunMetrics`. Re-exported here because the comparators
+// in this module are what populate it.
+pub use aqpbm_core::metrics::QueryCallSample;
+
 pub mod cardinality;
 pub mod frequency;
 pub mod quantile;
@@ -45,27 +51,6 @@ pub struct Comparison {
     /// per-call query CSV emitted by `throughput/{hll,kll,dd}/`).
     /// Empty otherwise so production runs pay nothing.
     pub query_calls: Option<Vec<QueryCallSample>>,
-}
-
-/// One row of per-call query telemetry. Mirrors the columns the
-/// legacy `throughput/{hll,kll,dd}/rust/src/bin/query.rs` emit
-/// per call: a strictly-monotonic 1-based call index, the
-/// timed `sketch.query()` wall, the sketch's answer (cast to
-/// `f64`), and — for quantile families — the percentile being
-/// queried plus the outer repeat number.
-#[derive(Debug, Clone, Copy)]
-pub struct QueryCallSample {
-    pub call_index: usize,
-    pub nanoseconds: u64,
-    pub estimate: f64,
-    /// Percentile being queried (0..=100 fraction). NaN for
-    /// cardinality / frequency families.
-    pub percentile: f64,
-    /// Outer "repeat" index used by KLL / DD legacy harnesses
-    /// (each run sweeps the percentile array `REPEATS_PER_RUN`
-    /// times to thicken the sample). 0 for the families that
-    /// don't repeat.
-    pub repeat: usize,
 }
 
 /// A comparator between a sketch's estimate and an exact answer

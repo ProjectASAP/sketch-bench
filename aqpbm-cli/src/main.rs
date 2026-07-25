@@ -24,13 +24,13 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(all(feature = "heap-jemalloc", feature = "heap-track"))]
 #[global_allocator]
-static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<tikv_jemallocator::Jemalloc> =
-    sketch_bench::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
+static GLOBAL: aqpbm_core::metrics::heap_track::TrackingAllocator<tikv_jemallocator::Jemalloc> =
+    aqpbm_core::metrics::heap_track::TrackingAllocator(tikv_jemallocator::Jemalloc);
 
 #[cfg(all(feature = "heap-track", not(feature = "heap-jemalloc")))]
 #[global_allocator]
-static GLOBAL: sketch_bench::metrics::heap_track::TrackingAllocator<std::alloc::System> =
-    sketch_bench::metrics::heap_track::TrackingAllocator(std::alloc::System);
+static GLOBAL: aqpbm_core::metrics::heap_track::TrackingAllocator<std::alloc::System> =
+    aqpbm_core::metrics::heap_track::TrackingAllocator(std::alloc::System);
 
 use std::fs::OpenOptions;
 use std::io::Write;

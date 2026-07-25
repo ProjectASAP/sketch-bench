@@ -15,6 +15,15 @@ description = "Core types (Sketch trait, Probe, Workload, MetricsMask, v1 report
 # `default-features = false`.
 default = ["hdrhist"]
 hdrhist = ["dep:hdrhistogram"]
+# Enable tikv-jemalloc-ctl `stats.allocated` sampling in the
+# `memory` recorder. Forces jemalloc on the linking binary —
+# opt-in only. Off → heap_allocated_kb = None.
+heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
+# Compile in the per-sketch tracking allocator (metrics/heap_track.rs).
+# The linking binary still has to install `TrackingAllocator` as
+# its `#[global_allocator]` for counters to advance — see
+# `aqpbm-cli`'s allocator setup. Off → heap_bytes_* = None.
+heap-track = []
 
 [dependencies]
 aqpbm-datagen.workspace = true
@@ -28,3 +37,8 @@ rand.workspace = true
 rand_distr.workspace = true
 rand_xoshiro.workspace = true
 thiserror.workspace = true
+tikv-jemalloc-ctl = { workspace = true, optional = true }
+
+# `metrics::time` reads CPU time via `getrusage`.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

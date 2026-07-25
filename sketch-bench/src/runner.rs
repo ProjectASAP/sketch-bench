@@ -17,13 +17,14 @@ use aqpbm_core::report::{BenchSection, Mode, Record, RunStats, Source};
 use aqpbm_core::sketch::Sketch;
 use aqpbm_core::workload::{Workload, WorkloadDesc};
 
+use aqpbm_core::metrics::{
+    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, Rss, RunMetrics, WallClock,
+};
+
 use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::config::{BenchConfig, MetricsMask};
-use crate::metrics::{
-    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, Rss, RunMetrics, WallClock,
-};
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
 /// sketch against a fixed workload, feeding each iteration's
@@ -609,8 +610,8 @@ where
 
     #[cfg(feature = "heap-track")]
     let heap_before = {
-        crate::metrics::heap_track::reset_peak();
-        crate::metrics::heap_track::snapshot()
+        aqpbm_core::metrics::heap_track::reset_peak();
+        aqpbm_core::metrics::heap_track::snapshot()
     };
 
     let factory_sketch = factory();
@@ -633,7 +634,7 @@ where
     sink.end_insert_phase();
 
     #[cfg(feature = "heap-track")]
-    let heap_after = crate::metrics::heap_track::snapshot();
+    let heap_after = aqpbm_core::metrics::heap_track::snapshot();
 
     // Query-phase timing is handled by each GroundTruth
     // comparator (which knows the wrapper's natural Query type).
@@ -684,8 +685,8 @@ where
 
     #[cfg(feature = "heap-track")]
     let heap_before = {
-        crate::metrics::heap_track::reset_peak();
-        crate::metrics::heap_track::snapshot()
+        aqpbm_core::metrics::heap_track::reset_peak();
+        aqpbm_core::metrics::heap_track::snapshot()
     };
 
     let mut sketch = factory();
@@ -700,7 +701,7 @@ where
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
 
     #[cfg(feature = "heap-track")]
-    let heap_after = crate::metrics::heap_track::snapshot();
+    let heap_after = aqpbm_core::metrics::heap_track::snapshot();
 
     let wall_time_ns = wall.elapsed_ns();
     let (cpu_user_ns, cpu_sys_ns) = match cpu.take() {

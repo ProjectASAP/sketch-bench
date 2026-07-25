@@ -1,24 +1,41 @@
-//! Metric recorders + the `FullSink` that composes them.
+//! The per-run metric record + the `FullSink` that composes the
+//! recorders to fill one.
 //!
 //! See `docs/DESIGN.md` §5.5.
 
-#[cfg(feature = "heap-track")]
-pub mod heap_track;
-pub mod memory;
-pub mod throughput;
-pub mod time;
+use std::collections::BTreeMap;
 
-use aqpbm_core::probe::MetricsSink;
+use crate::latency::{LatencyRecorder, LatencySnapshot};
+use crate::metrics::mask::MetricsMask;
+use crate::metrics::memory::{JemallocAllocated, Rss};
+use crate::metrics::time::{CpuTimeSampler, WallClock};
+use crate::probe::MetricsSink;
 
-use crate::config::MetricsMask;
-
-// The latency recorder moved to `aqpbm-core::latency` — the
-// embedded `sketch-runtime::Sampler` records latency too, and
-// pulling it from here forced a dep on this whole crate.
-pub use aqpbm_core::latency::{LatencyRecorder, LatencySnapshot};
-pub use memory::{JemallocAllocated, Rss};
-pub use throughput::ItemsPerSec;
-pub use time::{CpuTimeSample, CpuTimeSampler, WallClock};
+/// One row of per-call query telemetry. Mirrors the columns the
+/// legacy `throughput/{hll,kll,dd}/rust/src/bin/query.rs` emit
+/// per call: a strictly-monotonic 1-based call index, the
+/// timed `sketch.query()` wall, the sketch's answer (cast to
+/// `f64`), and — for quantile families — the percentile being
+/// queried plus the outer repeat number.
+///
+/// Pure telemetry with no sketch-domain knowledge, so it lives in
+/// `aqpbm-core` alongside `RunMetrics` (which carries a
+/// `Vec<QueryCallSample>`); the sketch-domain accuracy comparators
+/// in `sketch-bench` populate it.
+#[derive(Debug, Clone, Copy)]
+pub struct QueryCallSample {
+    pub call_index: usize,
+    pub nanoseconds: u64,
+    pub estimate: f64,
+    /// Percentile being queried (0..=100 fraction). NaN for
+    /// cardinality / frequency families.
+    pub percentile: f64,
+    /// Outer "repeat" index used by KLL / DD legacy harnesses
+    /// (each run sweeps the percentile array `REPEATS_PER_RUN`
+    /// times to thicken the sample). 0 for the families that
+    /// don't repeat.
+    pub repeat: usize,
+}
 
 /// Metrics produced by a single run. One `FullSink` finalises
 /// into one of these. The `BenchRunner` aggregates `RunMetrics`
@@ -64,13 +81,13 @@ pub struct RunMetrics {
     /// Named accuracy scalars from this run's comparator. Flat rather
     /// than an opaque JSON blob so `aggregate` can fold every key across
     /// runs without knowing any family's shape — see `accuracy::Comparison`.
-    pub accuracy: Option<std::collections::BTreeMap<String, f64>>,
+    pub accuracy: Option<BTreeMap<String, f64>>,
     /// Per-call query samples — `Some` only when the frontend
     /// requested `record_calls` on a comparator that supports
     /// it. Consumed by `aqpbm-cli/raw_csv` to back the legacy
     /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
     /// not surfaced in the v2 JSONL record.
-    pub query_calls: Option<Vec<crate::accuracy::QueryCallSample>>,
+    pub query_calls: Option<Vec<QueryCallSample>>,
 }
 
 impl RunMetrics {

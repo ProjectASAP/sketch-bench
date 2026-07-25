@@ -18,7 +18,7 @@
 
 #![cfg(feature = "heap-track")]
 
-use sketch_bench::metrics::heap_track::{reset_peak, snapshot, TrackingAllocator};
+use aqpbm_core::metrics::heap_track::{reset_peak, snapshot, TrackingAllocator};
 
 #[global_allocator]
 static A: TrackingAllocator<std::alloc::System> = TrackingAllocator(std::alloc::System);

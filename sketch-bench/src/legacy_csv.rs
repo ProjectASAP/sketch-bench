@@ -471,7 +471,7 @@ fn format_insert_row(
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
-    run: &crate::metrics::RunMetrics,
+    run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
     let lead = leading_value(family, seed, run_idx);
     let total_items = run.items_inserted.max(1);
@@ -495,7 +495,7 @@ fn format_query_row(
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
-    run: &crate::metrics::RunMetrics,
+    run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
     let lead = leading_value(family, seed, run_idx);
     let total_items = run.items_inserted;

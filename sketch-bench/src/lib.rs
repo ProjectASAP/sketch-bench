@@ -14,12 +14,15 @@ pub mod cell;
 pub mod config;
 pub mod init;
 pub mod legacy_csv;
-pub mod metrics;
 pub mod params;
 pub mod runner;
 pub mod wrappers;
 
 pub use config::{BenchConfig, MetricsMask};
 pub use init::{BuildError, InitSketch};
-pub use metrics::{FullSink, LatencySnapshot, RunMetrics};
+// The metric primitives + per-run record moved to `aqpbm-core`;
+// re-exported here so `sketch_bench::{FullSink, RunMetrics, ...}`
+// still resolve for existing callers.
+pub use aqpbm_core::latency::LatencySnapshot;
+pub use aqpbm_core::metrics::{FullSink, RunMetrics};
 pub use runner::{BenchReport, BenchRunner, NoGT};

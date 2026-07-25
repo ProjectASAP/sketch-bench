@@ -3,10 +3,10 @@
 
 pub mod welford;
 
+use aqpbm_core::metrics::{ItemsPerSec, RunMetrics};
 use aqpbm_core::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
 use super::config::MetricsMask;
-use super::metrics::{ItemsPerSec, RunMetrics};
 use welford::Welford;
 
 /// Roll up a slice of `RunMetrics` into a single `BenchSection`.
