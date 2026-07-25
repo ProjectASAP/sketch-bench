@@ -1,7 +1,7 @@
 //! Thin newtypes over each concrete sketch implementation in the
 //! repo, one file per family. Each implements `Sketch` (drive it)
-//! and `InitSketch` (build it from a `ParamSet`); `dispatch.rs`
-//! picks between them at CLI parse time.
+//! and `InitSketch` (build it from a `ParamSet`); `sketch_bench::catalog`
+//! binds the runtime `(family, impl)` strings to these types.
 
 pub mod cms;
 pub mod countsketch;

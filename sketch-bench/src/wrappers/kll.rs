@@ -21,8 +21,9 @@ use sketch_oxide::Mergeable as _;
 // ---------- sketch_oxide KLL ----------
 // `KllSketch::default()` constructs with the crate's built-in `k`
 // (no `new(k)` constructor exposed through the stable surface).
-// We store the requested `k` so `memory_bytes` is sensible; the
-// dispatch marks oxide KLL as fixed-shape.
+// `init` accepts any requested `k` but cannot honour it — it stores
+// the value only so `memory_bytes` is sensible, so `k` changes the
+// reported footprint, not the sketch.
 ///
 /// Generic over the item type. The inner sketch is `f64`-native, so `T = f64`
 /// monomorphises `to_f64` to the identity and the insert path holds no

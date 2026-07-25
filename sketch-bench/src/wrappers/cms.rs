@@ -130,7 +130,7 @@ impl Sketch for CmsDatasketches {
 // ---------- asap_sketchlib: FixedMatrix custom + FastPath ----------
 // Shape is baked at compile time by `impl_fixed_matrix!`. Only
 // runs when the requested `(rows, cols)` matches this shape;
-// otherwise the dispatch skips it.
+// otherwise `init` rejects the config with a `BuildError`.
 impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
 
 pub const CMS_CUSTOM_FIXED_ROWS: usize = 5;
@@ -227,9 +227,9 @@ impl Sketch for CmsLibFixedmatrixFast32k {
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
-// `FixedMatrix::default()` bakes in (5, 2048). Treated as a
-// fixed-shape impl in dispatch; only runs when `(rows, cols)`
-// matches that.
+// `FixedMatrix::default()` bakes in (5, 2048). A fixed-shape impl:
+// its `init` accepts only `(rows, cols)` matching that, rejecting
+// anything else with a `BuildError`.
 pub const CMS_FIXED_ROWS: usize = 5;
 pub const CMS_FIXED_COLS: usize = 2048;
 

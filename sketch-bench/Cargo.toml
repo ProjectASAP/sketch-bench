@@ -29,16 +29,14 @@ accuracy-topk = []
 rand = { workspace = true }
 rand_xoshiro = { workspace = true }
 aqpbm-core.workspace = true
-# The dispatch registry's `WorkloadSpec`/`Items` build workloads through the
-# one generator; `DType` also tags a row's item type.
+# `cell`'s `WorkloadSpec`/`Items` build workloads through the one
+# generator; `DType` also tags a row's item type.
 aqpbm-datagen.workspace = true
-# The dispatch registry surfaces "cannot run this cell" as an `anyhow` error.
+# `cell::run_cell` / `catalog::run` surface "cannot run this cell" as an
+# `anyhow` error.
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-chrono.workspace = true
-hashbrown.workspace = true
-thiserror.workspace = true
 tikv-jemalloc-ctl = { workspace = true, optional = true }
 
 # The wrapped implementations under test. They arrived with `wrappers/`:

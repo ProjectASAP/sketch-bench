@@ -779,7 +779,7 @@ impl BenchReport {
     }
 }
 
-/// Placeholder `GroundTruth` for dispatch rows that run without a
+/// Placeholder `GroundTruth` for catalog rows that run without a
 /// comparator. Never called; `compare` is a safe default.
 pub struct NoGT;
 impl<S: Sketch> GroundTruth<S> for NoGT {

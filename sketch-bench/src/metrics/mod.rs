@@ -65,7 +65,7 @@ pub struct RunMetrics {
     /// than an opaque JSON blob so `aggregate` can fold every key across
     /// runs without knowing any family's shape — see `accuracy::Comparison`.
     pub accuracy: Option<std::collections::BTreeMap<String, f64>>,
-    /// Per-call query samples — `Some` only when the dispatch
+    /// Per-call query samples — `Some` only when the frontend
     /// requested `record_calls` on a comparator that supports
     /// it. Consumed by `aqpbm-cli/raw_csv` to back the legacy
     /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
