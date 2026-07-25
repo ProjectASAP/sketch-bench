@@ -68,9 +68,16 @@ This is where core functionality lives.
 - timing functionality
 - possibly more
 
-**Today.** Two have partially landed, in `hot_loop`:
-- warm-up of cpu
-- the timed insert loop (a partial runner loop; the rest still in `sketch-bench`)
+**Today.** The generic benchmark engine now lives here in full — none of
+it names a sketch family:
+- `hot_loop`: cpu warm-up + the timed insert loop
+- `runner`: `BenchRunner` (the multi-pass runner/sweeper) + `BenchConfig`
+- `metrics`: the recorders (wall / CPU / RSS / jemalloc / heap-track /
+  throughput), `MetricsMask`, and the per-run `RunMetrics` + `FullSink`
+- `aggregation`: the Welford accumulator + N-run `aggregate` → `BenchSection`
+- `accuracy`: the generic `GroundTruth` comparator trait + `Comparison`
+  (the concrete per-family comparators live in `sketch-bench`)
+- `latency`, `probe`, `sketch`, `workload`, `report`, `config` (params)
 
 Used to be `sketch-core`.
 
@@ -110,7 +117,20 @@ This crate connects to `aqpbm-cli` such that user can use this benchmark.
 **Target.** Wrappers, sketch definition, and the measurement that is specific
 to this domain.
 
-**Today.** Messy.
+**Today.** Cleaned up — the crate is now the sketch domain only, built on the
+`aqpbm-core` engine:
+- `wrappers/`: the 21 wrapped sketch implementations under test
+- `accuracy/`: the concrete per-family comparators (frequency / cardinality /
+  quantile / top-k) implementing the core `GroundTruth` trait
+- `catalog` + `cell`: which `(family, impl)` pairs exist and how to run one
+- `params`, `init`: per-family construction
+- `legacy_csv`: the domain-specific long-format CSV rendering
+
+The generic engine (runner, config, metrics, aggregation, the `GroundTruth`
+abstraction) moved to `aqpbm-core`; `sketch-bench` re-exports it so
+`sketch_bench::{BenchRunner, BenchConfig, ...}` still name the entry points.
+This is what lets a future `aqp-bench` sit parallel to `sketch-bench` on the
+same core without depending on it.
 
 ## sketch-runtime
 
