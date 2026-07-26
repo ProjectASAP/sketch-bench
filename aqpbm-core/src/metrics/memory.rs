@@ -21,15 +21,13 @@ impl Rss {
     }
 }
 
-/// Jemalloc currently-allocated bytes (`stats.allocated`),
-/// compiled in only when the `heap-jemalloc` feature is enabled.
-/// Consumers linking the default system allocator get `None`.
+/// Jemalloc currently-allocated bytes (`stats.allocated`), compiled in only
+/// when the `heap-jemalloc` feature is enabled. Consumers linking the default
+/// system allocator get `None`.
 ///
-/// Despite the historical "peak" naming, `tikv-jemalloc-ctl 0.5`
-/// does not expose `thread.peak.read` / `stats.peak`, so this is
-/// a single-sample read of currently-in-use bytes — useful as a
-/// process-level proxy, not a true high-water mark. Per-sketch
-/// peak tracking lives behind the `heap-track` feature in PR2.
+/// `tikv-jemalloc-ctl 0.5` exposes no `thread.peak.read` / `stats.peak`, so
+/// this is a single-sample read of currently-in-use bytes — a process-level
+/// proxy, not a high-water mark. For per-sketch peaks see `heap_track`.
 pub struct JemallocAllocated;
 
 impl JemallocAllocated {

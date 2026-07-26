@@ -1,14 +1,10 @@
-//! Per-update latency histogram, backed by `hdrhistogram`
-//! when the `hdrhist` feature is enabled (default on).
+//! Per-update latency histogram, backed by `hdrhistogram` when the `hdrhist`
+//! feature is on (the default). With the feature off, `LatencyRecorder` is a
+//! no-op shim so the rest of the code stays agnostic to the optional dep.
 //!
-//! If the feature is off, `LatencyRecorder` is a tiny no-op
-//! shim that keeps the rest of the code agnostic to the
-//! optional dep.
-//!
-//! Lives here rather than in `sketch-bench` because
-//! `sketch-runtime::Sampler` records latency on the embedded hot
-//! path too — see [`crate::metrics`] for the same argument about
-//! `MetricsMask`.
+//! It sits in `aqpbm-core` rather than `sketch-bench` because
+//! `sketch-runtime::Sampler` records latency on the embedded hot path too —
+//! the same argument [`crate::metrics`] makes for `MetricsMask`.
 
 #[cfg(feature = "hdrhist")]
 use hdrhistogram::Histogram;

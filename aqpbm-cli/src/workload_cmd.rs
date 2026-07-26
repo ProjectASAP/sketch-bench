@@ -237,12 +237,9 @@ fn generate(a: GenerateArgs) -> Result<()> {
 
     // The one place in the tool where a run-time dtype has to become a type
     // parameter: `--dtype`/`--spec` is a string, and everything downstream of
-    // this `match` is monomorphic. The generator used to carry the choice all
-    // the way through as a tagged `Column`, which is what made every stage
-    // handle every variant.
-    //
-    // No `_` arm: adding a `DType` variant fails to compile here, which is
-    // the whole point of keeping the dispatch in one spot.
+    // this `match` is monomorphic (see `datagen::GenValue` for why the
+    // generator no longer carries a tagged column). No `_` arm: adding a
+    // `DType` variant fails to compile here, which is the point of one site.
     fn stream<T: datagen::GenValue + datagen::FixedWidth>(
         spec: &datagen::GenSpec,
         out: &Path,

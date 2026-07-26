@@ -1,21 +1,17 @@
 //! Per-sketch heap tracking via a counting `GlobalAlloc` shim.
 //!
-//! Wraps an inner allocator (System or jemalloc) and records
-//! `IN_USE` / `PEAK` byte counters on every alloc/dealloc/realloc.
-//! The runner takes a `snapshot()` before constructing a sketch
-//! and after dropping it, so the delta isolates that sketch's
-//! heap footprint from anything else the process is doing.
+//! Wraps an inner allocator (System or jemalloc) and records `IN_USE` /
+//! `PEAK` on every alloc/dealloc/realloc. The runner snapshots before
+//! constructing a sketch and again after the insert phase, so the delta
+//! isolates that sketch's footprint from everything else the process does.
 //!
-//! Counters are process-global atomics. The benchmark runner is
-//! single-threaded by contract (see `BenchRunner`), so contention
-//! is nil and a global counter is precise *for the sketch under
-//! test* — a background thread allocating during the measurement
-//! window would pollute the numbers, which is why this module
-//! must be paired with a single-threaded driver.
+//! The counters are process-global atomics, precise only under a
+//! single-threaded driver: any other thread allocating inside the window —
+//! a parallel-insert row, a background worker — lands in the same numbers.
 //!
-//! Cost: two relaxed atomic ops per alloc/dealloc. Off by default
-//! — opt in via the `heap-track` Cargo feature on the linking
-//! binary, then install `TrackingAllocator` as `#[global_allocator]`.
+//! Cost: two relaxed atomic ops per alloc/dealloc. Off by default — opt in
+//! via the `heap-track` feature on the linking binary, then install
+//! `TrackingAllocator` as `#[global_allocator]`.
 
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicI64, Ordering};

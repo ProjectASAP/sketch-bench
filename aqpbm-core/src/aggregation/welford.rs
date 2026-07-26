@@ -1,8 +1,9 @@
 //! Numerically-stable online mean + sample-variance
 //! accumulator (Welford's algorithm).
 //!
-//! Used by the aggregation step to build mean / stddev / 95% CI
-//! across N post-warm-up runs in `O(1)` memory per metric.
+//! Used by the aggregation step for mean / stddev across N post-warm-up runs
+//! in `O(1)` memory per metric, and by `sketchlib bench --repeats` for the
+//! one interval that can be computed honestly — see [`Welford::ci95`].
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Welford {
@@ -45,8 +46,10 @@ impl Welford {
         self.variance().sqrt()
     }
 
-    /// 95% CI around the mean using the normal approximation
-    /// (z = 1.96). Documented as approximate for N < 30.
+    /// 95% CI around the mean, normal approximation (z = 1.96) and so only
+    /// approximate for N < 30. Meaningful only over independent samples —
+    /// `sketchlib bench --repeats R` is the one caller; see `RunStats::ci95`
+    /// for why the within-process iterations do not qualify.
     pub fn ci95(&self) -> (f64, f64) {
         if self.n == 0 {
             return (0.0, 0.0);

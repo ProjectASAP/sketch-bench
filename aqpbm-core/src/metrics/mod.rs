@@ -1,15 +1,10 @@
 //! Metric recorders + the `FullSink` that composes them, plus the
 //! `MetricsMask` that selects which recorders run.
 //!
-//! These are the generic measurement primitives — the wall / CPU
-//! clocks, RSS + jemalloc + per-sketch heap tracking, the
-//! throughput math, the per-run `RunMetrics` record, and the
-//! `FullSink` that fills one. They carry no sketch-domain
-//! knowledge, so they live in `aqpbm-core` where `sketch-bench`,
-//! `sketch-runtime`, and any future `*-bench` share them without
-//! depending on the sketch benchmark library. `MetricsMask` in
-//! particular is named by both the offline `FullSink` and the
-//! embedded `sketch-runtime::Sampler`.
+//! Wall / CPU clocks, RSS + jemalloc + per-sketch heap tracking, the
+//! throughput math, and the per-run `RunMetrics` record. None of it carries
+//! sketch-domain knowledge, so `sketch-bench`, `sketch-runtime`, and any
+//! future `*-bench` share it without depending on the benchmark library.
 //!
 //! See `docs/DESIGN.md` §5.3 / §5.5.
 

@@ -25,9 +25,9 @@ pub struct BasicStats {
 
 /// Running summary over a chunked value stream.
 ///
-/// The generator can emit a column in pieces (see
-/// [`crate::datagen::Sink`]), so the sidecar's summary has to be
-/// accumulated rather than computed from a whole slice. Every field is
+/// The generator can emit a column in pieces (see [`crate::sink::Sink`]),
+/// so the sidecar's summary has to be accumulated rather than computed
+/// from a whole slice. Every field is
 /// order-independent except `first`/`last`, which is why chunks must be
 /// pushed in emission order.
 #[derive(Debug, Clone)]

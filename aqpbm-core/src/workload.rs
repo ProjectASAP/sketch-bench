@@ -5,15 +5,13 @@
 //!
 //! ## One type per item type, not one per source
 //!
-//! Every `i64` workload — generated or file-backed — is the same
-//! thing at runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`]
-//! that says where it came from. Modelling each *source* as its own
-//! `impl Workload` type forced every generic consumer to fan out over
-//! the source set (`aqpbm-cli`'s dispatch table carried a
-//! 3-variant `WorkloadAny` plus two derived 3-variant enums, and every
-//! dispatch macro repeated its body once per variant). Provenance is
-//! data, not a type parameter, so it lives in the `desc` field and the
-//! source only picks a constructor.
+//! Every `i64` workload — generated or file-backed — is the same thing at
+//! runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`] saying where it came
+//! from. Modelling each *source* as its own `impl Workload` forced every
+//! generic consumer to fan out over the source set — `aqpbm-cli` carried a
+//! 3-variant `WorkloadAny` plus two derived enums, with every dispatch macro
+//! repeating its body per variant. Provenance is data, not a type parameter,
+//! so it lives in `desc` and the source only picks a constructor.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -67,11 +65,9 @@ impl WorkloadDesc {
     /// fields cannot express carry their full spec in `spec`.
     ///
     /// Lives here rather than on `Shape` because it is a question about *this*
-    /// type: which of the descriptor's fields can hold a given shape. Keeping
-    /// it on `Shape` made the generator reference the report schema, which is
-    /// backwards — the generator has no business knowing a report exists, and
-    /// that single reference was the only thing preventing `sketch-datagen`
-    /// from standing on its own.
+    /// type: which of the descriptor's fields can hold a given shape. On
+    /// `Shape` it made the generator reference the report schema — backwards,
+    /// and the single thing that kept `aqpbm-datagen` from standing on its own.
     pub fn from_spec(spec: &GenSpec) -> Self {
         let (shape, size, seed) = (&spec.shape, spec.size, spec.seed);
         let (cardinality, zipf_s) = match shape {
@@ -330,26 +326,17 @@ impl<T: GenValue> Workload for NumericWorkload<T> {
         &self.items
     }
 
-    /// Regenerate from the retained spec with `seed` substituted. A spec that
-    /// generated once cannot fail on a different seed — every validation in
-    /// `Shape::build` is seed-independent — so a failure here would be a bug,
-    /// and returning `None` degrades to "cannot vary", which the caller
-    /// already handles honestly.
+    /// True exactly when a spec was retained: generated workloads can redraw,
+    /// file-backed ones cannot.
     fn can_resample(&self) -> bool {
         self.spec.is_some()
     }
 
-    /// Regenerate from the retained spec at `spec.seed + repetition`. The
-    /// offset is taken from the **spec's own** seed and `repetition >= 1`, so
-    /// a redraw can never equal the base draw. Deriving it from anything else
-    /// is how this silently breaks: an earlier version mixed in
-    /// `BenchConfig::seed`, which is unrelated to a `--spec` file's seed, so
-    /// `spec.seed = 43` with `--seed 42` made repetition 1 bit-identical to
-    /// repetition 0 and collapsed the reported stddev to exactly 0.
-    ///
-    /// A spec that generated once cannot fail on a different seed — every
-    /// validation in `Shape::build` is seed-independent — so a failure here
-    /// would be a bug, and `None` degrades to "cannot vary", which the caller
+    /// Regenerate at `spec.seed + repetition`. The offset must come from the
+    /// **spec's own** seed — see [`Workload::resample`] for what happens when
+    /// it doesn't. A spec that generated once cannot fail on a different seed
+    /// (every validation in `Shape::build` is seed-independent), so `None`
+    /// here would be a bug degrading to "cannot vary", which the caller
     /// already handles honestly.
     fn resample(&self, repetition: usize) -> Option<Self> {
         debug_assert!(repetition >= 1, "repetition 0 is the base draw");
@@ -360,25 +347,20 @@ impl<T: GenValue> Workload for NumericWorkload<T> {
     }
 }
 
-/// Reject a `.bin` whose sidecar declares a dtype this loader cannot
-/// read.
+/// Reject a `.bin` whose sidecar declares a dtype this loader cannot read.
 ///
-/// The `.bin` stream is header-less, so it cannot describe itself: a
-/// `u64`/`f64` file is byte-indistinguishable from an `i64` one and
-/// [`load_bin`] would happily reinterpret every 8-byte word as an
-/// `i64`. For `f64` that is catastrophic — the IEEE-754 bit pattern of
-/// `0.093` reads back as `4591388162153532928` — and the run would
-/// still emit a well-formed, plausible-looking report. A benchmark
-/// number that is silently wrong is worse than no number at all, so
-/// this fails loudly instead.
+/// The `.bin` stream is header-less, so it cannot describe itself: a `u64` or
+/// `f64` file is byte-indistinguishable from an `i64` one and [`load_bin`]
+/// would happily reinterpret every 8-byte word. For `f64` that is
+/// catastrophic — the IEEE-754 bit pattern of `0.093` reads back as
+/// `4591388162153532928` — behind a well-formed, plausible-looking report.
 ///
-/// Absence of usable provenance means "assume i64", the historical
-/// contract — so a missing sidecar (every legacy
-/// `input/benchmark_data_*.bin`) loads unchanged, and an unreadable one
-/// (foreign file, or a future schema this binary predates) degrades to
-/// the same path rather than failing a file that used to load. Only a
-/// sidecar we can actually parse is allowed to veto. `describe`, where
-/// the user asked about the sidecar specifically, keeps the strict
+/// Absence of usable provenance means "assume i64", the historical contract,
+/// so a missing sidecar (every legacy `input/benchmark_data_*.bin`) loads
+/// unchanged and an unreadable one (foreign file, or a future schema this
+/// binary predates) degrades to the same path rather than failing a file that
+/// used to load. Only a sidecar we can actually parse may veto. `describe`,
+/// where the user asked about the sidecar specifically, keeps the strict
 /// [`aqpbm_datagen::io::read_meta`] error.
 fn reject_non_i64_bin(path: &Path) -> Result<(), SketchError> {
     let Ok(Some(meta)) = aqpbm_datagen::io::read_meta(path) else {
@@ -854,7 +836,7 @@ mod sink_tests {
     /// be the same workload, or a run cannot be reproduced from the file it
     /// was supposedly generated into.
     ///
-    /// Lives here rather than in `sketch-datagen` because reading a `.bin`
+    /// Lives here rather than in `aqpbm-datagen` because reading a `.bin`
     /// back is `I64Workload::load`. The generator crate can write the format
     /// but not read it, so it cannot check its own round trip — worth fixing,
     /// but not by leaving the assertion unmade.
