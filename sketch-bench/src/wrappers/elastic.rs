@@ -3,22 +3,20 @@
 
 use std::cell::RefCell;
 
-use crate::init::{BuildError, InitSketch};
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::ElasticParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 
 // ---------- asap_sketchlib Elastic ----------
 //
-// `Elastic::query` takes `&mut self` (interior state update on
-// read) and `String` by value. We wrap in `RefCell` so the
-// `Sketch` trait's `fn query(&self, ...)` contract still holds;
-// interior mutability is safe here because BenchRunner queries
-// serially per run.
+// The `RefCell` is vestigial: it existed so `Elastic::query`, which takes
+// `&mut self` (interior state update on read), could be reached from behind a
+// `&self` query method. This row declares no query capability, so the cell is
+// now only ever reached through `get_mut` and could be a plain field.
 //
-// The lib's constructor only accepts `buckets`; `depth` is fixed
-// internally, so we honour `buckets` and record both in the
-// config, but `depth` has no effect on the build.
+// The lib's constructor only accepts `buckets`; `depth` is fixed internally,
+// so the config records both but `depth` has no effect on the build.
 pub struct ElasticLib {
     inner: RefCell<asap_sketchlib::Elastic<asap_sketchlib::DefaultXxHasher>>,
     buckets: usize,
@@ -40,14 +38,9 @@ impl InitSketch for ElasticLib {
 
 impl Sketch for ElasticLib {
     type Item = String;
-    type Query = String;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &String) {
         self.inner.get_mut().insert(v.clone());
-    }
-    fn query(&self, q: String) -> u64 {
-        self.inner.borrow_mut().query(q).max(0) as u64
     }
     fn memory_bytes(&self) -> usize {
         self.buckets * std::mem::size_of::<u32>() * 4
@@ -81,16 +74,16 @@ impl InitSketch for ElasticOxide {
 
 impl Sketch for ElasticOxide {
     type Item = Vec<u8>;
-    type Query = Vec<u8>;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1);
-    }
-    fn query(&self, q: Vec<u8>) -> u64 {
-        self.inner.estimate(&q)
     }
     fn memory_bytes(&self) -> usize {
         self.buckets * self.depth * std::mem::size_of::<u64>()
     }
 }
+
+// ---------- catalog identity ----------
+
+impl BenchImpl for ElasticLib { type Params = ElasticParams; const IMPL: &'static str = "lib"; }
+impl BenchImpl for ElasticOxide { type Params = ElasticParams; const IMPL: &'static str = "oxide"; }

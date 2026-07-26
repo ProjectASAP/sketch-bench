@@ -2,15 +2,13 @@
 //!
 //! A cell splits cleanly in two, because only one half needs the ground truth:
 //!   - [`run_cell`] — the **timed** measurements (throughput / latency / CPU /
-//!     memory). Generic over any `S: Sketch`, no oracle, fully monomorphised so
+//!     memory). Generic over the sketch, no oracle, fully monomorphised so
 //!     the wrapper's `update` inlines into the hot loop.
 //!   - [`score_cell`] — the **accuracy** measurement. Untimed, so it is free to
 //!     carry the track's oracle without touching the hot path.
 //!
-//! The frontend picks the concrete type `S` (and, for accuracy, the oracle `G`)
-//! and calls these. There is no per-track driver: `run_cell` is one generic
-//! function for every sketch, and `score_cell` is one generic function for
-//! every oracle.
+//! The frontend picks the concrete type `S` (and, for accuracy, the oracle
+//! `G`) and calls these. There is no per-track driver.
 //!
 //! This module also owns the run-time plumbing the frontend hands in:
 //! [`WorkloadSpec`] (where items come from), [`Items`] (the materialised
@@ -26,7 +24,7 @@ use aqpbm_core::workload::{
 use aqpbm_datagen::{DType, GenSpec};
 
 use crate::accuracy::GroundTruth;
-use crate::init::{BuildError, InitSketch};
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::{BenchConfig, BenchReport, BenchRunner};
 
 // ---------- accuracy settings the frontend fills in ----------
@@ -240,39 +238,35 @@ pub trait ParallelInit: Sketch + Sized {
 /// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
 /// ground truth — the oracle never touches the hot path.
 pub fn run_cell<S>(
-    family: &'static str,
-    impl_name: &'static str,
     cfg: &BenchConfig,
     items: &Items,
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch,
+    S: Sketch + InitSketch + BenchImpl,
     S::Item: FromItems,
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
-    S::init(params)?; // probe: skip this cell if it can't build
-    Ok(BenchRunner::new(cfg.clone(), &wk, family, impl_name)
+    S::init(params)?; // probe: the cell fails here if it cannot build
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL)
         .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
 }
 
 /// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
 pub fn run_cell_parallel<S>(
-    family: &'static str,
-    impl_name: &'static str,
     cfg: &BenchConfig,
     items: &Items,
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: ParallelInit,
+    S: ParallelInit + BenchImpl,
     S::Item: FromItems,
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
     Ok(
-        BenchRunner::new(cfg.clone(), &wk, family, impl_name).run_timed::<S, _, _>(
+        BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL).run_timed::<S, _, _>(
             move || S::build(params, workers).expect("construction proven by the probe above"),
             insert_body,
         ),
@@ -283,20 +277,18 @@ where
 /// the oracle is free to live here. The caller supplies the oracle for this
 /// sketch's track.
 pub fn score_cell<S, G>(
-    family: &'static str,
-    impl_name: &'static str,
     cfg: &BenchConfig,
     items: &Items,
     params: &ParamSet,
     gt: &G,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch,
+    S: Sketch + InitSketch + BenchImpl,
     S::Item: FromItems,
     G: GroundTruth<S>,
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
     S::init(params)?; // probe
-    Ok(BenchRunner::new(cfg.clone(), &wk, family, impl_name)
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL)
         .run_accuracy::<S, _, G, _>(|| built::<S>(params), insert_body, gt))
 }

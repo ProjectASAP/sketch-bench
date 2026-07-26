@@ -1,8 +1,9 @@
 //! HyperLogLog wrappers: `oxide`, `datasketches`, `sketchlib`
-//! (a.k.a. asap_sketchlib). All three expose cardinality as
-//! `Answer = f64`, `Query = ()`.
+//! (a.k.a. asap_sketchlib). All of them declare `CardinalityOps`,
+//! which is what makes them cardinality rows.
 
-use crate::init::{BuildError, InitSketch};
+use crate::accuracy::CardinalityOps;
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::HllParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
@@ -31,14 +32,9 @@ impl InitSketch for HllOxide {
 
 impl Sketch for HllOxide {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
-    }
-    fn query(&self, _: ()) -> f64 {
-        self.inner.estimate()
     }
     fn memory_bytes(&self) -> usize {
         // sketch_oxide stores registers as Vec<u8>: 1 byte/register.
@@ -77,14 +73,9 @@ impl InitSketch for HllDatasketches {
 
 impl Sketch for HllDatasketches {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(*v);
-    }
-    fn query(&self, _: ()) -> f64 {
-        self.inner.estimate()
     }
     fn memory_bytes(&self) -> usize {
         // Apache datasketches packs registers per HllType:
@@ -107,11 +98,10 @@ impl Sketch for HllDatasketches {
     /// `merge_time_ms` runs ~2x the others. Both are plausibly artifacts of
     /// this wrapper rather than of the library: a pairwise `merge` signature
     /// forces a fresh `HllUnion` and a `get_result` representation round-trip
-    /// on **every** fold, so K-1 unions are built and K-1 conversions happen,
-    /// all inside the timed region. Fixing it properly needs a fold-shaped
-    /// hook (`merge_many`) so one union spans the whole fold. Until then this
-    /// row's merge numbers should not be compared against the others, and the
-    /// `merge_lossless: 0` it reports is not evidence about DataSketches.
+    /// on **every** fold, all inside the timed region. Fixing it properly
+    /// needs a fold-shaped hook (`merge_many`) so one union spans the whole
+    /// fold. Until then this row's merge numbers say nothing about
+    /// DataSketches and should not be compared against the others.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         let mut union = datasketches::hll::HllUnion::new(self.lg_k);
         union.update(&self.inner);
@@ -141,14 +131,9 @@ impl InitSketch for HllLib {
 
 impl Sketch for HllLib {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
-    }
-    fn query(&self, _: ()) -> f64 {
-        self.inner.estimate() as f64
     }
     fn memory_bytes(&self) -> usize {
         // Implementation is fixed at P14 — register count is 2^14
@@ -164,11 +149,10 @@ impl Sketch for HllLib {
 
 // `asap_sketchlib::HyperLogLogHIP` (= HyperLogLogHIPP14) maintains the
 // cardinality estimate incrementally on the insert path — every register
-// upgrade pays a handful of fp ops to update the running `est` /
-// `kxq0` / `kxq1` fields. Query is then O(1) (returns the cached `est`),
-// which closes the gap to apache DataSketches' `get_estimate`. Use this
-// variant when query throughput matters; the Classic variant above is
-// slightly faster to insert but pays O(m) per query.
+// upgrade pays a handful of fp ops on the running `est` / `kxq0` / `kxq1`
+// fields — so query is O(1) rather than the Classic variant's O(m) register
+// scan. That trade (slightly slower inserts, query throughput on par with
+// apache DataSketches' `get_estimate`) is what this row exists to measure.
 pub struct HllLibHip {
     inner: asap_sketchlib::HyperLogLogHIP,
 }
@@ -184,17 +168,48 @@ impl InitSketch for HllLibHip {
 
 impl Sketch for HllLibHip {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
-    }
-    fn query(&self, _: ()) -> f64 {
-        self.inner.estimate() as f64
     }
     fn memory_bytes(&self) -> usize {
         1usize << 14
     }
 }
 
+
+// ---------- statistic membership ----------
+//
+// The parallel-HLL row ingests `i64` just like these do but answers nothing,
+// so it is absent here — which is what keeps it out of accuracy scoring.
+
+impl CardinalityOps for HllOxide {
+    fn estimate_distinct(&self) -> f64 {
+        self.inner.estimate()
+    }
+}
+
+impl CardinalityOps for HllDatasketches {
+    fn estimate_distinct(&self) -> f64 {
+        self.inner.estimate()
+    }
+}
+
+impl CardinalityOps for HllLib {
+    fn estimate_distinct(&self) -> f64 {
+        self.inner.estimate() as f64
+    }
+}
+
+impl CardinalityOps for HllLibHip {
+    fn estimate_distinct(&self) -> f64 {
+        self.inner.estimate() as f64
+    }
+}
+
+// ---------- catalog identity ----------
+
+impl BenchImpl for HllOxide { type Params = HllParams; const IMPL: &'static str = "oxide"; }
+impl BenchImpl for HllDatasketches { type Params = HllParams; const IMPL: &'static str = "datasketches"; }
+impl BenchImpl for HllLib { type Params = HllParams; const IMPL: &'static str = "lib"; }
+impl BenchImpl for HllLibHip { type Params = HllParams; const IMPL: &'static str = "lib-hip"; }

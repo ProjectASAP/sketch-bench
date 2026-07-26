@@ -51,6 +51,7 @@ use std::time::Instant;
 
 use aqpbm_core::sketch::Sketch;
 
+use super::statistic::FrequencyOps;
 use super::{Comparison, GroundTruth};
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -67,7 +68,7 @@ pub struct FrequencyGT {
 impl<S, K> GroundTruth<S> for FrequencyGT
 where
     K: Eq + Hash + Ord + Clone,
-    S: Sketch<Item = K, Query = K, Answer = u64>,
+    S: Sketch<Item = K> + FrequencyOps<Key = K>,
 {
     fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
         let mut exact: HashMap<&K, u64> = HashMap::new();
@@ -92,13 +93,12 @@ where
         let mut queries = 0u64;
         let mut query_ns = 0u64;
 
-        // Query throughput is attributed to the `all` sweep only. Every
-        // top-k prefix re-queries keys the `all` sweep already covers — the
-        // heaviest key would be probed five times — so counting them would
-        // report ops/sec over a multiset that is ~40% repeated hot keys
-        // sitting in L1, would not be comparable across versions, and would
-        // move whenever `TOP_K_REPORTED` changed. Accuracy still uses every
-        // prefix; only the timing population is pinned.
+        // Query throughput is attributed to the `all` sweep only. Every top-k
+        // prefix re-queries keys `all` already covers — the heaviest key would
+        // be probed five times — so counting them would report ops/sec over a
+        // multiset that is ~40% repeated hot keys sitting in L1, and would move
+        // whenever `TOP_K_REPORTED` changed. Accuracy still uses every prefix;
+        // only the timing population is pinned.
         let mut probe = |keys: &[&K], label: &str, metrics: &mut BTreeMap<String, f64>| {
             if keys.is_empty() {
                 return;
@@ -106,7 +106,7 @@ where
             let mut estimates = Vec::with_capacity(keys.len());
             let start = Instant::now();
             for k in keys {
-                estimates.push(sketch.query((*k).clone()));
+                estimates.push(sketch.estimate_frequency(k));
             }
             if label == "all" {
                 query_ns += start.elapsed().as_nanos() as u64;
@@ -185,7 +185,7 @@ where
 fn p99_relative_error<S, K>(sketch: &S, keys: &[&K], exact: &HashMap<&K, u64>) -> f64
 where
     K: Eq + Hash + Clone,
-    S: Sketch<Item = K, Query = K, Answer = u64>,
+    S: Sketch<Item = K> + FrequencyOps<Key = K>,
 {
     let mut errs: Vec<f64> = keys
         .iter()
@@ -194,7 +194,7 @@ where
             if truth <= 0.0 {
                 return None;
             }
-            let est = sketch.query((*k).clone()) as f64;
+            let est = sketch.estimate_frequency(k) as f64;
             Some((est - truth).abs() / truth)
         })
         .collect();
@@ -238,13 +238,17 @@ mod tests {
     struct NullFreq;
     impl Sketch for NullFreq {
         type Item = i64;
-        type Query = i64;
-        type Answer = u64;
         fn update(&mut self, _: &i64) {}
-        fn query(&self, _: i64) -> u64 {
+        fn memory_bytes(&self) -> usize {
             0
         }
-        fn memory_bytes(&self) -> usize {
+    }
+
+    // The null estimator has to declare itself a frequency estimator like any
+    // other — being shaped like one is no longer enough.
+    impl FrequencyOps for NullFreq {
+        type Key = i64;
+        fn estimate_frequency(&self, _: &i64) -> u64 {
             0
         }
     }

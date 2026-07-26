@@ -27,6 +27,7 @@ use aqpbm_core::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use super::statistic::QuantileOps;
 use super::{Comparison, GroundTruth, QueryCallSample};
 
 /// Number of times the 101-percentile sweep is repeated when
@@ -112,7 +113,7 @@ pub struct RankErrorGT {
 
 impl<S> GroundTruth<S> for RankErrorGT
 where
-    S: Sketch<Query = f64, Answer = f64>,
+    S: Sketch + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
@@ -127,12 +128,12 @@ where
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Time only the sketch.query() boundary.
+        // Time only the `estimate_quantile` boundary.
         let mut estimates: [f64; 101] = [0.0; 101];
         let q_start = Instant::now();
         for (i, slot) in estimates.iter_mut().enumerate() {
             let q = i as f64 / 100.0;
-            *slot = sketch.query(q);
+            *slot = sketch.estimate_quantile(q);
         }
         let q_ns = q_start.elapsed().as_nanos() as u64;
 
@@ -149,13 +150,10 @@ where
 
         for (i, est) in estimates.iter().enumerate() {
             let q = i as f64 / 100.0;
-            // Range of true ranks for the returned value:
-            //   lower = #items strictly less than est
-            //   upper = #items <= est
-            // The value occupies the contiguous rank interval
-            // [lower, upper]. If `q*n` is inside that interval,
-            // the answer is rank-correct (error 0); otherwise
-            // measure distance to the nearest edge.
+            // The returned value occupies the contiguous rank interval
+            // `[lower, upper]`. If `q*n` falls inside it the answer is
+            // rank-correct (error 0); otherwise the error is the distance
+            // to the nearest edge.
             let lower = lower_bound(&sorted, *est);
             let upper = upper_bound(&sorted, *est);
             let target = q * nf;
@@ -200,7 +198,7 @@ pub struct RelativeErrorGT {
 
 impl<S> GroundTruth<S> for RelativeErrorGT
 where
-    S: Sketch<Query = f64, Answer = f64>,
+    S: Sketch + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
@@ -219,7 +217,7 @@ where
         let q_start = Instant::now();
         for (i, slot) in estimates.iter_mut().enumerate() {
             let q = i as f64 / 100.0;
-            *slot = sketch.query(q);
+            *slot = sketch.estimate_quantile(q);
         }
         let q_ns = q_start.elapsed().as_nanos() as u64;
 
@@ -301,16 +299,15 @@ fn upper_bound(sorted: &[f64], x: f64) -> usize {
     lo
 }
 
-/// Independently-time each `query(p)` call across
-/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` to reproduce the
-/// legacy `{kll,dd}_throughput_query_results_rust.csv` per-call
-/// shape. The percentile sweep is by `p ∈ 0..NUM_PERCENTILES`,
-/// so the recorded `percentile` field is `p as f64 / 100.0`
-/// (matching the legacy harness's integer index → fraction
-/// convention).
+/// Independently-time each `estimate_quantile` call across
+/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` to reproduce the legacy
+/// `{kll,dd}_throughput_query_results_rust.csv` per-call shape. The sweep is
+/// by `p ∈ 0..NUM_PERCENTILES`, so the recorded `percentile` field is
+/// `p as f64 / 100.0` — the legacy harness's integer-index → fraction
+/// convention.
 fn capture_quantile_calls<S>(sketch: &S) -> Vec<QueryCallSample>
 where
-    S: Sketch<Query = f64, Answer = f64>,
+    S: QuantileOps,
 {
     let mut samples = Vec::with_capacity(RAW_REPEATS_PER_RUN * NUM_PERCENTILES);
     let mut call_index = 0usize;
@@ -319,7 +316,7 @@ where
             call_index += 1;
             let rank = p as f64 / 100.0;
             let t0 = Instant::now();
-            let q = sketch.query(rank);
+            let q = sketch.estimate_quantile(rank);
             let ns = t0.elapsed().as_nanos() as u64;
             std::hint::black_box(&q);
             samples.push(QueryCallSample {

@@ -1,7 +1,8 @@
-//! CountSketch wrappers — 4 variants (`oxide` + 3× sketchlib).
-//! Same family as CMS: `Query = i64`, `Answer = u64`.
+//! CountSketch wrappers — 5 variants (`oxide` + 4× sketchlib).
+//! Same family as CMS: each declares `FrequencyOps`.
 
-use crate::init::{BuildError, InitSketch};
+use crate::accuracy::FrequencyOps;
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CountSketchParams;
 use crate::wrappers::require_shape;
 use aqpbm_core::config::ParamSet;
@@ -48,18 +49,9 @@ impl InitSketch for CsOxide {
 
 impl Sketch for CsOxide {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v, 1);
-    }
-    fn query(&self, q: i64) -> u64 {
-        // CountSketch is an unbiased estimator (median of sign·counter); a
-        // small fraction of estimates can be slightly negative under collision
-        // noise. Clamp to 0 to match CMS-style frequency semantics — without
-        // this, `as u64` wraps -1 into u64::MAX and blows up rel-err.
-        self.inner.estimate(&q).max(0) as u64
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i64>()
@@ -89,14 +81,9 @@ impl InitSketch for CsLibFixedmatrixFast {
 
 impl Sketch for CsLibFixedmatrixFast {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.0.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
@@ -127,14 +114,9 @@ impl InitSketch for CsLibFixedmatrixFast32k {
 
 impl Sketch for CsLibFixedmatrixFast32k {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.0.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
         CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
@@ -167,14 +149,9 @@ impl InitSketch for CsLibVector2dFast {
 
 impl Sketch for CsLibVector2dFast {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.inner.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
@@ -207,14 +184,9 @@ impl InitSketch for CsLibVector2dRegular {
 
 impl Sketch for CsLibVector2dRegular {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.inner.estimate(&DataInput::I64(q)) as u64
     }
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
@@ -227,3 +199,54 @@ impl Sketch for CsLibVector2dRegular {
     }
 }
 
+
+// ---------- statistic membership ----------
+//
+// A different family from CMS (its own params) answering the same statistic.
+
+impl FrequencyOps for CsOxide {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        // CountSketch is an unbiased estimator (median of sign·counter); a
+        // small fraction of estimates can be slightly negative under collision
+        // noise. Clamp to 0 to match CMS-style frequency semantics — without
+        // this, `as u64` wraps -1 into u64::MAX and blows up rel-err.
+        self.inner.estimate(key).max(0) as u64
+    }
+}
+
+impl FrequencyOps for CsLibFixedmatrixFast {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.0.estimate(&DataInput::I64(*key)) as u64
+    }
+}
+
+impl FrequencyOps for CsLibFixedmatrixFast32k {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.0.estimate(&DataInput::I64(*key)) as u64
+    }
+}
+
+impl FrequencyOps for CsLibVector2dFast {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.inner.estimate(&DataInput::I64(*key)) as u64
+    }
+}
+
+impl FrequencyOps for CsLibVector2dRegular {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.inner.estimate(&DataInput::I64(*key)) as u64
+    }
+}
+
+// ---------- catalog identity ----------
+
+impl BenchImpl for CsOxide { type Params = CountSketchParams; const IMPL: &'static str = "oxide"; }
+impl BenchImpl for CsLibFixedmatrixFast { type Params = CountSketchParams; const IMPL: &'static str = "lib-fixedmatrix-fast"; }
+impl BenchImpl for CsLibFixedmatrixFast32k { type Params = CountSketchParams; const IMPL: &'static str = "lib-fixedmatrix-fast-32k"; }
+impl BenchImpl for CsLibVector2dFast { type Params = CountSketchParams; const IMPL: &'static str = "lib-vector2d-fast"; }
+impl BenchImpl for CsLibVector2dRegular { type Params = CountSketchParams; const IMPL: &'static str = "lib-vector2d-regular"; }

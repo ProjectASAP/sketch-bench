@@ -1,10 +1,10 @@
 //! DDSketch wrapper: `asap_sketchlib::DDSketch`.
 //! Quantile family with relative-error guarantee `alpha`:
-//! `Query = f64` (quantile in [0, 1]), `Answer = f64` (value
-//! at quantile).
+//! `estimate_quantile(phi) -> f64` (value at quantile).
 
 use crate::accuracy::quantile::QuantileValue;
-use crate::init::{BuildError, InitSketch};
+use crate::accuracy::QuantileOps;
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::DdParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -33,14 +33,9 @@ impl<T: QuantileValue> InitSketch for DdLib<T> {
 
 impl<T: QuantileValue> Sketch for DdLib<T> {
     type Item = T;
-    type Query = f64;
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.add(&v.to_f64());
-    }
-    fn query(&self, q: f64) -> f64 {
-        self.inner.get_value_at_quantile(q).unwrap_or(f64::NAN)
     }
     fn memory_bytes(&self) -> usize {
         // Best-effort estimate: DDSketch's bucket store is
@@ -52,3 +47,15 @@ impl<T: QuantileValue> Sketch for DdLib<T> {
     }
 }
 
+
+// ---------- statistic membership ----------
+
+impl<T: QuantileValue> QuantileOps for DdLib<T> {
+    fn estimate_quantile(&self, phi: f64) -> f64 {
+        self.inner.get_value_at_quantile(phi).unwrap_or(f64::NAN)
+    }
+}
+
+// ---------- catalog identity ----------
+
+impl<T: QuantileValue> BenchImpl for DdLib<T> { type Params = DdParams; const IMPL: &'static str = "lib"; }

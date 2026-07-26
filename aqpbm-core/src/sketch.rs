@@ -1,12 +1,11 @@
 //! The [`Sketch`] trait — the one abstraction every downstream
 //! crate in the sketchlib-tool graph depends on.
 //!
-//! Deliberately narrow: just enough to drive a generic
-//! `BenchRunner` and a `Probe` decorator. Each wrapped impl
-//! defines its own `Item`/`Query`/`Answer` types so we can cover
-//! the zoo of sketch APIs (HLL's `()→f64` cardinality, KLL's
-//! `f64→f64` quantile, CMS's `K→u64` point-lookup, ...) without
-//! one trait per family.
+//! Deliberately narrow: the **insert** side only, just enough to drive a
+//! generic `BenchRunner` and a `Probe` decorator. The zoo of query shapes
+//! (HLL's `()→f64`, KLL's `f64→f64`, CMS's `K→u64`, …) belongs to the
+//! per-statistic capability traits in `sketch-bench` — `CardinalityOps`,
+//! `FrequencyOps`, `QuantileOps`, `TopKOps` — which an impl opts into by name.
 //!
 //! See `docs/DESIGN.md` §4.1.
 
@@ -21,18 +20,6 @@ pub trait Sketch {
     /// type (primitive, `String`, `Vec<u8>`, custom struct).
     type Item;
 
-    /// The query argument type. `()` for sketches that answer a
-    /// single global question (HLL cardinality, UnivMon
-    /// entropy), concrete values for point-lookups
-    /// (`Item` for CMS), `f64` quantile for KLL, etc.
-    type Query;
-
-    /// The answer type returned by `query`. `f64` is idiomatic
-    /// for most sketches — count estimates, quantiles,
-    /// cardinality all float back. Wrappers may pick a richer
-    /// type where needed (`Vec<(Item, u64)>` for top-k).
-    type Answer;
-
     /// Ingest a single item.
     fn update(&mut self, v: &Self::Item);
 
@@ -45,9 +32,6 @@ pub trait Sketch {
         }
     }
 
-    /// Answer a query.
-    fn query(&self, q: Self::Query) -> Self::Answer;
-
     /// Best-effort memory footprint in bytes. Implementations
     /// that can't compute this cheaply should return a tight
     /// upper bound; returning `0` is acceptable for families
@@ -58,38 +42,33 @@ pub trait Sketch {
     /// Absorb another sketch of the same type and configuration.
     ///
     /// Mergeability is what makes a summary a *sketch* rather than a
-    /// stopwatch: it is why one can be computed per shard, per node, or per
-    /// time window and combined afterwards. So it belongs here on the base
-    /// trait, not in a separate opt-in capability trait — modelling it as
-    /// optional would say merging is exotic, and it is the common case.
+    /// stopwatch — it is why one can be computed per shard, per node, or per
+    /// time window and combined afterwards — so it belongs on the base trait.
+    /// Modelling it as an opt-in capability would say merging is exotic, and
+    /// it is the common case.
     ///
-    /// The `Result` is **not** about dimension mismatch. The benchmark always
-    /// constructs both operands from one `ParamSet`, so mismatched shapes
-    /// cannot arise, and a wrapper whose library returns a `Result` for that
-    /// reason should `expect()` it. The error exists for the other question:
-    /// *this implementation does not provide a merge at all*. Three of this
-    /// repo's rows are in that position (Nitro's and UnivMon's wrappers, whose
-    /// `query` is already a stub; the parallel-insert rows, which are N
-    /// deliberately unmerged shards and are arguably not one sketch). The
-    /// default therefore reports unsupported rather than panicking, so a
-    /// merge sweep records a row saying so instead of dying — the capability
-    /// matrix is itself a result worth publishing.
+    /// The `Result` is **not** about dimension mismatch: both operands are
+    /// always built from one `ParamSet`, so a wrapper whose library returns a
+    /// `Result` for that reason should `expect()` it. The error means *this
+    /// implementation provides no merge at all* — Nitro and UnivMon (which
+    /// declare no query capability either), the parallel-insert rows (N
+    /// deliberately unmerged shards, arguably not one sketch), and others.
+    /// Reporting unsupported rather than panicking lets a merge sweep record a
+    /// row saying so instead of dying; the capability matrix is itself a
+    /// result worth publishing.
     fn merge(&mut self, _other: &Self) -> Result<(), MergeUnsupported> {
         Err(MergeUnsupported)
     }
 
-    /// One-shot transition from "ingesting" to "queryable".
-    /// Called once between the last `update` and the first
-    /// `query`. Default no-op.
+    /// One-shot transition from "ingesting" to "queryable". Called once
+    /// between the last `update` and the first query. Default no-op.
     ///
-    /// Use this for any maintenance work that some sketches do
-    /// inside `update` (KLL/DD continuously maintain a queryable
-    /// structure) but other sketches defer (the exact baseline
-    /// can buffer raw values and sort once at the end). Doing the
-    /// work here, billed to the insert phase, keeps query-side
-    /// throughput numbers comparable across families: every
-    /// sketch's `query` is measured starting from the same
-    /// "ready-to-answer" state.
+    /// For the maintenance work some sketches do inside `update` (KLL/DD keep
+    /// a queryable structure continuously) and others defer (an exact baseline
+    /// can buffer raw values and sort at the end). Billing it to the insert
+    /// phase is what keeps query-side throughput comparable across families:
+    /// every sketch's query path is measured from the same "ready-to-answer"
+    /// state.
     fn finalize_for_query(&mut self) {}
 }
 

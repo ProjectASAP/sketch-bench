@@ -49,10 +49,6 @@ anyhow = "1"
 # Bitflags for MetricsMask.
 bitflags = "2"
 
-# SwissTable HashMap, used directly by ExactFrequency so we can
-# read its true heap allocation via `allocation_size()`.
-hashbrown = "0.17"
-
 # Sketch impls used by the 21 wrappers.
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"

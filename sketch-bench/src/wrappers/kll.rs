@@ -1,18 +1,16 @@
 //! KLL wrappers: `oxide`, `sketchlib` (a.k.a. asap_sketchlib).
-//! Quantile family: `Query = f64` (quantile in [0, 1]),
-//! `Answer = f64` (value at quantile).
+//! Quantile family: `estimate_quantile(phi) -> f64`.
 //!
-//! Note: `sketch_oxide::quantiles::KllSketch::quantile` takes
-//! `&mut self` (the sketch sorts lazily). We wrap the inner in
-//! `RefCell` so the `Sketch::query(&self, ...)` contract still
-//! works — the trait is intentionally `&self` since most
-//! sketches' query paths are pure reads; KLL-oxide is the one
-//! that isn't.
+//! Note: `sketch_oxide::quantiles::KllSketch::quantile` takes `&mut self`
+//! (the sketch sorts lazily), so the inner sketch is held in a `RefCell`.
+//! `QuantileOps::estimate_quantile` is `&self` because most sketches' query
+//! paths are pure reads; KLL-oxide is the one that isn't.
 
 use std::cell::RefCell;
 
 use crate::accuracy::quantile::QuantileValue;
-use crate::init::{BuildError, InitSketch};
+use crate::accuracy::QuantileOps;
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::KllParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
@@ -49,14 +47,9 @@ impl<T: QuantileValue> InitSketch for KllOxide<T> {
 
 impl<T: QuantileValue> Sketch for KllOxide<T> {
     type Item = T;
-    type Query = f64;
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.get_mut().update(v.to_f64());
-    }
-    fn query(&self, q: f64) -> f64 {
-        self.inner.borrow_mut().quantile(q).unwrap_or(f64::NAN)
     }
     fn memory_bytes(&self) -> usize {
         (self.k as usize) * std::mem::size_of::<f64>() * 4
@@ -77,18 +70,15 @@ impl<T: QuantileValue> Sketch for KllOxide<T> {
 
 // ---------- asap_sketchlib KLL ----------
 //
-// `asap_sketchlib::KLL::quantile(q)` rebuilds the full CDF from
-// the compactor levels on every call (sort + sweep over the
-// whole buffer). For an apples-to-apples query throughput
-// comparison we precompute the CDF once in `finalize_for_query`
-// and cache it; queries then collapse to a `Cdf::query` binary
-// search.
+// `asap_sketchlib::KLL::quantile(q)` rebuilds the full CDF from the compactor
+// levels on every call (sort + sweep over the whole buffer). For an
+// apples-to-apples query throughput comparison we precompute it once in
+// `finalize_for_query`; queries then collapse to a `Cdf::query` binary search.
 //
-// `update` deliberately does NOT invalidate the cached CDF —
-// `BenchRunner` only ever calls `finalize_for_query` once, after
-// the insert phase has ended, and never re-inserts afterwards. A
-// per-update RefCell::borrow() check is a measurable cost on a
-// hot 10ns/op insert path; we drop it on the throughput path.
+// `update` deliberately does NOT invalidate that cache. `BenchRunner` calls
+// `finalize_for_query` once, after the insert phase has ended, and never
+// re-inserts; a per-update `RefCell::borrow()` check would be a measurable
+// cost on a hot 10ns/op insert path.
 ///
 /// Unlike the oxide and DDSketch wrappers, this one is generic *in the
 /// library*: `asap_sketchlib::KLL<T: NumericalValue>` stores `T` and orders it
@@ -121,17 +111,9 @@ where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     type Item = T;
-    type Query = f64;
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.update(v);
-    }
-    fn query(&self, q: f64) -> f64 {
-        if let Some(cdf) = self.cdf.borrow().as_ref() {
-            return cdf.query(q);
-        }
-        self.inner.quantile(q)
     }
     fn memory_bytes(&self) -> usize {
         (self.k as usize) * std::mem::size_of::<T>() * 4
@@ -148,3 +130,34 @@ where
     }
 }
 
+
+// ---------- statistic membership ----------
+
+impl<T: QuantileValue> QuantileOps for KllOxide<T> {
+    fn estimate_quantile(&self, phi: f64) -> f64 {
+        self.inner.borrow_mut().quantile(phi).unwrap_or(f64::NAN)
+    }
+}
+
+impl<T> QuantileOps for KllLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    fn estimate_quantile(&self, phi: f64) -> f64 {
+        if let Some(cdf) = self.cdf.borrow().as_ref() {
+            return cdf.query(phi);
+        }
+        self.inner.quantile(phi)
+    }
+}
+
+// ---------- catalog identity ----------
+
+impl<T: QuantileValue> BenchImpl for KllOxide<T> { type Params = KllParams; const IMPL: &'static str = "oxide"; }
+impl<T> BenchImpl for KllLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    type Params = KllParams;
+    const IMPL: &'static str = "lib";
+}

@@ -17,10 +17,11 @@
 //! owns the query phase and stashes per-call samples. Without `--accuracy` the
 //! query phase is skipped entirely and only the insert CSV is produced.
 //!
-//! Limitations:
-//! - Impls outside the legacy harness (elastic, univmon, polars-,
-//!   fastpath-parallel-) use a synthesised legacy-style name
-//!   `rust_<impl>_<family>`.
+//! Naming: `lib` / `lib-*` impls keep their historical
+//! `rust_sketchlib_<family>[_<variant>]` names; every impl with no legacy
+//! counterpart (`oxide`, `datasketches`, `polars`, the topk trackers) gets a
+//! synthesised `rust_<impl>_<family>`. The parallel-insert rows never reach
+//! that path — they go to the octo file, labelled `octo`.
 
 use aqpbm_datagen::DType;
 
@@ -441,6 +442,10 @@ fn param_header(family: &str) -> &'static str {
         "hll" => "lg_k,registers",
         "kll" => "k",
         "cms" | "countsketch" => "rows,cols",
+        // Same matrix shape as cms/countsketch plus the tracked-key count; `k`
+        // is the axis a topk sweep varies, so omitting it pooled every k into
+        // one group.
+        "topk" => "rows,cols,k",
         "dd" => "alpha",
         "nitro" => "rows,cols,rate",
         "elastic" => "buckets,depth",
@@ -457,6 +462,7 @@ fn legacy_param_columns(family: &str) -> &'static [&'static str] {
         "hll" => &["lg_k", "registers"],
         "kll" => &["k"],
         "cms" | "countsketch" => &["rows", "cols"],
+        "topk" => &["rows", "cols", "k"],
         "dd" => &["alpha"],
         "nitro" => &["rows", "cols", "rate"],
         "elastic" => &["buckets", "depth"],
@@ -555,6 +561,16 @@ mod tests {
         );
     }
 
+    /// topk keeps the `run` label but carries three param columns; a missing
+    /// `k` made runs at different k byte-identical apart from timing noise.
+    #[test]
+    fn topk_header_carries_its_param_columns() {
+        assert_eq!(
+            insert_header("topk"),
+            "implementation,language,run,rows,cols,k,total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
+        );
+    }
+
     #[test]
     fn kll_query_header_aggregate_shape() {
         assert_eq!(
@@ -567,7 +583,7 @@ mod tests {
 #[cfg(test)]
 mod param_column_order_tests {
     use super::*;
-    use crate::params::{CmsParams, ElasticParams, HllParams, UnivMonParams};
+    use crate::params::{CmsParams, ElasticParams, HllParams, TopkParams, UnivMonParams};
 
     /// Values must line up with the header, which is *not* alphabetical.
     ///
@@ -593,6 +609,17 @@ mod param_column_order_tests {
                     cols: 4096,
                 }),
                 vec!["3", "4096"],
+            ),
+            (
+                // Alphabetical `fields()` order here is `cols,k,rows` — the
+                // widest gap yet between key order and header order.
+                "topk",
+                ParamSet::of(&TopkParams {
+                    rows: 5,
+                    cols: 2048,
+                    k: 100,
+                }),
+                vec!["5", "2048", "100"],
             ),
             (
                 "elastic",

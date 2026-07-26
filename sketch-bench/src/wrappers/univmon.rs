@@ -1,13 +1,14 @@
 //! UnivMon wrappers — `sketchlib::UnivMon` (string-keyed) and
 //! `sketch_oxide::universal::UnivMon` (byte-keyed). Multi-query
-//! sketch: we treat "query" as a single scalar moment estimate
-//! for Sketch-trait purposes; dedicated moment-family comparators
-//! are a future-work item.
+//! sketch: neither row declares a query capability, so neither is
+//! accuracy-scored — dedicated moment-family comparators are a
+//! future-work item.
 //!
-//! The tunable params are `layers` and `max_stream`; the
-//! underlying CMS is sized at a fixed (5, 2048).
+//! The tunable params are `layers` and `max_stream`; the underlying CMS is
+//! sized at a fixed (5, 2048). `sketch_oxide::universal::UnivMon::new` takes
+//! no layer count, so on that row `layers` moves the reported footprint only.
 
-use crate::init::{BuildError, InitSketch};
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::UnivMonParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -38,15 +39,10 @@ impl InitSketch for UnivMonLib {
 
 impl Sketch for UnivMonLib {
     type Item = String;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &String) {
         self.inner
             .fast_insert(&asap_sketchlib::DataInput::Str(v), 1);
-    }
-    fn query(&self, _: ()) -> f64 {
-        0.0
     }
     fn memory_bytes(&self) -> usize {
         self.layers * UNIVMON_CMS_ROWS * UNIVMON_CMS_COLS * std::mem::size_of::<i32>()
@@ -75,16 +71,16 @@ impl InitSketch for UnivMonOxide {
 
 impl Sketch for UnivMonOxide {
     type Item = Vec<u8>;
-    type Query = ();
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1.0).expect("UnivMon update succeeds");
-    }
-    fn query(&self, _: ()) -> f64 {
-        0.0
     }
     fn memory_bytes(&self) -> usize {
         self.layers * UNIVMON_CMS_ROWS * UNIVMON_CMS_COLS * std::mem::size_of::<u64>()
     }
 }
+
+// ---------- catalog identity ----------
+
+impl BenchImpl for UnivMonLib { type Params = UnivMonParams; const IMPL: &'static str = "lib"; }
+impl BenchImpl for UnivMonOxide { type Params = UnivMonParams; const IMPL: &'static str = "oxide"; }

@@ -1,11 +1,9 @@
 //! Construction parameters for each sketch family.
 //!
-//! These live next to the wrappers that consume them, not in
-//! `aqpbm-core`. `aqpbm-core` owns the *open* family axis —
-//! the `SketchParams` trait and the type-erased `ParamSet` — and
-//! deliberately knows no family names. Concrete families are
-//! declared by whoever ships the implementations, which is this
-//! crate.
+//! These live next to the wrappers that consume them, not in `aqpbm-core`:
+//! the core owns the *open* family axis (the `SketchParams` trait and the
+//! type-erased `ParamSet`) and deliberately knows no family names. Concrete
+//! families are declared by whoever ships the implementations — this crate.
 //!
 //! See `aqpbm_core::config` for why the axis is open at all.
 
@@ -68,6 +66,30 @@ sketch_params!(
     CountSketchParams {
         rows: 3,
         cols: 1024
+    }
+);
+
+/// Top-k is its own family because its parameter vocabulary is its own: `k`
+/// sizes the candidate tracker that answers the query, while `rows`/`cols`
+/// size the counter array underneath it. A CMS row has no `k` to set, so the
+/// two cannot share `CmsParams` without giving every CMS row a knob that
+/// means nothing to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopkParams {
+    pub rows: usize,
+    pub cols: usize,
+    /// How many heaviest keys the tracker keeps. Sizes both the sketch's
+    /// candidate set and the prefix the comparator scores against.
+    pub k: usize,
+}
+sketch_params!(
+    TopkParams,
+    "topk",
+    TopkParams {
+        rows: 5,
+        cols: 2048,
+        k: 100
     }
 );
 
@@ -211,6 +233,7 @@ mod tests {
         check::<UnivMonParams>();
         check::<DdParams>();
         check::<NitroParams>();
+        check::<TopkParams>();
     }
 
     #[test]

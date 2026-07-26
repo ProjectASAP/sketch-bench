@@ -1,24 +1,27 @@
 //! "Octo" parallel-insert wrappers: `cms/lib-fastpath-parallel`,
 //! `countsketch/lib-fastpath-parallel`, `hll/lib-fastpath-parallel`.
 //!
-//! Mirrors the legacy `throughput/octo/` binary: each worker
-//! thread builds its own `FastPath` sketch on a disjoint
-//! partition of the input. As in the legacy code, deltas
-//! emitted via `insert_emit_delta` are passed through
-//! `black_box` and the partition sketches are *not* merged —
-//! so `accuracy_kind: None` for these impls. The reported
-//! throughput is the max worker's elapsed time (= the wall
-//! clock for the parallel section), matching legacy octo.
+//! Mirrors the legacy `throughput/octo/` binary: each worker thread builds its
+//! own `FastPath` sketch on a disjoint partition of the input, deltas emitted
+//! via `insert_emit_delta` are passed through `black_box`, and the partition
+//! sketches are *not* merged — so these impls declare no query capability and
+//! are not scored.
 //!
-//! Worker count is plumbed via `BenchConfig.threads` (the new
-//! `--workers N` CLI flag). Wrappers ignore the family's
-//! `ParamSet` knobs; their shape is fixed to the legacy
-//! `M5x32K` (5 × 32768) octo matrix.
+//! `update` only buffers; the parallel section runs in `finalize_for_query`.
+//! Each kernel returns the max worker's elapsed time (legacy octo's headline
+//! number) but the caller discards it, and the throughput pass times the
+//! insert loop alone — so what these rows currently report is the buffering,
+//! not the parallel insert.
+//!
+//! Worker count is plumbed via `BenchConfig.threads` (the `--workers N` CLI
+//! flag). The family's `ParamSet` knobs are ignored: CMS and CountSketch are
+//! fixed to the legacy `M5x32K` (5 × 32768) octo matrix, the HLL row to
+//! sketchlib's P14 `ErtlMLE` default.
 
 use std::sync::Barrier;
 use std::time::Instant;
 
-use crate::init::BuildError;
+use crate::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -50,8 +53,6 @@ impl crate::cell::ParallelInit for ParallelCmsFastPath {
 
 impl Sketch for ParallelCmsFastPath {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
 
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -60,12 +61,6 @@ impl Sketch for ParallelCmsFastPath {
 
     fn finalize_for_query(&mut self) {
         run_parallel_cms(&self.buf, self.workers);
-    }
-
-    fn query(&self, _q: i64) -> u64 {
-        // Parallel partitions are intentionally not merged
-        // (matches legacy octo). Query is a stub.
-        0
     }
 
     fn memory_bytes(&self) -> usize {
@@ -92,8 +87,6 @@ impl crate::cell::ParallelInit for ParallelCsFastPath {
 
 impl Sketch for ParallelCsFastPath {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
 
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -102,10 +95,6 @@ impl Sketch for ParallelCsFastPath {
 
     fn finalize_for_query(&mut self) {
         run_parallel_cs(&self.buf, self.workers);
-    }
-
-    fn query(&self, _q: i64) -> u64 {
-        0
     }
 
     fn memory_bytes(&self) -> usize {
@@ -132,8 +121,6 @@ impl crate::cell::ParallelInit for ParallelHllFastPath {
 
 impl Sketch for ParallelHllFastPath {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
 
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -142,10 +129,6 @@ impl Sketch for ParallelHllFastPath {
 
     fn finalize_for_query(&mut self) {
         run_parallel_hll(&self.buf, self.workers);
-    }
-
-    fn query(&self, _q: ()) -> f64 {
-        0.0
     }
 
     fn memory_bytes(&self) -> usize {
@@ -256,3 +239,12 @@ fn run_parallel_hll(items: &[i64], workers: usize) -> u128 {
             .unwrap_or(0)
     })
 }
+
+// ---------- catalog identity ----------
+//
+// These build through `ParallelInit`, not `InitSketch` — identity is declared
+// the same way regardless.
+
+impl BenchImpl for ParallelCmsFastPath { type Params = CmsParams; const IMPL: &'static str = "lib-fastpath-parallel"; }
+impl BenchImpl for ParallelCsFastPath { type Params = CountSketchParams; const IMPL: &'static str = "lib-fastpath-parallel"; }
+impl BenchImpl for ParallelHllFastPath { type Params = HllParams; const IMPL: &'static str = "lib-fastpath-parallel"; }

@@ -23,7 +23,6 @@ use crate::metrics::{
     CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, MetricsMask, Rss, RunMetrics,
     WallClock,
 };
-use crate::probe::NoopSink;
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
 use crate::sketch::Sketch;
 use crate::workload::{Workload, WorkloadDesc};
@@ -54,35 +53,25 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    /// Run the bench across the metric passes encoded in
-    /// `config.metrics`. Each primary bit (THROUGHPUT / LATENCY /
-    /// ACCURACY) produces its **own** `BenchReport` with a fresh
-    /// sketch population — see [`MetricsMask::passes`]. Returns
-    /// one report per pass, in the order produced by `passes()`.
+    /// The **timed** passes — throughput, latency, and the merge fold, plus
+    /// the CPU/MEMORY bits that ride along with each. Accuracy is skipped
+    /// here and runs in [`run_accuracy`](Self::run_accuracy): it needs an
+    /// oracle, and keeping one off this path is what lets the wrapper's
+    /// `update` inline into the hot loop unencumbered.
     ///
-    /// Rationale for strict per-pass isolation: per-update
-    /// instrumentation (latency `Instant::now()` pair) inflates
-    /// the insert-phase wall clock, which is the throughput
-    /// denominator. Splitting throughput and latency into two
-    /// independent passes guarantees the throughput pass sees a
-    /// clean hot path. Accuracy gets its own pass too so its
-    /// insert phase isn't billed any per-op overhead either.
+    /// Each primary bit gets its **own** `BenchReport` over a fresh sketch
+    /// population — see [`MetricsMask::passes`]. That isolation is not
+    /// tidiness: per-update instrumentation (the latency `Instant::now()`
+    /// pair) inflates the insert-phase wall clock, which is the throughput
+    /// denominator.
     ///
-    /// `factory` is called once per iteration (warm-up +
-    /// measured) **per pass** — each run must see independent
-    /// state or the aggregated CI is meaningless.
-    /// `ground_truth` is consulted only in the ACCURACY pass.
-    /// `insert` is the hot-loop body. It is a caller-supplied closure —
-    /// **not** a `sketch.update(it)` call written here — so that it
-    /// monomorphizes in the crate that defines the wrapper, letting LLVM
-    /// fold the wrapper's `update` into the loop. Every pass that reports
+    /// `factory` is called once per iteration (warm-up + measured) **per
+    /// pass** — each run must see independent state or the aggregated CI is
+    /// meaningless. `insert` is the hot-loop body, supplied by the caller
+    /// rather than written here as `sketch.update(it)`, so it monomorphizes
+    /// in the crate that defines the wrapper; every pass that reports
     /// throughput drives this same closure, so the number cannot depend on
-    /// which `--metrics` flags were passed. See `insert_loop`.
-    /// The **timed** passes — throughput / latency / CPU / memory. No ground
-    /// truth: none of these measurements needs it, and keeping the oracle out
-    /// of this path is what lets the wrapper's `update` inline into the hot
-    /// loop unencumbered. Accuracy and merge (both of which compare against an
-    /// exact answer) run in [`run_accuracy`](Self::run_accuracy).
+    /// which `--metrics` flags were passed. See [`insert_loop`].
     pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
     where
         S: Sketch<Item = W::Item>,
@@ -410,13 +399,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     // estimate would read as lossless. Reported under that
                     // reading, not as a claim about bytes.
                     //
-                    // Exactly 1.0 is the correct answer for a linear sketch
-                    // (Count-Min, Count Sketch, HLL at equal lg_k, every exact
-                    // baseline): the merged state is identical to a single pass,
-                    // so anything less means the shards disagreed about hash
-                    // seeds or a counter saturated. For KLL it is expected to be
-                    // 0.0 — its compactor merge genuinely loses information —
-                    // and the size of the gap is the measurement.
+                    // Exactly 1.0 is the correct answer for a linear sketch and
+                    // 0.0 the expected one for KLL; this function's doc says
+                    // why, and what a linear sketch scoring < 1.0 means.
                     let mut single = factory();
                     for it in items {
                         insert(&mut single, it);
@@ -586,17 +571,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     }
 }
 
-/// One measured run: install `FullSink`, time insert (+
-/// optional query phase), return finalized metrics + the
-/// underlying sketch (for ground-truth comparison).
+/// One measured run through `Probe<S, FullSink>`: time the insert phase, and
+/// return the finalized metrics plus the sketch (for ground-truth comparison).
 ///
-/// Heap-track windowing (when the `heap-track` feature is on):
-/// the `before` snapshot is taken *after* `items` is already
-/// allocated by the caller (`workload.items()`) but *before*
-/// `factory()` runs, so the sketch's constructor allocations are
-/// attributed even for sketches that allocate everything up front
-/// (CMS, CountSketch, fixed-matrix HLL). `reset_peak` pins the
-/// watermark to that baseline before construction begins.
+/// Heap-track windowing (when the `heap-track` feature is on): the `before`
+/// snapshot is taken *after* the caller allocated `items` but *before*
+/// `factory()` runs, so constructor allocations are attributed even for
+/// sketches that allocate everything up front (CMS, CountSketch, fixed-matrix
+/// HLL). `reset_peak` pins the watermark to that baseline first.
 fn run_once<S, F>(
     factory: &mut F,
     mut sink: FullSink,
@@ -638,12 +620,8 @@ where
     #[cfg(feature = "heap-track")]
     let heap_after = crate::metrics::heap_track::snapshot();
 
-    // Query-phase timing is handled by each GroundTruth
-    // comparator (which knows the wrapper's natural Query type).
-    // A future scalar-only query microbench can live inside the
-    // runner, but v1 keeps the runner focused on the insert
-    // path — query accuracy + timing both belong to accuracy
-    // comparators where the shape is family-specific.
+    // Query timing belongs to the `GroundTruth` comparators, which know the
+    // family-specific query shape; `query_count` is unread as a result.
     let _ = config.query_count;
 
     let memory_bytes = sketch.memory_bytes() as u64;
@@ -750,8 +728,7 @@ where
     (metrics, sketch)
 }
 
-/// Output of a `BenchRunner::run`. Convertible to the v1 JSONL
-/// record defined in `aqpbm-core`.
+/// Output of one `BenchRunner` pass. Convertible to the v1 JSONL [`Record`].
 #[derive(Debug, Clone)]
 pub struct BenchReport {
     pub sketch: String,
@@ -789,11 +766,4 @@ impl<S: Sketch> GroundTruth<S> for NoGT {
     fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
         Comparison::default()
     }
-}
-
-// Suppress unused-import warning when the runner compiles
-// without the heap-jemalloc path.
-#[allow(dead_code)]
-fn _noop() -> NoopSink {
-    NoopSink
 }
