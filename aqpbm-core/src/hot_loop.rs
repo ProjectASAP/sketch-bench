@@ -1,26 +1,17 @@
 //! CPU warm-up + **the** timed insert loop — the mechanical core a runner
 //! drives, sitting here in `aqpbm-core` rather than in any one bench domain.
 //!
-//! Two of the `aqpbm-core` targets in `docs/component_walk_through.md` live
-//! here: "warm-up of cpu" ([`warmup_cpu_once`]) and the "timing functionality"
-//! of the hot path ([`insert_loop`]). Both are generic over the [`Sketch`]
-//! trait — which already lives in this crate — so moving them in introduces no
-//! new dependency.
-//!
 //! ## Why moving the hot loop across a crate boundary is inlining-safe
 //!
 //! [`insert_loop`] is the one function every throughput measurement times, and
 //! it must fold the caller's `insert` closure (the wrapper's `update`) into the
 //! loop or the number is wrong — see the 5.1% history on [`insert_loop`]
-//! itself. That fold **already** depended on `#[inline(always)]` + thin LTO,
-//! not on living in the same crate as the wrapper: the closure is monomorphised
-//! at the call site in the bench crate and passed in generically, and thin LTO
-//! (`lto = "thin"`, `codegen-units = 1` in the workspace release profile)
-//! inlines it across the crate boundary at link time. The boundary between
-//! `aqpbm-core` and the bench crate is therefore no different from the boundary
-//! the closure already crossed. Keeping the `#[inline(always)]` attribute and
-//! the single-copy structure is what preserves the guarantee; the crate it is
-//! compiled in does not enter into it.
+//! itself. That fold never depended on co-location: the closure is
+//! monomorphised at the call site in the bench crate and passed in
+//! generically, and thin LTO (`lto = "thin"`, `codegen-units = 1` in the
+//! workspace release profile) inlines it across the crate boundary at link
+//! time. Keeping the `#[inline(always)]` attribute and the single-copy
+//! structure is what preserves the guarantee.
 
 use std::sync::Once;
 use std::time::{Duration, Instant};

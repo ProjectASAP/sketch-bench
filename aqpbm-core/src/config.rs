@@ -2,20 +2,19 @@
 //!
 //! ## Why the family set is open
 //!
-//! This used to be a closed `enum ParamSet { Hll(..), Kll(..), Cms(..), .. }`,
-//! and everything that needed to know about a family matched on it. Adding one
-//! family therefore meant editing **131 match arms across six files**: the
-//! enum and its `family()`, a `build_*` constructor and an allowed-key list in
-//! the config parser, a CSV column header and a CSV row
-//! formatter, and a `family -> statistic` table whose doc comment asked the
-//! reader to "keep it in sync" with a field in the dispatch table by hand.
-//! Nothing enforced any of it; a missed arm was a runtime `bail!` at best.
+//! This used to be a closed `enum ParamSet { Hll(..), Kll(..), Cms(..), .. }`
+//! that everything matched on, so adding one family meant editing **131 match
+//! arms across six files** — the enum and its `family()`, a `build_*`
+//! constructor and an allowed-key list in the config parser, a CSV header and
+//! row formatter, and a `family -> statistic` table whose doc comment asked
+//! the reader to keep it in sync by hand. Nothing enforced any of it; a missed
+//! arm was a runtime `bail!` at best.
 //!
-//! A benchmark whose whole point is comparing implementations must make adding
-//! one obvious. So the family axis is open: [`ParamSet`] carries the family
-//! name and its parameters as JSON, and each parameter type declares its own
-//! name, its own canonical config, and — through serde — its own parsing and
-//! its own field names.
+//! A benchmark whose point is comparing implementations must make adding one
+//! obvious, so the family axis is open: [`ParamSet`] carries the family name
+//! and its parameters as JSON, and each parameter type declares its own name,
+//! its own canonical config, and — through serde — its own parsing and field
+//! names.
 //!
 //! The record shape is **field-for-field compatible** — still
 //! `{"family": "...", "params": {...}}`, and every pre-existing record still
@@ -28,7 +27,7 @@
 //! config as new across this boundary.
 //!
 //! Adding a family is now: one params struct with `#[derive(Serialize,
-//! Deserialize)]`, one `impl SketchParams`, and the dispatch row that names
+//! Deserialize)]`, one `impl SketchParams`, and the catalog row that names
 //! it. There is nothing else to keep in sync.
 
 use serde::de::DeserializeOwned;

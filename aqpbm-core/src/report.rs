@@ -130,9 +130,9 @@ pub struct BenchSection {
     pub merge_supported: Option<bool>,
 }
 
-/// MICRO (profile) section of a record — filled by
-/// `sketch-profile`. Kept here so readers don't need two
-/// crates to deserialise the same JSONL file.
+/// MICRO (profile) section of a record — reserved for `sketch-profile`
+/// (`docs/DESIGN.md` §2.2), which is not built yet. Declared here so readers
+/// don't need two crates to deserialise the same JSONL file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProfileSection {
     #[serde(skip_serializing_if = "Option::is_none")]

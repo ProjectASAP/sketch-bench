@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Macro-metric benchmark library for sketch algorithms (throughput, latency, CPU, memory, accuracy) — see docs/DESIGN.md §5."
 
 [features]
-default = ["hdrhist", "accuracy-topk"]
+default = ["hdrhist"]
 # Enable the hdrhistogram-backed latency recorder. Off → the
 # LATENCY mask bit is a no-op that costs nothing. The recorder
 # itself lives in aqpbm-core now; this forwards.
@@ -23,8 +23,6 @@ heap-jemalloc = ["aqpbm-core/heap-jemalloc"]
 # counters to advance — see `aqpbm-cli`'s allocator setup. Off →
 # heap_bytes_* = None.
 heap-track = ["aqpbm-core/heap-track"]
-# Pull the HashMap-based top-k ground-truth comparator.
-accuracy-topk = []
 
 [dependencies]
 # Fixed-seed shuffle of the probe set, so probe order is reproducible.
@@ -48,8 +46,3 @@ datasketches.workspace = true
 asap_sketchlib.workspace = true
 # DataFrame-engine baselines (hll/cms/kll/dd `polars` impls).
 polars = { version = "0.46", features = ["lazy"] }
-
-[dev-dependencies]
-# The heap-track integration test installs `TrackingAllocator`
-# (now in aqpbm-core) as the test binary's global allocator.
-aqpbm-core.workspace = true

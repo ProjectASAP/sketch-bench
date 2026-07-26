@@ -11,17 +11,12 @@ use crate::metrics::memory::{JemallocAllocated, Rss};
 use crate::metrics::time::{CpuTimeSampler, WallClock};
 use crate::probe::MetricsSink;
 
-/// One row of per-call query telemetry. Mirrors the columns the
-/// legacy `throughput/{hll,kll,dd}/rust/src/bin/query.rs` emit
-/// per call: a strictly-monotonic 1-based call index, the
-/// timed `sketch.query()` wall, the sketch's answer (cast to
-/// `f64`), and — for quantile families — the percentile being
-/// queried plus the outer repeat number.
-///
-/// Pure telemetry with no sketch-domain knowledge, so it lives in
-/// `aqpbm-core` alongside `RunMetrics` (which carries a
-/// `Vec<QueryCallSample>`); the sketch-domain accuracy comparators
-/// in `sketch-bench` populate it.
+/// One row of per-call query telemetry, mirroring the columns the retired
+/// per-family query harnesses emitted: a strictly-monotonic 1-based call
+/// index, the timed estimate call's wall, the sketch's answer (cast to
+/// `f64`), and — for quantile families — the percentile queried plus the
+/// outer repeat number. Populated by the accuracy comparators in
+/// `sketch-bench`; carries no sketch-domain knowledge itself.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryCallSample {
     pub call_index: usize,
@@ -56,12 +51,11 @@ pub struct RunMetrics {
     pub cpu_user_ns: Option<u64>,
     pub cpu_sys_ns: Option<u64>,
     pub rss_peak_kb: Option<u64>,
-    /// Currently-allocated jemalloc bytes (`stats.allocated`), in
-    /// kB. Populated only when the `heap-jemalloc` feature is
-    /// compiled into the binary AND the linking process has
-    /// jemalloc as its global allocator. `None` otherwise. This
-    /// is a single sample at finalize-time, not a true peak —
-    /// per-sketch peak lives in PR2 under `heap-track`.
+    /// Currently-allocated jemalloc bytes (`stats.allocated`), in kB.
+    /// Populated only when the `heap-jemalloc` feature is compiled in AND the
+    /// linking process has jemalloc as its global allocator; `None` otherwise.
+    /// A single sample at finalize time, not a true peak — for that see
+    /// `heap_bytes_peak`.
     pub heap_allocated_kb: Option<u64>,
     pub memory_bytes: Option<u64>,
     /// Net bytes allocated to this sketch over its lifetime, as
@@ -157,8 +151,8 @@ impl FullSink {
         }
     }
 
-    /// Arm the run. Called by the runner once per measured
-    /// iteration before any `update`/`query`.
+    /// Arm the run. Called by the runner once per measured iteration, before
+    /// any `update`.
     pub fn on_run_start(&mut self) {
         self.wall = Some(WallClock::start());
         if self.mask.contains(MetricsMask::CPU) {
@@ -175,15 +169,6 @@ impl FullSink {
     }
 
     pub fn end_insert_phase(&mut self) {
-        self.phase = Phase::Idle;
-    }
-
-    pub fn begin_query_phase(&mut self) {
-        self.phase = Phase::Query;
-        self.query_wall = Some(WallClock::start());
-    }
-
-    pub fn end_query_phase(&mut self) {
         self.phase = Phase::Idle;
     }
 
@@ -212,10 +197,10 @@ impl FullSink {
             queries_executed: self.queries_executed,
             wall_time_ns,
             insert_wall_time_ns,
-            // `FullSink` is used by the LATENCY pass which does not
-            // run finalize_for_query; the THROUGHPUT / ACCURACY
-            // passes time finalize in `run_once_clean` and patch
-            // this field directly on the returned RunMetrics.
+            // The latency pass, the only user of `FullSink`, does run
+            // `finalize_for_query` but does not time it separately;
+            // `run_once_clean` — the path every other pass takes — measures
+            // it and fills this field itself.
             finalize_wall_time_ns: 0,
             query_wall_time_ns,
             cpu_user_ns,

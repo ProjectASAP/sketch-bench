@@ -20,13 +20,12 @@ pub struct BenchConfig {
     pub warmup_runs: usize,
     /// Which metric families to record.
     pub metrics: MetricsMask,
-    /// How many queries to run *per* measured iteration after
-    /// the insert phase. `None` skips the query phase entirely
-    /// (appropriate for CMS/CS-style sketches whose "query" is
-    /// always paired with `update` in the downstream app).
+    /// Reserved: how many queries to run per measured iteration. The runner
+    /// does not read it — the `GroundTruth` comparators own the query phase
+    /// and pick their own probe counts.
     pub query_count: Option<usize>,
-    /// Threads used for the insert phase. `1` is the default;
-    /// multi-threaded support is planned but not wired.
+    /// Worker threads for the insert phase, read by the parallel-insert cells.
+    /// `1` — a single-threaded run — for every other row.
     pub threads: usize,
     /// Number of shards the merge pass splits the stream into. `1` means the
     /// merge pass has nothing to fold and is skipped. Contiguous ranges, and
@@ -35,9 +34,8 @@ pub struct BenchConfig {
     /// depends on both), but v1 fixes them and names them here rather than
     /// pretending the choice does not exist.
     pub merge_shards: usize,
-    /// Seeds the sink's randomness (latency sampling boundary,
-    /// future sampled ground-truth comparators, ...). Does NOT
-    /// seed the workload — workloads own their own seed.
+    /// The run's nominal seed, carried through to the legacy CSV's `seed`
+    /// column. Does NOT seed the workload — workloads own their own seed.
     pub seed: u64,
 }
 

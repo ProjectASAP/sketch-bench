@@ -3,9 +3,9 @@
 //!
 //! The `.bin` layout is deliberately header-less so `i64` output stays
 //! byte-compatible with the pre-existing `input/benchmark_data_*.bin`
-//! files and both readers (`crate::workload::FileI64` and the C++
-//! `cpp-bench` loader). All provenance — dtype included — lives in the
-//! sidecar, which those readers ignore.
+//! files and both readers (`aqpbm_core::workload::I64Workload` and the
+//! C++ `cpp-bench` loader). All provenance — dtype included — lives in
+//! the sidecar, which those readers ignore.
 
 use std::path::{Path, PathBuf};
 

@@ -10,18 +10,15 @@ use crate::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
 /// Roll up a slice of `RunMetrics` into a single `BenchSection`.
 ///
-/// `mask` is the *pass* mask (post-`MetricsMask::passes()` split)
-/// that produced these runs. Fields whose bit is not present in
-/// `mask` are suppressed (set to `None`) even if the run records
-/// happen to carry a value — this is what makes each pass emit
-/// only the metric it is responsible for, so downstream consumers
-/// can tell "not measured in this pass" apart from "measured and
-/// happened to be zero". Throughput / query_throughput depend on
-/// the THROUGHPUT and ACCURACY bits respectively; latency on
-/// LATENCY; cpu on CPU; rss / heap_allocated on MEMORY. The
-/// logical `memory_bytes` (param-derived from the sketch itself)
-/// is always emitted because it costs nothing to capture and
-/// downstream plots want it on every row.
+/// `mask` is the *pass* mask (post-`MetricsMask::passes()` split) that
+/// produced these runs. Fields whose bit is absent are suppressed (`None`)
+/// even if the run records carry a value — that is what lets a consumer tell
+/// "not measured in this pass" from "measured and happened to be zero".
+/// Throughput and query_throughput key off THROUGHPUT and ACCURACY
+/// respectively; latency off LATENCY, cpu off CPU, rss / heap_allocated off
+/// MEMORY. The logical `memory_bytes` (param-derived from the sketch itself)
+/// is always emitted: it costs nothing and downstream plots want it on every
+/// row.
 pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let n = runs.len();
 
@@ -157,8 +154,8 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
 ///
 /// A key present in some runs but not others (a top-k prefix that only some
 /// draws had enough distinct keys for) is averaged over the runs that
-/// reported it; `accuracy_runs` is the maximum, so a reader can spot the
-/// difference.
+/// reported it, while `accuracy_runs` counts every run that reported
+/// anything — so the two can disagree, and a reader can spot it.
 fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     use std::collections::BTreeMap;
     let mut acc: BTreeMap<&str, Welford> = BTreeMap::new();

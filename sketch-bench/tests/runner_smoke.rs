@@ -5,6 +5,7 @@
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use aqpbm_core::workload::I64Workload;
 use sketch_bench::accuracy::cardinality::CardinalityGT;
+use sketch_bench::accuracy::CardinalityOps;
 use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
@@ -16,13 +17,8 @@ struct ExactCounter {
 
 impl Sketch for ExactCounter {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
     fn update(&mut self, v: &i64) {
         self.seen.insert(*v);
-    }
-    fn query(&self, _: ()) -> f64 {
-        self.seen.len() as f64
     }
     fn memory_bytes(&self) -> usize {
         self.seen.capacity() * std::mem::size_of::<i64>()
@@ -32,6 +28,14 @@ impl Sketch for ExactCounter {
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.seen.extend(other.seen.iter().copied());
         Ok(())
+    }
+}
+
+/// Declares the toy sketch a cardinality estimator, which is what makes it
+/// eligible for `CardinalityGT` below.
+impl CardinalityOps for ExactCounter {
+    fn estimate_distinct(&self) -> f64 {
+        self.seen.len() as f64
     }
 }
 

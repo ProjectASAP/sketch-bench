@@ -162,11 +162,8 @@ pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
     /// Value as `f64` for the sidecar summary, or `None` when the summary
     /// does not apply.
     ///
-    /// `BasicStats` reports min/max/first/last as numbers. For a string
-    /// column those are not the string's own value, and reporting its length
-    /// under a field named `min` would be a lie in a provenance record. The
-    /// fields are already `Option`, so a string column simply carries
-    /// `count` and nothing else.
+    /// Reporting a string's *length* under a field named `min` would be a
+    /// lie in a provenance record, so a string column carries only `count`.
     fn stat(&self) -> Option<f64>;
 }
 
@@ -174,9 +171,8 @@ pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
 /// header-less `.bin` stream.
 ///
 /// Separate from `GenValue` so the constraint sits on the one sink that has
-/// it rather than on the generator. A variable-width value (a string) is a
-/// perfectly good `GenValue` — it goes to memory, CSV, or anywhere else —
-/// it just cannot be a `.bin`, and `BinSink::<That>` will not compile.
+/// it, not on the generator: a string is a fine `GenValue` and streams to
+/// [`MemorySink`], but `BinSink::<String>` will not compile.
 pub trait FixedWidth: GenValue {
     fn write_le<W: Write>(&self, w: &mut W) -> std::io::Result<()>;
 }
@@ -450,15 +446,11 @@ pub struct GenSpec {
     /// Physical encoding of the generated values.
     ///
     /// Sits here rather than inside [`Shape`] because it is not a property of
-    /// what the values *mean*. It used to live on two of the three `Shape`
-    /// variants and be implied on the third, so `Shape::dtype()` had to
-    /// special-case `Categorical`, and once the value type became a type
-    /// parameter it was a second source of truth that had to be checked
-    /// against the first. One home, no check.
-    ///
-    /// `Shape` is `#[serde(flatten)]`ed into this struct, so `dtype` was
-    /// already a sibling of `size`/`seed` on the wire — moving it changes no
-    /// spec file. `a_spec_file_is_unchanged_by_the_move` pins that.
+    /// what the values *mean*; on `Shape` it was a second source of truth
+    /// that had to be checked against the type parameter. `Shape` is
+    /// `#[serde(flatten)]`ed into this struct, so `dtype` was already a
+    /// sibling of `size`/`seed` on the wire and the move changed no spec file
+    /// — `a_spec_file_is_unchanged_by_the_move` pins that.
     #[serde(default)]
     pub dtype: DType,
     /// Rendering options for `dtype: string`. Absent means the defaults.
@@ -509,7 +501,7 @@ impl GenSpec {
     /// provenance record for what was written.
     ///
     /// The chunking is what decouples dataset size from memory: a
-    /// [`FileSink`] streams a dataset far larger than RAM, while a
+    /// [`BinSink`] streams a dataset far larger than RAM, while a
     /// [`MemorySink`] reassembles the same bytes. `chunk` therefore
     /// affects only peak memory and never the output — see
     /// `chunk_size_does_not_change_output`.
@@ -585,8 +577,8 @@ impl GenMeta {
         Self::from_parts(spec, T::DTYPE, acc.finish())
     }
 
-    /// Assemble the sidecar record from a streamed generation, where no
-    /// single `Column` ever existed to describe.
+    /// Assemble the sidecar record from a streamed generation, where the
+    /// values were never all resident to summarise in one pass.
     pub fn from_parts(spec: &GenSpec, dtype: DType, stats: BasicStats) -> Self {
         GenMeta {
             schema_version: GEN_META_SCHEMA_VERSION,

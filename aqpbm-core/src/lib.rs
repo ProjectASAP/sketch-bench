@@ -1,17 +1,13 @@
 //! `aqpbm-core` — the domain-agnostic benchmark engine + the
 //! shared types every sketchlib-tool crate is built on.
 //!
-//! It carries the abstractions (`Sketch` §4.1, the `Probe`
-//! decorator §4.2, the materialised workloads §4.3, the v1 JSONL
-//! report schema §4.4) **and** the generic machinery that turns
-//! them into measurements: the metric recorders + `MetricsMask`,
-//! the `BenchRunner` and its `BenchConfig`, the N-run `aggregate`,
-//! and the generic `GroundTruth` comparator abstraction. None of
-//! it names a sketch family — the concrete wrappers and per-family
-//! comparators live in `sketch-bench`. Generation itself is
-//! `aqpbm-datagen`. All other sketchlib-tool crates and every
-//! downstream ASAP app depend here — see `docs/DESIGN.md` §3.1
-//! for the full dependency-direction diagram.
+//! It carries the abstractions (`Sketch` §4.1, the `Probe` decorator §4.2,
+//! the materialised workloads §4.3, the v1 JSONL report schema §4.4) **and**
+//! the machinery that turns them into measurements: the metric recorders +
+//! `MetricsMask`, the `BenchRunner`, the N-run `aggregate`, the `GroundTruth`
+//! comparator. None of it names a sketch family — the concrete wrappers and
+//! per-family comparators live in `sketch-bench`, generation in
+//! `aqpbm-datagen`. See `docs/DESIGN.md` §3.1 for the dependency diagram.
 
 pub mod accuracy;
 pub mod aggregation;

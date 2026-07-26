@@ -46,12 +46,7 @@ impl RuntimeSamples for CapturingService {
 struct DummySketch;
 impl Sketch for DummySketch {
     type Item = i64;
-    type Query = ();
-    type Answer = u64;
     fn update(&mut self, _: &i64) {}
-    fn query(&self, _: ()) -> u64 {
-        0
-    }
     fn memory_bytes(&self) -> usize {
         0
     }

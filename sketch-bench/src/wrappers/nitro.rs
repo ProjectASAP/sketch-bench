@@ -1,14 +1,14 @@
 //! Nitro-style sketches — `sketchlib::NitroBatch<Vector2D>`
 //! and `sketch_oxide::NitroSketch<CountMinSketch>`.
 //!
-//! Nitro is a sampling frequency-family sketch. For this
-//! wrapper the `update` path is the sampled insert; `query`
-//! returns a point-estimate like CMS.
+//! Nitro is a sampling frequency-family sketch. Only the `update` path is
+//! exercised here: neither row declares a query capability, so neither is
+//! accuracy-scored.
 //!
-//! The tunable param is `rate`; the underlying CMS is sized at
-//! a fixed (5, 2048) — future work can expose those knobs too.
+//! The tunable param is `rate`; the underlying CMS is sized at a fixed
+//! (5, 2048) — future work can expose those knobs too.
 
-use crate::init::{BuildError, InitSketch};
+use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::NitroParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -34,19 +34,12 @@ impl InitSketch for NitroLib {
 
 impl Sketch for NitroLib {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(std::slice::from_ref(v));
     }
     fn bulk_update(&mut self, vs: &[i64]) {
         self.inner.insert(vs);
-    }
-    fn query(&self, _q: i64) -> u64 {
-        // NitroBatch doesn't expose a cheap point-query in the
-        // benched API; see wrapper notes in the older version.
-        0
     }
     fn memory_bytes(&self) -> usize {
         NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u32>()
@@ -73,16 +66,16 @@ impl InitSketch for NitroOxide {
 
 impl Sketch for NitroOxide {
     type Item = Vec<u8>;
-    type Query = Vec<u8>;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.0.update_sampled(v);
-    }
-    fn query(&self, q: Vec<u8>) -> u64 {
-        self.0.query(&q)
     }
     fn memory_bytes(&self) -> usize {
         NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u64>()
     }
 }
+
+// ---------- catalog identity ----------
+
+impl BenchImpl for NitroLib { type Params = NitroParams; const IMPL: &'static str = "lib"; }
+impl BenchImpl for NitroOxide { type Params = NitroParams; const IMPL: &'static str = "oxide"; }

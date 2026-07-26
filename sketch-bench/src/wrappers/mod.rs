@@ -12,6 +12,7 @@ pub mod kll;
 pub mod nitro;
 pub mod parallel;
 pub mod polars;
+pub mod topk;
 pub mod univmon;
 
 use crate::init::BuildError;

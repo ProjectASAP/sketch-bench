@@ -1,24 +1,19 @@
 //! `MetricsMask` — which metric families a sink collects.
 //!
-//! Lives here rather than in `sketch-bench` because both
-//! consumers of the `MetricsSink` contract need it: the offline
-//! `sketch-bench::FullSink` and the embedded
-//! `sketch-runtime::Sampler`. Keeping it in `sketch-bench` meant
-//! `sketch-runtime` had to depend on the whole offline benchmark
-//! library — runner, baselines, accuracy comparators — to name
-//! six bits.
+//! Named by both consumers of the `MetricsSink` contract — the offline
+//! [`FullSink`](crate::metrics::FullSink) and the embedded
+//! `sketch-runtime::Sampler` — which is why it sits in `aqpbm-core` rather
+//! than in either of them.
 //!
 //! See `docs/DESIGN.md` §5.3.
 
 use bitflags::bitflags;
 
 bitflags! {
-    /// Which metric families are collected during a run. Each
-    /// bit gates both construction cost and hot-path overhead of
-    /// its recorder — `Probe<_, FullSink>` only installs the
-    /// recorders whose bits are set, and `FullSink` holds only
-    /// those recorders. A mask with no bits set is legal (and
-    /// useful as a minimal smoke-test).
+    /// Which metric families are collected during a run. Each bit gates both
+    /// the construction cost and the hot-path overhead of its recorder:
+    /// `FullSink` holds only the recorders whose bits are set. An empty mask
+    /// is legal, and useful as a minimal smoke test.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct MetricsMask: u32 {
         const THROUGHPUT = 1 << 0;
@@ -41,25 +36,6 @@ const PRIMARY_PASSES: [(MetricsMask, &str); 4] = [
 ];
 
 impl MetricsMask {
-    /// Bits that each need their own pass over a fresh sketch, because they
-    /// share the per-`update` hot path and would contaminate each other:
-    /// bracketing every update with two `Instant::now()` calls for LATENCY
-    /// inflates the THROUGHPUT denominator by exactly that overhead.
-    ///
-    /// A property of the metrics, not of the offline runner — an embedded
-    /// sampler enabling both on one path would skew the same way.
-    pub const PRIMARY: MetricsMask = {
-        // Folded from the table rather than re-listed, so the two cannot
-        // disagree about what "primary" means.
-        let mut bits = 0u32;
-        let mut i = 0;
-        while i < PRIMARY_PASSES.len() {
-            bits |= PRIMARY_PASSES[i].0.bits();
-            i += 1;
-        }
-        MetricsMask::from_bits_truncate(bits)
-    };
-
     /// Bits that record at phase boundaries only (start / finish
     /// of the insert phase, not per-update). Free to attach to
     /// any primary pass without contaminating its measurement.
@@ -149,17 +125,8 @@ mod tests {
     }
 
     #[test]
-    fn primary_is_exactly_the_named_passes() {
-        // `PRIMARY` is folded from the same table `pass_name` reads, so this
-        // cannot drift — it pins that the fold is what we think it is, and
-        // that a bit added to the table lands in `PRIMARY` for free.
-        assert_eq!(
-            MetricsMask::PRIMARY,
-            MetricsMask::THROUGHPUT
-                | MetricsMask::LATENCY
-                | MetricsMask::ACCURACY
-                | MetricsMask::MERGE
-        );
+    fn every_named_pass_runs_under_all() {
+        // A bit added to the table must produce a pass, not just a name.
         assert_eq!(MetricsMask::all().passes().len(), PRIMARY_PASSES.len());
     }
 

@@ -19,14 +19,9 @@ struct DummySketch {
 }
 impl Sketch for DummySketch {
     type Item = i64;
-    type Query = ();
-    type Answer = u64;
     #[inline]
     fn update(&mut self, v: &i64) {
         self.n = self.n.wrapping_add(*v as u64);
-    }
-    fn query(&self, _: ()) -> u64 {
-        self.n
     }
     fn memory_bytes(&self) -> usize {
         8

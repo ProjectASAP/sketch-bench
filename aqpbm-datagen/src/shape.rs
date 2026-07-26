@@ -38,8 +38,7 @@ fn default_dist() -> Distribution {
 
 /// `f64` represents integers exactly only up to 2^53. Past that, a
 /// `cardinality`-sized key space would silently collapse onto rounded
-/// values — the same class of quiet wrongness the dtype guard in
-/// [`crate::workload::FileI64`] exists to prevent — so reject it.
+/// values, so reject it.
 fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchError> {
     const LIMIT: u64 = 1 << 53;
     if dtype == DType::F64 && cardinality > LIMIT {
@@ -61,10 +60,8 @@ pub enum Shape {
     /// `dist` (which must be range-valued: uniform / zipf / constant).
     /// The exact base is per-dist — uniform covers `[0, cardinality)`,
     /// zipf covers ranks `[1, cardinality]` — but the count is always
-    /// `cardinality`. That count is the same for every dtype, so `f64`
-    /// emits whole numbers: the same logical values as `i64`/`u64`,
-    /// differing only in physical encoding, so a benchmark can vary
-    /// `dtype` alone.
+    /// `cardinality`, at every dtype — so `f64` emits whole numbers and a
+    /// benchmark can vary `dtype` alone.
     Keys {
         cardinality: u64,
         #[serde(default = "default_dist")]
@@ -96,11 +93,9 @@ impl Shape {
     /// How many distinct values this shape can produce, when that is
     /// bounded.
     ///
-    /// Unlike the `dtype()` that used to sit here, this really is a property
-    /// of the shape: it is about what the values *mean*, not how they are
-    /// encoded. `string` needs it to size the prefix that keeps rendering
-    /// injective, and `Monotonic` has no answer — which is why a monotonic
-    /// string series is refused rather than approximated.
+    /// `string` needs it to size the prefix that keeps rendering injective,
+    /// and `Monotonic` has no answer — which is why a monotonic string
+    /// series is refused rather than approximated.
     pub fn domain_size(&self) -> Option<u64> {
         match self {
             Shape::Keys { cardinality, .. } => Some(*cardinality),
@@ -179,10 +174,10 @@ impl Shape {
 }
 
 /// A prepared generator: the closed set of structures, one per `Shape`
-/// variant. Built by [`Shape::build`], driven by [`GenSpec::generate`].
-/// An enum rather than a trait object — the set is closed and
-/// crate-private, matching how every other datagen concern
-/// ([`Distribution`], [`Column`], [`Shape`]) is modelled.
+/// variant. Built by [`Shape::build`], driven by
+/// [`GenSpec::generate_into`](super::GenSpec::generate_into).
+/// An enum rather than a trait object — the set is closed, matching how
+/// the other datagen axes ([`Distribution`], [`Shape`]) are modelled.
 pub enum Generator<T: GenValue> {
     Keys(KeysGen<T>),
     Categorical(CategoricalGen<T>),
@@ -190,16 +185,13 @@ pub enum Generator<T: GenValue> {
 }
 
 impl<T: GenValue> Generator<T> {
-    /// Produce the next `n` values.
+    /// Produce the next `n` values, appended to `out` (cleared by the
+    /// caller, so the chunked driver reuses one buffer for the whole run).
     ///
-    /// Takes `&mut self` because a structure may carry state *between*
-    /// calls (the monotonic accumulator does). That is what makes
-    /// chunked generation identical to one-shot generation: N calls of
-    /// `n` and one call of `N*n` consume the same RNG draws and
-    /// continue the same series.
-    /// Appends to `out` rather than returning a fresh `Vec`, so the chunked
-    /// driver reuses one buffer for the whole run instead of allocating per
-    /// chunk. `out` is cleared by the caller.
+    /// Takes `&mut self` because a structure may carry state *between* calls
+    /// (the monotonic accumulator does). That is what makes N calls of `n`
+    /// consume the same RNG draws, and continue the same series, as one call
+    /// of `N*n`.
     pub fn generate(
         &mut self,
         n: usize,
@@ -246,8 +238,7 @@ impl<T: GenValue> CategoricalGen<T> {
     /// through [`GenValue::from_acc`] rather than rendered from a draw — an
     /// id is a value the user wrote down, not a sample. `from_acc` is
     /// fallible, which is what makes `dtype: u64` over negative ids an error
-    /// rather than a wrap; there is no longer a `Shape::dtype()` pinning this
-    /// shape to `i64` in advance.
+    /// rather than a wrap.
     fn generate(
         &mut self,
         n: usize,
@@ -284,10 +275,7 @@ pub struct MonotonicGen<T: GenValue> {
 }
 
 impl<T: GenValue> MonotonicGen<T> {
-    /// Accumulates in the widest integer and narrows per value. The
-    /// intermediate `Vec<i128>` this used to build is gone: it existed only
-    /// so the per-dtype narrowing could happen in one trailing match, and
-    /// there is no match left.
+    /// Accumulates in the widest integer and narrows per value.
     fn generate(
         &mut self,
         n: usize,

@@ -1,11 +1,7 @@
-//! The destination axis: where generated values go.
-//!
-//! Generation has three separable concerns — *what* the values mean
-//! ([`super::shape::Shape`]), *how* they are spread
-//! ([`super::dist::Distribution`]), and *where* they end up. The first
-//! two were already orthogonal; this module makes the third one an
-//! interface too, so a new destination never touches the generators and
-//! a new distribution never touches the destinations.
+//! The destination axis: where generated values go — the third separable
+//! concern alongside *what* the values mean ([`super::shape::Shape`]) and
+//! *how* they are spread ([`super::dist::Distribution`]), so a new
+//! destination never touches the generators and vice versa.
 //!
 //! The driver ([`super::GenSpec::generate_into`]) pushes values to the sink
 //! in chunks. That is what lets [`BinSink`] write a dataset larger than RAM
@@ -70,10 +66,8 @@ impl<T> MemorySink<T> {
 
     /// The accumulated values.
     ///
-    /// Infallible, unlike the `Option<Column>` this replaced: an empty run
-    /// yields an empty `Vec<T>` whose type is known statically, so there is
-    /// no longer a case where the dtype cannot be inferred because no chunk
-    /// arrived.
+    /// Infallible: an empty run yields an empty `Vec<T>` whose type is known
+    /// statically, so there is no "dtype unknown, no chunk arrived" case.
     pub fn into_values(self) -> Vec<T> {
         self.values
     }
@@ -93,12 +87,10 @@ impl<T: Clone> Sink<T> for MemorySink<T> {
 /// here — it is the caller's choice (`--no-meta`), and the caller gets the
 /// [`super::GenMeta`] back from the driver.
 ///
-/// Accepts only [`FixedWidth`] values. The `.bin` layout is a bare sequence
-/// of equal-width little-endian values with no header, offsets, or
+/// Accepts only [`FixedWidth`] values: the layout has no header, offsets or
 /// delimiters, so a variable-width value has nowhere to record its length.
-/// That is a property of this format, not of the generator: a string
-/// workload is fine in memory or in CSV, and `BinSink::<String>` simply
-/// does not compile.
+/// That is a property of this format, not of the generator — strings go to a
+/// [`MemorySink`] fine, and `BinSink::<String>` simply does not compile.
 pub struct BinSink<T> {
     writer: BufWriter<File>,
     _item: PhantomData<T>,

@@ -1,26 +1,29 @@
-//! Polars-backed implementations, one per family (`hll/polars`,
-//! `cms/polars`, `countsketch/polars`, `kll/polars`, `dd/polars`).
-//! These are real `--impl` rows, not accuracy baselines: they
-//! compute the exact answer through a DataFrame engine, and the
-//! point of racing them is throughput. Their exactness is
-//! incidental — the accuracy ground truth lives in `accuracy/`.
+//! Polars-backed implementations, one per family (`hll/polars`, `cms/polars`,
+//! `countsketch/polars`, `kll/polars`, `dd/polars`, `topk/polars`). These are
+//! real `--impl` rows, not accuracy baselines: they compute the exact answer
+//! through a DataFrame engine, and the point of racing them is throughput.
+//! Their exactness is incidental — the accuracy ground truth lives in
+//! `accuracy/`.
 //!
-//! Mirrors the legacy `throughput/polars_{cardinality,freq,
-//! quantile}/` binaries: buffer the stream into a `Vec<i64>`,
-//! then on `finalize_for_query` build a `DataFrame` once and run
-//! the relevant Polars expression. The total work is billed to
-//! the insert phase, matching what legacy measured (insert
-//! throughput = items / (push + DataFrame + collect)).
+//! Mirrors the legacy `throughput/polars_{cardinality,freq,quantile}/`
+//! binaries: buffer the stream into a `Vec<i64>`, then on
+//! `finalize_for_query` build a `DataFrame` once and run the relevant Polars
+//! expression. Note that the runner bills that build to
+//! `RunMetrics::finalize_wall_time_ns` and the throughput pass times the
+//! insert loop alone, so a polars row's throughput column is the buffering
+//! `Vec::push`, not the engine work — unlike legacy, which divided items by
+//! push + DataFrame + collect.
 //!
-//! Per-call `query()` is a cached lookup — so under
-//! `--raw-csv --accuracy` the per-call CSV rows report the
-//! post-finalize lookup cost (≈ ns), not the heavyweight Polars
-//! compute. That's accurate: by the time the comparator queries
-//! the polars baseline, the work is already done.
+//! The per-call estimate is a cached lookup, so under `--raw-csv --accuracy`
+//! the per-call CSV rows report the post-finalize lookup cost (≈ ns), not the
+//! Polars compute. That is what it should be: by the time the comparator
+//! queries this row, the work is already done.
 
 use std::collections::HashMap;
 
-use crate::init::{BuildError, InitSketch};
+use crate::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
+use crate::init::{BenchImpl, BuildError, InitSketch};
+use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams, TopkParams};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
 use polars::prelude::*;
@@ -46,8 +49,6 @@ impl InitSketch for PolarsCardinality {
 
 impl Sketch for PolarsCardinality {
     type Item = i64;
-    type Query = ();
-    type Answer = f64;
 
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -68,10 +69,6 @@ impl Sketch for PolarsCardinality {
             .cast(&DataType::Float64)
             .expect("cast to f64");
         self.estimate = c.f64().expect("f64 chunked").get(0).unwrap_or(0.0);
-    }
-
-    fn query(&self, _: ()) -> f64 {
-        self.estimate
     }
 
     fn memory_bytes(&self) -> usize {
@@ -140,17 +137,12 @@ impl InitSketch for PolarsFrequencyCms {
 
 impl Sketch for PolarsFrequencyCms {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
     fn finalize_for_query(&mut self) {
         self.0.finalize();
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.0.query(q)
     }
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
@@ -170,17 +162,12 @@ impl InitSketch for PolarsFrequencyCs {
 
 impl Sketch for PolarsFrequencyCs {
     type Item = i64;
-    type Query = i64;
-    type Answer = u64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
     fn finalize_for_query(&mut self) {
         self.0.finalize();
-    }
-    fn query(&self, q: i64) -> u64 {
-        self.0.query(q)
     }
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
@@ -258,17 +245,12 @@ impl InitSketch for PolarsQuantileKll {
 
 impl Sketch for PolarsQuantileKll {
     type Item = i64;
-    type Query = f64;
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
     fn finalize_for_query(&mut self) {
         self.0.finalize();
-    }
-    fn query(&self, q: f64) -> f64 {
-        self.0.query(q)
     }
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
@@ -288,8 +270,6 @@ impl InitSketch for PolarsQuantileDd {
 
 impl Sketch for PolarsQuantileDd {
     type Item = i64;
-    type Query = f64;
-    type Answer = f64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
@@ -297,11 +277,150 @@ impl Sketch for PolarsQuantileDd {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
-    fn query(&self, q: f64) -> f64 {
-        self.0.query(q)
+    fn memory_bytes(&self) -> usize {
+        self.0.memory_bytes()
+    }
+}
+
+
+// ---------- statistic membership ----------
+//
+// The exact baselines answer the same statistics as the sketches they sit
+// beside, which is what makes their ~0 error a check on the comparator.
+
+impl CardinalityOps for PolarsCardinality {
+    fn estimate_distinct(&self) -> f64 {
+        self.estimate
+    }
+}
+
+impl FrequencyOps for PolarsFrequencyCms {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.0.query(*key)
+    }
+}
+
+impl FrequencyOps for PolarsFrequencyCs {
+    type Key = i64;
+    fn estimate_frequency(&self, key: &i64) -> u64 {
+        self.0.query(*key)
+    }
+}
+
+impl QuantileOps for PolarsQuantileKll {
+    fn estimate_quantile(&self, phi: f64) -> f64 {
+        self.0.query(phi)
+    }
+}
+
+impl QuantileOps for PolarsQuantileDd {
+    fn estimate_quantile(&self, phi: f64) -> f64 {
+        self.0.query(phi)
+    }
+}
+
+// ---------- catalog identity ----------
+//
+// Each exact baseline is named `polars` inside whichever family its params
+// type places it in — the family it belongs to falls out of `Params`.
+
+impl BenchImpl for PolarsCardinality { type Params = HllParams; const IMPL: &'static str = "polars"; }
+impl BenchImpl for PolarsFrequencyCms { type Params = CmsParams; const IMPL: &'static str = "polars"; }
+impl BenchImpl for PolarsFrequencyCs { type Params = CountSketchParams; const IMPL: &'static str = "polars"; }
+impl BenchImpl for PolarsQuantileKll { type Params = KllParams; const IMPL: &'static str = "polars"; }
+impl BenchImpl for PolarsQuantileDd { type Params = DdParams; const IMPL: &'static str = "polars"; }
+
+/// `topk/polars` — the exact top-k baseline. Reuses the same group_by that
+/// backs the frequency baseline, then sorts. Its score is the check on the
+/// comparator itself: an exact answer must come back at precision = recall =
+/// 1.0, so anything less means the oracle, not the sketch, is wrong.
+#[derive(Default)]
+pub struct PolarsTopK(PolarsFrequencyCore);
+
+impl InitSketch for PolarsTopK {
+    /// The one polars baseline that does read its config. `k` is not a
+    /// tuning knob it can shrug off like `rows`/`cols`: it is the prefix the
+    /// comparator scores this row against, so a config whose `k` cannot be
+    /// read has to fail here — naming the bad key — rather than let the row
+    /// run and be silently scored at some other `k`. It also keeps the
+    /// `topk` panel honest: every row in the family accepts and rejects the
+    /// same configs, so the rows in a comparison were asked the same question.
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        let p: TopkParams = config.parse()?;
+        if p.k == 0 {
+            return Err(BuildError("topk needs k >= 1".into()));
+        }
+        Ok(Self::default())
+    }
+}
+
+impl Sketch for PolarsTopK {
+    type Item = i64;
+    #[inline(always)]
+    fn update(&mut self, v: &i64) {
+        self.0.update(v);
+    }
+    /// All of the cost is here, not in `update` — the same split the other
+    /// polars baselines use, so the insert column stays a plain `Vec::push`.
+    fn finalize_for_query(&mut self) {
+        self.0.finalize();
     }
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
 }
 
+impl TopKOps for PolarsTopK {
+    type Key = i64;
+    fn estimate_topk(&self, k: usize) -> Vec<(i64, u64)> {
+        let mut out: Vec<(i64, u64)> = self.0.counts.iter().map(|(&k, &c)| (k, c)).collect();
+        out.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out.truncate(k);
+        out
+    }
+}
+
+impl BenchImpl for PolarsTopK {
+    type Params = TopkParams;
+    const IMPL: &'static str = "polars";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn topk_config(params: serde_json::Value) -> ParamSet {
+        ParamSet {
+            family: "topk".to_string(),
+            params,
+        }
+    }
+
+    /// Exactness is no excuse for accepting a config the rest of the family
+    /// rejects: this row is scored at `k`, so an unreadable `k` is a build
+    /// failure, not a default.
+    #[test]
+    fn a_k_that_cannot_be_read_is_a_build_error() {
+        let err = match PolarsTopK::init(&topk_config(
+            serde_json::json!({ "rows": 5, "cols": 2048, "kk": 5 }),
+        )) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a misspelled `k` must not build"),
+        };
+        assert!(err.contains("kk"), "error should name the bad key: {err}");
+
+        assert!(PolarsTopK::init(&topk_config(
+            serde_json::json!({ "rows": 5, "cols": 2048 })
+        ))
+        .is_err());
+        assert!(PolarsTopK::init(&topk_config(
+            serde_json::json!({ "rows": 5, "cols": 2048, "k": 0 })
+        ))
+        .is_err());
+        assert!(PolarsTopK::init(&topk_config(
+            serde_json::json!({ "rows": 5, "cols": 2048, "k": 5 })
+        ))
+        .is_ok());
+    }
+}

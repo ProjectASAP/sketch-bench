@@ -1,7 +1,8 @@
 //! `sketchlib` — unified CLI for sketchlib-tool.
 //!
-//! `bench` measures one `(impl, config)` cell of a sketch family.
-//! `list-impls` enumerates registered `(family, impl)` pairs.
+//! `bench` measures one `(impl, config)` cell of a sketch family,
+//! `list-impls` enumerates the catalog's `(family, impl)` pairs, and
+//! `workload` generates or inspects synthetic `.bin` workloads.
 
 mod cli;
 mod raw_csv;
@@ -44,7 +45,7 @@ use sketch_bench::{BenchConfig, MetricsMask};
 use cli::{BenchArgs, Cli, Cmd};
 // The catalog — which sketches exist, how to build them, which oracle scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
-// not know the set; it asks. The existing `catalog::` call sites resolve here.
+// not know the set; it asks.
 use sketch_bench::catalog;
 use sketch_bench::cell::{AccuracyCfg, WorkloadSpec};
 
@@ -227,9 +228,9 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     if args.merge_shards > 1 {
         metrics_mask |= MetricsMask::MERGE;
     }
-    // No `else` clearing the bit: `BenchRunner::run` already skips a merge
-    // pass with fewer than two shards, so one guard covers CLI and library
-    // callers alike.
+    // No `else` clearing the bit: the runner already skips a merge pass with
+    // fewer than two shards, so one guard covers CLI and library callers
+    // alike.
     if args.accuracy {
         // --accuracy implies the accuracy mask bit, regardless of
         // what --metrics said. Otherwise the runner would build the
@@ -295,7 +296,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", args.sketch, args.impl_name))?;
 
-    // Each `entry.run` call returns one report per metric pass (see
+    // `catalog::run` returns one report per metric pass (see
     // `MetricsMask::passes()`); emit each on its own JSONL line and its own
     // CSV row group. Downstream group-by on (sketch, impl, sketch_config,
     // workload) merges them back.

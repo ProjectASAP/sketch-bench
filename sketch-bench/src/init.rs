@@ -4,8 +4,6 @@
 //! yourself from the shared init config and you become a benchmarkable row;
 //! nothing else about you needs to be registered.
 //!
-//! ## Construction is where a config is accepted or rejected
-//!
 //! There is deliberately no separate "which configs does this impl accept"
 //! table. The answer is whatever `init` does with the `ParamSet`:
 //!
@@ -16,17 +14,14 @@
 //!   takes an error bound, not `rows`/`cols`) translates inside `init`.
 //!
 //! The `ParamSet` is the shared axis of comparison — the knobs held equal
-//! across libraries so the numbers mean something. What each impl does with
-//! it is private to that impl.
+//! across libraries so the numbers mean something.
 //!
-//! ## Scope
-//!
-//! `init` takes only the `ParamSet`. An impl needing a *run* knob that is not
-//! a sketch parameter — the parallel-insert wrappers want the worker count
-//! from `--workers`, which lives in `BenchConfig`, not here — cannot be
-//! expressed through this trait and keeps its own constructor.
+//! `init` takes only the `ParamSet`, so an impl needing a *run* knob — the
+//! parallel-insert wrappers want the worker count from `--workers`, which
+//! lives in `BenchConfig` — cannot be expressed through this trait and keeps
+//! its own constructor.
 
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::config::{ParamSet, SketchParams};
 use aqpbm_core::sketch::Sketch;
 use aqpbm_core::SketchError;
 
@@ -62,4 +57,34 @@ impl From<SketchError> for BuildError {
 /// runner can drive.
 pub trait InitSketch: Sketch + Sized {
     fn init(config: &ParamSet) -> Result<Self, BuildError>;
+}
+
+/// A catalog row's identity — what the record is labelled with.
+///
+/// Separate from construction (`InitSketch` / `cell::ParallelInit`, which the
+/// parallel rows implement instead) because every row has a name whether or
+/// not it builds the same way.
+///
+/// The family is *not* spelled here: it is read off `Params::FAMILY`, so
+/// `"cms"` is written once — in `CmsParams` — and the label on the emitted
+/// record cannot drift from the one in the catalog
+/// (`catalog::tests::every_catalog_entry_runs` pins the two together).
+///
+/// That is the whole guarantee. Nothing ties `Params` to the type
+/// `InitSketch::init` actually parses — pointing a row's `Params` at another
+/// family's struct compiles, and only fails at run time, when the row is
+/// handed a config of the family it now claims and its `init` will not parse
+/// it.
+pub trait BenchImpl: Sketch {
+    /// The parameters this impl is built from. `Params::FAMILY` is the row's
+    /// family.
+    type Params: SketchParams;
+
+    /// This impl's name within the family (`"oxide"`, `"lib-hip"`, ...).
+    const IMPL: &'static str;
+
+    /// The family, derived — never written by hand.
+    fn family() -> &'static str {
+        Self::Params::FAMILY
+    }
 }

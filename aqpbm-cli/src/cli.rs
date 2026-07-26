@@ -25,7 +25,8 @@ pub enum Cmd {
 
 #[derive(Parser, Debug)]
 pub struct BenchArgs {
-    /// Sketch family (hll, kll, cms, countsketch, elastic, nitro, univmon).
+    /// Sketch family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
+    /// univmon). `list-impls` prints every (family, impl) pair.
     #[arg(long)]
     pub sketch: String,
     /// Implementation within the family — exactly one (`oxide`).
@@ -67,15 +68,16 @@ pub struct BenchArgs {
     pub zipf_s: f64,
     /// Item type the sketches ingest: `i64` (default), `f64`, or `string`.
     ///
-    /// `f64` runs the ordered families (`kll`, `dd`); every hash-based row is
-    /// skipped with a reason, because `f64` is not `Hash` in Rust and hashing
-    /// its bits would repeat the `i64` curve.
+    /// `f64` runs the ordered families (`kll`, `dd`); asking for any
+    /// hash-based row under `f64` is an error naming the mismatch, because
+    /// `f64` is not `Hash` in Rust and hashing its bits would repeat the
+    /// `i64` curve.
     ///
-    /// `string` runs the rows whose wrappers take text (`elastic`, `nitro`,
-    /// `univmon`) over **generated** strings — configurable alphabet, varying
-    /// length. Those same rows run under `i64` too, but there they consume
-    /// decimal-formatted integers, which is a different and much narrower
-    /// workload. Comparing the two is the point.
+    /// `string` runs the rows whose wrappers take text (`elastic`, `univmon`,
+    /// and `nitro/oxide`) over **generated** strings — configurable alphabet,
+    /// varying length. Those same rows run under `i64` too, but there they
+    /// consume decimal-formatted integers, which is a different and much
+    /// narrower workload. Comparing the two is the point.
     ///
     /// For `i64` and `f64` the values themselves do not change, only their
     /// encoding. `string` is the exception: the rank is rendered rather than
@@ -144,16 +146,18 @@ pub struct BenchArgs {
     pub config: Option<String>,
     /// Compute ground-truth accuracy per run. Implies
     /// `MetricsMask::ACCURACY`. Per-family comparator: CMS /
-    /// CountSketch / Elastic → frequency (L1/L2/rel-err p99);
-    /// HLL → cardinality (rel-err); KLL → quantile rank-err.
-    /// Nitro / UnivMon are ignored with a stderr note (their
-    /// CLI-wrapper `query` is a stub).
+    /// CountSketch → frequency (L1/L2/rel-err); HLL →
+    /// cardinality (rel-err); KLL → quantile rank-err; DD →
+    /// quantile relative-error; topk → precision/recall at k.
+    /// Elastic, Nitro, UnivMon and the parallel-insert rows
+    /// declare no query capability, so no comparator scores
+    /// them: they still run, timed only, after a stderr note.
     #[arg(long, default_value_t = false)]
     pub accuracy: bool,
     /// Cap on the number of distinct keys probed by the
-    /// frequency comparator (CMS / CountSketch / Elastic). `0`
-    /// = probe every distinct key. Ignored by cardinality /
-    /// quantile comparators.
+    /// frequency comparator (CMS / CountSketch). `0` = probe
+    /// every distinct key. Ignored by the cardinality /
+    /// quantile / top-k comparators.
     #[arg(long, default_value_t = 100_000)]
     pub accuracy_probes: usize,
 }
