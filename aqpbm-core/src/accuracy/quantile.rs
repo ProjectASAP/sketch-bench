@@ -23,12 +23,13 @@
 //! universal number reflects how each sketch's correctness
 //! bound is actually defined in its paper.
 
-use aqpbm_core::sketch::Sketch;
+use crate::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::statistic::QuantileOps;
-use super::{Comparison, GroundTruth, QueryCallSample};
+use super::{Comparison, GroundTruth};
+use crate::metrics::QueryCallSample;
 
 /// Number of times the 101-percentile sweep is repeated when
 /// `record_calls` is on. Matches the legacy KLL / DD query

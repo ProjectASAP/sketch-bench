@@ -2,9 +2,9 @@
 //! Quantile family with relative-error guarantee `alpha`:
 //! `estimate_quantile(phi) -> f64` (value at quantile).
 
-use crate::accuracy::quantile::QuantileValue;
-use crate::accuracy::QuantileOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::quantile::QuantileValue;
+use aqpbm_core::accuracy::QuantileOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::DdParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;

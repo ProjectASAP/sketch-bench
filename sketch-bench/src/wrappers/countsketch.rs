@@ -1,8 +1,8 @@
 //! CountSketch wrappers — 5 variants (`oxide` + 4× sketchlib).
 //! Same family as CMS: each declares `FrequencyOps`.
 
-use crate::accuracy::FrequencyOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::FrequencyOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CountSketchParams;
 use crate::wrappers::require_shape;
 use aqpbm_core::config::ParamSet;

@@ -21,9 +21,9 @@
 //! lives in `BenchConfig` — cannot be expressed through this trait and keeps
 //! its own constructor.
 
-use aqpbm_core::config::{ParamSet, SketchParams};
-use aqpbm_core::sketch::Sketch;
-use aqpbm_core::SketchError;
+use crate::config::{ParamSet, SketchParams};
+use crate::sketch::Sketch;
+use crate::SketchError;
 
 /// Why a sketch could not be built from a given `ParamSet`.
 ///
@@ -84,7 +84,9 @@ pub trait BenchImpl: Sketch {
     const IMPL: &'static str;
 
     /// The family, derived — never written by hand.
-    fn family() -> &'static str {
-        Self::Params::FAMILY
-    }
+    ///
+    /// A `const` rather than a method so a catalog can read a row's identity
+    /// off the type in a `const` context, and so build its list of rows and
+    /// its dispatch from one table instead of two.
+    const FAMILY: &'static str = <Self::Params as SketchParams>::FAMILY;
 }

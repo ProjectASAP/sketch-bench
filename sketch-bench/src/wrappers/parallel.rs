@@ -29,7 +29,7 @@
 
 use std::sync::Barrier;
 
-use crate::init::{BenchImpl, BuildError};
+use aqpbm_core::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -45,7 +45,7 @@ pub struct ParallelCmsFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelCmsFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
     /// Not an `InitSketch`: it needs the worker count, which is a run knob
     /// (`--workers`), not a sketch parameter. Parses the config to reject a
     /// malformed one, then ignores its values — this impl's shape is fixed
@@ -83,7 +83,7 @@ pub struct ParallelCsFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelCsFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: CountSketchParams = config.parse()?;
         Ok(Self {
@@ -117,7 +117,7 @@ pub struct ParallelHllFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelHllFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelHllFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: HllParams = config.parse()?;
         Ok(Self {

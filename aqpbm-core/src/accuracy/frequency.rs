@@ -49,7 +49,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::Instant;
 
-use aqpbm_core::sketch::Sketch;
+use crate::sketch::Sketch;
 
 use super::statistic::FrequencyOps;
 use super::{Comparison, GroundTruth};

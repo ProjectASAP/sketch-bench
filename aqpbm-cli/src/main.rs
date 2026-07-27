@@ -40,14 +40,15 @@ use anyhow::{bail, Result};
 use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
 use clap::Parser;
 use sketch_bench::params::ParamSet;
-use sketch_bench::{BenchConfig, MetricsMask};
+use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::runner::BenchConfig;
 
 use cli::{BenchArgs, Cli, Cmd};
-// The catalog — which sketches exist, how to build them, which oracle scores
+// The catalog — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use sketch_bench::catalog;
-use sketch_bench::cell::{AccuracyCfg, WorkloadSpec};
+use aqpbm_core::cell::{AccuracyCfg, WorkloadSpec};
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
     let s = match s {

@@ -26,8 +26,8 @@
 use aqpbm_datagen::DType;
 
 use crate::params::ParamSet;
-use crate::BenchReport;
-use crate::MetricsMask;
+use aqpbm_core::runner::BenchReport;
+use aqpbm_core::metrics::MetricsMask;
 
 /// One CSV file to write: its filename (relative to the `--raw-csv` dir), its
 /// header line, and the rows beneath it. The frontend creates the file if
@@ -249,7 +249,7 @@ fn format_per_call_row(
     params: &ParamCols,
     run_no: usize,
     total_items: u64,
-    sample: &crate::accuracy::QueryCallSample,
+    sample: &aqpbm_core::metrics::QueryCallSample,
 ) -> String {
     // Per-call rows always index by `run` (legacy convention), even for
     // cms-style families that label aggregate rows with `seed` — only HLL /

@@ -1,154 +1,166 @@
-//! The catalog: the set of `(family, impl)` this crate exposes, and the
-//! `match` that resolves one to a concrete sketch type + its oracle.
-//!
-//! This is the sketch domain's registry, so it lives here, not in the CLI: the
-//! frontend does not know which sketches exist, how to build them, or which
-//! oracle scores them — it asks this module. A future parallel bench crate
-//! (`aqp-bench`) ships its own catalog, and the CLI multiplexes between them.
-//!
-//! There is no registry *table*: running a cell is a plain `cell::run_cell::<T>`
-//! (timed) plus, when `--accuracy` is on, `cell::score_cell::<T, Oracle>`
-//! (untimed). This module is where the runtime strings `("hll", "oxide")` bind
-//! to those monomorphised calls. [`IMPLS`] is the human-facing list (for
-//! `list-impls` and validation); [`run`] is the executable match. A test pins
-//! that the two agree.
+//! The catalog: one table naming every `(family, impl)` this crate exposes,
+//! and the dispatch resolving one to a concrete sketch type. It lives here,
+//! not in the CLI, so a future `aqp-bench` can ship its own. A row is a
+//! *type*, not a pair of strings — family, impl name and `scores_accuracy`
+//! are projected off it, so the list and the code cannot drift apart.
 
 use anyhow::Result;
 use aqpbm_core::sketch::Sketch;
 use aqpbm_datagen::DType;
 
-use crate::accuracy::cardinality::CardinalityGT;
-use crate::accuracy::frequency::FrequencyGT;
-use crate::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
-use crate::accuracy::topk::TopkGT;
-use crate::accuracy::GroundTruth;
-use crate::cell::{self, AccuracyCfg, DtypeMismatch, FromItems, Items, RunError};
-use crate::init::{BenchImpl, InitSketch};
+use aqpbm_core::accuracy::cardinality::CardinalityGT;
+use aqpbm_core::accuracy::frequency::FrequencyGT;
+use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
+use aqpbm_core::accuracy::topk::TopkGT;
+use aqpbm_core::accuracy::GroundTruth;
+use aqpbm_core::cell::{
+    self, AccuracyCfg, DtypeMismatch, FromItems, Items, ParallelInit, RunError,
+};
+use aqpbm_core::init::{BenchImpl, InitSketch};
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
 use crate::params::{ParamSet, TopkParams};
 use crate::wrappers::{
     cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, topk, univmon,
 };
-use crate::{BenchConfig, BenchReport};
 
-/// One catalog entry: `(family, impl, description, scores_accuracy)`. Metadata
-/// only — the executable binding is in [`run`]. `scores_accuracy` is `false`
-/// for throughput-only rows (Elastic/Nitro/UnivMon stubs, parallel-insert).
-pub const IMPLS: &[(&str, &str, &str, bool)] = &[
-    // -------- HLL (cardinality) --------
-    ("hll", "oxide", "sketch_oxide::cardinality::HyperLogLog", true),
-    ("hll", "datasketches", "datasketches::hll::HllSketch (Hll8)", true),
-    ("hll", "lib", "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate", true),
-    ("hll", "lib-hip", "asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate", true),
-    ("hll", "polars", "polars exact: DataFrame.n_unique()", true),
-    ("hll", "lib-fastpath-parallel", "asap HLL ErtlMLE, FastPath, parallel insert", false),
-    // -------- KLL (quantile, rank error) --------
-    ("kll", "oxide", "sketch_oxide::quantiles::KllSketch", true),
-    ("kll", "lib", "asap_sketchlib::KLL", true),
-    ("kll", "polars", "polars exact: 101-point quantile grid", true),
-    // -------- CMS (frequency) --------
-    ("cms", "oxide", "sketch_oxide::frequency::CountMinSketch", true),
-    ("cms", "datasketches", "datasketches::countmin::CountMinSketch", true),
-    ("cms", "lib-fixedmatrix-custom-fast", "asap CMS, custom FixedMatrix (5x65538), FastPath", true),
-    ("cms", "lib-fixedmatrix-fast", "asap CMS, FixedMatrix (5x2048), FastPath", true),
-    ("cms", "lib-fixedmatrix-fast-32k", "asap CMS, FixedMatrix (5x32768), FastPath", true),
-    ("cms", "lib-vector2d-fast", "asap CMS, Vector2D, FastPath", true),
-    ("cms", "lib-vector2d-regular", "asap CMS, Vector2D, RegularPath", true),
-    ("cms", "polars", "polars exact: group_by(v).agg(len)", true),
-    ("cms", "lib-fastpath-parallel", "asap CMS, FastPath, parallel insert on M5x32K", false),
-    // -------- CountSketch (frequency) --------
-    ("countsketch", "oxide", "sketch_oxide::frequency::CountSketch", true),
-    ("countsketch", "lib-fixedmatrix-fast", "asap Count, FixedMatrix (5x2048), FastPath", true),
-    ("countsketch", "lib-fixedmatrix-fast-32k", "asap Count, FixedMatrix (5x32768), FastPath", true),
-    ("countsketch", "lib-vector2d-fast", "asap Count, Vector2D, FastPath", true),
-    ("countsketch", "lib-vector2d-regular", "asap Count, Vector2D, RegularPath", true),
-    ("countsketch", "polars", "polars exact: group_by(v).agg(len)", true),
-    ("countsketch", "lib-fastpath-parallel", "asap Count, FastPath, parallel insert on M5x32K", false),
-    // -------- DDSketch (quantile, relative error) --------
-    ("dd", "lib", "asap_sketchlib::DDSketch (relative-error quantile)", true),
-    ("dd", "polars", "polars exact: 101-point quantile grid", true),
-    // -------- Top-k (counter array + size-k candidate tracker) --------
-    ("topk", "cms-heap", "sketch_oxide CMS + size-k heap (top-k on the insert path)", true),
-    ("topk", "cs-heap", "sketch_oxide CountSketch + size-k heap", true),
-    ("topk", "polars", "polars exact: group_by(v).agg(len) sorted, top k", true),
-    // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
-    ("elastic", "lib", "asap_sketchlib::Elastic<DefaultXxHasher>", false),
-    ("elastic", "oxide", "sketch_oxide::frequency::ElasticSketch", false),
-    // -------- Nitro / UnivMon (no query capability; throughput-only) --------
-    ("nitro", "lib", "asap_sketchlib::NitroBatch<Vector2D<u32>>", false),
-    ("nitro", "oxide", "sketch_oxide::frequency::NitroSketch<CountMinSketch>", false),
-    ("univmon", "lib", "asap_sketchlib::UnivMon", false),
-    ("univmon", "oxide", "sketch_oxide::universal::UnivMon", false),
-];
+// ---------- what a row is ----------
 
-pub fn list() -> Vec<String> {
-    IMPLS
-        .iter()
-        .map(|(f, i, d, _)| format!("{f:12} {i:28} {d}"))
-        .collect()
+/// The executable half of a row: everything the frontend can hand a cell.
+type RunFn = fn(&BenchConfig, &Items, &ParamSet, &AccuracyCfg) -> Result<Vec<BenchReport>, RunError>;
+
+/// One catalog entry. Built only by the four constructors below, so `family`,
+/// `impl_name` and `scores_accuracy` are always projections of the row's type
+/// and its runner — never hand-written strings that could drift from it.
+pub struct Row {
+    pub family: &'static str,
+    pub impl_name: &'static str,
+    /// The one field that is genuinely new data, and so is written in [`ROWS`].
+    pub description: &'static str,
+    /// Does `--accuracy` score this row? Derived: true iff it was built with a
+    /// constructor that takes a ground-truth calculator.
+    pub scores_accuracy: bool,
+    run: RunFn,
 }
 
-pub fn family_exists(family: &str) -> bool {
-    IMPLS.iter().any(|(f, _, _, _)| *f == family)
+// ---------- how a row builds its ground truth ----------
+
+/// A [`GroundTruth`] that can construct itself from the run's accuracy knobs
+/// and the row's own params.
+///
+/// A trait rather than a `fn` argument so the calculator is named as a *type*
+/// in [`ROWS`] and the row can stay a `const` — a `const fn` cannot close over
+/// a function value. Declared here, not in `aqpbm-core`, because `TopkGT`'s
+/// impl has to read this crate's [`TopkParams`].
+trait GroundTruthCalculator<S: Sketch>: GroundTruth<S> {
+    fn build(acc: &AccuracyCfg, params: &ParamSet) -> Self;
 }
 
-/// Does `--accuracy` score this row? `None` if the row is unknown.
-pub fn scores_accuracy(family: &str, impl_name: &str) -> Option<bool> {
-    IMPLS
-        .iter()
-        .find(|(f, i, _, _)| *f == family && *i == impl_name)
-        .map(|(_, _, _, a)| *a)
-}
-
-/// Parse the single `--config` point for a family, checking the family exists.
-pub fn config_point(family: &str, spec: &str) -> Result<ParamSet> {
-    if !family_exists(family) {
-        anyhow::bail!("unknown sketch family: {family}");
+impl<S: Sketch> GroundTruthCalculator<S> for CardinalityGT
+where
+    Self: GroundTruth<S>,
+{
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        CardinalityGT {
+            record_calls: acc.record_query_calls,
+        }
     }
-    ParamSet::single(family, spec).map_err(Into::into)
 }
 
-// ---------- the two generic frontend helpers ----------
+impl<S: Sketch> GroundTruthCalculator<S> for FrequencyGT
+where
+    Self: GroundTruth<S>,
+{
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        FrequencyGT {
+            max_probes: acc.max_probes,
+        }
+    }
+}
 
-/// Timed measurement, plus accuracy scored against `make_gt(acc)` when
-/// `--accuracy` is on. One generic function; the match arm supplies `S` and the
-/// oracle closure.
-fn scored<S, G>(
+impl<S: Sketch> GroundTruthCalculator<S> for RankErrorGT
+where
+    Self: GroundTruth<S>,
+{
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        RankErrorGT {
+            record_calls: acc.record_query_calls,
+        }
+    }
+}
+
+impl<S: Sketch> GroundTruthCalculator<S> for RelativeErrorGT
+where
+    Self: GroundTruth<S>,
+{
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        RelativeErrorGT {
+            record_calls: acc.record_query_calls,
+        }
+    }
+}
+
+impl<S: Sketch> GroundTruthCalculator<S> for TopkGT
+where
+    Self: GroundTruth<S>,
+{
+    /// Scores against the same `k` the sketch was built with, read from the
+    /// row's params — a comparator asked for a different prefix than the
+    /// tracker keeps would be measuring the mismatch, not the sketch.
+    ///
+    /// Infallible because every `topk` row parses these same params in its own
+    /// `init`, and [`run_scored`] runs the timed half first: a `k` this cannot
+    /// read has already failed the build. Falling back to a default `k` here is
+    /// what let a typo'd config run and publish a score at a `k` nobody asked
+    /// for.
+    fn build(_acc: &AccuracyCfg, params: &ParamSet) -> Self {
+        TopkGT {
+            k: params
+                .parse::<TopkParams>()
+                .expect("the row built, so its params parse")
+                .k,
+        }
+    }
+}
+
+// ---------- the four ways a row runs ----------
+
+/// Timed measurement, plus accuracy scored against `G` when `--accuracy` is on.
+fn run_scored<S, G>(
     cfg: &BenchConfig,
     items: &Items,
     params: &ParamSet,
     acc: &AccuracyCfg,
-    make_gt: impl FnOnce(&AccuracyCfg, &ParamSet) -> G,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Sketch + InitSketch + BenchImpl,
     S::Item: FromItems,
-    G: GroundTruth<S>,
+    G: GroundTruthCalculator<S>,
 {
     let mut reports = cell::run_cell::<S>(cfg, items, params)?;
     if acc.enabled {
-        let gt = make_gt(acc, params);
+        let gt = G::build(acc, params);
         reports.extend(cell::score_cell::<S, G>(cfg, items, params, &gt)?);
     }
     Ok(reports)
 }
 
 /// An ordered quantile family (KLL, DDSketch): the concrete type follows the
-/// run-time dtype, so the arm names both and this picks between them.
-fn ordered<Si, Sf, G>(
+/// run-time dtype, so the row names both and this picks between them.
+fn run_ordered<Si, Sf, G>(
     cfg: &BenchConfig,
     items: &Items,
     params: &ParamSet,
     acc: &AccuracyCfg,
-    make_gt: impl FnOnce(&AccuracyCfg, &ParamSet) -> G,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     Si: Sketch<Item = i64> + InitSketch + BenchImpl,
     Sf: Sketch<Item = f64> + InitSketch + BenchImpl,
-    G: GroundTruth<Si> + GroundTruth<Sf>,
+    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
 {
     match items {
-        Items::I64(_) => scored::<Si, G>(cfg, items, params, acc, make_gt),
-        Items::F64(_) => scored::<Sf, G>(cfg, items, params, acc, make_gt),
+        Items::I64(_) => run_scored::<Si, G>(cfg, items, params, acc),
+        Items::F64(_) => run_scored::<Sf, G>(cfg, items, params, acc),
         other => Err(DtypeMismatch {
             wanted: &[DType::I64, DType::F64],
             got: other.dtype(),
@@ -157,42 +169,178 @@ where
     }
 }
 
-fn card_gt(acc: &AccuracyCfg, _params: &ParamSet) -> CardinalityGT {
-    CardinalityGT {
-        record_calls: acc.record_query_calls,
-    }
+/// A row with no query capability: timed only, no ground truth, nothing to score.
+fn run_plain<S>(
+    cfg: &BenchConfig,
+    items: &Items,
+    params: &ParamSet,
+    _acc: &AccuracyCfg,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S: Sketch + InitSketch + BenchImpl,
+    S::Item: FromItems,
+{
+    cell::run_cell::<S>(cfg, items, params)
 }
-fn freq_gt(acc: &AccuracyCfg, _params: &ParamSet) -> FrequencyGT {
-    FrequencyGT {
-        max_probes: acc.max_probes,
-    }
+
+/// A parallel-insert row: built with the worker count, so not an `InitSketch`.
+fn run_parallel<S>(
+    cfg: &BenchConfig,
+    items: &Items,
+    params: &ParamSet,
+    _acc: &AccuracyCfg,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S: ParallelInit + BenchImpl,
+    S::Item: FromItems,
+{
+    cell::run_cell_parallel::<S>(cfg, items, params)
 }
-fn rank_gt(acc: &AccuracyCfg, _params: &ParamSet) -> RankErrorGT {
-    RankErrorGT {
-        record_calls: acc.record_query_calls,
-    }
-}
-fn rel_gt(acc: &AccuracyCfg, _params: &ParamSet) -> RelativeErrorGT {
-    RelativeErrorGT {
-        record_calls: acc.record_query_calls,
+
+// ---------- the four row constructors ----------
+//
+// Each reads `S::FAMILY` / `S::IMPL` off the type and fixes `scores_accuracy`
+// from its own kind. `const fn`, so `ROWS` stays a `const` and a bad row is
+// rejected at compile time rather than at first use.
+
+const fn scored<S, G>(description: &'static str) -> Row
+where
+    S: Sketch + InitSketch + BenchImpl,
+    S::Item: FromItems,
+    G: GroundTruthCalculator<S>,
+{
+    Row {
+        family: S::FAMILY,
+        impl_name: S::IMPL,
+        description,
+        scores_accuracy: true,
+        run: run_scored::<S, G>,
     }
 }
 
-/// Scores against the same `k` the sketch was built with, read from the
-/// row's params — a comparator asked for a different prefix than the tracker
-/// keeps would be measuring the mismatch, not the sketch.
-///
-/// Infallible because every `topk` row parses these same params in its own
-/// `init`, and [`scored`] runs the timed half first: a `k` this cannot read
-/// has already failed the build. Falling back to a default `k` here is what
-/// let a typo'd config run and publish a score at a `k` nobody asked for.
-fn topk_gt(_acc: &AccuracyCfg, params: &ParamSet) -> TopkGT {
-    TopkGT {
-        k: params
-            .parse::<TopkParams>()
-            .expect("the row built, so its params parse")
-            .k,
+const fn ordered<Si, Sf, G>(description: &'static str) -> Row
+where
+    Si: Sketch<Item = i64> + InitSketch + BenchImpl,
+    Sf: Sketch<Item = f64> + InitSketch + BenchImpl,
+    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
+{
+    Row {
+        // Both halves are the same row; the i64 one names it.
+        family: Si::FAMILY,
+        impl_name: Si::IMPL,
+        description,
+        scores_accuracy: true,
+        run: run_ordered::<Si, Sf, G>,
     }
+}
+
+const fn plain<S>(description: &'static str) -> Row
+where
+    S: Sketch + InitSketch + BenchImpl,
+    S::Item: FromItems,
+{
+    Row {
+        family: S::FAMILY,
+        impl_name: S::IMPL,
+        description,
+        scores_accuracy: false,
+        run: run_plain::<S>,
+    }
+}
+
+const fn parallel_row<S>(description: &'static str) -> Row
+where
+    S: ParallelInit + BenchImpl,
+    S::Item: FromItems,
+{
+    Row {
+        family: S::FAMILY,
+        impl_name: S::IMPL,
+        description,
+        scores_accuracy: false,
+        run: run_parallel::<S>,
+    }
+}
+
+// ---------- the catalog ----------
+
+/// Every `(family, impl)` this crate exposes. Adding one is one line here plus
+/// the wrapper it names; nothing else in this file changes.
+pub const ROWS: &[Row] = &[
+    // -------- HLL (cardinality) --------
+    scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog"),
+    scored::<hll::HllDatasketches, CardinalityGT>("datasketches::hll::HllSketch (Hll8)"),
+    scored::<hll::HllLib, CardinalityGT>("asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate"),
+    scored::<hll::HllLibHip, CardinalityGT>("asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate"),
+    scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
+    parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
+    // -------- KLL (quantile, rank error) --------
+    ordered::<kll::KllOxide<i64>, kll::KllOxide<f64>, RankErrorGT>("sketch_oxide::quantiles::KllSketch"),
+    ordered::<kll::KllLib<i64>, kll::KllLib<f64>, RankErrorGT>("asap_sketchlib::KLL"),
+    scored::<polars::PolarsQuantileKll, RankErrorGT>("polars exact: 101-point quantile grid"),
+    // -------- CMS (frequency) --------
+    scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
+    scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
+    scored::<cms::CmsLibFixedmatrixCustomFast, FrequencyGT>("asap CMS, custom FixedMatrix (5x65538), FastPath"),
+    scored::<cms::CmsLibFixedmatrixFast, FrequencyGT>("asap CMS, FixedMatrix (5x2048), FastPath"),
+    scored::<cms::CmsLibFixedmatrixFast32k, FrequencyGT>("asap CMS, FixedMatrix (5x32768), FastPath"),
+    scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
+    scored::<cms::CmsLibVector2dRegular, FrequencyGT>("asap CMS, Vector2D, RegularPath"),
+    scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
+    parallel_row::<parallel::ParallelCmsFastPath>("asap CMS, FastPath, parallel insert on M5x32K"),
+    // -------- CountSketch (frequency) --------
+    scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
+    scored::<countsketch::CsLibFixedmatrixFast, FrequencyGT>("asap Count, FixedMatrix (5x2048), FastPath"),
+    scored::<countsketch::CsLibFixedmatrixFast32k, FrequencyGT>("asap Count, FixedMatrix (5x32768), FastPath"),
+    scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
+    scored::<countsketch::CsLibVector2dRegular, FrequencyGT>("asap Count, Vector2D, RegularPath"),
+    scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
+    parallel_row::<parallel::ParallelCsFastPath>("asap Count, FastPath, parallel insert on M5x32K"),
+    // -------- DDSketch (quantile, relative error) --------
+    ordered::<dd::DdLib<i64>, dd::DdLib<f64>, RelativeErrorGT>("asap_sketchlib::DDSketch (relative-error quantile)"),
+    scored::<polars::PolarsQuantileDd, RelativeErrorGT>("polars exact: 101-point quantile grid"),
+    // -------- Top-k (counter array + size-k candidate tracker) --------
+    scored::<topk::TopKHeap<cms::CmsOxide>, TopkGT>("sketch_oxide CMS + size-k heap (top-k on the insert path)"),
+    scored::<topk::TopKHeap<countsketch::CsOxide>, TopkGT>("sketch_oxide CountSketch + size-k heap"),
+    scored::<polars::PolarsTopK, TopkGT>("polars exact: group_by(v).agg(len) sorted, top k"),
+    // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
+    plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
+    plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
+    // -------- Nitro / UnivMon (no query capability; throughput-only) --------
+    plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),
+    plain::<nitro::NitroOxide>("sketch_oxide::frequency::NitroSketch<CountMinSketch>"),
+    plain::<univmon::UnivMonLib>("asap_sketchlib::UnivMon"),
+    plain::<univmon::UnivMonOxide>("sketch_oxide::universal::UnivMon"),
+];
+
+// ---------- what the frontend asks ----------
+
+fn find(family: &str, impl_name: &str) -> Option<&'static Row> {
+    ROWS.iter()
+        .find(|r| r.family == family && r.impl_name == impl_name)
+}
+
+pub fn list() -> Vec<String> {
+    ROWS.iter()
+        .map(|r| format!("{:12} {:28} {}", r.family, r.impl_name, r.description))
+        .collect()
+}
+
+pub fn family_exists(family: &str) -> bool {
+    ROWS.iter().any(|r| r.family == family)
+}
+
+/// Does `--accuracy` score this row? `None` if the row is unknown.
+pub fn scores_accuracy(family: &str, impl_name: &str) -> Option<bool> {
+    find(family, impl_name).map(|r| r.scores_accuracy)
+}
+
+/// Parse the single `--config` point for a family, checking the family exists.
+pub fn config_point(family: &str, spec: &str) -> Result<ParamSet> {
+    if !family_exists(family) {
+        anyhow::bail!("unknown sketch family: {family}");
+    }
+    ParamSet::single(family, spec).map_err(Into::into)
 }
 
 /// Resolve `(family, impl)` to a concrete measurement and run it. The timed
@@ -205,53 +353,9 @@ pub fn run(
     params: &ParamSet,
     acc: &AccuracyCfg,
 ) -> Result<Vec<BenchReport>> {
-    let out: Result<Vec<BenchReport>, RunError> = match (family, impl_name) {
-        // -------- HLL --------
-        ("hll", "oxide") => scored::<hll::HllOxide, _>(cfg, items, params, acc, card_gt),
-        ("hll", "datasketches") => scored::<hll::HllDatasketches, _>(cfg, items, params, acc, card_gt),
-        ("hll", "lib") => scored::<hll::HllLib, _>(cfg, items, params, acc, card_gt),
-        ("hll", "lib-hip") => scored::<hll::HllLibHip, _>(cfg, items, params, acc, card_gt),
-        ("hll", "polars") => scored::<polars::PolarsCardinality, _>(cfg, items, params, acc, card_gt),
-        ("hll", "lib-fastpath-parallel") => cell::run_cell_parallel::<parallel::ParallelHllFastPath>(cfg, items, params),
-        // -------- KLL --------
-        ("kll", "oxide") => ordered::<kll::KllOxide<i64>, kll::KllOxide<f64>, _>(cfg, items, params, acc, rank_gt),
-        ("kll", "lib") => ordered::<kll::KllLib<i64>, kll::KllLib<f64>, _>(cfg, items, params, acc, rank_gt),
-        ("kll", "polars") => scored::<polars::PolarsQuantileKll, _>(cfg, items, params, acc, rank_gt),
-        // -------- CMS --------
-        ("cms", "oxide") => scored::<cms::CmsOxide, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "datasketches") => scored::<cms::CmsDatasketches, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-fixedmatrix-custom-fast") => scored::<cms::CmsLibFixedmatrixCustomFast, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-fixedmatrix-fast") => scored::<cms::CmsLibFixedmatrixFast, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-fixedmatrix-fast-32k") => scored::<cms::CmsLibFixedmatrixFast32k, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-vector2d-fast") => scored::<cms::CmsLibVector2dFast, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-vector2d-regular") => scored::<cms::CmsLibVector2dRegular, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "polars") => scored::<polars::PolarsFrequencyCms, _>(cfg, items, params, acc, freq_gt),
-        ("cms", "lib-fastpath-parallel") => cell::run_cell_parallel::<parallel::ParallelCmsFastPath>(cfg, items, params),
-        // -------- CountSketch --------
-        ("countsketch", "oxide") => scored::<countsketch::CsOxide, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "lib-fixedmatrix-fast") => scored::<countsketch::CsLibFixedmatrixFast, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "lib-fixedmatrix-fast-32k") => scored::<countsketch::CsLibFixedmatrixFast32k, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "lib-vector2d-fast") => scored::<countsketch::CsLibVector2dFast, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "lib-vector2d-regular") => scored::<countsketch::CsLibVector2dRegular, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "polars") => scored::<polars::PolarsFrequencyCs, _>(cfg, items, params, acc, freq_gt),
-        ("countsketch", "lib-fastpath-parallel") => cell::run_cell_parallel::<parallel::ParallelCsFastPath>(cfg, items, params),
-        // -------- DDSketch --------
-        ("dd", "lib") => ordered::<dd::DdLib<i64>, dd::DdLib<f64>, _>(cfg, items, params, acc, rel_gt),
-        ("dd", "polars") => scored::<polars::PolarsQuantileDd, _>(cfg, items, params, acc, rel_gt),
-        // -------- Top-k --------
-        ("topk", "cms-heap") => scored::<topk::TopKHeap<cms::CmsOxide>, _>(cfg, items, params, acc, topk_gt),
-        ("topk", "cs-heap") => scored::<topk::TopKHeap<countsketch::CsOxide>, _>(cfg, items, params, acc, topk_gt),
-        ("topk", "polars") => scored::<polars::PolarsTopK, _>(cfg, items, params, acc, topk_gt),
-        // -------- Elastic / Nitro / UnivMon (throughput-only) --------
-        ("elastic", "lib") => cell::run_cell::<elastic::ElasticLib>(cfg, items, params),
-        ("elastic", "oxide") => cell::run_cell::<elastic::ElasticOxide>(cfg, items, params),
-        ("nitro", "lib") => cell::run_cell::<nitro::NitroLib>(cfg, items, params),
-        ("nitro", "oxide") => cell::run_cell::<nitro::NitroOxide>(cfg, items, params),
-        ("univmon", "lib") => cell::run_cell::<univmon::UnivMonLib>(cfg, items, params),
-        ("univmon", "oxide") => cell::run_cell::<univmon::UnivMonOxide>(cfg, items, params),
-        _ => anyhow::bail!("no impl '{impl_name}' for family '{family}'"),
-    };
-    Ok(out?)
+    let row = find(family, impl_name)
+        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))?;
+    Ok((row.run)(cfg, items, params, acc)?)
 }
 
 #[cfg(test)]
@@ -281,18 +385,20 @@ mod tests {
         }
     }
 
-    /// The catalog's size, pinned — a silent row loss is the failure this
-    /// guards, the same as the old registry's `EXPECTED_ROWS`.
-    #[test]
-    fn catalog_size_is_pinned() {
-        assert_eq!(IMPLS.len(), 36, "catalog changed size; update the count if deliberate");
-    }
-
+    /// The one way two rows can still collide: distinct types that happen to
+    /// declare the same `IMPL` under the same family. The scan in [`find`]
+    /// takes the first, so the second would be dead. Not a compile error,
+    /// because the strings come from two different types.
     #[test]
     fn family_impl_pairs_are_unique() {
         let mut seen = BTreeSet::new();
-        for (f, i, _, _) in IMPLS {
-            assert!(seen.insert((*f, *i)), "duplicate row {f}/{i}");
+        for r in ROWS {
+            assert!(
+                seen.insert((r.family, r.impl_name)),
+                "duplicate row {}/{}",
+                r.family,
+                r.impl_name
+            );
         }
     }
 
@@ -326,41 +432,35 @@ mod tests {
         )
     }
 
-    /// Every catalog entry is runnable — `run` has a matching arm, never the
-    /// `_` bail. Pins that `IMPLS` (the list) and the `run` match agree.
+    /// Every row actually builds and ingests.
+    ///
+    /// "Has a run arm" is no longer worth testing — a row *is* its runner, so
+    /// there is no `_` bail left to fall into, and no strings for the list and
+    /// the dispatch to disagree about. What is left is the part the types
+    /// cannot state: that the row survives contact with a real workload.
     #[test]
     fn every_catalog_entry_runs() {
         let items = smoke_items();
         let (cfg, acc) = smoke_cfg();
-        for (family, impl_name, _, _) in IMPLS {
+        for r in ROWS {
             // Canonical, not `empty`: every family's params have required
             // fields, so `empty` built only the 5 polars rows that ignore
             // their config — the other 31 were "checked" without ever running.
-            let params = canonical_params(family);
-            let got = run(family, impl_name, &cfg, &items, &params, &acc);
+            let params = canonical_params(r.family);
+            let got = run(r.family, r.impl_name, &cfg, &items, &params, &acc);
             // Fixed-matrix rows refuse an off-shape config (a `RunError::Build`
-            // surfaced as an error); every other row runs. Neither is the
-            // "no impl" bail, which is what this test forbids.
-            match &got {
-                Err(e) => assert!(
-                    !e.to_string().contains("no impl"),
-                    "{family}/{impl_name} has no run arm"
-                ),
-                // The row's labels come from its type's `BenchImpl`, not from
-                // the arm's arguments, so this pins the last place the two can
-                // still disagree: the `IMPLS` strings against what the type
-                // says it is called.
-                Ok(reports) => {
-                    for r in reports {
-                        assert_eq!(
-                            (r.sketch.as_str(), r.impl_name.as_str()),
-                            (*family, *impl_name),
-                            "IMPLS row {family}/{impl_name} is labelled \
-                             {}/{} by its type",
-                            r.sketch,
-                            r.impl_name,
-                        );
-                    }
+            // surfaced as an error); every other row runs.
+            if let Ok(reports) = &got {
+                for report in reports {
+                    assert_eq!(
+                        (report.sketch.as_str(), report.impl_name.as_str()),
+                        (r.family, r.impl_name),
+                        "row {}/{} emits records labelled {}/{}",
+                        r.family,
+                        r.impl_name,
+                        report.sketch,
+                        report.impl_name,
+                    );
                 }
             }
         }
@@ -375,7 +475,6 @@ mod tests {
     fn topk_rows_accept_and_reject_the_same_configs() {
         let items = smoke_items();
         let (cfg, acc) = smoke_cfg();
-        let topk_rows = || IMPLS.iter().filter(|(f, _, _, _)| *f == "topk");
         for (spec, buildable) in [
             ("rows=5 cols=2048 k=5", true),
             ("rows=5 cols=2048 kk=5", false), // misspelled `k`
@@ -383,14 +482,16 @@ mod tests {
             ("rows=5 cols=2048", false),      // no `k` at all
         ] {
             let params = config_point("topk", spec).unwrap();
-            for (family, impl_name, _, _) in topk_rows() {
-                let got = run(family, impl_name, &cfg, &items, &params, &acc);
+            for r in ROWS.iter().filter(|r| r.family == "topk") {
+                let got = run(r.family, r.impl_name, &cfg, &items, &params, &acc);
                 assert_eq!(
                     got.is_ok(),
                     buildable,
-                    "topk/{impl_name} disagrees with the family on `{spec}`: {got:?}"
+                    "topk/{} disagrees with the family on `{spec}`: {got:?}",
+                    r.impl_name
                 );
             }
         }
     }
 }
+

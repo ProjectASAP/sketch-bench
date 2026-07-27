@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::ElasticParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;

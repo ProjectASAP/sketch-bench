@@ -8,9 +8,9 @@
 
 use std::cell::RefCell;
 
-use crate::accuracy::quantile::QuantileValue;
-use crate::accuracy::QuantileOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::quantile::QuantileValue;
+use aqpbm_core::accuracy::QuantileOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::KllParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};

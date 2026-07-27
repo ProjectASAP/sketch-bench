@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use crate::accuracy::{FrequencyOps, TopKOps};
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::{FrequencyOps, TopKOps};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::TopkParams;
 use aqpbm_core::config::{ParamSet, SketchParams};
 use aqpbm_core::sketch::Sketch;

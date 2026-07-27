@@ -1,7 +1,7 @@
 //! Cardinality-family ground truth (HLL). Exact distinct
 //! count from `items`; reports relative error.
 
-use aqpbm_core::sketch::Sketch;
+use crate::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -9,7 +9,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use super::statistic::CardinalityOps;
-use super::{Comparison, GroundTruth, QueryCallSample};
+use super::{Comparison, GroundTruth};
+use crate::metrics::QueryCallSample;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CardinalityGT {

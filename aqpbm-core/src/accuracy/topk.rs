@@ -1,7 +1,7 @@
 //! Top-k family ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
-use aqpbm_core::sketch::Sketch;
+use crate::sketch::Sketch;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -72,7 +72,69 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wrappers::polars::PolarsTopK;
+    use std::collections::BinaryHeap;
+
+    /// An exact top-k by hand: a `HashMap` counter, and a heap to pull the
+    /// largest `k` off it.
+    ///
+    /// Exact by construction, so it must score 1.0 against [`TopkGT`] —
+    /// anything less is the comparator being wrong, which is the whole point
+    /// of the two tests below. Written here rather than borrowed from a real
+    /// implementation so the comparator's own check owes nothing to a sketch
+    /// library, or to whatever that library's notion of "top k" happens to be.
+    #[derive(Default)]
+    struct ExactTopK {
+        counts: HashMap<i64, u64>,
+    }
+
+    impl Sketch for ExactTopK {
+        type Item = i64;
+        fn update(&mut self, v: &i64) {
+            *self.counts.entry(*v).or_insert(0) += 1;
+        }
+        fn memory_bytes(&self) -> usize {
+            self.counts.capacity() * (size_of::<i64>() + size_of::<u64>())
+        }
+    }
+
+    /// Ordered so the heap's max is "highest count, then *smallest* key" —
+    /// count ascending, key descending. That is the same total order `TopkGT`
+    /// ranks by; a source that broke ties the other way would score below 1.0
+    /// and the tests could not tell that apart from a real defect.
+    #[derive(PartialEq, Eq)]
+    struct Ranked {
+        count: u64,
+        key: i64,
+    }
+
+    impl Ord for Ranked {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.count
+                .cmp(&other.count)
+                .then_with(|| other.key.cmp(&self.key))
+        }
+    }
+
+    impl PartialOrd for Ranked {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl TopKOps for ExactTopK {
+        type Key = i64;
+        fn estimate_topk(&self, k: usize) -> Vec<(i64, u64)> {
+            let mut heap: BinaryHeap<Ranked> = self
+                .counts
+                .iter()
+                .map(|(&key, &count)| Ranked { count, key })
+                .collect();
+            std::iter::from_fn(|| heap.pop())
+                .take(k)
+                .map(|r| (r.key, r.count))
+                .collect()
+        }
+    }
 
     /// Key 1 is heavy; keys 2..=6 all tie at 5. Scored at k = 3, the tie
     /// straddles the boundary — the one place a top-k ranking's tie-break is
@@ -85,17 +147,16 @@ mod tests {
         items
     }
 
-    fn exact_source(items: &[i64]) -> PolarsTopK {
-        let mut s = PolarsTopK::default();
+    fn exact_source(items: &[i64]) -> ExactTopK {
+        let mut s = ExactTopK::default();
         for it in items {
             s.update(it);
         }
-        s.finalize_for_query();
         s
     }
 
     /// The exact baseline is this comparator's own check: anything below 1.0
-    /// means the oracle is wrong, not the sketch. Repeated because the
+    /// means the comparator is wrong, not the sketch. Repeated because the
     /// failure it guards was a per-`HashMap`-seed coin flip.
     #[test]
     fn an_exact_source_scores_precision_and_recall_of_one() {

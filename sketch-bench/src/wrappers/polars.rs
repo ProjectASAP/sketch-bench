@@ -21,8 +21,8 @@
 
 use std::collections::HashMap;
 
-use crate::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams, TopkParams};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;
@@ -334,7 +334,7 @@ impl BenchImpl for PolarsQuantileDd { type Params = DdParams; const IMPL: &'stat
 /// `topk/polars` — the exact top-k baseline. Reuses the same group_by that
 /// backs the frequency baseline, then sorts. Its score is the check on the
 /// comparator itself: an exact answer must come back at precision = recall =
-/// 1.0, so anything less means the oracle, not the sketch, is wrong.
+/// 1.0, so anything less means the ground-truth calculator, not the sketch, is wrong.
 #[derive(Default)]
 pub struct PolarsTopK(PolarsFrequencyCore);
 

@@ -4,9 +4,10 @@
 
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
 use aqpbm_core::workload::I64Workload;
-use sketch_bench::accuracy::cardinality::CardinalityGT;
-use sketch_bench::accuracy::CardinalityOps;
-use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
+use aqpbm_core::accuracy::cardinality::CardinalityGT;
+use aqpbm_core::accuracy::CardinalityOps;
+use aqpbm_core::runner::{BenchConfig, BenchRunner};
+use aqpbm_core::metrics::MetricsMask;
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
 /// exercises the full trait + runner machinery against a known

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Core types (Sketch trait, Probe, Workload, MetricsMask, v1 report schema) shared by sketch-bench, sketch-profile, sketch-runtime, and downstream ASAP apps."
+description = "The benchmark framework: the Sketch/InitSketch/BenchImpl traits an implementation plugs into, the per-statistic capability traits and their comparators, the cell runners, Probe, Workload, MetricsMask and the v1 report schema. Names no sketch family — the wrapped implementations live in sketch-bench."
 
 [features]
 # Back the `LatencyRecorder` with a real hdrhistogram. Off → it
@@ -27,8 +27,15 @@ heap-track = []
 
 [dependencies]
 aqpbm-datagen.workspace = true
+# `cell` surfaces "cannot materialise this workload" / "cannot run this
+# cell" as an `anyhow` error.
+anyhow.workspace = true
 bitflags.workspace = true
 hdrhistogram = { workspace = true, optional = true }
+# Fixed-seed shuffle of the frequency comparator's probe set, so probe
+# order is reproducible.
+rand = { workspace = true }
+rand_xoshiro = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

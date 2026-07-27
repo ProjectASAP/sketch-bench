@@ -8,7 +8,7 @@
 //! sized at a fixed (5, 2048). `sketch_oxide::universal::UnivMon::new` takes
 //! no layer count, so on that row `layers` moves the reported footprint only.
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::UnivMonParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;

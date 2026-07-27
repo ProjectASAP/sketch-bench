@@ -15,7 +15,7 @@ pub mod polars;
 pub mod topk;
 pub mod univmon;
 
-use crate::init::BuildError;
+use aqpbm_core::init::BuildError;
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
 /// shape; any other requested config is a `BuildError` naming both shapes.

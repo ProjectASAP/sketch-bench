@@ -2,12 +2,12 @@
 //!
 //! A cell splits cleanly in two, because only one half needs the ground truth:
 //!   - [`run_cell`] — the **timed** measurements (throughput / latency / CPU /
-//!     memory). Generic over the sketch, no oracle, fully monomorphised so
+//!     memory). Generic over the sketch, no ground truth, fully monomorphised so
 //!     the wrapper's `update` inlines into the hot loop.
 //!   - [`score_cell`] — the **accuracy** measurement. Untimed, so it is free to
-//!     carry the track's oracle without touching the hot path.
+//!     carry the track's ground-truth calculator without touching the hot path.
 //!
-//! The frontend picks the concrete type `S` (and, for accuracy, the oracle
+//! The frontend picks the concrete type `S` (and, for accuracy, the ground-truth calculator
 //! `G`) and calls these. There is no per-track driver.
 //!
 //! This module also owns the run-time plumbing the frontend hands in:
@@ -16,20 +16,20 @@
 //! [`DtypeMismatch`] / [`RunError`].
 
 use anyhow::Result;
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
-use aqpbm_core::workload::{
+use crate::config::ParamSet;
+use crate::sketch::Sketch;
+use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload,
 };
 use aqpbm_datagen::{DType, GenSpec};
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
-use crate::{BenchConfig, BenchReport, BenchRunner};
+use crate::runner::{BenchConfig, BenchReport, BenchRunner};
 
 // ---------- accuracy settings the frontend fills in ----------
 
-/// Accuracy knobs. Consumed only by [`score_cell`] / the oracle — the timed
+/// Accuracy knobs. Consumed only by [`score_cell`] / the ground-truth calculator — the timed
 /// path never sees them.
 #[derive(Debug, Clone, Copy)]
 pub struct AccuracyCfg {
@@ -211,9 +211,13 @@ impl FromItems for Vec<u8> {
 
 // ---------- the hot-loop body + construction ----------
 
-/// The hot-loop body. Defined in the same crate as the wrappers so the
-/// wrapper's `update` and this call site land in one codegen unit and LLVM can
-/// fold the update into the loop.
+/// The hot-loop body.
+///
+/// Generic and `#[inline(always)]`, so it is instantiated in whichever crate
+/// names the concrete `S` — the wrapper's `update` and this call site still
+/// land in one codegen unit and LLVM still folds the update into the loop,
+/// even though the wrappers now live a crate away. `BenchRunner::run_timed`,
+/// which drives the loop, has always been across that boundary.
 #[inline(always)]
 pub fn insert_body<S: Sketch>(s: &mut S, it: &S::Item) {
     s.update(it);
@@ -236,7 +240,7 @@ pub trait ParallelInit: Sketch + Sized {
 // ---------- running one cell ----------
 
 /// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
-/// ground truth — the oracle never touches the hot path.
+/// ground truth — the ground-truth calculator never touches the hot path.
 pub fn run_cell<S>(
     cfg: &BenchConfig,
     items: &Items,
@@ -248,7 +252,7 @@ where
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL)
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL)
         .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
 }
 
@@ -266,7 +270,7 @@ where
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
     Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL).run_timed::<S, _, _>(
+        BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL).run_timed::<S, _, _>(
             move || S::build(params, workers).expect("construction proven by the probe above"),
             insert_body,
         ),
@@ -274,7 +278,7 @@ where
 }
 
 /// Run the **accuracy** half of a cell against ground truth `gt`. Untimed, so
-/// the oracle is free to live here. The caller supplies the oracle for this
+/// the calculator is free to live here. The caller supplies the one for this
 /// sketch's track.
 pub fn score_cell<S, G>(
     cfg: &BenchConfig,
@@ -289,6 +293,6 @@ where
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
     S::init(params)?; // probe
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::family(), S::IMPL)
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL)
         .run_accuracy::<S, _, G, _>(|| built::<S>(params), insert_body, gt))
 }

@@ -12,8 +12,8 @@
 //! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath (tunable)
 //! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
 
-use crate::accuracy::FrequencyOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::FrequencyOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CmsParams;
 use crate::wrappers::require_shape;
 use aqpbm_core::config::ParamSet;

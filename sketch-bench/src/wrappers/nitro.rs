@@ -8,7 +8,7 @@
 //! The tunable param is `rate`; the underlying CMS is sized at a fixed
 //! (5, 2048) — future work can expose those knobs too.
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::NitroParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::Sketch;

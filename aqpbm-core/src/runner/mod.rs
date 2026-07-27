@@ -56,7 +56,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// The **timed** passes — throughput, latency, and the merge fold, plus
     /// the CPU/MEMORY bits that ride along with each. Accuracy is skipped
     /// here and runs in [`run_accuracy`](Self::run_accuracy): it needs an
-    /// oracle, and keeping one off this path is what lets the wrapper's
+    /// ground-truth calculator, and keeping one off this path is what lets the wrapper's
     /// `update` inline into the hot loop unencumbered.
     ///
     /// Each primary bit gets its **own** `BenchReport` over a fresh sketch
@@ -94,7 +94,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             pass_cfg.metrics = pass_mask;
             if pass_mask.contains(MetricsMask::MERGE) {
                 // Merge lives on *both* sides: its fold is a timed measurement
-                // (here, with no oracle) and its post-merge correctness is an
+                // (here, with no ground truth) and its post-merge correctness is an
                 // accuracy measurement (`run_accuracy`). Folding a single shard
                 // measures nothing, so skip it.
                 if pass_cfg.merge_shards < 2 {
@@ -131,7 +131,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// The **accuracy** passes — those that compare the sketch against an exact
     /// answer: the accuracy pass itself, and the merge pass (whose headline
     /// output is post-merge accuracy). Untimed relative to the hot loop, so
-    /// carrying the oracle `G` here costs the timed numbers nothing.
+    /// carrying the ground-truth calculator `G` here costs the timed numbers nothing.
     pub fn run_accuracy<S, F, G, Insert>(
         &self,
         mut factory: F,

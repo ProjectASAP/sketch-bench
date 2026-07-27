@@ -2,8 +2,8 @@
 //! (a.k.a. asap_sketchlib). All of them declare `CardinalityOps`,
 //! which is what makes them cardinality rows.
 
-use crate::accuracy::CardinalityOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::CardinalityOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::HllParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::sketch::{MergeUnsupported, Sketch};
