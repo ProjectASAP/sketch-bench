@@ -6,10 +6,11 @@ use aqpbm_core::accuracy::CardinalityOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::HllParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
-// sketch_oxide routes `.estimate()` through its `Sketch` trait.
-use sketch_oxide::Sketch as OxideSketch;
-// `merge` lives on sketch_oxide's `Mergeable`, not on its `Sketch`.
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
+// sketch_oxide routes `.estimate()` through its `Accumulator` trait.
+use sketch_oxide::Sketch as OxideSketch; // NOTE: foreign trait, not ours
+// `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide HLL ----------
@@ -30,15 +31,11 @@ impl InitSketch for HllOxide {
     }
 }
 
-impl Sketch for HllOxide {
+impl Accumulator for HllOxide {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
-    }
-    fn memory_bytes(&self) -> usize {
-        // sketch_oxide stores registers as Vec<u8>: 1 byte/register.
-        1usize << self.lg_k
     }
 
     /// Register-wise max. Exact for equal `lg_k`: the merged sketch is
@@ -49,6 +46,13 @@ impl Sketch for HllOxide {
             .merge(&other.inner)
             .expect("both operands built from one ParamSet, so lg_k matches");
         Ok(())
+    }
+}
+
+impl MemoryFootprint for HllOxide {
+    fn memory_bytes(&self) -> usize {
+        // sketch_oxide stores registers as Vec<u8>: 1 byte/register.
+        1usize << self.lg_k
     }
 }
 
@@ -71,21 +75,11 @@ impl InitSketch for HllDatasketches {
     }
 }
 
-impl Sketch for HllDatasketches {
+impl Accumulator for HllDatasketches {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(*v);
-    }
-    fn memory_bytes(&self) -> usize {
-        // Apache datasketches packs registers per HllType:
-        // Hll4 → 0.5 B, Hll6 → 0.75 B, Hll8 → 1 B.
-        let m = 1usize << self.lg_k;
-        match self.hll_type {
-            datasketches::hll::HllType::Hll4 => m / 2,
-            datasketches::hll::HllType::Hll6 => (m * 6).div_ceil(8),
-            datasketches::hll::HllType::Hll8 => m,
-        }
     }
 
     /// Apache DataSketches routes HLL merging through a `Union` gadget rather
@@ -111,6 +105,19 @@ impl Sketch for HllDatasketches {
     }
 }
 
+impl MemoryFootprint for HllDatasketches {
+    fn memory_bytes(&self) -> usize {
+        // Apache datasketches packs registers per HllType:
+        // Hll4 → 0.5 B, Hll6 → 0.75 B, Hll8 → 1 B.
+        let m = 1usize << self.lg_k;
+        match self.hll_type {
+            datasketches::hll::HllType::Hll4 => m / 2,
+            datasketches::hll::HllType::Hll6 => (m * 6).div_ceil(8),
+            datasketches::hll::HllType::Hll8 => m,
+        }
+    }
+}
+
 // ---------- asap_sketchlib HLL ----------
 // `asap_sketchlib::HyperLogLog<Classic>` is the P14 classic HLL estimator
 // (Flajolet et al., 2007). Insert path only bumps registers; `estimate()`
@@ -129,21 +136,24 @@ impl InitSketch for HllLib {
     }
 }
 
-impl Sketch for HllLib {
+impl Accumulator for HllLib {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        // Implementation is fixed at P14 — register count is 2^14
-        // regardless of `HllParams::lg_k`, 1 byte per register.
-        1usize << 14
-    }
 
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner.merge(&other.inner);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for HllLib {
+    fn memory_bytes(&self) -> usize {
+        // Implementation is fixed at P14 — register count is 2^14
+        // regardless of `HllParams::lg_k`, 1 byte per register.
+        1usize << 14
     }
 }
 
@@ -166,12 +176,15 @@ impl InitSketch for HllLibHip {
     }
 }
 
-impl Sketch for HllLibHip {
+impl Accumulator for HllLibHip {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
     }
+}
+
+impl MemoryFootprint for HllLibHip {
     fn memory_bytes(&self) -> usize {
         1usize << 14
     }

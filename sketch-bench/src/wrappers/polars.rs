@@ -25,7 +25,8 @@ use aqpbm_core::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams, TopkParams};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use polars::prelude::*;
 
 /// `hll/polars` — distinct count via `n_unique`.
@@ -47,7 +48,7 @@ impl InitSketch for PolarsCardinality {
     }
 }
 
-impl Sketch for PolarsCardinality {
+impl Accumulator for PolarsCardinality {
     type Item = i64;
 
     #[inline(always)]
@@ -71,6 +72,9 @@ impl Sketch for PolarsCardinality {
         self.estimate = c.f64().expect("f64 chunked").get(0).unwrap_or(0.0);
     }
 
+}
+
+impl MemoryFootprint for PolarsCardinality {
     fn memory_bytes(&self) -> usize {
         self.buf.capacity() * std::mem::size_of::<i64>()
     }
@@ -135,7 +139,7 @@ impl InitSketch for PolarsFrequencyCms {
     }
 }
 
-impl Sketch for PolarsFrequencyCms {
+impl Accumulator for PolarsFrequencyCms {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -144,6 +148,9 @@ impl Sketch for PolarsFrequencyCms {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsFrequencyCms {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -160,7 +167,7 @@ impl InitSketch for PolarsFrequencyCs {
     }
 }
 
-impl Sketch for PolarsFrequencyCs {
+impl Accumulator for PolarsFrequencyCs {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -169,6 +176,9 @@ impl Sketch for PolarsFrequencyCs {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsFrequencyCs {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -243,7 +253,7 @@ impl InitSketch for PolarsQuantileKll {
     }
 }
 
-impl Sketch for PolarsQuantileKll {
+impl Accumulator for PolarsQuantileKll {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -252,6 +262,9 @@ impl Sketch for PolarsQuantileKll {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsQuantileKll {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -268,7 +281,7 @@ impl InitSketch for PolarsQuantileDd {
     }
 }
 
-impl Sketch for PolarsQuantileDd {
+impl Accumulator for PolarsQuantileDd {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -277,6 +290,9 @@ impl Sketch for PolarsQuantileDd {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsQuantileDd {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -355,7 +371,7 @@ impl InitSketch for PolarsTopK {
     }
 }
 
-impl Sketch for PolarsTopK {
+impl Accumulator for PolarsTopK {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -366,6 +382,9 @@ impl Sketch for PolarsTopK {
     fn finalize_for_query(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsTopK {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }

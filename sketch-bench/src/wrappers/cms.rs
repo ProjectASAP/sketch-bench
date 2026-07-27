@@ -1,4 +1,4 @@
-//! Count-Min Sketch wrappers — 7 variants.
+//! Count-Min Accumulator wrappers — 7 variants.
 //!
 //! Frequency family: every variant declares `FrequencyOps`
 //! (`&i64` point lookup → `u64` count estimate).
@@ -17,7 +17,8 @@ use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CmsParams;
 use crate::wrappers::require_shape;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use sketch_oxide::Mergeable as _;
 
 use asap_sketchlib::{
@@ -57,20 +58,14 @@ impl InitSketch for CmsOxide {
     }
 }
 
-impl Sketch for CmsOxide {
+impl Accumulator for CmsOxide {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v);
     }
-    fn memory_bytes(&self) -> usize {
-        // The crate's counters are `table: Vec<u64>`, not 32-bit. Sizing this
-        // as `u32` halved every reported CMS footprint, which made CMS look
-        // twice as space-efficient as CountSketch at identical accuracy.
-        self.rows * self.cols * std::mem::size_of::<u64>()
-    }
 
-    /// Counter-wise addition. A Count-Min Sketch is linear in its input, so
+    /// Counter-wise addition. A Count-Min Accumulator is linear in its input, so
     /// merging shards is **exact**: the result is identical to one sketch fed
     /// the whole stream. The merge benchmark therefore asserts that equality
     /// rather than measuring a degradation — a difference would mean the
@@ -81,6 +76,15 @@ impl Sketch for CmsOxide {
             .merge(&other.inner)
             .expect("both operands built from one ParamSet, so rows/cols match");
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsOxide {
+    fn memory_bytes(&self) -> usize {
+        // The crate's counters are `table: Vec<u64>`, not 32-bit. Sizing this
+        // as `u32` halved every reported CMS footprint, which made CMS look
+        // twice as space-efficient as CountSketch at identical accuracy.
+        self.rows * self.cols * std::mem::size_of::<u64>()
     }
 }
 
@@ -102,22 +106,25 @@ impl InitSketch for CmsDatasketches {
     }
 }
 
-impl Sketch for CmsDatasketches {
+impl Accumulator for CmsDatasketches {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(*v);
     }
+
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.inner.merge(&other.inner);
+        Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsDatasketches {
     fn memory_bytes(&self) -> usize {
         // Backing store is `counts: Vec<i64>` — same width as the `u64` this
         // used to name, but spell the real type so the two stay in step.
         self.rows * self.cols * std::mem::size_of::<i64>()
-    }
-
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
     }
 }
 
@@ -147,20 +154,23 @@ impl InitSketch for CmsLibFixedmatrixCustomFast {
     }
 }
 
-impl Sketch for CmsLibFixedmatrixCustomFast {
+impl Accumulator for CmsLibFixedmatrixCustomFast {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        CMS_CUSTOM_FIXED_ROWS * CMS_CUSTOM_FIXED_COLS * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.0.merge(&other.0);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsLibFixedmatrixCustomFast {
+    fn memory_bytes(&self) -> usize {
+        CMS_CUSTOM_FIXED_ROWS * CMS_CUSTOM_FIXED_COLS * std::mem::size_of::<i32>()
     }
 }
 
@@ -185,20 +195,23 @@ impl InitSketch for CmsLibFixedmatrixFast32k {
     }
 }
 
-impl Sketch for CmsLibFixedmatrixFast32k {
+impl Accumulator for CmsLibFixedmatrixFast32k {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.0.merge(&other.0);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsLibFixedmatrixFast32k {
+    fn memory_bytes(&self) -> usize {
+        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
     }
 }
 
@@ -219,23 +232,26 @@ impl InitSketch for CmsLibFixedmatrixFast {
     }
 }
 
-impl Sketch for CmsLibFixedmatrixFast {
+impl Accumulator for CmsLibFixedmatrixFast {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
+
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.0.merge(&other.0);
+        Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsLibFixedmatrixFast {
     fn memory_bytes(&self) -> usize {
         // `FixedMatrix` is an alias for `QuickMatrixI32`, i.e. `Box<[i32; _]>` —
         // same width as the `u32` this used to name, but the peer CountSketch
         // impl already spells it `i32`; keep the two readable side by side.
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
-    }
-
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.0.merge(&other.0);
-        Ok(())
     }
 }
 
@@ -257,20 +273,23 @@ impl InitSketch for CmsLibVector2dFast {
     }
 }
 
-impl Sketch for CmsLibVector2dFast {
+impl Accumulator for CmsLibVector2dFast {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner.merge(&other.inner);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsLibVector2dFast {
+    fn memory_bytes(&self) -> usize {
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }
 
@@ -292,20 +311,23 @@ impl InitSketch for CmsLibVector2dRegular {
     }
 }
 
-impl Sketch for CmsLibVector2dRegular {
+impl Accumulator for CmsLibVector2dRegular {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; a Count-Min Sketch is linear, so merging is exact.
+    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner.merge(&other.inner);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CmsLibVector2dRegular {
+    fn memory_bytes(&self) -> usize {
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }
 

@@ -1,7 +1,7 @@
 //! `Probe<S, Sink>` — the one decorator both offline
 //! benchmarks and runtime samplers wrap around a live sketch.
 //!
-//! It keeps metric collection out of the `Sketch` impls: each wrapped
+//! It keeps metric collection out of the `Accumulator` impls: each wrapped
 //! implementation stays a thin newtype around the underlying library's
 //! struct, and `Probe` intercepts every `update` to notify the supplied
 //! `MetricsSink`. With [`NoopSink`] both hooks and the trait dispatch
@@ -9,7 +9,8 @@
 //!
 //! See `docs/DESIGN.md` §4.2.
 
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
+use crate::memory_footprint::MemoryFootprint;
 
 /// A handler for benchmark/runtime metrics events.
 ///
@@ -60,16 +61,16 @@ impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
     }
 }
 
-/// `Probe<S, Sink>` wraps any `Sketch` + `MetricsSink` into a new `Sketch`
+/// `Probe<S, Sink>` wraps any `Accumulator` + `MetricsSink` into a new `Accumulator`
 /// that records timing hooks around the inner `update`. The identical wrapper
 /// serves the offline [`BenchRunner`](crate::runner::BenchRunner) and the
 /// embedded `sketch-runtime::Sampler`.
-pub struct Probe<S: Sketch, Sink: MetricsSink> {
+pub struct Probe<S: Accumulator, Sink: MetricsSink> {
     inner: S,
     sink: Sink,
 }
 
-impl<S: Sketch, Sink: MetricsSink> Probe<S, Sink> {
+impl<S: Accumulator, Sink: MetricsSink> Probe<S, Sink> {
     pub fn new(inner: S, sink: Sink) -> Self {
         Self { inner, sink }
     }
@@ -87,7 +88,7 @@ impl<S: Sketch, Sink: MetricsSink> Probe<S, Sink> {
     }
 }
 
-impl<S: Sketch, Sink: MetricsSink> Sketch for Probe<S, Sink> {
+impl<S: Accumulator, Sink: MetricsSink> Accumulator for Probe<S, Sink> {
     type Item = S::Item;
 
     #[inline]
@@ -96,7 +97,9 @@ impl<S: Sketch, Sink: MetricsSink> Sketch for Probe<S, Sink> {
         self.inner.update(v);
         self.sink.on_update_end();
     }
+}
 
+impl<S: Accumulator + MemoryFootprint, Sink: MetricsSink> MemoryFootprint for Probe<S, Sink> {
     fn memory_bytes(&self) -> usize {
         self.inner.memory_bytes()
     }
@@ -109,11 +112,14 @@ mod tests {
     struct DummySketch {
         updates: usize,
     }
-    impl Sketch for DummySketch {
+    impl Accumulator for DummySketch {
         type Item = i64;
         fn update(&mut self, _: &i64) {
             self.updates += 1;
         }
+    }
+
+    impl MemoryFootprint for DummySketch {
         fn memory_bytes(&self) -> usize {
             0
         }

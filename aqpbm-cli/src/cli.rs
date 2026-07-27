@@ -25,7 +25,7 @@ pub enum Cmd {
 
 #[derive(Parser, Debug)]
 pub struct BenchArgs {
-    /// Sketch family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
+    /// Accumulator family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
     /// univmon). `list-impls` prints every (family, impl) pair.
     #[arg(long)]
     pub sketch: String,
@@ -128,7 +128,7 @@ pub struct BenchArgs {
     /// Mergeability is what lets a sketch be computed per shard, per node or
     /// per time window and combined later, and it is close to unmeasured in
     /// the literature: papers prove it and then evaluate insert and query.
-    /// For linear sketches (Count-Min, Count Sketch, HLL at equal lg_k) the
+    /// For linear sketches (Count-Min, Count Accumulator, HLL at equal lg_k) the
     /// merge is exact, so accuracy here must match the single-pass figure and
     /// a gap is a defect. For KLL it is lossy, and the gap is the result.
     #[arg(long, default_value_t = 1)]

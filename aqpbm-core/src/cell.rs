@@ -17,7 +17,8 @@
 
 use anyhow::Result;
 use crate::config::ParamSet;
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
+use crate::memory_footprint::MemoryFootprint;
 use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload,
 };
@@ -219,7 +220,7 @@ impl FromItems for Vec<u8> {
 /// even though the wrappers now live a crate away. `BenchRunner::run_timed`,
 /// which drives the loop, has always been across that boundary.
 #[inline(always)]
-pub fn insert_body<S: Sketch>(s: &mut S, it: &S::Item) {
+pub fn insert_body<S: Accumulator>(s: &mut S, it: &S::Item) {
     s.update(it);
 }
 
@@ -233,7 +234,7 @@ fn built<S: InitSketch>(params: &ParamSet) -> S {
 
 /// A parallel-insert wrapper: its constructor also takes the worker count (a
 /// run knob, not a sketch parameter), so it cannot be an [`InitSketch`].
-pub trait ParallelInit: Sketch + Sized {
+pub trait ParallelInit: Accumulator + Sized {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError>;
 }
 
@@ -247,7 +248,7 @@ pub fn run_cell<S>(
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
@@ -263,7 +264,7 @@ pub fn run_cell_parallel<S>(
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: ParallelInit + BenchImpl,
+    S: ParallelInit + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     let wk = <S::Item as FromItems>::narrow(items)?;
@@ -287,7 +288,7 @@ pub fn score_cell<S, G>(
     gt: &G,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
     G: GroundTruth<S>,
 {

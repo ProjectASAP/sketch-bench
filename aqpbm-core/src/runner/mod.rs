@@ -10,7 +10,7 @@ pub mod config;
 
 pub use config::BenchConfig;
 
-// The CPU warm-up and the single timed insert loop are generic over `Sketch`
+// The CPU warm-up and the single timed insert loop are generic over `Accumulator`
 // and carry no sketch-domain knowledge. `insert_loop` stays
 // `#[inline(always)]`, so thin LTO folds the wrapper's `update` into it across
 // the crate boundary exactly as before — the fold never depended on
@@ -24,7 +24,8 @@ use crate::metrics::{
     WallClock,
 };
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
+use crate::memory_footprint::MemoryFootprint;
 use crate::workload::{Workload, WorkloadDesc};
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
@@ -74,7 +75,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// which `--metrics` flags were passed. See [`insert_loop`].
     pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -139,7 +140,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         gt: &G,
     ) -> Vec<BenchReport>
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -208,7 +209,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -315,7 +316,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// What the comparison means depends on the family, and the difference is
     /// the point of the experiment:
     ///
-    /// * **Linear sketches** (Count-Min, Count Sketch, HLL at equal `lg_k`,
+    /// * **Linear sketches** (Count-Min, Count Accumulator, HLL at equal `lg_k`,
     ///   and every exact baseline) merge without loss. The merged sketch is
     ///   identical to one fed the whole stream, so their accuracy here must
     ///   equal their single-pass accuracy. A gap is a defect — mismatched
@@ -333,7 +334,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -517,7 +518,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -623,7 +624,7 @@ fn run_once<S, F>(
     config: &BenchConfig,
 ) -> (RunMetrics, S)
 where
-    S: Sketch,
+    S: Accumulator + MemoryFootprint,
     S::Item: Clone,
     F: FnMut() -> S,
 {
@@ -650,7 +651,7 @@ where
     };
     // Run any deferred build/sort/finalize before the query phase, so
     // query-throughput numbers measure steady-state queries on a
-    // ready-to-answer sketch (see Sketch trait doc). Timed on its own clock:
+    // ready-to-answer sketch (see Accumulator trait doc). Timed on its own clock:
     // the sink cannot see this call, and a pass that silently folded it into
     // the insert phase would make this path's `insert_wall_time_ns` mean
     // something different from every other path's.
@@ -693,7 +694,7 @@ fn run_once_clean<S, F, Insert>(
     config: &BenchConfig,
 ) -> (RunMetrics, S)
 where
-    S: Sketch,
+    S: Accumulator + MemoryFootprint,
     S::Item: Clone,
     F: FnMut() -> S,
     Insert: FnMut(&mut S, &S::Item),
@@ -804,7 +805,7 @@ impl BenchReport {
 /// Placeholder `GroundTruth` for catalog rows that run without a
 /// comparator. Never called; `compare` is a safe default.
 pub struct NoGT;
-impl<S: Sketch> GroundTruth<S> for NoGT {
+impl<S: Accumulator> GroundTruth<S> for NoGT {
     fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
         Comparison::default()
     }

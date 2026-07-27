@@ -12,8 +12,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::accumulator::Accumulator;
 use crate::metrics::QueryCallSample;
-use crate::sketch::Sketch;
 
 pub mod cardinality;
 pub mod frequency;
@@ -57,6 +57,6 @@ pub struct Comparison {
 /// A comparator between a sketch's estimate and an exact answer computed from
 /// the raw workload. Impls name their own keys in [`Comparison::metrics`];
 /// the runner carries that map through to `RunMetrics::accuracy`.
-pub trait GroundTruth<S: Sketch> {
+pub trait GroundTruth<S: Accumulator> {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison;
 }

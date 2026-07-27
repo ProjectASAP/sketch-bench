@@ -1,7 +1,7 @@
 //! Top-k family ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -17,7 +17,7 @@ pub struct TopkGT {
 impl<S, K> GroundTruth<S> for TopkGT
 where
     K: Eq + Hash + Ord + Clone,
-    S: Sketch<Item = K> + TopKOps<Key = K>,
+    S: Accumulator<Item = K> + TopKOps<Key = K>,
 {
     fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
         let mut exact: HashMap<K, u64> = HashMap::new();
@@ -87,13 +87,10 @@ mod tests {
         counts: HashMap<i64, u64>,
     }
 
-    impl Sketch for ExactTopK {
+    impl Accumulator for ExactTopK {
         type Item = i64;
         fn update(&mut self, v: &i64) {
             *self.counts.entry(*v).or_insert(0) += 1;
-        }
-        fn memory_bytes(&self) -> usize {
-            self.counts.capacity() * (size_of::<i64>() + size_of::<u64>())
         }
     }
 

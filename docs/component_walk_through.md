@@ -146,27 +146,6 @@ Rust type. That is the only reason a list of implementations exists at all —
 and it is also what lets a future `aqp-bench` sit parallel to `sketch-bench`
 on the same core, each shipping its own catalog.
 
-### The catalog is one table, not three
-
-A row is a **type**, not a pair of strings. `catalog::ROWS` names the Rust
-type and how to run it; the family, the impl name and `scores_accuracy` are
-projected back off that type — so `("hll", "oxide")` is written once, in
-`HllOxide`'s `BenchImpl`. Adding a row is one line in `ROWS` plus the wrapper
-it names.
-
-The payoff is that "the table and the implementations disagree" became a
-compile error rather than a run-time one:
-- a row whose type does not exist, or does not implement the required traits,
-  does not compile;
-- a row paired with an oracle it cannot answer (a frequency comparator on
-  something with no `FrequencyOps`) does not compile;
-- `scores_accuracy` is not written down at all — it is which constructor the
-  row used.
-
-Two things the compiler still cannot see, both run-time: two rows claiming the
-same `(family, impl)` (a test pins this), and a `BenchImpl` whose `Params`
-names a different family than its `init` parses.
-
 ## sketch-runtime
 
 This crate contains downstream application connection.

@@ -16,7 +16,7 @@
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
 
 /// Ramp the CPU **once per process**, before the first measured loop of any
 /// pass.
@@ -87,7 +87,7 @@ fn warmup_cpu_from_env() {
 #[inline(always)]
 pub fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
 where
-    S: Sketch,
+    S: Accumulator,
     Insert: FnMut(&mut S, &S::Item),
 {
     let start = Instant::now();

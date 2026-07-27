@@ -1,4 +1,4 @@
-//! Sketch-construction parameters.
+//! Accumulator-construction parameters.
 //!
 //! ## Why the family set is open
 //!

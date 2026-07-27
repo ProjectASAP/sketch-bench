@@ -5,7 +5,7 @@
 //! are projected off it, so the list and the code cannot drift apart.
 
 use anyhow::Result;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
 use aqpbm_datagen::DType;
 
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
@@ -17,6 +17,7 @@ use aqpbm_core::cell::{
     self, AccuracyCfg, DtypeMismatch, FromItems, Items, ParallelInit, RunError,
 };
 use aqpbm_core::init::{BenchImpl, InitSketch};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use crate::params::{ParamSet, TopkParams};
@@ -52,11 +53,11 @@ pub struct Row {
 /// in [`ROWS`] and the row can stay a `const` — a `const fn` cannot close over
 /// a function value. Declared here, not in `aqpbm-core`, because `TopkGT`'s
 /// impl has to read this crate's [`TopkParams`].
-trait GroundTruthCalculator<S: Sketch>: GroundTruth<S> {
+trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
     fn build(acc: &AccuracyCfg, params: &ParamSet) -> Self;
 }
 
-impl<S: Sketch> GroundTruthCalculator<S> for CardinalityGT
+impl<S: Accumulator> GroundTruthCalculator<S> for CardinalityGT
 where
     Self: GroundTruth<S>,
 {
@@ -67,7 +68,7 @@ where
     }
 }
 
-impl<S: Sketch> GroundTruthCalculator<S> for FrequencyGT
+impl<S: Accumulator> GroundTruthCalculator<S> for FrequencyGT
 where
     Self: GroundTruth<S>,
 {
@@ -78,7 +79,7 @@ where
     }
 }
 
-impl<S: Sketch> GroundTruthCalculator<S> for RankErrorGT
+impl<S: Accumulator> GroundTruthCalculator<S> for RankErrorGT
 where
     Self: GroundTruth<S>,
 {
@@ -89,7 +90,7 @@ where
     }
 }
 
-impl<S: Sketch> GroundTruthCalculator<S> for RelativeErrorGT
+impl<S: Accumulator> GroundTruthCalculator<S> for RelativeErrorGT
 where
     Self: GroundTruth<S>,
 {
@@ -100,7 +101,7 @@ where
     }
 }
 
-impl<S: Sketch> GroundTruthCalculator<S> for TopkGT
+impl<S: Accumulator> GroundTruthCalculator<S> for TopkGT
 where
     Self: GroundTruth<S>,
 {
@@ -133,7 +134,7 @@ fn run_scored<S, G>(
     acc: &AccuracyCfg,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
     G: GroundTruthCalculator<S>,
 {
@@ -154,8 +155,8 @@ fn run_ordered<Si, Sf, G>(
     acc: &AccuracyCfg,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    Si: Sketch<Item = i64> + InitSketch + BenchImpl,
-    Sf: Sketch<Item = f64> + InitSketch + BenchImpl,
+    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
     G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
 {
     match items {
@@ -177,7 +178,7 @@ fn run_plain<S>(
     _acc: &AccuracyCfg,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     cell::run_cell::<S>(cfg, items, params)
@@ -191,7 +192,7 @@ fn run_parallel<S>(
     _acc: &AccuracyCfg,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: ParallelInit + BenchImpl,
+    S: ParallelInit + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     cell::run_cell_parallel::<S>(cfg, items, params)
@@ -205,7 +206,7 @@ where
 
 const fn scored<S, G>(description: &'static str) -> Row
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
     G: GroundTruthCalculator<S>,
 {
@@ -220,8 +221,8 @@ where
 
 const fn ordered<Si, Sf, G>(description: &'static str) -> Row
 where
-    Si: Sketch<Item = i64> + InitSketch + BenchImpl,
-    Sf: Sketch<Item = f64> + InitSketch + BenchImpl,
+    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
     G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
 {
     Row {
@@ -236,7 +237,7 @@ where
 
 const fn plain<S>(description: &'static str) -> Row
 where
-    S: Sketch + InitSketch + BenchImpl,
+    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     Row {
@@ -250,7 +251,7 @@ where
 
 const fn parallel_row<S>(description: &'static str) -> Row
 where
-    S: ParallelInit + BenchImpl,
+    S: ParallelInit + BenchImpl + MemoryFootprint,
     S::Item: FromItems,
 {
     Row {

@@ -91,7 +91,7 @@ pub struct BenchSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
     /// **Ingest rate**: `items / insert_wall`. What it costs to feed the
-    /// stream in, and nothing else — `Sketch::finalize_for_query` is outside
+    /// stream in, and nothing else — `Accumulator::finalize_for_query` is outside
     /// the timed region.
     ///
     /// For the great majority of implementations `finalize_for_query` is a
@@ -109,7 +109,7 @@ pub struct BenchSection {
     /// CDFs without re-running the bench.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
-    /// **Sketch-build rate**: `items / (insert_wall + finalize_wall)` — the
+    /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)` — the
     /// rate at which a *ready-to-answer* sketch is produced from the stream.
     ///
     /// The cross-family column. `throughput_items_per_sec` answers "how fast
@@ -127,7 +127,7 @@ pub struct BenchSection {
     /// (`total_nanoseconds` + `finalize_nanoseconds`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
-    /// Wall time of `Sketch::finalize_for_query` per run — the deferred
+    /// Wall time of `Accumulator::finalize_for_query` per run — the deferred
     /// build cost that separates the two throughput columns above. Present
     /// on every throughput pass; `0.0` means the implementation's finalize
     /// really is a no-op, which is a measurement, not a gap.

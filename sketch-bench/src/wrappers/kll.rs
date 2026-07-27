@@ -13,7 +13,8 @@ use aqpbm_core::accuracy::QuantileOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::KllParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide KLL ----------
@@ -45,14 +46,11 @@ impl<T: QuantileValue> InitSketch for KllOxide<T> {
     }
 }
 
-impl<T: QuantileValue> Sketch for KllOxide<T> {
+impl<T: QuantileValue> Accumulator for KllOxide<T> {
     type Item = T;
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.get_mut().update(v.to_f64());
-    }
-    fn memory_bytes(&self) -> usize {
-        (self.k as usize) * std::mem::size_of::<f64>() * 4
     }
 
     /// Unlike HLL, KLL's merge is **lossy**: combining compactors adds error
@@ -65,6 +63,12 @@ impl<T: QuantileValue> Sketch for KllOxide<T> {
             .merge(&other.inner.borrow())
             .expect("both operands built from one ParamSet, so k matches");
         Ok(())
+    }
+}
+
+impl<T: QuantileValue> MemoryFootprint for KllOxide<T> {
+    fn memory_bytes(&self) -> usize {
+        (self.k as usize) * std::mem::size_of::<f64>() * 4
     }
 }
 
@@ -106,7 +110,7 @@ where
     }
 }
 
-impl<T> Sketch for KllLib<T>
+impl<T> Accumulator for KllLib<T>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -114,9 +118,6 @@ where
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.update(v);
-    }
-    fn memory_bytes(&self) -> usize {
-        (self.k as usize) * std::mem::size_of::<T>() * 4
     }
 
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
@@ -127,6 +128,14 @@ where
     }
     fn finalize_for_query(&mut self) {
         *self.cdf.borrow_mut() = Some(self.inner.cdf());
+    }
+}
+
+impl<T> MemoryFootprint for KllLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue, {
+    fn memory_bytes(&self) -> usize {
+        (self.k as usize) * std::mem::size_of::<T>() * 4
     }
 }
 

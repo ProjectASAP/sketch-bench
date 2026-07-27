@@ -7,7 +7,7 @@
 //! runners below will drive it, score it, and emit the same v1 JSONL records
 //! the `sketchlib bench` CLI does:
 //!
-//! 1. [`sketch::Sketch`] — how an item is ingested (§4.1).
+//! 1. [`accumulator::Accumulator`] — how an item is ingested (§4.1).
 //! 2. [`init::InitSketch`] — how to build one from a [`config::ParamSet`], or
 //!    why not.
 //! 3. [`init::BenchImpl`] — what the row is called.
@@ -22,7 +22,7 @@
 //!
 //! # What lives here
 //!
-//! The abstractions (`Sketch` §4.1, the `Probe` decorator §4.2, the
+//! The abstractions (`Accumulator` §4.1, the `Probe` decorator §4.2, the
 //! materialised workloads §4.3, the v1 JSONL report schema §4.4) **and** the
 //! machinery that turns them into measurements: the metric recorders +
 //! `MetricsMask`, the `BenchRunner`, the N-run `aggregate`, the `GroundTruth`
@@ -32,6 +32,7 @@
 //! catalog that lists them are `sketch-bench`'s job; generation is
 //! `aqpbm-datagen`'s. See `docs/DESIGN.md` §3.1 for the dependency diagram.
 
+pub mod accumulator;
 pub mod accuracy;
 pub mod aggregation;
 pub mod cell;
@@ -39,11 +40,11 @@ pub mod config;
 pub mod hot_loop;
 pub mod init;
 pub mod latency;
+pub mod memory_footprint;
 pub mod metrics;
 pub mod probe;
 pub mod report;
 pub mod runner;
-pub mod sketch;
 pub mod workload;
 
 // Only the open axis. The concrete per-family params structs live
@@ -72,5 +73,6 @@ pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,
     Record, RunStats, Source, SCHEMA_VERSION,
 };
-pub use sketch::{MergeUnsupported, Sketch};
+pub use accumulator::{Accumulator, MergeUnsupported};
+pub use memory_footprint::MemoryFootprint;
 pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDesc};

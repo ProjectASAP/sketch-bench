@@ -21,8 +21,8 @@
 //! lives in `BenchConfig` — cannot be expressed through this trait and keeps
 //! its own constructor.
 
+use crate::accumulator::Accumulator;
 use crate::config::{ParamSet, SketchParams};
-use crate::sketch::Sketch;
 use crate::SketchError;
 
 /// Why a sketch could not be built from a given `ParamSet`.
@@ -53,9 +53,9 @@ impl From<SketchError> for BuildError {
 
 /// Build `Self` from the shared init config, or explain why not.
 ///
-/// `Self: Sketch` because the only thing worth building here is something the
+/// `Self: Accumulator` because the only thing worth building here is something the
 /// runner can drive.
-pub trait InitSketch: Sketch + Sized {
+pub trait InitSketch: Accumulator + Sized {
     fn init(config: &ParamSet) -> Result<Self, BuildError>;
 }
 
@@ -75,7 +75,7 @@ pub trait InitSketch: Sketch + Sized {
 /// family's struct compiles, and only fails at run time, when the row is
 /// handed a config of the family it now claims and its `init` will not parse
 /// it.
-pub trait BenchImpl: Sketch {
+pub trait BenchImpl: Accumulator {
     /// The parameters this impl is built from. `Params::FAMILY` is the row's
     /// family.
     type Params: SketchParams;

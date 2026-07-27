@@ -2,7 +2,8 @@
 //! counting sketch. Proves: sketch construction → N-run +
 //! warmup loop → metrics aggregation → v1 JSONL record.
 
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::workload::I64Workload;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::CardinalityOps;
@@ -16,19 +17,22 @@ struct ExactCounter {
     seen: std::collections::HashSet<i64>,
 }
 
-impl Sketch for ExactCounter {
+impl Accumulator for ExactCounter {
     type Item = i64;
     fn update(&mut self, v: &i64) {
         self.seen.insert(*v);
-    }
-    fn memory_bytes(&self) -> usize {
-        self.seen.capacity() * std::mem::size_of::<i64>()
     }
     /// Set union — exact, so the merge pass can also check that merging
     /// costs no accuracy, which is the property the pass exists to test.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.seen.extend(other.seen.iter().copied());
         Ok(())
+    }
+}
+
+impl MemoryFootprint for ExactCounter {
+    fn memory_bytes(&self) -> usize {
+        self.seen.capacity() * std::mem::size_of::<i64>()
     }
 }
 
@@ -104,7 +108,7 @@ struct DeferredBuilder {
     finalized: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl Sketch for DeferredBuilder {
+impl Accumulator for DeferredBuilder {
     type Item = i64;
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
@@ -118,6 +122,9 @@ impl Sketch for DeferredBuilder {
         // separates "the runner timed a no-op" from "the runner skipped it".
         std::hint::black_box(&set);
     }
+}
+
+impl MemoryFootprint for DeferredBuilder {
     fn memory_bytes(&self) -> usize {
         self.buf.capacity() * std::mem::size_of::<i64>()
     }

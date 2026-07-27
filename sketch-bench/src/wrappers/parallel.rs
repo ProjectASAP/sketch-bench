@@ -32,7 +32,8 @@ use std::sync::Barrier;
 use aqpbm_core::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::{
     impl_fixed_matrix, Count, CountMin, DataInput, ErtlMLE, FastPath, HyperLogLog,
 };
@@ -59,7 +60,7 @@ impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
     }
 }
 
-impl Sketch for ParallelCmsFastPath {
+impl Accumulator for ParallelCmsFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -71,6 +72,9 @@ impl Sketch for ParallelCmsFastPath {
         run_parallel_cms(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelCmsFastPath {
     fn memory_bytes(&self) -> usize {
         self.workers * (5 * 32768 * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
@@ -93,7 +97,7 @@ impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
     }
 }
 
-impl Sketch for ParallelCsFastPath {
+impl Accumulator for ParallelCsFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -105,6 +109,9 @@ impl Sketch for ParallelCsFastPath {
         run_parallel_cs(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelCsFastPath {
     fn memory_bytes(&self) -> usize {
         self.workers * (5 * 32768 * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
@@ -127,7 +134,7 @@ impl aqpbm_core::cell::ParallelInit for ParallelHllFastPath {
     }
 }
 
-impl Sketch for ParallelHllFastPath {
+impl Accumulator for ParallelHllFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -139,6 +146,9 @@ impl Sketch for ParallelHllFastPath {
         run_parallel_hll(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelHllFastPath {
     fn memory_bytes(&self) -> usize {
         // Each worker holds an HLL with ErtlMLE registers — leave
         // it at a coarse upper bound (P14 default for the

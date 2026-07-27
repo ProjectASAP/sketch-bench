@@ -23,7 +23,7 @@
 //! universal number reflects how each sketch's correctness
 //! bound is actually defined in its paper.
 
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -114,7 +114,7 @@ pub struct RankErrorGT {
 
 impl<S> GroundTruth<S> for RankErrorGT
 where
-    S: Sketch + QuantileOps,
+    S: Accumulator + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
@@ -199,7 +199,7 @@ pub struct RelativeErrorGT {
 
 impl<S> GroundTruth<S> for RelativeErrorGT
 where
-    S: Sketch + QuantileOps,
+    S: Accumulator + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
