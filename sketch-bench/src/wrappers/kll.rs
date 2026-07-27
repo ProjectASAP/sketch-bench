@@ -77,10 +77,10 @@ impl<T: QuantileValue> MemoryFootprint for KllOxide<T> {
 // `asap_sketchlib::KLL::quantile(q)` rebuilds the full CDF from the compactor
 // levels on every call (sort + sweep over the whole buffer). For an
 // apples-to-apples query throughput comparison we precompute it once in
-// `finalize_for_query`; queries then collapse to a `Cdf::query` binary search.
+// `prepare`; queries then collapse to a `Cdf::query` binary search.
 //
 // `update` deliberately does NOT invalidate that cache. `BenchRunner` calls
-// `finalize_for_query` once, after the insert phase has ended, and never
+// `prepare` once, after the insert phase has ended, and never
 // re-inserts; a per-update `RefCell::borrow()` check would be a measurable
 // cost on a hot 10ns/op insert path.
 ///
@@ -88,7 +88,7 @@ impl<T: QuantileValue> MemoryFootprint for KllOxide<T> {
 /// library*: `asap_sketchlib::KLL<T: NumericalValue>` stores `T` and orders it
 /// with `T::total_cmp`, so nothing is converted on either side of the axis.
 /// `KLL<i64>` compares integers, `KLL<f64>` compares floats. That makes it the
-/// row where the dtype axis measures the library's own choice rather than a
+/// row where the item-type axis measures the library's own choice rather than a
 /// wrapper's cast.
 pub struct KllLib<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
@@ -126,7 +126,7 @@ where
         *self.cdf.borrow_mut() = None;
         Ok(())
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         *self.cdf.borrow_mut() = Some(self.inner.cdf());
     }
 }

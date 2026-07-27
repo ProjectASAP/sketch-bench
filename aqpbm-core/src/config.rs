@@ -49,7 +49,7 @@ pub trait SketchParams: Serialize + DeserializeOwned + Clone + std::fmt::Debug {
     /// Lives on the params type rather than in a table keyed by family name,
     /// so it cannot drift from the type it configures, and so a new family
     /// arrives with a valid config already attached. Not a sweep: it is the
-    /// single point the dtype-acceptance tests build each impl from.
+    /// single point the item-type acceptance tests build each impl from.
     fn canonical() -> Self;
 }
 

@@ -7,7 +7,7 @@
 //!
 //! Mirrors the legacy `throughput/polars_{cardinality,freq,quantile}/`
 //! binaries: buffer the stream into a `Vec<i64>`, then on
-//! `finalize_for_query` build a `DataFrame` once and run the relevant Polars
+//! `prepare` build a `DataFrame` once and run the relevant Polars
 //! expression. The runner bills that build to
 //! `RunMetrics::finalize_wall_time_ns` and times the insert loop alone, so a
 //! polars row's `throughput_items_per_sec` is the buffering `Vec::push`, not
@@ -56,7 +56,7 @@ impl Accumulator for PolarsCardinality {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         let series = Column::new("v".into(), &self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let result = df
@@ -145,7 +145,7 @@ impl Accumulator for PolarsFrequencyCms {
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
 }
@@ -173,7 +173,7 @@ impl Accumulator for PolarsFrequencyCs {
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
 }
@@ -186,7 +186,7 @@ impl MemoryFootprint for PolarsFrequencyCs {
 
 /// Polars-backed quantile baseline. The heavy work (one polars
 /// sort + 101-point quantile grid build) lives in
-/// `finalize_for_query`, which the runner now times separately
+/// `prepare`, which the runner now times separately
 /// into `RunMetrics::finalize_wall_time_ns`. Insert remains pure
 /// `Vec::push`; per-call `query()` is an array lookup.
 struct PolarsQuantileCore {
@@ -259,7 +259,7 @@ impl Accumulator for PolarsQuantileKll {
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
 }
@@ -287,7 +287,7 @@ impl Accumulator for PolarsQuantileDd {
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
 }
@@ -379,7 +379,7 @@ impl Accumulator for PolarsTopK {
     }
     /// All of the cost is here, not in `update` — the same split the other
     /// polars baselines use, so the insert column stays a plain `Vec::push`.
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
 }

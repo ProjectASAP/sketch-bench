@@ -23,10 +23,9 @@
 //! synthesised `rust_<impl>_<family>`. The parallel-insert rows never reach
 //! that path — they go to the octo file, labelled `octo`.
 
-
 use crate::params::ParamSet;
-use aqpbm_core::runner::BenchReport;
 use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::runner::BenchReport;
 
 /// One CSV file to write: its filename (relative to the `--raw-csv` dir), its
 /// header line, and the rows beneath it. The frontend creates the file if
@@ -48,21 +47,13 @@ pub fn render(
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
-    dtype: &str,
     report: &BenchReport,
 ) -> Vec<CsvFile> {
     let mut out = Vec::new();
-    // Non-`i64` runs go to their own files rather than into the shared ones.
-    //
     // These CSV headers are an external contract — `throughput/scripts/*.py`
     // read the exact column list, and the frontend appends, so a run lands in
-    // whatever file already exists. Adding a `dtype` column would change the
-    // header for every existing consumer, including pure-`i64` users who did
-    // not ask for the axis; leaving it out would let an `f64` run interleave
-    // with `i64` rows that are indistinguishable from it, which is the exact
-    // pooling `WorkloadDesc::dtype` exists to prevent. A separate file breaks
-    // neither contract.
-    let fam = family_file_stem(family, dtype);
+    // whatever file already exists.
+    let fam = family.to_string();
 
     // Parallel ("octo") impls go to a separate combined file with the legacy
     // `sketch_type, implementation, num_workers,...` header —
@@ -146,14 +137,7 @@ pub fn render(
                     .iter()
                     .enumerate()
                     .map(|(idx, run)| {
-                        format_query_row(
-                            family,
-                            &legacy_impl,
-                            &param_cols,
-                            seed,
-                            idx + 1,
-                            run,
-                        )
+                        format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                     })
                     .collect(),
             });
@@ -183,7 +167,7 @@ pub fn render(
 /// regardless of the impl name; the `sketch_type` column carries the family.
 ///
 /// `total_nanoseconds` is the **build** wall — insert plus
-/// `finalize_for_query` — not the insert wall the other legacy CSVs use.
+/// `prepare` — not the insert wall the other legacy CSVs use.
 /// The parallel rows buffer their partition in `update` and run the whole
 /// parallel section in finalize (see `wrappers::parallel`), so dividing by
 /// the insert wall alone would publish the cost of a `Vec::push` under a
@@ -392,13 +376,6 @@ fn legacy_impl_name(family: &str, impl_name: &str) -> String {
 /// File stem for a family's CSVs. `i64` keeps the historical name so existing
 /// files keep accumulating and existing scripts keep resolving; anything else
 /// is suffixed.
-fn family_file_stem(family: &str, dtype: &str) -> String {
-    if dtype == "i64" {
-        family.to_string()
-    } else {
-        format!("{family}_{dtype}")
-    }
-}
 
 fn insert_header(family: &str) -> String {
     let lead = leading_label(family);

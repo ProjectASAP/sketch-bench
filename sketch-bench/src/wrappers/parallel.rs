@@ -7,7 +7,7 @@
 //! sketches are *not* merged — so these impls declare no query capability and
 //! are not scored.
 //!
-//! `update` only buffers; the parallel section runs in `finalize_for_query`,
+//! `update` only buffers; the parallel section runs in `prepare`,
 //! which the runner times into `RunMetrics::finalize_wall_time_ns`. So read
 //! these rows off `build_throughput_items_per_sec` — their
 //! `throughput_items_per_sec` is the `Vec::push` that buffers the partition
@@ -68,7 +68,7 @@ impl Accumulator for ParallelCmsFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_cms(&self.buf, self.workers);
     }
 
@@ -105,7 +105,7 @@ impl Accumulator for ParallelCsFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_cs(&self.buf, self.workers);
     }
 
@@ -142,7 +142,7 @@ impl Accumulator for ParallelHllFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_hll(&self.buf, self.workers);
     }
 

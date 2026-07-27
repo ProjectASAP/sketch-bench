@@ -91,10 +91,10 @@ pub struct BenchSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
     /// **Ingest rate**: `items / insert_wall`. What it costs to feed the
-    /// stream in, and nothing else — `Accumulator::finalize_for_query` is outside
+    /// stream in, and nothing else — `Accumulator::prepare` is outside
     /// the timed region.
     ///
-    /// For the great majority of implementations `finalize_for_query` is a
+    /// For the great majority of implementations `prepare` is a
     /// no-op and this is also the rate at which queryable sketches are
     /// produced. It is **not** for the rows that defer their build (every
     /// `*/polars` row, the `lib-fastpath-parallel` rows): those buffer in
@@ -117,7 +117,7 @@ pub struct BenchSection {
     /// implementations that finish their work in `update`; this one answers
     /// "how fast can this thing turn N items into something queryable",
     /// which is the same question for all of them. Where
-    /// `finalize_for_query` is a no-op the two are equal by construction, so
+    /// `prepare` is a no-op the two are equal by construction, so
     /// a panel mixing streaming sketches with deferred-build baselines can
     /// use this column throughout without disadvantaging either.
     ///
@@ -127,7 +127,7 @@ pub struct BenchSection {
     /// (`total_nanoseconds` + `finalize_nanoseconds`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
-    /// Wall time of `Accumulator::finalize_for_query` per run — the deferred
+    /// Wall time of `Accumulator::prepare` per run — the deferred
     /// build cost that separates the two throughput columns above. Present
     /// on every throughput pass; `0.0` means the implementation's finalize
     /// really is a no-op, which is a measurement, not a gap.
@@ -298,7 +298,6 @@ mod tests {
             source_path: None,
             seed: Some(42),
             spec: None,
-            dtype: "i64".to_string(),
         };
         let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
         rec.bench = Some(BenchSection {
@@ -329,7 +328,6 @@ mod tests {
             source_path: None,
             seed: Some(1),
             spec: None,
-            dtype: "i64".to_string(),
         };
         let mut rec = Record::new("cms", "oxide", wd, Mode::Profile, 1);
         rec.profile = Some(ProfileSection {
@@ -424,7 +422,6 @@ mod tests {
             source_path: Some("input/benchmark_data_1m_int64.bin".into()),
             seed: None,
             spec: None,
-            dtype: "i64".to_string(),
         };
         let mut rec = Record::new("kll", "datasketches", wd, Mode::Bench, 10);
         rec.language = Language::Cpp;

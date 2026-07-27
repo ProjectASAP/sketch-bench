@@ -50,7 +50,7 @@ pub enum WorkloadSpec {
 
 impl WorkloadSpec {
     /// Materialise at the item type `T`, which the row's `Accumulator::Item`
-    /// already names. There is no dtype to agree on: the caller's type is the
+    /// already names. There is nothing to agree on: the caller's type is the
     /// only thing that picks an encoding.
     pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
         T::materialise(self)
@@ -93,10 +93,8 @@ impl From<anyhow::Error> for RunError {
 /// An item type a benchmark can be run over: it names the workload that
 /// carries it, and how to build one from a [`WorkloadSpec`].
 ///
-/// This replaces what used to be a runtime `DType` tag plus a narrowing step.
-/// A row's `Accumulator::Item` is a Rust type, so the encoding is already
-/// decided by the time anything is generated — there is nothing left to
-/// mismatch.
+/// A row's `Accumulator::Item` decides the encoding before anything is
+/// generated, so there is nothing here that can mismatch.
 pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;

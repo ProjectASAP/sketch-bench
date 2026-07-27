@@ -68,7 +68,7 @@ fn warmup_cpu_from_env() {
 /// elapsed nanoseconds.
 ///
 /// Every pass that reports throughput goes through here, and nothing else
-/// is inside the timed region — no metric snapshot, no `finalize_for_query`,
+/// is inside the timed region — no metric snapshot, no `prepare`,
 /// no `memory_bytes`. This function existing exactly once is a correctness
 /// property, not tidiness:
 ///

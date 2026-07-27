@@ -100,7 +100,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
 
 /// A sketch shaped like the deferred-build rows (`*/polars`,
 /// `lib-fastpath-parallel`): `update` only buffers, and the sketch is built
-/// in `finalize_for_query`. Counts its own finalize calls so a test can pin
+/// in `prepare`. Counts its own finalize calls so a test can pin
 /// that the runner made them.
 struct DeferredBuilder {
     buf: Vec<i64>,
@@ -113,7 +113,7 @@ impl Accumulator for DeferredBuilder {
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.finalized
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let set: std::collections::HashSet<i64> = self.buf.iter().copied().collect();
@@ -131,7 +131,7 @@ impl MemoryFootprint for DeferredBuilder {
 }
 
 /// The bug this pins: a bare `--metrics throughput` takes the slim path in
-/// `BenchRunner`, which used to skip `finalize_for_query` outright. For a
+/// `BenchRunner`, which used to skip `prepare` outright. For a
 /// sketch that defers its build that meant the measured work never ran at
 /// all — the `lib-fastpath-parallel` rows reported the cost of buffering a
 /// partition they then threw away without inserting it anywhere.

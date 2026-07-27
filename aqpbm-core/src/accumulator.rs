@@ -21,10 +21,10 @@ pub trait Accumulator {
         Err(MergeUnsupported)
     }
 
-    /// One-shot "done ingesting, ready to answer", called once before the
-    /// first query. Timed separately, so every row's query throughput starts
-    /// from the same state.
-    fn finalize_for_query(&mut self) {}
+    /// Optional: no more items are coming. Called once after the last
+    /// `update`. Timed separately, so an implementation that defers its work
+    /// is not credited with a fast insert loop.
+    fn prepare(&mut self) {}
 }
 
 /// Returned by [`Accumulator::merge`] when an implementation provides none.

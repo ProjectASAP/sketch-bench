@@ -42,11 +42,11 @@ pub struct RunMetrics {
     pub wall_time_ns: u64,
     /// Wall time of the insert loop alone — the **ingest** denominator.
     pub insert_wall_time_ns: u64,
-    /// Wall time for `Accumulator::finalize_for_query()` — billed
+    /// Wall time for `Accumulator::prepare()` — billed
     /// separately from insert/query so deferred sketch-build cost
     /// (e.g. polars sort + 101-quantile grid; asap_sketchlib KLL
     /// CDF build) is visible without inflating either column.
-    /// Zero for sketches whose `finalize_for_query` is a no-op.
+    /// Zero for sketches whose `prepare` is a no-op.
     ///
     /// Kept separate rather than folded into `insert_wall_time_ns` so both
     /// readings survive: `insert` alone is the ingest rate, `insert +

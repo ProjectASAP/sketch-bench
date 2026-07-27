@@ -39,7 +39,7 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use aqpbm_core::metrics::MetricsMask;
 use aqpbm_core::runner::BenchConfig;
-use aqpbm_datagen::{Distribution, GenSpec, Shape};
+use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
 use clap::Parser;
 use sketch_bench::params::ParamSet;
 
@@ -151,8 +151,8 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.spec.as_deref() {
         let spec = GenSpec::from_path(std::path::Path::new(path))
             .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
-        // A spec no longer names an item type, so there is nothing here for
-        // `--dtype` to disagree with: the row's `Accumulator::Item` decides.
+        // A spec carries its own `string:` block, so `--alphabet`/`--key-len`
+        // would be editing the user's file from the command line.
         return Ok(WorkloadSpec::Generated(spec));
     }
     let dist = match args.workload.as_str() {
@@ -160,6 +160,20 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
         "zipf" => Distribution::Zipf { s: args.zipf_s },
         other => bail!("unknown workload shape: {other} (expected uniform|zipf, or use --spec)"),
     };
+    // Only the rows that ingest text read this. Left `None` at the defaults
+    // so a run that did not ask for the axis keeps the descriptor — and so
+    // the record — it had before the flags existed.
+    let (min_len, max_len) = match args.key_len.as_slice() {
+        [n] => (*n, *n),
+        [lo, hi] => (*lo, *hi),
+        _ => bail!("--key-len takes one value (fixed) or two (min max)"),
+    };
+    if min_len == 0 || min_len > max_len {
+        bail!("--key-len must be non-zero and non-decreasing, got {min_len}..={max_len}");
+    }
+    if args.alphabet.is_empty() {
+        bail!("--alphabet cannot be empty");
+    }
     Ok(WorkloadSpec::Generated(GenSpec {
         shape: Shape::Keys {
             cardinality: args.cardinality,
@@ -167,7 +181,14 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
         },
         size: args.size,
         seed: args.seed,
-        string: None,
+        string: {
+            let opts = StringOpts {
+                alphabet: args.alphabet.clone(),
+                min_len,
+                max_len,
+            };
+            (opts != StringOpts::default()).then_some(opts)
+        },
     }))
 }
 
@@ -303,7 +324,6 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 Some(&params),
                 cfg.seed,
                 cfg.threads,
-                &report.workload.dtype,
                 report,
             )?;
         }

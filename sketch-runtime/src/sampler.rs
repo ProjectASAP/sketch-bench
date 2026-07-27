@@ -358,7 +358,6 @@ impl<E: Exporter> Sampler<E> {
             seed: None,
             // Live traffic has no generator spec to record.
             spec: None,
-            dtype: Default::default(),
         };
         let mut rec = Record::new(
             self.tag.sketch.clone(),

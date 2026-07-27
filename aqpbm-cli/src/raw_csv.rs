@@ -22,10 +22,9 @@ pub fn write_runs(
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
-    dtype: &str,
     report: &BenchReport,
 ) -> Result<()> {
-    let files = legacy_csv::render(family, impl_name, params, seed, workers, dtype, report);
+    let files = legacy_csv::render(family, impl_name, params, seed, workers, report);
     if files.is_empty() {
         return Ok(());
     }

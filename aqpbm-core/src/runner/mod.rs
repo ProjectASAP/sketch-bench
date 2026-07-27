@@ -111,7 +111,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // A throughput pass with no secondary CPU/MEMORY bits takes a
                 // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
                 // memory_bytes, and Welford-via-aggregate. Both paths run and
-                // separately time the insert loop and `finalize_for_query`,
+                // separately time the insert loop and `prepare`,
                 // so the choice affects what else is collected — never either
                 // throughput column.
                 reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
@@ -183,7 +183,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// giving LLVM a direct shot at folding the wrapper's update
     /// into the hot loop.
     ///
-    /// `finalize_for_query` runs here, outside the timed insert loop and
+    /// `prepare` runs here, outside the timed insert loop and
     /// timed on its own clock. It used to be skipped entirely, on the
     /// reasoning that a pass reporting only ingest rate has no use for a
     /// build step — but the implementations that defer their work do *all*
@@ -226,7 +226,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // that defines what an insert costs, and nothing else may enter
             // its timed region. See `hot_loop::insert_loop`.
             let finalize_wall = WallClock::start();
-            sketch.finalize_for_query();
+            sketch.prepare();
             std::hint::black_box(&sketch);
             let finalize_ns = finalize_wall.elapsed_ns();
             if trial >= pass_cfg.warmup_runs {
@@ -388,7 +388,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
             folded_shards = actual_shards;
             std::hint::black_box(&acc);
-            acc.finalize_for_query();
+            acc.prepare();
 
             // Warm the query path before the one measured comparison, for the
             // same reason `run_pass` does: otherwise the first comparator call
@@ -444,7 +444,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     for it in items {
                         insert(&mut single, it);
                     }
-                    single.finalize_for_query();
+                    single.prepare();
                     let reference = gt.compare(&single, items);
                     // A non-finite metric would compare unequal to itself and
                     // pin this to "lossy" forever, so treat it as unknown
@@ -656,7 +656,7 @@ where
     // the insert phase would make this path's `insert_wall_time_ns` mean
     // something different from every other path's.
     let finalize_wall = WallClock::start();
-    sketch.finalize_for_query();
+    sketch.prepare();
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
     sink.end_insert_phase();
 
@@ -719,7 +719,7 @@ where
     // about what an insert costs.
     let insert_wall_time_ns = insert_loop(&mut sketch, items, insert);
     let finalize_wall = WallClock::start();
-    sketch.finalize_for_query();
+    sketch.prepare();
     std::hint::black_box(&sketch);
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
 
