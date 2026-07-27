@@ -31,10 +31,10 @@ Dashed arrows are planned. An arrow points from a crate to what it depends on.
 flowchart TB
         cli["<b>aqpbm-cli</b><br/><i>argument parsing, calling necessary function from other crates, output</i>"]
 
-        sb["<b>sketch-bench</b><br/><i>the sketch domain: implementations,<br/>params, comparators, exact baselines</i>"]
+        sb["<b>sketch-bench</b><br/><i>the sketches themselves: wrappers,<br/>params, exact baselines, the catalog</i>"]
         ab["<b>aqp-bench</b><br/><i>V2 placeholder</i>"]
 
-        core["<b>aqpbm-core</b>"]
+        core["<b>aqpbm-core</b><br/><i>the framework: traits, runner,<br/>metrics, comparators</i>"]
         dg["<b>aqpbm-datagen</b><br/><i>synthetic data generation</i>"]
 
     rt["<b>sketch-runtime</b><br/><i>embedded sampler + exporters</i>"]
@@ -75,9 +75,17 @@ it names a sketch family:
 - `metrics`: the recorders (wall / CPU / RSS / jemalloc / heap-track /
   throughput), `MetricsMask`, and the per-run `RunMetrics` + `FullSink`
 - `aggregation`: the Welford accumulator + N-run `aggregate` → `BenchSection`
-- `accuracy`: the generic `GroundTruth` comparator trait + `Comparison`
-  (the concrete per-family comparators live in `sketch-bench`)
+- `accuracy`: the `GroundTruth` comparator trait + `Comparison`, the
+  per-statistic capability traits (`CardinalityOps`, `FrequencyOps`,
+  `QuantileOps`, `TopKOps`) and the comparators that score each — each binds
+  a *capability*, not a family, so it scores anyone's implementation
+- `init`: `InitSketch` / `BenchImpl` — the seam an implementation plugs into
+- `cell`: `run_cell` / `score_cell` / `run_cell_parallel`, `Items`, `RunError`
 - `latency`, `probe`, `sketch`, `workload`, `report`, `config` (params)
+
+Together these make this crate the whole framework: implement its traits on
+your own sketch and the runners will drive, score and report it, with no
+registration step — nothing here holds a list of implementations.
 
 Used to be `sketch-core`.
 
@@ -117,20 +125,26 @@ This crate connects to `aqpbm-cli` such that user can use this benchmark.
 **Target.** Wrappers, sketch definition, and the measurement that is specific
 to this domain.
 
-**Today.** Cleaned up — the crate is now the sketch domain only, built on the
-`aqpbm-core` engine:
-- `wrappers/`: the 21 wrapped sketch implementations under test
-- `accuracy/`: the concrete per-family comparators (frequency / cardinality /
-  quantile / top-k) implementing the core `GroundTruth` trait
-- `catalog` + `cell`: which `(family, impl)` pairs exist and how to run one
-- `params`, `init`: per-family construction
+**Today.** A bundle of implementations, not a framework — everything reusable
+has moved to `aqpbm-core`, and what is left is the sketches themselves:
+- `wrappers/`: the wrapped sketch implementations under test
+- `catalog`: which `(family, impl)` pairs exist and how to run one
+- `params`: per-family construction parameters (the only place family names
+  are written)
 - `legacy_csv`: the domain-specific long-format CSV rendering
 
-The generic engine (runner, config, metrics, aggregation, the `GroundTruth`
-abstraction) moved to `aqpbm-core`; `sketch-bench` re-exports it so
-`sketch_bench::{BenchRunner, BenchConfig, ...}` still name the entry points.
-This is what lets a future `aqp-bench` sit parallel to `sketch-bench` on the
-same core without depending on it.
+The framework — the runner, metrics, aggregation, the `Sketch` / `InitSketch`
+/ `BenchImpl` seam, the capability traits, the comparators and the cell
+runners — is all `aqpbm-core`, which holds no list of implementations.
+**Benchmarking a sketch of your own means depending on `aqpbm-core`, not on
+this crate**: you implement its traits and call `cell::run_cell`, with no row
+to add anywhere and no cost paid for the four sketch libraries wrapped here.
+
+This crate exists for the CLI. `sketchlib bench --sketch hll --impl oxide`
+arrives holding two strings, and `catalog` is what turns them into a concrete
+Rust type. That is the only reason a list of implementations exists at all —
+and it is also what lets a future `aqp-bench` sit parallel to `sketch-bench`
+on the same core, each shipping its own catalog.
 
 ## sketch-runtime
 

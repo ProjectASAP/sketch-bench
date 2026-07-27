@@ -25,7 +25,7 @@ pub enum Cmd {
 
 #[derive(Parser, Debug)]
 pub struct BenchArgs {
-    /// Sketch family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
+    /// Accumulator family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
     /// univmon). `list-impls` prints every (family, impl) pair.
     #[arg(long)]
     pub sketch: String,
@@ -66,24 +66,34 @@ pub struct BenchArgs {
     /// Zipf `s` exponent (only used when `--workload zipf`).
     #[arg(long, default_value_t = 1.1)]
     pub zipf_s: f64,
-    /// Item type the sketches ingest: `i64` (default), `f64`, or `string`.
+    /// Numeric width for the ordered families (`kll`, `dd`): `i64`
+    /// (default) or `f64`.
     ///
-    /// `f64` runs the ordered families (`kll`, `dd`); asking for any
-    /// hash-based row under `f64` is an error naming the mismatch, because
-    /// `f64` is not `Hash` in Rust and hashing its bits would repeat the
-    /// `i64` curve.
+    /// Every other row's item type is fixed by its wrapper — the rows that
+    /// take text always take text — so this is the one item-type choice
+    /// left, and asking for `f64` anywhere else is refused by name before a
+    /// workload is generated.
     ///
-    /// `string` runs the rows whose wrappers take text (`elastic`, `univmon`,
-    /// and `nitro/oxide`) over **generated** strings — configurable alphabet,
-    /// varying length. Those same rows run under `i64` too, but there they
-    /// consume decimal-formatted integers, which is a different and much
-    /// narrower workload. Comparing the two is the point.
-    ///
-    /// For `i64` and `f64` the values themselves do not change, only their
-    /// encoding. `string` is the exception: the rank is rendered rather than
-    /// cast, so the byte content is genuinely new.
+    /// The values themselves do not change with it, only their encoding.
     #[arg(long, default_value = "i64")]
     pub dtype: String,
+    /// Alphabet for generated string keys, for the rows whose wrappers take
+    /// text (`elastic`, `univmon`, `nitro/oxide`).
+    ///
+    /// Character order is the digit order of the positional encoding, so a
+    /// rank always renders to the same key. Ignored by rows that ingest
+    /// numbers. Overridden by `--spec`, which carries its own `string:`
+    /// block.
+    #[arg(long, default_value = "abcdefghijklmnopqrstuvwxyz0123456789")]
+    pub alphabet: String,
+    /// Inclusive length bounds for generated string keys. Equal values give
+    /// fixed-length keys.
+    ///
+    /// Key length is the dominant cost on a hashing insert path, so it is
+    /// the knob worth sweeping: `--key-len 1 7` approximates the
+    /// decimal-rendered integers these rows used to be fed.
+    #[arg(long = "key-len", num_args = 1..=2, default_values_t = [8usize, 24usize])]
+    pub key_len: Vec<usize>,
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42)]
     pub seed: u64,
@@ -128,7 +138,7 @@ pub struct BenchArgs {
     /// Mergeability is what lets a sketch be computed per shard, per node or
     /// per time window and combined later, and it is close to unmeasured in
     /// the literature: papers prove it and then evaluate insert and query.
-    /// For linear sketches (Count-Min, Count Sketch, HLL at equal lg_k) the
+    /// For linear sketches (Count-Min, Count Accumulator, HLL at equal lg_k) the
     /// merge is exact, so accuracy here must match the single-pass figure and
     /// a gap is a defect. For KLL it is lossy, and the gap is the result.
     #[arg(long, default_value_t = 1)]

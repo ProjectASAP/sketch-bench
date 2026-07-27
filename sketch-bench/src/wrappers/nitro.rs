@@ -8,10 +8,11 @@
 //! The tunable param is `rate`; the underlying CMS is sized at a fixed
 //! (5, 2048) — future work can expose those knobs too.
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::NitroParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::{NitroBatch, Vector2D};
 
 const NITRO_CMS_ROWS: usize = 5;
@@ -32,15 +33,15 @@ impl InitSketch for NitroLib {
     }
 }
 
-impl Sketch for NitroLib {
+impl Accumulator for NitroLib {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(std::slice::from_ref(v));
     }
-    fn bulk_update(&mut self, vs: &[i64]) {
-        self.inner.insert(vs);
-    }
+}
+
+impl MemoryFootprint for NitroLib {
     fn memory_bytes(&self) -> usize {
         NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u32>()
     }
@@ -64,12 +65,15 @@ impl InitSketch for NitroOxide {
     }
 }
 
-impl Sketch for NitroOxide {
+impl Accumulator for NitroOxide {
     type Item = Vec<u8>;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.0.update_sampled(v);
     }
+}
+
+impl MemoryFootprint for NitroOxide {
     fn memory_bytes(&self) -> usize {
         NITRO_CMS_ROWS * NITRO_CMS_COLS * std::mem::size_of::<u64>()
     }

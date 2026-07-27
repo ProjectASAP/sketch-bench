@@ -7,7 +7,7 @@
 //! sketches are *not* merged — so these impls declare no query capability and
 //! are not scored.
 //!
-//! `update` only buffers; the parallel section runs in `finalize_for_query`,
+//! `update` only buffers; the parallel section runs in `prepare`,
 //! which the runner times into `RunMetrics::finalize_wall_time_ns`. So read
 //! these rows off `build_throughput_items_per_sec` — their
 //! `throughput_items_per_sec` is the `Vec::push` that buffers the partition
@@ -29,10 +29,11 @@
 
 use std::sync::Barrier;
 
-use crate::init::{BenchImpl, BuildError};
+use aqpbm_core::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::{
     impl_fixed_matrix, Count, CountMin, DataInput, ErtlMLE, FastPath, HyperLogLog,
 };
@@ -45,7 +46,7 @@ pub struct ParallelCmsFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelCmsFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
     /// Not an `InitSketch`: it needs the worker count, which is a run knob
     /// (`--workers`), not a sketch parameter. Parses the config to reject a
     /// malformed one, then ignores its values — this impl's shape is fixed
@@ -59,7 +60,7 @@ impl crate::cell::ParallelInit for ParallelCmsFastPath {
     }
 }
 
-impl Sketch for ParallelCmsFastPath {
+impl Accumulator for ParallelCmsFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -67,10 +68,13 @@ impl Sketch for ParallelCmsFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_cms(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelCmsFastPath {
     fn memory_bytes(&self) -> usize {
         self.workers * (5 * 32768 * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
@@ -83,7 +87,7 @@ pub struct ParallelCsFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelCsFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: CountSketchParams = config.parse()?;
         Ok(Self {
@@ -93,7 +97,7 @@ impl crate::cell::ParallelInit for ParallelCsFastPath {
     }
 }
 
-impl Sketch for ParallelCsFastPath {
+impl Accumulator for ParallelCsFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -101,10 +105,13 @@ impl Sketch for ParallelCsFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_cs(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelCsFastPath {
     fn memory_bytes(&self) -> usize {
         self.workers * (5 * 32768 * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
@@ -117,7 +124,7 @@ pub struct ParallelHllFastPath {
     workers: usize,
 }
 
-impl crate::cell::ParallelInit for ParallelHllFastPath {
+impl aqpbm_core::cell::ParallelInit for ParallelHllFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: HllParams = config.parse()?;
         Ok(Self {
@@ -127,7 +134,7 @@ impl crate::cell::ParallelInit for ParallelHllFastPath {
     }
 }
 
-impl Sketch for ParallelHllFastPath {
+impl Accumulator for ParallelHllFastPath {
     type Item = i64;
 
     #[inline(always)]
@@ -135,10 +142,13 @@ impl Sketch for ParallelHllFastPath {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         run_parallel_hll(&self.buf, self.workers);
     }
 
+}
+
+impl MemoryFootprint for ParallelHllFastPath {
     fn memory_bytes(&self) -> usize {
         // Each worker holds an HLL with ErtlMLE registers — leave
         // it at a coarse upper bound (P14 default for the

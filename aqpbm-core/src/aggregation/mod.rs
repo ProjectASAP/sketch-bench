@@ -265,7 +265,7 @@ mod tests {
     }
 
     /// The property that lets one column serve a mixed panel: for the great
-    /// majority of implementations `finalize_for_query` is a no-op, and there
+    /// majority of implementations `prepare` is a no-op, and there
     /// the build rate must be the ingest rate exactly — not approximately,
     /// and not absent.
     #[test]

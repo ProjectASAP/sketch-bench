@@ -6,23 +6,23 @@
 //! ## One type per item type, not one per source
 //!
 //! Every `i64` workload — generated or file-backed — is the same thing at
-//! runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`] saying where it came
+//! runtime: an owned `Vec<i64>` plus the [`WorkloadDescription`] saying where it came
 //! from. Modelling each *source* as its own `impl Workload` forced every
 //! generic consumer to fan out over the source set — `aqpbm-cli` carried a
 //! 3-variant `WorkloadAny` plus two derived enums, with every dispatch macro
 //! repeating its body per variant. Provenance is data, not a type parameter,
-//! so it lives in `desc` and the source only picks a constructor.
+//! so it lives in `description` and the source only picks a constructor.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use aqpbm_datagen::{DType, Distribution, GenSpec, GenValue, Shape, SketchError};
+use aqpbm_datagen::{Distribution, GenSpec, GenValue, Shape, SketchError};
 
 /// Human-friendly description of a workload — serialised into
 /// every report so a JSONL record can be re-run without
 /// external metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkloadDesc {
+pub struct WorkloadDescription {
     pub shape: String, // "uniform" | "zipf" | "file"
     pub size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,28 +38,12 @@ pub struct WorkloadDesc {
     /// Absent for `uniform` / `zipf` / `file`, whose flat fields already
     /// round-trip — so records from those paths are byte-identical to
     /// what shipped before the generator was wired into `bench`.
-    /// See `Shape::to_workload_desc`.
+    /// See `Shape::to_workload_description`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<serde_json::Value>,
-
-    /// The item type the sketch actually ingested.
-    ///
-    /// Without this field an `i64` run and an `f64` run of the same shape,
-    /// size and seed produce **identical** descriptors, so anything that
-    /// groups by workload — `--repeats`, `scripts/merge_passes.py`, a
-    /// `groupby` over `--raw-csv` — pools two different measurements under
-    /// one key and averages them. The dtype is not cosmetic: for the
-    /// quantile families it decides whether the library compares integers or
-    /// floats, which is the thing being compared.
-    ///
-    /// Omitted when `i64`, so every record written before this field existed
-    /// stays byte-identical and still parses — those runs were all `i64`, so
-    /// the default is their true value rather than a guess.
-    #[serde(default, skip_serializing_if = "DType::is_i64")]
-    pub dtype: DType,
 }
 
-impl WorkloadDesc {
+impl WorkloadDescription {
     /// Projection of a generator [`Shape`] into the report-facing descriptor,
     /// so JSONL records stay well-formed regardless of shape. Shapes the flat
     /// fields cannot express carry their full spec in `spec`.
@@ -83,19 +67,18 @@ impl WorkloadDesc {
             Shape::Categorical { categories, .. } => (Some(categories.len() as u64), None),
             Shape::Monotonic { .. } => (None, None),
         };
-        WorkloadDesc {
+        WorkloadDescription {
             shape: shape.report_label().to_string(),
             size,
             cardinality,
             zipf_s,
             source_path: None,
             seed: Some(seed),
-            spec: if fits_legacy_desc(shape) {
+            spec: if fits_legacy_description(spec) {
                 None
             } else {
-                serde_json::to_value(shape).ok()
+                serde_json::to_value(spec).ok()
             },
-            dtype: spec.dtype,
         }
     }
 }
@@ -107,19 +90,19 @@ impl WorkloadDesc {
 /// their records stay byte-identical to what `--workload uniform|zipf` has
 /// always emitted. Everything else is lossy there and needs the full spec
 /// carried alongside, which is the one condition under which
-/// [`WorkloadDesc::spec`] is populated.
-fn fits_legacy_desc(shape: &Shape) -> bool {
-    matches!(
-        shape,
-        Shape::Keys {
-            dist: Distribution::Uniform | Distribution::Zipf { .. },
-            // `dtype` used to be excluded here, because it was part of what
-            // makes a shape reproducible and the flat fields could not express
-            // it. `WorkloadDesc::dtype` now carries it, so a non-`i64` keys
-            // shape round-trips flat like any other and does not need `spec`.
-            ..
-        }
-    )
+/// [`WorkloadDescription::spec`] is populated.
+fn fits_legacy_description(spec: &GenSpec) -> bool {
+    // `string` opts change the keys without changing the shape, so a spec
+    // carrying them cannot round-trip through the flat fields either: two
+    // runs at different key lengths would share a descriptor and be pooled.
+    spec.string.is_none()
+        && matches!(
+            spec.shape,
+            Shape::Keys {
+                dist: Distribution::Uniform | Distribution::Zipf { .. },
+                ..
+            }
+        )
 }
 
 /// The abstract contract for a workload a `BenchRunner` can
@@ -127,7 +110,7 @@ fn fits_legacy_desc(shape: &Shape) -> bool {
 /// plus an optional query stream.
 pub trait Workload: Sized {
     type Item: Clone;
-    fn desc(&self) -> WorkloadDesc;
+    fn description(&self) -> WorkloadDescription;
     fn items(&self) -> &[Self::Item];
 
     /// An **independent draw** from the same distribution, for a repetition
@@ -177,12 +160,12 @@ pub trait Workload: Sized {
 
 /// A numeric workload: the materialised item stream plus its
 /// provenance. Construct it from a generator (`uniform` / `zipf`)
-/// or from a file (`load`); the source shows up in `desc`, not in
+/// or from a file (`load`); the source shows up in `description`, not in
 /// the type.
 #[derive(Debug, Clone)]
 pub struct NumericWorkload<T> {
     items: Vec<T>,
-    desc: WorkloadDesc,
+    description: WorkloadDescription,
     /// The spec this was generated from, when it was generated. Retained so
     /// [`Workload::resample`] can draw again from the same distribution.
     /// `None` for file-backed workloads: a file is one fixed sample.
@@ -199,24 +182,24 @@ pub type F64Workload = NumericWorkload<f64>;
 
 impl<T: GenValue> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
-    /// `desc.size` is forced to match `items.len()` — a desc that
+    /// `description.size` is forced to match `items.len()` — a description that
     /// disagrees with the data it describes would silently corrupt
     /// every throughput denominator downstream.
-    pub fn new(items: Vec<T>, mut desc: WorkloadDesc) -> Self {
+    pub fn new(items: Vec<T>, mut description: WorkloadDescription) -> Self {
         // `load` cannot know the count until it has read the file, so it
         // passes 0 as a placeholder. Any other value is the caller *asserting*
         // what was produced — a generator returning short would otherwise be
         // relabelled into a smaller workload with no signal at all.
         debug_assert!(
-            desc.size == 0 || desc.size == items.len(),
-            "workload desc claims {} items but carries {}",
-            desc.size,
+            description.size == 0 || description.size == items.len(),
+            "workload description claims {} items but carries {}",
+            description.size,
             items.len(),
         );
-        desc.size = items.len();
+        description.size = items.len();
         Self {
             items,
-            desc,
+            description,
             spec: None,
         }
     }
@@ -225,14 +208,9 @@ impl<T: GenValue> NumericWorkload<T> {
     /// the tool. `sketchlib workload generate` runs the same spec
     /// through a file sink; this runs it through a memory sink, so a
     /// shape reachable on disk is reachable here by construction.
-    ///
-    /// Fails if the spec's dtype does not match `T`: reinterpreting one
-    /// numeric encoding as another would yield meaningless items behind a
-    /// well-formed report, and — for the ordered families — would hide an
-    /// integer-to-float conversion inside a run labelled `f64`.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
-        let desc = WorkloadDesc::from_spec(spec);
-        let mut wk = Self::new(spec.generate::<T>()?, desc);
+        let description = WorkloadDescription::from_spec(spec);
+        let mut wk = Self::new(spec.generate::<T>()?, description);
         wk.spec = Some(spec.clone());
         Ok(wk)
     }
@@ -246,7 +224,6 @@ impl<T: GenValue> NumericWorkload<T> {
             },
             size,
             seed,
-            dtype: T::DTYPE,
             string: None,
         })
         .expect("uniform keys over a non-zero cardinality always generate")
@@ -262,7 +239,6 @@ impl<T: GenValue> NumericWorkload<T> {
             },
             size,
             seed,
-            dtype: T::DTYPE,
             string: None,
         })
     }
@@ -303,7 +279,7 @@ impl NumericWorkload<i64> {
         }
         Ok(Self::new(
             items,
-            WorkloadDesc {
+            WorkloadDescription {
                 shape: "file".into(),
                 size: 0, // overwritten by `new`
                 cardinality: None,
@@ -311,7 +287,6 @@ impl NumericWorkload<i64> {
                 source_path: Some(path.display().to_string()),
                 seed: None,
                 spec: None,
-                dtype: DType::I64,
             },
         ))
     }
@@ -319,8 +294,8 @@ impl NumericWorkload<i64> {
 
 impl<T: GenValue> Workload for NumericWorkload<T> {
     type Item = T;
-    fn desc(&self) -> WorkloadDesc {
-        self.desc.clone()
+    fn description(&self) -> WorkloadDescription {
+        self.description.clone()
     }
     fn items(&self) -> &[T] {
         &self.items
@@ -366,13 +341,13 @@ fn reject_non_i64_bin(path: &Path) -> Result<(), SketchError> {
     let Ok(Some(meta)) = aqpbm_datagen::io::read_meta(path) else {
         return Ok(());
     };
-    if meta.dtype != aqpbm_datagen::DType::I64 {
+    if meta.dtype != "i64" {
         return Err(SketchError::BadParam(format!(
             "{}: sidecar declares dtype {}, but the benchmark only consumes i64. \
              Re-generate with `--dtype i64`; reading it as i64 would silently \
              reinterpret the raw bytes and produce meaningless keys.",
             path.display(),
-            meta.dtype.as_str(),
+            meta.dtype,
         )));
     }
     Ok(())
@@ -491,16 +466,14 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
 
 /// A `String` workload.
 ///
-/// Two origins, deliberately distinguishable in the report:
+/// Two origins:
 ///
-/// * **Generated** — `NumericWorkload::generate` at `dtype: string`. Real
-///   keys: length varies, the alphabet is configurable, and the rendering is
-///   injective over `cardinality`. `desc.dtype` says `string`.
+/// * **Generated** — real keys: length varies, the alphabet is configurable,
+///   and the rendering is injective over `cardinality`.
 /// * **Derived** — [`Self::from_i64`], decimal-formatting an `i64` workload.
 ///   1-7 characters over 10 symbols, length dictated by the key's magnitude.
-///   `desc` is the source workload's, so it still says `i64`.
 ///
-/// Keeping the descriptors different is the point: the two measure different
+/// They measure different
 /// things, and a groupby that pooled them would average a real string
 /// workload with a fake one.
 pub type StringWorkload = NumericWorkload<String>;
@@ -519,7 +492,7 @@ impl NumericWorkload<String> {
     pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
             items: inner.items().iter().map(|v| v.to_string()).collect(),
-            desc: inner.desc(),
+            description: inner.description(),
             spec: None,
         }
     }
@@ -528,13 +501,13 @@ impl NumericWorkload<String> {
 /// Same, but `Vec<u8>` for impls that want `&[u8]`.
 ///
 /// Not a [`NumericWorkload`]: `Vec<u8>` is not a `GenValue`, and making it one
-/// would mean deciding what a "byte-string dtype" draws — which is the string
+/// would mean deciding what a byte-string item type draws — which is the string
 /// question again with no new answer. These rows take the bytes of whichever
 /// string workload is in play.
 #[derive(Debug, Clone)]
 pub struct BytesWorkload {
     items: Vec<Vec<u8>>,
-    desc: WorkloadDesc,
+    description: WorkloadDescription,
 }
 
 impl BytesWorkload {
@@ -545,12 +518,12 @@ impl BytesWorkload {
                 .iter()
                 .map(|v| v.to_string().into_bytes())
                 .collect(),
-            desc: inner.desc(),
+            description: inner.description(),
         }
     }
 
     /// Bytes of an existing string workload, generated or derived. Carries
-    /// its `desc`, so a run over real strings stays distinguishable from one
+    /// its `description`, so a run over real strings stays distinguishable from one
     /// over decimal-formatted integers.
     pub fn from_strings(inner: &StringWorkload) -> Self {
         Self {
@@ -559,15 +532,15 @@ impl BytesWorkload {
                 .iter()
                 .map(|s| s.clone().into_bytes())
                 .collect(),
-            desc: inner.desc(),
+            description: inner.description(),
         }
     }
 }
 
 impl Workload for BytesWorkload {
     type Item = Vec<u8>;
-    fn desc(&self) -> WorkloadDesc {
-        self.desc.clone()
+    fn description(&self) -> WorkloadDescription {
+        self.description.clone()
     }
     fn items(&self) -> &[Vec<u8>] {
         &self.items
@@ -577,6 +550,44 @@ impl Workload for BytesWorkload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Key length is the dominant cost on a hashing insert path, so two runs
+    /// at different lengths are two measurements. They must not share a
+    /// descriptor, or anything grouping by workload averages them together.
+    #[test]
+    fn string_options_reach_the_descriptor() {
+        let base = GenSpec {
+            shape: Shape::Keys {
+                cardinality: 64,
+                dist: Distribution::Uniform,
+            },
+            size: 32,
+            seed: 1,
+            string: None,
+        };
+        let with_opts = |min_len, max_len| GenSpec {
+            string: Some(aqpbm_datagen::StringOpts {
+                alphabet: "ab".to_string(),
+                min_len,
+                max_len,
+            }),
+            ..base.clone()
+        };
+
+        // Defaults keep the descriptor a record written before the flags
+        // existed would have had.
+        let plain = WorkloadDescription::from_spec(&base);
+        assert!(plain.spec.is_none(), "{plain:?}");
+
+        let short = WorkloadDescription::from_spec(&with_opts(4, 4));
+        let long = WorkloadDescription::from_spec(&with_opts(16, 16));
+        assert!(short.spec.is_some());
+        assert_ne!(
+            serde_json::to_string(&short).unwrap(),
+            serde_json::to_string(&long).unwrap(),
+            "two key lengths must not share a group key"
+        );
+    }
 
     #[test]
     fn uniform_is_reproducible_from_seed() {
@@ -598,17 +609,17 @@ mod tests {
         let inner = I64Workload::uniform(50, 100, 1);
         let s = StringWorkload::from_i64(&inner);
         assert_eq!(s.items().len(), 50);
-        assert_eq!(s.desc().shape, "uniform");
+        assert_eq!(s.description().shape, "uniform");
     }
 
     #[test]
-    fn placeholder_desc_size_is_filled_in() {
-        // A desc that disagrees with the data would silently skew every
+    fn placeholder_description_size_is_filled_in() {
+        // A description that disagrees with the data would silently skew every
         // throughput denominator; `new` is the one place that can catch
         // it, so it always wins over the caller's claim.
         let w = I64Workload::new(
             vec![1, 2, 3],
-            WorkloadDesc {
+            WorkloadDescription {
                 shape: "custom".into(),
                 size: 0, // placeholder, as `load` passes
                 cardinality: None,
@@ -616,10 +627,9 @@ mod tests {
                 source_path: None,
                 seed: None,
                 spec: None,
-                dtype: DType::I64,
             },
         );
-        assert_eq!(w.desc().size, 3);
+        assert_eq!(w.description().size, 3);
     }
 
     #[test]
@@ -634,13 +644,17 @@ mod tests {
         drop(f);
         let w = I64Workload::load(&path).unwrap();
         assert_eq!(w.items(), &[1, -2, 3, 4]);
-        assert_eq!(w.desc().shape, "file");
-        assert_eq!(w.desc().size, 4);
+        assert_eq!(w.description().shape, "file");
+        assert_eq!(w.description().size, 4);
         std::fs::remove_file(&path).ok();
     }
 
-    /// Generate a `.bin` + sidecar of the given dtype and try to load it.
-    fn load_generated(dtype: aqpbm_datagen::DType, tag: &str) -> Result<I64Workload, SketchError> {
+    /// Write a `.bin` + sidecar at item type `T` and try to load it as i64.
+    /// The type parameter is the only thing naming an encoding — there is no
+    /// tag to pass, and no match to keep exhaustive.
+    fn load_generated<T: aqpbm_datagen::GenValue + aqpbm_datagen::FixedWidth>(
+        tag: &str,
+    ) -> Result<I64Workload, SketchError> {
         use aqpbm_datagen::{io, Distribution, GenMeta, GenSpec, Shape};
         let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
         let spec = GenSpec {
@@ -650,30 +664,11 @@ mod tests {
             },
             size: 32,
             seed: 1,
-            dtype,
             string: None,
         };
-        // The one shape a run-time dtype takes now: a `match` that picks the
-        // type parameter, with every arm one line. No `_` arm, so adding a
-        // `DType` variant fails to compile here rather than silently missing
-        // a case.
-        fn write<T: aqpbm_datagen::GenValue + aqpbm_datagen::FixedWidth>(
-            path: &std::path::Path,
-            spec: &GenSpec,
-        ) {
-            let col = spec.generate::<T>().unwrap();
-            io::write_bin(path, &col).unwrap();
-            io::write_meta(path, &GenMeta::new(spec, &col)).unwrap();
-        }
-        match dtype {
-            aqpbm_datagen::DType::I64 => write::<i64>(&path, &spec),
-            aqpbm_datagen::DType::U64 => write::<u64>(&path, &spec),
-            aqpbm_datagen::DType::F64 => write::<f64>(&path, &spec),
-            // `String` is not `FixedWidth`, so this arm cannot call `write`.
-            // The guard under test is about `.bin` files, which strings do
-            // not have.
-            aqpbm_datagen::DType::Str => unreachable!("no .bin path for strings"),
-        }
+        let col = spec.generate::<T>().unwrap();
+        io::write_bin(&path, &col).unwrap();
+        io::write_meta(&path, &GenMeta::new(&spec, &col)).unwrap();
         let out = I64Workload::load(&path);
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(io::sidecar_path(&path)).ok();
@@ -682,7 +677,7 @@ mod tests {
 
     #[test]
     fn bin_with_i64_sidecar_loads() {
-        let w = load_generated(aqpbm_datagen::DType::I64, "i64").expect("i64 must load");
+        let w = load_generated::<i64>("i64").expect("i64 must load");
         assert_eq!(w.items().len(), 32);
     }
 
@@ -691,16 +686,15 @@ mod tests {
         // An f64/u64 stream is byte-indistinguishable from i64, so
         // loading it would silently produce garbage keys rather than
         // fail. The sidecar is the only thing that can catch it.
-        for (dtype, tag) in [
-            (aqpbm_datagen::DType::F64, "f64"),
-            (aqpbm_datagen::DType::U64, "u64"),
+        for (err, tag) in [
+            (load_generated::<f64>("f64"), "f64"),
+            (load_generated::<u64>("u64"), "u64"),
         ] {
-            let err = load_generated(dtype, tag)
-                .expect_err("non-i64 dtype must be rejected, not silently misread");
+            let err = err.expect_err("a non-i64 stream must be rejected, not silently misread");
             let msg = err.to_string();
             assert!(
                 msg.contains(tag),
-                "error should name the offending dtype: {msg}"
+                "error should name the offending item type: {msg}"
             );
         }
     }
@@ -768,7 +762,7 @@ mod tests {
 #[cfg(test)]
 mod resample_tests {
     use super::*;
-    use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
+    use aqpbm_datagen::{Distribution, GenSpec, Shape};
 
     fn spec(seed: u64) -> GenSpec {
         GenSpec {
@@ -778,7 +772,6 @@ mod resample_tests {
             },
             size: 2000,
             seed,
-            dtype: DType::I64,
             string: None,
         }
     }
@@ -849,7 +842,6 @@ mod sink_tests {
             },
             size: 3_000,
             seed: 7,
-            dtype: DType::I64,
             string: None,
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
@@ -861,75 +853,5 @@ mod sink_tests {
         let from_memory = I64Workload::generate(&s).unwrap();
         assert_eq!(from_file.items(), from_memory.items());
         std::fs::remove_file(&path).ok();
-    }
-}
-
-#[cfg(test)]
-mod dtype_tests {
-    use super::*;
-    use aqpbm_datagen::{Distribution, GenSpec, Shape};
-
-    fn keys_spec(dtype: DType) -> GenSpec {
-        GenSpec {
-            shape: Shape::Keys {
-                cardinality: 100,
-                dist: Distribution::Uniform,
-            },
-            size: 500,
-            seed: 7,
-            dtype,
-            string: None,
-        }
-    }
-
-    /// The dtype axis is only worth having if the two runs are
-    /// distinguishable downstream. `--repeats`, `merge_passes.py` and any
-    /// `groupby` over the CSV key on the serialised workload, so if these two
-    /// descriptors matched, an i64 and an f64 measurement would be averaged
-    /// together under one row.
-    #[test]
-    fn i64_and_f64_descriptors_are_distinguishable() {
-        let a = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
-        let b = F64Workload::generate(&keys_spec(DType::F64)).unwrap();
-        let (ja, jb) = (
-            serde_json::to_string(&a.desc()).unwrap(),
-            serde_json::to_string(&b.desc()).unwrap(),
-        );
-        assert_ne!(ja, jb, "i64 and f64 workloads must not share a group key");
-        assert!(jb.contains(r#""dtype":"f64""#), "{jb}");
-    }
-
-    /// Every record ever written was i64, so the field is omitted at that
-    /// value: old files stay byte-identical and new i64 runs still compare
-    /// equal to them.
-    #[test]
-    fn an_i64_descriptor_keeps_the_bytes_it_had_before_the_field_existed() {
-        let wk = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
-        let json = serde_json::to_string(&wk.desc()).unwrap();
-        assert!(
-            !json.contains("dtype"),
-            "i64 must not emit the field: {json}"
-        );
-    }
-
-    #[test]
-    fn a_descriptor_without_dtype_reads_back_as_i64() {
-        let old = r#"{"shape":"uniform","size":500,"cardinality":100,"seed":7}"#;
-        let desc: WorkloadDesc = serde_json::from_str(old).unwrap();
-        assert_eq!(desc.dtype, DType::I64);
-    }
-
-    /// The one thing this axis must never do: quietly widen integers into the
-    /// float path. That would put an `as f64` back on the insert loop while
-    /// the report claims the workload was f64 — the measurement error the
-    /// dtype axis exists to expose.
-    #[test]
-    fn a_float_workload_refuses_an_integer_spec() {
-        let err = F64Workload::generate(&keys_spec(DType::I64))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("f64") && err.contains("i64"), "{err}");
-        // And the converse, so neither direction converts.
-        assert!(I64Workload::generate(&keys_spec(DType::F64)).is_err());
     }
 }

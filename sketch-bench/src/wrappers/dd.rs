@@ -2,12 +2,13 @@
 //! Quantile family with relative-error guarantee `alpha`:
 //! `estimate_quantile(phi) -> f64` (value at quantile).
 
-use crate::accuracy::quantile::QuantileValue;
-use crate::accuracy::QuantileOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::quantile::QuantileValue;
+use aqpbm_core::accuracy::QuantileOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::DdParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::DDSketch;
 
 /// Generic over the item type. `DDSketch` buckets by `log(value)`, so it is
@@ -31,12 +32,15 @@ impl<T: QuantileValue> InitSketch for DdLib<T> {
     }
 }
 
-impl<T: QuantileValue> Sketch for DdLib<T> {
+impl<T: QuantileValue> Accumulator for DdLib<T> {
     type Item = T;
     #[inline(always)]
     fn update(&mut self, v: &T) {
         self.inner.add(&v.to_f64());
     }
+}
+
+impl<T: QuantileValue> MemoryFootprint for DdLib<T> {
     fn memory_bytes(&self) -> usize {
         // Best-effort estimate: DDSketch's bucket store is
         // dynamically sized; fall back to the serialised size.

@@ -10,22 +10,23 @@ pub mod config;
 
 pub use config::BenchConfig;
 
-// The CPU warm-up and the single timed insert loop are generic over `Sketch`
+// The CPU warm-up and the single timed insert loop are generic over `Accumulator`
 // and carry no sketch-domain knowledge. `insert_loop` stays
 // `#[inline(always)]`, so thin LTO folds the wrapper's `update` into it across
 // the crate boundary exactly as before — the fold never depended on
 // co-location. See `crate::hot_loop`.
+use crate::accumulator::Accumulator;
 use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
+use crate::memory_footprint::MemoryFootprint;
 use crate::metrics::{
     CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, MetricsMask, Rss, RunMetrics,
     WallClock,
 };
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
-use crate::sketch::Sketch;
-use crate::workload::{Workload, WorkloadDesc};
+use crate::workload::{Workload, WorkloadDescription};
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
 /// sketch against a fixed workload, feeding each iteration's
@@ -56,7 +57,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// The **timed** passes — throughput, latency, and the merge fold, plus
     /// the CPU/MEMORY bits that ride along with each. Accuracy is skipped
     /// here and runs in [`run_accuracy`](Self::run_accuracy): it needs an
-    /// oracle, and keeping one off this path is what lets the wrapper's
+    /// ground-truth calculator, and keeping one off this path is what lets the wrapper's
     /// `update` inline into the hot loop unencumbered.
     ///
     /// Each primary bit gets its **own** `BenchReport` over a fresh sketch
@@ -74,7 +75,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// which `--metrics` flags were passed. See [`insert_loop`].
     pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -94,7 +95,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             pass_cfg.metrics = pass_mask;
             if pass_mask.contains(MetricsMask::MERGE) {
                 // Merge lives on *both* sides: its fold is a timed measurement
-                // (here, with no oracle) and its post-merge correctness is an
+                // (here, with no ground truth) and its post-merge correctness is an
                 // accuracy measurement (`run_accuracy`). Folding a single shard
                 // measures nothing, so skip it.
                 if pass_cfg.merge_shards < 2 {
@@ -110,7 +111,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // A throughput pass with no secondary CPU/MEMORY bits takes a
                 // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
                 // memory_bytes, and Welford-via-aggregate. Both paths run and
-                // separately time the insert loop and `finalize_for_query`,
+                // separately time the insert loop and `prepare`,
                 // so the choice affects what else is collected — never either
                 // throughput column.
                 reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
@@ -131,7 +132,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// The **accuracy** passes — those that compare the sketch against an exact
     /// answer: the accuracy pass itself, and the merge pass (whose headline
     /// output is post-merge accuracy). Untimed relative to the hot loop, so
-    /// carrying the oracle `G` here costs the timed numbers nothing.
+    /// carrying the ground-truth calculator `G` here costs the timed numbers nothing.
     pub fn run_accuracy<S, F, G, Insert>(
         &self,
         mut factory: F,
@@ -139,7 +140,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         gt: &G,
     ) -> Vec<BenchReport>
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -162,8 +163,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 if pass_cfg.merge_shards < 2 {
                     continue;
                 }
-                let mut report =
-                    self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
+                let mut report = self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
                 // `run_timed` owns merge timing; this half keeps only the
                 // post-merge accuracy, so the two do not both claim a
                 // `merge_time_ms` (theirs is the clean one, this fold is timed
@@ -182,7 +182,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// giving LLVM a direct shot at folding the wrapper's update
     /// into the hot loop.
     ///
-    /// `finalize_for_query` runs here, outside the timed insert loop and
+    /// `prepare` runs here, outside the timed insert loop and
     /// timed on its own clock. It used to be skipped entirely, on the
     /// reasoning that a pass reporting only ingest rate has no use for a
     /// build step — but the implementations that defer their work do *all*
@@ -208,7 +208,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -225,7 +225,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // that defines what an insert costs, and nothing else may enter
             // its timed region. See `hot_loop::insert_loop`.
             let finalize_wall = WallClock::start();
-            sketch.finalize_for_query();
+            sketch.prepare();
             std::hint::black_box(&sketch);
             let finalize_ns = finalize_wall.elapsed_ns();
             if trial >= pass_cfg.warmup_runs {
@@ -297,7 +297,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run: Vec::new(),
             bench,
             config: pass_cfg,
@@ -315,7 +315,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// What the comparison means depends on the family, and the difference is
     /// the point of the experiment:
     ///
-    /// * **Linear sketches** (Count-Min, Count Sketch, HLL at equal `lg_k`,
+    /// * **Linear sketches** (Count-Min, Count Accumulator, HLL at equal `lg_k`,
     ///   and every exact baseline) merge without loss. The merged sketch is
     ///   identical to one fed the whole stream, so their accuracy here must
     ///   equal their single-pass accuracy. A gap is a defect — mismatched
@@ -333,7 +333,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -387,7 +387,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
             folded_shards = actual_shards;
             std::hint::black_box(&acc);
-            acc.finalize_for_query();
+            acc.prepare();
 
             // Warm the query path before the one measured comparison, for the
             // same reason `run_pass` does: otherwise the first comparator call
@@ -443,7 +443,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     for it in items {
                         insert(&mut single, it);
                     }
-                    single.finalize_for_query();
+                    single.prepare();
                     let reference = gt.compare(&single, items);
                     // A non-finite metric would compare unequal to itself and
                     // pin this to "lossy" forever, so treat it as unknown
@@ -502,7 +502,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run,
             bench,
             config: pass_cfg,
@@ -517,7 +517,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Sketch<Item = W::Item>,
+        S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
@@ -600,7 +600,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run,
             bench,
             config: pass_cfg,
@@ -623,7 +623,7 @@ fn run_once<S, F>(
     config: &BenchConfig,
 ) -> (RunMetrics, S)
 where
-    S: Sketch,
+    S: Accumulator + MemoryFootprint,
     S::Item: Clone,
     F: FnMut() -> S,
 {
@@ -650,12 +650,12 @@ where
     };
     // Run any deferred build/sort/finalize before the query phase, so
     // query-throughput numbers measure steady-state queries on a
-    // ready-to-answer sketch (see Sketch trait doc). Timed on its own clock:
+    // ready-to-answer sketch (see Accumulator trait doc). Timed on its own clock:
     // the sink cannot see this call, and a pass that silently folded it into
     // the insert phase would make this path's `insert_wall_time_ns` mean
     // something different from every other path's.
     let finalize_wall = WallClock::start();
-    sketch.finalize_for_query();
+    sketch.prepare();
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
     sink.end_insert_phase();
 
@@ -693,7 +693,7 @@ fn run_once_clean<S, F, Insert>(
     config: &BenchConfig,
 ) -> (RunMetrics, S)
 where
-    S: Sketch,
+    S: Accumulator + MemoryFootprint,
     S::Item: Clone,
     F: FnMut() -> S,
     Insert: FnMut(&mut S, &S::Item),
@@ -718,7 +718,7 @@ where
     // about what an insert costs.
     let insert_wall_time_ns = insert_loop(&mut sketch, items, insert);
     let finalize_wall = WallClock::start();
-    sketch.finalize_for_query();
+    sketch.prepare();
     std::hint::black_box(&sketch);
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
 
@@ -775,7 +775,7 @@ where
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub workload: WorkloadDesc,
+    pub workload: WorkloadDescription,
     pub per_run: Vec<RunMetrics>,
     pub bench: crate::report::BenchSection,
     pub config: BenchConfig,
@@ -804,7 +804,7 @@ impl BenchReport {
 /// Placeholder `GroundTruth` for catalog rows that run without a
 /// comparator. Never called; `compare` is a safe default.
 pub struct NoGT;
-impl<S: Sketch> GroundTruth<S> for NoGT {
+impl<S: Accumulator> GroundTruth<S> for NoGT {
     fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
         Comparison::default()
     }

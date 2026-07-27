@@ -1,12 +1,13 @@
 //! CountSketch wrappers — 5 variants (`oxide` + 4× sketchlib).
 //! Same family as CMS: each declares `FrequencyOps`.
 
-use crate::accuracy::FrequencyOps;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::FrequencyOps;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CountSketchParams;
 use crate::wrappers::require_shape;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
 use sketch_oxide::Mergeable as _;
 
@@ -47,22 +48,25 @@ impl InitSketch for CsOxide {
     }
 }
 
-impl Sketch for CsOxide {
+impl Accumulator for CsOxide {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.update(v, 1);
     }
-    fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i64>()
-    }
 
-    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner
             .merge(&other.inner)
             .expect("both operands built from one ParamSet, so rows/cols match");
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CsOxide {
+    fn memory_bytes(&self) -> usize {
+        self.rows * self.cols * std::mem::size_of::<i64>()
     }
 }
 
@@ -79,20 +83,23 @@ impl InitSketch for CsLibFixedmatrixFast {
     }
 }
 
-impl Sketch for CsLibFixedmatrixFast {
+impl Accumulator for CsLibFixedmatrixFast {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.0.merge(&other.0);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CsLibFixedmatrixFast {
+    fn memory_bytes(&self) -> usize {
+        CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
     }
 }
 
@@ -112,20 +119,23 @@ impl InitSketch for CsLibFixedmatrixFast32k {
     }
 }
 
-impl Sketch for CsLibFixedmatrixFast32k {
+impl Accumulator for CsLibFixedmatrixFast32k {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.0.merge(&other.0);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CsLibFixedmatrixFast32k {
+    fn memory_bytes(&self) -> usize {
+        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
     }
 }
 
@@ -147,20 +157,23 @@ impl InitSketch for CsLibVector2dFast {
     }
 }
 
-impl Sketch for CsLibVector2dFast {
+impl Accumulator for CsLibVector2dFast {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner.merge(&other.inner);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CsLibVector2dFast {
+    fn memory_bytes(&self) -> usize {
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }
 
@@ -182,20 +195,23 @@ impl InitSketch for CsLibVector2dRegular {
     }
 }
 
-impl Sketch for CsLibVector2dRegular {
+impl Accumulator for CsLibVector2dRegular {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.inner.insert(&DataInput::I64(*v));
     }
-    fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>()
-    }
 
-    /// Counter-wise addition; Count Sketch is linear, so merging is exact.
+    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner.merge(&other.inner);
         Ok(())
+    }
+}
+
+impl MemoryFootprint for CsLibVector2dRegular {
+    fn memory_bytes(&self) -> usize {
+        self.rows * self.cols * std::mem::size_of::<i32>()
     }
 }
 

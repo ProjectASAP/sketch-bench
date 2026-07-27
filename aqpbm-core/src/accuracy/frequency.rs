@@ -19,7 +19,7 @@
 //!
 //! An estimator that answers **zero for every key** scores exactly 1.0 on this
 //! metric, by construction: `|0 − f| / f = 1` for every key with `f > 0`. So
-//! the unfiltered 22.31 says a real Count-Min Sketch is 22× *worse* than doing
+//! the unfiltered 22.31 says a real Count-Min Accumulator is 22× *worse* than doing
 //! no work at all — and the crossover sits somewhere around a true count of
 //! 10–100. That is not a defect of this implementation; it is the metric
 //! measuring the wrong population, and it is a documented trap (SALSA, ICDE
@@ -49,7 +49,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::Instant;
 
-use aqpbm_core::sketch::Sketch;
+use crate::accumulator::Accumulator;
 
 use super::statistic::FrequencyOps;
 use super::{Comparison, GroundTruth};
@@ -68,7 +68,7 @@ pub struct FrequencyGT {
 impl<S, K> GroundTruth<S> for FrequencyGT
 where
     K: Eq + Hash + Ord + Clone,
-    S: Sketch<Item = K> + FrequencyOps<Key = K>,
+    S: Accumulator<Item = K> + FrequencyOps<Key = K>,
 {
     fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
         let mut exact: HashMap<&K, u64> = HashMap::new();
@@ -185,7 +185,7 @@ where
 fn p99_relative_error<S, K>(sketch: &S, keys: &[&K], exact: &HashMap<&K, u64>) -> f64
 where
     K: Eq + Hash + Clone,
-    S: Sketch<Item = K> + FrequencyOps<Key = K>,
+    S: Accumulator<Item = K> + FrequencyOps<Key = K>,
 {
     let mut errs: Vec<f64> = keys
         .iter()
@@ -236,12 +236,9 @@ mod tests {
 
     /// The estimator that does no work: every frequency is zero.
     struct NullFreq;
-    impl Sketch for NullFreq {
+    impl Accumulator for NullFreq {
         type Item = i64;
         fn update(&mut self, _: &i64) {}
-        fn memory_bytes(&self) -> usize {
-            0
-        }
     }
 
     // The null estimator has to declare itself a frequency estimator like any

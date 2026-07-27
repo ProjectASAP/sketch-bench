@@ -3,10 +3,11 @@
 
 use std::cell::RefCell;
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::ElasticParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 
 // ---------- asap_sketchlib Elastic ----------
 //
@@ -36,12 +37,15 @@ impl InitSketch for ElasticLib {
     }
 }
 
-impl Sketch for ElasticLib {
+impl Accumulator for ElasticLib {
     type Item = String;
     #[inline(always)]
     fn update(&mut self, v: &String) {
         self.inner.get_mut().insert(v.clone());
     }
+}
+
+impl MemoryFootprint for ElasticLib {
     fn memory_bytes(&self) -> usize {
         self.buckets * std::mem::size_of::<u32>() * 4
     }
@@ -72,12 +76,15 @@ impl InitSketch for ElasticOxide {
     }
 }
 
-impl Sketch for ElasticOxide {
+impl Accumulator for ElasticOxide {
     type Item = Vec<u8>;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1);
     }
+}
+
+impl MemoryFootprint for ElasticOxide {
     fn memory_bytes(&self) -> usize {
         self.buckets * self.depth * std::mem::size_of::<u64>()
     }

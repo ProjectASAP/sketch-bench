@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::SketchError;
 
 use super::dist::{Distribution, GapSampler, KeySampler};
-use super::{DType, GenValue};
+use super::GenValue;
 
 /// A semantic label for the units of a timestamp column. Metadata only:
 /// it does not rescale generated values (gaps are measured in these
@@ -36,16 +36,17 @@ fn default_dist() -> Distribution {
     Distribution::Uniform
 }
 
-/// `f64` represents integers exactly only up to 2^53. Past that, a
-/// `cardinality`-sized key space would silently collapse onto rounded
-/// values, so reject it.
-fn reject_inexact_f64(dtype: DType, cardinality: u64) -> Result<(), SketchError> {
-    const LIMIT: u64 = 1 << 53;
-    if dtype == DType::F64 && cardinality > LIMIT {
-        return Err(SketchError::BadParam(format!(
-            "dtype f64 cannot hold {cardinality} distinct integers exactly \
-             (limit 2^53 = {LIMIT}); values would round silently"
-        )));
+/// A type that holds integers exactly only up to some limit (`f64`: 2^53)
+/// would silently collapse a larger key space onto rounded values.
+fn reject_inexact<T: GenValue>(cardinality: u64) -> Result<(), SketchError> {
+    if let Some(limit) = T::EXACT_INTEGER_LIMIT {
+        if cardinality > limit {
+            return Err(SketchError::BadParam(format!(
+                "{} cannot hold {cardinality} distinct integers exactly \
+                 (limit {limit}); values would round silently",
+                T::NAME,
+            )));
+        }
     }
     Ok(())
 }
@@ -129,7 +130,7 @@ impl Shape {
                         "keys: cardinality must be > 0".into(),
                     ));
                 }
-                reject_inexact_f64(T::DTYPE, *cardinality)?;
+                reject_inexact::<T>(*cardinality)?;
                 Ok(Generator::Keys(KeysGen {
                     sampler: dist.key_sampler(*cardinality)?,
                     cfg,
@@ -156,10 +157,11 @@ impl Shape {
                 min_gap,
                 unit: _,
             } => {
-                if T::DTYPE == DType::F64 {
-                    return Err(SketchError::BadParam(
-                        "monotonic: dtype f64 unsupported; use i64 or u64".into(),
-                    ));
+                if !T::SUPPORTS_MONOTONIC {
+                    return Err(SketchError::BadParam(format!(
+                        "monotonic: {} unsupported; use i64 or u64",
+                        T::NAME,
+                    )));
                 }
                 Ok(Generator::Monotonic(MonotonicGen {
                     gap: gap.gap_sampler()?,

@@ -1,5 +1,5 @@
 //! Thin newtypes over each concrete sketch implementation in the
-//! repo, one file per family. Each implements `Sketch` (drive it)
+//! repo, one file per family. Each implements `Accumulator` (drive it)
 //! and `InitSketch` (build it from a `ParamSet`); `sketch_bench::catalog`
 //! binds the runtime `(family, impl)` strings to these types.
 
@@ -15,7 +15,7 @@ pub mod polars;
 pub mod topk;
 pub mod univmon;
 
-use crate::init::BuildError;
+use aqpbm_core::init::BuildError;
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
 /// shape; any other requested config is a `BuildError` naming both shapes.

@@ -10,7 +10,6 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
-use aqpbm_datagen::DType;
 use aqpbm_core::runner::BenchReport;
 use sketch_bench::legacy_csv;
 use sketch_bench::params::ParamSet;
@@ -23,10 +22,9 @@ pub fn write_runs(
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
-    dtype: DType,
     report: &BenchReport,
 ) -> Result<()> {
-    let files = legacy_csv::render(family, impl_name, params, seed, workers, dtype, report);
+    let files = legacy_csv::render(family, impl_name, params, seed, workers, report);
     if files.is_empty() {
         return Ok(());
     }

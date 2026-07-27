@@ -63,11 +63,11 @@ mod tests {
 
     fn sample_record() -> Record {
         use aqpbm_core::report::Mode;
-        use aqpbm_core::workload::WorkloadDesc;
+        use aqpbm_core::workload::WorkloadDescription;
         Record::new(
             "hll",
             "oxide",
-            WorkloadDesc {
+            WorkloadDescription {
                 shape: "test".into(),
                 size: 1,
                 cardinality: None,
@@ -75,7 +75,6 @@ mod tests {
                 source_path: None,
                 seed: None,
                 spec: None,
-                dtype: Default::default(),
             },
             Mode::Runtime,
             1,

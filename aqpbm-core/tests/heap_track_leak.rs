@@ -14,7 +14,7 @@
 //! it runs single-threaded with no other allocators of note.
 //!
 //! The test only compiles under the `heap-track` feature.
-//!     cargo test -p sketch-bench --features heap-track --test heap_track_leak
+//!     cargo test -p aqpbm-core --features heap-track --test heap_track_leak
 
 #![cfg(feature = "heap-track")]
 

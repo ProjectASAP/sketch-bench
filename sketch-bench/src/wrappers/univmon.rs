@@ -8,10 +8,11 @@
 //! sized at a fixed (5, 2048). `sketch_oxide::universal::UnivMon::new` takes
 //! no layer count, so on that row `layers` moves the reported footprint only.
 
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::UnivMonParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 
 const UNIVMON_CMS_ROWS: usize = 5;
 const UNIVMON_CMS_COLS: usize = 2048;
@@ -37,13 +38,16 @@ impl InitSketch for UnivMonLib {
     }
 }
 
-impl Sketch for UnivMonLib {
+impl Accumulator for UnivMonLib {
     type Item = String;
     #[inline(always)]
     fn update(&mut self, v: &String) {
         self.inner
             .fast_insert(&asap_sketchlib::DataInput::Str(v), 1);
     }
+}
+
+impl MemoryFootprint for UnivMonLib {
     fn memory_bytes(&self) -> usize {
         self.layers * UNIVMON_CMS_ROWS * UNIVMON_CMS_COLS * std::mem::size_of::<i32>()
     }
@@ -69,12 +73,15 @@ impl InitSketch for UnivMonOxide {
     }
 }
 
-impl Sketch for UnivMonOxide {
+impl Accumulator for UnivMonOxide {
     type Item = Vec<u8>;
     #[inline(always)]
     fn update(&mut self, v: &Vec<u8>) {
         self.inner.update(v, 1.0).expect("UnivMon update succeeds");
     }
+}
+
+impl MemoryFootprint for UnivMonOxide {
     fn memory_bytes(&self) -> usize {
         self.layers * UNIVMON_CMS_ROWS * UNIVMON_CMS_COLS * std::mem::size_of::<u64>()
     }

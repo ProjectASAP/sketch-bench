@@ -7,7 +7,7 @@
 //!
 //! Mirrors the legacy `throughput/polars_{cardinality,freq,quantile}/`
 //! binaries: buffer the stream into a `Vec<i64>`, then on
-//! `finalize_for_query` build a `DataFrame` once and run the relevant Polars
+//! `prepare` build a `DataFrame` once and run the relevant Polars
 //! expression. The runner bills that build to
 //! `RunMetrics::finalize_wall_time_ns` and times the insert loop alone, so a
 //! polars row's `throughput_items_per_sec` is the buffering `Vec::push`, not
@@ -21,11 +21,12 @@
 
 use std::collections::HashMap;
 
-use crate::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams, TopkParams};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use polars::prelude::*;
 
 /// `hll/polars` — distinct count via `n_unique`.
@@ -47,7 +48,7 @@ impl InitSketch for PolarsCardinality {
     }
 }
 
-impl Sketch for PolarsCardinality {
+impl Accumulator for PolarsCardinality {
     type Item = i64;
 
     #[inline(always)]
@@ -55,7 +56,7 @@ impl Sketch for PolarsCardinality {
         self.buf.push(*v);
     }
 
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         let series = Column::new("v".into(), &self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let result = df
@@ -71,6 +72,9 @@ impl Sketch for PolarsCardinality {
         self.estimate = c.f64().expect("f64 chunked").get(0).unwrap_or(0.0);
     }
 
+}
+
+impl MemoryFootprint for PolarsCardinality {
     fn memory_bytes(&self) -> usize {
         self.buf.capacity() * std::mem::size_of::<i64>()
     }
@@ -135,15 +139,18 @@ impl InitSketch for PolarsFrequencyCms {
     }
 }
 
-impl Sketch for PolarsFrequencyCms {
+impl Accumulator for PolarsFrequencyCms {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsFrequencyCms {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -160,15 +167,18 @@ impl InitSketch for PolarsFrequencyCs {
     }
 }
 
-impl Sketch for PolarsFrequencyCs {
+impl Accumulator for PolarsFrequencyCs {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsFrequencyCs {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -176,7 +186,7 @@ impl Sketch for PolarsFrequencyCs {
 
 /// Polars-backed quantile baseline. The heavy work (one polars
 /// sort + 101-point quantile grid build) lives in
-/// `finalize_for_query`, which the runner now times separately
+/// `prepare`, which the runner now times separately
 /// into `RunMetrics::finalize_wall_time_ns`. Insert remains pure
 /// `Vec::push`; per-call `query()` is an array lookup.
 struct PolarsQuantileCore {
@@ -243,15 +253,18 @@ impl InitSketch for PolarsQuantileKll {
     }
 }
 
-impl Sketch for PolarsQuantileKll {
+impl Accumulator for PolarsQuantileKll {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsQuantileKll {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -268,15 +281,18 @@ impl InitSketch for PolarsQuantileDd {
     }
 }
 
-impl Sketch for PolarsQuantileDd {
+impl Accumulator for PolarsQuantileDd {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
         self.0.update(v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsQuantileDd {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }
@@ -334,7 +350,7 @@ impl BenchImpl for PolarsQuantileDd { type Params = DdParams; const IMPL: &'stat
 /// `topk/polars` — the exact top-k baseline. Reuses the same group_by that
 /// backs the frequency baseline, then sorts. Its score is the check on the
 /// comparator itself: an exact answer must come back at precision = recall =
-/// 1.0, so anything less means the oracle, not the sketch, is wrong.
+/// 1.0, so anything less means the ground-truth calculator, not the sketch, is wrong.
 #[derive(Default)]
 pub struct PolarsTopK(PolarsFrequencyCore);
 
@@ -355,7 +371,7 @@ impl InitSketch for PolarsTopK {
     }
 }
 
-impl Sketch for PolarsTopK {
+impl Accumulator for PolarsTopK {
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -363,9 +379,12 @@ impl Sketch for PolarsTopK {
     }
     /// All of the cost is here, not in `update` — the same split the other
     /// polars baselines use, so the insert column stays a plain `Vec::push`.
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.0.finalize();
     }
+}
+
+impl MemoryFootprint for PolarsTopK {
     fn memory_bytes(&self) -> usize {
         self.0.memory_bytes()
     }

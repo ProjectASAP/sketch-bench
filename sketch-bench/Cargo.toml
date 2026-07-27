@@ -25,15 +25,12 @@ heap-jemalloc = ["aqpbm-core/heap-jemalloc"]
 heap-track = ["aqpbm-core/heap-track"]
 
 [dependencies]
-# Fixed-seed shuffle of the probe set, so probe order is reproducible.
-rand = { workspace = true }
-rand_xoshiro = { workspace = true }
+# The framework: the traits the wrappers implement, and the cell runners
+# and comparators `catalog` dispatches into.
 aqpbm-core.workspace = true
-# `cell`'s `WorkloadSpec`/`Items` build workloads through the one
-# generator; `DType` also tags a row's item type.
+# `DType` tags a row's item type.
 aqpbm-datagen.workspace = true
-# `cell::run_cell` / `catalog::run` surface "cannot run this cell" as an
-# `anyhow` error.
+# `catalog::run` surfaces "cannot run this cell" as an `anyhow` error.
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

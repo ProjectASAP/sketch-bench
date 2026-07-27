@@ -37,17 +37,18 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
+use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::runner::BenchConfig;
+use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
 use clap::Parser;
 use sketch_bench::params::ParamSet;
-use sketch_bench::{BenchConfig, MetricsMask};
 
 use cli::{BenchArgs, Cli, Cmd};
-// The catalog — which sketches exist, how to build them, which oracle scores
+// The catalog — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
+use aqpbm_core::cell::{AccuracyCfg, WorkloadSpec};
 use sketch_bench::catalog;
-use sketch_bench::cell::{AccuracyCfg, WorkloadSpec};
 
 fn parse_mask(s: Option<&str>) -> MetricsMask {
     let s = match s {
@@ -141,7 +142,7 @@ fn main() -> Result<()> {
 /// The flag path builds the same `GenSpec` the spec path would, so
 /// `--workload zipf --cardinality N --zipf-s S` is exactly sugar for a
 /// `keys`/`zipf` spec — one generator, not two.
-fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
+fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.input.as_deref() {
         return Ok(WorkloadSpec::File {
             path: path.to_string(),
@@ -150,17 +151,8 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
     if let Some(path) = args.spec.as_deref() {
         let spec = GenSpec::from_path(std::path::Path::new(path))
             .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
-        // A spec file names its own dtype. Silently overriding it would edit
-        // the user's file from the command line; silently ignoring `--dtype`
-        // would run a different measurement than the one asked for. Neither is
-        // recoverable from the output, so disagreeing is an error.
-        if spec.dtype != dtype {
-            bail!(
-                "--dtype {} but {path} generates {}; drop --dtype or edit the spec",
-                dtype.as_str(),
-                spec.dtype.as_str(),
-            );
-        }
+        // A spec carries its own `string:` block, so `--alphabet`/`--key-len`
+        // would be editing the user's file from the command line.
         return Ok(WorkloadSpec::Generated(spec));
     }
     let dist = match args.workload.as_str() {
@@ -168,6 +160,20 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
         "zipf" => Distribution::Zipf { s: args.zipf_s },
         other => bail!("unknown workload shape: {other} (expected uniform|zipf, or use --spec)"),
     };
+    // Only the rows that ingest text read this. Left `None` at the defaults
+    // so a run that did not ask for the axis keeps the descriptor — and so
+    // the record — it had before the flags existed.
+    let (min_len, max_len) = match args.key_len.as_slice() {
+        [n] => (*n, *n),
+        [lo, hi] => (*lo, *hi),
+        _ => bail!("--key-len takes one value (fixed) or two (min max)"),
+    };
+    if min_len == 0 || min_len > max_len {
+        bail!("--key-len must be non-zero and non-decreasing, got {min_len}..={max_len}");
+    }
+    if args.alphabet.is_empty() {
+        bail!("--alphabet cannot be empty");
+    }
     Ok(WorkloadSpec::Generated(GenSpec {
         shape: Shape::Keys {
             cardinality: args.cardinality,
@@ -175,8 +181,14 @@ fn workload_spec(args: &BenchArgs, dtype: DType) -> Result<WorkloadSpec> {
         },
         size: args.size,
         seed: args.seed,
-        dtype,
-        string: None,
+        string: {
+            let opts = StringOpts {
+                alphabet: args.alphabet.clone(),
+                min_len,
+                max_len,
+            };
+            (opts != StringOpts::default()).then_some(opts)
+        },
     }))
 }
 
@@ -217,13 +229,16 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    let dtype = match args.dtype.as_str() {
-        "i64" => DType::I64,
-        "f64" => DType::F64,
-        "string" => DType::Str,
-        other => bail!("unknown --dtype: {other} (expected i64|f64|string)"),
+    // The only item-type choice left: an `ordered` row (KLL, DDSketch) is
+    // built at one width or the other. Every other row's item type is fixed
+    // by its Rust type, and `catalog::run` refuses a width it cannot honour
+    // before anything is generated.
+    let width = match args.dtype.as_str() {
+        "i64" => catalog::Numeric::I64,
+        "f64" => catalog::Numeric::F64,
+        other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
-    let spec = workload_spec(&args, dtype)?;
+    let spec = workload_spec(&args)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
     if args.merge_shards > 1 {
         metrics_mask |= MetricsMask::MERGE;
@@ -264,8 +279,6 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         None => ParamSet::empty(&args.sketch),
     };
 
-    let workload = spec.build(dtype)?;
-
     if accuracy_cfg.enabled && !scores_accuracy {
         eprintln!(
             "sketchlib: --accuracy has no comparator for {}/{} (throughput-only row) — running without ground truth",
@@ -290,9 +303,10 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         &args.sketch,
         &args.impl_name,
         &cfg,
-        &workload,
+        &spec,
         &params,
         &accuracy_cfg,
+        width,
     )
     .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", args.sketch, args.impl_name))?;
 
@@ -310,7 +324,6 @@ fn run_bench(args: BenchArgs) -> Result<()> {
                 Some(&params),
                 cfg.seed,
                 cfg.threads,
-                dtype,
                 report,
             )?;
         }

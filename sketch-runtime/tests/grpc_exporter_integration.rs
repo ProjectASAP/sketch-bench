@@ -9,9 +9,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::probe::Probe;
 use aqpbm_core::report::{Source, SCHEMA_VERSION};
-use aqpbm_core::sketch::Sketch;
 use sketch_runtime::sampler::{Sampler, Tag};
 use sketch_runtime::{GrpcConfig, GrpcExporter};
 
@@ -44,12 +44,9 @@ impl RuntimeSamples for CapturingService {
 }
 
 struct DummySketch;
-impl Sketch for DummySketch {
+impl Accumulator for DummySketch {
     type Item = i64;
     fn update(&mut self, _: &i64) {}
-    fn memory_bytes(&self) -> usize {
-        0
-    }
 }
 
 async fn spin_server() -> (String, Arc<Mutex<Vec<PushBatch>>>) {

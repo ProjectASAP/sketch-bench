@@ -2,11 +2,13 @@
 //! counting sketch. Proves: sketch construction → N-run +
 //! warmup loop → metrics aggregation → v1 JSONL record.
 
-use aqpbm_core::sketch::{MergeUnsupported, Sketch};
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::workload::I64Workload;
-use sketch_bench::accuracy::cardinality::CardinalityGT;
-use sketch_bench::accuracy::CardinalityOps;
-use sketch_bench::{BenchConfig, BenchRunner, MetricsMask};
+use aqpbm_core::accuracy::cardinality::CardinalityGT;
+use aqpbm_core::accuracy::CardinalityOps;
+use aqpbm_core::runner::{BenchConfig, BenchRunner};
+use aqpbm_core::metrics::MetricsMask;
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
 /// exercises the full trait + runner machinery against a known
@@ -15,19 +17,22 @@ struct ExactCounter {
     seen: std::collections::HashSet<i64>,
 }
 
-impl Sketch for ExactCounter {
+impl Accumulator for ExactCounter {
     type Item = i64;
     fn update(&mut self, v: &i64) {
         self.seen.insert(*v);
-    }
-    fn memory_bytes(&self) -> usize {
-        self.seen.capacity() * std::mem::size_of::<i64>()
     }
     /// Set union — exact, so the merge pass can also check that merging
     /// costs no accuracy, which is the property the pass exists to test.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.seen.extend(other.seen.iter().copied());
         Ok(())
+    }
+}
+
+impl MemoryFootprint for ExactCounter {
+    fn memory_bytes(&self) -> usize {
+        self.seen.capacity() * std::mem::size_of::<i64>()
     }
 }
 
@@ -95,7 +100,7 @@ fn runner_end_to_end_produces_valid_jsonl() {
 
 /// A sketch shaped like the deferred-build rows (`*/polars`,
 /// `lib-fastpath-parallel`): `update` only buffers, and the sketch is built
-/// in `finalize_for_query`. Counts its own finalize calls so a test can pin
+/// in `prepare`. Counts its own finalize calls so a test can pin
 /// that the runner made them.
 struct DeferredBuilder {
     buf: Vec<i64>,
@@ -103,12 +108,12 @@ struct DeferredBuilder {
     finalized: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl Sketch for DeferredBuilder {
+impl Accumulator for DeferredBuilder {
     type Item = i64;
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
-    fn finalize_for_query(&mut self) {
+    fn prepare(&mut self) {
         self.finalized
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let set: std::collections::HashSet<i64> = self.buf.iter().copied().collect();
@@ -117,13 +122,16 @@ impl Sketch for DeferredBuilder {
         // separates "the runner timed a no-op" from "the runner skipped it".
         std::hint::black_box(&set);
     }
+}
+
+impl MemoryFootprint for DeferredBuilder {
     fn memory_bytes(&self) -> usize {
         self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
 
 /// The bug this pins: a bare `--metrics throughput` takes the slim path in
-/// `BenchRunner`, which used to skip `finalize_for_query` outright. For a
+/// `BenchRunner`, which used to skip `prepare` outright. For a
 /// sketch that defers its build that meant the measured work never ran at
 /// all — the `lib-fastpath-parallel` rows reported the cost of buffering a
 /// partition they then threw away without inserting it anywhere.

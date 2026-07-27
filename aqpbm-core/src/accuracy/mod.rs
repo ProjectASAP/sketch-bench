@@ -1,18 +1,28 @@
-//! The generic ground-truth comparator abstraction: the
-//! [`GroundTruth`] trait a benchmark consults to score a sketch
-//! against an exact answer, and the [`Comparison`] it returns.
+//! Scoring a sketch against an exact answer: the [`GroundTruth`] trait a
+//! benchmark consults, the [`Comparison`] it returns, the per-statistic
+//! capability traits that say which sketch can be asked which question, and
+//! the comparators that score each statistic.
 //!
-//! Both are generic over the core [`Sketch`] trait and carry no
-//! family-specific knowledge, so they live here alongside the runner that
-//! drives them. The concrete per-family comparators (frequency, cardinality,
-//! quantile, top-k) live in `sketch-bench::accuracy`.
+//! None of it names a sketch family. A comparator binds a *capability*
+//! ([`CardinalityOps`], [`FrequencyOps`], ...), not a family, so it scores any
+//! implementation that declares that capability — the ones in `sketch-bench`
+//! and anybody else's alike.
 //!
 //! See `docs/DESIGN.md` §5.6.
 
 use std::collections::BTreeMap;
 
+use crate::accumulator::Accumulator;
 use crate::metrics::QueryCallSample;
-use crate::sketch::Sketch;
+
+pub mod cardinality;
+pub mod frequency;
+pub mod quantile;
+pub mod statistic;
+pub mod topk;
+
+// The capability traits that declare which sketch answers which statistic.
+pub use statistic::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
 
 /// Output of a single ground-truth comparison run: the comparator's named
 /// scalars plus the timing of the estimate calls it issued. The runner pulls
@@ -47,6 +57,6 @@ pub struct Comparison {
 /// A comparator between a sketch's estimate and an exact answer computed from
 /// the raw workload. Impls name their own keys in [`Comparison::metrics`];
 /// the runner carries that map through to `RunMetrics::accuracy`.
-pub trait GroundTruth<S: Sketch> {
+pub trait GroundTruth<S: Accumulator> {
     fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison;
 }

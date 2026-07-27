@@ -1,6 +1,6 @@
 //! Top-k wrappers: a counter array plus a size-`k` candidate tracker.
 //!
-//! A bare Count-Min / Count Sketch cannot answer top-k at all — it stores
+//! A bare Count-Min / Count Accumulator cannot answer top-k at all — it stores
 //! counters, not keys, so it has nothing to enumerate. The classic fix is to
 //! carry a heap of the `k` heaviest keys seen so far and maintain it on
 //! **every** update. That is the whole point of giving this its own row
@@ -14,11 +14,12 @@
 
 use std::collections::HashMap;
 
-use crate::accuracy::{FrequencyOps, TopKOps};
-use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::TopkParams;
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::accuracy::{FrequencyOps, TopKOps};
 use aqpbm_core::config::{ParamSet, SketchParams};
-use aqpbm_core::sketch::Sketch;
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::memory_footprint::MemoryFootprint;
 
 /// A frequency sketch plus the size-`k` tracker that turns it into a top-k
 /// sketch. Generic over the counter array so CMS and CountSketch share one
@@ -44,7 +45,7 @@ pub struct TopKHeap<S> {
 
 impl<S> TopKHeap<S>
 where
-    S: Sketch<Item = i64> + FrequencyOps<Key = i64>,
+    S: Accumulator<Item = i64> + FrequencyOps<Key = i64>,
 {
     /// Offer `key`'s current estimate to the candidate set.
     ///
@@ -98,9 +99,9 @@ where
     }
 }
 
-impl<S> Sketch for TopKHeap<S>
+impl<S> Accumulator for TopKHeap<S>
 where
-    S: Sketch<Item = i64> + FrequencyOps<Key = i64>,
+    S: Accumulator<Item = i64> + FrequencyOps<Key = i64>,
 {
     type Item = i64;
 
@@ -109,7 +110,12 @@ where
         self.inner.update(v);
         self.offer(*v);
     }
+}
 
+impl<S> MemoryFootprint for TopKHeap<S>
+where
+    S: Accumulator<Item = i64> + FrequencyOps<Key = i64> + MemoryFootprint,
+{
     fn memory_bytes(&self) -> usize {
         // The tracker is part of what this row costs, so it is billed here —
         // that is the trade the row exists to expose.
@@ -133,7 +139,7 @@ impl<S> TopKOps for TopKHeap<S> {
 
 impl<S> InitSketch for TopKHeap<S>
 where
-    S: Sketch<Item = i64> + FrequencyOps<Key = i64> + InitSketch + BenchImpl,
+    S: Accumulator<Item = i64> + FrequencyOps<Key = i64> + InitSketch + BenchImpl,
 {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: TopkParams = config.parse()?;
@@ -180,11 +186,14 @@ mod tests {
     #[derive(Default)]
     struct ExactCounter(HashMap<i64, u64>);
 
-    impl Sketch for ExactCounter {
+    impl Accumulator for ExactCounter {
         type Item = i64;
         fn update(&mut self, v: &i64) {
             *self.0.entry(*v).or_insert(0) += 1;
         }
+    }
+
+    impl MemoryFootprint for ExactCounter {
         fn memory_bytes(&self) -> usize {
             0
         }

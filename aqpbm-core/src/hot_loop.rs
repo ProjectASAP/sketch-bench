@@ -16,7 +16,7 @@
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use crate::sketch::Sketch;
+use crate::accumulator::Accumulator;
 
 /// Ramp the CPU **once per process**, before the first measured loop of any
 /// pass.
@@ -68,7 +68,7 @@ fn warmup_cpu_from_env() {
 /// elapsed nanoseconds.
 ///
 /// Every pass that reports throughput goes through here, and nothing else
-/// is inside the timed region — no metric snapshot, no `finalize_for_query`,
+/// is inside the timed region — no metric snapshot, no `prepare`,
 /// no `memory_bytes`. This function existing exactly once is a correctness
 /// property, not tidiness:
 ///
@@ -87,7 +87,7 @@ fn warmup_cpu_from_env() {
 #[inline(always)]
 pub fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
 where
-    S: Sketch,
+    S: Accumulator,
     Insert: FnMut(&mut S, &S::Item),
 {
     let start = Instant::now();

@@ -7,9 +7,9 @@
 
 use std::hint::black_box;
 
+use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::probe::{NoopSink, Probe};
 use aqpbm_core::report::Source;
-use aqpbm_core::sketch::Sketch;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use sketch_runtime::exporter::NoopExporter;
 use sketch_runtime::sampler::{Sampler, Tag};
@@ -17,14 +17,11 @@ use sketch_runtime::sampler::{Sampler, Tag};
 struct DummySketch {
     n: u64,
 }
-impl Sketch for DummySketch {
+impl Accumulator for DummySketch {
     type Item = i64;
     #[inline]
     fn update(&mut self, v: &i64) {
         self.n = self.n.wrapping_add(*v as u64);
-    }
-    fn memory_bytes(&self) -> usize {
-        8
     }
 }
 

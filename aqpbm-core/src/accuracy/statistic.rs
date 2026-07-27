@@ -4,7 +4,7 @@
 //! `impl CardinalityOps for HllOxide` is where "HLL is a cardinality sketch"
 //! is stated — plural, and compiler-checked, because each comparator binds
 //! the capability it needs. This is nominal on purpose: the old structural
-//! bound (`S: Sketch<Query = (), Answer = f64>`) also matched UnivMon and the
+//! bound (`S: Accumulator<Query = (), Answer = f64>`) also matched UnivMon and the
 //! parallel-HLL shard, which answer a stub, and only the catalog's
 //! hand-maintained `scores_accuracy` column kept them out.
 

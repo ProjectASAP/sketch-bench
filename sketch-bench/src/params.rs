@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn every_family_ships_a_canonical_config_that_roundtrips() {
         // The canonical config is one buildable point per family — the
-        // dtype-acceptance tests take it as a valid config per impl. It must
+        // item-type acceptance tests take it as a valid config per impl. It must
         // erase to a `ParamSet` of its own family and parse back unchanged.
         fn check<P: SketchParams + PartialEq + std::fmt::Debug>() {
             let p = P::canonical();

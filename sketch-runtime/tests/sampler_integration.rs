@@ -14,9 +14,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::probe::Probe;
 use aqpbm_core::report::{Record, Source};
-use aqpbm_core::sketch::Sketch;
 use sketch_runtime::exporter::Exporter;
 use sketch_runtime::sampler::{Sampler, Tag};
 use sketch_runtime::switch::RuntimeSwitch;
@@ -49,13 +49,10 @@ impl Exporter for RecordSink {
 struct DummySketch {
     n: u64,
 }
-impl Sketch for DummySketch {
+impl Accumulator for DummySketch {
     type Item = i64;
     fn update(&mut self, v: &i64) {
         self.n = self.n.wrapping_add(*v as u64);
-    }
-    fn memory_bytes(&self) -> usize {
-        8
     }
 }
 
