@@ -6,16 +6,13 @@
 
 use anyhow::Result;
 use aqpbm_core::accumulator::Accumulator;
-use aqpbm_datagen::DType;
 
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{
-    self, AccuracyCfg, DtypeMismatch, FromItems, Items, ParallelInit, RunError,
-};
+use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
 use aqpbm_core::init::{BenchImpl, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
@@ -27,8 +24,25 @@ use crate::wrappers::{
 
 // ---------- what a row is ----------
 
+/// The one item-type choice a user still makes. An `ordered` row (KLL,
+/// DDSketch) is built at either width; every other row's item type is fixed
+/// by its Rust type, so asking for the other one is a question the catalog
+/// can refuse before generating anything.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Numeric {
+    #[default]
+    I64,
+    F64,
+}
+
 /// The executable half of a row: everything the frontend can hand a cell.
-type RunFn = fn(&BenchConfig, &Items, &ParamSet, &AccuracyCfg) -> Result<Vec<BenchReport>, RunError>;
+type RunFn = fn(
+    &BenchConfig,
+    &WorkloadSpec,
+    &ParamSet,
+    &AccuracyCfg,
+    Numeric,
+) -> Result<Vec<BenchReport>, RunError>;
 
 /// One catalog entry. Built only by the four constructors below, so `family`,
 /// `impl_name` and `scores_accuracy` are always projections of the row's type
@@ -41,6 +55,8 @@ pub struct Row {
     /// Does `--accuracy` score this row? Derived: true iff it was built with a
     /// constructor that takes a ground-truth calculator.
     pub scores_accuracy: bool,
+    /// Can this row run at [`Numeric::F64`]? Derived: only `ordered` rows can.
+    pub picks_width: bool,
     run: RunFn,
 }
 
@@ -129,73 +145,73 @@ where
 /// Timed measurement, plus accuracy scored against `G` when `--accuracy` is on.
 fn run_scored<S, G>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     acc: &AccuracyCfg,
+    _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
     G: GroundTruthCalculator<S>,
 {
-    let mut reports = cell::run_cell::<S>(cfg, items, params)?;
+    let mut reports = cell::run_cell::<S>(cfg, spec, params)?;
     if acc.enabled {
         let gt = G::build(acc, params);
-        reports.extend(cell::score_cell::<S, G>(cfg, items, params, &gt)?);
+        reports.extend(cell::score_cell::<S, G>(cfg, spec, params, &gt)?);
     }
     Ok(reports)
 }
 
-/// An ordered quantile family (KLL, DDSketch): the concrete type follows the
-/// run-time dtype, so the row names both and this picks between them.
+/// An ordered quantile family (KLL, DDSketch): the row names both widths and
+/// the caller's [`Numeric`] picks one. The only place a runtime value still
+/// selects an item type.
 fn run_ordered<Si, Sf, G>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     acc: &AccuracyCfg,
+    width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
     Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
     G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
 {
-    match items {
-        Items::I64(_) => run_scored::<Si, G>(cfg, items, params, acc),
-        Items::F64(_) => run_scored::<Sf, G>(cfg, items, params, acc),
-        other => Err(DtypeMismatch {
-            wanted: &[DType::I64, DType::F64],
-            got: other.dtype(),
-        }
-        .into()),
+    match width {
+        Numeric::I64 => run_scored::<Si, G>(cfg, spec, params, acc, width),
+        Numeric::F64 => run_scored::<Sf, G>(cfg, spec, params, acc, width),
     }
 }
 
 /// A row with no query capability: timed only, no ground truth, nothing to score.
 fn run_plain<S>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     _acc: &AccuracyCfg,
+    _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
-    cell::run_cell::<S>(cfg, items, params)
+    cell::run_cell::<S>(cfg, spec, params)
 }
 
 /// A parallel-insert row: built with the worker count, so not an `InitSketch`.
 fn run_parallel<S>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     _acc: &AccuracyCfg,
+    _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
-    cell::run_cell_parallel::<S>(cfg, items, params)
+    cell::run_cell_parallel::<S>(cfg, spec, params)
 }
 
 // ---------- the four row constructors ----------
@@ -207,7 +223,7 @@ where
 const fn scored<S, G>(description: &'static str) -> Row
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
     G: GroundTruthCalculator<S>,
 {
     Row {
@@ -215,6 +231,7 @@ where
         impl_name: S::IMPL,
         description,
         scores_accuracy: true,
+        picks_width: false,
         run: run_scored::<S, G>,
     }
 }
@@ -231,6 +248,7 @@ where
         impl_name: Si::IMPL,
         description,
         scores_accuracy: true,
+        picks_width: true,
         run: run_ordered::<Si, Sf, G>,
     }
 }
@@ -238,13 +256,14 @@ where
 const fn plain<S>(description: &'static str) -> Row
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
     Row {
         family: S::FAMILY,
         impl_name: S::IMPL,
         description,
         scores_accuracy: false,
+        picks_width: false,
         run: run_plain::<S>,
     }
 }
@@ -252,13 +271,14 @@ where
 const fn parallel_row<S>(description: &'static str) -> Row
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
     Row {
         family: S::FAMILY,
         impl_name: S::IMPL,
         description,
         scores_accuracy: false,
+        picks_width: false,
         run: run_parallel::<S>,
     }
 }
@@ -271,38 +291,56 @@ pub const ROWS: &[Row] = &[
     // -------- HLL (cardinality) --------
     scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog"),
     scored::<hll::HllDatasketches, CardinalityGT>("datasketches::hll::HllSketch (Hll8)"),
-    scored::<hll::HllLib, CardinalityGT>("asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate"),
+    scored::<hll::HllLib, CardinalityGT>(
+        "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate",
+    ),
     scored::<hll::HllLibHip, CardinalityGT>("asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate"),
     scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
     parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
     // -------- KLL (quantile, rank error) --------
-    ordered::<kll::KllOxide<i64>, kll::KllOxide<f64>, RankErrorGT>("sketch_oxide::quantiles::KllSketch"),
+    ordered::<kll::KllOxide<i64>, kll::KllOxide<f64>, RankErrorGT>(
+        "sketch_oxide::quantiles::KllSketch",
+    ),
     ordered::<kll::KllLib<i64>, kll::KllLib<f64>, RankErrorGT>("asap_sketchlib::KLL"),
     scored::<polars::PolarsQuantileKll, RankErrorGT>("polars exact: 101-point quantile grid"),
     // -------- CMS (frequency) --------
     scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
     scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
-    scored::<cms::CmsLibFixedmatrixCustomFast, FrequencyGT>("asap CMS, custom FixedMatrix (5x65538), FastPath"),
+    scored::<cms::CmsLibFixedmatrixCustomFast, FrequencyGT>(
+        "asap CMS, custom FixedMatrix (5x65538), FastPath",
+    ),
     scored::<cms::CmsLibFixedmatrixFast, FrequencyGT>("asap CMS, FixedMatrix (5x2048), FastPath"),
-    scored::<cms::CmsLibFixedmatrixFast32k, FrequencyGT>("asap CMS, FixedMatrix (5x32768), FastPath"),
+    scored::<cms::CmsLibFixedmatrixFast32k, FrequencyGT>(
+        "asap CMS, FixedMatrix (5x32768), FastPath",
+    ),
     scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
     scored::<cms::CmsLibVector2dRegular, FrequencyGT>("asap CMS, Vector2D, RegularPath"),
     scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     parallel_row::<parallel::ParallelCmsFastPath>("asap CMS, FastPath, parallel insert on M5x32K"),
     // -------- CountSketch (frequency) --------
     scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
-    scored::<countsketch::CsLibFixedmatrixFast, FrequencyGT>("asap Count, FixedMatrix (5x2048), FastPath"),
-    scored::<countsketch::CsLibFixedmatrixFast32k, FrequencyGT>("asap Count, FixedMatrix (5x32768), FastPath"),
+    scored::<countsketch::CsLibFixedmatrixFast, FrequencyGT>(
+        "asap Count, FixedMatrix (5x2048), FastPath",
+    ),
+    scored::<countsketch::CsLibFixedmatrixFast32k, FrequencyGT>(
+        "asap Count, FixedMatrix (5x32768), FastPath",
+    ),
     scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
     scored::<countsketch::CsLibVector2dRegular, FrequencyGT>("asap Count, Vector2D, RegularPath"),
     scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     parallel_row::<parallel::ParallelCsFastPath>("asap Count, FastPath, parallel insert on M5x32K"),
     // -------- DDSketch (quantile, relative error) --------
-    ordered::<dd::DdLib<i64>, dd::DdLib<f64>, RelativeErrorGT>("asap_sketchlib::DDSketch (relative-error quantile)"),
+    ordered::<dd::DdLib<i64>, dd::DdLib<f64>, RelativeErrorGT>(
+        "asap_sketchlib::DDSketch (relative-error quantile)",
+    ),
     scored::<polars::PolarsQuantileDd, RelativeErrorGT>("polars exact: 101-point quantile grid"),
     // -------- Top-k (counter array + size-k candidate tracker) --------
-    scored::<topk::TopKHeap<cms::CmsOxide>, TopkGT>("sketch_oxide CMS + size-k heap (top-k on the insert path)"),
-    scored::<topk::TopKHeap<countsketch::CsOxide>, TopkGT>("sketch_oxide CountSketch + size-k heap"),
+    scored::<topk::TopKHeap<cms::CmsOxide>, TopkGT>(
+        "sketch_oxide CMS + size-k heap (top-k on the insert path)",
+    ),
+    scored::<topk::TopKHeap<countsketch::CsOxide>, TopkGT>(
+        "sketch_oxide CountSketch + size-k heap",
+    ),
     scored::<polars::PolarsTopK, TopkGT>("polars exact: group_by(v).agg(len) sorted, top k"),
     // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
     plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
@@ -350,13 +388,20 @@ pub fn run(
     family: &str,
     impl_name: &str,
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     acc: &AccuracyCfg,
+    width: Numeric,
 ) -> Result<Vec<BenchReport>> {
     let row = find(family, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))?;
-    Ok((row.run)(cfg, items, params, acc)?)
+    // Asked for a width this row's type cannot be built at. Answerable from
+    // the catalog, before a single item is generated — it used to surface as
+    // a `DtypeMismatch` after materialising a whole workload.
+    if width == Numeric::F64 && !row.picks_width {
+        anyhow::bail!("{family}/{impl_name} runs over i64 only; drop --dtype f64");
+    }
+    Ok((row.run)(cfg, spec, params, acc, width)?)
 }
 
 #[cfg(test)]
@@ -403,19 +448,19 @@ mod tests {
         }
     }
 
-    /// A small i64 workload, enough for any row to build and ingest.
-    fn smoke_items() -> Items {
-        let spec = aqpbm_datagen::GenSpec {
+    /// A small workload spec, enough for any row to build and ingest. The
+    /// item type is no longer named here — each row materialises it at its
+    /// own `Accumulator::Item`.
+    fn smoke_spec() -> WorkloadSpec {
+        WorkloadSpec::Generated(aqpbm_datagen::GenSpec {
             shape: aqpbm_datagen::Shape::Keys {
                 cardinality: 64,
                 dist: aqpbm_datagen::Distribution::Uniform,
             },
             size: 256,
             seed: 1,
-            dtype: DType::I64,
             string: None,
-        };
-        cell::WorkloadSpec::Generated(spec).build(DType::I64).unwrap()
+        })
     }
 
     fn smoke_cfg() -> (BenchConfig, AccuracyCfg) {
@@ -441,14 +486,22 @@ mod tests {
     /// cannot state: that the row survives contact with a real workload.
     #[test]
     fn every_catalog_entry_runs() {
-        let items = smoke_items();
+        let spec = smoke_spec();
         let (cfg, acc) = smoke_cfg();
         for r in ROWS {
             // Canonical, not `empty`: every family's params have required
             // fields, so `empty` built only the 5 polars rows that ignore
             // their config — the other 31 were "checked" without ever running.
             let params = canonical_params(r.family);
-            let got = run(r.family, r.impl_name, &cfg, &items, &params, &acc);
+            let got = run(
+                r.family,
+                r.impl_name,
+                &cfg,
+                &spec,
+                &params,
+                &acc,
+                Numeric::I64,
+            );
             // Fixed-matrix rows refuse an off-shape config (a `RunError::Build`
             // surfaced as an error); every other row runs.
             if let Ok(reports) = &got {
@@ -474,25 +527,32 @@ mod tests {
     /// while the tracker rows rejected the same config outright.
     #[test]
     fn topk_rows_accept_and_reject_the_same_configs() {
-        let items = smoke_items();
+        let spec = smoke_spec();
         let (cfg, acc) = smoke_cfg();
-        for (spec, buildable) in [
+        for (cfg_spec, buildable) in [
             ("rows=5 cols=2048 k=5", true),
             ("rows=5 cols=2048 kk=5", false), // misspelled `k`
             ("rows=5 cols=2048 k=0", false),  // a top-k of nothing
             ("rows=5 cols=2048", false),      // no `k` at all
         ] {
-            let params = config_point("topk", spec).unwrap();
+            let params = config_point("topk", cfg_spec).unwrap();
             for r in ROWS.iter().filter(|r| r.family == "topk") {
-                let got = run(r.family, r.impl_name, &cfg, &items, &params, &acc);
+                let got = run(
+                    r.family,
+                    r.impl_name,
+                    &cfg,
+                    &spec,
+                    &params,
+                    &acc,
+                    Numeric::I64,
+                );
                 assert_eq!(
                     got.is_ok(),
                     buildable,
-                    "topk/{} disagrees with the family on `{spec}`: {got:?}",
+                    "topk/{} disagrees with the family on `{cfg_spec}`: {got:?}",
                     r.impl_name
                 );
             }
         }
     }
 }
-

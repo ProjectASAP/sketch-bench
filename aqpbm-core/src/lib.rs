@@ -56,14 +56,14 @@ pub use config::{ParamSet, SketchParams};
 // knowledge of sketches. Re-exported here so the names stay where callers
 // already look for them.
 pub use aqpbm_datagen::{
-    BasicStats, DType, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
+    BasicStats, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
     SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
 };
 pub use accuracy::{
     CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, TopKOps,
 };
 // The seam an implementation plugs into, and the two calls that drive it.
-pub use cell::{run_cell, score_cell, AccuracyCfg, Items, RunError, WorkloadSpec};
+pub use cell::{run_cell, score_cell, AccuracyCfg, BenchItem, RunError, WorkloadSpec};
 pub use init::{BenchImpl, BuildError, InitSketch};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use metrics::{FullSink, MetricsMask, RunMetrics};

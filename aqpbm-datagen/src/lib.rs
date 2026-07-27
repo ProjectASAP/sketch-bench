@@ -24,8 +24,8 @@
 //!   `weights` / `gap_sampler`). Every structure picks it up for free.
 //! * New structure → add a `*Gen` struct, a [`shape::Generator`]
 //!   variant, and a variant + build arm to [`shape::Shape`].
-//! * New physical type → add a [`DType`] variant, one [`GenValue`] impl,
-//!   and one arm in the caller's `match` on the requested dtype.
+//! * New physical type → one [`GenValue`] impl. A spec does not name a
+//!   type; the caller's `T` is the only thing that picks one.
 //!
 //! ## Reproducibility
 //!
@@ -69,47 +69,6 @@ pub const DEFAULT_CHUNK: usize = 1 << 16;
 /// deserialize.
 pub const GEN_META_SCHEMA_VERSION: u32 = 2;
 
-/// Physical output type of a generated column. The `.bin` stream is a
-/// raw little-endian sequence of this type; the logical dtype is
-/// recorded in the sidecar (the `.bin` itself is header-less).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DType {
-    /// Signed 64-bit. Every shape emits it, and it is the only type the
-    /// `.bin` loader can read back.
-    #[default]
-    I64,
-    /// Unsigned 64-bit. Emitted by `keys` and `monotonic`, but **nothing in
-    /// this repo consumes it**: there is no `NumericItem` impl, so `bench`
-    /// cannot ingest it, and the `.bin` loader rejects it. Generating one
-    /// produces a file this workspace cannot read.
-    U64,
-    /// IEEE-754 double. `keys` only — `monotonic` rejects it — and readable
-    /// only in-process via `bench --dtype f64`, not through `--input`.
-    F64,
-    /// A `String`, rendered from the drawn rank per [`StringOpts`]. `keys`
-    /// only, and not writable to `.bin` (see [`FixedWidth`]).
-    #[serde(rename = "string")]
-    Str,
-}
-
-impl DType {
-    /// Used by `WorkloadDesc`'s `skip_serializing_if` so an `i64` record keeps
-    /// the exact bytes it had before the field existed.
-    pub fn is_i64(&self) -> bool {
-        matches!(self, DType::I64)
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DType::I64 => "i64",
-            DType::U64 => "u64",
-            DType::F64 => "f64",
-            DType::Str => "string",
-        }
-    }
-}
-
 /// A value the generator can emit.
 ///
 /// This is what replaced the `Column` enum. A column was "a `Vec` whose
@@ -118,23 +77,29 @@ impl DType {
 /// once per variant, 14 places in all. Adding a type meant editing all of
 /// them, and a missed arm behind a `_` fallback compiled fine.
 ///
-/// The run-time choice has not disappeared; a spec file really does say
-/// `"dtype": "f64"` and something must act on that string. It moved to a
-/// single `match` at the point the string is read, after which the whole
-/// pipeline is one monomorphic `T`. Adding a type is now a `DType` variant,
-/// one impl of this trait, and one arm in that match — and the match has no
-/// `_` fallback, so a missing arm fails to compile.
+/// There is no run-time type tag. A caller names `T` and the whole pipeline
+/// is one monomorphic instantiation of it; adding a type is one impl of this
+/// trait and nothing else. The only place a string still becomes a type is
+/// `sketchlib workload generate`, whose `--dtype` flag has nowhere else to
+/// read the answer from.
 pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
     /// Per-type rendering configuration, built once from the spec.
     ///
     /// `()` for the numeric types, which need nothing: rendering a draw as an
     /// `i64` is a cast. A string needs an alphabet and a length rule, and
-    /// those cannot live in [`DType`] — `DTYPE` is a `const`, so it cannot
-    /// carry values read from a spec file at run time.
+    /// those cannot be `const`s — they are read from a spec file at run time.
     type Cfg: Clone;
 
-    /// The tag recorded in the sidecar and the report.
-    const DTYPE: DType;
+    /// The tag recorded in the sidecar and the report. Written once, here,
+    /// so it cannot drift from the type it names.
+    const NAME: &'static str;
+
+    /// Largest integer this type holds exactly, if it has such a bound.
+    /// `Some(2^53)` for `f64`; `None` for the integer types and strings.
+    const EXACT_INTEGER_LIMIT: Option<u64> = None;
+
+    /// Whether `Shape::Monotonic` can render into this type.
+    const SUPPORTS_MONOTONIC: bool = true;
 
     /// Build this type's configuration from the spec, validating it eagerly
     /// so a bad `string:` block fails before any values are drawn.
@@ -178,10 +143,10 @@ pub trait FixedWidth: GenValue {
 }
 
 macro_rules! gen_value {
-    ($ty:ty, $dtype:expr, $draw:expr) => {
+    ($ty:ty, $name:literal, $draw:expr) => {
         impl GenValue for $ty {
             type Cfg = ();
-            const DTYPE: DType = $dtype;
+            const NAME: &'static str = $name;
             fn cfg(_spec: &GenSpec) -> Result<(), SketchError> {
                 Ok(())
             }
@@ -209,12 +174,14 @@ macro_rules! gen_value {
     };
 }
 
-gen_value!(i64, DType::I64, |u: u64| u as i64);
-gen_value!(u64, DType::U64, |u: u64| u);
+gen_value!(i64, "i64", |u: u64| u as i64);
+gen_value!(u64, "u64", |u: u64| u);
 
 impl GenValue for f64 {
     type Cfg = ();
-    const DTYPE: DType = DType::F64;
+    const NAME: &'static str = "f64";
+    const EXACT_INTEGER_LIMIT: Option<u64> = Some(1 << 53);
+    const SUPPORTS_MONOTONIC: bool = false;
     fn cfg(_spec: &GenSpec) -> Result<(), SketchError> {
         Ok(())
     }
@@ -388,7 +355,7 @@ impl StrCfg {
 
 impl GenValue for String {
     type Cfg = StrCfg;
-    const DTYPE: DType = DType::Str;
+    const NAME: &'static str = "string";
 
     fn cfg(spec: &GenSpec) -> Result<StrCfg, SketchError> {
         let cardinality = spec.shape.domain_size().ok_or_else(|| {
@@ -443,16 +410,6 @@ pub struct GenSpec {
     pub size: usize,
     #[serde(default = "default_seed")]
     pub seed: u64,
-    /// Physical encoding of the generated values.
-    ///
-    /// Sits here rather than inside [`Shape`] because it is not a property of
-    /// what the values *mean*; on `Shape` it was a second source of truth
-    /// that had to be checked against the type parameter. `Shape` is
-    /// `#[serde(flatten)]`ed into this struct, so `dtype` was already a
-    /// sibling of `size`/`seed` on the wire and the move changed no spec file
-    /// — `a_spec_file_is_unchanged_by_the_move` pins that.
-    #[serde(default)]
-    pub dtype: DType,
     /// Rendering options for `dtype: string`. Absent means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub string: Option<StringOpts>,
@@ -522,18 +479,6 @@ impl GenSpec {
         if self.size == 0 {
             return Err(SketchError::BadParam("size must be > 0".into()));
         }
-        // The spec names a dtype and the caller names `T`. Disagreeing is an
-        // error rather than a silent preference for either: obeying the spec
-        // would ignore `--dtype`, and obeying `T` would edit the user's spec
-        // file from the command line. Checked here, before any allocation,
-        // rather than by unwrapping the finished data as it used to be.
-        if T::DTYPE != self.dtype {
-            return Err(SketchError::BadParam(format!(
-                "spec generates {}, but {} was requested",
-                self.dtype.as_str(),
-                T::DTYPE.as_str(),
-            )));
-        }
         let cfg = T::cfg(self)?;
         let mut generator = self.shape.build::<T>(cfg)?;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(self.seed);
@@ -551,7 +496,7 @@ impl GenSpec {
         }
         sink.flush()?;
 
-        Ok(GenMeta::from_parts(self, T::DTYPE, stats.finish()))
+        Ok(GenMeta::from_parts(self, T::NAME, stats.finish()))
     }
 }
 
@@ -562,7 +507,7 @@ impl GenSpec {
 pub struct GenMeta {
     pub schema_version: u32,
     pub generator_version: String,
-    pub dtype: DType,
+    pub dtype: String,
     pub count: usize,
     pub seed: u64,
     pub shape: Shape,
@@ -574,16 +519,16 @@ impl GenMeta {
     pub fn new<T: GenValue>(spec: &GenSpec, values: &[T]) -> Self {
         let mut acc = StatsAcc::new();
         acc.push_slice(values, |v| v.stat());
-        Self::from_parts(spec, T::DTYPE, acc.finish())
+        Self::from_parts(spec, T::NAME, acc.finish())
     }
 
     /// Assemble the sidecar record from a streamed generation, where the
     /// values were never all resident to summarise in one pass.
-    pub fn from_parts(spec: &GenSpec, dtype: DType, stats: BasicStats) -> Self {
+    pub fn from_parts(spec: &GenSpec, dtype: &str, stats: BasicStats) -> Self {
         GenMeta {
             schema_version: GEN_META_SCHEMA_VERSION,
             generator_version: env!("CARGO_PKG_VERSION").to_string(),
-            dtype,
+            dtype: dtype.to_string(),
             count: stats.count,
             seed: spec.seed,
             shape: spec.shape.clone(),
@@ -598,15 +543,10 @@ mod tests {
     use rand::SeedableRng;
 
     fn spec(shape: Shape, size: usize, seed: u64) -> GenSpec {
-        spec_dt(shape, size, seed, DType::I64)
-    }
-
-    fn spec_dt(shape: Shape, size: usize, seed: u64, dtype: DType) -> GenSpec {
         GenSpec {
             shape,
             size,
             seed,
-            dtype,
             string: None,
         }
     }
@@ -633,13 +573,12 @@ mod tests {
     }
 
     #[test]
-    fn dtype_selects_physical_width() {
-        // 64 values x 8 bytes each, every dtype. The dtype is now the type
-        // parameter rather than a tag to match on, so asking for the wrong
-        // one is a compile error and there is nothing left to assert about
-        // which variant came back.
-        fn written<T: GenValue + FixedWidth>(dtype: DType) -> usize {
-            let v: Vec<T> = spec_dt(keys(256, Distribution::Uniform), 64, 1, dtype)
+    fn the_type_parameter_selects_physical_width() {
+        // 64 values x 8 bytes each, for every type. The type parameter is now
+        // the only thing that selects an encoding — there is no tag to
+        // disagree with it.
+        fn written<T: GenValue + FixedWidth>() -> usize {
+            let v: Vec<T> = spec(keys(256, Distribution::Uniform), 64, 1)
                 .generate()
                 .unwrap();
             let mut buf = Vec::new();
@@ -648,30 +587,19 @@ mod tests {
             }
             buf.len()
         }
-        assert_eq!(written::<i64>(DType::I64), 64 * 8);
-        assert_eq!(written::<u64>(DType::U64), 64 * 8);
-        assert_eq!(written::<f64>(DType::F64), 64 * 8);
+        assert_eq!(written::<i64>(), 64 * 8);
+        assert_eq!(written::<u64>(), 64 * 8);
+        assert_eq!(written::<f64>(), 64 * 8);
     }
 
     #[test]
-    fn a_spec_and_a_requested_type_that_disagree_are_an_error() {
-        // The guard that `Column::into_i64` used to perform after the fact.
-        // Doing it up front means no data is generated to be thrown away,
-        // and the message names both sides.
-        let s = spec(keys(256, Distribution::Uniform), 64, 1);
-        let err = s.generate::<f64>().unwrap_err().to_string();
-        assert!(err.contains("i64") && err.contains("f64"), "{err}");
-        assert!(s.generate::<i64>().is_ok());
-    }
-
-    #[test]
-    fn uniform_cardinality_means_distinct_count_for_every_dtype() {
-        // `cardinality` must not silently change meaning with dtype:
+    fn uniform_cardinality_means_distinct_count_for_every_item_type() {
+        // `cardinality` must not silently change meaning with the item type:
         // a continuous f64 range would yield ~n distinct values instead
         // of `cardinality`, quietly invalidating the one parameter a
         // sketch benchmark cares most about.
         let card = 100u64;
-        let f64s: Vec<f64> = spec_dt(keys(card, Distribution::Uniform), 10_000, 42, DType::F64)
+        let f64s: Vec<f64> = spec(keys(card, Distribution::Uniform), 10_000, 42)
             .generate()
             .unwrap();
         let distinct = f64s
@@ -691,18 +619,18 @@ mod tests {
     }
 
     #[test]
-    fn dtype_changes_encoding_not_logical_values() {
-        // Holding shape+size+seed fixed, every dtype must produce the
-        // same logical sequence — that is what makes dtype a controlled
+    fn the_item_type_changes_encoding_not_logical_values() {
+        // Holding shape+size+seed fixed, every type must produce the same
+        // logical sequence — that is what makes the item type a controlled
         // variable when comparing benchmark runs.
-        fn draw<T: GenValue>(dtype: DType) -> Vec<T> {
-            spec_dt(keys(500, Distribution::Uniform), 1_000, 7, dtype)
+        fn draw<T: GenValue>() -> Vec<T> {
+            spec(keys(500, Distribution::Uniform), 1_000, 7)
                 .generate()
                 .unwrap()
         }
-        let i: Vec<i64> = draw(DType::I64);
-        let u: Vec<u64> = draw(DType::U64);
-        let f: Vec<f64> = draw(DType::F64);
+        let i: Vec<i64> = draw();
+        let u: Vec<u64> = draw();
+        let f: Vec<f64> = draw();
         assert!(i.iter().zip(&u).all(|(a, b)| *a as u64 == *b));
         assert!(i.iter().zip(&f).all(|(a, b)| *a as f64 == *b));
     }
@@ -743,33 +671,29 @@ mod tests {
 
     #[test]
     fn meta_round_trips_through_json() {
-        let s = spec_dt(keys(50, Distribution::Zipf { s: 1.2 }), 100, 9, DType::U64);
+        let s = spec(keys(50, Distribution::Zipf { s: 1.2 }), 100, 9);
         let col = s.generate::<u64>().unwrap();
         let meta = GenMeta::new(&s, &col);
         let json = serde_json::to_string(&meta).unwrap();
         let back: GenMeta = serde_json::from_str(&json).unwrap();
         assert_eq!(back.shape, s.shape);
-        assert_eq!(back.dtype, DType::U64);
+        assert_eq!(back.dtype, "u64");
         assert_eq!(back.count, 100);
     }
 
-    /// Moving `dtype` off `Shape` and onto `GenSpec` must not change a single
-    /// spec file. `Shape` is `#[serde(flatten)]`ed, so `dtype` was already a
-    /// sibling of `size`/`seed` on the wire — the move is invisible there,
-    /// and this is the assertion that keeps it that way.
+    /// A spec file written before the item type became a type parameter
+    /// still carries `dtype:`. It must keep loading — the field is now
+    /// ignored, not rejected, so existing files do not have to be edited.
     #[test]
-    fn a_spec_file_is_unchanged_by_the_move() {
+    fn a_spec_file_with_a_stale_dtype_still_loads() {
         let yaml = "shape: monotonic\nstart: 1700000000000\nunit: millis\ngap:\n  kind: exponential\n  lambda: 0.5\nmin_gap: 1\ndtype: i64\nsize: 1000\nseed: 42\n";
         let spec: GenSpec = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(spec.dtype, DType::I64);
         assert_eq!(spec.size, 1000);
         assert!(matches!(spec.shape, Shape::Monotonic { min_gap: 1, .. }));
 
-        // And a keys spec with a non-default dtype, the other shape that
-        // used to carry the field.
         let json = r#"{"shape":"keys","cardinality":100,"dist":{"kind":"uniform"},"dtype":"f64","size":10,"seed":3}"#;
         let spec: GenSpec = serde_json::from_str(json).unwrap();
-        assert_eq!(spec.dtype, DType::F64);
+        assert_eq!(spec.size, 10);
     }
 
     #[test]
@@ -823,7 +747,7 @@ mod tests {
 
     #[test]
     fn timestamp_min_gap_zero_allows_duplicates() {
-        let s = spec_dt(
+        let s = spec(
             Shape::Monotonic {
                 start: 0,
                 unit: TimeUnit::Secs,
@@ -832,7 +756,6 @@ mod tests {
             },
             10,
             1,
-            DType::U64,
         );
         let v = s.generate::<u64>().unwrap();
         assert!(v.iter().all(|&x| x == 0), "constant-0 gap stays flat");
@@ -964,7 +887,6 @@ mod string_tests {
             },
             size,
             seed: 42,
-            dtype: DType::Str,
             string: opts,
         }
     }
@@ -994,10 +916,8 @@ mod string_tests {
         let s = spec(64, 4_000, None);
         let v: Vec<String> = s.generate().unwrap();
         let mut seen: std::collections::HashMap<usize, &String> = std::collections::HashMap::new();
-        // Same spec at i64 gives the ranks behind those strings.
-        let mut ints = spec(64, 4_000, None);
-        ints.dtype = DType::I64;
-        let ranks: Vec<i64> = ints.generate().unwrap();
+        // The same spec at i64 gives the ranks behind those strings.
+        let ranks: Vec<i64> = spec(64, 4_000, None).generate().unwrap();
         for (r, sv) in ranks.iter().zip(&v) {
             if let Some(prev) = seen.insert(*r as usize, sv) {
                 assert_eq!(prev, sv, "rank {r} rendered two different ways");
@@ -1108,7 +1028,6 @@ mod string_tests {
             },
             size: 10,
             seed: 1,
-            dtype: DType::Str,
             string: None,
         };
         assert!(s.generate::<String>().is_err());
@@ -1123,7 +1042,7 @@ mod string_tests {
         let v: Vec<String> = s.generate().unwrap();
         let meta = GenMeta::new(&s, &v);
         assert_eq!(meta.count, 500);
-        assert_eq!(meta.dtype, DType::Str);
+        assert_eq!(meta.dtype, "string");
         assert!(meta.stats.min.is_none() && meta.stats.max.is_none());
         assert_eq!(meta.stats.count, 500);
     }

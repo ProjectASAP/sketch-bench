@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use aqpbm_datagen::{self as datagen, DType, Distribution, GenSpec, Shape, TimeUnit};
+use aqpbm_datagen::{self as datagen, Distribution, GenSpec, Shape, TimeUnit};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -105,12 +105,15 @@ pub fn run(args: WorkloadArgs) -> Result<()> {
     }
 }
 
-fn parse_dtype(s: &str) -> Result<DType> {
+/// Normalise the `--dtype` string. `generate` is the one command with no
+/// sketch to read an item type off, so it keeps a string here and turns it
+/// into a type parameter at the single `match` in [`generate`].
+fn parse_dtype(s: &str) -> Result<String> {
     match s.to_ascii_lowercase().as_str() {
-        "i64" => Ok(DType::I64),
-        "u64" => Ok(DType::U64),
-        "f64" => Ok(DType::F64),
-        "string" | "str" => Ok(DType::Str),
+        "i64" => Ok("i64".to_string()),
+        "u64" => Ok("u64".to_string()),
+        "f64" => Ok("f64".to_string()),
+        "string" | "str" => Ok("string".to_string()),
         other => bail!("unknown dtype: {other} (expected i64|u64|f64|string)"),
     }
 }
@@ -170,7 +173,6 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         return GenSpec::from_path(Path::new(path))
             .with_context(|| format!("loading spec from {path}"));
     }
-    let dtype = parse_dtype(&a.dtype)?;
     let shape = match a.shape.as_str() {
         "uniform" => Shape::Keys {
             cardinality: a.cardinality,
@@ -216,7 +218,6 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         shape,
         size: a.size,
         seed: a.seed,
-        dtype,
         // No flags for the string options: the only sink that exists is
         // `.bin`, which cannot hold strings, so a `--alphabet` flag would
         // configure a path that always errors. `--spec` can already set
@@ -226,6 +227,7 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
 }
 
 fn generate(a: GenerateArgs) -> Result<()> {
+    let dtype = parse_dtype(&a.dtype)?;
     let spec = resolve_spec(&a)?;
     let out = Path::new(&a.out);
     if let Some(parent) = out.parent() {
@@ -235,11 +237,10 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    // The one place in the tool where a run-time dtype has to become a type
-    // parameter: `--dtype`/`--spec` is a string, and everything downstream of
-    // this `match` is monomorphic (see `datagen::GenValue` for why the
-    // generator no longer carries a tagged column). No `_` arm: adding a
-    // `DType` variant fails to compile here, which is the point of one site.
+    // The one place left in the tool where a string has to become a type
+    // parameter. Everywhere else the item type is read off a catalog row's
+    // `Accumulator::Item`; `generate` has no row, so it matches on the flag
+    // and everything downstream of the match is monomorphic.
     fn stream<T: datagen::GenValue + datagen::FixedWidth>(
         spec: &datagen::GenSpec,
         out: &Path,
@@ -251,19 +252,19 @@ fn generate(a: GenerateArgs) -> Result<()> {
         spec.generate_into(&mut sink, datagen::DEFAULT_CHUNK)
             .with_context(|| format!("generating into {}", out.display()))
     }
-    let meta = match spec.dtype {
-        datagen::DType::I64 => stream::<i64>(&spec, out)?,
-        datagen::DType::U64 => stream::<u64>(&spec, out)?,
-        datagen::DType::F64 => stream::<f64>(&spec, out)?,
-        // Not an oversight and not a `_` arm: `String` is not `FixedWidth`,
-        // so `stream::<String>` would not compile. The `.bin` layout is a
-        // bare sequence of equal-width values with nowhere to record a
-        // length. Strings generate fine in-process; what is missing is a
-        // sink that can hold them.
-        datagen::DType::Str => bail!(
+    let meta = match dtype.as_str() {
+        "i64" => stream::<i64>(&spec, out)?,
+        "u64" => stream::<u64>(&spec, out)?,
+        "f64" => stream::<f64>(&spec, out)?,
+        // Not an oversight: `String` is not `FixedWidth`, so `stream::<String>`
+        // would not compile. The `.bin` layout is a bare sequence of
+        // equal-width values with nowhere to record a length. Strings
+        // generate fine in-process; what is missing is a sink for them.
+        "string" => bail!(
             "dtype string cannot be written to a .bin file: the format has no length field. \
              Strings are generated in-process today; a CSV sink is what would give them a file"
         ),
+        other => bail!("unknown dtype: {other}"),
     };
 
     let sidecar = if a.no_meta {

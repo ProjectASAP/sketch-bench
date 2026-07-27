@@ -10,19 +10,16 @@
 //! The frontend picks the concrete type `S` (and, for accuracy, the ground-truth calculator
 //! `G`) and calls these. There is no per-track driver.
 //!
-//! This module also owns the run-time plumbing the frontend hands in:
-//! [`WorkloadSpec`] (where items come from), [`Items`] (the materialised
-//! workload), the view-narrowing [`FromItems`], and the two "cannot run" reasons
-//! [`DtypeMismatch`] / [`RunError`].
+//! This module also owns the plumbing the frontend hands in: [`WorkloadSpec`]
+//! (where items come from), [`BenchItem`] (how a sketch's item type builds a
+//! workload out of one), and [`RunError`].
 
-use anyhow::Result;
-use crate::config::ParamSet;
 use crate::accumulator::Accumulator;
+use crate::config::ParamSet;
 use crate::memory_footprint::MemoryFootprint;
-use crate::workload::{
-    BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload,
-};
-use aqpbm_datagen::{DType, GenSpec};
+use crate::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
+use anyhow::Result;
+use aqpbm_datagen::GenSpec;
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
@@ -52,82 +49,26 @@ pub enum WorkloadSpec {
 }
 
 impl WorkloadSpec {
-    /// Materialise the items at the requested `dtype`. The dtype is *checked*
-    /// against the spec, not inferred.
-    pub fn build(self, dtype: DType) -> Result<Items> {
-        match (self, dtype) {
-            (WorkloadSpec::Generated(spec), DType::F64) => F64Workload::generate(&spec)
-                .map(Items::F64)
-                .map_err(|e| anyhow::anyhow!("{}", e)),
-            (WorkloadSpec::Generated(spec), DType::Str) => StringWorkload::generate(&spec)
-                .map(Items::Str)
-                .map_err(|e| anyhow::anyhow!("{}", e)),
-            (WorkloadSpec::Generated(spec), _) => I64Workload::generate(&spec)
-                .map(Items::I64)
-                .map_err(|e| anyhow::anyhow!("{}", e)),
-            (WorkloadSpec::File { path }, DType::I64) => {
-                I64Workload::load(std::path::Path::new(&path))
-                    .map(Items::I64)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            (WorkloadSpec::File { path }, other) => Err(anyhow::anyhow!(
-                "--input {path} is read as an i64 stream, but --dtype {} was requested; \
-                 generate the workload instead (--spec / --workload) to benchmark {}",
-                other.as_str(),
-                other.as_str(),
-            )),
-        }
+    /// Materialise at the item type `T`, which the row's `Accumulator::Item`
+    /// already names. There is no dtype to agree on: the caller's type is the
+    /// only thing that picks an encoding.
+    pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
+        T::materialise(self)
     }
 }
 
-/// The materialised workload, at whichever dtype was asked for.
-pub enum Items {
-    I64(I64Workload),
-    F64(F64Workload),
-    Str(StringWorkload),
-}
-
-impl Items {
-    pub fn dtype(&self) -> DType {
-        match self {
-            Items::I64(_) => DType::I64,
-            Items::F64(_) => DType::F64,
-            Items::Str(_) => DType::Str,
-        }
-    }
-}
-
-/// A row was handed a workload whose item type it cannot ingest.
-#[derive(Debug, Clone)]
-pub struct DtypeMismatch {
-    pub wanted: &'static [DType],
-    pub got: DType,
-}
-
-impl std::fmt::Display for DtypeMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let wanted: Vec<&str> = self.wanted.iter().map(DType::as_str).collect();
-        write!(
-            f,
-            "consumes {} items, workload is {}",
-            wanted.join(" or "),
-            self.got.as_str()
-        )
-    }
-}
-
-/// Why a `(impl, config)` cell cannot run: a data type it does not ingest, or a
+/// Why a `(impl, config)` cell cannot run: a workload it cannot obtain, or a
 /// construction it cannot satisfy.
 #[derive(Debug)]
 pub enum RunError {
-    Dtype(DtypeMismatch),
+    Workload(anyhow::Error),
     Build(BuildError),
 }
 
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunError::Dtype(e) => e.fmt(f),
+            RunError::Workload(e) => e.fmt(f),
             RunError::Build(e) => e.fmt(f),
         }
     }
@@ -135,78 +76,84 @@ impl std::fmt::Display for RunError {
 
 impl std::error::Error for RunError {}
 
-impl From<DtypeMismatch> for RunError {
-    fn from(e: DtypeMismatch) -> Self {
-        RunError::Dtype(e)
-    }
-}
-
 impl From<BuildError> for RunError {
     fn from(e: BuildError) -> Self {
         RunError::Build(e)
     }
 }
 
-// ---------- the view axis ----------
+impl From<anyhow::Error> for RunError {
+    fn from(e: anyhow::Error) -> Self {
+        RunError::Workload(e)
+    }
+}
 
-/// Narrow the runtime [`Items`] enum to the concrete workload a sketch's `Item`
-/// type consumes. One impl per item type; runs once per cell, before any timed
-/// loop.
-pub trait FromItems: Sized + Clone {
+// ---------- the item axis ----------
+
+/// An item type a benchmark can be run over: it names the workload that
+/// carries it, and how to build one from a [`WorkloadSpec`].
+///
+/// This replaces what used to be a runtime `DType` tag plus a narrowing step.
+/// A row's `Accumulator::Item` is a Rust type, so the encoding is already
+/// decided by the time anything is generated — there is nothing left to
+/// mismatch.
+pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
-    const ACCEPTS: &'static [DType];
-    fn narrow(items: &Items) -> Result<Self::Wk, DtypeMismatch>;
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;
 }
 
-impl FromItems for i64 {
+impl BenchItem for i64 {
     type Wk = I64Workload;
-    const ACCEPTS: &'static [DType] = &[DType::I64];
-    fn narrow(items: &Items) -> Result<Self::Wk, DtypeMismatch> {
-        match items {
-            Items::I64(wk) => Ok(wk.clone()),
-            other => Err(DtypeMismatch {
-                wanted: Self::ACCEPTS,
-                got: other.dtype(),
-            }),
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+        match spec {
+            WorkloadSpec::Generated(g) => {
+                I64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            WorkloadSpec::File { path } => {
+                I64Workload::load(std::path::Path::new(path)).map_err(|e| anyhow::anyhow!("{}", e))
+            }
         }
     }
 }
 
-impl FromItems for f64 {
+impl BenchItem for f64 {
     type Wk = F64Workload;
-    const ACCEPTS: &'static [DType] = &[DType::F64];
-    fn narrow(items: &Items) -> Result<Self::Wk, DtypeMismatch> {
-        match items {
-            Items::F64(wk) => Ok(wk.clone()),
-            other => Err(DtypeMismatch {
-                wanted: Self::ACCEPTS,
-                got: other.dtype(),
-            }),
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+        match spec {
+            WorkloadSpec::Generated(g) => {
+                F64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            // `.bin` is a raw i64 stream with no header; reading it as f64
+            // would reinterpret the bytes, not convert them.
+            WorkloadSpec::File { path } => Err(anyhow::anyhow!(
+                "--input {path} is a raw i64 stream; generate the workload \
+                 instead to benchmark f64"
+            )),
         }
     }
 }
 
-impl FromItems for String {
+impl BenchItem for String {
     type Wk = StringWorkload;
-    const ACCEPTS: &'static [DType] = &[DType::I64, DType::Str];
-    fn narrow(items: &Items) -> Result<Self::Wk, DtypeMismatch> {
-        match items {
-            Items::I64(wk) => Ok(StringWorkload::from_i64(wk)),
-            Items::Str(wk) => Ok(wk.clone()),
-            other => Err(DtypeMismatch {
-                wanted: Self::ACCEPTS,
-                got: other.dtype(),
-            }),
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+        match spec {
+            WorkloadSpec::Generated(g) => {
+                StringWorkload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            // Decimal-formatted, the same rendering the i64-sourced path used.
+            WorkloadSpec::File { path } => I64Workload::load(std::path::Path::new(path))
+                .map(|wk| StringWorkload::from_i64(&wk))
+                .map_err(|e| anyhow::anyhow!("{}", e)),
         }
     }
 }
 
-impl FromItems for Vec<u8> {
+impl BenchItem for Vec<u8> {
     type Wk = BytesWorkload;
-    const ACCEPTS: &'static [DType] = &[DType::I64, DType::Str];
-    fn narrow(items: &Items) -> Result<Self::Wk, DtypeMismatch> {
-        let strings = <String as FromItems>::narrow(items)?;
-        Ok(BytesWorkload::from_strings(&strings))
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+        Ok(BytesWorkload::from_strings(
+            &<String as BenchItem>::materialise(spec)?,
+        ))
     }
 }
 
@@ -244,14 +191,14 @@ pub trait ParallelInit: Accumulator + Sized {
 /// ground truth — the ground-truth calculator never touches the hot path.
 pub fn run_cell<S>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
-    let wk = <S::Item as FromItems>::narrow(items)?;
+    let wk = <S::Item as BenchItem>::materialise(spec)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
     Ok(BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL)
         .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
@@ -260,14 +207,14 @@ where
 /// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
 pub fn run_cell_parallel<S>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
 {
-    let wk = <S::Item as FromItems>::narrow(items)?;
+    let wk = <S::Item as BenchItem>::materialise(spec)?;
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
     Ok(
@@ -283,17 +230,22 @@ where
 /// sketch's track.
 pub fn score_cell<S, G>(
     cfg: &BenchConfig,
-    items: &Items,
+    spec: &WorkloadSpec,
     params: &ParamSet,
     gt: &G,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: FromItems,
+    S::Item: BenchItem,
     G: GroundTruth<S>,
 {
-    let wk = <S::Item as FromItems>::narrow(items)?;
+    let wk = <S::Item as BenchItem>::materialise(spec)?;
     S::init(params)?; // probe
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL)
-        .run_accuracy::<S, _, G, _>(|| built::<S>(params), insert_body, gt))
+    Ok(
+        BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL).run_accuracy::<S, _, G, _>(
+            || built::<S>(params),
+            insert_body,
+            gt,
+        ),
+    )
 }

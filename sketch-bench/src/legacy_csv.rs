@@ -23,7 +23,6 @@
 //! synthesised `rust_<impl>_<family>`. The parallel-insert rows never reach
 //! that path — they go to the octo file, labelled `octo`.
 
-use aqpbm_datagen::DType;
 
 use crate::params::ParamSet;
 use aqpbm_core::runner::BenchReport;
@@ -49,7 +48,7 @@ pub fn render(
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
-    dtype: DType,
+    dtype: &str,
     report: &BenchReport,
 ) -> Vec<CsvFile> {
     let mut out = Vec::new();
@@ -393,11 +392,11 @@ fn legacy_impl_name(family: &str, impl_name: &str) -> String {
 /// File stem for a family's CSVs. `i64` keeps the historical name so existing
 /// files keep accumulating and existing scripts keep resolving; anything else
 /// is suffixed.
-fn family_file_stem(family: &str, dtype: DType) -> String {
-    if dtype.is_i64() {
+fn family_file_stem(family: &str, dtype: &str) -> String {
+    if dtype == "i64" {
         family.to_string()
     } else {
-        format!("{family}_{}", dtype.as_str())
+        format!("{family}_{dtype}")
     }
 }
 

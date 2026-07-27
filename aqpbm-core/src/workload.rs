@@ -16,7 +16,17 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use aqpbm_datagen::{DType, Distribution, GenSpec, GenValue, Shape, SketchError};
+use aqpbm_datagen::{Distribution, GenSpec, GenValue, Shape, SketchError};
+
+/// The default and the omit-test for [`WorkloadDesc::dtype`]: an `i64` run
+/// leaves the field out, so records predating it stay byte-identical.
+fn i64_name() -> String {
+    "i64".to_string()
+}
+
+fn is_i64_name(s: &str) -> bool {
+    s == "i64"
+}
 
 /// Human-friendly description of a workload — serialised into
 /// every report so a JSONL record can be re-run without
@@ -55,8 +65,11 @@ pub struct WorkloadDesc {
     /// Omitted when `i64`, so every record written before this field existed
     /// stays byte-identical and still parses — those runs were all `i64`, so
     /// the default is their true value rather than a guess.
-    #[serde(default, skip_serializing_if = "DType::is_i64")]
-    pub dtype: DType,
+    ///
+    /// A plain string, read off `GenValue::NAME`: the item type is a Rust
+    /// type now, and this is only its label in the report.
+    #[serde(default = "i64_name", skip_serializing_if = "is_i64_name")]
+    pub dtype: String,
 }
 
 impl WorkloadDesc {
@@ -68,7 +81,7 @@ impl WorkloadDesc {
     /// type: which of the descriptor's fields can hold a given shape. On
     /// `Shape` it made the generator reference the report schema — backwards,
     /// and the single thing that kept `aqpbm-datagen` from standing on its own.
-    pub fn from_spec(spec: &GenSpec) -> Self {
+    pub fn from_spec<T: GenValue>(spec: &GenSpec) -> Self {
         let (shape, size, seed) = (&spec.shape, spec.size, spec.seed);
         let (cardinality, zipf_s) = match shape {
             Shape::Keys {
@@ -95,7 +108,7 @@ impl WorkloadDesc {
             } else {
                 serde_json::to_value(shape).ok()
             },
-            dtype: spec.dtype,
+            dtype: T::NAME.to_string(),
         }
     }
 }
@@ -231,7 +244,7 @@ impl<T: GenValue> NumericWorkload<T> {
     /// well-formed report, and — for the ordered families — would hide an
     /// integer-to-float conversion inside a run labelled `f64`.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
-        let desc = WorkloadDesc::from_spec(spec);
+        let desc = WorkloadDesc::from_spec::<T>(spec);
         let mut wk = Self::new(spec.generate::<T>()?, desc);
         wk.spec = Some(spec.clone());
         Ok(wk)
@@ -246,7 +259,6 @@ impl<T: GenValue> NumericWorkload<T> {
             },
             size,
             seed,
-            dtype: T::DTYPE,
             string: None,
         })
         .expect("uniform keys over a non-zero cardinality always generate")
@@ -262,7 +274,6 @@ impl<T: GenValue> NumericWorkload<T> {
             },
             size,
             seed,
-            dtype: T::DTYPE,
             string: None,
         })
     }
@@ -311,7 +322,7 @@ impl NumericWorkload<i64> {
                 source_path: Some(path.display().to_string()),
                 seed: None,
                 spec: None,
-                dtype: DType::I64,
+                dtype: i64_name(),
             },
         ))
     }
@@ -366,13 +377,13 @@ fn reject_non_i64_bin(path: &Path) -> Result<(), SketchError> {
     let Ok(Some(meta)) = aqpbm_datagen::io::read_meta(path) else {
         return Ok(());
     };
-    if meta.dtype != aqpbm_datagen::DType::I64 {
+    if meta.dtype != "i64" {
         return Err(SketchError::BadParam(format!(
             "{}: sidecar declares dtype {}, but the benchmark only consumes i64. \
              Re-generate with `--dtype i64`; reading it as i64 would silently \
              reinterpret the raw bytes and produce meaningless keys.",
             path.display(),
-            meta.dtype.as_str(),
+            meta.dtype,
         )));
     }
     Ok(())
@@ -616,7 +627,7 @@ mod tests {
                 source_path: None,
                 seed: None,
                 spec: None,
-                dtype: DType::I64,
+                dtype: i64_name(),
             },
         );
         assert_eq!(w.desc().size, 3);
@@ -639,8 +650,12 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// Generate a `.bin` + sidecar of the given dtype and try to load it.
-    fn load_generated(dtype: aqpbm_datagen::DType, tag: &str) -> Result<I64Workload, SketchError> {
+    /// Write a `.bin` + sidecar at item type `T` and try to load it as i64.
+    /// The type parameter is the only thing naming an encoding — there is no
+    /// tag to pass, and no match to keep exhaustive.
+    fn load_generated<T: aqpbm_datagen::GenValue + aqpbm_datagen::FixedWidth>(
+        tag: &str,
+    ) -> Result<I64Workload, SketchError> {
         use aqpbm_datagen::{io, Distribution, GenMeta, GenSpec, Shape};
         let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
         let spec = GenSpec {
@@ -650,30 +665,11 @@ mod tests {
             },
             size: 32,
             seed: 1,
-            dtype,
             string: None,
         };
-        // The one shape a run-time dtype takes now: a `match` that picks the
-        // type parameter, with every arm one line. No `_` arm, so adding a
-        // `DType` variant fails to compile here rather than silently missing
-        // a case.
-        fn write<T: aqpbm_datagen::GenValue + aqpbm_datagen::FixedWidth>(
-            path: &std::path::Path,
-            spec: &GenSpec,
-        ) {
-            let col = spec.generate::<T>().unwrap();
-            io::write_bin(path, &col).unwrap();
-            io::write_meta(path, &GenMeta::new(spec, &col)).unwrap();
-        }
-        match dtype {
-            aqpbm_datagen::DType::I64 => write::<i64>(&path, &spec),
-            aqpbm_datagen::DType::U64 => write::<u64>(&path, &spec),
-            aqpbm_datagen::DType::F64 => write::<f64>(&path, &spec),
-            // `String` is not `FixedWidth`, so this arm cannot call `write`.
-            // The guard under test is about `.bin` files, which strings do
-            // not have.
-            aqpbm_datagen::DType::Str => unreachable!("no .bin path for strings"),
-        }
+        let col = spec.generate::<T>().unwrap();
+        io::write_bin(&path, &col).unwrap();
+        io::write_meta(&path, &GenMeta::new(&spec, &col)).unwrap();
         let out = I64Workload::load(&path);
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(io::sidecar_path(&path)).ok();
@@ -682,7 +678,7 @@ mod tests {
 
     #[test]
     fn bin_with_i64_sidecar_loads() {
-        let w = load_generated(aqpbm_datagen::DType::I64, "i64").expect("i64 must load");
+        let w = load_generated::<i64>("i64").expect("i64 must load");
         assert_eq!(w.items().len(), 32);
     }
 
@@ -691,16 +687,15 @@ mod tests {
         // An f64/u64 stream is byte-indistinguishable from i64, so
         // loading it would silently produce garbage keys rather than
         // fail. The sidecar is the only thing that can catch it.
-        for (dtype, tag) in [
-            (aqpbm_datagen::DType::F64, "f64"),
-            (aqpbm_datagen::DType::U64, "u64"),
+        for (err, tag) in [
+            (load_generated::<f64>("f64"), "f64"),
+            (load_generated::<u64>("u64"), "u64"),
         ] {
-            let err = load_generated(dtype, tag)
-                .expect_err("non-i64 dtype must be rejected, not silently misread");
+            let err = err.expect_err("a non-i64 stream must be rejected, not silently misread");
             let msg = err.to_string();
             assert!(
                 msg.contains(tag),
-                "error should name the offending dtype: {msg}"
+                "error should name the offending item type: {msg}"
             );
         }
     }
@@ -768,7 +763,7 @@ mod tests {
 #[cfg(test)]
 mod resample_tests {
     use super::*;
-    use aqpbm_datagen::{DType, Distribution, GenSpec, Shape};
+    use aqpbm_datagen::{Distribution, GenSpec, Shape};
 
     fn spec(seed: u64) -> GenSpec {
         GenSpec {
@@ -778,7 +773,6 @@ mod resample_tests {
             },
             size: 2000,
             seed,
-            dtype: DType::I64,
             string: None,
         }
     }
@@ -849,7 +843,6 @@ mod sink_tests {
             },
             size: 3_000,
             seed: 7,
-            dtype: DType::I64,
             string: None,
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
@@ -865,11 +858,11 @@ mod sink_tests {
 }
 
 #[cfg(test)]
-mod dtype_tests {
+mod item_type_tests {
     use super::*;
     use aqpbm_datagen::{Distribution, GenSpec, Shape};
 
-    fn keys_spec(dtype: DType) -> GenSpec {
+    fn keys_spec() -> GenSpec {
         GenSpec {
             shape: Shape::Keys {
                 cardinality: 100,
@@ -877,7 +870,6 @@ mod dtype_tests {
             },
             size: 500,
             seed: 7,
-            dtype,
             string: None,
         }
     }
@@ -889,8 +881,8 @@ mod dtype_tests {
     /// together under one row.
     #[test]
     fn i64_and_f64_descriptors_are_distinguishable() {
-        let a = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
-        let b = F64Workload::generate(&keys_spec(DType::F64)).unwrap();
+        let a = I64Workload::generate(&keys_spec()).unwrap();
+        let b = F64Workload::generate(&keys_spec()).unwrap();
         let (ja, jb) = (
             serde_json::to_string(&a.desc()).unwrap(),
             serde_json::to_string(&b.desc()).unwrap(),
@@ -904,7 +896,7 @@ mod dtype_tests {
     /// equal to them.
     #[test]
     fn an_i64_descriptor_keeps_the_bytes_it_had_before_the_field_existed() {
-        let wk = I64Workload::generate(&keys_spec(DType::I64)).unwrap();
+        let wk = I64Workload::generate(&keys_spec()).unwrap();
         let json = serde_json::to_string(&wk.desc()).unwrap();
         assert!(
             !json.contains("dtype"),
@@ -916,20 +908,6 @@ mod dtype_tests {
     fn a_descriptor_without_dtype_reads_back_as_i64() {
         let old = r#"{"shape":"uniform","size":500,"cardinality":100,"seed":7}"#;
         let desc: WorkloadDesc = serde_json::from_str(old).unwrap();
-        assert_eq!(desc.dtype, DType::I64);
-    }
-
-    /// The one thing this axis must never do: quietly widen integers into the
-    /// float path. That would put an `as f64` back on the insert loop while
-    /// the report claims the workload was f64 — the measurement error the
-    /// dtype axis exists to expose.
-    #[test]
-    fn a_float_workload_refuses_an_integer_spec() {
-        let err = F64Workload::generate(&keys_spec(DType::I64))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("f64") && err.contains("i64"), "{err}");
-        // And the converse, so neither direction converts.
-        assert!(I64Workload::generate(&keys_spec(DType::F64)).is_err());
+        assert_eq!(desc.dtype, "i64");
     }
 }
