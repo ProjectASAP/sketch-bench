@@ -15,18 +15,18 @@ pub use config::BenchConfig;
 // `#[inline(always)]`, so thin LTO folds the wrapper's `update` into it across
 // the crate boundary exactly as before — the fold never depended on
 // co-location. See `crate::hot_loop`.
+use crate::accumulator::Accumulator;
 use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
+use crate::memory_footprint::MemoryFootprint;
 use crate::metrics::{
     CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, MetricsMask, Rss, RunMetrics,
     WallClock,
 };
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
-use crate::accumulator::Accumulator;
-use crate::memory_footprint::MemoryFootprint;
-use crate::workload::{Workload, WorkloadDesc};
+use crate::workload::{Workload, WorkloadDescription};
 
 /// Drives `config.runs + config.warmup_runs` iterations of a
 /// sketch against a fixed workload, feeding each iteration's
@@ -163,8 +163,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 if pass_cfg.merge_shards < 2 {
                     continue;
                 }
-                let mut report =
-                    self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
+                let mut report = self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
                 // `run_timed` owns merge timing; this half keeps only the
                 // post-merge accuracy, so the two do not both claim a
                 // `merge_time_ms` (theirs is the clean one, this fold is timed
@@ -298,7 +297,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run: Vec::new(),
             bench,
             config: pass_cfg,
@@ -503,7 +502,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run,
             bench,
             config: pass_cfg,
@@ -601,7 +600,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
-            workload: self.workload.desc(),
+            workload: self.workload.description(),
             per_run,
             bench,
             config: pass_cfg,
@@ -776,7 +775,7 @@ where
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub workload: WorkloadDesc,
+    pub workload: WorkloadDescription,
     pub per_run: Vec<RunMetrics>,
     pub bench: crate::report::BenchSection,
     pub config: BenchConfig,

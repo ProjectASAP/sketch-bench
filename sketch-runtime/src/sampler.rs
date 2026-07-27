@@ -19,7 +19,7 @@ use aqpbm_core::probe::MetricsSink;
 use aqpbm_core::report::{
     BenchSection, LatencySummary, Mode as RecordMode, Record, RunStats, Source,
 };
-use aqpbm_core::workload::WorkloadDesc;
+use aqpbm_core::workload::WorkloadDescription;
 
 use crate::exporter::Exporter;
 use crate::switch::RuntimeSwitch;
@@ -349,7 +349,7 @@ impl<E: Exporter> Sampler<E> {
             ..Default::default()
         };
 
-        let wd = WorkloadDesc {
+        let wd = WorkloadDescription {
             shape: "live".into(),
             size: self.state.op_count as usize,
             cardinality: None,

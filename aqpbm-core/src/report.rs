@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::workload::WorkloadDesc;
+use crate::workload::WorkloadDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
@@ -32,7 +32,7 @@ pub struct Record {
     /// from legacy records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
-    pub workload: WorkloadDesc,
+    pub workload: WorkloadDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,7 +259,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        workload: WorkloadDesc,
+        workload: WorkloadDescription,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn record_roundtrips_through_json() {
-        let wd = WorkloadDesc {
+        let wd = WorkloadDescription {
             shape: "zipf".into(),
             size: 1_000_000,
             cardinality: Some(10_000),
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn profile_section_roundtrips() {
-        let wd = WorkloadDesc {
+        let wd = WorkloadDescription {
             shape: "uniform".into(),
             size: 1000,
             cardinality: Some(100),
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn cpp_record_roundtrips() {
-        let wd = WorkloadDesc {
+        let wd = WorkloadDescription {
             shape: "file".into(),
             size: 1_000_000,
             cardinality: None,

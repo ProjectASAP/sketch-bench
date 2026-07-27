@@ -6,12 +6,12 @@
 //! ## One type per item type, not one per source
 //!
 //! Every `i64` workload — generated or file-backed — is the same thing at
-//! runtime: an owned `Vec<i64>` plus the [`WorkloadDesc`] saying where it came
+//! runtime: an owned `Vec<i64>` plus the [`WorkloadDescription`] saying where it came
 //! from. Modelling each *source* as its own `impl Workload` forced every
 //! generic consumer to fan out over the source set — `aqpbm-cli` carried a
 //! 3-variant `WorkloadAny` plus two derived enums, with every dispatch macro
 //! repeating its body per variant. Provenance is data, not a type parameter,
-//! so it lives in `desc` and the source only picks a constructor.
+//! so it lives in `description` and the source only picks a constructor.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -22,7 +22,7 @@ use aqpbm_datagen::{Distribution, GenSpec, GenValue, Shape, SketchError};
 /// every report so a JSONL record can be re-run without
 /// external metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkloadDesc {
+pub struct WorkloadDescription {
     pub shape: String, // "uniform" | "zipf" | "file"
     pub size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,12 +38,12 @@ pub struct WorkloadDesc {
     /// Absent for `uniform` / `zipf` / `file`, whose flat fields already
     /// round-trip — so records from those paths are byte-identical to
     /// what shipped before the generator was wired into `bench`.
-    /// See `Shape::to_workload_desc`.
+    /// See `Shape::to_workload_description`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<serde_json::Value>,
 }
 
-impl WorkloadDesc {
+impl WorkloadDescription {
     /// Projection of a generator [`Shape`] into the report-facing descriptor,
     /// so JSONL records stay well-formed regardless of shape. Shapes the flat
     /// fields cannot express carry their full spec in `spec`.
@@ -67,14 +67,14 @@ impl WorkloadDesc {
             Shape::Categorical { categories, .. } => (Some(categories.len() as u64), None),
             Shape::Monotonic { .. } => (None, None),
         };
-        WorkloadDesc {
+        WorkloadDescription {
             shape: shape.report_label().to_string(),
             size,
             cardinality,
             zipf_s,
             source_path: None,
             seed: Some(seed),
-            spec: if fits_legacy_desc(spec) {
+            spec: if fits_legacy_description(spec) {
                 None
             } else {
                 serde_json::to_value(spec).ok()
@@ -90,8 +90,8 @@ impl WorkloadDesc {
 /// their records stay byte-identical to what `--workload uniform|zipf` has
 /// always emitted. Everything else is lossy there and needs the full spec
 /// carried alongside, which is the one condition under which
-/// [`WorkloadDesc::spec`] is populated.
-fn fits_legacy_desc(spec: &GenSpec) -> bool {
+/// [`WorkloadDescription::spec`] is populated.
+fn fits_legacy_description(spec: &GenSpec) -> bool {
     // `string` opts change the keys without changing the shape, so a spec
     // carrying them cannot round-trip through the flat fields either: two
     // runs at different key lengths would share a descriptor and be pooled.
@@ -110,7 +110,7 @@ fn fits_legacy_desc(spec: &GenSpec) -> bool {
 /// plus an optional query stream.
 pub trait Workload: Sized {
     type Item: Clone;
-    fn desc(&self) -> WorkloadDesc;
+    fn description(&self) -> WorkloadDescription;
     fn items(&self) -> &[Self::Item];
 
     /// An **independent draw** from the same distribution, for a repetition
@@ -160,12 +160,12 @@ pub trait Workload: Sized {
 
 /// A numeric workload: the materialised item stream plus its
 /// provenance. Construct it from a generator (`uniform` / `zipf`)
-/// or from a file (`load`); the source shows up in `desc`, not in
+/// or from a file (`load`); the source shows up in `description`, not in
 /// the type.
 #[derive(Debug, Clone)]
 pub struct NumericWorkload<T> {
     items: Vec<T>,
-    desc: WorkloadDesc,
+    description: WorkloadDescription,
     /// The spec this was generated from, when it was generated. Retained so
     /// [`Workload::resample`] can draw again from the same distribution.
     /// `None` for file-backed workloads: a file is one fixed sample.
@@ -182,24 +182,24 @@ pub type F64Workload = NumericWorkload<f64>;
 
 impl<T: GenValue> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
-    /// `desc.size` is forced to match `items.len()` — a desc that
+    /// `description.size` is forced to match `items.len()` — a description that
     /// disagrees with the data it describes would silently corrupt
     /// every throughput denominator downstream.
-    pub fn new(items: Vec<T>, mut desc: WorkloadDesc) -> Self {
+    pub fn new(items: Vec<T>, mut description: WorkloadDescription) -> Self {
         // `load` cannot know the count until it has read the file, so it
         // passes 0 as a placeholder. Any other value is the caller *asserting*
         // what was produced — a generator returning short would otherwise be
         // relabelled into a smaller workload with no signal at all.
         debug_assert!(
-            desc.size == 0 || desc.size == items.len(),
-            "workload desc claims {} items but carries {}",
-            desc.size,
+            description.size == 0 || description.size == items.len(),
+            "workload description claims {} items but carries {}",
+            description.size,
             items.len(),
         );
-        desc.size = items.len();
+        description.size = items.len();
         Self {
             items,
-            desc,
+            description,
             spec: None,
         }
     }
@@ -209,8 +209,8 @@ impl<T: GenValue> NumericWorkload<T> {
     /// through a file sink; this runs it through a memory sink, so a
     /// shape reachable on disk is reachable here by construction.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
-        let desc = WorkloadDesc::from_spec(spec);
-        let mut wk = Self::new(spec.generate::<T>()?, desc);
+        let description = WorkloadDescription::from_spec(spec);
+        let mut wk = Self::new(spec.generate::<T>()?, description);
         wk.spec = Some(spec.clone());
         Ok(wk)
     }
@@ -279,7 +279,7 @@ impl NumericWorkload<i64> {
         }
         Ok(Self::new(
             items,
-            WorkloadDesc {
+            WorkloadDescription {
                 shape: "file".into(),
                 size: 0, // overwritten by `new`
                 cardinality: None,
@@ -294,8 +294,8 @@ impl NumericWorkload<i64> {
 
 impl<T: GenValue> Workload for NumericWorkload<T> {
     type Item = T;
-    fn desc(&self) -> WorkloadDesc {
-        self.desc.clone()
+    fn description(&self) -> WorkloadDescription {
+        self.description.clone()
     }
     fn items(&self) -> &[T] {
         &self.items
@@ -492,7 +492,7 @@ impl NumericWorkload<String> {
     pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
             items: inner.items().iter().map(|v| v.to_string()).collect(),
-            desc: inner.desc(),
+            description: inner.description(),
             spec: None,
         }
     }
@@ -507,7 +507,7 @@ impl NumericWorkload<String> {
 #[derive(Debug, Clone)]
 pub struct BytesWorkload {
     items: Vec<Vec<u8>>,
-    desc: WorkloadDesc,
+    description: WorkloadDescription,
 }
 
 impl BytesWorkload {
@@ -518,12 +518,12 @@ impl BytesWorkload {
                 .iter()
                 .map(|v| v.to_string().into_bytes())
                 .collect(),
-            desc: inner.desc(),
+            description: inner.description(),
         }
     }
 
     /// Bytes of an existing string workload, generated or derived. Carries
-    /// its `desc`, so a run over real strings stays distinguishable from one
+    /// its `description`, so a run over real strings stays distinguishable from one
     /// over decimal-formatted integers.
     pub fn from_strings(inner: &StringWorkload) -> Self {
         Self {
@@ -532,15 +532,15 @@ impl BytesWorkload {
                 .iter()
                 .map(|s| s.clone().into_bytes())
                 .collect(),
-            desc: inner.desc(),
+            description: inner.description(),
         }
     }
 }
 
 impl Workload for BytesWorkload {
     type Item = Vec<u8>;
-    fn desc(&self) -> WorkloadDesc {
-        self.desc.clone()
+    fn description(&self) -> WorkloadDescription {
+        self.description.clone()
     }
     fn items(&self) -> &[Vec<u8>] {
         &self.items
@@ -576,11 +576,11 @@ mod tests {
 
         // Defaults keep the descriptor a record written before the flags
         // existed would have had.
-        let plain = WorkloadDesc::from_spec(&base);
+        let plain = WorkloadDescription::from_spec(&base);
         assert!(plain.spec.is_none(), "{plain:?}");
 
-        let short = WorkloadDesc::from_spec(&with_opts(4, 4));
-        let long = WorkloadDesc::from_spec(&with_opts(16, 16));
+        let short = WorkloadDescription::from_spec(&with_opts(4, 4));
+        let long = WorkloadDescription::from_spec(&with_opts(16, 16));
         assert!(short.spec.is_some());
         assert_ne!(
             serde_json::to_string(&short).unwrap(),
@@ -609,17 +609,17 @@ mod tests {
         let inner = I64Workload::uniform(50, 100, 1);
         let s = StringWorkload::from_i64(&inner);
         assert_eq!(s.items().len(), 50);
-        assert_eq!(s.desc().shape, "uniform");
+        assert_eq!(s.description().shape, "uniform");
     }
 
     #[test]
-    fn placeholder_desc_size_is_filled_in() {
-        // A desc that disagrees with the data would silently skew every
+    fn placeholder_description_size_is_filled_in() {
+        // A description that disagrees with the data would silently skew every
         // throughput denominator; `new` is the one place that can catch
         // it, so it always wins over the caller's claim.
         let w = I64Workload::new(
             vec![1, 2, 3],
-            WorkloadDesc {
+            WorkloadDescription {
                 shape: "custom".into(),
                 size: 0, // placeholder, as `load` passes
                 cardinality: None,
@@ -629,7 +629,7 @@ mod tests {
                 spec: None,
             },
         );
-        assert_eq!(w.desc().size, 3);
+        assert_eq!(w.description().size, 3);
     }
 
     #[test]
@@ -644,8 +644,8 @@ mod tests {
         drop(f);
         let w = I64Workload::load(&path).unwrap();
         assert_eq!(w.items(), &[1, -2, 3, 4]);
-        assert_eq!(w.desc().shape, "file");
-        assert_eq!(w.desc().size, 4);
+        assert_eq!(w.description().shape, "file");
+        assert_eq!(w.description().size, 4);
         std::fs::remove_file(&path).ok();
     }
 

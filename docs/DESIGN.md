@@ -272,7 +272,7 @@ The factory argument is deliberate: N-run CI requires independent initial state 
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub workload_desc: WorkloadDesc,
+    pub workload_description: WorkloadDescription,
     pub per_run: Vec<RunMetrics>,      // length == config.runs (warmup excluded)
     pub aggregated: AggregatedMetrics, // mean/stddev/CI over per_run
 }

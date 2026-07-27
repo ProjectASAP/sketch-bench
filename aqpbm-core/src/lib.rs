@@ -55,24 +55,22 @@ pub use config::{ParamSet, SketchParams};
 // (`sketchlib workload generate`), an on-disk format contract, and no
 // knowledge of sketches. Re-exported here so the names stay where callers
 // already look for them.
+pub use accuracy::{CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, TopKOps};
 pub use aqpbm_datagen::{
     BasicStats, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
     SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
 };
-pub use accuracy::{
-    CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, TopKOps,
-};
 // The seam an implementation plugs into, and the two calls that drive it.
+pub use accumulator::{Accumulator, MergeUnsupported};
 pub use cell::{run_cell, score_cell, AccuracyCfg, BenchItem, RunError, WorkloadSpec};
 pub use init::{BenchImpl, BuildError, InitSketch};
 pub use latency::{LatencyRecorder, LatencySnapshot};
+pub use memory_footprint::MemoryFootprint;
 pub use metrics::{FullSink, MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
-pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};
 pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,
     Record, RunStats, Source, SCHEMA_VERSION,
 };
-pub use accumulator::{Accumulator, MergeUnsupported};
-pub use memory_footprint::MemoryFootprint;
-pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDesc};
+pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};
+pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDescription};

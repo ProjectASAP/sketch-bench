@@ -18,7 +18,7 @@ non-Rust emitter (currently just C++) can produce bytes that
 | `sketch` | yes | family name. Lowercase. Examples: `"hll"`, `"cms"`, `"cs"`, `"kll"`. |
 | `impl` | yes | implementation key. Rust uses `"oxide"` / `"lib"` / etc.; C++ uses `"datasketches"` / `"final"` / `"naive"` / etc. |
 | `language` | recommended | `"rust"` or `"cpp"`. Optional — missing is interpreted as `"rust"` for back-compat with pre-`language` records. |
-| `workload` | yes | `WorkloadDesc` (see below). |
+| `workload` | yes | `WorkloadDescription` (see below). |
 | `mode` | yes | `"bench" \| "profile" \| "runtime"`. C++ track always emits `"bench"`. |
 | `runs` | yes | number of measured runs aggregated into this record. |
 | `bench` | optional | `BenchSection` — measured numbers. Required for `mode = "bench"`. |
@@ -27,7 +27,7 @@ non-Rust emitter (currently just C++) can produce bytes that
 | `source` | yes | `"cli" \| "asap-fusion" \| "data-collector" \| "asap-query" \| "cpp-bench"`. The C++ track always emits `"cpp-bench"`. |
 | `timestamp` | yes | RFC3339 / ISO-8601 with a `Z` suffix or numeric offset. |
 
-`WorkloadDesc` (snake_case keys):
+`WorkloadDescription` (snake_case keys):
 
 ```jsonc
 {
