@@ -48,13 +48,53 @@ because every optional field deserialises from `null` to `None`.
 
 ```jsonc
 {
-  "throughput_items_per_sec": { "mean": 4.2e7, "stddev": 1.1e6, "n": 10 },
-  "latency_ns":               { "p50": 17, "p95": 41, "p99": 60, "p999": 95, "max": 312, "count": 1000000 },
-  "accuracy":                 { /* family-specific, see below */ }
+  "throughput_items_per_sec":       { "mean": 4.2e7, "stddev": 1.1e6, "n": 10 },
+  "build_throughput_items_per_sec": { "mean": 4.2e7, "stddev": 1.1e6, "n": 10 },
+  "finalize_time_ms":               { "mean": 0.0,   "stddev": 0.0,   "n": 10 },
+  "latency_ns":                     { "p50": 17, "p95": 41, "p99": 60, "p999": 95, "max": 312, "count": 1000000 },
+  "accuracy":                       { /* family-specific, see below */ }
 }
 ```
 
 `RunStats` is `mean` / `stddev` / `n`, plus an **optional** `ci95`.
+
+### The two throughput columns
+
+"Throughput" is two different questions, and a panel that mixes streaming
+sketches with deferred-build baselines gets two different answers. Both are
+reported; pick by which question you are asking.
+
+| field | definition | question it answers |
+|---|---|---|
+| `throughput_items_per_sec` | `items / insert_wall` | how fast can this swallow the stream? |
+| `build_throughput_items_per_sec` | `items / (insert_wall + finalize_wall)` | how fast can this turn N items into something queryable? |
+| `finalize_time_ms` | `finalize_wall` | the gap between the two |
+
+`insert_wall` times the insert loop alone; `finalize_wall` times
+`Sketch::finalize_for_query`, the one-shot "ingesting → queryable"
+transition. Nothing else is inside either region.
+
+Most implementations do all their work in `update` and have a no-op
+finalize. For those, `finalize_time_ms` is `0.0` and the two throughput
+columns are **equal by construction**, not merely close.
+
+They diverge for implementations that defer the build — every `*/polars`
+row, and the `*/lib-fastpath-parallel` rows. Those buffer the stream into a
+`Vec` in `update` and do all the real work in finalize, so their
+`throughput_items_per_sec` is the cost of a `Vec::push` and overstates them
+by orders of magnitude. **`build_throughput_items_per_sec` is the column to
+compare rows on**, because it is defined the same way for every row and
+costs the streaming sketches nothing.
+
+`finalize_time_ms` of `0.0` is a measurement, not a missing value: it says
+the implementation's finalize really is free. A genuinely absent field means
+the pass did not run (the THROUGHPUT bit was not set).
+
+Both columns are computed over the same set of runs, so their ratio — the
+share of build cost a row defers — is meaningful. Only
+`throughput_items_per_sec` has a `throughput_samples` companion; a build-rate
+companion would duplicate it exactly on nearly every row. Per-run pairs live
+in the `--raw-csv` output as `total_nanoseconds` + `finalize_nanoseconds`.
 
 `ci95` is present only when the tool had statistically independent samples
 to compute it from — i.e. `sketchlib bench --repeats R` with `R > 1`, which

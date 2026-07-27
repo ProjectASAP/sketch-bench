@@ -19,28 +19,51 @@ use crate::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 /// MEMORY. The logical `memory_bytes` (param-derived from the sketch itself)
 /// is always emitted: it costs nothing and downstream plots want it on every
 /// row.
+///
+/// The THROUGHPUT bit yields **three** fields, not one, because "throughput"
+/// is two different questions for a panel that mixes streaming sketches with
+/// deferred-build baselines: `throughput_items_per_sec` is the ingest rate,
+/// `build_throughput_items_per_sec` the ready-to-answer rate, and
+/// `finalize_time_ms` the gap between them. See `BenchSection`.
 pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let n = runs.len();
 
-    let (throughput, throughput_samples) = if mask.contains(MetricsMask::THROUGHPUT) {
-        let mut w = Welford::new();
-        let mut samples: Vec<f64> = Vec::with_capacity(runs.len());
-        for r in runs {
-            if r.insert_wall_time_ns > 0 {
-                let v = ItemsPerSec::compute(r.items_inserted, r.insert_wall_time_ns);
-                w.push(v);
-                samples.push(v);
+    let (throughput, throughput_samples, build_throughput, finalize_time_ms) =
+        if mask.contains(MetricsMask::THROUGHPUT) {
+            let mut w = Welford::new();
+            let mut build_w = Welford::new();
+            let mut fin_w = Welford::new();
+            let mut samples: Vec<f64> = Vec::with_capacity(runs.len());
+            for r in runs {
+                if r.insert_wall_time_ns > 0 {
+                    let v = ItemsPerSec::compute(r.items_inserted, r.insert_wall_time_ns);
+                    w.push(v);
+                    samples.push(v);
+                    // Same guard, not `build_ns > 0`: the two columns must
+                    // summarise the same set of runs or their ratio — the
+                    // whole reason both exist — is taken across different
+                    // denominators.
+                    build_w.push(ItemsPerSec::compute(
+                        r.items_inserted,
+                        r.build_wall_time_ns(),
+                    ));
+                    fin_w.push(r.finalize_wall_time_ns as f64 / 1_000_000.0);
+                }
             }
-        }
-        let s = if samples.is_empty() {
-            None
+            let s = if samples.is_empty() {
+                None
+            } else {
+                Some(samples)
+            };
+            (
+                maybe_runstats(w),
+                s,
+                maybe_runstats(build_w),
+                maybe_runstats(fin_w),
+            )
         } else {
-            Some(samples)
+            (None, None, None, None)
         };
-        (maybe_runstats(w), s)
-    } else {
-        (None, None)
-    };
 
     let query_throughput = if mask.contains(MetricsMask::ACCURACY) {
         let mut w = Welford::new();
@@ -128,6 +151,8 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         pass: mask.pass_name().map(str::to_string),
         throughput_items_per_sec: throughput,
         throughput_samples,
+        build_throughput_items_per_sec: build_throughput,
+        finalize_time_ms,
         query_throughput_items_per_sec: query_throughput,
         latency_ns,
         cpu_time_ms,
@@ -230,6 +255,74 @@ mod tests {
             insert_wall_time_ns: insert_ns,
             ..Default::default()
         }
+    }
+
+    fn rm_deferred(items: u64, insert_ns: u64, finalize_ns: u64) -> RunMetrics {
+        RunMetrics {
+            finalize_wall_time_ns: finalize_ns,
+            ..rm(items, insert_ns + finalize_ns, insert_ns)
+        }
+    }
+
+    /// The property that lets one column serve a mixed panel: for the great
+    /// majority of implementations `finalize_for_query` is a no-op, and there
+    /// the build rate must be the ingest rate exactly — not approximately,
+    /// and not absent.
+    #[test]
+    fn build_throughput_equals_ingest_when_finalize_is_free() {
+        let runs = vec![
+            rm(1_000_000, 100_000_000, 100_000_000),
+            rm(1_000_000, 50_000_000, 50_000_000),
+        ];
+        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let tp = out.throughput_items_per_sec.expect("ingest present");
+        let bt = out.build_throughput_items_per_sec.expect("build present");
+        assert_eq!(bt.mean, tp.mean);
+        assert_eq!(bt.n, tp.n);
+        // Measured and zero, not "not measured": a no-op finalize is a fact
+        // about the implementation and the field says so.
+        assert_eq!(out.finalize_time_ms.expect("finalize present").mean, 0.0);
+    }
+
+    /// A `*/polars` row in miniature: insert is a `Vec::push` and the sketch
+    /// is built in finalize. The ingest column is allowed to say 100M/s —
+    /// that is what pushing costs — but the build column must not.
+    #[test]
+    fn deferred_build_cost_lands_in_build_throughput() {
+        // 10ms of push + 90ms of engine work over 1M items: 100M/s ingest,
+        // 10M/s build.
+        let runs = vec![rm_deferred(1_000_000, 10_000_000, 90_000_000)];
+        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let tp = out.throughput_items_per_sec.expect("ingest present");
+        let bt = out.build_throughput_items_per_sec.expect("build present");
+        assert!((tp.mean - 100_000_000.0).abs() < 1.0);
+        assert!((bt.mean - 10_000_000.0).abs() < 1.0);
+        assert!((out.finalize_time_ms.unwrap().mean - 90.0).abs() < 1e-9);
+    }
+
+    /// Both columns must summarise the same runs, or their ratio — the whole
+    /// reason for reporting two — is taken across different denominators.
+    #[test]
+    fn both_throughput_columns_cover_the_same_runs() {
+        let runs = vec![
+            rm_deferred(1_000_000, 10_000_000, 90_000_000),
+            // Insert too fast for the clock: dropped from the ingest column,
+            // and so from the build column too even though its finalize is
+            // perfectly measurable.
+            rm_deferred(1_000_000, 0, 90_000_000),
+        ];
+        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        assert_eq!(out.throughput_items_per_sec.unwrap().n, 1);
+        assert_eq!(out.build_throughput_items_per_sec.unwrap().n, 1);
+        assert_eq!(out.finalize_time_ms.unwrap().n, 1);
+    }
+
+    #[test]
+    fn build_throughput_is_suppressed_with_the_throughput_bit() {
+        let runs = vec![rm_deferred(1_000_000, 10_000_000, 90_000_000)];
+        let out = aggregate(&runs, MetricsMask::LATENCY);
+        assert!(out.build_throughput_items_per_sec.is_none());
+        assert!(out.finalize_time_ms.is_none());
     }
 
     #[test]

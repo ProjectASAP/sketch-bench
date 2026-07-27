@@ -7,11 +7,20 @@
 //! sketches are *not* merged — so these impls declare no query capability and
 //! are not scored.
 //!
-//! `update` only buffers; the parallel section runs in `finalize_for_query`.
-//! Each kernel returns the max worker's elapsed time (legacy octo's headline
-//! number) but the caller discards it, and the throughput pass times the
-//! insert loop alone — so what these rows currently report is the buffering,
-//! not the parallel insert.
+//! `update` only buffers; the parallel section runs in `finalize_for_query`,
+//! which the runner times into `RunMetrics::finalize_wall_time_ns`. So read
+//! these rows off `build_throughput_items_per_sec` — their
+//! `throughput_items_per_sec` is the `Vec::push` that buffers the partition
+//! and says nothing about parallel insert.
+//!
+//! The timed region is the whole parallel section: partition, spawn, barrier,
+//! insert, join. Legacy octo's headline instead took the max worker's own
+//! elapsed time, which excludes spawn and join — each kernel here used to
+//! compute that number and then drop it on the floor, unreadable by anything,
+//! costing a per-thread `Instant` pair for nothing. The end-to-end reading is
+//! the one a caller can act on (you pay for the threads whether or not the
+//! workers were the slow part), so the kernels now return `()` and the clock
+//! that matters is the runner's.
 //!
 //! Worker count is plumbed via `BenchConfig.threads` (the `--workers N` CLI
 //! flag). The family's `ParamSet` knobs are ignored: CMS and CountSketch are
@@ -19,7 +28,6 @@
 //! sketchlib's P14 `ErtlMLE` default.
 
 use std::sync::Barrier;
-use std::time::Instant;
 
 use crate::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
@@ -150,94 +158,68 @@ fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
     items.chunks(chunk).collect()
 }
 
-fn run_parallel_cms(items: &[i64], workers: usize) -> u128 {
+/// The barrier is load-bearing and stays: a worker that started inserting
+/// while its peers were still being spawned would not be measuring a parallel
+/// insert at all. It costs one rendezvous inside the runner's timed region,
+/// which is the honest place for it.
+fn run_parallel_cms(items: &[i64], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
     std::thread::scope(|s| {
-        let handles: Vec<_> = parts
-            .iter()
-            .map(|part| {
-                let barrier = &barrier;
-                s.spawn(move || {
-                    let mut sketch = CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
-                    barrier.wait();
-                    let start = Instant::now();
-                    for &v in *part {
-                        sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
-                            std::hint::black_box(&d);
-                        });
-                    }
-                    std::hint::black_box(&sketch);
-                    start.elapsed().as_nanos()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .max()
-            .unwrap_or(0)
-    })
+        for part in &parts {
+            let barrier = &barrier;
+            s.spawn(move || {
+                let mut sketch = CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                barrier.wait();
+                for &v in *part {
+                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                        std::hint::black_box(&d);
+                    });
+                }
+                std::hint::black_box(&sketch);
+            });
+        }
+    });
 }
 
-fn run_parallel_cs(items: &[i64], workers: usize) -> u128 {
+fn run_parallel_cs(items: &[i64], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
     std::thread::scope(|s| {
-        let handles: Vec<_> = parts
-            .iter()
-            .map(|part| {
-                let barrier = &barrier;
-                s.spawn(move || {
-                    let mut sketch = Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
-                    barrier.wait();
-                    let start = Instant::now();
-                    for &v in *part {
-                        sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
-                            std::hint::black_box(&d);
-                        });
-                    }
-                    std::hint::black_box(&sketch);
-                    start.elapsed().as_nanos()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .max()
-            .unwrap_or(0)
-    })
+        for part in &parts {
+            let barrier = &barrier;
+            s.spawn(move || {
+                let mut sketch = Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                barrier.wait();
+                for &v in *part {
+                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                        std::hint::black_box(&d);
+                    });
+                }
+                std::hint::black_box(&sketch);
+            });
+        }
+    });
 }
 
-fn run_parallel_hll(items: &[i64], workers: usize) -> u128 {
+fn run_parallel_hll(items: &[i64], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
     std::thread::scope(|s| {
-        let handles: Vec<_> = parts
-            .iter()
-            .map(|part| {
-                let barrier = &barrier;
-                s.spawn(move || {
-                    let mut sketch = HyperLogLog::<ErtlMLE>::default();
-                    barrier.wait();
-                    let start = Instant::now();
-                    for &v in *part {
-                        sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
-                            std::hint::black_box(&d);
-                        });
-                    }
-                    std::hint::black_box(&sketch);
-                    start.elapsed().as_nanos()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .max()
-            .unwrap_or(0)
-    })
+        for part in &parts {
+            let barrier = &barrier;
+            s.spawn(move || {
+                let mut sketch = HyperLogLog::<ErtlMLE>::default();
+                barrier.wait();
+                for &v in *part {
+                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                        std::hint::black_box(&d);
+                    });
+                }
+                std::hint::black_box(&sketch);
+            });
+        }
+    });
 }
 
 // ---------- catalog identity ----------

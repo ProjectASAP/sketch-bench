@@ -109,9 +109,10 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             } else if pass_mask == MetricsMask::THROUGHPUT {
                 // A throughput pass with no secondary CPU/MEMORY bits takes a
                 // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
-                // finalize_for_query, memory_bytes, and Welford-via-aggregate.
-                // Both paths time only the insert loop, so the choice affects
-                // what else is collected — never the throughput.
+                // memory_bytes, and Welford-via-aggregate. Both paths run and
+                // separately time the insert loop and `finalize_for_query`,
+                // so the choice affects what else is collected — never either
+                // throughput column.
                 reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
             } else {
                 // `NoGT` + `None`: these passes ignore ground truth. Naming the
@@ -180,6 +181,18 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// The closure body monomorphizes at the *caller's* crate,
     /// giving LLVM a direct shot at folding the wrapper's update
     /// into the hot loop.
+    ///
+    /// `finalize_for_query` runs here, outside the timed insert loop and
+    /// timed on its own clock. It used to be skipped entirely, on the
+    /// reasoning that a pass reporting only ingest rate has no use for a
+    /// build step — but the implementations that defer their work do *all*
+    /// of it in finalize. Under a bare `--metrics throughput`, which is what
+    /// selects this path and what `scripts/run_throughput_fast.sh` passes,
+    /// the `lib-fastpath-parallel` rows therefore never ran a single
+    /// parallel insert and the `*/polars` rows never built a DataFrame: they
+    /// timed `Vec::push` and then dropped the buffer. Running it is also
+    /// what `build_throughput_items_per_sec` is computed from, and what
+    /// makes this path's numbers comparable with `run_once_clean`'s.
     #[inline(always)]
     fn run_throughput_pass_with<S, F, Insert>(
         &self,
@@ -203,37 +216,59 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         let items = self.workload.items();
         let n_items = items.len() as u64;
         let total = pass_cfg.runs + pass_cfg.warmup_runs;
-        let mut ns_list: Vec<u64> = Vec::with_capacity(pass_cfg.runs);
+        let mut ns_list: Vec<(u64, u64)> = Vec::with_capacity(pass_cfg.runs);
 
         for trial in 0..total {
             let mut sketch = factory();
             let ns = insert_loop(&mut sketch, items, insert);
+            // Outside `insert_loop` by construction — it is the one function
+            // that defines what an insert costs, and nothing else may enter
+            // its timed region. See `hot_loop::insert_loop`.
+            let finalize_wall = WallClock::start();
+            sketch.finalize_for_query();
+            std::hint::black_box(&sketch);
+            let finalize_ns = finalize_wall.elapsed_ns();
             if trial >= pass_cfg.warmup_runs {
-                ns_list.push(ns);
+                ns_list.push((ns, finalize_ns));
             }
         }
 
         let mut w = Welford::new();
+        let mut build_w = Welford::new();
+        let mut fin_w = Welford::new();
         let mut samples: Vec<f64> = Vec::with_capacity(ns_list.len());
-        for &ns in &ns_list {
+        for &(ns, finalize_ns) in &ns_list {
             if ns > 0 {
                 let v = ItemsPerSec::compute(n_items, ns);
                 w.push(v);
                 samples.push(v);
+                // Same guard as the ingest column so both summarise the same
+                // set of runs — see `aggregation::aggregate`, which this path
+                // deliberately mirrors rather than reimplements differently.
+                build_w.push(ItemsPerSec::compute(
+                    n_items,
+                    ns.saturating_add(finalize_ns),
+                ));
+                fin_w.push(finalize_ns as f64 / 1_000_000.0);
             }
         }
-        // No `ci95`: these are iterations of one process, not independent
-        // samples of this implementation. See `RunStats::ci95`.
-        let throughput = if w.n() == 0 {
-            None
-        } else {
-            Some(RunStats {
-                mean: w.mean(),
-                stddev: w.stddev(),
-                ci95: None,
-                n: w.n(),
-            })
+        // No `ci95` on any of these: they are iterations of one process, not
+        // independent samples of this implementation. See `RunStats::ci95`.
+        let stats = |w: Welford| {
+            if w.n() == 0 {
+                None
+            } else {
+                Some(RunStats {
+                    mean: w.mean(),
+                    stddev: w.stddev(),
+                    ci95: None,
+                    n: w.n(),
+                })
+            }
         };
+        let throughput = stats(w);
+        let build_throughput = stats(build_w);
+        let finalize_time_ms = stats(fin_w);
         let throughput_samples = if samples.is_empty() {
             None
         } else {
@@ -244,6 +279,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             pass: pass_cfg.metrics.pass_name().map(str::to_string),
             throughput_items_per_sec: throughput,
             throughput_samples,
+            build_throughput_items_per_sec: build_throughput,
+            finalize_time_ms,
             query_throughput_items_per_sec: None,
             latency_ns: None,
             cpu_time_ms: None,
@@ -611,10 +648,15 @@ where
         let (s, _sink) = probe.into_parts();
         s
     };
-    // Bill any deferred build/sort/finalize cost to the insert
-    // phase so query-throughput numbers measure steady-state
-    // queries on a ready-to-answer sketch (see Sketch trait doc).
+    // Run any deferred build/sort/finalize before the query phase, so
+    // query-throughput numbers measure steady-state queries on a
+    // ready-to-answer sketch (see Sketch trait doc). Timed on its own clock:
+    // the sink cannot see this call, and a pass that silently folded it into
+    // the insert phase would make this path's `insert_wall_time_ns` mean
+    // something different from every other path's.
+    let finalize_wall = WallClock::start();
     sketch.finalize_for_query();
+    let finalize_wall_time_ns = finalize_wall.elapsed_ns();
     sink.end_insert_phase();
 
     #[cfg(feature = "heap-track")]
@@ -625,8 +667,8 @@ where
     let _ = config.query_count;
 
     let memory_bytes = sketch.memory_bytes() as u64;
-    #[allow(unused_mut)]
     let mut metrics = sink.finalize(Some(memory_bytes));
+    metrics.finalize_wall_time_ns = finalize_wall_time_ns;
 
     #[cfg(feature = "heap-track")]
     {

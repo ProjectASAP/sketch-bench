@@ -174,6 +174,15 @@ fn merge(records: Vec<Record>) -> Record {
         // and the interval computed from them must describe one population.
         bench.throughput_samples = Some(samples);
     }
+    // Pooled on its own rather than derived from the pooled ingest rate: the
+    // two columns are means of ratios, and `items / (insert + finalize)` is
+    // not recoverable from `items / insert`.
+    if let (Some(b), _) = across(records.iter(), |b| b.build_throughput_items_per_sec) {
+        bench.build_throughput_items_per_sec = Some(b);
+    }
+    if let (Some(f), _) = across(records.iter(), |b| b.finalize_time_ms) {
+        bench.finalize_time_ms = Some(f);
+    }
     if let (Some(q), _) = across(records.iter(), |b| b.query_throughput_items_per_sec) {
         bench.query_throughput_items_per_sec = Some(q);
     }

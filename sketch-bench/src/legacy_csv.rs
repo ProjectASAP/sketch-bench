@@ -182,6 +182,15 @@ pub fn render(
 /// Used by `throughput/scripts/plot_octo_throughput.py`. We emit
 /// `implementation = "octo"` (the legacy label for the parallel path)
 /// regardless of the impl name; the `sketch_type` column carries the family.
+///
+/// `total_nanoseconds` is the **build** wall — insert plus
+/// `finalize_for_query` — not the insert wall the other legacy CSVs use.
+/// The parallel rows buffer their partition in `update` and run the whole
+/// parallel section in finalize (see `wrappers::parallel`), so dividing by
+/// the insert wall alone would publish the cost of a `Vec::push` under a
+/// header that legacy octo filled with the parallel insert time, and the
+/// resulting plot would show these rows beating every sketch by two orders
+/// of magnitude. The column shape is unchanged; only the row is correct now.
 fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
     let sketch_type = legacy_sketch_type(family);
     let rows = report
@@ -190,7 +199,7 @@ fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
         .enumerate()
         .map(|(idx, run)| {
             let total_items = run.items_inserted.max(1);
-            let total_ns = run.insert_wall_time_ns.max(1);
+            let total_ns = run.build_wall_time_ns().max(1);
             let throughput = (total_items as f64) * 1_000_000_000.0 / (total_ns as f64);
             format!(
                 "{sketch_type},octo,{workers},{run_no},{total_items},{total_ns},{throughput:.6}",
@@ -290,59 +299,74 @@ struct ParamCols {
 }
 
 impl ParamCols {
+    /// Build one row's worth of parameter values, **always** exactly as many
+    /// as `legacy_param_columns(family)` names.
+    ///
+    /// That guarantee is the whole job. Plot scripts read these files with
+    /// `csv.DictReader`, which pairs fields with header names positionally
+    /// and does not notice a short row — it just shifts every later column
+    /// left and reads the last one as `None`. A `kll/polars` row written
+    /// without `--config` used to do exactly that: no value for `k`, so
+    /// `total_items` landed under `k`, and the plot read
+    /// `finalize_nanoseconds` as `throughput_items_per_sec`.
+    ///
+    /// So the branches below produce whatever they can, and a final pass
+    /// reconciles the result against the header, filling anything missing
+    /// with the sentinel `0` — "no sketch tuning involved here". Downstream
+    /// grouping is by `implementation`, so the sentinel is not read for the
+    /// baselines that need it.
     fn from(family: &str, params: Option<&ParamSet>) -> Self {
-        let mut cols: Vec<(&'static str, String)> = Vec::new();
-        // Unparameterized impls (polars) still need to emit values for the
-        // family's param columns so each row matches the legacy header width —
-        // plot scripts call `csv.DictReader` and choke on a short row.
-        // Sentinel `0` values mark "no sketch tuning involved here";
-        // downstream grouping is by `implementation` so the value isn't read
-        // for these baselines.
-        if params.is_none() {
-            for name in legacy_param_columns(family) {
-                cols.push((name, "0".to_string()));
-            }
-            return Self { cols };
-        }
+        let mut found: Vec<(&'static str, String)> = Vec::new();
         // Values come from the params object generically; only the two places
         // where the legacy CSV header is *not* a list of parameters need
         // naming. The rest used to be one match arm per family, kept in step
         // with `param_header` by hand.
-        let params = params.expect("None handled above");
-        match family {
-            // `registers` is derived from `lg_k`, not a parameter.
-            "hll" => {
-                let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
-                if let Some((_, v)) = lg_k {
-                    let bits: u32 = v.parse().unwrap_or(0);
-                    cols.push(("lg_k", v));
-                    cols.push(("registers", (1usize << bits).to_string()));
+        if let Some(params) = params {
+            match family {
+                // `registers` is derived from `lg_k`, not a parameter.
+                "hll" => {
+                    let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
+                    if let Some((_, v)) = lg_k {
+                        let bits: u32 = v.parse().unwrap_or(0);
+                        found.push(("lg_k", v));
+                        found.push(("registers", (1usize << bits).to_string()));
+                    }
                 }
-            }
-            // Nitro's legacy CSV carries rows/cols, but the params only own
-            // `rate` — the matrix shape is baked into each impl. Sentinel 0s
-            // keep the row width legal.
-            "nitro" => {
-                cols.push(("rows", "0".to_string()));
-                cols.push(("cols", "0".to_string()));
-                for (_, v) in params.fields() {
-                    cols.push(("rate", legacy_float_format(&v)));
+                // Nitro's legacy CSV carries rows/cols, but the params only own
+                // `rate` — the matrix shape is baked into each impl, so those
+                // two fall through to the sentinel below.
+                "nitro" => {
+                    for (_, v) in params.fields() {
+                        found.push(("rate", legacy_float_format(&v)));
+                    }
                 }
-            }
-            _ => {
-                // Iterate the **header**, looking each column's value up — not
-                // the params object, which is ordered alphabetically. Driving
-                // the loop from `fields()` emitted cms as `2048,5` under a
-                // header reading `rows,cols`: a silent column/value swap in a
-                // file that plot scripts read positionally.
-                let fields = params.fields();
-                for col in legacy_param_columns(family) {
-                    if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
-                        cols.push((col, legacy_float_format(v)));
+                _ => {
+                    // Iterate the **header**, looking each column's value up —
+                    // not the params object, which is ordered alphabetically.
+                    // Driving the loop from `fields()` emitted cms as `2048,5`
+                    // under a header reading `rows,cols`: a silent
+                    // column/value swap in a file that plot scripts read
+                    // positionally.
+                    let fields = params.fields();
+                    for col in legacy_param_columns(family) {
+                        if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
+                            found.push((col, legacy_float_format(v)));
+                        }
                     }
                 }
             }
         }
+        let cols = legacy_param_columns(family)
+            .iter()
+            .map(|&col| {
+                let v = found
+                    .iter()
+                    .find(|(k, _)| *k == col)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| "0".to_string());
+                (col, v)
+            })
+            .collect();
         Self { cols }
     }
 
@@ -645,6 +669,61 @@ mod param_column_order_tests {
             assert_eq!(names, header, "{family}: column order must match header");
             let values: Vec<&str> = cols.cols.iter().map(|(_, v)| v.as_str()).collect();
             assert_eq!(values, expected, "{family}: values misaligned");
+        }
+    }
+
+    /// Every family, every params object, one value per header column.
+    ///
+    /// The failure this pins is silent by construction. `csv.DictReader`
+    /// zips a row against the header positionally and pads the tail with
+    /// `None`, so a row one field short reads *every* later column shifted
+    /// by one and raises nothing. `kll/polars` run without `--config` did
+    /// this: the polars baselines ignore their config, `k` had no value, and
+    /// the emitted row was `impl,lang,run,<total_items>,<total_ns>,…` under
+    /// a header starting `implementation,language,run,k,total_items,…` — so
+    /// the plot script read `finalize_nanoseconds` as the throughput column
+    /// and charted it.
+    ///
+    /// The parameterless `ParamSet` is the case that mattered: the CLI
+    /// always hands over a params object, so a "no params at all" guard
+    /// never fired for it.
+    #[test]
+    fn every_row_has_one_value_per_header_column() {
+        let empty = ParamSet {
+            family: String::new(),
+            params: serde_json::json!({}),
+        };
+        let wrong_keys = ParamSet {
+            family: String::new(),
+            params: serde_json::json!({ "nonsense": 1 }),
+        };
+        for family in [
+            "hll",
+            "kll",
+            "cms",
+            "countsketch",
+            "topk",
+            "dd",
+            "nitro",
+            "elastic",
+            "univmon",
+        ] {
+            let width = param_header(family).split(',').count();
+            for (label, params) in [
+                ("none", None),
+                ("empty", Some(&empty)),
+                ("wrong keys", Some(&wrong_keys)),
+            ] {
+                let cols = ParamCols::from(family, params);
+                assert_eq!(
+                    cols.join_values().split(',').count(),
+                    width,
+                    "{family} with {label} params: row width must match header"
+                );
+                let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
+                let header: Vec<&str> = param_header(family).split(',').collect();
+                assert_eq!(names, header, "{family} with {label} params");
+            }
         }
     }
 

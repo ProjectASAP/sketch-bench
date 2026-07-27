@@ -90,13 +90,49 @@ pub struct BenchSection {
     /// Absent on records written before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
+    /// **Ingest rate**: `items / insert_wall`. What it costs to feed the
+    /// stream in, and nothing else — `Sketch::finalize_for_query` is outside
+    /// the timed region.
+    ///
+    /// For the great majority of implementations `finalize_for_query` is a
+    /// no-op and this is also the rate at which queryable sketches are
+    /// produced. It is **not** for the rows that defer their build (every
+    /// `*/polars` row, the `lib-fastpath-parallel` rows): those buffer in
+    /// `update` and do the real work in finalize, so this column reports
+    /// their `Vec::push` and overstates them by orders of magnitude. Compare
+    /// those against [`Self::build_throughput_items_per_sec`], which is
+    /// defined for every row and equals this one wherever finalize is free.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
-    /// Per-run throughput samples (items/sec, one entry per measured run).
+    /// Per-run ingest-rate samples (items/sec, one entry per measured run).
     /// Kept alongside the aggregate so consumers can render box plots /
     /// CDFs without re-running the bench.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
+    /// **Sketch-build rate**: `items / (insert_wall + finalize_wall)` — the
+    /// rate at which a *ready-to-answer* sketch is produced from the stream.
+    ///
+    /// The cross-family column. `throughput_items_per_sec` answers "how fast
+    /// can this thing swallow data", which is the same question only for
+    /// implementations that finish their work in `update`; this one answers
+    /// "how fast can this thing turn N items into something queryable",
+    /// which is the same question for all of them. Where
+    /// `finalize_for_query` is a no-op the two are equal by construction, so
+    /// a panel mixing streaming sketches with deferred-build baselines can
+    /// use this column throughout without disadvantaging either.
+    ///
+    /// No `_samples` companion: it would duplicate `throughput_samples`
+    /// exactly on every row with a free finalize, which is nearly all of
+    /// them. Per-run pairs are in the `--raw-csv` output
+    /// (`total_nanoseconds` + `finalize_nanoseconds`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_throughput_items_per_sec: Option<RunStats>,
+    /// Wall time of `Sketch::finalize_for_query` per run — the deferred
+    /// build cost that separates the two throughput columns above. Present
+    /// on every throughput pass; `0.0` means the implementation's finalize
+    /// really is a no-op, which is a measurement, not a gap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalize_time_ms: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query_throughput_items_per_sec: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]

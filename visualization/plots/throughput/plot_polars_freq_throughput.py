@@ -28,8 +28,26 @@ def load_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def build_throughput(row: dict[str, str]) -> float:
+    """Items per second to produce a *queryable* result.
+
+    Not the CSV's own ``throughput_items_per_sec``: that column is
+    ``total_items / total_nanoseconds``, and for a polars row
+    ``total_nanoseconds`` covers only the ``Vec::push`` that buffers the
+    stream. All of the engine work — DataFrame build, group_by / sort /
+    quantile grid, collect — is billed to ``finalize_nanoseconds``, so the
+    ready-made column reports the buffer and overstates these rows by orders
+    of magnitude. Divide by the sum, which is what the legacy polars binaries
+    timed and what this chart's title claims to show.
+    """
+    total_ns = float(row["total_nanoseconds"]) + float(row.get("finalize_nanoseconds") or 0.0)
+    if total_ns <= 0:
+        raise ValueError(f"non-positive elapsed time in row: {row}")
+    return float(row["total_items"]) * 1_000_000_000.0 / total_ns
+
+
 def render_plot(rows: list[dict[str, str]], output: Path) -> None:
-    values = [float(row["throughput_items_per_sec"]) for row in rows]
+    values = [build_throughput(row) for row in rows]
     total_items = {int(row["total_items"]) for row in rows}
 
     median = statistics.median(values)

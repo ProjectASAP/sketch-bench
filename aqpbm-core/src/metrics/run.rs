@@ -40,12 +40,19 @@ pub struct RunMetrics {
     pub items_inserted: u64,
     pub queries_executed: u64,
     pub wall_time_ns: u64,
+    /// Wall time of the insert loop alone — the **ingest** denominator.
     pub insert_wall_time_ns: u64,
     /// Wall time for `Sketch::finalize_for_query()` — billed
     /// separately from insert/query so deferred sketch-build cost
     /// (e.g. polars sort + 101-quantile grid; asap_sketchlib KLL
     /// CDF build) is visible without inflating either column.
     /// Zero for sketches whose `finalize_for_query` is a no-op.
+    ///
+    /// Kept separate rather than folded into `insert_wall_time_ns` so both
+    /// readings survive: `insert` alone is the ingest rate, `insert +
+    /// finalize` (see [`RunMetrics::build_wall_time_ns`]) is the rate at
+    /// which queryable sketches are produced, and only reporting both makes
+    /// a `*/polars` row comparable with a streaming sketch.
     pub finalize_wall_time_ns: u64,
     pub query_wall_time_ns: u64,
     pub cpu_user_ns: Option<u64>,
@@ -106,6 +113,18 @@ impl RunMetrics {
             accuracy: None,
             query_calls: None,
         }
+    }
+
+    /// Wall time to turn this run's items into a *queryable* sketch —
+    /// ingest plus deferred build. The denominator of
+    /// `BenchSection::build_throughput_items_per_sec`.
+    ///
+    /// Saturating rather than wrapping: the two are read from separate
+    /// clocks, and a nonsensical sum should pin the rate near zero rather
+    /// than wrap into a spectacular one.
+    pub fn build_wall_time_ns(&self) -> u64 {
+        self.insert_wall_time_ns
+            .saturating_add(self.finalize_wall_time_ns)
     }
 }
 
@@ -197,10 +216,11 @@ impl FullSink {
             queries_executed: self.queries_executed,
             wall_time_ns,
             insert_wall_time_ns,
-            // The latency pass, the only user of `FullSink`, does run
-            // `finalize_for_query` but does not time it separately;
-            // `run_once_clean` — the path every other pass takes — measures
-            // it and fills this field itself.
+            // `FullSink` never sees the finalize call — it happens between
+            // `begin_insert_phase` and `end_insert_phase`, outside any hook
+            // this sink owns. `run_once` times it around the call and
+            // overwrites this field; leaving the timer out of `FullSink`
+            // keeps the sink's job "instrument the per-update boundary".
             finalize_wall_time_ns: 0,
             query_wall_time_ns,
             cpu_user_ns,

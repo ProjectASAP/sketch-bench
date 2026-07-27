@@ -8,11 +8,11 @@
 //! Mirrors the legacy `throughput/polars_{cardinality,freq,quantile}/`
 //! binaries: buffer the stream into a `Vec<i64>`, then on
 //! `finalize_for_query` build a `DataFrame` once and run the relevant Polars
-//! expression. Note that the runner bills that build to
-//! `RunMetrics::finalize_wall_time_ns` and the throughput pass times the
-//! insert loop alone, so a polars row's throughput column is the buffering
-//! `Vec::push`, not the engine work — unlike legacy, which divided items by
-//! push + DataFrame + collect.
+//! expression. The runner bills that build to
+//! `RunMetrics::finalize_wall_time_ns` and times the insert loop alone, so a
+//! polars row's `throughput_items_per_sec` is the buffering `Vec::push`, not
+//! the engine work. Its `build_throughput_items_per_sec` is push + DataFrame
+//! + collect — the legacy number, and the one to race these rows on.
 //!
 //! The per-call estimate is a cached lookup, so under `--raw-csv --accuracy`
 //! the per-call CSV rows report the post-finalize lookup cost (≈ ns), not the
