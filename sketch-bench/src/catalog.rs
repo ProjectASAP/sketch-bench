@@ -437,10 +437,10 @@ mod tests {
     /// type is not named here — each row materialises its own
     /// `Accumulator::Item`.
     fn smoke_spec() -> WorkloadSpec {
-        WorkloadSpec::Generated(aqpbm_datagen::GenSpec {
-            shape: aqpbm_datagen::Shape::Keys {
+        WorkloadSpec::Generated(aqpbm_core::GenSpec {
+            shape: aqpbm_core::Shape::Keys {
                 cardinality: 64,
-                dist: aqpbm_datagen::Distribution::Uniform,
+                dist: aqpbm_core::Distribution::Uniform,
             },
             size: 256,
             seed: 1,

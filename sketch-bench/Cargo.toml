@@ -28,8 +28,6 @@ heap-track = ["aqpbm-core/heap-track"]
 # The framework: the traits the wrappers implement, and the cell runners
 # and comparators `catalog` dispatches into.
 aqpbm-core.workspace = true
-# `DType` tags a row's item type.
-aqpbm-datagen.workspace = true
 # `catalog::run` surfaces "cannot run this cell" as an `anyhow` error.
 anyhow.workspace = true
 serde.workspace = true
