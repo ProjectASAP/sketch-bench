@@ -1,14 +1,7 @@
-//! `Sampler<E>` — the embedded `MetricsSink` that downstream
-//! apps hand to a `Probe<S, Sampler>`. Three modes:
-//!
-//! * **Disabled** — zero work on the hot path (one cold branch).
-//! * **EveryN { sample_every_n, samples_per_window }** — sample
-//!   one op in every `sample_every_n`; emit a v1 JSONL record
-//!   to the configured `Exporter` every `samples_per_window`
-//!   sampled ops.
-//! * **TimeWindow { sample_every_n, window }** — same sampling
-//!   rate, but emit on a time boundary rather than count.
-//!
+//! `Sampler<E>` — the embedded `MetricsSink` downstream apps hand to a
+//! `Probe<S, Sampler>`. Three modes: **Disabled** (one cold branch), **EveryN**
+//! (sample one op in N, emit every `samples_per_window` samples), and
+//! **TimeWindow** (same rate, emitting on a time boundary instead).
 //! See `docs/DESIGN.md` §7.1.
 
 use std::time::{Duration, Instant};
@@ -44,23 +37,15 @@ impl Tag {
     }
 }
 
-/// Sampling mode. Callers pick one at construction; the
-/// `Disabled` variant is what lets a single call site stay in
-/// the source tree with zero runtime cost.
-///
-/// Two independent axes: *when to sample* (count vs. time) and
-/// *when to emit* (count-of-samples vs. time since last emit).
-/// Four constructors cover the four combinations — see
-/// [`Sampler::every_n`], [`Sampler::every_n_time_window`],
-/// [`Sampler::every_period`], [`Sampler::every_period_time_window`].
+/// Sampling mode, picked at construction; `Disabled` is what lets a call site
+/// stay in the tree at zero cost. Two independent axes — when to sample (count
+/// vs time) and when to emit — with four constructors for the combinations.
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
     /// Never sample, never emit.
     Disabled,
-    /// Sample 1 in `sample_every_n` ops; flush a record to the
-    /// exporter every `samples_per_window` sampled ops.
-    /// Suitable for sparse event-rate sampling
-    /// (`sample_every_n = 1_000_000` → "once every million ops").
+    /// Sample 1 in `sample_every_n` ops; flush a record every
+    /// `samples_per_window` sampled ops. For sparse event-rate sampling.
     EveryN {
         sample_every_n: u32,
         samples_per_window: u32,
@@ -71,10 +56,8 @@ pub enum Mode {
         sample_every_n: u32,
         window: Duration,
     },
-    /// Sample at most once per `sample_period` of wall time;
-    /// flush every `samples_per_window` samples. Suitable for
-    /// "every 1 s sample once" deployments where the app's op
-    /// rate is unpredictable.
+    /// Sample at most once per `sample_period` of wall time; flush every
+    /// `samples_per_window` samples. For deployments whose op rate varies.
     EveryPeriod {
         sample_period: Duration,
         samples_per_window: u32,
@@ -142,15 +125,9 @@ impl<E: Exporter> Sampler<E> {
         }
     }
 
-    /// Event-rate sampling, **count**-based emit window.
-    ///
-    /// * `sample_every_n` — sample 1 in every N ops. Set to 1 to
-    ///   measure every op (the "scrape-every-op" batching mode
-    ///   described in the crate README).
-    /// * `samples_per_window` — emit a record after this many
-    ///   sampled ops have accumulated.
-    ///
-    /// Total ops between emits ≈ `sample_every_n × samples_per_window`.
+    /// Event-rate sampling, **count**-based emit window: sample 1 in every
+    /// `sample_every_n` ops (1 measures every op), emitting once
+    /// `samples_per_window` have accumulated. Ops between emits ≈ their product.
     pub fn every_n(sample_every_n: u32, samples_per_window: u32, exporter: E, tag: Tag) -> Self {
         Self::with_mode(
             Mode::EveryN {
@@ -162,13 +139,9 @@ impl<E: Exporter> Sampler<E> {
         )
     }
 
-    /// Event-rate sampling, **time**-based emit window.
-    ///
-    /// This is the "scrape every op, batch-emit once per second"
-    /// pattern: `every_n_time_window(1, Duration::from_secs(1))`
-    /// measures every op, accumulates the latency histogram +
-    /// throughput counters in memory, then emits one batched
-    /// record per wall-second — regardless of op rate.
+    /// Event-rate sampling, **time**-based emit window — the "scrape every op,
+    /// batch-emit once per second" pattern. Accumulates the histogram and
+    /// counters in memory, emitting one record per window regardless of op rate.
     pub fn every_n_time_window(
         sample_every_n: u32,
         window: Duration,
@@ -185,13 +158,9 @@ impl<E: Exporter> Sampler<E> {
         )
     }
 
-    /// Time-rate sampling, count-based emit window.
-    ///
-    /// Sample at most once per `sample_period` of wall time —
-    /// independent of op rate. Suitable when the app's op rate
-    /// is variable or unknown: "I want one measurement per
-    /// second, no matter whether the host is doing 10 ops/s or
-    /// 10 M ops/s."
+    /// Time-rate sampling, count-based emit window: at most one sample per
+    /// `sample_period` of wall time, independent of op rate. For an app that
+    /// might do 10 ops/s or 10 M ops/s and still wants one per second.
     pub fn every_period(
         sample_period: Duration,
         samples_per_window: u32,
@@ -208,11 +177,9 @@ impl<E: Exporter> Sampler<E> {
         )
     }
 
-    /// Time-rate sampling, time-based emit window.
-    ///
-    /// "Sample once per 10 ms, emit one batched record per 1 s"
-    /// → `every_period_time_window(Duration::from_millis(10),
-    /// Duration::from_secs(1))`.
+    /// Time-rate sampling, time-based emit window — "sample once per 10 ms, emit
+    /// one batched record per 1 s" is
+    /// `every_period_time_window(from_millis(10), from_secs(1))`.
     pub fn every_period_time_window(
         sample_period: Duration,
         window: Duration,
@@ -403,10 +370,9 @@ impl<E: Exporter> MetricsSink for Sampler<E> {
                 rec.record_ns(start.elapsed().as_nanos() as u64);
             }
             self.state.sampled_ops = self.state.sampled_ops.saturating_add(1);
-            // `EveryPeriod*` modes need this to rate-limit the
-            // next sample; `EveryN*` modes read op_count, which
-            // is already advanced, and never look at this field
-            // — so the unconditional stamp is cheap + harmless.
+            // `EveryPeriod*` modes need this to rate-limit the next sample;
+            // `EveryN*` modes read the already-advanced op_count and never look
+            // here, so the unconditional stamp is cheap and harmless.
             self.state.last_sample_at = Some(Instant::now());
         }
         self.maybe_flush();

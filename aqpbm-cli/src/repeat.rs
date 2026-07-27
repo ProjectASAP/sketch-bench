@@ -1,36 +1,8 @@
 //! `--repeats R` — the only way this tool can honestly publish a confidence
-//! interval on an implementation's throughput.
-//!
-//! ## Why a fresh process, and not just more `--runs`
-//!
-//! `--runs N` measures N back-to-back iterations inside one process: one core,
-//! one allocator arena, one address-space layout, one governor ramp, one
-//! already-resident item slice. Those iterations estimate how much the last
-//! few seconds of *that process* wobbled. They are not independent samples of
-//! "the throughput of this implementation", so `mean ± 1.96·stddev/√N` over
-//! them yields an interval far tighter than the command's own reproducibility.
-//! The same command, four times, before this existed:
-//!
-//! ```text
-//! 94.85 M/s  ci95 [94.69, 95.02]
-//! 95.81 M/s  ci95 [95.62, 96.01]
-//! 96.68 M/s  ci95 [96.60, 96.75]
-//! 97.24 M/s  ci95 [97.08, 97.40]
-//! ```
-//!
-//! Four mutually disjoint 95% intervals for one measurement. Comparing two
-//! implementations by whether their intervals overlap — which is what an
-//! interval is *for* — would have called differences significant that a re-run
-//! inverts. `docs/DESIGN.md` §5.7 used to prescribe raising `--runs` as the
-//! remedy for a wide interval; that makes it narrower and more wrong.
-//!
-//! So a repeat is a whole process. Each one gets a fresh arena, a fresh ASLR
-//! layout, a fresh ramp, and fresh page-cache state — exactly the variance
-//! that cancels within a process and shows up between invocations.
-//!
-//! Accuracy deliberately does not use this axis: a sketch's error is a
-//! deterministic function of (data, parameters), with no process-level
-//! variance to sample. Its repetitions vary the *data*, in-process.
+//! interval on throughput. A repeat is a whole process, so each gets a fresh
+//! arena, ASLR layout, governor ramp and page-cache state: exactly the variance
+//! that cancels within one process. Accuracy does not use this axis — its error
+//! is deterministic given (data, parameters), so it varies the data instead.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -40,29 +12,18 @@ use anyhow::{bail, Context, Result};
 use aqpbm_core::aggregation::welford::Welford;
 use aqpbm_core::report::{BenchSection, Record, RunStats};
 
-/// Marks a child so it runs exactly one repeat and writes to stdout,
-/// whatever `--repeats` / `--report` its argv says. The child's argv is
-/// byte-identical to the parent's, which is what makes it provably the same
-/// measurement — and reading this variable is also what stops it recursing.
+/// Marks a child so it runs exactly one repeat and writes to stdout, whatever
+/// its argv says. The argv is byte-identical to the parent's — provably the same
+/// measurement — and reading this variable is what stops it recursing.
 const CHILD_ENV: &str = "SKETCHLIB_REPEAT_CHILD";
 
 pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Identifies the measurement a record belongs to, across repeats.
-///
-/// element 1: sketch family — `hll`, `cms`, ...
-/// element 2: implementation within that family — `oxide`, `datasketches`, ...
-/// element 3: construction params as JSON; empty for the unparameterized rows
-/// element 4: the workload as JSON — shape, size, cardinality, seed
-/// element 5: which pass, read from `BenchSection::pass`
-///
-/// Only the last needs an argument. `MetricsMask::passes` runs each primary
-/// metric separately so their hot paths cannot contaminate each other, so one
-/// invocation emits several records sharing elements 1–4. They describe
-/// different runs: pooling a throughput record with a latency one would
-/// average two populations under a single `n`.
+/// Identifies the measurement a record belongs to across repeats: family, impl,
+/// params, workload, pass. The pass matters because one invocation emits several
+/// records sharing the rest, and pooling them averages two populations.
 type GroupKey = (String, String, String, String, String);
 
 fn group_key(r: &Record) -> GroupKey {
@@ -130,11 +91,9 @@ fn across<'a>(
     if w.n() == 0 {
         return (None, samples);
     }
-    // A single sample is not an interval. Repeats need not all emit the same
-    // record set — an implementation can be skipped for one config, or a
-    // pass can produce nothing — so `n == 1` is reachable, and `Welford`
-    // would hand back a zero-width `[mean, mean]` under a field whose whole
-    // premise is that its presence means it can be trusted.
+    // A single sample is not an interval, and `n == 1` is reachable because
+    // repeats need not all emit the same record set. `Welford` would hand back
+    // a zero-width `[mean, mean]` under a field that promises trustworthiness.
     let ci95 = if w.n() >= 2 {
         let (lo, hi) = w.ci95();
         Some([lo, hi])
@@ -152,14 +111,9 @@ fn across<'a>(
     )
 }
 
-/// Collapse one measurement's per-process records into one.
-///
-/// Timing statistics are recomputed **across** repeats: each repeat
-/// contributes its own mean as one sample, so `n` becomes the repeat count and
-/// the interval describes spread between invocations. Everything else —
-/// memory, latency percentiles, accuracy — is taken from the first repeat: it
-/// is either deterministic given the inputs, or a within-process summary that
-/// averaging would misrepresent.
+/// Collapse one measurement's per-process records into one. Timings recompute
+/// **across** repeats, each contributing its mean as one sample. Everything else
+/// comes from the first: deterministic, or a summary averaging would distort.
 fn merge(records: Vec<Record>) -> Record {
     let repeats = records.len();
     let mut base = records[0].clone();

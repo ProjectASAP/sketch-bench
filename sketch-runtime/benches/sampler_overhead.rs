@@ -1,9 +1,6 @@
-//! Overhead of `Probe<_, Sampler>` vs `Probe<_, NoopSink>` at
-//! sampling rate 1/1024. Design doc §10 sets the ceiling at 1%
-//! throughput loss.
-//!
-//! Uses a trivial counting "sketch" so the measurement is
-//! dominated by the sink hook cost, not the sketch itself.
+//! Overhead of `Probe<_, Sampler>` vs `Probe<_, NoopSink>` at sampling rate
+//! 1/1024; design doc §10 sets the ceiling at 1% throughput loss. Uses a trivial
+//! counting "sketch" so the sink hook cost dominates, not the sketch.
 
 use std::hint::black_box;
 

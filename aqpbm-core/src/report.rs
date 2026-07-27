@@ -1,6 +1,6 @@
-//! v1 JSONL report schema — the single serialised record shape
+//! The JSONL report schema — the single serialised record shape
 //! shared by offline benchmarks, runtime samplers, and the
-//! visualisation layer.
+//! visualisation layer. Current version: [`SCHEMA_VERSION`].
 //!
 //! See `docs/DESIGN.md` §4.4.
 
@@ -13,7 +13,7 @@ use crate::workload::WorkloadDescription;
 /// should refuse to process records with a mismatched version.
 pub const SCHEMA_VERSION: u32 = 2;
 
-/// A single record in the v1 JSONL report stream. One record
+/// A single record in the JSONL report stream. One record
 /// per benchmark / profile / runtime window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -21,15 +21,12 @@ pub struct Record {
     pub sketch: String,
     #[serde(rename = "impl")]
     pub impl_name: String,
-    /// Implementation language. Lets readers split Rust vs C++
-    /// records when both tracks dump into one JSONL stream
-    /// (see `docs/SCHEMA_V1.md`). Defaults to `rust` so older
-    /// records deserialise unchanged.
+    /// Implementation language, so readers can split Rust from C++ records when
+    /// both tracks dump into one JSONL stream. Defaults to `rust`.
     #[serde(default)]
     pub language: Language,
-    /// Family-specific construction params used for this run.
-    /// Populated by `bench` from the cell's `ParamSet`; absent
-    /// from legacy records.
+    /// Family-specific construction params used for this run, populated by
+    /// `bench` from the cell's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
     pub workload: WorkloadDescription,
@@ -82,26 +79,13 @@ pub enum Source {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchSection {
     /// Which pass produced this record — `"throughput"`, `"latency"`,
-    /// `"accuracy"` or `"merge"`, from `MetricsMask::pass_name`.
-    ///
-    /// `MetricsMask::passes` runs each primary metric separately, so one
-    /// invocation emits several records per (sketch, impl, config, workload).
-    /// They describe different runs; group by this before pooling any of them.
-    /// Absent on records written before the field existed.
+    /// `"accuracy"` or `"merge"`. One invocation emits several records per
+    /// (sketch, impl, config, workload); group by this before pooling any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
-    /// **Ingest rate**: `items / insert_wall`. What it costs to feed the
-    /// stream in, and nothing else — `Accumulator::prepare` is outside
-    /// the timed region.
-    ///
-    /// For the great majority of implementations `prepare` is a
-    /// no-op and this is also the rate at which queryable sketches are
-    /// produced. It is **not** for the rows that defer their build (every
-    /// `*/polars` row, the `lib-fastpath-parallel` rows): those buffer in
-    /// `update` and do the real work in finalize, so this column reports
-    /// their `Vec::push` and overstates them by orders of magnitude. Compare
-    /// those against [`Self::build_throughput_items_per_sec`], which is
-    /// defined for every row and equals this one wherever finalize is free.
+    /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
+    /// Deferred-build rows buffer in `update`, so this times their `Vec::push`
+    /// — compare [`Self::build_throughput_items_per_sec`] instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
     /// Per-run ingest-rate samples (items/sec, one entry per measured run).
@@ -109,28 +93,14 @@ pub struct BenchSection {
     /// CDFs without re-running the bench.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
-    /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)` — the
-    /// rate at which a *ready-to-answer* sketch is produced from the stream.
-    ///
-    /// The cross-family column. `throughput_items_per_sec` answers "how fast
-    /// can this thing swallow data", which is the same question only for
-    /// implementations that finish their work in `update`; this one answers
-    /// "how fast can this thing turn N items into something queryable",
-    /// which is the same question for all of them. Where
-    /// `prepare` is a no-op the two are equal by construction, so
-    /// a panel mixing streaming sketches with deferred-build baselines can
-    /// use this column throughout without disadvantaging either.
-    ///
-    /// No `_samples` companion: it would duplicate `throughput_samples`
-    /// exactly on every row with a free finalize, which is nearly all of
-    /// them. Per-run pairs are in the `--raw-csv` output
-    /// (`total_nanoseconds` + `finalize_nanoseconds`).
+    /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)`, the
+    /// rate a *ready-to-answer* sketch is produced at. The cross-family column;
+    /// equals the ingest rate wherever `prepare` is free.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
-    /// Wall time of `Accumulator::prepare` per run — the deferred
-    /// build cost that separates the two throughput columns above. Present
-    /// on every throughput pass; `0.0` means the implementation's finalize
-    /// really is a no-op, which is a measurement, not a gap.
+    /// Wall time of `Accumulator::prepare` per run — the deferred build cost
+    /// separating the two throughput columns. `0.0` means finalize really is a
+    /// no-op, which is a measurement, not a gap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalize_time_ms: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,10 +119,9 @@ pub struct BenchSection {
     pub memory_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
-    /// Wall time to fold `merge_shards` shard sketches into one, per run.
-    /// Absent unless the merge pass ran. Scales with sketch *state* size, not
-    /// stream length, so compare it against `memory_bytes` rather than
-    /// against insert throughput.
+    /// Wall time to fold `merge_shards` sketches into one, per run; absent
+    /// unless the merge pass ran. Scales with sketch *state*, not stream
+    /// length, so compare against `memory_bytes`, not insert throughput.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_time_ms: Option<RunStats>,
     /// How many shards were folded. Present whenever the merge pass ran, even
@@ -210,25 +179,9 @@ pub struct ExternalReports {
 pub struct RunStats {
     pub mean: f64,
     pub stddev: f64,
-    /// 95% confidence interval on the mean — **present only when the samples
-    /// it summarises are statistically independent**, i.e. when
-    /// `sketchlib bench --repeats R` (R > 1) measured R separate processes.
-    ///
-    /// It used to be emitted unconditionally, computed over the N iterations
-    /// of a single `--runs N`. Those iterations share one process: one
-    /// allocator arena, one address-space layout, one governor ramp, one
-    /// already-resident item slice. They estimate how much the last few
-    /// seconds of that process wobbled, not how much the implementation's
-    /// throughput varies — and `mean ± 1.96·stddev/√n` over correlated
-    /// samples yields an interval far tighter than the command's own
-    /// reproducibility. Four identical invocations produced four *disjoint*
-    /// 95% intervals. Raising `--runs`, which the design doc once recommended
-    /// as the remedy, makes that worse rather than better.
-    ///
-    /// So it is absent unless it can be computed honestly. Anything that
-    /// reads this field can trust it; `mean` / `stddev` / `n` and the raw
-    /// `throughput_samples` remain available either way, and make no claim
-    /// about a population.
+    /// 95% CI on the mean — **present only when the samples are statistically
+    /// independent**, i.e. `--repeats R` (R > 1) over R processes. Iterations of
+    /// one `--runs N` share too much for an interval over them to mean anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci95: Option<[f64; 2]>,
     /// Number of samples behind `mean`. Iterations within one process when
@@ -343,29 +296,9 @@ mod tests {
         assert_eq!(back.profile.unwrap().hw_counters.unwrap().ipc, Some(3.2));
     }
 
-    /// A gate, not a behaviour test. Bumping `SCHEMA_VERSION` turns
-    /// this red on purpose — change the literal deliberately, and
-    /// read this comment while you do.
-    ///
-    /// This number does not stay in the repo. It is stamped into every
-    /// JSONL record `sketchlib bench` writes (consumed by `scripts/`
-    /// and `visualization/`), and `sketch-runtime` puts it on the wire
-    /// as `RuntimeRecord.schema_version` in `proto/feedback.proto`.
-    ///
-    /// Today nothing outside this repo reads the wire field — the
-    /// controller side of that channel is unbuilt (MERGE_PLAN Phase 9).
-    /// So right now a bump only obliges you to check `scripts/` and
-    /// `visualization/`. Once something *is* listening, a bump becomes
-    /// a cross-repo contract change and this gate is where you find
-    /// that out.
-    ///
-    /// It has already earned its keep once and been ignored: the 1 → 2
-    /// bump in da61875 (2026-05-04, `heap_peak_kb` →
-    /// `heap_allocated_kb`) left a hardcoded `1` failing in
-    /// `sketch-runtime/tests/grpc_exporter_integration.rs` for two
-    /// months. That assertion carried no explanation, so when it
-    /// surfaced it was misread as noise and left alone. Hence this
-    /// comment.
+    /// A gate, not a behaviour test: bumping `SCHEMA_VERSION` turns this red on
+    /// purpose. The number leaves the repo — in every JSONL record, and on the
+    /// wire as `RuntimeRecord.schema_version` — so a bump is a contract change.
     #[test]
     fn schema_version_is_v2() {
         assert_eq!(SCHEMA_VERSION, 2);
@@ -389,11 +322,9 @@ mod tests {
         assert_eq!(rec.language, Language::Rust);
     }
 
-    /// Wire-format compat test: a JSONL line shaped exactly like
-    /// what `cpp-bench/common/record_v1.cpp` emits must deserialise
-    /// into a `Record` with the right fields. Catches field-name
-    /// drift between the two emitters without needing to compile
-    /// the C++ side.
+    /// Wire-format compat: a JSONL line shaped like what the C++ emitter writes
+    /// must deserialise into a `Record` with the right fields, catching
+    /// field-name drift without compiling that side.
     #[test]
     fn cpp_bench_jsonl_parses() {
         let cpp_emitted = r#"{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":{"shape":"file","size":1000000,"source_path":"input/benchmark_data_1m_int64.bin"},"mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;

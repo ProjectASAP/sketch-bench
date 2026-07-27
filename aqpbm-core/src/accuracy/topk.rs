@@ -25,11 +25,9 @@ where
             *exact.entry(it.clone()).or_insert(0) += 1;
         }
         let mut exact_vec: Vec<(K, u64)> = exact.into_iter().collect();
-        // Count descending, ties on the key — a total order, and the same one
-        // every top-k impl here ranks by. Sorting on the count alone leaves
-        // the keys tied at the k-th place in `HashMap` iteration order, so
-        // the "truth" set moved between processes and even between two calls,
-        // and an exact source scored below 1.0 against itself.
+        // Count descending, ties on the key — a total order, the same one every
+        // top-k impl ranks by. On count alone the k-th place falls to HashMap
+        // order, and an exact source scores below 1.0 against itself.
         exact_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         exact_vec.truncate(self.k);
 
@@ -74,14 +72,9 @@ mod tests {
     use super::*;
     use std::collections::BinaryHeap;
 
-    /// An exact top-k by hand: a `HashMap` counter, and a heap to pull the
-    /// largest `k` off it.
-    ///
-    /// Exact by construction, so it must score 1.0 against [`TopkGT`] —
-    /// anything less is the comparator being wrong, which is the whole point
-    /// of the two tests below. Written here rather than borrowed from a real
-    /// implementation so the comparator's own check owes nothing to a sketch
-    /// library, or to whatever that library's notion of "top k" happens to be.
+    /// An exact top-k by hand: a `HashMap` counter plus a heap. Exact by
+    /// construction, so it must score 1.0 against [`TopkGT`]; anything less is
+    /// the comparator being wrong. Hand-written so the check owes no library.
     #[derive(Default)]
     struct ExactTopK {
         counts: HashMap<i64, u64>,
@@ -94,10 +87,9 @@ mod tests {
         }
     }
 
-    /// Ordered so the heap's max is "highest count, then *smallest* key" —
-    /// count ascending, key descending. That is the same total order `TopkGT`
-    /// ranks by; a source that broke ties the other way would score below 1.0
-    /// and the tests could not tell that apart from a real defect.
+    /// Ordered so the heap's max is "highest count, then *smallest* key" — the
+    /// same total order `TopkGT` ranks by. Breaking ties the other way scores
+    /// below 1.0, which the tests could not distinguish from a real defect.
     #[derive(PartialEq, Eq)]
     struct Ranked {
         count: u64,

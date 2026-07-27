@@ -1,23 +1,8 @@
-//! Polars-backed implementations, one per family (`hll/polars`, `cms/polars`,
-//! `countsketch/polars`, `kll/polars`, `dd/polars`, `topk/polars`). These are
-//! real `--impl` rows, not accuracy baselines: they compute the exact answer
-//! through a DataFrame engine, and the point of racing them is throughput.
-//! Their exactness is incidental — the accuracy ground truth lives in
-//! `accuracy/`.
-//!
-//! Mirrors the legacy `throughput/polars_{cardinality,freq,quantile}/`
-//! binaries: buffer the stream into a `Vec<i64>`, then on
-//! `prepare` build a `DataFrame` once and run the relevant Polars
-//! expression. The runner bills that build to
-//! `RunMetrics::finalize_wall_time_ns` and times the insert loop alone, so a
-//! polars row's `throughput_items_per_sec` is the buffering `Vec::push`, not
-//! the engine work. Its `build_throughput_items_per_sec` is push + DataFrame
-//! + collect — the legacy number, and the one to race these rows on.
-//!
-//! The per-call estimate is a cached lookup, so under `--raw-csv --accuracy`
-//! the per-call CSV rows report the post-finalize lookup cost (≈ ns), not the
-//! Polars compute. That is what it should be: by the time the comparator
-//! queries this row, the work is already done.
+//! Polars-backed implementations, one per family. Real `--impl` rows, not
+//! accuracy baselines: they compute the exact answer through a DataFrame engine
+//! and the point of racing them is throughput. They buffer the stream in
+//! `update` and build in `prepare`, so race them on
+//! `build_throughput_items_per_sec` — the insert column is the `Vec::push`.
 
 use std::collections::HashMap;
 
@@ -36,10 +21,9 @@ pub struct PolarsCardinality {
 }
 
 impl InitSketch for PolarsCardinality {
-    /// Polars computes the exact answer; it has no `(rows, cols)` to tune, so
-    /// it ignores the `ParamSet` and builds unconditionally. Its record
-    /// therefore carries whatever config the cell was given — typically the
-    /// parameterless point, since there is nothing to set.
+    /// Polars computes the exact answer and has no `(rows, cols)` to tune, so it
+    /// ignores the `ParamSet` and builds unconditionally. Its record carries
+    /// whatever config the cell was given.
     fn init(_config: &ParamSet) -> Result<Self, BuildError> {
         Ok(Self {
             buf: Vec::new(),
@@ -184,11 +168,9 @@ impl MemoryFootprint for PolarsFrequencyCs {
     }
 }
 
-/// Polars-backed quantile baseline. The heavy work (one polars
-/// sort + 101-point quantile grid build) lives in
-/// `prepare`, which the runner now times separately
-/// into `RunMetrics::finalize_wall_time_ns`. Insert remains pure
-/// `Vec::push`; per-call `query()` is an array lookup.
+/// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
+/// quantile grid — lives in `prepare`, which the runner times separately.
+/// Insert is pure `Vec::push`; per-call `query()` is an array lookup.
 struct PolarsQuantileCore {
     buf: Vec<i64>,
     quantiles: [f64; 101],
@@ -300,9 +282,8 @@ impl MemoryFootprint for PolarsQuantileDd {
 
 
 // ---------- statistic membership ----------
-//
-// The exact baselines answer the same statistics as the sketches they sit
-// beside, which is what makes their ~0 error a check on the comparator.
+// The exact baselines answer the same statistics as the sketches beside them,
+// which is what makes their ~0 error a check on the comparator.
 
 impl CardinalityOps for PolarsCardinality {
     fn estimate_distinct(&self) -> f64 {
@@ -337,9 +318,8 @@ impl QuantileOps for PolarsQuantileDd {
 }
 
 // ---------- catalog identity ----------
-//
-// Each exact baseline is named `polars` inside whichever family its params
-// type places it in — the family it belongs to falls out of `Params`.
+// Each exact baseline is named `polars` inside whichever family its params type
+// places it in — the family falls out of `Params`.
 
 impl BenchImpl for PolarsCardinality { type Params = HllParams; const IMPL: &'static str = "polars"; }
 impl BenchImpl for PolarsFrequencyCms { type Params = CmsParams; const IMPL: &'static str = "polars"; }
@@ -347,21 +327,16 @@ impl BenchImpl for PolarsFrequencyCs { type Params = CountSketchParams; const IM
 impl BenchImpl for PolarsQuantileKll { type Params = KllParams; const IMPL: &'static str = "polars"; }
 impl BenchImpl for PolarsQuantileDd { type Params = DdParams; const IMPL: &'static str = "polars"; }
 
-/// `topk/polars` — the exact top-k baseline. Reuses the same group_by that
-/// backs the frequency baseline, then sorts. Its score is the check on the
-/// comparator itself: an exact answer must come back at precision = recall =
-/// 1.0, so anything less means the ground-truth calculator, not the sketch, is wrong.
+/// `topk/polars` — the exact top-k baseline, reusing the frequency baseline's
+/// group_by then sorting. Its score checks the comparator: an exact answer must
+/// come back at precision = recall = 1.0.
 #[derive(Default)]
 pub struct PolarsTopK(PolarsFrequencyCore);
 
 impl InitSketch for PolarsTopK {
-    /// The one polars baseline that does read its config. `k` is not a
-    /// tuning knob it can shrug off like `rows`/`cols`: it is the prefix the
-    /// comparator scores this row against, so a config whose `k` cannot be
-    /// read has to fail here — naming the bad key — rather than let the row
-    /// run and be silently scored at some other `k`. It also keeps the
-    /// `topk` panel honest: every row in the family accepts and rejects the
-    /// same configs, so the rows in a comparison were asked the same question.
+    /// The one polars baseline that reads its config: `k` is the prefix the
+    /// comparator scores against, not a knob to shrug off, so an unreadable `k`
+    /// must fail here rather than be silently scored at some other `k`.
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: TopkParams = config.parse()?;
         if p.k == 0 {

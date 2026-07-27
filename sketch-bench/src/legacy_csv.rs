@@ -1,27 +1,8 @@
-//! Legacy long-format CSV rendering for a [`BenchReport`].
-//!
-//! Produces the exact headers and filenames the historical
-//! `throughput/scripts/plot_*.py` scripts read with `csv.DictReader`: one row
-//! per measured run, with family-specific param columns. Coexists with the
-//! JSONL stream emitted via `--report`.
-//!
-//! This is the *content*, not the sink: [`render`] returns a [`CsvFile`] per
-//! output file (name, header, rows), and the frontend appends each to the
-//! `--raw-csv DIR` it chose (see `aqpbm-cli`'s `raw_csv`). Same split as the
-//! `Record`/`to_jsonl` (content) + `ReportSink` (write) pair for JSONL.
-//!
-//! HLL / KLL / DD additionally get a *per-call* query CSV
-//! (`<family>_throughput_query_results_rust.csv` columns
-//! `..call_index, nanoseconds, estimate` plus KLL/DD's `repeat, percentile`)
-//! when `--accuracy` is also set — that flag is what gates the comparator that
-//! owns the query phase and stashes per-call samples. Without `--accuracy` the
-//! query phase is skipped entirely and only the insert CSV is produced.
-//!
-//! Naming: `lib` / `lib-*` impls keep their historical
-//! `rust_sketchlib_<family>[_<variant>]` names; every impl with no legacy
-//! counterpart (`oxide`, `datasketches`, `polars`, the topk trackers) gets a
-//! synthesised `rust_<impl>_<family>`. The parallel-insert rows never reach
-//! that path — they go to the octo file, labelled `octo`.
+//! Long-format CSV rendering for a [`BenchReport`] — the exact headers and
+//! filenames `plot_*.py` reads with `csv.DictReader`, one row per measured run.
+//! Content only: [`render`] returns a [`CsvFile`] per file and the frontend
+//! appends each, mirroring the `Record` / `ReportSink` split for JSONL.
+//! HLL / KLL / DD also get a per-call query CSV when `--accuracy` is set.
 
 use crate::params::ParamSet;
 use aqpbm_core::metrics::MetricsMask;
@@ -36,10 +17,8 @@ pub struct CsvFile {
     pub rows: Vec<String>,
 }
 
-/// Render the legacy CSV files this `(entry, report)` produces.
-///
-/// Returns one [`CsvFile`] per file the run should append to — empty when this
-/// report carries no pass that maps to a legacy CSV (e.g. a lone LATENCY pass,
+/// Render the CSV files this `(entry, report)` produces — one [`CsvFile`] per
+/// file to append to, empty when no pass maps to one (a lone LATENCY pass,
 /// whose per-op timer would muddle the throughput plot).
 pub fn render(
     family: &str,
@@ -55,12 +34,9 @@ pub fn render(
     // whatever file already exists.
     let fam = family.to_string();
 
-    // Parallel ("octo") impls go to a separate combined file with the legacy
-    // `sketch_type, implementation, num_workers,...` header —
-    // `throughput/scripts/plot_octo_throughput.py` reads exactly that shape
-    // from a single file across cms/cs/hll. Only the THROUGHPUT pass emits, so
-    // the insert_wall_time_ns column reflects a clean hot path, not the
-    // latency-pass timer overhead.
+    // Parallel ("octo") impls go to a separate combined file whose
+    // `sketch_type, implementation, num_workers,...` header spans cms/cs/hll.
+    // Only THROUGHPUT emits, so the wall column reflects a clean hot path.
     if impl_name == "lib-fastpath-parallel" {
         if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
             out.push(octo_file(family, workers, report));
@@ -71,10 +47,8 @@ pub fn render(
     let legacy_impl = legacy_impl_name(family, impl_name);
     let param_cols = ParamCols::from(family, params);
 
-    // Only the THROUGHPUT pass produces a clean insert-phase wall clock; rows
-    // from other passes (LATENCY is inflated by per-op timing; ACCURACY is
-    // clean but conceptually belongs to the query CSV) would muddle the
-    // throughput plot.
+    // Only THROUGHPUT produces a clean insert-phase wall clock: LATENCY is
+    // inflated by per-op timing, and ACCURACY belongs to the query CSV.
     if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
         out.push(CsvFile {
             name: format!("{fam}_throughput_results_rust.csv"),
@@ -96,10 +70,9 @@ pub fn render(
         .any(|r| r.query_calls.as_ref().is_some_and(|v| !v.is_empty()));
 
     if has_per_call {
-        // Per-call CSV — one row per (run, call). Matches the legacy
-        // `throughput/{hll,kll,dd}/rust/src/bin/query.rs` shape; takes
-        // precedence over the aggregate query CSV for these three families
-        // because their plot scripts read the per-call columns.
+        // Per-call CSV — one row per (run, call). Takes precedence over the
+        // aggregate query CSV for these three families, whose plot scripts
+        // read the per-call columns.
         let mut rows: Vec<String> = Vec::new();
         for (run_idx, run) in report.per_run.iter().enumerate() {
             let run_no = run_idx + 1;
@@ -122,12 +95,9 @@ pub fn render(
             rows,
         });
 
-        // Also emit the aggregate (tight-loop) CSV: one row per run, computed
-        // from `queries_executed` / `query_wall_time_ns` (the comparator's
-        // outer Instant pair that wraps the whole 101- or 4096-call tight
-        // loop). This is the apples-to-apples peer of cpp-bench's
-        // `--query-csv` and lets the throughput bar charts compare without
-        // per-call timer overhead.
+        // Also emit the aggregate (tight-loop) CSV: one row per run from
+        // `queries_executed` / `query_wall_time_ns`, so the bar charts can
+        // compare without per-call timer overhead.
         if report.per_run.iter().any(|r| r.queries_executed > 0) {
             out.push(CsvFile {
                 name: format!("{fam}_throughput_query_tight_results_rust.csv"),
@@ -160,20 +130,9 @@ pub fn render(
     out
 }
 
-/// Legacy octo CSV: one combined file, header
-/// `sketch_type,implementation,num_workers,run,total_items,total_nanoseconds,throughput_items_per_sec`.
-/// Used by `throughput/scripts/plot_octo_throughput.py`. We emit
-/// `implementation = "octo"` (the legacy label for the parallel path)
-/// regardless of the impl name; the `sketch_type` column carries the family.
-///
-/// `total_nanoseconds` is the **build** wall — insert plus
-/// `prepare` — not the insert wall the other legacy CSVs use.
-/// The parallel rows buffer their partition in `update` and run the whole
-/// parallel section in finalize (see `wrappers::parallel`), so dividing by
-/// the insert wall alone would publish the cost of a `Vec::push` under a
-/// header that legacy octo filled with the parallel insert time, and the
-/// resulting plot would show these rows beating every sketch by two orders
-/// of magnitude. The column shape is unchanged; only the row is correct now.
+/// The octo CSV: one combined file, `implementation = "octo"` with `sketch_type`
+/// carrying the family. `total_nanoseconds` is the **build** wall, not the insert
+/// wall — these rows do their real work in finalize.
 fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
     let sketch_type = legacy_sketch_type(family);
     let rows = report
@@ -282,28 +241,13 @@ struct ParamCols {
 }
 
 impl ParamCols {
-    /// Build one row's worth of parameter values, **always** exactly as many
-    /// as `legacy_param_columns(family)` names.
-    ///
-    /// That guarantee is the whole job. Plot scripts read these files with
-    /// `csv.DictReader`, which pairs fields with header names positionally
-    /// and does not notice a short row — it just shifts every later column
-    /// left and reads the last one as `None`. A `kll/polars` row written
-    /// without `--config` used to do exactly that: no value for `k`, so
-    /// `total_items` landed under `k`, and the plot read
-    /// `finalize_nanoseconds` as `throughput_items_per_sec`.
-    ///
-    /// So the branches below produce whatever they can, and a final pass
-    /// reconciles the result against the header, filling anything missing
-    /// with the sentinel `0` — "no sketch tuning involved here". Downstream
-    /// grouping is by `implementation`, so the sentinel is not read for the
-    /// baselines that need it.
+    /// Build one row's parameter values, **always** exactly as many as
+    /// `legacy_param_columns(family)` names — a short row silently shifts every
+    /// later column. A final pass reconciles against the header, filling with `0`.
     fn from(family: &str, params: Option<&ParamSet>) -> Self {
         let mut found: Vec<(&'static str, String)> = Vec::new();
         // Values come from the params object generically; only the two places
-        // where the legacy CSV header is *not* a list of parameters need
-        // naming. The rest used to be one match arm per family, kept in step
-        // with `param_header` by hand.
+        // where the header is *not* a list of parameters need naming.
         if let Some(params) = params {
             match family {
                 // `registers` is derived from `lg_k`, not a parameter.
@@ -325,11 +269,8 @@ impl ParamCols {
                 }
                 _ => {
                     // Iterate the **header**, looking each column's value up —
-                    // not the params object, which is ordered alphabetically.
-                    // Driving the loop from `fields()` emitted cms as `2048,5`
-                    // under a header reading `rows,cols`: a silent
-                    // column/value swap in a file that plot scripts read
-                    // positionally.
+                    // not the params object, which is alphabetical. Driving from
+                    // `fields()` swaps cms to `2048,5` under `rows,cols`.
                     let fields = params.fields();
                     for col in legacy_param_columns(family) {
                         if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
@@ -415,13 +356,9 @@ fn leading_label(family: &str) -> &'static str {
     }
 }
 
-/// Render a value the way the pre-generic writer did.
-///
-/// `--raw-csv` **appends**, so a formatting change splits one series in two:
-/// `alpha = 0.01` written as `0.010000` by earlier runs and `0.01` by later
-/// ones makes `groupby(row["alpha"])` produce two points with half the samples
-/// each. Integers were always rendered plainly; floats always with six
-/// decimals, and they still are.
+/// Render a value in the pinned CSV formatting: integers plainly, floats with
+/// six decimals. `--raw-csv` **appends**, so changing this splits one series in
+/// two — `0.01` and `0.010000` group as different keys.
 fn legacy_float_format(v: &str) -> String {
     match v.parse::<f64>() {
         Ok(f) if v.contains('.') || v.contains('e') || v.contains('E') => format!("{f:.6}"),
@@ -429,14 +366,9 @@ fn legacy_float_format(v: &str) -> String {
     }
 }
 
-/// The legacy CSV header, verbatim.
-///
-/// This stays a per-family table on purpose: it encodes an **external file
-/// format** that plot scripts read with `csv.DictReader`, not an abstraction
-/// over sketch families. Deriving it from the params object would silently
-/// change the header — `registers` is derived rather than a parameter, and
-/// nitro's `rows`/`cols` are sentinels — and break those readers. The values
-/// beneath it are produced generically; only the column names are pinned.
+/// The CSV header, verbatim. A per-family table on purpose: it encodes an
+/// **external file format**, not an abstraction over families — `registers` is
+/// derived and nitro's `rows`/`cols` are sentinels, so deriving it would break.
 fn param_header(family: &str) -> &'static str {
     match family {
         "hll" => "lg_k,registers",
@@ -585,12 +517,9 @@ mod param_column_order_tests {
     use super::*;
     use crate::params::{CmsParams, ElasticParams, HllParams, TopkParams, UnivMonParams};
 
-    /// Values must line up with the header, which is *not* alphabetical.
-    ///
-    /// The generic value path once iterated the params object — ordered by
-    /// key — while the header stayed in its legacy order, so cms wrote
-    /// `2048,5` under `rows,cols`. The CSV is read positionally, so nothing
-    /// downstream could have noticed.
+    /// Values must line up with the header, which is *not* alphabetical: driving
+    /// the loop from the key-ordered params object writes cms as `2048,5` under
+    /// `rows,cols`, and a positionally-read CSV cannot notice.
     #[test]
     fn values_follow_the_header_not_the_key_order() {
         let cases: Vec<(&str, ParamSet, Vec<&str>)> = vec![
@@ -648,21 +577,9 @@ mod param_column_order_tests {
         }
     }
 
-    /// Every family, every params object, one value per header column.
-    ///
-    /// The failure this pins is silent by construction. `csv.DictReader`
-    /// zips a row against the header positionally and pads the tail with
-    /// `None`, so a row one field short reads *every* later column shifted
-    /// by one and raises nothing. `kll/polars` run without `--config` did
-    /// this: the polars baselines ignore their config, `k` had no value, and
-    /// the emitted row was `impl,lang,run,<total_items>,<total_ns>,…` under
-    /// a header starting `implementation,language,run,k,total_items,…` — so
-    /// the plot script read `finalize_nanoseconds` as the throughput column
-    /// and charted it.
-    ///
-    /// The parameterless `ParamSet` is the case that mattered: the CLI
-    /// always hands over a params object, so a "no params at all" guard
-    /// never fired for it.
+    /// Every family, every params object, one value per header column. Silent by
+    /// construction: `csv.DictReader` zips positionally and pads the tail, so a
+    /// short row shifts every later column and raises nothing.
     #[test]
     fn every_row_has_one_value_per_header_column() {
         let empty = ParamSet {

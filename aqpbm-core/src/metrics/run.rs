@@ -11,12 +11,9 @@ use crate::metrics::memory::{JemallocAllocated, Rss};
 use crate::metrics::time::{CpuTimeSampler, WallClock};
 use crate::probe::MetricsSink;
 
-/// One row of per-call query telemetry, mirroring the columns the retired
-/// per-family query harnesses emitted: a strictly-monotonic 1-based call
-/// index, the timed estimate call's wall, the sketch's answer (cast to
-/// `f64`), and — for quantile families — the percentile queried plus the
-/// outer repeat number. Populated by the accuracy comparators in
-/// `sketch-bench`; carries no sketch-domain knowledge itself.
+/// One row of per-call query telemetry: a 1-based call index, the timed estimate
+/// call's wall, the answer, and — for quantile families — the percentile and
+/// repeat. Filled by the comparators in `accuracy`, which it knows nothing of.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryCallSample {
     pub call_index: usize,
@@ -25,10 +22,8 @@ pub struct QueryCallSample {
     /// Percentile being queried (0..=100 fraction). NaN for
     /// cardinality / frequency families.
     pub percentile: f64,
-    /// Outer "repeat" index used by KLL / DD legacy harnesses
-    /// (each run sweeps the percentile array `REPEATS_PER_RUN`
-    /// times to thicken the sample). 0 for the families that
-    /// don't repeat.
+    /// Outer "repeat" index — each run sweeps the percentile array
+    /// `REPEATS_PER_RUN` times to thicken the sample. 0 when it does not.
     pub repeat: usize,
 }
 
@@ -42,35 +37,22 @@ pub struct RunMetrics {
     pub wall_time_ns: u64,
     /// Wall time of the insert loop alone — the **ingest** denominator.
     pub insert_wall_time_ns: u64,
-    /// Wall time for `Accumulator::prepare()` — billed
-    /// separately from insert/query so deferred sketch-build cost
-    /// (e.g. polars sort + 101-quantile grid; asap_sketchlib KLL
-    /// CDF build) is visible without inflating either column.
-    /// Zero for sketches whose `prepare` is a no-op.
-    ///
-    /// Kept separate rather than folded into `insert_wall_time_ns` so both
-    /// readings survive: `insert` alone is the ingest rate, `insert +
-    /// finalize` (see [`RunMetrics::build_wall_time_ns`]) is the rate at
-    /// which queryable sketches are produced, and only reporting both makes
-    /// a `*/polars` row comparable with a streaming sketch.
+    /// Wall time for `Accumulator::prepare()`, billed separately so deferred
+    /// build cost shows without inflating insert or query; zero for a no-op.
+    /// `insert` is the ingest rate, `insert + finalize` the queryable rate.
     pub finalize_wall_time_ns: u64,
     pub query_wall_time_ns: u64,
     pub cpu_user_ns: Option<u64>,
     pub cpu_sys_ns: Option<u64>,
     pub rss_peak_kb: Option<u64>,
-    /// Currently-allocated jemalloc bytes (`stats.allocated`), in kB.
-    /// Populated only when the `heap-jemalloc` feature is compiled in AND the
-    /// linking process has jemalloc as its global allocator; `None` otherwise.
-    /// A single sample at finalize time, not a true peak — for that see
-    /// `heap_bytes_peak`.
+    /// Currently-allocated jemalloc bytes (`stats.allocated`), in kB. Needs
+    /// `heap-jemalloc` compiled in AND jemalloc as the process's global
+    /// allocator. One sample at finalize, not a peak — see `heap_bytes_peak`.
     pub heap_allocated_kb: Option<u64>,
     pub memory_bytes: Option<u64>,
-    /// Net bytes allocated to this sketch over its lifetime, as
-    /// measured by the `heap-track` tracking allocator. Steady
-    /// state at the end of the insert phase; complements the
-    /// logical `memory_bytes` (param-derived) with what actually
-    /// hit the heap. `None` unless `heap-track` is compiled in
-    /// AND the bin installs `TrackingAllocator` as its global.
+    /// Net bytes allocated to this sketch over its lifetime, per the
+    /// `heap-track` allocator — steady state at the end of insert, complementing
+    /// the param-derived `memory_bytes`. Needs `heap-track` + the bin's global.
     pub heap_bytes_net: Option<u64>,
     /// High-water mark of the tracker during construction + feed.
     /// Captures transient peaks (resize, intermediate buffers)
@@ -83,11 +65,9 @@ pub struct RunMetrics {
     /// than an opaque JSON blob so `aggregate` can fold every key across
     /// runs without knowing any family's shape — see `accuracy::Comparison`.
     pub accuracy: Option<BTreeMap<String, f64>>,
-    /// Per-call query samples — `Some` only when the frontend
-    /// requested `record_calls` on a comparator that supports
-    /// it. Consumed by `aqpbm-cli/raw_csv` to back the legacy
-    /// `{hll,kll,dd}_throughput_query_results_rust.csv` shape;
-    /// not surfaced in the v2 JSONL record.
+    /// Per-call query samples — `Some` only when the frontend requested
+    /// `record_calls` on a comparator that supports it. Rendered by
+    /// `sketch-bench::legacy_csv`; not surfaced in the JSONL record.
     pub query_calls: Option<Vec<QueryCallSample>>,
 }
 
@@ -115,23 +95,17 @@ impl RunMetrics {
         }
     }
 
-    /// Wall time to turn this run's items into a *queryable* sketch —
-    /// ingest plus deferred build. The denominator of
-    /// `BenchSection::build_throughput_items_per_sec`.
-    ///
-    /// Saturating rather than wrapping: the two are read from separate
-    /// clocks, and a nonsensical sum should pin the rate near zero rather
-    /// than wrap into a spectacular one.
+    /// Wall time to turn this run's items into a *queryable* sketch — the
+    /// denominator of `build_throughput_items_per_sec`. Saturating, so a bad sum
+    /// across the two clocks pins the rate near zero instead of wrapping.
     pub fn build_wall_time_ns(&self) -> u64 {
         self.insert_wall_time_ns
             .saturating_add(self.finalize_wall_time_ns)
     }
 }
 
-/// Concrete sink for offline benchmark runs. Holds each
-/// recorder only when the corresponding mask bit is set — so
-/// `MetricsMask::THROUGHPUT` alone has no heap allocation for
-/// the histogram, etc.
+/// Concrete sink for offline benchmark runs. Holds each recorder only when its
+/// mask bit is set, so `MetricsMask::THROUGHPUT` alone allocates no histogram.
 pub struct FullSink {
     mask: MetricsMask,
     wall: Option<WallClock>,
@@ -216,11 +190,9 @@ impl FullSink {
             queries_executed: self.queries_executed,
             wall_time_ns,
             insert_wall_time_ns,
-            // `FullSink` never sees the finalize call — it happens between
-            // `begin_insert_phase` and `end_insert_phase`, outside any hook
-            // this sink owns. `run_once` times it around the call and
-            // overwrites this field; leaving the timer out of `FullSink`
-            // keeps the sink's job "instrument the per-update boundary".
+            // `FullSink` never sees the finalize call — it lands outside any
+            // hook this sink owns. `run_once` times it and overwrites this
+            // field, keeping the sink's job to the per-update boundary.
             finalize_wall_time_ns: 0,
             query_wall_time_ns,
             cpu_user_ns,

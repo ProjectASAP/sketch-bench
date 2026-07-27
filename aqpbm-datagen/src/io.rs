@@ -1,11 +1,7 @@
-//! On-disk output for generated workloads: a raw little-endian value
-//! stream (`.bin`) plus a JSON provenance sidecar.
-//!
-//! The `.bin` layout is deliberately header-less so `i64` output stays
-//! byte-compatible with the pre-existing `input/benchmark_data_*.bin`
-//! files and both readers (`aqpbm_core::workload::I64Workload` and the
-//! C++ `cpp-bench` loader). All provenance — dtype included — lives in
-//! the sidecar, which those readers ignore.
+//! On-disk output for generated workloads: a raw little-endian value stream
+//! (`.bin`) plus a JSON provenance sidecar. The `.bin` layout is deliberately
+//! header-less, so all provenance — dtype included — lives in the sidecar,
+//! which the readers ignore.
 
 use std::path::{Path, PathBuf};
 
@@ -13,20 +9,17 @@ use crate::error::SketchError;
 
 use super::{FixedWidth, GenMeta};
 
-/// Sidecar path for a `.bin` output: `foo.bin` -> `foo.bin.meta.json`.
-///
-/// The full filename (extension included) is preserved so the sidecar
-/// is unambiguous even for non-`.bin` output names.
+/// Sidecar path for a `.bin` output: `foo.bin` -> `foo.bin.meta.json`. The full
+/// filename is preserved so the sidecar is unambiguous for any output name.
 pub fn sidecar_path(bin_path: &Path) -> PathBuf {
     let mut name = bin_path.as_os_str().to_os_string();
     name.push(".meta.json");
     PathBuf::from(name)
 }
 
-/// Write already-materialised values as a raw little-endian stream
-/// (no header). Streaming generation should go through
-/// [`super::BinSink`] instead — this is the one-shot convenience for
-/// callers that already hold the whole column.
+/// Write already-materialised values as a raw little-endian stream, no header.
+/// The one-shot convenience for callers holding the whole column; streaming
+/// generation goes through [`super::BinSink`].
 pub fn write_bin<T: FixedWidth>(path: &Path, values: &[T]) -> Result<(), SketchError> {
     use super::Sink;
     let mut sink = super::BinSink::<T>::create(path)?;

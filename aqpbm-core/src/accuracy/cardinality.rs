@@ -15,20 +15,14 @@ use crate::metrics::QueryCallSample;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CardinalityGT {
     /// When set, also stash a `Vec<QueryCallSample>` of independently-timed
-    /// `estimate_distinct()` calls so the legacy
-    /// `hll_throughput_query_results_rust.csv` shape (one row per call) can be
-    /// emitted. Off by default — production accuracy runs pay nothing.
+    /// `estimate_distinct()` calls, for the one-row-per-call CSV shape. Off by
+    /// default — production accuracy runs pay nothing.
     pub record_calls: bool,
 }
 
-/// Number of repeated `estimate_distinct()` calls used to time
-/// steady-state cardinality query throughput. The cheap estimators
-/// answer from a cached field in ~1 ns, well inside `Instant::now()`'s
-/// 20-50 ns syscall/vDSO noise floor — timing one call would report
-/// nothing but timer jitter and cache state, swinging by 2-3× run to
-/// run. Looping and dividing pulls the per-query cost out of the noise
-/// and makes this row directly comparable to KLL (101 quantile queries)
-/// / Frequency (one probe per heavy hitter).
+/// Repeated `estimate_distinct()` calls used to time steady-state query
+/// throughput: cheap estimators answer in ~1 ns, inside `Instant::now()`'s
+/// 20-50 ns noise floor, so one call would report only timer jitter.
 const QUERY_TIMING_REPEATS: usize = 4096;
 
 /// How many independently-timed `estimate_distinct()` calls to record
@@ -76,10 +70,8 @@ where
             None
         };
 
-        // The null estimator for cardinality answers 0, giving
-        // `relative_error = 1.0` exactly — the same constant the frequency
-        // comparator documents. Any implementation scoring above 1.0 is
-        // worse than doing no work.
+        // The null estimator answers 0, giving `relative_error = 1.0` exactly.
+        // Any implementation scoring above 1.0 is worse than doing no work.
         let metrics = BTreeMap::from([
             ("truth".to_string(), truth),
             ("estimate".to_string(), est),

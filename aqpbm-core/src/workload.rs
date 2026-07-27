@@ -1,17 +1,8 @@
-//! Synthetic workload generators + adapters for file-backed
-//! test data.
-//!
+//! Synthetic workload generators + adapters for file-backed test data.
 //! See `docs/DESIGN.md` §4.3.
 //!
-//! ## One type per item type, not one per source
-//!
-//! Every `i64` workload — generated or file-backed — is the same thing at
-//! runtime: an owned `Vec<i64>` plus the [`WorkloadDescription`] saying where it came
-//! from. Modelling each *source* as its own `impl Workload` forced every
-//! generic consumer to fan out over the source set — `aqpbm-cli` carried a
-//! 3-variant `WorkloadAny` plus two derived enums, with every dispatch macro
-//! repeating its body per variant. Provenance is data, not a type parameter,
-//! so it lives in `description` and the source only picks a constructor.
+//! One type per *item* type, not per source: provenance is data, not a type
+//! parameter, so it lives in `description` and the source picks a constructor.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -33,25 +24,17 @@ pub struct WorkloadDescription {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// Full `datagen` spec, when the flat fields above cannot express
-    /// the shape (categorical weights, timestamp gap distributions, …).
-    /// Absent for `uniform` / `zipf` / `file`, whose flat fields already
-    /// round-trip — so records from those paths are byte-identical to
-    /// what shipped before the generator was wired into `bench`.
-    /// See `Shape::to_workload_description`.
+    /// Full `datagen` spec, when the flat fields above cannot express the shape
+    /// (categorical weights, timestamp gap distributions, …). Absent for
+    /// `uniform` / `zipf` / `file`, whose flat fields already round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<serde_json::Value>,
 }
 
 impl WorkloadDescription {
-    /// Projection of a generator [`Shape`] into the report-facing descriptor,
-    /// so JSONL records stay well-formed regardless of shape. Shapes the flat
-    /// fields cannot express carry their full spec in `spec`.
-    ///
-    /// Lives here rather than on `Shape` because it is a question about *this*
-    /// type: which of the descriptor's fields can hold a given shape. On
-    /// `Shape` it made the generator reference the report schema — backwards,
-    /// and the single thing that kept `aqpbm-datagen` from standing on its own.
+    /// Projection of a generator [`Shape`] into the report-facing descriptor.
+    /// Lives here, not on `Shape`, because it asks which of *this* type's
+    /// fields can hold a shape — on `Shape` the generator would cite the schema.
     pub fn from_spec(spec: &GenSpec) -> Self {
         let (shape, size, seed) = (&spec.shape, spec.size, spec.seed);
         let (cardinality, zipf_s) = match shape {
@@ -84,13 +67,8 @@ impl WorkloadDescription {
 }
 
 /// Whether the flat `cardinality` / `zipf_s` fields fully describe `shape`.
-///
-/// True only for the two shapes that predate the generator (`keys` drawn
-/// uniform or zipf) — those round-trip through the legacy fields exactly, so
-/// their records stay byte-identical to what `--workload uniform|zipf` has
-/// always emitted. Everything else is lossy there and needs the full spec
-/// carried alongside, which is the one condition under which
-/// [`WorkloadDescription::spec`] is populated.
+/// True only for `keys` drawn uniform or zipf; everything else is lossy there
+/// and is the one condition under which [`WorkloadDescription::spec`] is set.
 fn fits_legacy_description(spec: &GenSpec) -> bool {
     // `string` opts change the keys without changing the shape, so a spec
     // carrying them cannot round-trip through the flat fields either: two
@@ -113,37 +91,16 @@ pub trait Workload: Sized {
     fn description(&self) -> WorkloadDescription;
     fn items(&self) -> &[Self::Item];
 
-    /// An **independent draw** from the same distribution, for a repetition
-    /// that must not reuse the previous one.
-    ///
-    /// Accuracy is a deterministic function of (data, parameters): re-running
-    /// a sketch over the same items with the same seed produces the identical
-    /// error, so N repetitions over one fixed workload yield N identical
-    /// numbers and any spread reported from them is fabricated. Varying the
-    /// *data* is what the literature does (Harmouch: 10 independent datasets
-    /// per point; Heule: 5000; Ertl and DataSketches: fresh values per trial).
-    ///
-    /// Takes the **1-based repetition index**, not a seed. The seed has to be
-    /// derived from the workload's own generation seed, because deriving it
-    /// from anything else can silently reproduce the original draw: an
-    /// earlier version mixed in `BenchConfig::seed`, which is unrelated to a
-    /// `--spec` file's seed, so `spec.seed = 43` with `--seed 42` made
-    /// repetition 1 bit-identical to repetition 0 and collapsed the reported
-    /// stddev to exactly 0 — the defect this method exists to prevent,
-    /// reintroduced silently. Indices start at 1 so a redraw can never
-    /// collide with the base draw.
-    ///
-    /// `None` means this workload has no distribution to redraw from — a file
-    /// on disk is one fixed sample. Callers must then run **one** repetition
-    /// and report `n = 1`, not N copies of it.
+    /// An **independent draw** from the same distribution — error is
+    /// deterministic given (data, parameters), so repeats over one fixed workload
+    /// fabricate spread. 1-based index; seed derives from the workload's own.
     fn resample(&self, _repetition: usize) -> Option<Self> {
         None
     }
 
     /// Whether [`Self::resample`] can produce anything, without paying for a
-    /// generation to find out. The runner needs this *before* it decides how
-    /// many repetitions to run, and probing by calling `resample` would
-    /// generate a full workload only to discard it.
+    /// generation to find out — the runner needs this *before* choosing how
+    /// many repetitions to run.
     fn can_resample(&self) -> bool {
         false
     }
@@ -151,17 +108,9 @@ pub trait Workload: Sized {
 
 // ---------- numeric workloads ----------
 
-// The `NumericItem` trait that used to live here is gone. Its whole job was
-// `from_column` — unwrapping the generator's run-time-tagged `Column` into a
-// concrete `Vec<T>` and refusing the other variants. The generator is generic
-// now, so it hands back a `Vec<T>` directly and there is nothing to unwrap:
-// `aqpbm_datagen::GenValue` already carries the `DTYPE` constant this needed,
-// and the mismatch check moved into `generate_into`, before any data exists.
-
-/// A numeric workload: the materialised item stream plus its
-/// provenance. Construct it from a generator (`uniform` / `zipf`)
-/// or from a file (`load`); the source shows up in `description`, not in
-/// the type.
+/// A numeric workload: the materialised item stream plus its provenance.
+/// Construct from a generator (`uniform` / `zipf`) or a file (`load`); the
+/// source shows up in `description`, not in the type.
 #[derive(Debug, Clone)]
 pub struct NumericWorkload<T> {
     items: Vec<T>,
@@ -182,14 +131,12 @@ pub type F64Workload = NumericWorkload<f64>;
 
 impl<T: GenValue> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
-    /// `description.size` is forced to match `items.len()` — a description that
-    /// disagrees with the data it describes would silently corrupt
-    /// every throughput denominator downstream.
+    /// `description.size` is forced to `items.len()`: a description disagreeing
+    /// with its data would corrupt every throughput denominator downstream.
     pub fn new(items: Vec<T>, mut description: WorkloadDescription) -> Self {
-        // `load` cannot know the count until it has read the file, so it
-        // passes 0 as a placeholder. Any other value is the caller *asserting*
-        // what was produced — a generator returning short would otherwise be
-        // relabelled into a smaller workload with no signal at all.
+        // `load` passes 0 as a placeholder, not knowing the count until it has
+        // read the file. Any other value asserts what was produced — otherwise a
+        // short generator is silently relabelled into a smaller workload.
         debug_assert!(
             description.size == 0 || description.size == items.len(),
             "workload description claims {} items but carries {}",
@@ -204,10 +151,9 @@ impl<T: GenValue> NumericWorkload<T> {
         }
     }
 
-    /// Generate in-process from a [`GenSpec`] — the one generator in
-    /// the tool. `sketchlib workload generate` runs the same spec
-    /// through a file sink; this runs it through a memory sink, so a
-    /// shape reachable on disk is reachable here by construction.
+    /// Generate in-process from a [`GenSpec`] — the one generator in the tool.
+    /// `workload generate` runs the same spec through a file sink and this
+    /// through a memory sink, so on-disk shapes are reachable here.
     pub fn generate(spec: &GenSpec) -> Result<Self, SketchError> {
         let description = WorkloadDescription::from_spec(spec);
         let mut wk = Self::new(spec.generate::<T>()?, description);
@@ -245,18 +191,9 @@ impl<T: GenValue> NumericWorkload<T> {
 }
 
 impl NumericWorkload<i64> {
-    /// Load from a file, auto-detecting the format from its
-    /// extension:
-    ///
-    /// * `.bin` (or anything else) — little-endian `int64` stream,
-    ///   matching the pre-existing `input/benchmark_data_*.bin`
-    ///   layout.
-    /// * `.pcap` — libpcap capture. For each IPv4 packet the source
-    ///   address is read as a big-endian `u32` and sign-extended into
-    ///   an `i64`. Non-IPv4 packets are skipped. Used by the
-    ///   frequency-family accuracy harness against network traces.
-    /// * `.csv` — CSV with a header row; the first column on every
-    ///   subsequent row is parsed as `i64`. Empty lines skipped.
+    /// Load from a file, format from the extension: `.bin` (and anything else)
+    /// is a little-endian `int64` stream; `.pcap` takes each IPv4 source address
+    /// as big-endian `u32`; `.csv` parses column 0 below a header row.
     pub fn load(path: &Path) -> Result<Self, SketchError> {
         let items = match path
             .extension()
@@ -307,12 +244,9 @@ impl<T: GenValue> Workload for NumericWorkload<T> {
         self.spec.is_some()
     }
 
-    /// Regenerate at `spec.seed + repetition`. The offset must come from the
-    /// **spec's own** seed — see [`Workload::resample`] for what happens when
-    /// it doesn't. A spec that generated once cannot fail on a different seed
-    /// (every validation in `Shape::build` is seed-independent), so `None`
-    /// here would be a bug degrading to "cannot vary", which the caller
-    /// already handles honestly.
+    /// Regenerate at `spec.seed + repetition` — the offset must come from the
+    /// **spec's own** seed. Every validation in `Shape::build` is
+    /// seed-independent, so a spec that generated once cannot fail here.
     fn resample(&self, repetition: usize) -> Option<Self> {
         debug_assert!(repetition >= 1, "repetition 0 is the base draw");
         let spec = self.spec.as_ref()?;
@@ -322,21 +256,9 @@ impl<T: GenValue> Workload for NumericWorkload<T> {
     }
 }
 
-/// Reject a `.bin` whose sidecar declares a dtype this loader cannot read.
-///
-/// The `.bin` stream is header-less, so it cannot describe itself: a `u64` or
-/// `f64` file is byte-indistinguishable from an `i64` one and [`load_bin`]
-/// would happily reinterpret every 8-byte word. For `f64` that is
-/// catastrophic — the IEEE-754 bit pattern of `0.093` reads back as
-/// `4591388162153532928` — behind a well-formed, plausible-looking report.
-///
-/// Absence of usable provenance means "assume i64", the historical contract,
-/// so a missing sidecar (every legacy `input/benchmark_data_*.bin`) loads
-/// unchanged and an unreadable one (foreign file, or a future schema this
-/// binary predates) degrades to the same path rather than failing a file that
-/// used to load. Only a sidecar we can actually parse may veto. `describe`,
-/// where the user asked about the sidecar specifically, keeps the strict
-/// [`aqpbm_datagen::io::read_meta`] error.
+/// Reject a `.bin` whose sidecar declares an unreadable dtype. The stream is
+/// header-less, so an `f64` file is byte-indistinguishable from `i64` — `0.093`
+/// reads back as `4591388162153532928`. No sidecar means "assume i64".
 fn reject_non_i64_bin(path: &Path) -> Result<(), SketchError> {
     let Ok(Some(meta)) = aqpbm_datagen::io::read_meta(path) else {
         return Ok(());
@@ -464,31 +386,15 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
 
 // ---------- string / bytes workloads ----------
 
-/// A `String` workload.
-///
-/// Two origins:
-///
-/// * **Generated** — real keys: length varies, the alphabet is configurable,
-///   and the rendering is injective over `cardinality`.
-/// * **Derived** — [`Self::from_i64`], decimal-formatting an `i64` workload.
-///   1-7 characters over 10 symbols, length dictated by the key's magnitude.
-///
-/// They measure different
-/// things, and a groupby that pooled them would average a real string
-/// workload with a fake one.
+/// A `String` workload, either **generated** (varying length, configurable
+/// alphabet) or **derived** via [`Self::from_i64`] (1-7 decimal digits). They
+/// measure different things, so pooling them averages a real one with a fake.
 pub type StringWorkload = NumericWorkload<String>;
 
 impl NumericWorkload<String> {
-    /// Decimal-format an `i64` workload.
-    ///
-    /// This is what the `elastic` / `univmon` rows have always consumed, and
-    /// it stays so the default matrix does not shrink when a real string
-    /// workload becomes available. It is not a string workload in any
-    /// meaningful sense — hash cost and length distribution are what such a
-    /// workload exists to vary, and here both follow from the integer.
-    ///
-    /// No `spec`, so [`Workload::resample`] returns `None` exactly as before:
-    /// a derived workload has no distribution of its own to redraw from.
+    /// Decimal-format an `i64` workload. Not a string workload in any meaningful
+    /// sense — hash cost and length are what one exists to vary, and here both
+    /// follow from the integer. No `spec`, so `resample` yields `None`.
     pub fn from_i64(inner: &I64Workload) -> Self {
         Self {
             items: inner.items().iter().map(|v| v.to_string()).collect(),
@@ -498,11 +404,8 @@ impl NumericWorkload<String> {
     }
 }
 
-/// Same, but `Vec<u8>` for impls that want `&[u8]`.
-///
-/// Not a [`NumericWorkload`]: `Vec<u8>` is not a `GenValue`, and making it one
-/// would mean deciding what a byte-string item type draws — which is the string
-/// question again with no new answer. These rows take the bytes of whichever
+/// Same, but `Vec<u8>` for impls that want `&[u8]`. Not a [`NumericWorkload`]:
+/// `Vec<u8>` is not a `GenValue`, so these rows take the bytes of whichever
 /// string workload is in play.
 #[derive(Debug, Clone)]
 pub struct BytesWorkload {
@@ -777,10 +680,8 @@ mod resample_tests {
     }
 
     /// The property the accuracy pass depends on: no repetition may reproduce
-    /// the base draw. A previous version derived the redraw seed from
-    /// `BenchConfig::seed`, unrelated to the spec's own seed, so a spec seed
-    /// one greater than the CLI seed made repetition 1 identical to
-    /// repetition 0 — reported as `accuracy_runs: 2, stddev: 0.0`.
+    /// the base draw. Deriving the redraw seed from anything but the spec's own
+    /// seed can collide, and a collision reports as `stddev: 0.0`.
     #[test]
     fn no_repetition_reproduces_the_base_draw() {
         for base_seed in [0u64, 1, 42, 43, u64::MAX] {
@@ -825,14 +726,9 @@ mod sink_tests {
     use super::*;
     use aqpbm_datagen::{BinSink, Distribution, GenSpec, Shape};
 
-    /// `workload generate` (file sink) and `bench --spec` (memory sink) must
-    /// be the same workload, or a run cannot be reproduced from the file it
-    /// was supposedly generated into.
-    ///
-    /// Lives here rather than in `aqpbm-datagen` because reading a `.bin`
-    /// back is `I64Workload::load`. The generator crate can write the format
-    /// but not read it, so it cannot check its own round trip — worth fixing,
-    /// but not by leaving the assertion unmade.
+    /// `workload generate` (file sink) and `bench --spec` (memory sink) must be
+    /// the same workload, or a run cannot be reproduced from its own file. Lives
+    /// here because reading a `.bin` back is `I64Workload::load`.
     #[test]
     fn file_and_memory_sinks_agree() {
         let s = GenSpec {

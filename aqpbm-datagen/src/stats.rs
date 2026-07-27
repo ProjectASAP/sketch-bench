@@ -2,14 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A human-facing summary of a generated column, embedded in the
-/// `.meta.json` sidecar and printed by `workload describe`.
-///
-/// `min`/`max`/`first`/`last` are stored as `f64` for a uniform JSON
-/// shape across dtypes. For very large integer values (e.g.
-/// epoch-nanosecond timestamps beyond `2^53`) these are approximate —
-/// they are a summary for humans, never the data itself (the `.bin`
-/// stream holds the exact values).
+/// A human-facing summary of a generated column, in the `.meta.json` sidecar and
+/// printed by `workload describe`. `min`/`max`/`first`/`last` are `f64`, so
+/// beyond `2^53` they are approximate — the `.bin` stream holds exact values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BasicStats {
     pub count: usize,
@@ -23,13 +18,9 @@ pub struct BasicStats {
     pub last: Option<f64>,
 }
 
-/// Running summary over a chunked value stream.
-///
-/// The generator can emit a column in pieces (see [`crate::sink::Sink`]),
-/// so the sidecar's summary has to be accumulated rather than computed
-/// from a whole slice. Every field is
-/// order-independent except `first`/`last`, which is why chunks must be
-/// pushed in emission order.
+/// Running summary over a chunked value stream: the generator emits a column in
+/// pieces, so the sidecar's summary accumulates rather than reading a whole
+/// slice. Every field is order-independent except `first`/`last`.
 #[derive(Debug, Clone)]
 pub struct StatsAcc {
     count: usize,
@@ -54,13 +45,9 @@ impl StatsAcc {
         }
     }
 
-    /// Fold one chunk in. Must be called in emission order.
-    ///
-    /// `to_f64` returns `None` for value types with no numeric summary — a
-    /// string column reports only its `count`, because min/max/first/last are
-    /// numbers and a string's length is not its value. `count` therefore
-    /// tracks every value while the numeric fields track only those that
-    /// have one.
+    /// Fold one chunk in, in emission order. `to_f64` returns `None` for types
+    /// with no numeric summary — a string reports only `count`, since a
+    /// string's length is not its value. `count` tracks every value regardless.
     pub(crate) fn push_slice<T, F: Fn(&T) -> Option<f64>>(&mut self, values: &[T], to_f64: F) {
         if values.is_empty() {
             return;

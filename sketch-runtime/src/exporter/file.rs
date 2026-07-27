@@ -1,10 +1,7 @@
-//! JSONL → append-only file exporter.
-//!
-//! Opens a single `File` at construction time; serialises writes
-//! behind a `Mutex`. No rotation, no buffering beyond the OS's —
-//! each `export` is a write + flush, trading throughput for
-//! crash-resilience. Rotation / buffered mode belong in a later
-//! iteration when a production use-case demands them.
+//! JSONL → append-only file exporter. Opens one `File` at construction and
+//! serialises writes behind a `Mutex`. No rotation and no buffering beyond the
+//! OS's: each `export` is a write + flush, trading throughput for
+//! crash-resilience.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};

@@ -1,23 +1,15 @@
-//! `FanOutExporter` — route every record to two `Exporter`s
-//! simultaneously. The canonical paper setup: one branch pushes
-//! to the controller for real-time decisions (`PushExporter`);
-//! the other writes the same records to a local file
-//! (`FileExporter`) for offline paper-artifact reproducibility.
-//!
-//! Composition rather than a variadic list: two-wide covers the
-//! paper story, and nesting (`FanOutExporter<A, FanOutExporter<B, C>>`)
-//! is a pass-through one-liner if more branches are ever needed.
+//! `FanOutExporter` — route every record to two `Exporter`s at once: one branch
+//! pushes to the controller for real-time decisions, the other writes the same
+//! records to a local file for offline reproducibility. Composition rather than
+//! a variadic list — nesting covers more branches in a one-liner.
 
 use aqpbm_core::report::Record;
 
 use super::Exporter;
 
-/// Send each record to both `a` and `b`. Exporters run
-/// serially on the caller's thread; `PushExporter` is
-/// non-blocking (fire-and-forget via bounded channel), so the
-/// only real work done on this path is `FileExporter`'s
-/// `write + flush`. A slow branch cannot block the other —
-/// each `Exporter::export` is independent.
+/// Send each record to both `a` and `b`, serially on the caller's thread. The
+/// push branch is fire-and-forget via a bounded channel, so the only real work
+/// here is the file branch's `write + flush`.
 pub struct FanOutExporter<A: Exporter, B: Exporter> {
     pub a: A,
     pub b: B,

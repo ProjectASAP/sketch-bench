@@ -1,18 +1,8 @@
-//! The distribution axis.
-//!
-//! A [`Distribution`] says *how* values are spread; it says nothing
-//! about what they mean. The structure that consumes it (keys /
-//! categorical / monotonic — see [`super::shape::Shape`]) decides that,
-//! and picks the realization engine its domain can afford:
-//!
-//! * a large key space samples directly (no per-value table),
-//! * a small finite domain resolves to an explicit weight table,
-//! * a monotonic series samples non-negative integer gaps.
-//!
-//! Because the engine is the *structure's* concern, each distribution
-//! (uniform, zipf, …) is declared exactly once here instead of once per
-//! structure — which is what removes the old `Shape::Zipf` /
-//! `WeightSpec::Zipf` / `GapDist` duplication.
+//! The distribution axis. A [`Distribution`] says *how* values are spread, not
+//! what they mean; the structure that consumes it ([`super::shape::Shape`])
+//! decides that and picks the realization its domain affords — direct sampling,
+//! an explicit weight table, or integer gaps. Because the engine is the
+//! structure's concern, each distribution is declared exactly once, here.
 
 use rand_distr::{Distribution as _, Exp, Geometric, Poisson, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;

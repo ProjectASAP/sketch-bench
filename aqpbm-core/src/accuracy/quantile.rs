@@ -1,27 +1,8 @@
-//! Quantile-family ground truth comparators.
-//!
-//! Two metrics, one per sketch family:
-//!
-//! - [`RankErrorGT`] — KLL. Reports `mean_rank_err` /
-//!   `max_rank_err`: how far the rank of the sketch's returned
-//!   value diverges from the requested fractional rank, in
-//!   units of `n` (the stream length). Range-based: when ties
-//!   make the returned value occupy a contiguous rank interval,
-//!   error is 0 if the target falls inside the interval, else
-//!   distance to the nearest edge. This matches the standard
-//!   KLL paper bound and gives the exact baseline ~0 error
-//!   under heavy-tied (Zipf-style) inputs.
-//!
-//! - [`RelativeErrorGT`] — DDSketch. Reports
-//!   `mean_relative_err` / `max_relative_err`: `|v_sketch -
-//!   v_truth| / |v_truth|`, where `v_truth` is the **Type-7
-//!   linear-interpolation** quantile (NumPy / R / Prometheus
-//!   default), computed here by [`type7_quantile`]. This matches
-//!   DDSketch's relative-error guarantee.
-//!
-//! Picking the metric per family rather than reporting one
-//! universal number reflects how each sketch's correctness
-//! bound is actually defined in its paper.
+//! Quantile-family ground truth comparators, one metric per family, because
+//! each sketch's correctness bound is defined differently in its paper.
+//! [`RankErrorGT`] (KLL) reports rank error in units of `n`, range-based over
+//! tie intervals; [`RelativeErrorGT`] (DDSketch) reports `|v̂ − v| / |v|`
+//! against the Type-7 linear-interpolation quantile ([`type7_quantile`]).
 
 use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
@@ -31,16 +12,14 @@ use super::statistic::QuantileOps;
 use super::{Comparison, GroundTruth};
 use crate::metrics::QueryCallSample;
 
-/// Number of times the 101-percentile sweep is repeated when
-/// `record_calls` is on. Matches the legacy KLL / DD query
-/// binary's `REPEATS_PER_RUN = 10`.
+/// Number of times the 101-percentile sweep is repeated when `record_calls`
+/// is on, matching the KLL / DD query binaries' `REPEATS_PER_RUN = 10`.
 const RAW_REPEATS_PER_RUN: usize = 10;
 const NUM_PERCENTILES: usize = 101;
 
-/// Lossy-cast to f64. Impl for common numeric item types used
-/// by quantile sketches. Separate from `Into<f64>` because the
-/// standard lib refuses the `i64 -> f64` impl on precision
-/// grounds, but for rank-error analysis the `as` cast is fine.
+/// Lossy-cast to f64, for the numeric item types quantile sketches take.
+/// Separate from `Into<f64>` because std refuses `i64 -> f64` on precision
+/// grounds, which rank-error analysis does not care about.
 pub trait ToF64 {
     fn to_f64(self) -> f64;
 }
@@ -76,13 +55,9 @@ impl ToF64 for u32 {
     }
 }
 
-/// A value an ordered (quantile) sketch can ingest.
-///
-/// The extra requirement over [`ToF64`] is a **total** order. `f64` has only a
-/// partial one, so sorting a buffer of them through `partial_cmp().unwrap()`
-/// panics the moment a NaN reaches it — and a benchmark that dies on one bad
-/// input value is worse than one that orders it consistently. `f64::total_cmp`
-/// is the standard-library answer; for integers it is just `Ord::cmp`.
+/// A value an ordered (quantile) sketch can ingest. Adds a **total** order
+/// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
+/// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
 pub trait QuantileValue: ToF64 + Copy {
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
 }
@@ -151,10 +126,8 @@ where
 
         for (i, est) in estimates.iter().enumerate() {
             let q = i as f64 / 100.0;
-            // The returned value occupies the contiguous rank interval
-            // `[lower, upper]`. If `q*n` falls inside it the answer is
-            // rank-correct (error 0); otherwise the error is the distance
-            // to the nearest edge.
+            // The returned value occupies the rank interval `[lower, upper]`:
+            // error 0 if `q*n` falls inside, else distance to the near edge.
             let lower = lower_bound(&sorted, *est);
             let upper = upper_bound(&sorted, *est);
             let target = q * nf;
@@ -301,11 +274,8 @@ fn upper_bound(sorted: &[f64], x: f64) -> usize {
 }
 
 /// Independently-time each `estimate_quantile` call across
-/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` to reproduce the legacy
-/// `{kll,dd}_throughput_query_results_rust.csv` per-call shape. The sweep is
-/// by `p ∈ 0..NUM_PERCENTILES`, so the recorded `percentile` field is
-/// `p as f64 / 100.0` — the legacy harness's integer-index → fraction
-/// convention.
+/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` for the per-call CSV shape. The
+/// sweep is by `p`, so the recorded `percentile` is `p as f64 / 100.0`.
 fn capture_quantile_calls<S>(sketch: &S) -> Vec<QueryCallSample>
 where
     S: QuantileOps,

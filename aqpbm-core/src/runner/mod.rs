@@ -10,11 +10,9 @@ pub mod config;
 
 pub use config::BenchConfig;
 
-// The CPU warm-up and the single timed insert loop are generic over `Accumulator`
-// and carry no sketch-domain knowledge. `insert_loop` stays
-// `#[inline(always)]`, so thin LTO folds the wrapper's `update` into it across
-// the crate boundary exactly as before — the fold never depended on
-// co-location. See `crate::hot_loop`.
+// Warm-up and the timed insert loop are generic over `Accumulator` and carry no
+// sketch-domain knowledge. `insert_loop` stays `#[inline(always)]`, so thin LTO
+// folds the wrapper's `update` in across the crate boundary. See `hot_loop`.
 use crate::accumulator::Accumulator;
 use crate::accuracy::{Comparison, GroundTruth};
 use crate::aggregation::aggregate;
@@ -28,10 +26,8 @@ use crate::metrics::{
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
 
-/// Drives `config.runs + config.warmup_runs` iterations of a
-/// sketch against a fixed workload, feeding each iteration's
-/// `Probe<S, FullSink>` output into per-run `RunMetrics`
-/// records.
+/// Drives `config.runs + config.warmup_runs` iterations against a fixed
+/// workload, feeding each `Probe<S, FullSink>` into per-run `RunMetrics`.
 pub struct BenchRunner<'a, W: Workload> {
     config: BenchConfig,
     workload: &'a W,
@@ -54,25 +50,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    /// The **timed** passes — throughput, latency, and the merge fold, plus
-    /// the CPU/MEMORY bits that ride along with each. Accuracy is skipped
-    /// here and runs in [`run_accuracy`](Self::run_accuracy): it needs an
-    /// ground-truth calculator, and keeping one off this path is what lets the wrapper's
-    /// `update` inline into the hot loop unencumbered.
-    ///
-    /// Each primary bit gets its **own** `BenchReport` over a fresh sketch
-    /// population — see [`MetricsMask::passes`]. That isolation is not
-    /// tidiness: per-update instrumentation (the latency `Instant::now()`
-    /// pair) inflates the insert-phase wall clock, which is the throughput
-    /// denominator.
-    ///
-    /// `factory` is called once per iteration (warm-up + measured) **per
-    /// pass** — each run must see independent state or the aggregated CI is
-    /// meaningless. `insert` is the hot-loop body, supplied by the caller
-    /// rather than written here as `sketch.update(it)`, so it monomorphizes
-    /// in the crate that defines the wrapper; every pass that reports
-    /// throughput drives this same closure, so the number cannot depend on
-    /// which `--metrics` flags were passed. See [`insert_loop`].
+    /// The **timed** passes — throughput, latency, merge, plus CPU/MEMORY bits;
+    /// accuracy runs in [`run_accuracy`](Self::run_accuracy), off the hot loop.
+    /// Each primary bit gets its own report over a fresh population.
     pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
     where
         S: Accumulator<Item = W::Item> + MemoryFootprint,
@@ -94,10 +74,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             let mut pass_cfg = self.config.clone();
             pass_cfg.metrics = pass_mask;
             if pass_mask.contains(MetricsMask::MERGE) {
-                // Merge lives on *both* sides: its fold is a timed measurement
-                // (here, with no ground truth) and its post-merge correctness is an
-                // accuracy measurement (`run_accuracy`). Folding a single shard
-                // measures nothing, so skip it.
+                // Merge lives on *both* sides: the fold is timed here, its
+                // post-merge correctness scored in `run_accuracy`. Folding a
+                // single shard measures nothing, so skip it.
                 if pass_cfg.merge_shards < 2 {
                     continue;
                 }
@@ -108,12 +87,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     pass_cfg,
                 ));
             } else if pass_mask == MetricsMask::THROUGHPUT {
-                // A throughput pass with no secondary CPU/MEMORY bits takes a
-                // slim path that skips RunMetrics, CPU/RSS/heap snapshots,
-                // memory_bytes, and Welford-via-aggregate. Both paths run and
-                // separately time the insert loop and `prepare`,
-                // so the choice affects what else is collected — never either
-                // throughput column.
+                // A throughput pass with no CPU/MEMORY bits takes a slim path
+                // that skips RunMetrics and the snapshots. Both paths time the
+                // insert loop and `prepare` alike, so no throughput column moves.
                 reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
             } else {
                 // `NoGT` + `None`: these passes ignore ground truth. Naming the
@@ -129,10 +105,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         reports
     }
 
-    /// The **accuracy** passes — those that compare the sketch against an exact
-    /// answer: the accuracy pass itself, and the merge pass (whose headline
-    /// output is post-merge accuracy). Untimed relative to the hot loop, so
-    /// carrying the ground-truth calculator `G` here costs the timed numbers nothing.
+    /// The **accuracy** passes — the accuracy pass itself, and the merge pass
+    /// (whose headline output is post-merge accuracy). Untimed relative to the
+    /// hot loop, so carrying `G` here costs the timed numbers nothing.
     pub fn run_accuracy<S, F, G, Insert>(
         &self,
         mut factory: F,
@@ -156,18 +131,16 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             let mut pass_cfg = self.config.clone();
             pass_cfg.metrics = pass_mask;
             if pass_mask.contains(MetricsMask::MERGE) {
-                // Folding a single shard measures nothing, and
-                // `MetricsMask::all()` sets the MERGE bit — so the guard belongs
-                // here: a caller asking for "all metrics" must not silently
-                // acquire a pass that has no shards to fold.
+                // `MetricsMask::all()` sets the MERGE bit, so the guard belongs
+                // here: asking for "all metrics" must not silently acquire a
+                // pass with no shards to fold.
                 if pass_cfg.merge_shards < 2 {
                     continue;
                 }
                 let mut report = self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
                 // `run_timed` owns merge timing; this half keeps only the
-                // post-merge accuracy, so the two do not both claim a
-                // `merge_time_ms` (theirs is the clean one, this fold is timed
-                // only to produce a sketch to compare).
+                // post-merge accuracy, so the two never both claim a
+                // `merge_time_ms` — this fold only produces a sketch to score.
                 report.bench.merge_time_ms = None;
                 reports.push(report);
             } else if pass_mask.contains(MetricsMask::ACCURACY) {
@@ -177,33 +150,16 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         reports
     }
 
-    /// Throughput-only fast path with an explicit insert closure.
-    /// The closure body monomorphizes at the *caller's* crate,
-    /// giving LLVM a direct shot at folding the wrapper's update
-    /// into the hot loop.
-    ///
-    /// `prepare` runs here, outside the timed insert loop and
-    /// timed on its own clock. It used to be skipped entirely, on the
-    /// reasoning that a pass reporting only ingest rate has no use for a
-    /// build step — but the implementations that defer their work do *all*
-    /// of it in finalize. Under a bare `--metrics throughput`, which is what
-    /// selects this path and what `scripts/run_throughput_fast.sh` passes,
-    /// the `lib-fastpath-parallel` rows therefore never ran a single
-    /// parallel insert and the `*/polars` rows never built a DataFrame: they
-    /// timed `Vec::push` and then dropped the buffer. Running it is also
-    /// what `build_throughput_items_per_sec` is computed from, and what
-    /// makes this path's numbers comparable with `run_once_clean`'s.
+    /// Throughput-only fast path; the insert closure monomorphizes at the
+    /// *caller's* crate so LLVM folds the wrapper's update into the hot loop.
+    /// `prepare` runs outside the timed loop, on its own clock.
     #[inline(always)]
     fn run_throughput_pass_with<S, F, Insert>(
         &self,
         factory: &mut F,
-        // `&mut Insert`, not `Insert`: `run_pass` -> `run_once_clean` also
-        // reaches `insert_loop` through one `&mut`, so taking it by value
-        // here would instantiate `insert_loop::<_, &mut &mut Insert>` on this
-        // path and `insert_loop::<_, &mut Insert>` on the other. They fold
-        // today, but only because of `#[inline(always)]` + LTO — the exact
-        // mechanism whose failure caused the 5.1% split this fix exists to
-        // close. Same type on both paths makes it structural instead.
+        // `&mut Insert`, not `Insert`: the other path reaches `insert_loop`
+        // through one `&mut` too, and taking it by value here would instantiate
+        // two different `insert_loop` types that only fold thanks to LTO.
         insert: &mut Insert,
         pass_cfg: BenchConfig,
     ) -> BenchReport
@@ -304,27 +260,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    /// Build `merge_shards` sketches over contiguous slices of the stream,
-    /// fold them into one, and compare the result against the whole stream.
-    ///
-    /// Only the fold is timed. Filling the shards is ordinary insert work
-    /// already measured by the throughput pass, and including it would bury
-    /// the merge cost — which scales with sketch *state*, not stream length —
-    /// under it.
-    ///
-    /// What the comparison means depends on the family, and the difference is
-    /// the point of the experiment:
-    ///
-    /// * **Linear sketches** (Count-Min, Count Accumulator, HLL at equal `lg_k`,
-    ///   and every exact baseline) merge without loss. The merged sketch is
-    ///   identical to one fed the whole stream, so their accuracy here must
-    ///   equal their single-pass accuracy. A gap is a defect — mismatched
-    ///   hash seeds across shards, or saturated counters — not a property of
-    ///   merging.
-    /// * **KLL** merges lossily: combining compactors adds error, and the
-    ///   result depends on the fold order. Its accuracy here is a genuine
-    ///   measurement, and the gap against its single-pass accuracy is the
-    ///   quantity nobody publishes.
+    /// Build `merge_shards` sketches over contiguous slices, fold them into one,
+    /// and compare against the whole stream. Only the fold is timed. Linear
+    /// sketches merge losslessly, so a gap is a defect; KLL's gap is the point.
     fn run_merge_pass<S, F, G, Insert>(
         &self,
         factory: &mut F,
@@ -362,12 +300,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 })
                 .collect();
 
-            // `chunks` yields ceil(n / per_shard) pieces, which is <= the
-            // requested count and often strictly less (n=1000, shards=256 ->
-            // 250). Reporting the request would put merge cost against the
-            // wrong x on any cost-vs-shards plot, and a stream shorter than
-            // the shard count can yield a single chunk — zero folds — while
-            // still claiming a merge happened.
+            // `chunks` yields ceil(n / per_shard) pieces, often strictly fewer
+            // than requested. Reporting the request would put merge cost against
+            // the wrong x, and a short stream could claim a fold that never ran.
             let actual_shards = sketches.len();
             if actual_shards < 2 {
                 supported = false;
@@ -389,10 +324,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             std::hint::black_box(&acc);
             acc.prepare();
 
-            // Warm the query path before the one measured comparison, for the
-            // same reason `run_pass` does: otherwise the first comparator call
-            // is also the first query ever issued against this sketch, and its
-            // `query_throughput` measures a cold path.
+            // Warm the query path before the one measured comparison: otherwise
+            // the first comparator call is the first query ever issued against
+            // this sketch, and `query_throughput` measures a cold path.
             if run_idx < pass_cfg.warmup_runs {
                 if let Some(gt) = ground_truth {
                     std::hint::black_box(gt.compare(&acc, items));
@@ -406,39 +340,17 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     memory_bytes: Some(acc.memory_bytes() as u64),
                     ..RunMetrics::empty()
                 };
-                // Accuracy is attached on the first measured run only. Unlike
-                // the accuracy pass, this loop re-folds the **same** draw every
-                // iteration, so N copies would publish `accuracy_runs: N` with
-                // `_stddev: 0.0` under a contract that says those counts are
-                // independent draws. The later iterations still earn their keep
-                // for `merge_time_ms`, which is a legitimate N-sample timing.
+                // Accuracy attaches on the first measured run only: this loop
+                // re-folds the **same** draw, so N copies would claim N
+                // independent draws. Later runs still time `merge_time_ms`.
                 if let (Some(gt), true) = (ground_truth, per_run.is_empty()) {
                     let merged = gt.compare(&acc, items);
                     metrics.queries_executed = merged.queries;
                     metrics.query_wall_time_ns = merged.query_wall_ns;
 
-                    // Is merging lossless for this implementation?
-                    //
-                    // Comparing the merge pass's accuracy against the accuracy
-                    // pass's would answer nothing: those two passes now measure
-                    // different data (the accuracy pass draws a fresh sample per
-                    // repetition), so any difference is dominated by sampling.
-                    // The question is only meaningful *within* one draw, so the
-                    // single-pass reference is built here, over the same items,
-                    // and the two are compared on the same probe set.
-                    //
-                    // "Lossless" here means **indistinguishable on this probe
-                    // set**, which is weaker than "the merged state equals the
-                    // single-pass state". For frequency the fingerprint is
-                    // strong (~30 keys including per-key L1/L2 sums); for
-                    // cardinality it is four scalars derived from one estimate,
-                    // so a state difference that happens not to move the
-                    // estimate would read as lossless. Reported under that
-                    // reading, not as a claim about bytes.
-                    //
-                    // Exactly 1.0 is the correct answer for a linear sketch and
-                    // 0.0 the expected one for KLL; this function's doc says
-                    // why, and what a linear sketch scoring < 1.0 means.
+                    // Is merging lossless here? Only meaningful within one
+                    // draw, so the single-pass reference is built over the same
+                    // items. "Lossless" = indistinguishable on this probe set.
                     let mut single = factory();
                     for it in items {
                         insert(&mut single, it);
@@ -465,20 +377,18 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        // Post-merge accuracy is the *point* of this pass, but the pass mask
-        // carries only the MERGE bit, and `aggregate` suppresses any metric
-        // whose bit is absent. Add ACCURACY when a comparator actually ran,
-        // or the measurement would be computed and then dropped.
+        // The pass mask carries only MERGE, and `aggregate` suppresses metrics
+        // whose bit is absent. Add ACCURACY when a comparator actually ran, or
+        // post-merge accuracy — the point of this pass — is computed then lost.
         let agg_mask = if ground_truth.is_some() {
             pass_cfg.metrics | MetricsMask::ACCURACY
         } else {
             pass_cfg.metrics
         };
         let mut bench = aggregate(&per_run, agg_mask);
-        // `agg_mask` says what to aggregate, not which pass ran — it carries
-        // the borrowed ACCURACY bit above. Pass identity is the pass mask, so
-        // restate it rather than let a record claim it came from the accuracy
-        // pass. Those are different runs and a consumer groups by this field.
+        // `agg_mask` says what to aggregate, not which pass ran — it carries the
+        // borrowed ACCURACY bit. Restate the pass mask, or the record claims the
+        // accuracy pass; those are different runs, and consumers group by this.
         bench.pass = pass_cfg.metrics.pass_name().map(str::to_string);
         // Nothing in this pass is timed end-to-end: shard filling is
         // deliberately excluded and only the fold is measured, so a
@@ -525,13 +435,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     {
         let accuracy_pass = pass_cfg.metrics.contains(MetricsMask::ACCURACY);
 
-        // On the accuracy pass a repetition is only worth running if it draws
-        // its own sample: a sketch's error is deterministic given (data,
-        // parameters), so N repetitions over one fixed workload produce N
-        // identical numbers and any spread computed from them is fabricated.
-        // A workload that cannot be redrawn — a file on disk is one fixed
-        // sample — therefore gets exactly **one** measured run, and reports
-        // `n = 1`, instead of N copies of the same number.
+        // A repetition is only worth running if it draws its own sample: error
+        // is deterministic given (data, parameters), so repeats over one fixed
+        // workload fabricate spread. Non-resamplable → one run, `n = 1`.
         let measured_runs = if accuracy_pass && !self.workload.can_resample() {
             1
         } else {
@@ -554,20 +460,17 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
             let (metrics, final_sketch) = if pass_cfg.metrics.contains(MetricsMask::LATENCY) {
                 // The latency pass deliberately does NOT use `insert`: its
-                // instrument *is* the per-update `Probe` boundary, and it
-                // reports latency, not throughput. `aggregate` suppresses
-                // throughput for this pass because the mask lacks the bit.
+                // instrument *is* the per-update `Probe` boundary. `aggregate`
+                // suppresses throughput here because the mask lacks the bit.
                 let sink = FullSink::new(pass_cfg.metrics);
                 run_once(factory, sink, items, &pass_cfg)
             } else {
                 run_once_clean(factory, insert, items, &pass_cfg)
             };
 
-            // The comparator owns the query phase, so it must run on warm-up
-            // iterations too: skipping it there left the first *measured*
-            // query phase as the first query phase ever executed — cold
-            // branch predictors, cold probe array, cold query path — while
-            // `--warmup-runs` was protecting only the insert side.
+            // The comparator owns the query phase, so it runs on warm-up
+            // iterations too — otherwise `--warmup-runs` protects only the
+            // insert side and the first measured query is a cold one.
             let comparison = if accuracy_pass {
                 ground_truth.map(|gt| gt.compare(&final_sketch, items))
             } else {
@@ -591,10 +494,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
 
         let bench = aggregate(&per_run, pass_cfg.metrics);
-        // `runs` must say how many runs were measured, not how many were
-        // asked for: a non-resamplable workload measures once, and a record
-        // reading `runs: 10` beside `accuracy_runs: 1` is self-contradictory
-        // and inflates any cost or confidence proxy taken from it.
+        // `runs` says how many were measured, not asked for: a non-resamplable
+        // workload measures once, and `runs: 10` beside `accuracy_runs: 1` is
+        // self-contradictory and inflates any confidence proxy taken from it.
         let mut pass_cfg = pass_cfg;
         pass_cfg.runs = per_run.len();
         BenchReport {
@@ -608,14 +510,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     }
 }
 
-/// One measured run through `Probe<S, FullSink>`: time the insert phase, and
-/// return the finalized metrics plus the sketch (for ground-truth comparison).
-///
-/// Heap-track windowing (when the `heap-track` feature is on): the `before`
-/// snapshot is taken *after* the caller allocated `items` but *before*
-/// `factory()` runs, so constructor allocations are attributed even for
-/// sketches that allocate everything up front (CMS, CountSketch, fixed-matrix
-/// HLL). `reset_peak` pins the watermark to that baseline first.
+/// One measured run through `Probe<S, FullSink>`: time the insert phase, return
+/// metrics plus sketch. Under `heap-track` the `before` snapshot lands after
+/// `items` but before `factory()`, so constructor allocations are attributed.
 fn run_once<S, F>(
     factory: &mut F,
     mut sink: FullSink,
@@ -648,12 +545,9 @@ where
         let (s, _sink) = probe.into_parts();
         s
     };
-    // Run any deferred build/sort/finalize before the query phase, so
-    // query-throughput numbers measure steady-state queries on a
-    // ready-to-answer sketch (see Accumulator trait doc). Timed on its own clock:
-    // the sink cannot see this call, and a pass that silently folded it into
-    // the insert phase would make this path's `insert_wall_time_ns` mean
-    // something different from every other path's.
+    // Run any deferred build before the query phase, so query throughput
+    // measures a ready-to-answer sketch. Timed on its own clock — folding it
+    // into insert would change what `insert_wall_time_ns` means on this path.
     let finalize_wall = WallClock::start();
     sketch.prepare();
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
@@ -679,12 +573,9 @@ where
     (metrics, sketch)
 }
 
-/// One measured run with no per-update instrumentation. Used by
-/// the THROUGHPUT and ACCURACY passes — both want a clean insert
-/// hot path with no `Probe<S, FullSink>` wrapper, so the inner
-/// sketch's `update` is the only thing in the loop. Phase-boundary
-/// metrics (CPU / MEMORY / heap-track) still attach via direct
-/// primitives instead of going through `FullSink`.
+/// One measured run with no per-update instrumentation, for the THROUGHPUT and
+/// ACCURACY passes: no `Probe` wrapper, so the sketch's `update` is alone in the
+/// loop. Phase-boundary metrics still attach via direct primitives.
 #[inline(always)]
 fn run_once_clean<S, F, Insert>(
     factory: &mut F,

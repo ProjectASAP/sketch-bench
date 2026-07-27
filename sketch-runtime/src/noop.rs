@@ -1,13 +1,7 @@
-//! Zero-cost fallback Sampler for `--no-default-features` builds.
-//!
-//! When the downstream app disables the `enabled` feature, the
-//! public `Sampler` type comes from this module. It is a
-//! zero-sized newtype whose `MetricsSink` impl is four empty
-//! methods the compiler inlines to nothing — identical
-//! behaviour to `aqpbm_core::NoopSink`. The knobs
-//! (`sample_every_n`, `window`, etc.) stay in the API signature
-//! so downstream code compiles identically; they're just
-//! ignored at runtime.
+//! Zero-cost fallback Sampler for `--no-default-features` builds: a zero-sized
+//! newtype whose `MetricsSink` impl is four empty methods the compiler inlines
+//! away. The knobs stay in the API signature so downstream code compiles
+//! identically; they are simply ignored.
 
 use std::time::Duration;
 

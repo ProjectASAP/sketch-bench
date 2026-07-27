@@ -1,14 +1,7 @@
-//! `Exporter` trait + concrete sinks (`stdout`, `file`, `grpc`,
-//! `noop`, `fanout`).
-//!
-//! The trait is deliberately simple — one `export(&Record)`
-//! method, no `Result` on the hot path — because embedded
-//! benchmarking must NEVER panic the host app. Concrete impls
-//! log and drop records on error rather than propagate.
-//!
-//! Interior mutability: `&self` (not `&mut self`) lets a
-//! single `Arc<dyn Exporter>` be shared across many `Probe`s
-//! without forcing the caller to wrap it themselves.
+//! `Exporter` trait + concrete sinks (`stdout`, `file`, `grpc`, `noop`,
+//! `fanout`). Deliberately simple — one `export(&Record)`, no `Result` on the
+//! hot path — because embedded benchmarking must NEVER panic the host app, so
+//! impls log and drop on error. `&self` lets one `Arc<dyn Exporter>` be shared.
 
 pub mod fanout;
 pub mod file;
@@ -26,13 +19,9 @@ pub use stdout::StdoutExporter;
 
 use aqpbm_core::report::Record;
 
-/// Handler for v1 JSONL records produced by the embedded
-/// [`Sampler`](crate::sampler::Sampler).
-///
-/// Impls must be `Send + Sync` so one `Arc<dyn Exporter>` can be
-/// shared across many worker threads / sketches. Errors are
-/// logged internally and swallowed — the hot path never
-/// propagates them.
+/// Handler for the JSONL records produced by the embedded
+/// [`Sampler`](crate::sampler::Sampler). Impls must be `Send + Sync` so one
+/// `Arc<dyn Exporter>` spans many threads; errors are logged and swallowed.
 pub trait Exporter: Send + Sync {
     fn export(&self, record: &Record);
 }

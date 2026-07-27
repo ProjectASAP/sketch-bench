@@ -1,16 +1,8 @@
-//! Top-k wrappers: a counter array plus a size-`k` candidate tracker.
-//!
-//! A bare Count-Min / Count Accumulator cannot answer top-k at all — it stores
-//! counters, not keys, so it has nothing to enumerate. The classic fix is to
-//! carry a heap of the `k` heaviest keys seen so far and maintain it on
-//! **every** update. That is the whole point of giving this its own row
-//! rather than another method on the CMS rows: the tracker sits in the insert
-//! hot path, so a top-k row's throughput and memory are genuinely different
-//! numbers from the frequency row it wraps.
-//!
-//! Contrast heavy-hitters, which needs nothing on the insert side — probing
-//! known candidates and filtering by threshold is pure query-side work, so it
-//! belongs to the frequency rows rather than here.
+//! Top-k wrappers: a counter array plus a size-`k` candidate tracker, which a
+//! bare Count-Min cannot answer — it stores counters, not keys. The tracker is
+//! maintained on **every** update, so it sits in the insert hot path: that is
+//! why this is its own row rather than a method on the CMS rows. Heavy-hitters
+//! needs nothing on the insert side and belongs to the frequency rows.
 
 use std::collections::HashMap;
 
@@ -27,19 +19,13 @@ use aqpbm_core::memory_footprint::MemoryFootprint;
 pub struct TopKHeap<S> {
     inner: S,
     k: usize,
-    /// The current candidate set, `key -> latest estimate`. Held as a map
-    /// rather than a `BinaryHeap` because the dominant operation is "is this
-    /// key already a candidate", which a heap answers in O(k) and this
-    /// answers in O(1).
+    /// The current candidate set, `key -> latest estimate`. A map, not a
+    /// `BinaryHeap`, because the dominant operation is "is this key already a
+    /// candidate" — O(k) on a heap, O(1) here.
     top: HashMap<i64, u64>,
-    /// A **lower bound** on the smallest estimate in `top`, cached. Under a
-    /// skewed stream most updates are tail keys that lose to it outright, so
-    /// caching it keeps the common path a hash lookup plus a compare — no
-    /// O(k) scan. It is deliberately only a bound: refreshing an incumbent
-    /// leaves it stale-low rather than paying O(k), and a stale-low bound can
-    /// only cost a skipped fast path, never a wrong admission, because
-    /// [`TopKHeap::offer`] decides promotions against the actual weakest
-    /// candidate.
+    /// A cached **lower bound** on the smallest estimate in `top`, so a losing
+    /// tail key costs one lookup and a compare. Only a bound — stale-low can
+    /// skip the fast path, never admit wrongly.
     min_est: u64,
 }
 
@@ -47,18 +33,16 @@ impl<S> TopKHeap<S>
 where
     S: Accumulator<Item = i64> + FrequencyOps<Key = i64>,
 {
-    /// Offer `key`'s current estimate to the candidate set.
-    ///
-    /// Maintains `min_est <= min(top.values())`: every branch either restores
-    /// it exactly or lowers it, so the fast reject is only ever conservative.
+    /// Offer `key`'s current estimate to the candidate set, maintaining
+    /// `min_est <= min(top.values())` — every branch either restores it exactly
+    /// or lowers it, so the fast reject stays conservative.
     #[inline(always)]
     fn offer(&mut self, key: i64) {
         let est = self.inner.estimate_frequency(&key);
 
         // Already a candidate: refresh its estimate. A rise leaves the bound
-        // stale-low, which is only a missed fast path; a fall would break the
-        // bound outright — a CountSketch median can drop — so that direction
-        // is tracked, at O(1).
+        // stale-low (a missed fast path); a fall would break it outright — a
+        // CountSketch median can drop — so that direction is tracked, at O(1).
         if let Some(slot) = self.top.get_mut(&key) {
             *slot = est;
             self.min_est = self.min_est.min(est);
@@ -76,11 +60,9 @@ where
         if est <= self.min_est {
             return;
         }
-        // Past the bound, the promotion is decided against the weakest
-        // candidate's *actual* estimate. Comparing against `min_est` instead
-        // would let a key that merely beat a stale-low bound displace a far
-        // heavier one. Ties break on the key so which candidate leaves does
-        // not depend on `HashMap` iteration order, which varies per process.
+        // Past the bound, promotion is decided against the weakest candidate's
+        // *actual* estimate — on `min_est` alone a key beating a stale-low bound
+        // could displace a far heavier one. Ties break on the key.
         let (weakest, weakest_est) = self
             .top
             .iter()
@@ -163,9 +145,8 @@ where
 }
 
 // ---------- catalog identity ----------
-//
-// One tracker, two rows: the `IMPL` name is what distinguishes which counter
-// array is underneath.
+// One tracker, two rows: the `IMPL` name distinguishes which counter array is
+// underneath.
 
 impl BenchImpl for TopKHeap<super::cms::CmsOxide> {
     type Params = TopkParams;
@@ -220,9 +201,8 @@ mod tests {
     }
 
     /// The bound is a lower bound, so "beats the bound" is not "beats the
-    /// weakest candidate": key 20 at 2 clears a bound left at 1 while key 10
-    /// sits at 50. Promoting on the bound alone evicted the heaviest key in
-    /// the stream.
+    /// weakest candidate": key 20 at 2 clears a bound of 1 while key 10 sits at
+    /// 50. Promoting on the bound alone evicts the heaviest key in the stream.
     #[test]
     fn a_light_key_does_not_displace_a_heavy_one() {
         let mut stream: Vec<i64> = std::iter::repeat(10).take(50).collect();
@@ -239,10 +219,9 @@ mod tests {
         assert_eq!(track(2, &stream), vec![(10, 5), (20, 4)]);
     }
 
-    /// Three candidates tied at the minimum, one promotion: which of them
-    /// leaves used to be whichever `HashMap::iter` happened to yield first,
-    /// so the same workload gave different candidate sets in different
-    /// processes. Repeated because each `HashMap` gets its own hash seed.
+    /// Three candidates tied at the minimum, one promotion: which one leaves
+    /// must not depend on `HashMap::iter` order, or the same workload yields
+    /// different candidate sets per process. Repeated for the per-map seed.
     #[test]
     fn eviction_among_tied_candidates_is_reproducible() {
         let stream = [1, 2, 3, 4, 4];

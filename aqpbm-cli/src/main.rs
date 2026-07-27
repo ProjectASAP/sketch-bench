@@ -9,16 +9,9 @@ mod raw_csv;
 mod repeat;
 mod workload_cmd;
 
-// Global allocator selection. Four combinations of two feature
-// flags (`heap-jemalloc`, `heap-track`):
-//
-// - heap-jemalloc, no heap-track: bare jemalloc (legacy default)
-// - heap-jemalloc + heap-track:   TrackingAllocator wrapping
-//   jemalloc — counters advance, stats.allocated still readable
-// - heap-track, no heap-jemalloc: TrackingAllocator(System)
-// - neither:                      implicit System allocator
-//
-// The static is required for `#[global_allocator]` to take effect.
+// Global allocator selection across the `heap-jemalloc` / `heap-track` feature
+// pair: bare jemalloc, `TrackingAllocator` wrapping jemalloc or System, or the
+// implicit System allocator. The static is what `#[global_allocator]` needs.
 #[cfg(all(feature = "heap-jemalloc", not(feature = "heap-track")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -135,13 +128,9 @@ fn main() -> Result<()> {
     }
 }
 
-/// Resolve where this run's items come from, in precedence order:
-/// `--input` (a file on disk) > `--spec` (a full generator spec) >
-/// the `--workload` flags.
-///
-/// The flag path builds the same `GenSpec` the spec path would, so
-/// `--workload zipf --cardinality N --zipf-s S` is exactly sugar for a
-/// `keys`/`zipf` spec — one generator, not two.
+/// Resolve where this run's items come from, in precedence order: `--input` >
+/// `--spec` > the `--workload` flags. The flag path builds the same `GenSpec`
+/// the spec path would, so it is sugar for a `keys`/`zipf` spec — one generator.
 fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.input.as_deref() {
         return Ok(WorkloadSpec::File {
@@ -192,11 +181,9 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
     }))
 }
 
-/// Seconds of CPU burn before the first measured loop, so the cpufreq
-/// governor is at max turbo when timing starts. This default lives here
-/// rather than in `sketch-bench` because only a measurement run wants it:
-/// a test binary or an embedding application that links the runner should
-/// not pay ten seconds of spin merely for linking it.
+/// Seconds of CPU burn before the first measured loop, so the cpufreq governor
+/// is at max turbo when timing starts. The default lives here because only a
+/// measurement run wants it — linking the runner should not cost ten seconds.
 const DEFAULT_WARMUP_SECS: &str = "10";
 
 fn run_bench(args: BenchArgs) -> Result<()> {
@@ -229,10 +216,9 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    // The only item-type choice left: an `ordered` row (KLL, DDSketch) is
-    // built at one width or the other. Every other row's item type is fixed
-    // by its Rust type, and `catalog::run` refuses a width it cannot honour
-    // before anything is generated.
+    // The only item-type choice left: an `ordered` row builds at either width.
+    // Every other row's type is fixed by its Rust type, and `catalog::run`
+    // refuses a width it cannot honour before anything is generated.
     let width = match args.dtype.as_str() {
         "i64" => catalog::Numeric::I64,
         "f64" => catalog::Numeric::F64,
@@ -296,9 +282,8 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     );
 
     // Whether this cell can run is decided at construction: a wrong dtype, a
-    // fixed shape the config misses, or a params struct missing a value all
-    // surface here as an error — the tool ran exactly what it was asked and
-    // that one thing could not run, so it fails rather than skipping on.
+    // missed fixed shape, or a missing param all surface here. The tool ran
+    // exactly what it was asked, so it fails rather than skipping on.
     let reports = catalog::run(
         &args.sketch,
         &args.impl_name,
@@ -310,10 +295,9 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", args.sketch, args.impl_name))?;
 
-    // `catalog::run` returns one report per metric pass (see
-    // `MetricsMask::passes()`); emit each on its own JSONL line and its own
-    // CSV row group. Downstream group-by on (sketch, impl, sketch_config,
-    // workload) merges them back.
+    // `catalog::run` returns one report per metric pass; emit each on its own
+    // JSONL line and CSV row group. A downstream group-by on
+    // (sketch, impl, sketch_config, workload) merges them back.
     let mut sink = ReportSink::open(args.report.as_deref())?;
     for report in &reports {
         if let Some(dir) = args.raw_csv.as_deref() {

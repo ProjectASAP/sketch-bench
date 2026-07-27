@@ -1,10 +1,7 @@
-//! KLL wrappers: `oxide`, `sketchlib` (a.k.a. asap_sketchlib).
-//! Quantile family: `estimate_quantile(phi) -> f64`.
-//!
-//! Note: `sketch_oxide::quantiles::KllSketch::quantile` takes `&mut self`
-//! (the sketch sorts lazily), so the inner sketch is held in a `RefCell`.
-//! `QuantileOps::estimate_quantile` is `&self` because most sketches' query
-//! paths are pure reads; KLL-oxide is the one that isn't.
+//! KLL wrappers: `oxide`, `sketchlib` (a.k.a. asap_sketchlib). Quantile family:
+//! `estimate_quantile(phi) -> f64`. `sketch_oxide`'s `quantile` takes
+//! `&mut self` (it sorts lazily), so its inner sketch sits in a `RefCell` —
+//! `QuantileOps::estimate_quantile` is `&self` for everyone else's pure reads.
 
 use std::cell::RefCell;
 
@@ -18,17 +15,12 @@ use aqpbm_core::memory_footprint::MemoryFootprint;
 use sketch_oxide::Mergeable as _;
 
 // ---------- sketch_oxide KLL ----------
-// `KllSketch::default()` constructs with the crate's built-in `k`
-// (no `new(k)` constructor exposed through the stable surface).
-// `init` accepts any requested `k` but cannot honour it — it stores
-// the value only so `memory_bytes` is sensible, so `k` changes the
-// reported footprint, not the sketch.
+// `KllSketch::default()` uses the crate's built-in `k`; `init` stores a request
+// only for `memory_bytes`, so `k` moves the footprint, not the sketch.
+
 ///
-/// Generic over the item type. The inner sketch is `f64`-native, so `T = f64`
-/// monomorphises `to_f64` to the identity and the insert path holds no
-/// conversion at all; `T = i64` keeps the `as f64` it always had. That
-/// difference is the measurement — before this was generic only the `i64`
-/// side existed, so the conversion was unavoidable and therefore invisible.
+/// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
+/// monomorphises `to_f64` away while `T = i64` keeps the cast — the measurement.
 pub struct KllOxide<T = i64> {
     inner: RefCell<sketch_oxide::quantiles::KllSketch>,
     k: u32,
@@ -53,10 +45,9 @@ impl<T: QuantileValue> Accumulator for KllOxide<T> {
         self.inner.get_mut().update(v.to_f64());
     }
 
-    /// Unlike HLL, KLL's merge is **lossy**: combining compactors adds error
-    /// beyond a single pass over the same data, and the result depends on the
-    /// merge order. That is precisely why the merge benchmark measures
-    /// accuracy after merging rather than asserting it.
+    /// Unlike HLL, KLL's merge is **lossy**: combining compactors adds error and
+    /// the result depends on fold order, which is why the merge benchmark
+    /// measures accuracy afterwards rather than asserting it.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner
             .borrow_mut()
@@ -73,23 +64,12 @@ impl<T: QuantileValue> MemoryFootprint for KllOxide<T> {
 }
 
 // ---------- asap_sketchlib KLL ----------
-//
-// `asap_sketchlib::KLL::quantile(q)` rebuilds the full CDF from the compactor
-// levels on every call (sort + sweep over the whole buffer). For an
-// apples-to-apples query throughput comparison we precompute it once in
-// `prepare`; queries then collapse to a `Cdf::query` binary search.
-//
-// `update` deliberately does NOT invalidate that cache. `BenchRunner` calls
-// `prepare` once, after the insert phase has ended, and never
-// re-inserts; a per-update `RefCell::borrow()` check would be a measurable
-// cost on a hot 10ns/op insert path.
-///
-/// Unlike the oxide and DDSketch wrappers, this one is generic *in the
-/// library*: `asap_sketchlib::KLL<T: NumericalValue>` stores `T` and orders it
-/// with `T::total_cmp`, so nothing is converted on either side of the axis.
-/// `KLL<i64>` compares integers, `KLL<f64>` compares floats. That makes it the
-/// row where the item-type axis measures the library's own choice rather than a
-/// wrapper's cast.
+// `KLL::quantile(q)` rebuilds the full CDF per call, so we precompute once in
+// `prepare`. `update` does not invalidate it: the runner never re-inserts.
+
+/// Generic *in the library*: `KLL<T>` stores `T` and orders it with
+/// `T::total_cmp`, converting nothing — so this row's item-type axis measures
+/// the library's own choice, not a wrapper's cast.
 pub struct KllLib<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
     k: u32,

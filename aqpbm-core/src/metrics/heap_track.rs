@@ -1,39 +1,22 @@
-//! Per-sketch heap tracking via a counting `GlobalAlloc` shim.
-//!
-//! Wraps an inner allocator (System or jemalloc) and records `IN_USE` /
-//! `PEAK` on every alloc/dealloc/realloc. The runner snapshots before
-//! constructing a sketch and again after the insert phase, so the delta
-//! isolates that sketch's footprint from everything else the process does.
-//!
-//! The counters are process-global atomics, precise only under a
-//! single-threaded driver: any other thread allocating inside the window —
-//! a parallel-insert row, a background worker — lands in the same numbers.
-//!
-//! Cost: two relaxed atomic ops per alloc/dealloc. Off by default — opt in
-//! via the `heap-track` feature on the linking binary, then install
-//! `TrackingAllocator` as `#[global_allocator]`.
+//! Per-sketch heap tracking via a counting `GlobalAlloc` shim: wraps an inner
+//! allocator and records `IN_USE` / `PEAK`, which the runner snapshots around
+//! the insert phase. Counters are process-global atomics, so they are precise
+//! only under a single-threaded driver. Costs two relaxed atomics per alloc;
+//! off unless the linking binary enables `heap-track` and installs the shim.
 
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicI64, Ordering};
 
-/// Currently-allocated bytes attributed to this process by the
-/// shim. Signed so transient drift (rare on x86-64, but possible
-/// during torn deallocs across feature-gated paths) is visible
-/// rather than silently wrapping.
+/// Currently-allocated bytes attributed to this process by the shim. Signed so
+/// transient drift is visible rather than silently wrapping.
 pub static IN_USE: AtomicI64 = AtomicI64::new(0);
 
 /// High-water mark of `IN_USE` since the last `reset_peak()`.
 pub static PEAK: AtomicI64 = AtomicI64::new(0);
 
-/// Wraps any `GlobalAlloc`, forwarding every call while updating
-/// `IN_USE` / `PEAK`. Use as `#[global_allocator]` in the bin
-/// crate, e.g.
-///
-/// ```ignore
-/// #[global_allocator]
-/// static A: TrackingAllocator<std::alloc::System> =
-///     TrackingAllocator(std::alloc::System);
-/// ```
+/// Wraps any `GlobalAlloc`, forwarding every call while updating `IN_USE` /
+/// `PEAK`. Install in the bin crate as
+/// `#[global_allocator] static A: TrackingAllocator<System> = ...`.
 pub struct TrackingAllocator<A>(pub A);
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<A> {

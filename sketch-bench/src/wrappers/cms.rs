@@ -1,16 +1,7 @@
-//! Count-Min Accumulator wrappers — 7 variants.
-//!
-//! Frequency family: every variant declares `FrequencyOps`
-//! (`&i64` point lookup → `u64` count estimate).
-//!
-//! Impls:
-//! * `oxide` — sketch_oxide::frequency::CountMinSketch (tunable via (rows,cols))
-//! * `datasketches` — datasketches::countmin::CountMinSketch (tunable)
-//! * `lib_fixedmatrix_custom_fast` — asap_sketchlib custom storage (FIXED 5x65538)
-//! * `lib_fixedmatrix_fast` — asap_sketchlib FixedMatrix + FastPath (FIXED 5x2048)
-//! * `lib_fixedmatrix_fast_32k` — same, FIXED 5x32768
-//! * `lib_vector2d_fast` — asap_sketchlib Vector2D + FastPath (tunable)
-//! * `lib_vector2d_regular` — asap_sketchlib Vector2D + RegularPath (tunable)
+//! Count-Min Accumulator wrappers — 7 variants, every one declaring
+//! `FrequencyOps` (`&i64` point lookup → `u64` count estimate). `oxide`,
+//! `datasketches` and the `lib_vector2d_*` pair tune via `(rows, cols)`; the
+//! `lib_fixedmatrix_*` variants bake their shape in (5x65538, 5x2048, 5x32768).
 
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
@@ -25,11 +16,9 @@ use asap_sketchlib::{
     impl_fixed_matrix, CountMin, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D,
 };
 
-/// Convert `(rows, cols)` → `(epsilon, delta)` for the oxide /
-/// datasketches style API (they accept error bounds, not raw
-/// dimensions). Matches the `CMS_ROWS=5 / CMS_COLS=2048` →
-/// `CMS_EPSILON=0.0013 / CMS_DELTA=0.0067` defaults used by the
-/// legacy binaries within float tolerance.
+/// Convert `(rows, cols)` → `(epsilon, delta)` for the oxide / datasketches
+/// APIs, which take error bounds rather than raw dimensions. Matches
+/// `5 / 2048` → `0.0013 / 0.0067` within float tolerance.
 fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
     let epsilon = std::f64::consts::E / cols as f64;
     let delta = (-(rows as f64)).exp();
@@ -65,12 +54,9 @@ impl Accumulator for CmsOxide {
         self.inner.update(v);
     }
 
-    /// Counter-wise addition. A Count-Min Accumulator is linear in its input, so
-    /// merging shards is **exact**: the result is identical to one sketch fed
-    /// the whole stream. The merge benchmark therefore asserts that equality
-    /// rather than measuring a degradation — a difference would mean the
-    /// shards disagreed about hash seeds, or a counter saturated. The other
-    /// CMS impls in this file merge on the same reasoning.
+    /// Counter-wise addition. Count-Min is linear, so merging shards is
+    /// **exact** and the benchmark asserts equality rather than measuring
+    /// degradation — a difference means mismatched seeds or a saturated counter.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.inner
             .merge(&other.inner)
@@ -122,16 +108,15 @@ impl Accumulator for CmsDatasketches {
 
 impl MemoryFootprint for CmsDatasketches {
     fn memory_bytes(&self) -> usize {
-        // Backing store is `counts: Vec<i64>` — same width as the `u64` this
-        // used to name, but spell the real type so the two stay in step.
+        // Backing store is `counts: Vec<i64>`; spell the real type so the two
+        // stay in step.
         self.rows * self.cols * std::mem::size_of::<i64>()
     }
 }
 
 // ---------- asap_sketchlib: FixedMatrix custom + FastPath ----------
-// Shape is baked at compile time by `impl_fixed_matrix!`. Only
-// runs when the requested `(rows, cols)` matches this shape;
-// otherwise `init` rejects the config with a `BuildError`.
+// Shape baked at compile time by `impl_fixed_matrix!`; `init` rejects any
+// `(rows, cols)` that does not match it with a `BuildError`.
 impl_fixed_matrix!(CustomCountMinMatrixI32U128, i32, 5, 65538);
 
 pub const CMS_CUSTOM_FIXED_ROWS: usize = 5;
@@ -175,8 +160,7 @@ impl MemoryFootprint for CmsLibFixedmatrixCustomFast {
 }
 
 // ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
-// Same code path as the 5x2048 FixedMatrix (compile-time baked
-// shape via `impl_fixed_matrix!`), at 5x32768 to mirror the
+// Same code path as the 5x2048 FixedMatrix, at 5x32768 to mirror the
 // CMS+CS 32K panel.
 impl_fixed_matrix!(CountMinMatrix5x32K, i32, 5, 32768);
 
@@ -216,9 +200,8 @@ impl MemoryFootprint for CmsLibFixedmatrixFast32k {
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
-// `FixedMatrix::default()` bakes in (5, 2048). A fixed-shape impl:
-// its `init` accepts only `(rows, cols)` matching that, rejecting
-// anything else with a `BuildError`.
+// `FixedMatrix::default()` bakes in (5, 2048); `init` accepts only a matching
+// `(rows, cols)` and rejects anything else with a `BuildError`.
 pub const CMS_FIXED_ROWS: usize = 5;
 pub const CMS_FIXED_COLS: usize = 2048;
 
@@ -248,9 +231,8 @@ impl Accumulator for CmsLibFixedmatrixFast {
 
 impl MemoryFootprint for CmsLibFixedmatrixFast {
     fn memory_bytes(&self) -> usize {
-        // `FixedMatrix` is an alias for `QuickMatrixI32`, i.e. `Box<[i32; _]>` —
-        // same width as the `u32` this used to name, but the peer CountSketch
-        // impl already spells it `i32`; keep the two readable side by side.
+        // `FixedMatrix` aliases `QuickMatrixI32`, i.e. `Box<[i32; _]>`. The peer
+        // CountSketch impl spells it `i32` too; keep the two readable together.
         CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
     }
 }

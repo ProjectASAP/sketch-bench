@@ -104,9 +104,8 @@ impl MemoryFootprint for CsLibFixedmatrixFast {
 }
 
 // ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
-// Same code path as the 5x2048 FixedMatrix variant, at 5x32768
-// to match the CMS+CS 32K throughput panel. Reuses the
-// `CountMinMatrix5x32K` shape declared in cms.rs.
+// Same code path as the 5x2048 variant, at 5x32768 for the CMS+CS 32K panel.
+// Reuses the `CountMinMatrix5x32K` shape declared in cms.rs.
 pub struct CsLibFixedmatrixFast32k(pub Count<CountMinMatrix5x32K, FastPath>);
 
 impl InitSketch for CsLibFixedmatrixFast32k {
@@ -223,10 +222,9 @@ impl MemoryFootprint for CsLibVector2dRegular {
 impl FrequencyOps for CsOxide {
     type Key = i64;
     fn estimate_frequency(&self, key: &i64) -> u64 {
-        // CountSketch is an unbiased estimator (median of sign·counter); a
-        // small fraction of estimates can be slightly negative under collision
-        // noise. Clamp to 0 to match CMS-style frequency semantics — without
-        // this, `as u64` wraps -1 into u64::MAX and blows up rel-err.
+        // CountSketch is unbiased (median of sign·counter), so collision noise
+        // can push an estimate slightly negative. Clamp to 0 for CMS-style
+        // semantics — otherwise `as u64` wraps -1 into u64::MAX.
         self.inner.estimate(key).max(0) as u64
     }
 }

@@ -82,20 +82,9 @@ impl Accumulator for HllDatasketches {
         self.inner.update(*v);
     }
 
-    /// Apache DataSketches routes HLL merging through a `Union` gadget rather
-    /// than a method on the sketch, so this rebuilds `self` from the union's
-    /// result.
-    ///
-    /// **Known limitation, unresolved.** Every other HLL row folds registers
-    /// in place and the merge benchmark reports it lossless, as theory
-    /// requires for equal `lg_k`. This row reports *lossy*, and its
-    /// `merge_time_ms` runs ~2x the others. Both are plausibly artifacts of
-    /// this wrapper rather than of the library: a pairwise `merge` signature
-    /// forces a fresh `HllUnion` and a `get_result` representation round-trip
-    /// on **every** fold, all inside the timed region. Fixing it properly
-    /// needs a fold-shaped hook (`merge_many`) so one union spans the whole
-    /// fold. Until then this row's merge numbers say nothing about
-    /// DataSketches and should not be compared against the others.
+    /// DataSketches merges HLL through a `Union` gadget, so this rebuilds `self`
+    /// from its result. **Known limitation:** a fresh `HllUnion` per fold inside
+    /// the timed region makes this row read lossy and ~2x slow — not comparable.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         let mut union = datasketches::hll::HllUnion::new(self.lg_k);
         union.update(&self.inner);
@@ -119,10 +108,8 @@ impl MemoryFootprint for HllDatasketches {
 }
 
 // ---------- asap_sketchlib HLL ----------
-// `asap_sketchlib::HyperLogLog<Classic>` is the P14 classic HLL estimator
-// (Flajolet et al., 2007). Insert path only bumps registers; `estimate()`
-// scans all 2^14 registers (O(m)). Compile-time fixed at P14; the
-// requested `lg_k` is ignored.
+// `HyperLogLog<Classic>`, the P14 classic estimator (Flajolet et al., 2007):
+// insert bumps registers, `estimate()` scans 2^14. Fixed at P14; `lg_k` inert.
 pub struct HllLib {
     inner: asap_sketchlib::HyperLogLog<asap_sketchlib::Classic>,
 }
@@ -157,12 +144,9 @@ impl MemoryFootprint for HllLib {
     }
 }
 
-// `asap_sketchlib::HyperLogLogHIP` (= HyperLogLogHIPP14) maintains the
-// cardinality estimate incrementally on the insert path — every register
-// upgrade pays a handful of fp ops on the running `est` / `kxq0` / `kxq1`
-// fields — so query is O(1) rather than the Classic variant's O(m) register
-// scan. That trade (slightly slower inserts, query throughput on par with
-// apache DataSketches' `get_estimate`) is what this row exists to measure.
+// `HyperLogLogHIP` maintains the estimate incrementally on the insert path —
+// every register upgrade pays a few fp ops — so query is O(1) rather than
+// Classic's O(m) scan. That trade is what this row exists to measure.
 pub struct HllLibHip {
     inner: asap_sketchlib::HyperLogLogHIP,
 }
@@ -192,9 +176,8 @@ impl MemoryFootprint for HllLibHip {
 
 
 // ---------- statistic membership ----------
-//
-// The parallel-HLL row ingests `i64` just like these do but answers nothing,
-// so it is absent here — which is what keeps it out of accuracy scoring.
+// The parallel-HLL row ingests `i64` like these but answers nothing, so it is
+// absent here — which is what keeps it out of accuracy scoring.
 
 impl CardinalityOps for HllOxide {
     fn estimate_distinct(&self) -> f64 {

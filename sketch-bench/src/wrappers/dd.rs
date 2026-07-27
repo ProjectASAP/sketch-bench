@@ -13,10 +13,7 @@ use asap_sketchlib::DDSketch;
 
 /// Generic over the item type. `DDSketch` buckets by `log(value)`, so it is
 /// `f64`-native: `T = f64` monomorphises the insert path down to `add`, while
-/// `T = i64` keeps the widening cast. Same shape as [`KllOxide`], for the same
-/// reason.
-///
-/// [`KllOxide`]: crate::wrappers::kll::KllOxide
+/// `T = i64` keeps the widening cast. Same shape as `KllOxide`.
 pub struct DdLib<T = i64> {
     inner: DDSketch,
     _item: std::marker::PhantomData<T>,

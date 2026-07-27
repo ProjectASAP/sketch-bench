@@ -1,48 +1,8 @@
 //! Frequency-family ground truth (CMS, CountSketch).
 //!
-//! ## Why the headline number is reported per top-k prefix
-//!
-//! The obvious metric, average relative error over every distinct key,
-//! `mean(|f̂ − f| / f)`, is dominated by the keys a frequency sketch was never
-//! meant to estimate. Under Zipf most distinct keys occur once or twice; a
-//! collision adds a near-constant absolute overestimate, and dividing that by
-//! a true count of 1 produces a huge term. Measured here, CMS `oxide` 5×2048
-//! on 500k Zipf(1.1) items over 50k keys:
-//!
-//! ```text
-//! keys with true count >= T      ARE
-//!   T = 0   (all 33747)         22.31
-//!   T = 10       (3396)          1.96
-//!   T = 100       (383)          0.186
-//!   T = 1000       (48)          0.019
-//! ```
-//!
-//! An estimator that answers **zero for every key** scores exactly 1.0 on this
-//! metric, by construction: `|0 − f| / f = 1` for every key with `f > 0`. So
-//! the unfiltered 22.31 says a real Count-Min Accumulator is 22× *worse* than doing
-//! no work at all — and the crossover sits somewhere around a true count of
-//! 10–100. That is not a defect of this implementation; it is the metric
-//! measuring the wrong population, and it is a documented trap (SALSA, ICDE
-//! 2021: *"for CMS, and this dataset, it is better to estimate all sizes as 0
-//! without performing any measurement"*).
-//!
-//! So the error is reported as a **curve over the true top-k**: `are_top1`,
-//! `are_top10`, `are_top100`, `are_top1000`. Where the curve crosses 1.0 is
-//! itself the finding. `are_all` is still emitted — naming its population,
-//! unlike the legacy `relative_error_mean` alias it duplicates — because a
-//! sketch that is wildly wrong on the tail should not be able to hide it.
-//!
-//! ## Why ARE and AAE are both reported
-//!
-//! They fail in opposite directions and either one alone can be gamed:
-//!
-//! * `ARE = mean(|f̂ − f| / f)` — the denominator makes **rare** keys dominate.
-//! * `AAE = mean(|f̂ − f|)`      — the absolute scale makes **heavy** keys dominate.
-//!
-//! Cormode & Hadjieleftheriou (PVLDB 2008) additionally split relative error
-//! between true heavy hitters and false positives, because a single blended
-//! figure hides a difference of several orders of magnitude. The top-k prefixes
-//! here serve the same purpose along a continuum.
+//! Error ships as a curve over the true top-k (`are_top1`…`are_top1000`) plus
+//! `are_all`: ARE over all distinct keys is dominated by singletons, where an
+//! all-zero estimator scores 1.0 (SALSA, ICDE 2021). AAE weights heavy keys.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -76,29 +36,24 @@ where
             *exact.entry(it).or_insert(0) += 1;
         }
 
-        // Rank by true count, descending. Ties break on the key so the
-        // ranking — and therefore every top-k prefix — is deterministic
-        // across runs and across implementations; a HashMap's iteration
-        // order is not.
+        // Rank by true count descending, ties broken on the key, so every
+        // top-k prefix is deterministic across runs and implementations —
+        // a HashMap's iteration order is not.
         let mut ranked: Vec<(&K, u64)> = exact.iter().map(|(k, c)| (*k, *c)).collect();
         ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
 
-        // The `*_all` population: every distinct key, shuffled so the probe
-        // order does not hand the exact-baseline HashMap the cache locality
-        // that encounter order would (under Zipf the heavy hitters arrive
-        // first), then capped. Fixed seed so the choice is reproducible.
+        // The `*_all` population: every distinct key, shuffled so probe order
+        // does not hand the baseline HashMap the locality that encounter order
+        // would, then capped. Fixed seed, so the choice is reproducible.
         let all_probes = sample_distinct(&ranked, self.max_probes);
 
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         let mut queries = 0u64;
         let mut query_ns = 0u64;
 
-        // Query throughput is attributed to the `all` sweep only. Every top-k
-        // prefix re-queries keys `all` already covers — the heaviest key would
-        // be probed five times — so counting them would report ops/sec over a
-        // multiset that is ~40% repeated hot keys sitting in L1, and would move
-        // whenever `TOP_K_REPORTED` changed. Accuracy still uses every prefix;
-        // only the timing population is pinned.
+        // Query throughput is attributed to the `all` sweep only: top-k
+        // prefixes re-query keys `all` already covers, so counting them would
+        // measure hot keys in L1 and move whenever `TOP_K_REPORTED` changed.
         let mut probe = |keys: &[&K], label: &str, metrics: &mut BTreeMap<String, f64>| {
             if keys.is_empty() {
                 return;
@@ -155,10 +110,8 @@ where
         }
         probe(&all_probes, "all", &mut metrics);
 
-        // `relative_error_mean` / `relative_error_p99` / `probes` keep their
-        // historical names and meaning (the unfiltered population) so existing
-        // plot scripts keep working. `are_all` is the same number under a name
-        // that says which population it covers.
+        // `relative_error_mean` / `_p99` / `probes` name the unfiltered
+        // population; `are_all` is the same number under a name that says so.
         if let Some(v) = metrics.get("are_all").copied() {
             metrics.insert("relative_error_mean".into(), v);
         }
@@ -203,12 +156,8 @@ where
 }
 
 /// The distinct keys, shuffled, then capped at `max_probes` (`0` = no cap).
-///
-/// The `min_true_count` filter this used to take is gone: it asked the
-/// operator to pick a heavy-hitter threshold in advance, and its
-/// empty-result fallback silently substituted a different population under
-/// the same metric name. The top-k prefixes answer the same question without
-/// either problem.
+/// No threshold knob: the top-k prefixes answer the same question without
+/// asking an operator to pick a heavy-hitter cutoff in advance.
 fn sample_distinct<'a, K>(ranked: &[(&'a K, u64)], max_probes: usize) -> Vec<&'a K> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
@@ -242,7 +191,7 @@ mod tests {
     }
 
     // The null estimator has to declare itself a frequency estimator like any
-    // other — being shaped like one is no longer enough.
+    // other; being shaped like one is not enough.
     impl FrequencyOps for NullFreq {
         type Key = i64;
         fn estimate_frequency(&self, _: &i64) -> u64 {
@@ -251,9 +200,8 @@ mod tests {
     }
 
     /// The property that makes the top-k curve worth reporting: a null
-    /// estimator scores exactly 1.0 on ARE, on every population. Any metric
-    /// that ranks a real sketch *above* 1.0 is measuring the wrong thing, and
-    /// this is the constant a reader compares against.
+    /// estimator scores exactly 1.0 on ARE, on every population. A real sketch
+    /// ranked *above* 1.0 means the metric is measuring the wrong thing.
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();

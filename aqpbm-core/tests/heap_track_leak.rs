@@ -1,20 +1,8 @@
-//! End-to-end check for the `heap-track` allocator shim.
-//!
-//! Installs `TrackingAllocator(System)` as the test binary's
-//! global allocator and asserts that an alloc/drop pair moves
-//! `IN_USE` by approximately the right delta.
-//!
-//! The counters are process-global atomics — fine for a
-//! single-threaded benchmark runner, but the cargo test harness
-//! itself allocates on background paths (panic plumbing, output
-//! capture) between any two snapshots. So we cannot assert
-//! "after drop, in_use == before" in absolute terms; we assert
-//! the *drop delta* is at least the size we just freed. The
-//! BenchRunner's invariant ("any drift is a leak") holds because
-//! it runs single-threaded with no other allocators of note.
-//!
-//! The test only compiles under the `heap-track` feature.
-//!     cargo test -p aqpbm-core --features heap-track --test heap_track_leak
+//! End-to-end check for the `heap-track` allocator shim: an alloc/drop pair
+//! must move `IN_USE` by roughly the right delta. The test harness allocates
+//! on background paths between snapshots, so this asserts the *drop delta*
+//! covers what was freed rather than an absolute return to the baseline.
+//! `cargo test -p aqpbm-core --features heap-track --test heap_track_leak`
 
 #![cfg(feature = "heap-track")]
 

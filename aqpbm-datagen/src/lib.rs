@@ -1,38 +1,8 @@
-//! Synthetic data-generation toolkit.
-//!
-//! A small, extensible library for producing benchmark workloads as
-//! raw little-endian `.bin` files (consumed by `sketchlib bench
-//! --input`) alongside a self-describing `.meta.json` sidecar.
-//!
-//! The design is intentionally decoupled from any particular benchmark:
-//! generators write columns into a [`sink::Sink`], and a consumer reads
-//! them back through the `.bin` + sidecar format, so no dispatch machinery
-//! has to know a new distribution exists.
-//!
-//! This crate depends on nothing else in the workspace. The sketch
-//! benchmark is its first consumer, not its owner -- which is why it is
-//! named for the program it belongs to rather than for the sketches that
-//! happen to read it today. See `docs/DESIGN.md` §4.3.
-//!
-//! ## Extending
-//!
-//! Distribution (*how* values spread) and structure (*what* they mean)
-//! are orthogonal axes:
-//!
-//! * New distribution → add a [`dist::Distribution`] variant plus the
-//!   arm(s) in whichever realization it supports (`key_sampler` /
-//!   `weights` / `gap_sampler`). Every structure picks it up for free.
-//! * New structure → add a `*Gen` struct, a [`shape::Generator`]
-//!   variant, and a variant + build arm to [`shape::Shape`].
-//! * New physical type → one [`GenValue`] impl. A spec does not name a
-//!   type; the caller's `T` is the only thing that picks one.
-//!
-//! ## Reproducibility
-//!
-//! Every generator is a pure function of `(spec, seed, n)`: it takes a
-//! freshly seeded [`Xoshiro256PlusPlus`] and holds any running state
-//! (e.g. a timestamp accumulator) as a call-local, so the same inputs
-//! always yield byte-identical output.
+//! Synthetic data-generation toolkit: benchmark workloads as raw little-endian
+//! `.bin` files plus a self-describing `.meta.json` sidecar. Distribution (*how*
+//! values spread) and structure (*what* they mean) are orthogonal axes, and the
+//! destination is a third — so a new one of any never touches the others. Every
+//! generator is a pure function of `(spec, seed, n)`. See `docs/DESIGN.md` §4.3.
 
 pub mod dist;
 pub mod error;
@@ -54,40 +24,22 @@ pub use shape::{Generator, Shape, TimeUnit};
 pub use sink::{BinSink, MemorySink, Sink};
 pub use stats::{BasicStats, StatsAcc};
 
-/// Values produced per [`Sink::accept`] call by [`GenSpec::generate_into`].
-///
-/// Bounds a streaming sink's memory (64Ki × 8B = 512KiB per chunk) while
-/// staying large enough that the per-chunk dispatch is noise next to the
-/// per-value sampling. It is a transport detail only: output is
+/// Values produced per [`Sink::accept`] call, bounding a streaming sink's memory
+/// while keeping per-chunk dispatch to noise. A transport detail only: output is
 /// byte-identical at any chunk size.
 pub const DEFAULT_CHUNK: usize = 1 << 16;
 
-/// Schema version of the `.meta.json` sidecar. Bumped to 2 when the
-/// `shape` representation was refactored into orthogonal
-/// structure/`Distribution` axes; v1 sidecars (flattened `uniform`/
-/// `zipf`/`monotonic_timestamp`/`skewed_categorical` shapes) no longer
-/// deserialize.
+/// Schema version of the `.meta.json` sidecar. Version 2 carries the orthogonal
+/// structure / `Distribution` axes; v1's flattened shapes do not deserialize.
 pub const GEN_META_SCHEMA_VERSION: u32 = 2;
 
-/// A value the generator can emit.
-///
-/// This is what replaced the `Column` enum. A column was "a `Vec` whose
-/// element type is decided at run time", which forced every operation on
-/// generated data — write, summarise, concatenate, unwrap — to be spelled
-/// once per variant, 14 places in all. Adding a type meant editing all of
-/// them, and a missed arm behind a `_` fallback compiled fine.
-///
-/// There is no run-time type tag. A caller names `T` and the whole pipeline
-/// is one monomorphic instantiation of it; adding a type is one impl of this
-/// trait and nothing else. The only place a string still becomes a type is
-/// `sketchlib workload generate`, whose `--dtype` flag has nowhere else to
-/// read the answer from.
+/// A value the generator can emit. No run-time type tag: a caller names `T` and
+/// the pipeline is one monomorphic instantiation, so adding a type is one impl
+/// and nothing else. Only `workload generate`'s `--dtype` turns a string into one.
 pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
-    /// Per-type rendering configuration, built once from the spec.
-    ///
-    /// `()` for the numeric types, which need nothing: rendering a draw as an
-    /// `i64` is a cast. A string needs an alphabet and a length rule, and
-    /// those cannot be `const`s — they are read from a spec file at run time.
+    /// Per-type rendering configuration, built once from the spec. `()` for the
+    /// numeric types, where rendering a draw is a cast; a string needs an
+    /// alphabet and a length rule, read from the spec at run time.
     type Cfg: Clone;
 
     /// The tag recorded in the sidecar and the report. Written once, here,
@@ -105,39 +57,25 @@ pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
     /// so a bad `string:` block fails before any values are drawn.
     fn cfg(spec: &GenSpec) -> Result<Self::Cfg, SketchError>;
 
-    /// Render a raw `u64` draw as this type.
-    ///
-    /// Truncating for the numeric types, deliberately: the sampler's domain
-    /// is bounded by `cardinality`, which `Shape::build` has already
-    /// validated against the type (see `reject_inexact_f64`), so a draw
-    /// always fits. Keeping this infallible is also what preserves the
-    /// guarantee that a fixed `(shape, size, seed)` has the same *logical*
-    /// values at every dtype — every type renders the same draw.
+    /// Render a raw `u64` draw as this type, truncating for the numerics:
+    /// `Shape::build` has bounded the sampler's domain against the type, so a
+    /// draw always fits and every dtype renders the same logical values.
     fn from_draw(u: u64, cfg: &Self::Cfg) -> Self;
 
-    /// Narrow an accumulated `i128` (the monotonic series) or a category id
-    /// to this type.
-    ///
-    /// Fallible, unlike [`Self::from_draw`], because these values are not
-    /// bounded by `cardinality`: a long series of large gaps really can leave
-    /// the target type, and silently wrapping would produce a non-monotonic
-    /// series.
+    /// Narrow an accumulated `i128` (the monotonic series) or a category id to
+    /// this type. Fallible, unlike [`Self::from_draw`]: these are not bounded by
+    /// `cardinality`, and wrapping would produce a non-monotonic series.
     fn from_acc(a: i128, cfg: &Self::Cfg) -> Result<Self, SketchError>;
 
-    /// Value as `f64` for the sidecar summary, or `None` when the summary
-    /// does not apply.
-    ///
-    /// Reporting a string's *length* under a field named `min` would be a
-    /// lie in a provenance record, so a string column carries only `count`.
+    /// Value as `f64` for the sidecar summary, or `None` when it does not apply
+    /// — a string's *length* under a field named `min` would be a lie in a
+    /// provenance record, so a string column carries only `count`.
     fn stat(&self) -> Option<f64>;
 }
 
-/// A [`GenValue`] with a fixed byte width, and therefore writable to the
-/// header-less `.bin` stream.
-///
-/// Separate from `GenValue` so the constraint sits on the one sink that has
-/// it, not on the generator: a string is a fine `GenValue` and streams to
-/// [`MemorySink`], but `BinSink::<String>` will not compile.
+/// A [`GenValue`] with a fixed byte width, therefore writable to the
+/// header-less `.bin` stream. Separate from `GenValue` so the constraint sits on
+/// the one sink that has it: `BinSink::<String>` simply will not compile.
 pub trait FixedWidth: GenValue {
     fn write_le<W: Write>(&self, w: &mut W) -> std::io::Result<()>;
 }
@@ -190,10 +128,8 @@ impl GenValue for f64 {
         u as f64
     }
     /// `f64` has no `TryFrom<i128>`; bound it by the exact-integer range so a
-    /// monotonic series cannot silently lose its last digits and stop being
-    /// strictly increasing. (`Shape::build` rejects `f64` monotonic outright
-    /// today, so this is the guard for if that ever changes, not dead weight
-    /// covering a live path.)
+    /// monotonic series cannot lose its last digits and stop increasing.
+    /// `Shape::build` rejects `f64` monotonic today, so this guards a change.
     fn from_acc(a: i128, _cfg: &()) -> Result<Self, SketchError> {
         const LIMIT: i128 = 1 << 53;
         if a.abs() > LIMIT {
@@ -209,11 +145,9 @@ impl GenValue for f64 {
     }
 }
 
-/// How a drawn rank becomes a string.
-///
-/// Only meaningful when `dtype: string`. Ignored otherwise, rather than
-/// rejected, so a spec can carry one set of options and be run at several
-/// dtypes — which is the point of dtype being a controlled variable.
+/// How a drawn rank becomes a string. Only meaningful at `dtype: string`, and
+/// ignored rather than rejected elsewhere, so one spec can run at several dtypes
+/// — the point of dtype being a controlled variable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StringOpts {
@@ -254,13 +188,9 @@ pub struct StrCfg {
     alphabet: Vec<char>,
     min_len: usize,
     max_len: usize,
-    /// Number of leading characters that positionally encode the rank.
-    ///
-    /// This is what keeps the rendering **injective**: those `prefix` digits
-    /// are a base-`|alphabet|` encoding of the rank, so two different ranks
-    /// differ within them. Without it, a workload asking for `cardinality`
-    /// distinct keys could silently deliver fewer — and cardinality is the
-    /// one parameter a sketch benchmark is built around.
+    /// Leading characters positionally encoding the rank — a base-`|alphabet|`
+    /// encoding, so two ranks always differ within them. That is what keeps the
+    /// rendering **injective**, and the `cardinality` claim honest.
     prefix: usize,
 }
 
@@ -416,18 +346,9 @@ pub struct GenSpec {
 }
 
 impl GenSpec {
-    /// Load a spec from a `.yaml`/`.yml` (serde_yaml) or otherwise JSON
-    /// file. The shape's tagged fields are flattened alongside
-    /// `size`/`seed`, e.g.:
-    ///
-    /// ```yaml
-    /// shape: keys
-    /// cardinality: 100000
-    /// dist: { kind: zipf, s: 1.1 }
-    /// dtype: i64
-    /// size: 1000000
-    /// seed: 42
-    /// ```
+    /// Load a spec from a `.yaml`/`.yml` (serde_yaml) or otherwise JSON file,
+    /// with the shape's tagged fields flattened alongside `size`/`seed` — e.g.
+    /// `shape: keys`, `cardinality: 100000`, `dist: {kind: zipf, s: 1.1}`.
     pub fn from_path(path: &Path) -> Result<Self, SketchError> {
         let text = std::fs::read_to_string(path)?;
         let ext = path
@@ -442,26 +363,18 @@ impl GenSpec {
         }
     }
 
-    /// Generate the whole column into memory.
-    ///
-    /// Convenience wrapper over [`Self::generate_into`] with a
-    /// [`MemorySink`], for callers that want the values resident (the
-    /// benchmark runner replays one slice per measured run) and know
-    /// the dataset fits.
+    /// Generate the whole column into memory — [`Self::generate_into`] over a
+    /// [`MemorySink`], for callers that want the values resident (the runner
+    /// replays one slice per measured run) and know the dataset fits.
     pub fn generate<T: GenValue>(&self) -> Result<Vec<T>, SketchError> {
         let mut sink = MemorySink::<T>::new();
         self.generate_into(&mut sink, DEFAULT_CHUNK)?;
         Ok(sink.into_values())
     }
 
-    /// Generate into `sink`, `chunk` values at a time, and return the
-    /// provenance record for what was written.
-    ///
-    /// The chunking is what decouples dataset size from memory: a
-    /// [`BinSink`] streams a dataset far larger than RAM, while a
-    /// [`MemorySink`] reassembles the same bytes. `chunk` therefore
-    /// affects only peak memory and never the output — see
-    /// `chunk_size_does_not_change_output`.
+    /// Generate into `sink`, `chunk` values at a time, returning the provenance
+    /// record. Chunking decouples dataset size from memory, so `chunk` affects
+    /// peak memory and never the output — `chunk_size_does_not_change_output`.
     pub fn generate_into<T: GenValue, S: Sink<T>>(
         &self,
         sink: &mut S,
@@ -471,11 +384,9 @@ impl GenSpec {
         if chunk == 0 {
             return Err(SketchError::BadParam("chunk size must be > 0".into()));
         }
-        // An empty workload benchmarks nothing, but every downstream stage
-        // accepts it: the runner times an empty loop and reports `0.0
-        // items/sec` with a confidence interval around it. `I64Workload::load`
-        // already refuses a zero-item file; refuse the generated case here so
-        // both sources agree.
+        // An empty workload benchmarks nothing, yet every downstream stage
+        // accepts it and reports `0.0 items/sec`. `I64Workload::load` refuses a
+        // zero-item file; refuse the generated case so both sources agree.
         if self.size == 0 {
             return Err(SketchError::BadParam("size must be > 0".into()));
         }
@@ -594,10 +505,9 @@ mod tests {
 
     #[test]
     fn uniform_cardinality_means_distinct_count_for_every_item_type() {
-        // `cardinality` must not silently change meaning with the item type:
-        // a continuous f64 range would yield ~n distinct values instead
-        // of `cardinality`, quietly invalidating the one parameter a
-        // sketch benchmark cares most about.
+        // `cardinality` must not change meaning with the item type: a continuous
+        // f64 range would yield ~n distinct values instead of `cardinality`,
+        // invalidating the parameter the benchmark is built around.
         let card = 100u64;
         let f64s: Vec<f64> = spec(keys(card, Distribution::Uniform), 10_000, 42)
             .generate()
@@ -891,10 +801,9 @@ mod string_tests {
         }
     }
 
-    /// The property everything else rests on. A frequency benchmark is built
-    /// around `cardinality`; if two ranks rendered to the same string the run
-    /// would quietly have fewer distinct keys than it claims, and every
-    /// per-key error figure would be computed against the wrong denominator.
+    /// The property everything rests on: if two ranks rendered to the same
+    /// string, the run would have fewer distinct keys than it claims and every
+    /// per-key error figure would use the wrong denominator.
     #[test]
     fn distinct_ranks_never_collide() {
         let card = 5_000u64;
@@ -926,10 +835,9 @@ mod string_tests {
         assert!(seen.len() > 1, "test needs repeated keys to be meaningful");
     }
 
-    /// The whole point of a string workload: lengths vary, so hash cost and
-    /// comparison cost vary with them. Decimal-formatted integers gave a
-    /// 1-7 character spread over 10 symbols; this is the axis that replaces
-    /// that.
+    /// The whole point of a string workload: lengths vary, so hash and
+    /// comparison cost vary with them — the axis that decimal-formatted
+    /// integers, at 1-7 characters over 10 symbols, could not move.
     #[test]
     fn lengths_spread_across_the_configured_range() {
         let opts = StringOpts {

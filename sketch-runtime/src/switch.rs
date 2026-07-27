@@ -1,10 +1,7 @@
-//! Runtime toggle — a cheap atomic bool the controller can flip
-//! without restarting the host. Shared between the `Sampler` and
-//! whoever controls sampling (typically the ASAPController push
-//! handler or a local `/metrics` endpoint).
-//!
-//! Cost on the hot path: one `Relaxed` atomic load per op. Every
-//! modern CPU turns that into a single cycle; no CAS, no fence.
+//! Runtime toggle — a cheap atomic bool the controller can flip without
+//! restarting the host, shared between the `Sampler` and whoever controls
+//! sampling. Costs one `Relaxed` atomic load per op on the hot path: a single
+//! cycle on any modern CPU, no CAS and no fence.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

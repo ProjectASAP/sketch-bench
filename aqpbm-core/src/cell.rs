@@ -1,18 +1,8 @@
 //! Running **one cell** — one `(impl, config)` measured against one workload.
 //!
-//! A cell splits cleanly in two, because only one half needs the ground truth:
-//!   - [`run_cell`] — the **timed** measurements (throughput / latency / CPU /
-//!     memory). Generic over the sketch, no ground truth, fully monomorphised so
-//!     the wrapper's `update` inlines into the hot loop.
-//!   - [`score_cell`] — the **accuracy** measurement. Untimed, so it is free to
-//!     carry the track's ground-truth calculator without touching the hot path.
-//!
-//! The frontend picks the concrete type `S` (and, for accuracy, the ground-truth calculator
-//! `G`) and calls these. There is no per-track driver.
-//!
-//! This module also owns the plumbing the frontend hands in: [`WorkloadSpec`]
-//! (where items come from), [`BenchItem`] (how a sketch's item type builds a
-//! workload out of one), and [`RunError`].
+//! [`run_cell`] takes the timed half (throughput / latency / CPU / memory),
+//! monomorphised so the wrapper's `update` inlines; [`score_cell`] takes the
+//! untimed accuracy half. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
 
 use crate::accumulator::Accumulator;
 use crate::config::ParamSet;
@@ -90,11 +80,9 @@ impl From<anyhow::Error> for RunError {
 
 // ---------- the item axis ----------
 
-/// An item type a benchmark can be run over: it names the workload that
-/// carries it, and how to build one from a [`WorkloadSpec`].
-///
-/// A row's `Accumulator::Item` decides the encoding before anything is
-/// generated, so there is nothing here that can mismatch.
+/// An item type a benchmark can be run over: it names the workload that carries
+/// it, and how to build one from a [`WorkloadSpec`]. A row's
+/// `Accumulator::Item` fixes the encoding before anything is generated.
 pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;
@@ -157,13 +145,9 @@ impl BenchItem for Vec<u8> {
 
 // ---------- the hot-loop body + construction ----------
 
-/// The hot-loop body.
-///
-/// Generic and `#[inline(always)]`, so it is instantiated in whichever crate
-/// names the concrete `S` — the wrapper's `update` and this call site still
-/// land in one codegen unit and LLVM still folds the update into the loop,
-/// even though the wrappers now live a crate away. `BenchRunner::run_timed`,
-/// which drives the loop, has always been across that boundary.
+/// The hot-loop body. Generic and `#[inline(always)]`, so it instantiates in
+/// whichever crate names the concrete `S`: the wrapper's `update` and this call
+/// site land in one codegen unit, and LLVM folds the update into the loop.
 #[inline(always)]
 pub fn insert_body<S: Accumulator>(s: &mut S, it: &S::Item) {
     s.update(it);

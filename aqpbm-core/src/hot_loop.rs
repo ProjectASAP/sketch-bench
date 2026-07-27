@@ -1,17 +1,8 @@
-//! CPU warm-up + **the** timed insert loop — the mechanical core a runner
-//! drives, sitting here in `aqpbm-core` rather than in any one bench domain.
+//! CPU warm-up + **the** timed insert loop — the mechanical core a runner drives.
 //!
-//! ## Why moving the hot loop across a crate boundary is inlining-safe
-//!
-//! [`insert_loop`] is the one function every throughput measurement times, and
-//! it must fold the caller's `insert` closure (the wrapper's `update`) into the
-//! loop or the number is wrong — see the 5.1% history on [`insert_loop`]
-//! itself. That fold never depended on co-location: the closure is
-//! monomorphised at the call site in the bench crate and passed in
-//! generically, and thin LTO (`lto = "thin"`, `codegen-units = 1` in the
-//! workspace release profile) inlines it across the crate boundary at link
-//! time. Keeping the `#[inline(always)]` attribute and the single-copy
-//! structure is what preserves the guarantee.
+//! [`insert_loop`] must fold the caller's `insert` closure into the loop or the
+//! number is wrong. Thin LTO (`lto = "thin"`, `codegen-units = 1`) inlines it
+//! across the crate boundary; `#[inline(always)]` and one copy preserve that.
 
 use std::sync::Once;
 use std::time::{Duration, Instant};
@@ -19,31 +10,16 @@ use std::time::{Duration, Instant};
 use crate::accumulator::Accumulator;
 
 /// Ramp the CPU **once per process**, before the first measured loop of any
-/// pass.
-///
-/// This used to be called from the throughput fast path only, which made the
-/// warm-up an accident of which `--metrics` flags were passed: a THROUGHPUT
-/// pass that also carried the CPU/MEMORY bits took the other branch and was
-/// timed with no governor ramp at all. Two passes measured at two different
-/// clock states is not a comparison. Gating on `Once` also stops each of a
-/// cell's metric passes from re-burning the warm-up duration — the ramp only
-/// the first pass in the process actually needs.
+/// pass — two passes timed at two different clock states is not a comparison.
+/// `Once` also stops a cell's later passes from re-burning the warm-up.
 pub fn warmup_cpu_once() {
     static WARMED: Once = Once::new();
     WARMED.call_once(warmup_cpu_from_env);
 }
 
-/// Burn CPU on the current core so the cpufreq governor ramps to max turbo
-/// before timing starts. External shell warmups don't work reliably because
-/// the governor can drop frequency during the bench process's exec/startup
-/// window.
-///
-/// Duration is read from `BENCH_WARMUP_SECS`. **Defaults to 0** — a library
-/// must not burn ten seconds of a caller's CPU because it was linked. The
-/// measurement default lives in `sketchlib`'s `main`, which sets the variable
-/// when the operator hasn't; every integration test and downstream embedder
-/// therefore pays nothing. (`cfg!(test)` cannot express this: an integration
-/// test links this crate as a plain dependency, compiled without `cfg(test)`.)
+/// Burn CPU so the cpufreq governor ramps to max turbo before timing starts.
+/// Duration from `BENCH_WARMUP_SECS`, **defaulting to 0** — a library must not
+/// burn a caller's CPU; `sketchlib`'s `main` sets the measurement default.
 fn warmup_cpu_from_env() {
     let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
         .ok()
@@ -64,26 +40,9 @@ fn warmup_cpu_from_env() {
     }
 }
 
-/// **The** insert loop. Times `insert` over every item and returns the
-/// elapsed nanoseconds.
-///
-/// Every pass that reports throughput goes through here, and nothing else
-/// is inside the timed region — no metric snapshot, no `prepare`,
-/// no `memory_bytes`. This function existing exactly once is a correctness
-/// property, not tidiness:
-///
-/// The throughput fast path and the CPU/MEMORY path used to carry their own
-/// copies of this loop, one calling a closure supplied by `aqpbm-cli` and
-/// the other calling `sketch.update(it)` from inside `sketch-bench`. Both
-/// timed the right region, so the bug was invisible to review — but the
-/// cross-crate call in the second copy cost the asap_sketchlib FixedMatrix
-/// FastPath its inlining, and `cms/lib-fixedmatrix-fast-32k` reported
-/// **5.1% lower throughput** under `--metrics throughput,cpu,memory` than
-/// under `--metrics throughput` (5 alternating rounds, non-overlapping
-/// ranges). The penalty scaled with how much an implementation relies on
-/// inlining — ~1.5% for `hll/oxide` — so it did not cancel out: it changed
-/// the ranking *between* implementations, and the slow path is the one the
-/// default `--metrics` selects.
+/// **The** insert loop. Times `insert` over every item, returns elapsed ns.
+/// Nothing else is inside the timed region — no snapshot, no `prepare`. One
+/// copy only: a duplicate calling across a crate boundary costs 5.1%.
 #[inline(always)]
 pub fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
 where

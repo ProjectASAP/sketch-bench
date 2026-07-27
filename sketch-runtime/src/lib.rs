@@ -1,25 +1,8 @@
-//! `sketch-runtime` — the embedded half of sketchlib-tool.
-//!
-//! Downstream apps (asap-fusion, DataCollector, ASAPQuery) wrap
-//! their live sketches in a `Probe<S, Sampler>` so throughput /
-//! latency samples flow to an `Exporter` (stdout / file / gRPC /
-//! prometheus) in the same v1 JSONL shape the offline
-//! `sketchlib bench` CLI produces. See `docs/DESIGN.md` §7.1.
-//!
-//! # Enabling / disabling
-//!
-//! There are **three** independent off-switches. Pick the one
-//! whose cost / ergonomics fit:
-//!
-//! | Level | How | Hot-path cost |
-//! |---|---|---|
-//! | Compile-time | `sketch-runtime = { default-features = false }` | 0 (four `#[inline(always)]` no-ops) |
-//! | Construction-time | `Sampler::disabled(exporter, tag)` | 1 cold branch per op |
-//! | Runtime | `RuntimeSwitch::disable()` | 1 `Relaxed` atomic load per op |
-//!
-//! Additionally the sampling rate itself is a dial — a
-//! `Sampler::every_n(u32::MAX, ...)` effectively never emits
-//! until the controller turns it down.
+//! `sketch-runtime` — the embedded half of sketchlib-tool. Downstream apps wrap
+//! live sketches in a `Probe<S, Sampler>` so samples flow to an `Exporter` in
+//! the same JSONL shape the offline CLI produces. Three independent off-switches:
+//! compile-time (`default-features = false`, free), construction-time
+//! (`Sampler::disabled`, one cold branch), runtime (`RuntimeSwitch`, one load).
 
 pub mod exporter;
 pub mod switch;

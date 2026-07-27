@@ -10,14 +10,8 @@ use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::memory_footprint::MemoryFootprint;
 
 // ---------- asap_sketchlib Elastic ----------
-//
-// The `RefCell` is vestigial: it existed so `Elastic::query`, which takes
-// `&mut self` (interior state update on read), could be reached from behind a
-// `&self` query method. This row declares no query capability, so the cell is
-// now only ever reached through `get_mut` and could be a plain field.
-//
-// The lib's constructor only accepts `buckets`; `depth` is fixed internally,
-// so the config records both but `depth` has no effect on the build.
+// The `RefCell` is vestigial: no query capability here, so it is only reached
+// through `get_mut`. The constructor takes only `buckets`; `depth` is inert.
 pub struct ElasticLib {
     inner: RefCell<asap_sketchlib::Elastic<asap_sketchlib::DefaultXxHasher>>,
     buckets: usize,

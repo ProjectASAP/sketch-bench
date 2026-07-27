@@ -8,23 +8,9 @@ use welford::Welford;
 use crate::metrics::{ItemsPerSec, MetricsMask, RunMetrics};
 use crate::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
-/// Roll up a slice of `RunMetrics` into a single `BenchSection`.
-///
-/// `mask` is the *pass* mask (post-`MetricsMask::passes()` split) that
-/// produced these runs. Fields whose bit is absent are suppressed (`None`)
-/// even if the run records carry a value — that is what lets a consumer tell
-/// "not measured in this pass" from "measured and happened to be zero".
-/// Throughput and query_throughput key off THROUGHPUT and ACCURACY
-/// respectively; latency off LATENCY, cpu off CPU, rss / heap_allocated off
-/// MEMORY. The logical `memory_bytes` (param-derived from the sketch itself)
-/// is always emitted: it costs nothing and downstream plots want it on every
-/// row.
-///
-/// The THROUGHPUT bit yields **three** fields, not one, because "throughput"
-/// is two different questions for a panel that mixes streaming sketches with
-/// deferred-build baselines: `throughput_items_per_sec` is the ingest rate,
-/// `build_throughput_items_per_sec` the ready-to-answer rate, and
-/// `finalize_time_ms` the gap between them. See `BenchSection`.
+/// Roll up `RunMetrics` into one `BenchSection`. `mask` is the *pass* mask;
+/// fields whose bit is absent are suppressed, distinguishing "not measured
+/// here" from "zero". THROUGHPUT yields three fields — see `BenchSection`.
 pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let n = runs.len();
 
@@ -40,9 +26,8 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
                     w.push(v);
                     samples.push(v);
                     // Same guard, not `build_ns > 0`: the two columns must
-                    // summarise the same set of runs or their ratio — the
-                    // whole reason both exist — is taken across different
-                    // denominators.
+                    // summarise the same runs, or their ratio — the whole
+                    // reason both exist — spans different denominators.
                     build_w.push(ItemsPerSec::compute(
                         r.items_inserted,
                         r.build_wall_time_ns(),
@@ -168,19 +153,9 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     }
 }
 
-/// Fold every run's accuracy scalars into one object.
-///
-/// Each repetition of the accuracy pass measured an **independent draw** of
-/// the workload (see `BenchRunner::run_pass`), so these are genuine samples
-/// and the spread across them is real. Each key is emitted as its mean, with
-/// a `<key>_stddev` companion and one `accuracy_runs` count — scalars stay
-/// scalars, so a consumer reading `relative_error_mean` keeps working while
-/// gaining the ability to see how much it moved.
-///
-/// A key present in some runs but not others (a top-k prefix that only some
-/// draws had enough distinct keys for) is averaged over the runs that
-/// reported it, while `accuracy_runs` counts every run that reported
-/// anything — so the two can disagree, and a reader can spot it.
+/// Fold every run's accuracy scalars into one object. Each repetition drew
+/// independently, so spread is real: each key ships as a mean plus `_stddev`,
+/// with `accuracy_runs` counting every run — the two can visibly disagree.
 fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     use std::collections::BTreeMap;
     let mut acc: BTreeMap<&str, Welford> = BTreeMap::new();
@@ -200,10 +175,8 @@ fn merge_accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     let mut out = serde_json::Map::new();
     for (k, w) in acc {
         out.insert(k.to_string(), json_num(w.mean()));
-        // A `_stddev` of exactly zero carries no information and most of
-        // these keys are configuration constants (`probes_top10`,
-        // `grid_points`, `items`) that only ride along in the metric map.
-        // Emitting a companion for each doubled the payload with zeros.
+        // A `_stddev` of exactly zero carries no information, and most such
+        // keys are configuration constants riding along in the metric map.
         if w.n() > 1 && w.stddev() != 0.0 {
             out.insert(format!("{k}_stddev"), json_num(w.stddev()));
         }
@@ -229,12 +202,9 @@ fn maybe_runstats(w: Welford) -> Option<RunStats> {
     }
 }
 
-/// Summarise the post-warmup iterations of one process.
-///
-/// `ci95` is deliberately `None`: these iterations are not independent
-/// samples of the implementation's throughput, so no interval computed from
-/// them would mean what an interval claims. `sketchlib bench --repeats R`
-/// fills it in from R separate processes. See `RunStats::ci95`.
+/// Summarise the post-warmup iterations of one process. `ci95` is deliberately
+/// `None` — these iterations are not independent samples, so no interval over
+/// them means what one claims. `--repeats R` fills it in. See `RunStats::ci95`.
 fn runstats_from(w: Welford) -> RunStats {
     RunStats {
         mean: w.mean(),
@@ -264,10 +234,9 @@ mod tests {
         }
     }
 
-    /// The property that lets one column serve a mixed panel: for the great
-    /// majority of implementations `prepare` is a no-op, and there
-    /// the build rate must be the ingest rate exactly — not approximately,
-    /// and not absent.
+    /// The property that lets one column serve a mixed panel: where `prepare`
+    /// is a no-op the build rate must equal the ingest rate exactly — not
+    /// approximately, and not absent.
     #[test]
     fn build_throughput_equals_ingest_when_finalize_is_free() {
         let runs = vec![

@@ -1,18 +1,13 @@
-//! `MetricsMask` — which metric families a sink collects.
-//!
-//! Named by both consumers of the `MetricsSink` contract — the offline
-//! [`FullSink`](crate::metrics::FullSink) and the embedded
-//! `sketch-runtime::Sampler` — which is why it sits in `aqpbm-core` rather
-//! than in either of them.
-//!
-//! See `docs/DESIGN.md` §5.3.
+//! `MetricsMask` — which metric families a sink collects. Named by both
+//! consumers of the `MetricsSink` contract, the offline
+//! [`FullSink`](crate::metrics::FullSink) and `sketch-runtime::Sampler`, which
+//! is why it sits here rather than in either. See `docs/DESIGN.md` §5.3.
 
 use bitflags::bitflags;
 
 bitflags! {
-    /// Which metric families are collected during a run. Each bit gates both
-    /// the construction cost and the hot-path overhead of its recorder:
-    /// `FullSink` holds only the recorders whose bits are set. An empty mask
+    /// Which metric families are collected during a run. Each bit gates both the
+    /// construction cost and the hot-path overhead of its recorder. An empty mask
     /// is legal, and useful as a minimal smoke test.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct MetricsMask: u32 {
@@ -42,11 +37,9 @@ impl MetricsMask {
     pub const SECONDARY: MetricsMask =
         MetricsMask::from_bits_truncate(Self::CPU.bits() | Self::MEMORY.bits());
 
-    /// Split this mask into one sub-mask per `BenchRunner` pass.
-    /// Each primary bit produces its own pass; secondary bits
-    /// (CPU / MEMORY) attach to every primary pass. If no primary
-    /// bit is set but secondary bits are, one pass runs with the
-    /// secondary bits alone.
+    /// Split this mask into one sub-mask per `BenchRunner` pass: each primary
+    /// bit gets its own pass, secondary bits (CPU / MEMORY) attach to all of
+    /// them, and secondary-only masks run as a single pass.
     pub fn passes(self) -> Vec<MetricsMask> {
         let secondary = self & Self::SECONDARY;
         let mut out = Vec::new();

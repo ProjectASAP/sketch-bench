@@ -1,10 +1,7 @@
-//! The structure axis — *what* the generated values mean, orthogonal
-//! to the [`Distribution`] that says *how* they are spread.
-//!
-//! Each variant owns a [`Distribution`] and the domain it applies it
-//! over; the distribution appears once (in `dist.rs`) rather than once
-//! per structure. Adding a structure is a `*Gen` struct, a
-//! [`Generator`] variant, and a variant + build arm here.
+//! The structure axis — *what* the generated values mean, orthogonal to the
+//! [`Distribution`] saying *how* they are spread. Each variant owns a
+//! distribution and the domain it applies over. Adding a structure is a `*Gen`
+//! struct, a [`Generator`] variant, and a variant + build arm here.
 
 use rand::distributions::WeightedIndex;
 use rand_distr::Distribution as _;
@@ -57,12 +54,9 @@ fn reject_inexact<T: GenValue>(cardinality: u64) -> Result<(), SketchError> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum Shape {
-    /// A large key space of `cardinality` distinct keys drawn per
-    /// `dist` (which must be range-valued: uniform / zipf / constant).
-    /// The exact base is per-dist — uniform covers `[0, cardinality)`,
-    /// zipf covers ranks `[1, cardinality]` — but the count is always
-    /// `cardinality`, at every dtype — so `f64` emits whole numbers and a
-    /// benchmark can vary `dtype` alone.
+    /// A large key space of `cardinality` distinct keys drawn per `dist`
+    /// (range-valued: uniform / zipf / constant). The base is per-dist, but the
+    /// count is always `cardinality` at every dtype, so `dtype` varies alone.
     Keys {
         cardinality: u64,
         #[serde(default = "default_dist")]
@@ -75,10 +69,9 @@ pub enum Shape {
         #[serde(default = "default_dist")]
         dist: Distribution,
     },
-    /// A monotonically non-decreasing series (e.g. event timestamps):
-    /// each value is the previous plus a non-negative gap drawn from
-    /// `gap` (a count/interval distribution). `min_gap` floors each gap
-    /// (1 → strictly increasing, 0 → duplicates allowed).
+    /// A monotonically non-decreasing series (e.g. event timestamps): each value
+    /// is the previous plus a non-negative gap from `gap`. `min_gap` floors it —
+    /// 1 for strictly increasing, 0 to allow duplicates.
     Monotonic {
         #[serde(default)]
         start: i64,
@@ -91,12 +84,9 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// How many distinct values this shape can produce, when that is
-    /// bounded.
-    ///
-    /// `string` needs it to size the prefix that keeps rendering injective,
-    /// and `Monotonic` has no answer — which is why a monotonic string
-    /// series is refused rather than approximated.
+    /// How many distinct values this shape can produce, when bounded. `string`
+    /// needs it to size the injective prefix, and `Monotonic` has no answer —
+    /// which is why a monotonic string series is refused, not approximated.
     pub fn domain_size(&self) -> Option<u64> {
         match self {
             Shape::Keys { cardinality, .. } => Some(*cardinality),
@@ -105,13 +95,9 @@ impl Shape {
         }
     }
 
-    /// The label used in reports and CLI output. This is a
-    /// back-compat shim, **not** a clean structural tag: for `Keys` it
-    /// returns the *distribution* name (`"uniform"`/`"zipf"`/…) so
-    /// existing plot scripts that filter on `shape=="zipf"` keep
-    /// working, while the other structures return a structural name.
-    /// Do not rely on it to identify the structure axis; use the enum
-    /// variant for that.
+    /// The label used in reports and CLI output — **not** a clean structural
+    /// tag: `Keys` returns the *distribution* name so `shape=="zipf"` filters
+    /// keep working. Use the enum variant to identify the structure axis.
     pub fn report_label(&self) -> &'static str {
         match self {
             Shape::Keys { dist, .. } => dist.tag(),
@@ -175,11 +161,9 @@ impl Shape {
     }
 }
 
-/// A prepared generator: the closed set of structures, one per `Shape`
-/// variant. Built by [`Shape::build`], driven by
-/// [`GenSpec::generate_into`](super::GenSpec::generate_into).
-/// An enum rather than a trait object — the set is closed, matching how
-/// the other datagen axes ([`Distribution`], [`Shape`]) are modelled.
+/// A prepared generator: the closed set of structures, one per `Shape` variant.
+/// Built by [`Shape::build`]. An enum rather than a trait object, matching how
+/// the other datagen axes are modelled.
 pub enum Generator<T: GenValue> {
     Keys(KeysGen<T>),
     Categorical(CategoricalGen<T>),
@@ -187,13 +171,9 @@ pub enum Generator<T: GenValue> {
 }
 
 impl<T: GenValue> Generator<T> {
-    /// Produce the next `n` values, appended to `out` (cleared by the
-    /// caller, so the chunked driver reuses one buffer for the whole run).
-    ///
-    /// Takes `&mut self` because a structure may carry state *between* calls
-    /// (the monotonic accumulator does). That is what makes N calls of `n`
-    /// consume the same RNG draws, and continue the same series, as one call
-    /// of `N*n`.
+    /// Produce the next `n` values into `out`, which the caller clears so one
+    /// buffer serves the run. `&mut self` because a structure may carry state
+    /// between calls — what makes N calls of `n` match one call of `N*n`.
     pub fn generate(
         &mut self,
         n: usize,
@@ -236,11 +216,9 @@ pub struct CategoricalGen<T: GenValue> {
 }
 
 impl<T: GenValue> CategoricalGen<T> {
-    /// Category ids are authored as `i64` in the spec, so they are narrowed
-    /// through [`GenValue::from_acc`] rather than rendered from a draw — an
-    /// id is a value the user wrote down, not a sample. `from_acc` is
-    /// fallible, which is what makes `dtype: u64` over negative ids an error
-    /// rather than a wrap.
+    /// Category ids are authored as `i64`, so they narrow through
+    /// [`GenValue::from_acc`] rather than rendering from a draw. Its fallibility
+    /// makes `u64` over a negative id an error rather than a wrap.
     fn generate(
         &mut self,
         n: usize,
@@ -257,13 +235,9 @@ impl<T: GenValue> CategoricalGen<T> {
     }
 }
 
-/// Monotonically non-decreasing values built by accumulating gaps.
-///
-/// The accumulator is an `i128` **field**, not a call-local: the series
-/// has to continue across chunk boundaries, so a fresh generator (built
-/// once per [`super::GenSpec::generate_into`]) starts at `start` and
-/// each subsequent call resumes where the last left off. Overflow past
-/// the target type is a hard error.
+/// Monotonically non-decreasing values built by accumulating gaps. The
+/// accumulator is an `i128` **field**, not a call-local, so the series continues
+/// across chunk boundaries. Overflow past the target type is a hard error.
 pub struct MonotonicGen<T: GenValue> {
     gap: GapSampler,
     min_gap: u64,

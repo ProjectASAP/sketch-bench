@@ -1,31 +1,8 @@
-//! "Octo" parallel-insert wrappers: `cms/lib-fastpath-parallel`,
-//! `countsketch/lib-fastpath-parallel`, `hll/lib-fastpath-parallel`.
-//!
-//! Mirrors the legacy `throughput/octo/` binary: each worker thread builds its
-//! own `FastPath` sketch on a disjoint partition of the input, deltas emitted
-//! via `insert_emit_delta` are passed through `black_box`, and the partition
-//! sketches are *not* merged — so these impls declare no query capability and
-//! are not scored.
-//!
-//! `update` only buffers; the parallel section runs in `prepare`,
-//! which the runner times into `RunMetrics::finalize_wall_time_ns`. So read
-//! these rows off `build_throughput_items_per_sec` — their
-//! `throughput_items_per_sec` is the `Vec::push` that buffers the partition
-//! and says nothing about parallel insert.
-//!
-//! The timed region is the whole parallel section: partition, spawn, barrier,
-//! insert, join. Legacy octo's headline instead took the max worker's own
-//! elapsed time, which excludes spawn and join — each kernel here used to
-//! compute that number and then drop it on the floor, unreadable by anything,
-//! costing a per-thread `Instant` pair for nothing. The end-to-end reading is
-//! the one a caller can act on (you pay for the threads whether or not the
-//! workers were the slow part), so the kernels now return `()` and the clock
-//! that matters is the runner's.
-//!
-//! Worker count is plumbed via `BenchConfig.threads` (the `--workers N` CLI
-//! flag). The family's `ParamSet` knobs are ignored: CMS and CountSketch are
-//! fixed to the legacy `M5x32K` (5 × 32768) octo matrix, the HLL row to
-//! sketchlib's P14 `ErtlMLE` default.
+//! "Octo" parallel-insert wrappers. Each worker builds its own `FastPath`
+//! sketch on a disjoint partition and the shards are *not* merged, so these
+//! rows declare no query capability. `update` only buffers — read them off
+//! `build_throughput_items_per_sec`, since the parallel section runs in
+//! `prepare` and the timed region spans partition, spawn, barrier, insert, join.
 
 use std::sync::Barrier;
 
@@ -47,10 +24,9 @@ pub struct ParallelCmsFastPath {
 }
 
 impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
-    /// Not an `InitSketch`: it needs the worker count, which is a run knob
-    /// (`--workers`), not a sketch parameter. Parses the config to reject a
-    /// malformed one, then ignores its values — this impl's shape is fixed
-    /// internally, so any well-formed config builds it.
+    /// Not an `InitSketch`: it needs the worker count, a run knob (`--workers`)
+    /// rather than a sketch parameter. Parses the config to reject a malformed
+    /// one, then ignores its values — the shape is fixed internally.
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
         let _p: CmsParams = config.parse()?;
         Ok(Self {
@@ -168,10 +144,9 @@ fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
     items.chunks(chunk).collect()
 }
 
-/// The barrier is load-bearing and stays: a worker that started inserting
-/// while its peers were still being spawned would not be measuring a parallel
-/// insert at all. It costs one rendezvous inside the runner's timed region,
-/// which is the honest place for it.
+/// The barrier is load-bearing: a worker inserting while its peers are still
+/// being spawned is not measuring a parallel insert. It costs one rendezvous
+/// inside the runner's timed region, which is the honest place for it.
 fn run_parallel_cms(items: &[i64], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
@@ -233,7 +208,6 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
 }
 
 // ---------- catalog identity ----------
-//
 // These build through `ParallelInit`, not `InitSketch` — identity is declared
 // the same way regardless.
 

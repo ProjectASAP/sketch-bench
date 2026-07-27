@@ -1,21 +1,15 @@
-//! `Probe<S, Sink>` — the one decorator both offline
-//! benchmarks and runtime samplers wrap around a live sketch.
-//!
-//! It keeps metric collection out of the `Accumulator` impls: each wrapped
-//! implementation stays a thin newtype around the underlying library's
-//! struct, and `Probe` intercepts every `update` to notify the supplied
-//! `MetricsSink`. With [`NoopSink`] both hooks and the trait dispatch
-//! inline away to nothing.
-//!
+//! `Probe<S, Sink>` — the one decorator both offline benchmarks and runtime
+//! samplers wrap around a live sketch. It keeps metric collection out of the
+//! `Accumulator` impls by intercepting every `update` to notify a `MetricsSink`.
+//! With [`NoopSink`] the hooks and the dispatch inline away to nothing.
 //! See `docs/DESIGN.md` §4.2.
 
 use crate::accumulator::Accumulator;
 use crate::memory_footprint::MemoryFootprint;
 
-/// A handler for benchmark/runtime metrics events.
-///
-/// Impls: [`NoopSink`] below, [`FullSink`](crate::metrics::FullSink) for
-/// offline runs, and `sketch-runtime`'s `Sampler` for the embedded path.
+/// A handler for benchmark/runtime metrics events. Impls: [`NoopSink`] below,
+/// [`FullSink`](crate::metrics::FullSink) for offline runs, and
+/// `sketch-runtime`'s `Sampler` for the embedded path.
 pub trait MetricsSink {
     fn on_update_start(&mut self);
     fn on_update_end(&mut self);
@@ -61,10 +55,9 @@ impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
     }
 }
 
-/// `Probe<S, Sink>` wraps any `Accumulator` + `MetricsSink` into a new `Accumulator`
-/// that records timing hooks around the inner `update`. The identical wrapper
-/// serves the offline [`BenchRunner`](crate::runner::BenchRunner) and the
-/// embedded `sketch-runtime::Sampler`.
+/// `Probe<S, Sink>` wraps an `Accumulator` + `MetricsSink` into an `Accumulator`
+/// recording timing hooks around the inner `update`. The identical wrapper serves
+/// the offline [`BenchRunner`](crate::runner::BenchRunner) and the embedded sampler.
 pub struct Probe<S: Accumulator, Sink: MetricsSink> {
     inner: S,
     sink: Sink,

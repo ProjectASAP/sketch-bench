@@ -1,12 +1,8 @@
 //! UnivMon wrappers — `sketchlib::UnivMon` (string-keyed) and
-//! `sketch_oxide::universal::UnivMon` (byte-keyed). Multi-query
-//! sketch: neither row declares a query capability, so neither is
-//! accuracy-scored — dedicated moment-family comparators are a
-//! future-work item.
-//!
-//! The tunable params are `layers` and `max_stream`; the underlying CMS is
-//! sized at a fixed (5, 2048). `sketch_oxide::universal::UnivMon::new` takes
-//! no layer count, so on that row `layers` moves the reported footprint only.
+//! `sketch_oxide::universal::UnivMon` (byte-keyed). Neither declares a query
+//! capability, so neither is accuracy-scored; moment-family comparators are
+//! future work. Tunable params are `layers` and `max_stream`, over a fixed
+//! (5, 2048) CMS — and oxide's constructor ignores `layers` beyond footprint.
 
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::UnivMonParams;

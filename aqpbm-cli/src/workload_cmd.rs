@@ -1,10 +1,7 @@
-//! `sketchlib workload generate|describe` — produce and inspect
-//! synthetic `.bin` workloads.
-//!
-//! Generation writes a raw little-endian value stream plus a
-//! `foo.bin.meta.json` provenance sidecar. The stream is consumed by
-//! `sketchlib bench --input <path>`; the sidecar is ignored by the
-//! benchmark and read back by `describe`.
+//! `sketchlib workload generate|describe` — produce and inspect synthetic
+//! `.bin` workloads. Generation writes a raw little-endian value stream plus a
+//! `foo.bin.meta.json` provenance sidecar: the stream feeds `bench --input`,
+//! while the sidecar is ignored there and read back by `describe`.
 
 use std::path::Path;
 
@@ -45,11 +42,9 @@ pub struct GenerateArgs {
     /// Output `.bin` path. Parent directories are created if missing.
     #[arg(long)]
     out: String,
-    /// Physical output type: i64 | u64 | f64.
-    ///
-    /// `bench --input` reads i64 files only. f64 is benchmarkable, but
-    /// through `bench --dtype f64`, which generates in-process rather than
-    /// reading a file. u64 has no consumer in this repo at all.
+    /// Physical output type: i64 | u64 | f64. `bench --input` reads i64 only;
+    /// f64 is benchmarkable through `bench --dtype f64`, which generates
+    /// in-process. u64 has no consumer in this repo.
     #[arg(long, default_value = "i64")]
     dtype: String,
     /// Uniform: max key (exclusive). Zipf: key-space size.
@@ -218,10 +213,9 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         shape,
         size: a.size,
         seed: a.seed,
-        // No flags for the string options: the only sink that exists is
-        // `.bin`, which cannot hold strings, so a `--alphabet` flag would
-        // configure a path that always errors. `--spec` can already set
-        // them for callers using the library.
+        // No flags for the string options: the only sink is `.bin`, which
+        // cannot hold strings, so `--alphabet` would configure a path that
+        // always errors. `--spec` already sets them for library callers.
         string: None,
     })
 }
@@ -237,10 +231,9 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    // The one place left in the tool where a string has to become a type
-    // parameter. Everywhere else the item type is read off a catalog row's
-    // `Accumulator::Item`; `generate` has no row, so it matches on the flag
-    // and everything downstream of the match is monomorphic.
+    // The one place a string still becomes a type parameter: everywhere else the
+    // item type is read off a catalog row's `Accumulator::Item`, but `generate`
+    // has no row, so it matches on the flag and stays monomorphic below.
     fn stream<T: datagen::GenValue + datagen::FixedWidth>(
         spec: &datagen::GenSpec,
         out: &Path,
@@ -257,9 +250,8 @@ fn generate(a: GenerateArgs) -> Result<()> {
         "u64" => stream::<u64>(&spec, out)?,
         "f64" => stream::<f64>(&spec, out)?,
         // Not an oversight: `String` is not `FixedWidth`, so `stream::<String>`
-        // would not compile. The `.bin` layout is a bare sequence of
-        // equal-width values with nowhere to record a length. Strings
-        // generate fine in-process; what is missing is a sink for them.
+        // would not compile — `.bin` is equal-width values with nowhere to record
+        // a length. Strings generate fine in-process; the sink is what is missing.
         "string" => bail!(
             "dtype string cannot be written to a .bin file: the format has no length field. \
              Strings are generated in-process today; a CSV sink is what would give them a file"

@@ -114,14 +114,9 @@ async fn grpc_exporter_pushes_compressed_batch_to_server() {
     assert_eq!(rec.sketch, "hll");
     assert_eq!(rec.impl_name, "oxide");
     assert_eq!(rec.source, "data-collector");
-    // Against the constant, not a literal: what this test owns is that
-    // the exporter *passes the version through* — same number on the
-    // wire, in the proto field and inside the payload. Pinning the
-    // number itself is a separate job, done by
-    // `aqpbm_core::report::tests::schema_version_is_v2`, which
-    // explains why it matters. A literal here duplicated that gate
-    // badly: it went red on the 1 → 2 bump with nothing to say for
-    // itself, and got written off as a broken test.
+    // Against the constant, not a literal: this test owns that the exporter
+    // *passes the version through* — same number on the wire, in the proto field
+    // and in the payload. Pinning the number itself is `report`'s job.
     assert_eq!(rec.schema_version, SCHEMA_VERSION);
     // payload_json is the full Record — parse it back to prove.
     let parsed: serde_json::Value = serde_json::from_str(&rec.payload_json).unwrap();

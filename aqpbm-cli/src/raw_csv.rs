@@ -1,9 +1,7 @@
-//! Writes the legacy CSV files for `sketchlib bench --raw-csv DIR`.
-//!
-//! The *content* — headers, family-specific columns, filenames — is rendered
-//! by [`sketch_bench::legacy_csv`]. This is only the sink: create the
-//! directory and append each rendered file, mirroring how `ReportSink` writes
-//! the JSONL that the `Record` schema produces.
+//! Writes the CSV files for `sketchlib bench --raw-csv DIR`. The *content* —
+//! headers, family-specific columns, filenames — is rendered by
+//! [`sketch_bench::legacy_csv`]; this is only the sink, mirroring how
+//! `ReportSink` writes the JSONL the `Record` schema produces.
 
 use std::fs::OpenOptions;
 use std::io::Write;

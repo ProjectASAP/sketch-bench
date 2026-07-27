@@ -98,10 +98,9 @@ fn runner_end_to_end_produces_valid_jsonl() {
     assert!(back.bench.as_ref().unwrap().accuracy.is_some());
 }
 
-/// A sketch shaped like the deferred-build rows (`*/polars`,
-/// `lib-fastpath-parallel`): `update` only buffers, and the sketch is built
-/// in `prepare`. Counts its own finalize calls so a test can pin
-/// that the runner made them.
+/// A sketch shaped like the deferred-build rows: `update` only buffers, and the
+/// sketch is built in `prepare`. Counts its own finalize calls so a test can
+/// pin that the runner made them.
 struct DeferredBuilder {
     buf: Vec<i64>,
     distinct: usize,
@@ -130,14 +129,9 @@ impl MemoryFootprint for DeferredBuilder {
     }
 }
 
-/// The bug this pins: a bare `--metrics throughput` takes the slim path in
-/// `BenchRunner`, which used to skip `prepare` outright. For a
-/// sketch that defers its build that meant the measured work never ran at
-/// all — the `lib-fastpath-parallel` rows reported the cost of buffering a
-/// partition they then threw away without inserting it anywhere.
-///
-/// `MetricsMask::THROUGHPUT` alone, deliberately: adding any other bit routes
-/// to `run_once_clean` and stops exercising the path.
+/// Pins that the slim path taken by a bare `--metrics throughput` still runs
+/// `prepare` — without it a deferred-build sketch never does its measured work.
+/// THROUGHPUT alone: any other bit routes elsewhere and stops testing this.
 #[test]
 fn the_slim_throughput_path_still_builds_the_sketch() {
     use std::sync::atomic::Ordering;
@@ -187,10 +181,9 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
     assert!(bench.finalize_time_ms.is_some());
 }
 
-/// The same sketch through the other two paths. Whichever `--metrics` flags
-/// are passed, the build cost must land in the same field — the ingest column
-/// reporting `Vec::push` on one path and push-plus-build on another would
-/// make rows from two invocations silently incomparable.
+/// The same sketch through the other two paths: whichever `--metrics` flags are
+/// passed, build cost must land in the same field, or rows from two invocations
+/// are silently incomparable.
 #[test]
 fn every_path_bills_the_deferred_build_to_the_same_field() {
     let workload = I64Workload::uniform(20_000, 5_000, 11);
@@ -249,15 +242,9 @@ fn runner_respects_mask_noop_when_empty() {
     assert!(reports.is_empty());
 }
 
-/// The merge pass publishes post-merge accuracy, so it populates `accuracy`
-/// as well as its own fields. A consumer that grouped records by guessing the
-/// pass from which fields are set therefore could not tell it from the
-/// accuracy pass — `aqpbm-cli::repeat` merged the two and dropped one.
-///
-/// The record now states its pass, and this pins that it states the *pass*
-/// mask and not the aggregation mask: the runner widens the latter with a
-/// borrowed ACCURACY bit so the measurement is not suppressed, and reading
-/// that back would label this record "accuracy".
+/// The merge pass populates `accuracy` too, so a consumer guessing the pass from
+/// which fields are set cannot tell it apart. Pins that the record states the
+/// *pass* mask, not the ACCURACY-widened aggregation mask.
 #[test]
 fn the_merge_pass_is_labelled_merge_not_accuracy() {
     let workload = I64Workload::uniform(4_000, 500, 7);

@@ -1,18 +1,8 @@
-//! The destination axis: where generated values go — the third separable
-//! concern alongside *what* the values mean ([`super::shape::Shape`]) and
-//! *how* they are spread ([`super::dist::Distribution`]), so a new
-//! destination never touches the generators and vice versa.
-//!
-//! The driver ([`super::GenSpec::generate_into`]) pushes values to the sink
-//! in chunks. That is what lets [`BinSink`] write a dataset larger than RAM
-//! in constant memory; [`MemorySink`] concatenates the chunks back into one
-//! `Vec<T>` for callers (the benchmark) that need the whole stream
-//! resident.
-//!
-//! Chunking is an implementation detail of the *transport*, never of
-//! the *data*: a fixed `(spec, seed, size)` yields byte-identical
-//! output at every chunk size. `chunk_size_does_not_change_output`
-//! pins that down.
+//! The destination axis: where generated values go — the third separable concern
+//! alongside structure and distribution, so a new destination never touches the
+//! generators. The driver pushes values in chunks, which lets [`BinSink`] write
+//! a dataset larger than RAM while [`MemorySink`] reassembles one `Vec<T>`.
+//! Chunking is transport, never data: output is byte-identical at any size.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -23,16 +13,9 @@ use crate::error::SketchError;
 
 use super::FixedWidth;
 
-/// A destination for generated chunks.
-///
-/// Generic over the value type rather than taking a run-time-tagged column.
-/// Two things fall out of that. A sink can no longer be handed a chunk of
-/// the wrong type, so the "generator switched dtype mid-stream" error this
-/// module used to carry is gone — not handled, *unrepresentable*. And a
-/// sink is free to accept only some types: see [`BinSink`].
-///
-/// Implementors see values in emission order and must not reorder them.
-/// `flush` is called exactly once, after the last chunk.
+/// A destination for generated chunks, generic over the value type: a sink
+/// cannot be handed the wrong type, and may accept only some (see [`BinSink`]).
+/// Values arrive in emission order; `flush` is called once, after the last.
 pub trait Sink<T> {
     /// Accept the next chunk of generated values.
     fn accept(&mut self, chunk: &[T]) -> Result<(), SketchError>;
@@ -44,10 +27,8 @@ pub trait Sink<T> {
     }
 }
 
-/// Accumulates the whole stream in memory.
-///
-/// Used by `sketchlib bench`, whose runner replays the same item slice
-/// once per measured run and therefore needs it resident.
+/// Accumulates the whole stream in memory — used by `sketchlib bench`, whose
+/// runner replays the same item slice once per measured run.
 #[derive(Debug)]
 pub struct MemorySink<T> {
     values: Vec<T>,
@@ -64,10 +45,8 @@ impl<T> MemorySink<T> {
         Self::default()
     }
 
-    /// The accumulated values.
-    ///
-    /// Infallible: an empty run yields an empty `Vec<T>` whose type is known
-    /// statically, so there is no "dtype unknown, no chunk arrived" case.
+    /// The accumulated values. Infallible: an empty run yields an empty `Vec<T>`
+    /// whose type is known statically, so no chunk needs to have arrived.
     pub fn into_values(self) -> Vec<T> {
         self.values
     }
@@ -80,17 +59,9 @@ impl<T: Clone> Sink<T> for MemorySink<T> {
     }
 }
 
-/// Streams chunks to a header-less little-endian `.bin` file.
-///
-/// Memory is bounded by the chunk size, not the dataset size, so this can
-/// write a file far larger than RAM. The provenance sidecar is not written
-/// here — it is the caller's choice (`--no-meta`), and the caller gets the
-/// [`super::GenMeta`] back from the driver.
-///
-/// Accepts only [`FixedWidth`] values: the layout has no header, offsets or
-/// delimiters, so a variable-width value has nowhere to record its length.
-/// That is a property of this format, not of the generator — strings go to a
-/// [`MemorySink`] fine, and `BinSink::<String>` simply does not compile.
+/// Streams chunks to a header-less little-endian `.bin` file, in memory bounded
+/// by the chunk size rather than the dataset. Accepts only [`FixedWidth`] values
+/// — with no header or delimiters, a variable-width value cannot record a length.
 pub struct BinSink<T> {
     writer: BufWriter<File>,
     _item: PhantomData<T>,
@@ -131,9 +102,9 @@ mod tests {
         assert_eq!(s.into_values(), vec![1, 2, 3]);
     }
 
-    /// The old `memory_sink_rejects_dtype_switch_mid_stream` has no successor
-    /// on purpose: `Sink<T>` cannot be handed a chunk of another type, so
-    /// there is no run-time state left to check.
+    /// There is deliberately no "sink rejects a dtype switch mid-stream" test:
+    /// `Sink<T>` cannot be handed a chunk of another type, so there is no
+    /// run-time state left to check.
     #[test]
     fn a_sink_is_typed_so_an_empty_run_still_has_a_type() {
         let s = MemorySink::<f64>::new();

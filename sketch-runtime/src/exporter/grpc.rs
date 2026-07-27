@@ -1,25 +1,8 @@
-//! `GrpcExporter` — client-side gRPC streaming to the
-//! controller's `asap.runtime.v1.RuntimeSamples` service.
-//!
-//! Replaces the HTTP+JSONL+zstd `PushExporter` the earlier
-//! milestone shipped. Why gRPC:
-//!
-//! * **Typed schema** — `feedback.proto` is the wire contract,
-//!   breakage is build-time not silent-at-runtime.
-//! * **HTTP/2 flow control** — controller slow → producer
-//!   learns, no invisible staleness.
-//! * **Compression** — tonic negotiates gzip per-call; wire
-//!   size is within ~1.5× of JSON+zstd for this traffic shape
-//!   but schema gains outweigh the small bytes-on-wire cost.
-//! * **Schema evolution** — `payload_json` carries the
-//!   `aqpbm-core::Record`'s full shape as JSON, so new
-//!   `Record` fields flow through without a proto rebump.
-//!   The `schema_version` field marks breaking changes.
-//!
-//! Delivery semantics match `PushExporter`: fire-and-forget
-//! on the hot path via bounded `mpsc`, background task does
-//! batch + RPC, queue-full / server-error drops are counted,
-//! never a block or panic.
+//! `GrpcExporter` — client-side gRPC streaming to the controller's
+//! `asap.runtime.v1.RuntimeSamples` service. `feedback.proto` is the wire
+//! contract, so breakage is build-time; HTTP/2 flow control makes controller
+//! slowness visible; `payload_json` carries the `Record` shape so new fields
+//! need no proto bump. Fire-and-forget on the hot path: drops are counted.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -144,12 +127,9 @@ impl Exporter for GrpcExporter {
 /// Background flush loop: drain the channel, batch, build one
 /// `PushBatch` RPC per batch, gzip-compressed on the wire.
 async fn flush_loop(mut rx: mpsc::Receiver<Record>, config: GrpcConfig, stats: Arc<GrpcStats>) {
-    // The channel is kept open even if the controller is
-    // briefly unreachable — tonic reconnects transparently on
-    // the next RPC. Failure to build the endpoint at all is a
-    // caller misconfig, so we fail loudly by panicking the
-    // background task (stats.send_errors stays at 0 because we
-    // couldn't even kick off a batch).
+    // The channel stays open if the controller is briefly unreachable — tonic
+    // reconnects on the next RPC. Failing to build the endpoint at all is a
+    // caller misconfig, so the background task panics loudly instead.
     let endpoint = match Endpoint::from_shared(config.endpoint.clone()) {
         Ok(e) => e.timeout(config.rpc_timeout),
         Err(e) => {

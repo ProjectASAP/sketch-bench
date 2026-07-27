@@ -1,11 +1,7 @@
-//! Construction parameters for each sketch family.
-//!
-//! These live next to the wrappers that consume them, not in `aqpbm-core`:
-//! the core owns the *open* family axis (the `SketchParams` trait and the
-//! type-erased `ParamSet`) and deliberately knows no family names. Concrete
-//! families are declared by whoever ships the implementations — this crate.
-//!
-//! See `aqpbm_core::config` for why the axis is open at all.
+//! Construction parameters for each sketch family. These live next to the
+//! wrappers that consume them, not in `aqpbm-core`: the core owns the *open*
+//! family axis and deliberately knows no family names, so concrete families are
+//! declared by whoever ships the implementations. See `aqpbm_core::config`.
 
 use serde::{Deserialize, Serialize};
 
@@ -69,11 +65,9 @@ sketch_params!(
     }
 );
 
-/// Top-k is its own family because its parameter vocabulary is its own: `k`
-/// sizes the candidate tracker that answers the query, while `rows`/`cols`
-/// size the counter array underneath it. A CMS row has no `k` to set, so the
-/// two cannot share `CmsParams` without giving every CMS row a knob that
-/// means nothing to it.
+/// Top-k is its own family because its parameter vocabulary is: `k` sizes the
+/// candidate tracker, `rows`/`cols` the counter array under it. Sharing
+/// `CmsParams` would give every CMS row a `k` that means nothing to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TopkParams {
@@ -205,7 +199,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_rejected_by_name() {
-        // What the hand-written per-family allowed-key lists used to do.
+        // `deny_unknown_fields` is what names the offending key.
         let p = ParamSet {
             family: "cms".into(),
             params: serde_json::json!({"rows": 5, "colz": 2048}),

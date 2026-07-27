@@ -1,12 +1,7 @@
-//! Nitro-style sketches — `sketchlib::NitroBatch<Vector2D>`
-//! and `sketch_oxide::NitroSketch<CountMinSketch>`.
-//!
-//! Nitro is a sampling frequency-family sketch. Only the `update` path is
-//! exercised here: neither row declares a query capability, so neither is
-//! accuracy-scored.
-//!
-//! The tunable param is `rate`; the underlying CMS is sized at a fixed
-//! (5, 2048) — future work can expose those knobs too.
+//! Nitro-style sampling frequency sketches — `sketchlib::NitroBatch<Vector2D>`
+//! and `sketch_oxide::NitroSketch<CountMinSketch>`. Only `update` is exercised:
+//! neither row declares a query capability, so neither is accuracy-scored. The
+//! tunable param is `rate`; the underlying CMS is fixed at (5, 2048).
 
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::NitroParams;

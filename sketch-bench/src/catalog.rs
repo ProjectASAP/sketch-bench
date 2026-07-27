@@ -24,10 +24,9 @@ use crate::wrappers::{
 
 // ---------- what a row is ----------
 
-/// The one item-type choice a user still makes. An `ordered` row (KLL,
-/// DDSketch) is built at either width; every other row's item type is fixed
-/// by its Rust type, so asking for the other one is a question the catalog
-/// can refuse before generating anything.
+/// The one item-type choice a user still makes: an `ordered` row (KLL, DDSketch)
+/// builds at either width, while every other row's item type is fixed by its Rust
+/// type — so the catalog can refuse before generating anything.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Numeric {
     #[default]
@@ -62,13 +61,9 @@ pub struct Row {
 
 // ---------- how a row builds its ground truth ----------
 
-/// A [`GroundTruth`] that can construct itself from the run's accuracy knobs
-/// and the row's own params.
-///
-/// A trait rather than a `fn` argument so the calculator is named as a *type*
-/// in [`ROWS`] and the row can stay a `const` — a `const fn` cannot close over
-/// a function value. Declared here, not in `aqpbm-core`, because `TopkGT`'s
-/// impl has to read this crate's [`TopkParams`].
+/// A [`GroundTruth`] that constructs itself from the run's accuracy knobs and the
+/// row's params. A trait, not a `fn` argument, so the calculator is named as a
+/// *type* in [`ROWS`] and the row stays `const`.
 trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
     fn build(acc: &AccuracyCfg, params: &ParamSet) -> Self;
 }
@@ -121,15 +116,9 @@ impl<S: Accumulator> GroundTruthCalculator<S> for TopkGT
 where
     Self: GroundTruth<S>,
 {
-    /// Scores against the same `k` the sketch was built with, read from the
-    /// row's params — a comparator asked for a different prefix than the
-    /// tracker keeps would be measuring the mismatch, not the sketch.
-    ///
-    /// Infallible because every `topk` row parses these same params in its own
-    /// `init`, and [`run_scored`] runs the timed half first: a `k` this cannot
-    /// read has already failed the build. Falling back to a default `k` here is
-    /// what let a typo'd config run and publish a score at a `k` nobody asked
-    /// for.
+    /// Scores against the same `k` the sketch was built with — a different prefix
+    /// would measure the mismatch, not the sketch. Infallible because the timed
+    /// half runs first, so an unreadable `k` has already failed the build.
     fn build(_acc: &AccuracyCfg, params: &ParamSet) -> Self {
         TopkGT {
             k: params
@@ -215,10 +204,8 @@ where
 }
 
 // ---------- the four row constructors ----------
-//
-// Each reads `S::FAMILY` / `S::IMPL` off the type and fixes `scores_accuracy`
-// from its own kind. `const fn`, so `ROWS` stays a `const` and a bad row is
-// rejected at compile time rather than at first use.
+// Each reads `S::FAMILY` / `S::IMPL` off the type and fixes `scores_accuracy`.
+// `const fn`, so `ROWS` stays `const` and a bad row fails at compile time.
 
 const fn scored<S, G>(description: &'static str) -> Row
 where
@@ -395,9 +382,8 @@ pub fn run(
 ) -> Result<Vec<BenchReport>> {
     let row = find(family, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))?;
-    // Asked for a width this row's type cannot be built at. Answerable from
-    // the catalog, before a single item is generated — it used to surface as
-    // a `DtypeMismatch` after materialising a whole workload.
+    // Asked for a width this row's type cannot be built at — answerable from
+    // the catalog, before a single item is generated.
     if width == Numeric::F64 && !row.picks_width {
         anyhow::bail!("{family}/{impl_name} runs over i64 only; drop --dtype f64");
     }
@@ -431,10 +417,9 @@ mod tests {
         }
     }
 
-    /// The one way two rows can still collide: distinct types that happen to
-    /// declare the same `IMPL` under the same family. The scan in [`find`]
-    /// takes the first, so the second would be dead. Not a compile error,
-    /// because the strings come from two different types.
+    /// The one way two rows can still collide: distinct types declaring the same
+    /// `IMPL` under the same family. [`find`] takes the first, so the second is
+    /// dead. Not a compile error — the strings come from two different types.
     #[test]
     fn family_impl_pairs_are_unique() {
         let mut seen = BTreeSet::new();
@@ -448,9 +433,9 @@ mod tests {
         }
     }
 
-    /// A small workload spec, enough for any row to build and ingest. The
-    /// item type is no longer named here — each row materialises it at its
-    /// own `Accumulator::Item`.
+    /// A small workload spec, enough for any row to build and ingest. The item
+    /// type is not named here — each row materialises its own
+    /// `Accumulator::Item`.
     fn smoke_spec() -> WorkloadSpec {
         WorkloadSpec::Generated(aqpbm_datagen::GenSpec {
             shape: aqpbm_datagen::Shape::Keys {
@@ -478,12 +463,9 @@ mod tests {
         )
     }
 
-    /// Every row actually builds and ingests.
-    ///
-    /// "Has a run arm" is no longer worth testing — a row *is* its runner, so
-    /// there is no `_` bail left to fall into, and no strings for the list and
-    /// the dispatch to disagree about. What is left is the part the types
-    /// cannot state: that the row survives contact with a real workload.
+    /// Every row actually builds and ingests — the part the types cannot state.
+    /// A row *is* its runner, so there is no `_` bail to fall into and no strings
+    /// for the list and the dispatch to disagree about.
     #[test]
     fn every_catalog_entry_runs() {
         let spec = smoke_spec();
@@ -520,11 +502,9 @@ mod tests {
         }
     }
 
-    /// A family's rows are only comparable if they were asked the same
-    /// question, so they must agree on which configs are answerable. The
-    /// `topk` panel did not: the exact row ignored its `ParamSet` entirely,
-    /// so a typo'd or zero `k` built there and got scored at a default `k`
-    /// while the tracker rows rejected the same config outright.
+    /// A family's rows are only comparable if asked the same question, so they
+    /// must agree on which configs are answerable — one row silently accepting a
+    /// config its peers reject scores a different experiment.
     #[test]
     fn topk_rows_accept_and_reject_the_same_configs() {
         let spec = smoke_spec();

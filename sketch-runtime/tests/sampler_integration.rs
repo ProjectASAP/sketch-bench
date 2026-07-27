@@ -1,15 +1,8 @@
-//! Integration tests for the three-level enable/disable matrix.
-//!
-//! * `enabled` feature on (default): the full sampler runs, emits
-//!   records, and respects count/time windows.
-//! * `Sampler::disabled(...)`: no records emitted, no hot-path
-//!   work.
-//! * `RuntimeSwitch::disable()`: live flip to no records.
-//!
-//! The compile-time path (`default-features = false`) is covered
-//! by a separate command-line invocation documented in the
-//! crate-level README — a single source of truth keeps the same
-//! downstream code compiling either way.
+//! Integration tests for the three-level enable/disable matrix: the `enabled`
+//! feature on (full sampler, records emitted, windows respected),
+//! `Sampler::disabled(...)` (no records, no hot-path work), and
+//! `RuntimeSwitch::disable()` (a live flip to none). The compile-time path is
+//! covered by a separate invocation documented in the crate README.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -181,10 +174,9 @@ fn every_n_time_window_batches_emits() {
 
 #[test]
 fn exporter_noop_is_hot_path_ok() {
-    // Smoke-test that using `NoopExporter` with a real sampler
-    // config works — the sampler still emits (to nowhere). This
-    // is a legitimate deployment when a host wants the hot-path
-    // cost but not the output.
+    // `NoopExporter` with a real sampler config: the sampler still emits, to
+    // nowhere. A legitimate deployment when a host wants the hot-path cost
+    // but not the output.
     use sketch_runtime::exporter::NoopExporter;
     let sampler = Sampler::every_n(4, 1, NoopExporter, tag());
     let mut probe = Probe::new(DummySketch { n: 0 }, sampler);
@@ -210,13 +202,9 @@ fn drop_mid_window_is_safe() {
 
 #[test]
 fn metrics_sink_blanket_impl_works_through_and() {
-    // The `&mut T: MetricsSink` blanket impl in aqpbm-core
-    // means Probe can wrap a sampler behind a mutable ref —
-    // check the chain compiles + runs.
-    //
-    // With sample_every_n=2 + samples_per_window=2, each flush
-    // needs 2 sampled ops ≡ 4 total ops. Drive the probe for 4
-    // ops; expect exactly one record.
+    // The `&mut T: MetricsSink` blanket impl means Probe can wrap a sampler
+    // behind a mutable ref. With sample_every_n=2 and samples_per_window=2 a
+    // flush needs 4 total ops, so driving 4 must yield exactly one record.
     let sink = RecordSink::new();
     let mut sampler = Sampler::every_n(2, 2, sink.clone_shared(), tag());
     {

@@ -27,12 +27,9 @@ pub struct BenchConfig {
     /// Worker threads for the insert phase, read by the parallel-insert cells.
     /// `1` — a single-threaded run — for every other row.
     pub threads: usize,
-    /// Number of shards the merge pass splits the stream into. `1` means the
-    /// merge pass has nothing to fold and is skipped. Contiguous ranges, and
-    /// folded sequentially into one accumulator — the partitioning scheme and
-    /// the fold topology are both real experimental axes (a KLL's error
-    /// depends on both), but v1 fixes them and names them here rather than
-    /// pretending the choice does not exist.
+    /// Shards the merge pass splits the stream into; `1` skips the pass.
+    /// Contiguous ranges folded sequentially into one accumulator — both the
+    /// partitioning and the fold topology are real axes, fixed here for now.
     pub merge_shards: usize,
     /// The run's nominal seed, carried through to the legacy CSV's `seed`
     /// column. Does NOT seed the workload — workloads own their own seed.
