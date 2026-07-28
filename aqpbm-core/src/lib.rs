@@ -24,7 +24,9 @@ pub mod workload;
 pub use config::{ParamSet, SketchParams};
 // The generator is its own crate: independent product surface, its own on-disk
 // format contract, no knowledge of sketches. Re-exported so callers find it here.
-pub use accuracy::{CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, TopKOps};
+pub use accuracy::{
+    CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, SubpopFrequencyOps, TopKOps,
+};
 pub use aqpbm_datagen::{
     BasicStats, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
     SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
@@ -42,4 +44,7 @@ pub use report::{
     Record, RunStats, Source, SCHEMA_VERSION,
 };
 pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};
-pub use workload::{BytesWorkload, I64Workload, StringWorkload, Workload, WorkloadDescription};
+pub use workload::{
+    BytesWorkload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
+    WorkloadDescription,
+};

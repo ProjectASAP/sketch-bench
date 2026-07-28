@@ -26,7 +26,7 @@ pub enum Cmd {
 #[derive(Parser, Debug)]
 pub struct BenchArgs {
     /// Accumulator family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
-    /// univmon). `list-impls` prints every (family, impl) pair.
+    /// univmon, hydra). `list-impls` prints every (family, impl) pair.
     #[arg(long)]
     pub sketch: String,
     /// Implementation within the family — exactly one (`oxide`).
@@ -86,6 +86,10 @@ pub struct BenchArgs {
     /// Generate in-process from a `datagen` spec file (examples in
     /// `configs/datagen/`), unlocking every generator shape without a disk
     /// round-trip. Overrides the `--workload` flags; `--input` wins over it.
+    ///
+    /// A file holding a *list* of specs is a multi-column stream: the last
+    /// column is the value, the ones before it are labels. The rows ingesting
+    /// labelled records (`hydra`) need one; every other row refuses it.
     #[arg(long)]
     pub spec: Option<String>,
     /// Path to append JSONL records to. `-` or omitted → stdout.

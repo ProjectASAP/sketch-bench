@@ -7,9 +7,11 @@
 use crate::accumulator::Accumulator;
 use crate::config::ParamSet;
 use crate::memory_footprint::MemoryFootprint;
-use crate::workload::{BytesWorkload, F64Workload, I64Workload, StringWorkload, Workload};
+use crate::workload::{
+    BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
+};
 use anyhow::Result;
-use aqpbm_datagen::GenSpec;
+use aqpbm_datagen::{GenSpec, GenValue};
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
@@ -35,6 +37,10 @@ pub struct AccuracyCfg {
 #[derive(Debug, Clone)]
 pub enum WorkloadSpec {
     Generated(GenSpec),
+    /// A multi-column stream: `n - 1` label columns then one value column, each
+    /// an ordinary [`GenSpec`]. Only the row types whose `Item` is a record read
+    /// this; every single-column row refuses it by name.
+    Columns(Vec<GenSpec>),
     File { path: String },
 }
 
@@ -85,7 +91,22 @@ impl From<anyhow::Error> for RunError {
 /// `Accumulator::Item` fixes the encoding before anything is generated.
 pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
+
+    /// Whether this item is materialised from a [`WorkloadSpec::Columns`] list
+    /// instead of a single-column spec. A `const`, so a catalog can read which
+    /// kind of workload a row wants off the row's type, without building one.
+    const TAKES_COLUMNS: bool = false;
+
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;
+}
+
+/// A single-column row was handed a column list. Refused by name: zipping the
+/// columns down to one would run the measurement over a stream nobody asked for.
+fn reject_columns<T>(item: &str) -> Result<T> {
+    Err(anyhow::anyhow!(
+        "--spec names a column list, but this row ingests a plain `{item}` stream; \
+         give it a single-column spec, or pick a row whose item is a record"
+    ))
 }
 
 impl BenchItem for i64 {
@@ -95,6 +116,7 @@ impl BenchItem for i64 {
             WorkloadSpec::Generated(g) => {
                 I64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
             }
+            WorkloadSpec::Columns(_) => reject_columns("i64"),
             WorkloadSpec::File { path } => {
                 I64Workload::load(std::path::Path::new(path)).map_err(|e| anyhow::anyhow!("{}", e))
             }
@@ -109,6 +131,7 @@ impl BenchItem for f64 {
             WorkloadSpec::Generated(g) => {
                 F64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
             }
+            WorkloadSpec::Columns(_) => reject_columns("f64"),
             // `.bin` is a raw i64 stream with no header; reading it as f64
             // would reinterpret the bytes, not convert them.
             WorkloadSpec::File { path } => Err(anyhow::anyhow!(
@@ -126,6 +149,7 @@ impl BenchItem for String {
             WorkloadSpec::Generated(g) => {
                 StringWorkload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
             }
+            WorkloadSpec::Columns(_) => reject_columns("String"),
             // Decimal-formatted, the same rendering the i64-sourced path used.
             WorkloadSpec::File { path } => I64Workload::load(std::path::Path::new(path))
                 .map(|wk| StringWorkload::from_i64(&wk))
@@ -140,6 +164,30 @@ impl BenchItem for Vec<u8> {
         Ok(BytesWorkload::from_strings(
             &<String as BenchItem>::materialise(spec)?,
         ))
+    }
+}
+
+/// The record item: only a column list materialises one. A single-column spec
+/// is refused instead of being padded into a one-label record, because the
+/// column count is what a grouped sketch's cost is a function of.
+impl<V: GenValue> BenchItem for Labeled<V> {
+    type Wk = LabeledWorkload<V>;
+    const TAKES_COLUMNS: bool = true;
+    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+        match spec {
+            WorkloadSpec::Columns(cols) => {
+                LabeledWorkload::generate(cols).map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            WorkloadSpec::Generated(_) => Err(anyhow::anyhow!(
+                "this row ingests labelled records, so it needs a column list: \
+                 pass `--spec` a JSON array of column specs, the last one being \
+                 the value column"
+            )),
+            WorkloadSpec::File { path } => Err(anyhow::anyhow!(
+                "--input {path} is a single-column stream; this row ingests \
+                 labelled records, so it needs a `--spec` column list"
+            )),
+        }
     }
 }
 

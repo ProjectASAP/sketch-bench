@@ -8,6 +8,7 @@ pub mod countsketch;
 pub mod dd;
 pub mod elastic;
 pub mod hll;
+pub mod hydra;
 pub mod kll;
 pub mod nitro;
 pub mod parallel;

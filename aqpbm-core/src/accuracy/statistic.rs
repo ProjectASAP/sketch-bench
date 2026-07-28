@@ -21,6 +21,23 @@ pub trait FrequencyOps {
     fn estimate_frequency(&self, key: &Self::Key) -> u64;
 }
 
+// ---------- subpopulation frequency ----------
+
+/// Answers "within the records carrying these labels, how many times did this
+/// value occur", scored by
+/// [`SubpopFrequencyGT`](super::subpopulation::SubpopFrequencyGT).
+///
+/// Note what the population is: a **(subpopulation, value) pair**, not a
+/// subpopulation. A counter array under a grouped sketch counts values inside a
+/// group; the size of the group itself is a different statistic, and a sketch
+/// answering that declares a different capability.
+pub trait SubpopFrequencyOps {
+    type Value;
+    /// `labels` in column order. The query carries values only, never column
+    /// positions, because that is all a grouped sketch's key is.
+    fn estimate_subpop_frequency(&self, labels: &[&str], value: &Self::Value) -> f64;
+}
+
 // ---------- quantile ----------
 
 /// Answers "what value sits at this quantile". Two rulers score it — rank

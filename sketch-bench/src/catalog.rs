@@ -10,6 +10,7 @@ use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
+use aqpbm_core::accuracy::subpopulation::SubpopFrequencyGT;
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
@@ -19,7 +20,7 @@ use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use crate::params::{ParamSet, TopkParams};
 use crate::wrappers::{
-    cms, countsketch, dd, elastic, hll, kll, nitro, parallel, polars, topk, univmon,
+    cms, countsketch, dd, elastic, hll, hydra, kll, nitro, parallel, polars, topk, univmon,
 };
 
 // ---------- what a row is ----------
@@ -56,6 +57,9 @@ pub struct Row {
     pub scores_accuracy: bool,
     /// Can this row run at [`Numeric::F64`]? Derived: only `ordered` rows can.
     pub picks_width: bool,
+    /// Does this row ingest labelled records, and so need a `--spec` column
+    /// list instead of a single-column spec? Derived off the row's item type.
+    pub takes_columns: bool,
     run: RunFn,
 }
 
@@ -85,6 +89,21 @@ where
 {
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         FrequencyGT {
+            max_probes: acc.max_probes,
+        }
+    }
+}
+
+impl<S: Accumulator> GroundTruthCalculator<S> for SubpopFrequencyGT
+where
+    Self: GroundTruth<S>,
+{
+    /// Scores column 0. A grouped sketch stores every column subset, but each
+    /// one is its own population with its own error, so a comparator names the
+    /// one it scores instead of pooling them.
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        SubpopFrequencyGT {
+            label_column: 0,
             max_probes: acc.max_probes,
         }
     }
@@ -219,6 +238,7 @@ where
         description,
         scores_accuracy: true,
         picks_width: false,
+        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_scored::<S, G>,
     }
 }
@@ -236,6 +256,7 @@ where
         description,
         scores_accuracy: true,
         picks_width: true,
+        takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
         run: run_ordered::<Si, Sf, G>,
     }
 }
@@ -251,6 +272,7 @@ where
         description,
         scores_accuracy: false,
         picks_width: false,
+        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_plain::<S>,
     }
 }
@@ -266,6 +288,7 @@ where
         description,
         scores_accuracy: false,
         picks_width: false,
+        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_parallel::<S>,
     }
 }
@@ -332,6 +355,10 @@ pub const ROWS: &[Row] = &[
     // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
     plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
     plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
+    // -------- Hydra (per-subpopulation frequency over labelled records) --------
+    scored::<hydra::HydraCms, SubpopFrequencyGT>(
+        "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+    ),
     // -------- Nitro / UnivMon (no query capability; throughput-only) --------
     plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),
     plain::<nitro::NitroOxide>("sketch_oxide::frequency::NitroSketch<CountMinSketch>"),
@@ -394,8 +421,8 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::params::{
-        CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, KllParams, NitroParams,
-        SketchParams, TopkParams, UnivMonParams,
+        CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraParams, KllParams,
+        NitroParams, SketchParams, TopkParams, UnivMonParams,
     };
     use std::collections::BTreeSet;
 
@@ -411,6 +438,7 @@ mod tests {
             "dd" => ParamSet::of(&DdParams::canonical()),
             "elastic" => ParamSet::of(&ElasticParams::canonical()),
             "nitro" => ParamSet::of(&NitroParams::canonical()),
+            "hydra" => ParamSet::of(&HydraParams::canonical()),
             "topk" => ParamSet::of(&TopkParams::canonical()),
             "univmon" => ParamSet::of(&UnivMonParams::canonical()),
             other => panic!("no canonical params known for family '{other}'"),
@@ -437,15 +465,35 @@ mod tests {
     /// type is not named here — each row materialises its own
     /// `Accumulator::Item`.
     fn smoke_spec() -> WorkloadSpec {
-        WorkloadSpec::Generated(aqpbm_core::GenSpec {
+        WorkloadSpec::Generated(column(64, 256, 1))
+    }
+
+    fn column(cardinality: u64, size: usize, seed: u64) -> aqpbm_core::GenSpec {
+        aqpbm_core::GenSpec {
             shape: aqpbm_core::Shape::Keys {
-                cardinality: 64,
+                cardinality,
                 dist: aqpbm_core::Distribution::Uniform,
             },
-            size: 256,
-            seed: 1,
+            size,
+            seed,
             string: None,
-        })
+        }
+    }
+
+    /// The same, for the rows whose item is a record: two label columns and a
+    /// value column. A row states which of the two it wants through
+    /// `Row::takes_columns`, so neither is guessed here.
+    fn smoke_columns_spec() -> WorkloadSpec {
+        WorkloadSpec::Columns(vec![column(8, 256, 1), column(4, 256, 2), column(32, 256, 3)])
+    }
+
+    /// The spec shape `row` can actually ingest.
+    fn spec_for(row: &Row) -> WorkloadSpec {
+        if row.takes_columns {
+            smoke_columns_spec()
+        } else {
+            smoke_spec()
+        }
     }
 
     fn smoke_cfg() -> (BenchConfig, AccuracyCfg) {
@@ -468,7 +516,6 @@ mod tests {
     /// for the list and the dispatch to disagree about.
     #[test]
     fn every_catalog_entry_runs() {
-        let spec = smoke_spec();
         let (cfg, acc) = smoke_cfg();
         for r in ROWS {
             // Canonical, not `empty`: every family's params have required
@@ -479,7 +526,7 @@ mod tests {
                 r.family,
                 r.impl_name,
                 &cfg,
-                &spec,
+                &spec_for(r),
                 &params,
                 &acc,
                 Numeric::I64,
