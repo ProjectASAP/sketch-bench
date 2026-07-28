@@ -128,6 +128,39 @@ fn main() -> Result<()> {
     }
 }
 
+/// Load a `--spec` file as either one column spec or a list of them.
+///
+/// The two shapes are unambiguous, since a mapping is never a sequence, so the
+/// file itself picks and no second flag has to. A list is `n - 1` label columns
+/// then one value column, which is what the record-ingesting rows read; every
+/// other row refuses it by name.
+fn load_spec(path: &str) -> Result<WorkloadSpec> {
+    let p = std::path::Path::new(path);
+    let text =
+        std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
+    let yaml = matches!(
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("yaml") | Some("yml")
+    );
+    if yaml {
+        if let Ok(columns) = serde_yaml::from_str::<Vec<GenSpec>>(&text) {
+            return Ok(WorkloadSpec::Columns(columns));
+        }
+        return serde_yaml::from_str::<GenSpec>(&text)
+            .map(WorkloadSpec::Generated)
+            .map_err(|e| anyhow::anyhow!("spec yaml {path}: {e}"));
+    }
+    if let Ok(columns) = serde_json::from_str::<Vec<GenSpec>>(&text) {
+        return Ok(WorkloadSpec::Columns(columns));
+    }
+    serde_json::from_str::<GenSpec>(&text)
+        .map(WorkloadSpec::Generated)
+        .map_err(|e| anyhow::anyhow!("spec json {path}: {e}"))
+}
+
 /// Resolve where this run's items come from, in precedence order: `--input` >
 /// `--spec` > the `--workload` flags. The flag path builds the same `GenSpec`
 /// the spec path would, so it is sugar for a `keys`/`zipf` spec — one generator.
@@ -138,11 +171,9 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
         });
     }
     if let Some(path) = args.spec.as_deref() {
-        let spec = GenSpec::from_path(std::path::Path::new(path))
-            .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
         // A spec carries its own `string:` block, so `--alphabet`/`--key-len`
         // would be editing the user's file from the command line.
-        return Ok(WorkloadSpec::Generated(spec));
+        return load_spec(path);
     }
     let dist = match args.workload.as_str() {
         "uniform" => Distribution::Uniform,

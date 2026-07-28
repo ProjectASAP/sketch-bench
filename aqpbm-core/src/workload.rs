@@ -404,6 +404,149 @@ impl NumericWorkload<String> {
     }
 }
 
+// ---------- multi-column (labelled record) workloads ----------
+
+/// One record of a multi-column stream: the label columns joined with `;`,
+/// plus the measured value.
+///
+/// The join happens once at generation, so a wrapper feeding a library that
+/// takes `"a;b"` pays nothing for it on the insert path. The parts are not
+/// stored alongside it because only the untimed comparator asks for them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Labeled<V> {
+    pub key: String,
+    pub value: V,
+}
+
+impl<V> Labeled<V> {
+    /// The label columns, in the order they were generated.
+    pub fn labels(&self) -> std::str::Split<'_, char> {
+        self.key.split(';')
+    }
+
+    /// The label in column `i`, or `None` past the last column.
+    pub fn label(&self, i: usize) -> Option<&str> {
+        self.labels().nth(i)
+    }
+}
+
+/// A multi-column workload: `n - 1` label columns followed by one value column,
+/// each its own [`GenSpec`].
+///
+/// No new generator: every column is one ordinary single-column draw, and this
+/// type only zips them into records. Which means a column's cardinality, skew
+/// and seed are all independently steerable, using the vocabulary that already
+/// exists.
+#[derive(Debug, Clone)]
+pub struct LabeledWorkload<V> {
+    items: Vec<Labeled<V>>,
+    description: WorkloadDescription,
+    /// The column specs this was generated from, retained so [`Workload::resample`]
+    /// can redraw every column from the same distributions.
+    columns: Option<Vec<GenSpec>>,
+}
+
+impl<V: GenValue> LabeledWorkload<V> {
+    /// Zip `columns` into records: all but the last are label columns rendered
+    /// as `String`, the last is the value column rendered as `V`.
+    pub fn generate(columns: &[GenSpec]) -> Result<Self, SketchError> {
+        let Some((value_spec, label_specs)) = columns.split_last() else {
+            return Err(SketchError::BadParam(
+                "columns: an empty column list generates nothing".into(),
+            ));
+        };
+        if label_specs.is_empty() {
+            return Err(SketchError::BadParam(
+                "columns: needs at least one label column before the value column".into(),
+            ));
+        }
+        // Every column must contribute exactly one draw per record, so a
+        // disagreement here is a spec error and not something to truncate to
+        // the shortest column: the extra draws would silently change each
+        // column's realised distribution.
+        let size = columns[0].size;
+        if let Some(bad) = columns.iter().position(|c| c.size != size) {
+            return Err(SketchError::BadParam(format!(
+                "columns: column {bad} generates {} items but column 0 generates {size}; \
+                 every column contributes one draw per record",
+                columns[bad].size,
+            )));
+        }
+
+        let labels: Vec<Vec<String>> = label_specs
+            .iter()
+            .map(|s| s.generate::<String>())
+            .collect::<Result<_, _>>()?;
+        let values = value_spec.generate::<V>()?;
+
+        let mut items = Vec::with_capacity(size);
+        for i in 0..size {
+            let mut key = String::new();
+            for (col_idx, col) in labels.iter().enumerate() {
+                if col_idx > 0 {
+                    key.push(';');
+                }
+                key.push_str(&col[i]);
+            }
+            items.push(Labeled {
+                key,
+                value: values[i].clone(),
+            });
+        }
+
+        let mut description = WorkloadDescription {
+            shape: "columns".into(),
+            size,
+            cardinality: None,
+            zipf_s: None,
+            source_path: None,
+            seed: Some(columns[0].seed),
+            // The flat fields cannot express a column list, so the whole spec
+            // rides in the escape hatch and the record still round-trips.
+            spec: serde_json::to_value(columns).ok(),
+        };
+        description.size = items.len();
+
+        Ok(Self {
+            items,
+            description,
+            columns: Some(columns.to_vec()),
+        })
+    }
+}
+
+impl<V: GenValue> Workload for LabeledWorkload<V> {
+    type Item = Labeled<V>;
+
+    fn description(&self) -> WorkloadDescription {
+        self.description.clone()
+    }
+
+    fn items(&self) -> &[Labeled<V>] {
+        &self.items
+    }
+
+    fn can_resample(&self) -> bool {
+        self.columns.is_some()
+    }
+
+    /// Offset **every** column's seed, so a redraw is an independent draw of the
+    /// whole record. Offsetting only one column would hold the others fixed and
+    /// understate the spread.
+    fn resample(&self, repetition: usize) -> Option<Self> {
+        debug_assert!(repetition >= 1, "repetition 0 is the base draw");
+        let columns = self.columns.as_ref()?;
+        let redrawn: Vec<GenSpec> = columns
+            .iter()
+            .map(|c| GenSpec {
+                seed: c.seed.wrapping_add(repetition as u64),
+                ..c.clone()
+            })
+            .collect();
+        Self::generate(&redrawn).ok()
+    }
+}
+
 /// Same, but `Vec<u8>` for impls that want `&[u8]`. Not a [`NumericWorkload`]:
 /// `Vec<u8>` is not a `GenValue`, so these rows take the bytes of whichever
 /// string workload is in play.
@@ -718,6 +861,130 @@ mod resample_tests {
         assert!(!w.can_resample(), "a file is one fixed sample");
         assert!(w.resample(1).is_none());
         std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod labeled_tests {
+    use super::*;
+    use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
+    use std::collections::BTreeSet;
+
+    /// A label column: `cardinality` distinct strings over `alphabet`.
+    fn label_col(cardinality: u64, alphabet: &str, size: usize, seed: u64) -> GenSpec {
+        GenSpec {
+            shape: Shape::Keys {
+                cardinality,
+                dist: Distribution::Uniform,
+            },
+            size,
+            seed,
+            string: Some(StringOpts {
+                alphabet: alphabet.to_string(),
+                min_len: 3,
+                max_len: 3,
+            }),
+        }
+    }
+
+    fn value_col(cardinality: u64, size: usize, seed: u64) -> GenSpec {
+        GenSpec {
+            shape: Shape::Keys {
+                cardinality,
+                dist: Distribution::Zipf { s: 1.1 },
+            },
+            size,
+            seed,
+            string: None,
+        }
+    }
+
+    fn three_columns(size: usize) -> Vec<GenSpec> {
+        vec![
+            label_col(8, "abcd", size, 1),
+            label_col(4, "wxyz", size, 2),
+            value_col(50, size, 3),
+        ]
+    }
+
+    #[test]
+    fn columns_zip_into_records() {
+        let w = LabeledWorkload::<i64>::generate(&three_columns(200)).unwrap();
+        assert_eq!(w.items().len(), 200);
+        for r in w.items() {
+            let labels: Vec<&str> = r.labels().collect();
+            assert_eq!(labels.len(), 2, "two label columns => two labels: {r:?}");
+            assert_eq!(r.label(0), Some(labels[0]));
+            assert_eq!(r.label(1), Some(labels[1]));
+            assert_eq!(r.label(2), None);
+        }
+        assert_eq!(w.description().shape, "columns");
+        assert_eq!(w.description().size, 200);
+        // The flat descriptor fields cannot hold a column list, so the whole
+        // spec must ride in the escape hatch or the run cannot be reproduced.
+        assert!(w.description().spec.is_some());
+    }
+
+    /// Each column's own `GenSpec` steers it, so two columns given different
+    /// alphabets draw from disjoint domains. This is the knob that decides
+    /// whether a grouped sketch's key space aliases across columns.
+    #[test]
+    fn columns_are_independently_steerable() {
+        let w = LabeledWorkload::<i64>::generate(&three_columns(300)).unwrap();
+        let col0: BTreeSet<&str> = w.items().iter().filter_map(|r| r.label(0)).collect();
+        let col1: BTreeSet<&str> = w.items().iter().filter_map(|r| r.label(1)).collect();
+        assert!(col0.len() <= 8, "column 0 respects its cardinality: {col0:?}");
+        assert!(col1.len() <= 4, "column 1 respects its cardinality: {col1:?}");
+        assert!(
+            col0.is_disjoint(&col1),
+            "distinct alphabets must give disjoint domains: {col0:?} vs {col1:?}"
+        );
+    }
+
+    /// Truncating to the shortest column would silently change each column's
+    /// realised distribution, so a disagreement is refused and names the column.
+    #[test]
+    fn mismatched_column_sizes_are_refused() {
+        let mut cols = three_columns(100);
+        cols[1].size = 99;
+        let err = LabeledWorkload::<i64>::generate(&cols).unwrap_err().to_string();
+        assert!(err.contains("column 1"), "error should name the column: {err}");
+    }
+
+    #[test]
+    fn a_value_column_alone_is_refused() {
+        let err = LabeledWorkload::<i64>::generate(&[value_col(10, 8, 1)])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("label column"), "{err}");
+    }
+
+    /// A redraw must move **every** column. Holding one fixed would understate
+    /// the spread the accuracy pass reports.
+    #[test]
+    fn resample_redraws_every_column() {
+        let w = LabeledWorkload::<i64>::generate(&three_columns(400)).unwrap();
+        assert!(w.can_resample());
+        let r = w.resample(1).expect("generated workloads resample");
+        assert_ne!(r.items(), w.items());
+
+        let moved = |col: usize| {
+            let before: Vec<Option<&str>> = w.items().iter().map(|r| r.label(col)).collect();
+            let after: Vec<Option<&str>> = r.items().iter().map(|r| r.label(col)).collect();
+            before != after
+        };
+        assert!(moved(0), "label column 0 did not redraw");
+        assert!(moved(1), "label column 1 did not redraw");
+        let values_before: Vec<i64> = w.items().iter().map(|r| r.value).collect();
+        let values_after: Vec<i64> = r.items().iter().map(|r| r.value).collect();
+        assert_ne!(values_before, values_after, "value column did not redraw");
+    }
+
+    #[test]
+    fn generation_is_reproducible_from_the_column_seeds() {
+        let a = LabeledWorkload::<i64>::generate(&three_columns(150)).unwrap();
+        let b = LabeledWorkload::<i64>::generate(&three_columns(150)).unwrap();
+        assert_eq!(a.items(), b.items());
     }
 }
 

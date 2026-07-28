@@ -382,6 +382,10 @@ fn param_header(family: &str) -> &'static str {
         "nitro" => "rows,cols,rate",
         "elastic" => "buckets,depth",
         "univmon" => "layers,max_stream",
+        // Must stay in step with `legacy_param_columns`; the width assertion in
+        // `every_row_has_one_value_per_header_column` is what holds the two lists
+        // together.
+        "hydra" => "rows,cols,cell_rows,cell_cols",
         _ => "",
     }
 }
@@ -399,6 +403,9 @@ fn legacy_param_columns(family: &str) -> &'static [&'static str] {
         "nitro" => &["rows", "cols", "rate"],
         "elastic" => &["buckets", "depth"],
         "univmon" => &["layers", "max_stream"],
+        // Both shapes, because Hydra's cost is their product: a row carrying
+        // only the grid would read as a far smaller sketch than it is.
+        "hydra" => &["rows", "cols", "cell_rows", "cell_cols"],
         _ => &[],
     }
 }
@@ -600,6 +607,7 @@ mod param_column_order_tests {
             "nitro",
             "elastic",
             "univmon",
+            "hydra",
         ] {
             let width = param_header(family).split(',').count();
             for (label, params) in [

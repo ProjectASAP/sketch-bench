@@ -1,0 +1,47 @@
+# A multi-column stream for the record-ingesting rows (`hydra`): a list of
+# specs, where the last column is the value and the ones before it are labels.
+# Each column is an ordinary single-column spec, so its cardinality, skew and
+# seed are steered independently.
+#
+# Run with:
+#   sketchlib bench --sketch hydra --impl lib-cm \
+#     --spec configs/datagen/hydra_columns.yaml \
+#     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" --accuracy
+#
+# Two things worth knowing before reading the numbers.
+#
+# A record is written into every non-empty subset of its labels, so `d` labels
+# cost `2^d - 1` cell insertions. At the two label columns below that is 3.
+# Reported throughput is records per second, which is the denominator that stays
+# comparable as `d` changes.
+#
+# The columns here share the default alphabet, so their value domains overlap: a
+# query for label `"abc"` cannot distinguish the key1 group from the key2 group,
+# and the estimate absorbs both. Give each column its own `string.alphabet` to
+# make the domains disjoint and isolate the sketch's own error.
+
+# key1: the column the comparator groups by.
+- shape: keys
+  cardinality: 200
+  dist:
+    kind: uniform
+  size: 200000
+  seed: 1
+
+# key2: a second label, skewed, so the subset fan-out is not uniform.
+- shape: keys
+  cardinality: 50
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 2
+
+# value: what the Count-Min cells count inside each subpopulation.
+- shape: keys
+  cardinality: 1000
+  dist:
+    kind: zipf
+    s: 1.2
+  size: 200000
+  seed: 3

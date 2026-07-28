@@ -119,6 +119,32 @@ pub struct DdParams {
 }
 sketch_params!(DdParams, "dd", DdParams { alpha: 0.005 });
 
+/// Hydra is two nested shapes, so it takes two pairs of dimensions: `rows` and
+/// `cols` size the outer grid a subpopulation key hashes into, `cell_rows` and
+/// `cell_cols` size the counter array inside every one of those cells.
+///
+/// Memory is their product, so the two pairs are not interchangeable knobs: a
+/// grid of 1024 columns holding 2048-column cells is three orders of magnitude
+/// past either one alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_rows: usize,
+    pub cell_cols: usize,
+}
+sketch_params!(
+    HydraParams,
+    "hydra",
+    HydraParams {
+        rows: 3,
+        cols: 128,
+        cell_rows: 3,
+        cell_cols: 512
+    }
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnivMonParams {
