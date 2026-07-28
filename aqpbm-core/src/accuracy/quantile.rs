@@ -1,4 +1,4 @@
-//! Quantile-family ground truth comparators, one metric per family, because
+//! Quantile-algorithm ground truth comparators, one metric per algorithm, because
 //! each sketch's correctness bound is defined differently in its paper.
 //! [`RankErrorGT`] (KLL) reports rank error in units of `n`, range-based over
 //! tie intervals; [`RelativeErrorGT`] (DDSketch) reports `|v̂ − v| / |v|`

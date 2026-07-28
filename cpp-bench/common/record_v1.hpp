@@ -42,7 +42,7 @@ struct BenchSection {
     std::optional<LatencySummary>  latency_ns;
     // accuracy is a pre-serialised JSON object string (e.g.
     // R"({"queries":[0.5,0.95],"abs_rank_err":{...}})") so each
-    // sketch family can shape it per docs/SCHEMA_V1.md.
+    // sketch algorithm can shape it per docs/SCHEMA_V1.md.
     std::optional<std::string>     accuracy_json;
 };
 

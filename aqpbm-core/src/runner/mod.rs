@@ -557,7 +557,7 @@ where
     let heap_after = crate::metrics::heap_track::snapshot();
 
     // Query timing belongs to the `GroundTruth` comparators, which know the
-    // family-specific query shape; `query_count` is unread as a result.
+    // algorithm-specific query shape; `query_count` is unread as a result.
     let _ = config.query_count;
 
     let memory_bytes = sketch.memory_bytes() as u64;

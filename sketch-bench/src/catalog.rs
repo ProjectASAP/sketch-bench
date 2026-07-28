@@ -1,7 +1,7 @@
-//! The catalog: one table naming every `(family, impl)` this crate exposes,
+//! The catalog: one table naming every `(algorithm, impl)` this crate exposes,
 //! and the dispatch resolving one to a concrete sketch type. It lives here,
 //! not in the CLI, so a future `aqp-bench` can ship its own. A row is a
-//! *type*, not a pair of strings — family, impl name and `scores_accuracy`
+//! *type*, not a pair of strings — algorithm, impl name and `scores_accuracy`
 //! are projected off it, so the list and the code cannot drift apart.
 
 use anyhow::Result;
@@ -44,11 +44,11 @@ type RunFn = fn(
     Numeric,
 ) -> Result<Vec<BenchReport>, RunError>;
 
-/// One catalog entry. Built only by the four constructors below, so `family`,
+/// One catalog entry. Built only by the four constructors below, so `algorithm`,
 /// `impl_name` and `scores_accuracy` are always projections of the row's type
 /// and its runner — never hand-written strings that could drift from it.
 pub struct Row {
-    pub family: &'static str,
+    pub algorithm: &'static str,
     pub impl_name: &'static str,
     /// The one field that is genuinely new data, and so is written in [`ROWS`].
     pub description: &'static str,
@@ -171,7 +171,7 @@ where
     Ok(reports)
 }
 
-/// An ordered quantile family (KLL, DDSketch): the row names both widths and
+/// An ordered quantile algorithm (KLL, DDSketch): the row names both widths and
 /// the caller's [`Numeric`] picks one. The only place a runtime value still
 /// selects an item type.
 fn run_ordered<Si, Sf, G>(
@@ -223,7 +223,7 @@ where
 }
 
 // ---------- the four row constructors ----------
-// Each reads `S::FAMILY` / `S::IMPL` off the type and fixes `scores_accuracy`.
+// Each reads `S::ALGORITHM` / `S::IMPL` off the type and fixes `scores_accuracy`.
 // `const fn`, so `ROWS` stays `const` and a bad row fails at compile time.
 
 const fn scored<S, G>(description: &'static str) -> Row
@@ -233,7 +233,7 @@ where
     G: GroundTruthCalculator<S>,
 {
     Row {
-        family: S::FAMILY,
+        algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
         scores_accuracy: true,
@@ -251,7 +251,7 @@ where
 {
     Row {
         // Both halves are the same row; the i64 one names it.
-        family: Si::FAMILY,
+        algorithm: Si::ALGORITHM,
         impl_name: Si::IMPL,
         description,
         scores_accuracy: true,
@@ -267,7 +267,7 @@ where
     S::Item: BenchItem,
 {
     Row {
-        family: S::FAMILY,
+        algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
         scores_accuracy: false,
@@ -283,7 +283,7 @@ where
     S::Item: BenchItem,
 {
     Row {
-        family: S::FAMILY,
+        algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
         scores_accuracy: false,
@@ -295,7 +295,7 @@ where
 
 // ---------- the catalog ----------
 
-/// Every `(family, impl)` this crate exposes. Adding one is one line here plus
+/// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
 /// the wrapper it names; nothing else in this file changes.
 pub const ROWS: &[Row] = &[
     // -------- HLL (cardinality) --------
@@ -368,38 +368,38 @@ pub const ROWS: &[Row] = &[
 
 // ---------- what the frontend asks ----------
 
-fn find(family: &str, impl_name: &str) -> Option<&'static Row> {
+fn find(algorithm: &str, impl_name: &str) -> Option<&'static Row> {
     ROWS.iter()
-        .find(|r| r.family == family && r.impl_name == impl_name)
+        .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
 pub fn list() -> Vec<String> {
     ROWS.iter()
-        .map(|r| format!("{:12} {:28} {}", r.family, r.impl_name, r.description))
+        .map(|r| format!("{:12} {:28} {}", r.algorithm, r.impl_name, r.description))
         .collect()
 }
 
-pub fn family_exists(family: &str) -> bool {
-    ROWS.iter().any(|r| r.family == family)
+pub fn algorithm_exists(algorithm: &str) -> bool {
+    ROWS.iter().any(|r| r.algorithm == algorithm)
 }
 
 /// Does `--accuracy` score this row? `None` if the row is unknown.
-pub fn scores_accuracy(family: &str, impl_name: &str) -> Option<bool> {
-    find(family, impl_name).map(|r| r.scores_accuracy)
+pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool> {
+    find(algorithm, impl_name).map(|r| r.scores_accuracy)
 }
 
-/// Parse the single `--config` point for a family, checking the family exists.
-pub fn config_point(family: &str, spec: &str) -> Result<ParamSet> {
-    if !family_exists(family) {
-        anyhow::bail!("unknown sketch family: {family}");
+/// Parse the single `--config` point for an algorithm, checking the algorithm exists.
+pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet> {
+    if !algorithm_exists(algorithm) {
+        anyhow::bail!("unknown sketch algorithm: {algorithm}");
     }
-    ParamSet::single(family, spec).map_err(Into::into)
+    ParamSet::single(algorithm, spec).map_err(Into::into)
 }
 
-/// Resolve `(family, impl)` to a concrete measurement and run it. The timed
+/// Resolve `(algorithm, impl)` to a concrete measurement and run it. The timed
 /// half is always run; the accuracy half only when `acc.enabled`.
 pub fn run(
-    family: &str,
+    algorithm: &str,
     impl_name: &str,
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
@@ -407,12 +407,12 @@ pub fn run(
     acc: &AccuracyCfg,
     width: Numeric,
 ) -> Result<Vec<BenchReport>> {
-    let row = find(family, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))?;
+    let row = find(algorithm, impl_name)
+        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))?;
     // Asked for a width this row's type cannot be built at — answerable from
     // the catalog, before a single item is generated.
     if width == Numeric::F64 && !row.picks_width {
-        anyhow::bail!("{family}/{impl_name} runs over i64 only; drop --dtype f64");
+        anyhow::bail!("{algorithm}/{impl_name} runs over i64 only; drop --dtype f64");
     }
     Ok((row.run)(cfg, spec, params, acc, width)?)
 }
@@ -426,11 +426,11 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// One buildable config per family, from each params type's own
-    /// `canonical()`. The `panic!` arm is what makes a newly added family
+    /// One buildable config per algorithm, from each params type's own
+    /// `canonical()`. The `panic!` arm is what makes a newly added algorithm
     /// show up here rather than silently skipping the tests below.
-    fn canonical_params(family: &str) -> ParamSet {
-        match family {
+    fn canonical_params(algorithm: &str) -> ParamSet {
+        match algorithm {
             "hll" => ParamSet::of(&HllParams::canonical()),
             "kll" => ParamSet::of(&KllParams::canonical()),
             "cms" => ParamSet::of(&CmsParams::canonical()),
@@ -441,21 +441,21 @@ mod tests {
             "hydra" => ParamSet::of(&HydraParams::canonical()),
             "topk" => ParamSet::of(&TopkParams::canonical()),
             "univmon" => ParamSet::of(&UnivMonParams::canonical()),
-            other => panic!("no canonical params known for family '{other}'"),
+            other => panic!("no canonical params known for algorithm '{other}'"),
         }
     }
 
     /// The one way two rows can still collide: distinct types declaring the same
-    /// `IMPL` under the same family. [`find`] takes the first, so the second is
+    /// `IMPL` under the same algorithm. [`find`] takes the first, so the second is
     /// dead. Not a compile error — the strings come from two different types.
     #[test]
-    fn family_impl_pairs_are_unique() {
+    fn algorithm_impl_pairs_are_unique() {
         let mut seen = BTreeSet::new();
         for r in ROWS {
             assert!(
-                seen.insert((r.family, r.impl_name)),
+                seen.insert((r.algorithm, r.impl_name)),
                 "duplicate row {}/{}",
-                r.family,
+                r.algorithm,
                 r.impl_name
             );
         }
@@ -518,12 +518,12 @@ mod tests {
     fn every_catalog_entry_runs() {
         let (cfg, acc) = smoke_cfg();
         for r in ROWS {
-            // Canonical, not `empty`: every family's params have required
+            // Canonical, not `empty`: every algorithm's params have required
             // fields, so `empty` built only the 5 polars rows that ignore
             // their config — the other 31 were "checked" without ever running.
-            let params = canonical_params(r.family);
+            let params = canonical_params(r.algorithm);
             let got = run(
-                r.family,
+                r.algorithm,
                 r.impl_name,
                 &cfg,
                 &spec_for(r),
@@ -537,9 +537,9 @@ mod tests {
                 for report in reports {
                     assert_eq!(
                         (report.sketch.as_str(), report.impl_name.as_str()),
-                        (r.family, r.impl_name),
+                        (r.algorithm, r.impl_name),
                         "row {}/{} emits records labelled {}/{}",
-                        r.family,
+                        r.algorithm,
                         r.impl_name,
                         report.sketch,
                         report.impl_name,
@@ -549,7 +549,7 @@ mod tests {
         }
     }
 
-    /// A family's rows are only comparable if asked the same question, so they
+    /// An algorithm's rows are only comparable if asked the same question, so they
     /// must agree on which configs are answerable — one row silently accepting a
     /// config its peers reject scores a different experiment.
     #[test]
@@ -563,9 +563,9 @@ mod tests {
             ("rows=5 cols=2048", false),      // no `k` at all
         ] {
             let params = config_point("topk", cfg_spec).unwrap();
-            for r in ROWS.iter().filter(|r| r.family == "topk") {
+            for r in ROWS.iter().filter(|r| r.algorithm == "topk") {
                 let got = run(
-                    r.family,
+                    r.algorithm,
                     r.impl_name,
                     &cfg,
                     &spec,
@@ -576,7 +576,7 @@ mod tests {
                 assert_eq!(
                     got.is_ok(),
                     buildable,
-                    "topk/{} disagrees with the family on `{cfg_spec}`: {got:?}",
+                    "topk/{} disagrees with the algorithm on `{cfg_spec}`: {got:?}",
                     r.impl_name
                 );
             }

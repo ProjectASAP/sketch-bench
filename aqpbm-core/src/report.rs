@@ -11,7 +11,7 @@ use crate::workload::WorkloadDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// A single record in the JSONL report stream. One record
 /// per benchmark / profile / runtime window.
@@ -25,7 +25,7 @@ pub struct Record {
     /// both tracks dump into one JSONL stream. Defaults to `rust`.
     #[serde(default)]
     pub language: Language,
-    /// Family-specific construction params used for this run, populated by
+    /// Algorithm-specific construction params used for this run, populated by
     /// `bench` from the cell's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
@@ -61,7 +61,7 @@ pub enum Mode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
-    /// Run produced by the `sketchlib` CLI.
+    /// Run produced by the `approxbench` CLI.
     Cli,
     /// Run produced by an embedded `sketch-runtime::Sampler`
     /// in one of the downstream apps.
@@ -94,7 +94,7 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
     /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)`, the
-    /// rate a *ready-to-answer* sketch is produced at. The cross-family column;
+    /// rate a *ready-to-answer* sketch is produced at. The cross-algorithm column;
     /// equals the ingest rate wherever `prepare` is free.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
@@ -300,8 +300,8 @@ mod tests {
     /// purpose. The number leaves the repo — in every JSONL record, and on the
     /// wire as `RuntimeRecord.schema_version` — so a bump is a contract change.
     #[test]
-    fn schema_version_is_v2() {
-        assert_eq!(SCHEMA_VERSION, 2);
+    fn schema_version_is_v3() {
+        assert_eq!(SCHEMA_VERSION, 3);
     }
 
     #[test]

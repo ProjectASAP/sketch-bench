@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
     cpp_bench::AggregatedMetrics m = cpp_bench::aggregate(raw);
 
     cpp_bench::Record rec;
-    // Family name matches the Rust dispatch: "countsketch"
+    // Algorithm name matches the Rust dispatch: "countsketch"
     // (the directory is still cpp-bench/cs/ to mirror cpp/cs/).
     rec.sketch    = "countsketch";
     rec.impl_name = "datasketches";

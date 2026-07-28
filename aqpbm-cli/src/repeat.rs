@@ -15,13 +15,13 @@ use aqpbm_core::report::{BenchSection, Record, RunStats};
 /// Marks a child so it runs exactly one repeat and writes to stdout, whatever
 /// its argv says. The argv is byte-identical to the parent's — provably the same
 /// measurement — and reading this variable is what stops it recursing.
-const CHILD_ENV: &str = "SKETCHLIB_REPEAT_CHILD";
+const CHILD_ENV: &str = "APPROXBENCH_REPEAT_CHILD";
 
 pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Identifies the measurement a record belongs to across repeats: family, impl,
+/// Identifies the measurement a record belongs to across repeats: algorithm, impl,
 /// params, workload, pass. The pass matters because one invocation emits several
 /// records sharing the rest, and pooling them averages two populations.
 type GroupKey = (String, String, String, String, String);
@@ -50,7 +50,7 @@ pub fn run_repeats(repeats: usize) -> Result<Vec<Record>> {
     let mut groups: BTreeMap<GroupKey, Vec<Record>> = BTreeMap::new();
 
     for i in 0..repeats {
-        eprintln!("sketchlib: repeat {}/{repeats}", i + 1);
+        eprintln!("approxbench: repeat {}/{repeats}", i + 1);
         let out = Command::new(&exe)
             .args(&argv)
             .env(CHILD_ENV, "1")

@@ -1,19 +1,19 @@
-//! Construction parameters for each sketch family. These live next to the
+//! Construction parameters for each sketch algorithm. These live next to the
 //! wrappers that consume them, not in `aqpbm-core`: the core owns the *open*
-//! family axis and deliberately knows no family names, so concrete families are
+//! algorithm axis and deliberately knows no algorithm names, so concrete algorithms are
 //! declared by whoever ships the implementations. See `aqpbm_core::config`.
 
 use serde::{Deserialize, Serialize};
 
 // Re-exported so callers reach the whole parameter vocabulary —
-// the open axis from `aqpbm-core` plus this crate's families —
+// the open axis from `aqpbm-core` plus this crate's algorithms —
 // through one module.
 pub use aqpbm_core::config::{ParamSet, SketchParams};
 
 macro_rules! sketch_params {
-    ($ty:ident, $family:literal, $canonical:expr) => {
+    ($ty:ident, $algorithm:literal, $canonical:expr) => {
         impl SketchParams for $ty {
-            const FAMILY: &'static str = $family;
+            const ALGORITHM: &'static str = $algorithm;
             fn canonical() -> Self {
                 $canonical
             }
@@ -65,7 +65,7 @@ sketch_params!(
     }
 );
 
-/// Top-k is its own family because its parameter vocabulary is: `k` sizes the
+/// Top-k is its own algorithm because its parameter vocabulary is: `k` sizes the
 /// candidate tracker, `rows`/`cols` the counter array under it. Sharing
 /// `CmsParams` would give every CMS row a `k` that means nothing to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,30 +175,30 @@ mod tests {
         });
         assert_eq!(
             serde_json::to_string(&p).unwrap(),
-            r#"{"family":"cms","params":{"cols":2048,"rows":5}}"#
+            r#"{"algorithm":"cms","params":{"cols":2048,"rows":5}}"#
         );
     }
 
     #[test]
     fn records_written_before_the_open_representation_still_parse() {
         // Declaration order, as the closed enum emitted it.
-        for (json, family) in [
-            (r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
-            (r#"{"family":"hll","params":{"lg_k":14}}"#, "hll"),
+        for (json, algorithm) in [
+            (r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
+            (r#"{"algorithm":"hll","params":{"lg_k":14}}"#, "hll"),
             (
-                r#"{"family":"countsketch","params":{"rows":3,"cols":4096}}"#,
+                r#"{"algorithm":"countsketch","params":{"rows":3,"cols":4096}}"#,
                 "countsketch",
             ),
             (
-                r#"{"family":"univmon","params":{"layers":8,"max_stream":256}}"#,
+                r#"{"algorithm":"univmon","params":{"layers":8,"max_stream":256}}"#,
                 "univmon",
             ),
         ] {
             let p: ParamSet = serde_json::from_str(json).unwrap();
-            assert_eq!(p.family(), family);
+            assert_eq!(p.algorithm(), algorithm);
         }
         let cms: ParamSet =
-            serde_json::from_str(r#"{"family":"cms","params":{"rows":5,"cols":2048}}"#).unwrap();
+            serde_json::from_str(r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#).unwrap();
         assert_eq!(
             cms.parse::<CmsParams>().unwrap(),
             CmsParams {
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn parsing_as_the_wrong_family_fails() {
+    fn parsing_as_the_wrong_algorithm_fails() {
         let p = ParamSet::of(&HllParams { lg_k: 14 });
         let err = p.parse::<CmsParams>().unwrap_err().to_string();
         assert!(err.contains("hll") && err.contains("cms"), "{err}");
@@ -227,7 +227,7 @@ mod tests {
     fn unknown_keys_are_rejected_by_name() {
         // `deny_unknown_fields` is what names the offending key.
         let p = ParamSet {
-            family: "cms".into(),
+            algorithm: "cms".into(),
             params: serde_json::json!({"rows": 5, "colz": 2048}),
         };
         let err = p.parse::<CmsParams>().unwrap_err().to_string();
@@ -235,14 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn every_family_ships_a_canonical_config_that_roundtrips() {
-        // The canonical config is one buildable point per family — the
+    fn every_algorithm_ships_a_canonical_config_that_roundtrips() {
+        // The canonical config is one buildable point per algorithm — the
         // item-type acceptance tests take it as a valid config per impl. It must
-        // erase to a `ParamSet` of its own family and parse back unchanged.
+        // erase to a `ParamSet` of its own algorithm and parse back unchanged.
         fn check<P: SketchParams + PartialEq + std::fmt::Debug>() {
             let p = P::canonical();
             let set = ParamSet::of(&p);
-            assert_eq!(set.family(), P::FAMILY);
+            assert_eq!(set.algorithm(), P::ALGORITHM);
             assert_eq!(set.parse::<P>().unwrap(), p);
         }
         check::<HllParams>();

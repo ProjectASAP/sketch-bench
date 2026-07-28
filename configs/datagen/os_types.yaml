@@ -1,7 +1,7 @@
 # Finite-domain skewed-categorical: a handful of "OS type" ids that
 # recur, with an explicit heavy skew toward the common ones.
 # Generate with:
-#   sketchlib workload generate --spec configs/datagen/os_types.yaml --out input/os_types.bin
+#   approxbench workload generate --spec configs/datagen/os_types.yaml --out input/os_types.bin
 shape: categorical
 categories: [0, 1, 2, 3, 4, 5, 6, 7]
 dist:

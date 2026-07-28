@@ -1,6 +1,6 @@
 //! UnivMon wrappers — `sketchlib::UnivMon` (string-keyed) and
 //! `sketch_oxide::universal::UnivMon` (byte-keyed). Neither declares a query
-//! capability, so neither is accuracy-scored; moment-family comparators are
+//! capability, so neither is accuracy-scored; moment-algorithm comparators are
 //! future work. Tunable params are `layers` and `max_stream`, over a fixed
 //! (5, 2048) CMS — and oxide's constructor ignores `layers` beyond footprint.
 

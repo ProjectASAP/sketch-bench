@@ -1,7 +1,7 @@
 //! Thin newtypes over each concrete sketch implementation in the
-//! repo, one file per family. Each implements `Accumulator` (drive it)
+//! repo, one file per algorithm. Each implements `Accumulator` (drive it)
 //! and `InitSketch` (build it from a `ParamSet`); `sketch_bench::catalog`
-//! binds the runtime `(family, impl)` strings to these types.
+//! binds the runtime `(algorithm, impl)` strings to these types.
 
 pub mod cms;
 pub mod countsketch;

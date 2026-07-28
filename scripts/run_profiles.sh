@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # run_profiles.sh — CPU-accuracy and memory-accuracy profiles
 #
-# Runs all four sketch families (hll, kll, cms, countsketch)
+# Runs all four sketch algorithms (hll, kll, cms, countsketch)
 # across three workloads (zipf, uniform, file) using the default
-# config grids. Emits one JSONL file per (family, workload) in
+# config grids. Emits one JSONL file per (algorithm, workload) in
 # output/profiles/, plus a combined all.jsonl.
 #
 # Usage:
 #   scripts/run_profiles.sh             # build + run everything
 #   scripts/run_profiles.sh --no-build  # skip cargo build
-#   FAMILIES="hll kll" scripts/run_profiles.sh  # subset of families
+#   ALGORITHMS="hll kll" scripts/run_profiles.sh  # subset of algorithms
 #
 # ── Key JSONL fields for analysis ──────────────────────────────
 # Identity:
-#   .sketch                            family name
+#   .sketch                            algorithm name
 #   .impl                              impl name
 #   .sketch_config.params              config (lg_k / k / rows+cols / …)
 #   .workload.shape                    "zipf" | "uniform" | "file"
@@ -64,9 +64,9 @@ if [[ "${1:-}" == "--no-build" ]]; then
     BUILD=0
 fi
 
-BINARY=./target/release/sketchlib
-FAMILIES_DEFAULT="hll kll cms countsketch"
-FAMILIES="${FAMILIES:-$FAMILIES_DEFAULT}"
+BINARY=./target/release/approxbench
+ALGORITHMS_DEFAULT="hll kll cms countsketch"
+ALGORITHMS="${ALGORITHMS:-$ALGORITHMS_DEFAULT}"
 
 # ── Tune these ──────────────────────────────────────────────────
 RUNS=5
@@ -83,7 +83,7 @@ OUT_DIR=output/profiles
 mkdir -p "$OUT_DIR"
 
 if [[ $BUILD -eq 1 ]]; then
-    echo "==> Building sketchlib (release)..."
+    echo "==> Building approxbench (release)..."
     cargo build -p aqpbm-cli --release
 fi
 
@@ -94,33 +94,33 @@ fi
 
 # Truncate existing output files so reruns don't append duplicates
 # (the CLI opens with O_APPEND; clean slate on each script run).
-for FAMILY in $FAMILIES; do
-    rm -f "$OUT_DIR/${FAMILY}_zipf.jsonl" \
-          "$OUT_DIR/${FAMILY}_uniform.jsonl" \
-          "$OUT_DIR/${FAMILY}_file.jsonl"
+for ALGORITHM in $ALGORITHMS; do
+    rm -f "$OUT_DIR/${ALGORITHM}_zipf.jsonl" \
+          "$OUT_DIR/${ALGORITHM}_uniform.jsonl" \
+          "$OUT_DIR/${ALGORITHM}_file.jsonl"
 done
 rm -f "$OUT_DIR/all.jsonl"
 
 # ── Benchmark driver ─────────────────────────────────────────────
 bench() {
-    local family=$1; shift
+    local algorithm=$1; shift
     local label=$1; shift
     echo ""
-    echo "─── $family / $label ───────────────────────────────────"
+    echo "─── $algorithm / $label ───────────────────────────────────"
     "$BINARY" bench \
-        --sketch    "$family" \
+        --sketch    "$algorithm" \
         --runs      "$RUNS" \
         --warmup-runs "$WARMUP" \
         --metrics   "$METRICS" \
         --accuracy \
         --accuracy-probes     "$ACCURACY_PROBES" \
-        --report    "$OUT_DIR/${family}_${label}.jsonl" \
+        --report    "$OUT_DIR/${algorithm}_${label}.jsonl" \
         "$@"
 }
 
-for FAMILY in $FAMILIES; do
+for ALGORITHM in $ALGORITHMS; do
     # Zipf workload — skewed, so the are_topN prefixes separate
-    bench "$FAMILY" zipf \
+    bench "$ALGORITHM" zipf \
         --workload zipf \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
@@ -128,14 +128,14 @@ for FAMILY in $FAMILIES; do
         --seed "$SEED"
 
     # Uniform workload — all keys have similar counts
-    bench "$FAMILY" uniform \
+    bench "$ALGORITHM" uniform \
         --workload uniform \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
         --seed "$SEED"
 
     # Pre-built binary file — 1M int64, seed 42
-    bench "$FAMILY" file \
+    bench "$ALGORITHM" file \
         --input input/benchmark_data_1m_int64.bin
 done
 

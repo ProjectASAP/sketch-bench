@@ -1,4 +1,4 @@
-//! `sketchlib workload generate|describe` — produce and inspect synthetic
+//! `approxbench workload generate|describe` — produce and inspect synthetic
 //! `.bin` workloads. Generation writes a raw little-endian value stream plus a
 //! `foo.bin.meta.json` provenance sidecar: the stream feeds `bench --input`,
 //! while the sidecar is ignored there and read back by `describe`.
@@ -266,14 +266,14 @@ fn generate(a: GenerateArgs) -> Result<()> {
     };
 
     eprintln!(
-        "sketchlib: generated shape={} dtype={} count={} -> {}",
+        "approxbench: generated shape={} dtype={} count={} -> {}",
         spec.shape.report_label(),
         meta.dtype.as_str(),
         meta.count,
         a.out,
     );
     if let Some(p) = sidecar {
-        eprintln!("sketchlib: sidecar -> {}", p.display());
+        eprintln!("approxbench: sidecar -> {}", p.display());
     }
     Ok(())
 }

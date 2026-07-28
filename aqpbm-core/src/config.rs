@@ -1,6 +1,6 @@
 //! Accumulator-construction parameters.
 //!
-//! The family axis is open: [`ParamSet`] carries the family name plus its
+//! The algorithm axis is open: [`ParamSet`] carries the algorithm name plus its
 //! parameters as JSON, and each params type declares its own name, its own
 //! canonical config, and — through serde — its own parsing and field names.
 
@@ -9,24 +9,24 @@ use serde::{Deserialize, Serialize};
 
 use aqpbm_datagen::SketchError;
 
-/// Construction parameters for one sketch family. `deny_unknown_fields` on each
+/// Construction parameters for one sketch algorithm. `deny_unknown_fields` on each
 /// implementor turns a typo in `--config` into an error naming the offending key.
 pub trait SketchParams: Serialize + DeserializeOwned + Clone + std::fmt::Debug {
     /// The `--sketch` name this parameterises.
-    const FAMILY: &'static str;
+    const ALGORITHM: &'static str;
 
-    /// One representative, buildable config for the family. Lives on the params
-    /// type, not a table keyed by family name, so it cannot drift from what it
+    /// One representative, buildable config for the algorithm. Lives on the params
+    /// type, not a table keyed by algorithm name, so it cannot drift from what it
     /// configures. Not a sweep — it is the single point acceptance tests build.
     fn canonical() -> Self;
 }
 
-/// Family-tagged parameters, type-erased so the set of families stays open.
-/// Serialises as `{"family": "...", "params": {...}}`, the shape of a record's
+/// Algorithm-tagged parameters, type-erased so the set of algorithms stays open.
+/// Serialises as `{"algorithm": "...", "params": {...}}`, the shape of a record's
 /// `sketch_config` field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParamSet {
-    pub family: String,
+    pub algorithm: String,
     pub params: serde_json::Value,
 }
 
@@ -34,28 +34,28 @@ impl ParamSet {
     /// Erase a typed params value.
     pub fn of<P: SketchParams>(p: &P) -> Self {
         Self {
-            family: P::FAMILY.to_string(),
+            algorithm: P::ALGORITHM.to_string(),
             params: serde_json::to_value(p).expect("params -> JSON should not fail"),
         }
     }
 
-    /// Recover the typed value. Fails if this set belongs to another family, or
+    /// Recover the typed value. Fails if this set belongs to another algorithm, or
     /// if the JSON does not match `P` — which is how a misspelled `--config` key
     /// is reported, with serde naming it and listing the valid ones.
     pub fn parse<P: SketchParams>(&self) -> Result<P, SketchError> {
-        if self.family != P::FAMILY {
+        if self.algorithm != P::ALGORITHM {
             return Err(SketchError::BadParam(format!(
-                "params are for family '{}', not '{}'",
-                self.family,
-                P::FAMILY
+                "params are for algorithm '{}', not '{}'",
+                self.algorithm,
+                P::ALGORITHM
             )));
         }
         serde_json::from_value(self.params.clone())
-            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", P::FAMILY)))
+            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", P::ALGORITHM)))
     }
 
-    pub fn family(&self) -> &str {
-        &self.family
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
     }
 
     /// The whole tagged object, for the record's `sketch_config` field.
@@ -63,19 +63,19 @@ impl ParamSet {
         serde_json::to_value(self).expect("ParamSet -> JSON should not fail")
     }
 
-    /// The parameterless point for a family — what `--config` defaults to. An
+    /// The parameterless point for an algorithm — what `--config` defaults to. An
     /// impl needing parameters rejects it, naming the field it is missing.
-    pub fn empty(family: &str) -> Self {
+    pub fn empty(algorithm: &str) -> Self {
         Self {
-            family: family.to_string(),
+            algorithm: algorithm.to_string(),
             params: serde_json::Value::Object(serde_json::Map::new()),
         }
     }
 
     /// Parse one `--config` point: `'k1=v1 k2=v2'`, one value per key — a comma
     /// list is an error, since one invocation measures one cell. Syntax only:
-    /// no family is named here, so membership is the caller's check.
-    pub fn single(family: &str, spec: &str) -> Result<ParamSet, SketchError> {
+    /// no algorithm is named here, so membership is the caller's check.
+    pub fn single(algorithm: &str, spec: &str) -> Result<ParamSet, SketchError> {
         let axes = parse_axes(spec)?;
         let mut params = serde_json::Map::new();
         for (key, values) in axes {
@@ -89,13 +89,13 @@ impl ParamSet {
             params.insert(key, typed(&values[0]));
         }
         Ok(ParamSet {
-            family: family.to_string(),
+            algorithm: algorithm.to_string(),
             params: serde_json::Value::Object(params),
         })
     }
 
     /// `(key, value)` pairs of the parameters, ordered by key — lets the CSV
-    /// writer emit a header and a row for any family with no per-family table,
+    /// writer emit a header and a row for any algorithm with no per-algorithm table,
     /// and keeps one file's header stable across runs.
     pub fn fields(&self) -> Vec<(String, String)> {
         let Some(obj) = self.params.as_object() else {
@@ -153,8 +153,8 @@ fn parse_axes(spec: &str) -> Result<Vec<(String, Vec<String>)>, SketchError> {
 mod tests {
     use super::*;
 
-    /// Families declared right here, so these tests exercise the open axis
-    /// without `aqpbm-core` knowing any real family. That the axis can be
+    /// Algorithms declared right here, so these tests exercise the open axis
+    /// without `aqpbm-core` knowing any real algorithm. That the axis can be
     /// exercised this way *is* the property under test.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -164,7 +164,7 @@ mod tests {
     }
 
     impl SketchParams for FakeParams {
-        const FAMILY: &'static str = "fake";
+        const ALGORITHM: &'static str = "fake";
         fn canonical() -> Self {
             FakeParams {
                 rows: 5,
@@ -180,7 +180,7 @@ mod tests {
     }
 
     impl SketchParams for OtherParams {
-        const FAMILY: &'static str = "other";
+        const ALGORITHM: &'static str = "other";
         fn canonical() -> Self {
             OtherParams { lg_k: 14 }
         }
@@ -195,7 +195,7 @@ mod tests {
     }
 
     impl SketchParams for FloatParams {
-        const FAMILY: &'static str = "float";
+        const ALGORITHM: &'static str = "float";
         fn canonical() -> Self {
             FloatParams { alpha: 0.01 }
         }
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn single_defers_key_checking_to_parse() {
-        // `single` knows no family, so a misspelled key survives and is
+        // `single` knows no algorithm, so a misspelled key survives and is
         // caught by serde against the struct that defines the fields.
         let p = ParamSet::single("fake", "rows=5 colz=1024").unwrap();
         let err = p.parse::<FakeParams>().unwrap_err().to_string();
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn empty_is_a_parameterless_point() {
         let p = ParamSet::empty("fake");
-        assert_eq!(p.family(), "fake");
+        assert_eq!(p.algorithm(), "fake");
         assert_eq!(p.fields(), Vec::<(String, String)>::new());
         // A params struct with required fields rejects it, naming a field.
         assert!(p.parse::<FakeParams>().is_err());
@@ -271,7 +271,7 @@ mod tests {
         });
         assert_eq!(
             serde_json::to_string(&p).unwrap(),
-            r#"{"family":"fake","params":{"cols":2048,"rows":5}}"#
+            r#"{"algorithm":"fake","params":{"cols":2048,"rows":5}}"#
         );
     }
 
@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn parsing_as_the_wrong_family_fails() {
+    fn parsing_as_the_wrong_algorithm_fails() {
         let p = ParamSet::of(&OtherParams { lg_k: 14 });
         let err = p.parse::<FakeParams>().unwrap_err().to_string();
         assert!(err.contains("other") && err.contains("fake"), "{err}");
@@ -294,7 +294,7 @@ mod tests {
     fn unknown_keys_are_rejected_by_name() {
         // `deny_unknown_fields` is what names the offending key.
         let p = ParamSet {
-            family: "fake".into(),
+            algorithm: "fake".into(),
             params: serde_json::json!({"rows": 5, "colz": 2048}),
         };
         let err = p.parse::<FakeParams>().unwrap_err().to_string();

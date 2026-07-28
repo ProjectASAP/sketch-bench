@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run throughput benchmarks through `sketchlib bench` and emit the
+# Run throughput benchmarks through `approxbench bench` and emit the
 # legacy long-format CSVs under `output/throughput/`.
 #
-# Replaces the per-family binaries that used to live under
-# `throughput/<family>/rust/` plus `throughput/polars_*/` and
+# Replaces the per-algorithm binaries that used to live under
+# `throughput/<algorithm>/rust/` plus `throughput/polars_*/` and
 # `throughput/octo/`. All of those are now reachable through the
 # aqpbm-cli wrappers:
 #
@@ -11,16 +11,16 @@
 #   sketch-bench/src/wrappers/parallel.rs  — *.lib-fastpath-parallel (octo)
 #   sketch-bench/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — regular impls
 #
-# Output layout mirrors the legacy `throughput/<family>/output/`
+# Output layout mirrors the legacy `throughput/<algorithm>/output/`
 # shape so the plot scripts under `visualization/plots/throughput/`
-# keep working without changes: each family writes
-# `<family>_throughput_results_rust.csv` (insert) and, when
-# accuracy ran, `<family>_throughput_query_results_rust.csv`.
+# keep working without changes: each algorithm writes
+# `<algorithm>_throughput_results_rust.csv` (insert) and, when
+# accuracy ran, `<algorithm>_throughput_query_results_rust.csv`.
 # Octo-parallel rows land in `octo_throughput_results_rust.csv`.
 #
 # Usage:
-#   scripts/run_throughput.sh                       # all families
-#   scripts/run_throughput.sh --variant cms         # one family
+#   scripts/run_throughput.sh                       # all algorithms
+#   scripts/run_throughput.sh --variant cms         # one algorithm
 #   scripts/run_throughput.sh --workers 1,2,4,8     # octo sweep
 #   scripts/run_throughput.sh --output-dir /tmp/out
 set -euo pipefail
@@ -66,8 +66,8 @@ if [[ ! -f "${DATA}" ]]; then
   fi
 fi
 
-run_family() {
-  local FAMILY="$1"
+run_algorithm() {
+  local ALGORITHM="$1"
   local IMPL_FILTER="${2:-all}"
   local CONFIG="${3:-}"
   local EXTRA="${4:-}"
@@ -75,10 +75,10 @@ run_family() {
   if [[ -n "${CONFIG}" ]]; then
     CONFIG_ARGS=(--config "${CONFIG}")
   fi
-  echo "===== throughput: ${FAMILY} (impl=${IMPL_FILTER}) ====="
+  echo "===== throughput: ${ALGORITHM} (impl=${IMPL_FILTER}) ====="
   # shellcheck disable=SC2086
   cargo run --release --quiet -p aqpbm-cli -- bench \
-    --sketch "${FAMILY}" --impl "${IMPL_FILTER}" \
+    --sketch "${ALGORITHM}" --impl "${IMPL_FILTER}" \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     ${ACCURACY} \
     "${CONFIG_ARGS[@]}" \
@@ -92,12 +92,12 @@ run_octo() {
   # invocation appends to `octo_throughput_results_rust.csv`.
   IFS=',' read -ra WORKERS <<<"${WORKERS_LIST}"
   for n in "${WORKERS[@]}"; do
-    for fam_cfg in "cms|rows=5 cols=32768" "countsketch|rows=5 cols=32768" "hll|lg_k=14"; do
-      local FAM="${fam_cfg%%|*}"
-      local CFG="${fam_cfg#*|}"
-      echo "===== throughput: ${FAM}/lib-fastpath-parallel workers=${n} ====="
+    for algo_cfg in "cms|rows=5 cols=32768" "countsketch|rows=5 cols=32768" "hll|lg_k=14"; do
+      local ALGO="${algo_cfg%%|*}"
+      local CFG="${algo_cfg#*|}"
+      echo "===== throughput: ${ALGO}/lib-fastpath-parallel workers=${n} ====="
       cargo run --release --quiet -p aqpbm-cli -- bench \
-        --sketch "${FAM}" --impl lib-fastpath-parallel \
+        --sketch "${ALGO}" --impl lib-fastpath-parallel \
         --config "${CFG}" \
         --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
         --workers "${n}" \
@@ -109,22 +109,22 @@ run_octo() {
 
 case "${VARIANT}" in
   all)
-    run_family hll
-    run_family kll
-    run_family cms
-    run_family countsketch
-    run_family dd
-    run_family nitro
-    run_family elastic
-    run_family univmon
+    run_algorithm hll
+    run_algorithm kll
+    run_algorithm cms
+    run_algorithm countsketch
+    run_algorithm dd
+    run_algorithm nitro
+    run_algorithm elastic
+    run_algorithm univmon
     run_octo
     ;;
   octo)         run_octo ;;
-  cs)           run_family countsketch ;;
-  *)            run_family "${VARIANT}" ;;
+  cs)           run_algorithm countsketch ;;
+  *)            run_algorithm "${VARIANT}" ;;
 esac
 
 echo "----"
 echo "JSONL report : ${REPORT}"
-echo "Legacy CSVs  : ${OUTPUT_DIR}/<family>_throughput_results_rust.csv"
+echo "Legacy CSVs  : ${OUTPUT_DIR}/<algorithm>_throughput_results_rust.csv"
 echo "Octo CSV     : ${OUTPUT_DIR}/octo_throughput_results_rust.csv"

@@ -1,7 +1,7 @@
 #pragma once
 
 // Cross-language accuracy contract for the v1 schema's `accuracy`
-// payload. See docs/SCHEMA_V1.md for the per-family JSON shape.
+// payload. See docs/SCHEMA_V1.md for the per-algorithm JSON shape.
 //
 // Each helper returns a pre-serialised JSON object so it can be
 // dropped straight into `BenchSection::accuracy_json`.
@@ -13,7 +13,7 @@
 
 namespace cpp_bench {
 
-// ---------- Quantile family (KLL, t-digest, ...) ----------
+// ---------- Quantile algorithms (KLL, t-digest, ...) ----------
 
 struct QuantileAccuracy {
     std::string json;
@@ -26,7 +26,7 @@ QuantileAccuracy compute_quantile_accuracy(
     const std::vector<double>& queries,
     const std::function<std::int64_t(double q)>& estimate_q);
 
-// ---------- Frequency family (CMS, CS) ----------
+// ---------- Frequency algorithms (CMS, CS) ----------
 
 struct FrequencyAccuracy {
     std::string json;
@@ -40,7 +40,7 @@ FrequencyAccuracy compute_frequency_accuracy(
     std::size_t top_k,
     const std::function<std::uint64_t(std::int64_t key)>& estimate_freq);
 
-// ---------- Cardinality family (HLL) ----------
+// ---------- Cardinality algorithms (HLL) ----------
 
 struct CardinalityAccuracy {
     std::string json;

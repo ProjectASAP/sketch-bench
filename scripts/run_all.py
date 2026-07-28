@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cross-track orchestrator: run the Rust `sketchlib bench` and the C++
+Cross-track orchestrator: run the Rust `approxbench bench` and the C++
 `cpp-bench/<sketch>/<impl>_<sketch>` binaries against a shared
 workload file, concatenate every emitted v1 JSONL record into one
 report file.
@@ -46,11 +46,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Combos to run by default. Each entry is (track, sketch, impl).
 # `sketch` matches what each track's `Record.sketch` field will be
 # (e.g. Rust dispatch uses "countsketch", not "cs"). C++ binaries
-# emit the same family name to keep the JSONL apples-to-apples.
+# emit the same algorithm name to keep the JSONL apples-to-apples.
 #
 # C++ binary path convention: `{cpp_bin_dir}/{cpp_dir}/{impl}_{cpp_dir}`,
 # where `cpp_dir` is the on-disk dir name in cpp-bench/ (which for the
-# countsketch family is "cs").
+# countsketch algorithm is "cs").
 DEFAULT_COMBOS: list[tuple[str, str, str]] = [
     # Rust track — names from aqpbm-cli/src/dispatch.rs
     ("rust", "kll",         "lib"),
@@ -64,8 +64,8 @@ DEFAULT_COMBOS: list[tuple[str, str, str]] = [
     ("cpp",  "countsketch", "final"),
 ]
 
-# C++ family name → on-disk directory under cpp-bench/. Most match
-# (kll → kll), but the countsketch family lives under cs/.
+# C++ algorithm name → on-disk directory under cpp-bench/. Most match
+# (kll → kll), but the countsketch algorithm lives under cs/.
 CPP_DIR_FOR_SKETCH: dict[str, str] = {
     "kll": "kll",
     "countsketch": "cs",
@@ -108,8 +108,8 @@ def parse_args(argv: list[str]) -> Args:
     p.add_argument("--report", type=Path, required=True,
                    help="JSONL file every record is appended to")
     p.add_argument("--rust-bin", type=Path,
-                   default=REPO_ROOT / "target" / "release" / "sketchlib",
-                   help="path to the sketchlib binary (default: cargo release build)")
+                   default=REPO_ROOT / "target" / "release" / "approxbench",
+                   help="path to the approxbench binary (default: cargo release build)")
     p.add_argument("--cpp-bin-dir", type=Path,
                    default=REPO_ROOT / "cpp-bench" / "build",
                    help="directory containing the cpp-bench binaries")
@@ -223,7 +223,7 @@ def main(argv: list[str]) -> int:
     # Sanity check the binaries exist (skip in dry-run).
     if not args.dry_run:
         if any(t == "rust" for (t, _, _) in combos) and not args.rust_bin.is_file():
-            print(f"[run_all] sketchlib not found at {args.rust_bin}; "
+            print(f"[run_all] approxbench not found at {args.rust_bin}; "
                   "run `cargo build --release -p aqpbm-cli` first", file=sys.stderr)
             return 2
         if any(t == "cpp" for (t, _, _) in combos) and not args.cpp_bin_dir.is_dir():

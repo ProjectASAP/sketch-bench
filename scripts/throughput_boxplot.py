@@ -42,12 +42,12 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def cli_bench(family: str, impl: str, config: str, panel_dir: Path) -> Path:
+def cli_bench(algorithm: str, impl: str, config: str, panel_dir: Path) -> Path:
     """Run aqpbm-cli bench for one impl and return the per-run CSV path."""
     panel_dir.mkdir(parents=True, exist_ok=True)
-    # raw-csv writes a fixed filename '<family>_throughput_results_rust.csv'
+    # raw-csv writes a fixed filename '<algorithm>_throughput_results_rust.csv'
     # so we isolate per-impl runs into per-impl subdirs to avoid clobber.
-    impl_dir = panel_dir / f"{family}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
+    impl_dir = panel_dir / f"{algorithm}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
     if impl_dir.exists():
         for f in impl_dir.iterdir():
             f.unlink()
@@ -55,7 +55,7 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path) -> Path:
     cmd = [
         "cargo", "run", "--release", "--quiet", "-p", "aqpbm-cli", "--",
         "bench",
-        "--sketch", family,
+        "--sketch", algorithm,
         "--impl", impl,
         "--input", str(INPUT_BIN),
         "--runs", str(RUNS),
@@ -65,7 +65,7 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path) -> Path:
         "--report", str(impl_dir / "report.jsonl"),
     ]
     run(cmd)
-    return impl_dir / f"{family}_throughput_results_rust.csv"
+    return impl_dir / f"{algorithm}_throughput_results_rust.csv"
 
 
 def cpp_bench(binary: Path, k: int | None, panel_dir: Path, tag: str) -> Path:
@@ -203,7 +203,7 @@ def boxplot(data: dict[str, list[float]], title: str, out_png: Path, ylabel: str
 
 
 def boxplot_grouped(data: dict[tuple[str, str], list[float]], title: str, out_png: Path) -> None:
-    """For the CMS+CS@32K combined panel: bars grouped by family with a gap between groups."""
+    """For the CMS+CS@32K combined panel: bars grouped by algorithm with a gap between groups."""
     # Preserve insertion order; identify group boundaries.
     keys = list(data.keys())
     positions = []

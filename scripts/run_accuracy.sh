@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run accuracy benchmarks through `sketchlib bench --accuracy` and
+# Run accuracy benchmarks through `approxbench bench --accuracy` and
 # emit the legacy long-format CSVs under `output/accuracy/`.
 #
 # Replaces `accuracy/<statistic>/rust/` per-statistic binaries.
-# Each family's comparator runs inside the aqpbm-cli runner; the
+# Each algorithm's comparator runs inside the aqpbm-cli runner; the
 # per-call query CSV (hll/kll/dd) is enabled because `--accuracy`
 # + `--raw-csv` are paired here.
 #
@@ -59,11 +59,11 @@ if [[ ! -f "${DATA}" ]]; then
   fi
 fi
 
-run_family() {
-  local FAMILY="$1"
-  echo "===== accuracy: ${FAMILY} ====="
+run_algorithm() {
+  local ALGORITHM="$1"
+  echo "===== accuracy: ${ALGORITHM} ====="
   cargo run --release --quiet -p aqpbm-cli -- bench \
-    --sketch "${FAMILY}" --impl all \
+    --sketch "${ALGORITHM}" --impl all \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     --accuracy --accuracy-probes "${PROBES}" \
     --raw-csv "${OUTPUT_DIR}" \
@@ -76,20 +76,20 @@ case "${VARIANT}" in
     #   cardinality  → hll
     #   frequency    → cms + countsketch + elastic
     #   quantile     → kll + dd
-    run_family hll
-    run_family kll
-    run_family cms
-    run_family countsketch
-    run_family dd
-    run_family elastic
+    run_algorithm hll
+    run_algorithm kll
+    run_algorithm cms
+    run_algorithm countsketch
+    run_algorithm dd
+    run_algorithm elastic
     ;;
-  cardinality)  run_family hll ;;
-  frequency)    run_family cms; run_family countsketch; run_family elastic ;;
-  quantile)     run_family kll; run_family dd ;;
-  cs)           run_family countsketch ;;
-  *)            run_family "${VARIANT}" ;;
+  cardinality)  run_algorithm hll ;;
+  frequency)    run_algorithm cms; run_algorithm countsketch; run_algorithm elastic ;;
+  quantile)     run_algorithm kll; run_algorithm dd ;;
+  cs)           run_algorithm countsketch ;;
+  *)            run_algorithm "${VARIANT}" ;;
 esac
 
 echo "----"
 echo "JSONL report : ${REPORT}"
-echo "Legacy CSVs  : ${OUTPUT_DIR}/<family>_throughput_*_results_rust.csv"
+echo "Legacy CSVs  : ${OUTPUT_DIR}/<algorithm>_throughput_*_results_rust.csv"

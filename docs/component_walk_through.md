@@ -77,7 +77,7 @@ This is where core functionality lives.
 - `aggregation`: the Welford accumulator (running mean + variance, one pass, O(1) memory) + N-run `aggregate` → `BenchSection`
 - `accuracy`: the `GroundTruth` comparator trait + `Comparison`, the per-statistic capability traits (`CardinalityOps`, `FrequencyOps`, `QuantileOps`, `TopKOps`) and the comparators
   - a comparator computes the exact answer from the whole item slice at once, so it is not an `Accumulator`
-- `init`: `InitSketch` (build one from a `ParamSet`) / `BenchImpl` (a row's identity — its impl name, and the family it belongs to)
+- `init`: `InitSketch` (build one from a `ParamSet`) / `BenchImpl` (a row's identity — its impl name, and the algorithm it belongs to)
 - `cell`: `run_cell` / `score_cell` / `run_cell_parallel`, `BenchItem` / `ParallelInit` traits, `WorkloadSpec`, `AccuracyCfg`, `RunError`
   - consider the data table where each cell is the result of one benchmark
 - `accumulator`: the trait a sketch implements about how the sketch ingests one item, and optionally how it merges and finalises (finalises is none for most sketches)
@@ -110,7 +110,7 @@ A common front-end that process input including command line argument and prefer
 **Today.** Cleaned up.
 - `cli`: parse the command-line argument
 - call corresponding function in `sketch-bench`
-- `workload_cmd`: operate datagen for workload passed to benchmark (`sketchlib workload generate|describe`)
+- `workload_cmd`: operate datagen for workload passed to benchmark (`approxbench workload generate|describe`)
 - `raw_csv`: write output received from `sketch-bench`
 - `repeat`: re-execute the whole benchmark in N separate processes, and report the spread across their means
 
@@ -123,20 +123,20 @@ This crate connects to `aqpbm-cli` such that user can use this benchmark.
 
 **Today.** A bundle of implementations:
 - `wrappers/`: the wrapped sketch implementations under test
-- `catalog`: which `(family, impl)` pairs exist and how to run one
-- `params`: per-family construction parameters, and where the family names are declared
+- `catalog`: which `(algorithm, impl)` pairs exist and how to run one
+- `params`: per-algorithm construction parameters, and where the algorithm names are declared
 - `legacy_csv`: the domain-specific long-format CSV rendering
 
-Note: A *family* is the algorithm (`hll`, `cms`, `kll`) and an *impl* is one library's version of it (`oxide`, `datasketches`, `polars`, `lib-hip`), so `(hll, oxide)` names one benchmarkable row.
+Note: A *algorithm* is the algorithm (`hll`, `cms`, `kll`) and an *impl* is one library's version of it (`oxide`, `datasketches`, `polars`, `lib-hip`), so `(hll, oxide)` names one benchmarkable row.
 
-Family names are written in exactly two places: the `FAMILY` consts in `params`, and `legacy_csv`'s per-family header table.
+Algorithm names are written in exactly two places: the `ALGORITHM` consts in `params`, and `legacy_csv`'s per-algorithm header table.
 The second is pinned rather than derived, because plot scripts read those columns positionally and renaming one silently shifts every later column.
-Everywhere else the family comes from the type: a row's `BenchImpl` derives it from `Params::FAMILY`, so `"hll"` is written once and `catalog` spells no family name at all.
+Everywhere else the algorithm comes from the type: a row's `BenchImpl` derives it from `Params::ALGORITHM`, so `"hll"` is written once and `catalog` spells no algorithm name at all.
 
 **Benchmarking a sketch of your own means depending on `aqpbm-core`, not on this crate**: you implement its traits and call `cell::run_cell`.
 
 This crate exists for the CLI.
-`sketchlib bench --sketch hll --impl oxide` arrives holding two strings, and `catalog` is what turns them into a concrete Rust type.
+`approxbench bench --sketch hll --impl oxide` arrives holding two strings, and `catalog` is what turns them into a concrete Rust type.
 That is the only reason a list of implementations exists at all — and it is also what lets a future `aqp-bench` sit parallel to `sketch-bench` on the same core, each shipping its own catalog.
 
 ## sketch-runtime
@@ -178,29 +178,29 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 
 | Terminology | Meaning | Name change? |
 |---|---|---|
-| `aqpbm-core` | The framework: traits, runner, metrics, comparators. Names no family. | No |
+| `aqpbm-core` | The framework: traits, runner, metrics, comparators. Names no algorithm. | No |
 | `aqpbm-datagen` | The generator: shape × dist × sink. Depends on nothing else in the workspace. | No |
-| `aqpbm-cli` | The `sketchlib` binary — parse argv, call `sketch-bench`, write output. | No |
+| `aqpbm-cli` | The `approxbench` binary — parse argv, call `sketch-bench`, write output. | No |
 | `sketch-bench` | The bundle of wrapped implementations, plus the catalog that names them. | maybe? |
 | `sketch-runtime` | Embedded sampler + exporters for downstream apps. | Open — the crate itself is under discussion |
 | `aqp-bench` | V2 placeholder: a second bundle sitting parallel to `sketch-bench`. | Open — stated above as "may be changed" |
-| `sketchlib` | The CLI binary name. | Likely — same "sketch" question as the crates |
-| family | The algorithm: `hll`, `cms`, `countsketch`, `kll`, `dd`, `topk`, `elastic`, `nitro`, `univmon`. | likely |
-| impl | One library's version of a family: `oxide`, `datasketches`, `polars`, `lib`, `lib-hip`, `lib-fixedmatrix-fast`, … | likely |
-| row | One `(family, impl)` pair — the unit that can be benchmarked. | No |
+| `approxbench` | The CLI binary name. | Likely — same "sketch" question as the crates |
+| algorithm | The algorithm: `hll`, `cms`, `countsketch`, `kll`, `dd`, `topk`, `elastic`, `nitro`, `univmon`. | likely |
+| impl | One library's version of an algorithm: `oxide`, `datasketches`, `polars`, `lib`, `lib-hip`, `lib-fixedmatrix-fast`, … | likely |
+| row | One `(algorithm, impl)` pair — the unit that can be benchmarked. | No |
 | cell | One row measured against one workload at one config. What `run_cell` runs. | likely |
 | run | One measured iteration inside a cell (`--runs N`), all in the same process. | likely |
 | repeat | One whole re-execution in a fresh process (`--repeats R`). | likely |
 | pass | One metric group measured over its own sketch population: throughput, latency, accuracy, merge. | likely |
 | `Accumulator` | The trait a sketch implements: ingest one item, optionally merge and `prepare`. | No |
 | `InitSketch` | Build one from a `ParamSet`, or say why not. | likely |
-| `BenchImpl` | A row's identity: its `IMPL` name plus its `Params` type, from which `FAMILY` is derived. | likely |
+| `BenchImpl` | A row's identity: its `IMPL` name plus its `Params` type, from which `ALGORITHM` is derived. | likely |
 | `ParallelInit` | Same, for rows that need the worker count and not just a `ParamSet`. | likely |
 | `BenchItem` | How a sketch's item type materialises a workload. | likely |
 | `CardinalityOps` / `FrequencyOps` / `QuantileOps` / `TopKOps` | Capability traits — which statistic a row can answer, and therefore which comparator applies. | No |
-| `SketchParams` | The trait a per-family params struct implements; carries `const FAMILY`. | likely |
-| `ParamSet` | A family name plus its params as JSON. The type-erased form that keeps the family axis open. | likely |
-| `FAMILY` | The const on a params struct. One of the two places a family name is written. | likely |
+| `SketchParams` | The trait a per-algorithm params struct implements; carries `const ALGORITHM`. | likely |
+| `ParamSet` | An algorithm name plus its params as JSON. The type-erased form that keeps the algorithm axis open. | likely |
+| `ALGORITHM` | The const on a params struct. One of the two places an algorithm name is written. | likely |
 | `hot_loop` / `insert_loop` | The single timed insert loop. Nothing else is inside the timed region. | likelly |
 | `BenchRunner` | Drives warm-up plus measured iterations, and emits one report per pass. | likely |
 | `BenchConfig` | Knobs for a run: runs, warm-up runs, metrics mask, merge shards, threads, seed. | likely |
@@ -211,7 +211,7 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 | `prepare()` | Deferred build after the last `update` — a polars sort, a KLL CDF. No-op for most sketches. | **Likely** — the method is `prepare`, the metric it feeds is `finalize_*`; the two should agree |
 | `Probe` | The decorator that reports per-update events to a `MetricsSink`. | likely |
 | `MetricsSink` | What receives those events: `FullSink` offline, `Sampler` embedded, `NoopSink` when off. | likely |
-| `MetricsMask` | Which metric families a run collects. | likely |
+| `MetricsMask` | Which metric algorithms a run collects. | likely |
 | `FullSink` | The collector built from that mask; finalises into one `RunMetrics`. | likely |
 | `RunMetrics` | What one run measured. | likely |
 | `Welford` | Running mean + variance, one pass, O(1) memory. | likely |
@@ -230,8 +230,8 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 | `io` / `stats` | Datagen's `.bin` writer + `.meta.json` sidecar, and the column summary inside it. | likely |
 | `cli` / `workload_cmd` / `raw_csv` / `repeat` | The `aqpbm-cli` modules: argv parsing, `workload generate\|describe`, the CSV sink, the multi-process re-runner. | No |
 | `wrappers/` | The wrapped implementations under test. | No |
-| `catalog` | The list of rows and how to run one. Spells no family name itself. | likely |
-| `params` | Per-family construction parameters, and where family names are declared. | likely |
+| `catalog` | The list of rows and how to run one. Spells no algorithm name itself. | likely |
+| `params` | Per-algorithm construction parameters, and where algorithm names are declared. | likely |
 | `legacy_csv` | The long-format CSV the plot scripts read. | **Likely** — "legacy" names a format that is still the live output |
 | `sampler` | The embedded `MetricsSink` a downstream app hands to a `Probe`. | Open — with the crate |
 | `exporter` | Where sampled records go: `stdout`, `file`, `grpc`, `noop`, `fanout`. | Open — with the crate |

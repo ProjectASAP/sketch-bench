@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use crate::workload_cmd;
 
 #[derive(Parser, Debug)]
-#[command(name = "sketchlib", version, about = "Unified sketchlib-tool CLI")]
+#[command(name = "approxbench", version, about = "Unified sketchlib-tool CLI")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Cmd,
@@ -15,9 +15,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
-    /// Measure one `(impl, config)` cell of a sketch family.
+    /// Measure one `(impl, config)` cell of a sketch algorithm.
     Bench(BenchArgs),
-    /// List every `(family, impl)` pair the CLI can drive.
+    /// List every `(algorithm, impl)` pair the CLI can drive.
     ListImpls,
     /// Generate or inspect synthetic `.bin` workloads.
     Workload(workload_cmd::WorkloadArgs),
@@ -25,11 +25,11 @@ pub enum Cmd {
 
 #[derive(Parser, Debug)]
 pub struct BenchArgs {
-    /// Accumulator family (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
-    /// univmon, hydra). `list-impls` prints every (family, impl) pair.
+    /// Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic, nitro,
+    /// univmon, hydra). `list-impls` prints every (algorithm, impl) pair.
     #[arg(long)]
     pub sketch: String,
-    /// Implementation within the family — exactly one (`oxide`).
+    /// Implementation within the algorithm — exactly one (`oxide`).
     /// `list-impls` shows the choices. One invocation measures one
     /// (impl, config) cell; to race several, invoke once per impl.
     #[arg(long = "impl")]
@@ -60,7 +60,7 @@ pub struct BenchArgs {
     /// Zipf `s` exponent (only used when `--workload zipf`).
     #[arg(long, default_value_t = 1.1)]
     pub zipf_s: f64,
-    /// Numeric width for the ordered families (`kll`, `dd`): `i64` (default) or
+    /// Numeric width for the ordered algorithms (`kll`, `dd`): `i64` (default) or
     /// `f64`. The one item-type choice left — every other row's is fixed by its
     /// wrapper, and `f64` elsewhere is refused by name. Encoding only.
     #[arg(long, default_value = "i64")]
@@ -96,7 +96,7 @@ pub struct BenchArgs {
     #[arg(long)]
     pub report: Option<String>,
     /// Output directory for long-format CSVs, one row per measured run, named
-    /// `<family>_throughput[_query]_results_rust.csv`. Coexists with `--report`;
+    /// `<algorithm>_throughput[_query]_results_rust.csv`. Coexists with `--report`;
     /// for plot scripts that consume that CSV shape.
     #[arg(long)]
     pub raw_csv: Option<String>,
@@ -118,7 +118,7 @@ pub struct BenchArgs {
     /// comma list is an error: one invocation is one cell, not a grid.
     #[arg(long)]
     pub config: Option<String>,
-    /// Compute ground-truth accuracy per run, one comparator per family. Rows
+    /// Compute ground-truth accuracy per run, one comparator per algorithm. Rows
     /// declaring no query capability are not scored — they still run, timed
     /// only, after a stderr note.
     #[arg(long, default_value_t = false)]

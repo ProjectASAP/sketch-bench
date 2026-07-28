@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run sketchlib's slim throughput path on the canonical four
-# families (kll/cms/countsketch/hll):
+# Run approxbench's slim throughput path on the canonical four
+# algorithms (kll/cms/countsketch/hll):
 #
 #   kll          k=200
 #   hll          lg_k=14
@@ -22,8 +22,8 @@
 #   LOCK_FREQUENCY   1 = `cpupower -g performance`   (default 0)
 #   DISABLE_TURBO    1 = echo 1 > intel_pstate/no_turbo (default 0)
 #   WARMUP_SECONDS   busy-loop pre-warm before exec  (default 2)
-#   RUNS             measured trials per family      (default 10)
-#   WARMUP_RUNS      discarded trials per family     (default 2)
+#   RUNS             measured trials per algorithm      (default 10)
+#   WARMUP_RUNS      discarded trials per algorithm     (default 2)
 #   SIZE             items per trial                 (default 1_000_000)
 #   INPUT            override workload file          (default: generate)
 
@@ -41,19 +41,19 @@ WARMUP_RUNS="${WARMUP_RUNS:-2}"
 SIZE="${SIZE:-1000000}"
 INPUT="${INPUT:-${REPO_ROOT}/input/benchmark_data_1m_int64.bin}"
 
-FAMILIES=("$@")
-if [[ ${#FAMILIES[@]} -eq 0 ]]; then
-    FAMILIES=(kll cms countsketch hll)
+ALGORITHMS=("$@")
+if [[ ${#ALGORITHMS[@]} -eq 0 ]]; then
+    ALGORITHMS=(kll cms countsketch hll)
 fi
 
-# Canonical (family, impl, --config) tuples.
+# Canonical (algorithm, impl, --config) tuples.
 config_for() {
     case "$1" in
         kll)          echo "lib|k=200" ;;
         hll)          echo "lib|lg_k=14" ;;
         cms)          echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;
         countsketch)  echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;
-        *) echo "unknown family: $1" >&2; exit 1 ;;
+        *) echo "unknown algorithm: $1" >&2; exit 1 ;;
     esac
 }
 
@@ -61,9 +61,9 @@ config_for() {
 # scripts/archive/build_pgo.sh and docs/archive/PGO.md; with
 # asap_sketchlib 0.2.2 the inline hint inside the hash dispatch
 # delivers the same FixedMatrix specialization without PGO.
-BIN_PATH="${REPO_ROOT}/target/release/sketchlib"
+BIN_PATH="${REPO_ROOT}/target/release/approxbench"
 if [[ ! -x "${BIN_PATH}" ]]; then
-    echo "building sketchlib (release)..." >&2
+    echo "building approxbench (release)..." >&2
     (cd "${REPO_ROOT}" && cargo build --release -p aqpbm-cli >&2)
 fi
 
@@ -110,19 +110,19 @@ else
 fi
 
 run_one() {
-    local family="$1"
+    local algorithm="$1"
     local cfg
-    cfg=$(config_for "${family}")
+    cfg=$(config_for "${algorithm}")
     local impl="${cfg%%|*}"
     local params="${cfg#*|}"
 
-    echo "# === ${family} / ${impl} / ${params} ===" >&2
+    echo "# === ${algorithm} / ${impl} / ${params} ===" >&2
     # Bash-quoted exec so the pre-warm busy-loop runs on the pinned core.
     taskset -c "${PIN_CORE}" bash -c "
 end=\$((SECONDS+${WARMUP_SECONDS}))
 while [ \$SECONDS -lt \$end ]; do :; done
 exec '${BIN_PATH}' bench \
-  --sketch '${family}' \
+  --sketch '${algorithm}' \
   --impl '${impl}' \
   --metrics throughput \
   --config '${params}' \
@@ -132,6 +132,6 @@ exec '${BIN_PATH}' bench \
 "
 }
 
-for fam in "${FAMILIES[@]}"; do
-    run_one "${fam}"
+for algo in "${ALGORITHMS[@]}"; do
+    run_one "${algo}"
 done

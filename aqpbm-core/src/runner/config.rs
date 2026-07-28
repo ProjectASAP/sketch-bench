@@ -18,7 +18,7 @@ pub struct BenchConfig {
     /// begins. Lets jemalloc / CPU caches settle so the first
     /// measured run isn't artificially slow.
     pub warmup_runs: usize,
-    /// Which metric families to record.
+    /// Which metric algorithms to record.
     pub metrics: MetricsMask,
     /// Reserved: how many queries to run per measured iteration. The runner
     /// does not read it — the `GroundTruth` comparators own the query phase

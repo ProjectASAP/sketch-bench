@@ -1,4 +1,4 @@
-//! Polars-backed implementations, one per family. Real `--impl` rows, not
+//! Polars-backed implementations, one per algorithm. Real `--impl` rows, not
 //! accuracy baselines: they compute the exact answer through a DataFrame engine
 //! and the point of racing them is throughput. They buffer the stream in
 //! `update` and build in `prepare`, so race them on
@@ -318,8 +318,8 @@ impl QuantileOps for PolarsQuantileDd {
 }
 
 // ---------- catalog identity ----------
-// Each exact baseline is named `polars` inside whichever family its params type
-// places it in — the family falls out of `Params`.
+// Each exact baseline is named `polars` inside whichever algorithm its params type
+// places it in — the algorithm falls out of `Params`.
 
 impl BenchImpl for PolarsCardinality { type Params = HllParams; const IMPL: &'static str = "polars"; }
 impl BenchImpl for PolarsFrequencyCms { type Params = CmsParams; const IMPL: &'static str = "polars"; }
@@ -386,12 +386,12 @@ mod tests {
 
     fn topk_config(params: serde_json::Value) -> ParamSet {
         ParamSet {
-            family: "topk".to_string(),
+            algorithm: "topk".to_string(),
             params,
         }
     }
 
-    /// Exactness is no excuse for accepting a config the rest of the family
+    /// Exactness is no excuse for accepting a config the rest of the algorithm
     /// rejects: this row is scored at `k`, so an unreadable `k` is a build
     /// failure, not a default.
     #[test]

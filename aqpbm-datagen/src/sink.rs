@@ -27,7 +27,7 @@ pub trait Sink<T> {
     }
 }
 
-/// Accumulates the whole stream in memory — used by `sketchlib bench`, whose
+/// Accumulates the whole stream in memory — used by `approxbench bench`, whose
 /// runner replays the same item slice once per measured run.
 #[derive(Debug)]
 pub struct MemorySink<T> {

@@ -121,11 +121,11 @@ pub struct NumericWorkload<T> {
     spec: Option<GenSpec>,
 }
 
-/// The key-shaped workload: every hash-based family (cms, countsketch, hll,
+/// The key-shaped workload: every hash-based algorithm (cms, countsketch, hll,
 /// elastic, …) ingests these, and the `String`/`Bytes` views derive from it.
 pub type I64Workload = NumericWorkload<i64>;
 
-/// The float workload, consumed by the ordered families (kll, dd) whose
+/// The float workload, consumed by the ordered algorithms (kll, dd) whose
 /// libraries are `f64`-native.
 pub type F64Workload = NumericWorkload<f64>;
 

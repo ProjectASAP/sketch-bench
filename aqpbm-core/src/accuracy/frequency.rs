@@ -1,4 +1,4 @@
-//! Frequency-family ground truth (CMS, CountSketch).
+//! Frequency-algorithm ground truth (CMS, CountSketch).
 //!
 //! Error ships as a curve over the true top-k (`are_top1`…`are_top1000`) plus
 //! `are_all`: ARE over all distinct keys is dominated by singletons, where an

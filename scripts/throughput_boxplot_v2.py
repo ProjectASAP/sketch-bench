@@ -72,12 +72,12 @@ def taskset(cmd: list[str]) -> list[str]:
     return ["taskset", "-c", PIN_CORE, *cmd]
 
 
-def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
+def cli_bench(algorithm: str, impl: str, config: str, panel_dir: Path, *,
               warmup_runs: int = WARMUP_RUNS_DEFAULT,
               with_query: bool = True) -> tuple[Path, Path | None]:
     """Run a aqpbm-cli bench. Returns (insert_csv, query_csv_or_None)."""
     panel_dir.mkdir(parents=True, exist_ok=True)
-    impl_dir = panel_dir / f"{family}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
+    impl_dir = panel_dir / f"{algorithm}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
     if impl_dir.exists():
         for f in impl_dir.iterdir():
             f.unlink()
@@ -85,7 +85,7 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
     cmd = taskset([
         "cargo", "run", "--release", "--quiet", "-p", "aqpbm-cli", "--",
         "bench",
-        "--sketch", family,
+        "--sketch", algorithm,
         "--impl", impl,
         "--input", str(INPUT_BIN),
         "--runs", str(RUNS),
@@ -97,14 +97,14 @@ def cli_bench(family: str, impl: str, config: str, panel_dir: Path, *,
     if with_query:
         cmd += ["--accuracy"]
     run(cmd)
-    insert_csv = impl_dir / f"{family}_throughput_results_rust.csv"
+    insert_csv = impl_dir / f"{algorithm}_throughput_results_rust.csv"
     # Per-call CSV (one row per timed call). Used for accuracy / latency
     # distributions; the per-call clock_gettime overhead is baked in, so
     # it is NOT apples-to-apples with cpp-bench's tight-loop query CSV.
-    query_csv = impl_dir / f"{family}_throughput_query_results_rust.csv"
+    query_csv = impl_dir / f"{algorithm}_throughput_query_results_rust.csv"
     # Tight-loop CSV (one row per run, comparator's outer Instant pair).
     # Apples-to-apples with cpp-bench `--query-csv`.
-    query_tight = impl_dir / f"{family}_throughput_query_tight_results_rust.csv"
+    query_tight = impl_dir / f"{algorithm}_throughput_query_tight_results_rust.csv"
     chosen = query_tight if (with_query and query_tight.exists()) else query_csv
     return insert_csv, (chosen if with_query and chosen.exists() else None)
 
@@ -201,7 +201,7 @@ def read_query_throughputs(csv_path: Path) -> list[float]:
 # `runner` returns (insert_csv, query_csv_or_None).
 # `aliases` is an optional list of extra (panel, group, label) tuples that
 # should receive a copy of this step's results — used for polars, which is
-# config-independent (one run per family, replicated across width subgroups).
+# config-independent (one run per algorithm, replicated across width subgroups).
 
 PANEL_CMS_CS = "cms_cs"
 PANEL_HLL = "hll"
@@ -248,7 +248,7 @@ BASELINE_STEPS = [
     (PANEL_CMS_CS, "CS@32K",  "oxide",
      lambda: cli_bench("countsketch", "oxide",        "rows=5 cols=32768", RAW_DIR / "cms_cs"), []),
     # Polars exact baseline (config-independent — one run replicated across
-    # the width subgroups in each family).
+    # the width subgroups in each algorithm).
     (PANEL_CMS_CS, "CMS@2K",  "polars (exact)",
      lambda: cli_bench("cms",         "polars",       "rows=5 cols=2048",  RAW_DIR / "cms_cs"),
      [(PANEL_CMS_CS, "CMS@32K", "polars (exact)")]),

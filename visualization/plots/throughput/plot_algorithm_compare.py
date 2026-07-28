@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""4-family insert-throughput comparison (cms / countsketch / hll / kll).
+"""4-algorithm insert-throughput comparison (cms / countsketch / hll / kll).
 
 Reads JSONL records emitted by aqpbm-cli (`source: cli`) and cpp-bench
-(`source: cpp-bench`) and renders one subplot per family. Each bar is
+(`source: cpp-bench`) and renders one subplot per algorithm. Each bar is
 one `(language, impl)` pair; height is `bench.throughput_items_per_sec.mean`.
 
 Usage:
-    python plot_family_compare.py --input-dir DIR --output PATH
+    python plot_algorithm_compare.py --input-dir DIR --output PATH
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-FAMILIES = [
+ALGORITHMS = [
     ("cms", "Count-Min Sketch"),
     ("countsketch", "Count Sketch"),
     ("hll", "HyperLogLog"),
@@ -51,7 +51,7 @@ def load_records(input_dir: Path) -> list[dict]:
     return out
 
 
-def family_of(rec: dict) -> str:
+def algorithm_of(rec: dict) -> str:
     return rec["sketch"]
 
 
@@ -71,23 +71,23 @@ def main() -> None:
 
     records = load_records(args.input_dir)
 
-    # group: family -> label -> [throughput_mean per record]
+    # group: algorithm -> label -> [throughput_mean per record]
     grouped: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for rec in records:
-        fam = family_of(rec)
+        algo = algorithm_of(rec)
         if not args.include_baselines and rec.get("impl") in EXCLUDE_IMPLS:
             continue
         bench = rec.get("bench", {})
         tput = bench.get("throughput_items_per_sec", {}).get("mean")
         if tput is None:
             continue
-        grouped[fam][label_of(rec)].append(float(tput))
+        grouped[algo][label_of(rec)].append(float(tput))
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 11))
     axes = axes.flatten()
 
-    for ax, (fam, title) in zip(axes, FAMILIES):
-        data = grouped.get(fam, {})
+    for ax, (algo, title) in zip(axes, ALGORITHMS):
+        data = grouped.get(algo, {})
         if not data:
             ax.set_title(f"{title} — no data")
             ax.axis("off")
@@ -112,7 +112,7 @@ def main() -> None:
         ax.set_xticklabels([l.split("/", 1)[1] for l in labels],
                            rotation=35, ha="right", fontsize=9)
         ax.set_ylabel("Throughput (M items/sec)")
-        ax.set_title(f"{title} ({fam})", fontsize=13)
+        ax.set_title(f"{title} ({algo})", fontsize=13)
         ax.grid(True, axis="y", alpha=0.25, zorder=0)
         ymax = max(medians) if medians else 1.0
         ax.set_ylim(0, ymax * 1.18)

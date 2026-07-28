@@ -1,13 +1,13 @@
 # `sketchlib-tool` (repo: `sketch-bench`)
 
-> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `sketchlib` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
+> Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `approxbench` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
 
 ## Quick start
 
 ```
 cargo run -p sketch-cli --release -- list-impls
 
-# default: sweep all impls of a family across the family's default config grid
+# default: sweep all impls of an algorithm across the algorithm's default config grid
 cargo run -p sketch-cli --release -- bench \
     --sketch hll \
     --workload zipf --size 1000000 --zipf-s 1.1 \
@@ -35,11 +35,11 @@ cargo run -p sketch-cli --release -- bench \
     --report out.jsonl
 ```
 
-`list-impls` enumerates every `(family, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-family default grids.
+`list-impls` enumerates every `(algorithm, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-algorithm default grids.
 
-Covered families / impls (21 sketch + 3 exact = 24 total):
+Covered algorithms / impls (21 sketch + 3 exact = 24 total):
 
-| family | implementations |
+| algorithm | implementations |
 |---|---|
 | `hll` | `oxide`, `datasketches`, `lib` (asap_sketchlib), `exact` |
 | `kll` | `oxide`, `lib`, `exact` |
@@ -49,7 +49,7 @@ Covered families / impls (21 sketch + 3 exact = 24 total):
 | `nitro` | `oxide`, `lib` |
 | `univmon` | `oxide`, `lib` |
 
-The `exact` impl per (hll, kll, cms) family is a zero-error baseline
+The `exact` impl per (hll, kll, cms) algorithm is a zero-error baseline
 that implements the same `Sketch` trait, so it benches through the
 identical insert / query / accuracy pipeline. It exists to give a
 side-by-side throughput / CPU / memory reference point and to
@@ -57,7 +57,7 @@ sanity-check the ground-truth wiring. The dispatch marks it
 `Unparameterized`, so sweeps run it once regardless of grid size.
 
 The baselines live under `sketch-bench/src/baselines/` organised by
-**statistic** — not by sketch family — so a single exact algorithm
+**statistic** — not by sketch algorithm — so a single exact algorithm
 serves every sketch that answers the same question:
 
 | module             | statistic    | exact algorithm        | sketches that share this baseline |
@@ -66,12 +66,12 @@ serves every sketch that answers the same question:
 | `frequency.rs`     | frequency    | `HashMap<i64, u64>`    | `cms`, `countsketch`, `elastic`   |
 | `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
 
-`sketch_bench::baselines::Statistic::for_family(...)` is the
-canonical family → statistic lookup.
+`sketch_bench::baselines::Statistic::for_algorithm(...)` is the
+canonical algorithm → statistic lookup.
 
 `sketchlib-tool` is:
 
-1. A **CLI** (`sketchlib`) for offline benchmarking and profiling of streaming-data sketch implementations across Rust and C++.
+1. A **CLI** (`approxbench`) for offline benchmarking and profiling of streaming-data sketch implementations across Rust and C++.
 2. An **embeddable library** used by ASAP applications (asap-fusion, DataCollector, ASAPQuery) to report live sketch metrics to the ASAPController control plane.
 
 ## Benchmark vs. profile
@@ -83,7 +83,7 @@ The two concepts are kept strictly separate throughout the code, CLI, and report
 | **What** | End-to-end behavior on a workload | Microarchitectural + allocation behavior |
 | **Metrics** | Throughput, latency p50/p95/p99, CPU time, RSS, heap peak, accuracy, 95% CI over N runs | L1/L2/LLC miss rates, branch mispredicts, TLB misses, IPC, cache-simulation, allocation hotspots, flamegraphs |
 | **Overhead** | Low — safe for always-on embedding | Higher — CLI-only |
-| **CLI** | `sketchlib bench …` | `sketchlib profile …` |
+| **CLI** | `approxbench bench …` | `approxbench profile …` |
 | **Crate** | `sketch-bench` | `sketch-profile` |
 
 Both write the same JSONL schema (see [`docs/DESIGN.md §4.4`](docs/DESIGN.md)) so the visualization layer consumes either.
@@ -96,10 +96,10 @@ sketch-bench/
 ├── sketch-bench/           # macro metrics (throughput, latency, CPU, memory, accuracy, CI)
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
-├── sketch-cli/             # unified `sketchlib` binary
+├── sketch-cli/             # unified `approxbench` binary
 ├── cpp-bench/              # C++ track of sketch-bench (v1 JSONL via cpp-bench/common/)
 ├── input/ scripts/         # shared datasets + top-level orchestrators
-├── visualization/          # JSON/JSONL viewer (tables + charts) + per-family
+├── visualization/          # JSON/JSONL viewer (tables + charts) + per-algorithm
 │                           # matplotlib plot scripts under visualization/plots/
 └── docs/                   # DESIGN.md, MERGE_PLAN.md
 ```
@@ -113,7 +113,7 @@ Downstream apps depend on `sketch-core + sketch-runtime` — not on `sketch-benc
 
 ## Current behavior (pre-migration)
 
-The legacy harness still works as before while the migration proceeds. Everything below describes the existing repo; over time it will be superseded by `sketchlib bench` / `sketchlib profile` subcommands.
+The legacy harness still works as before while the migration proceeds. Everything below describes the existing repo; over time it will be superseded by `approxbench bench` / `approxbench profile` subcommands.
 
 ### Methodology
 
@@ -134,44 +134,44 @@ The legacy harness still works as before while the migration proceeds. Everythin
 1. Generate/verify input data (done automatically by the scripts).
 2. Execute the benchmark you want, from the repo root:
    ```bash
-   scripts/run_throughput.sh            # all families incl. octo + polars
+   scripts/run_throughput.sh            # all algorithms incl. octo + polars
    scripts/run_accuracy.sh              # all statistics, --accuracy on
    scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
    ```
 
-   Both scripts wrap `sketchlib bench --raw-csv DIR` and dump
+   Both scripts wrap `approxbench bench --raw-csv DIR` and dump
    long-format CSVs into `output/throughput/` and `output/accuracy/`
-   respectively. The per-family Rust harnesses that used to live
-   under `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+   respectively. The per-algorithm Rust harnesses that used to live
+   under `throughput/<algorithm>/rust/` and `accuracy/<statistic>/rust/`
    have been retired in favour of `sketch-cli` (recoverable from
-   git history). The per-family C++ harnesses have likewise been
+   git history). The per-algorithm C++ harnesses have likewise been
    ported onto `cpp-bench/common/` (`cpp-bench/{hll,cms,cs,kll}/`).
 3. C++ benchmarks build through one top-level CMake project:
    ```bash
    cmake -S cpp-bench -B cpp-bench/build
    cmake --build cpp-bench/build
-   ./cpp-bench/build/{hll,cms,cs,kll}/<impl>_<family> --workload ... --report-path ...
+   ./cpp-bench/build/{hll,cms,cs,kll}/<impl>_<algorithm> --workload ... --report-path ...
    ```
-   `scripts/run_all.py` orchestrates both tracks (Rust via `sketchlib bench`, C++ via the binaries above) into a single v1-JSONL report.
+   `scripts/run_all.py` orchestrates both tracks (Rust via `approxbench bench`, C++ via the binaries above) into a single v1-JSONL report.
 4. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
 
 - `cpp-bench/`: HLL / CMS / Count Sketch / KLL — the Apache DataSketches
-  baseline plus the Insert-Optimized "final" variant for every family, and
+  baseline plus the Insert-Optimized "final" variant for every algorithm, and
   the full CS/KLL optimization-evolution series (naive → fastrange →
   fixed_size → final / naive → cached_level_capacities → no_min_max →
   no_self_move_protection → pcg_random → final). All emit v1 JSONL.
-- `sketch-cli/`: unified `sketchlib bench` — every Rust impl + the polars
+- `sketch-cli/`: unified `approxbench bench` — every Rust impl + the polars
   exact baselines + the `lib-fastpath-parallel` (octo) variants. The
-  per-family `throughput/<family>/rust/` and `accuracy/<statistic>/rust/`
+  per-algorithm `throughput/<algorithm>/rust/` and `accuracy/<statistic>/rust/`
   trees have been retired into git history.
 - `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
-  that fan `sketchlib bench` over all families and dump CSVs the legacy
+  that fan `approxbench bench` over all algorithms and dump CSVs the legacy
   plot scripts (now under `visualization/plots/throughput/` and
   `visualization/plots/accuracy/`) still consume unchanged.
 - `visualization/`: JSON/JSONL loader for charts and tables across all
-  outputs, plus per-family matplotlib `plot_*.py` scripts under
+  outputs, plus per-algorithm matplotlib `plot_*.py` scripts under
   `visualization/plots/{throughput,accuracy}/`.
 
 ### Build prerequisites
@@ -180,11 +180,11 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 
 ## Contributing while the migration is in flight
 
-- New Rust impls: add a wrapper under `sketch-cli/src/wrappers/<family>.rs`,
+- New Rust impls: add a wrapper under `sketch-cli/src/wrappers/<algorithm>.rs`,
   register it in `sketch-cli/src/dispatch.rs` (one `IMPLS` row + one macro
-  invocation), pick an `AccuracyKind`. The old per-family `rust/` trees are
-  gone; everything new flows through `sketchlib bench`.
-- New C++ benches: land them under `cpp-bench/<family>/` on the new
+  invocation), pick an `AccuracyKind`. The old per-algorithm `rust/` trees are
+  gone; everything new flows through `approxbench bench`.
+- New C++ benches: land them under `cpp-bench/<algorithm>/` on the new
   v1-JSONL framework (`cpp-bench/common/`); follow `cpp-bench/kll/` or
   `cpp-bench/cs/` as templates.
 - New metrics: add under `sketch-bench/metrics/` (macro) or

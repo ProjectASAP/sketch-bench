@@ -1,19 +1,19 @@
-# `sketchlib bench` — config-sweep extension
+# `approxbench bench` — config-sweep extension
 
 > Status: **landed**. See the "Changed for the user" section of the PR for the final surface.
 
-Extends the existing `sketchlib bench` command so it can sweep a sketch family's configuration space in one invocation — instead of hard-coding params in `sketch-cli/src/params.rs`, rebuilding, and looping by hand.
+Extends the existing `approxbench bench` command so it can sweep a sketch algorithm's configuration space in one invocation — instead of hard-coding params in `sketch-cli/src/params.rs`, rebuilding, and looping by hand.
 
 Scope is deliberately small:
 - **No new subcommand.** Sweep is the default behaviour of `bench`.
 - **No new input formats.** Synthetic `uniform` / `zipf` only. CSV / file / binary inputs tracked separately as a follow-up.
-- **No presets, no YAML, no manifest sidecar.** One default grid per family; one `--config` flag to override.
+- **No presets, no YAML, no manifest sidecar.** One default grid per algorithm; one `--config` flag to override.
 
 ---
 
 ## 1. Why
 
-Today `sketchlib bench --sketch hll --impl oxide` bakes `HLL_PRECISION=14` (from `params.rs`) into the wrapper. To compare HLL across `lg_k ∈ {10, 12, 14, 16}` you must edit, rebuild, and re-run — per value, by hand. Same for every other family.
+Today `approxbench bench --sketch hll --impl oxide` bakes `HLL_PRECISION=14` (from `params.rs`) into the wrapper. To compare HLL across `lg_k ∈ {10, 12, 14, 16}` you must edit, rebuild, and re-run — per value, by hand. Same for every other algorithm.
 
 ---
 
@@ -22,7 +22,7 @@ Today `sketchlib bench --sketch hll --impl oxide` bakes `HLL_PRECISION=14` (from
 The existing flags stay. Two new things:
 
 ```
-sketchlib bench \
+approxbench bench \
     --sketch hll \                                # required
     [--impl oxide | oxide,datasketches | all]     # NEW — optional, default = all
     --workload zipf --size 1000000 --zipf-s 1.1 \
@@ -35,20 +35,20 @@ sketchlib bench \
 ### 2.1 Sweep semantics
 
 Given `--sketch X`:
-- `--impl` omitted or `all` → every registered impl for family `X`.
+- `--impl` omitted or `all` → every registered impl for algorithm `X`.
 - `--impl a,b` → only those impls.
 - `--impl a` → only that impl (same as today).
 
 Given those impls:
-- `--config` omitted → use the **default grid** for family `X` (§3).
-- `--config 'k=v1,v2 ...'` → Cartesian product of the listed values. Keys must belong to family `X`'s param set (unknown key → error).
+- `--config` omitted → use the **default grid** for algorithm `X` (§3).
+- `--config 'k=v1,v2 ...'` → Cartesian product of the listed values. Keys must belong to algorithm `X`'s param set (unknown key → error).
 - `--config 'k=v'` (single value per key) → single config — reproduces today's behaviour exactly.
 
 Output is one JSONL record per `(impl, config)` pair, appended to `--report`.
 
 ### 2.2 Dropped from the earlier proposal
 
-- `--preset small|medium|large` → one default grid per family is enough for v1. If the default is too big / small, the user passes `--config`.
+- `--preset small|medium|large` → one default grid per algorithm is enough for v1. If the default is too big / small, the user passes `--config`.
 - `--dry-run` / `--progress` / `--fail-fast` → nice to have, add later if needed. v1 fails loudly on the first error.
 - `--config-file` → YAML is tracked as a separate TODO item; not needed for the core use case.
 - Sweep manifest sidecar → over-engineering for v1. The JSONL records already contain the full config.
@@ -66,11 +66,11 @@ Proposal: **(A)** — matches "make sweep the default, easy path." The existing 
 
 ---
 
-## 3. Default grids (per family)
+## 3. Default grids (per algorithm)
 
-Straw-man — tune these to match the paper's plots. One grid per family; used when `--config` isn't given. Medium-sized on purpose: ~5–15 configs so a full sweep fits in a couple minutes at `size=1M`.
+Straw-man — tune these to match the paper's plots. One grid per algorithm; used when `--config` isn't given. Medium-sized on purpose: ~5–15 configs so a full sweep fits in a couple minutes at `size=1M`.
 
-| family | param(s) | default grid | count |
+| algorithm | param(s) | default grid | count |
 |---|---|---|---|
 | `hll` | `lg_k` | `{10, 12, 14, 16}` | 4 |
 | `kll` | `k` | `{100, 200, 400, 800}` | 4 |
@@ -88,7 +88,7 @@ Some wrappers bake dimensions at compile time (e.g. `lib-fixedmatrix-custom-fast
 
 ## 4. Wrapper refactor (scope of the impl PR)
 
-Every wrapper's ctor changes from zero-arg to family-specific params:
+Every wrapper's ctor changes from zero-arg to algorithm-specific params:
 
 ```rust
 // before
@@ -97,7 +97,7 @@ CmsOxide::new()
 CmsOxide::new(&CmsParams { rows: 5, cols: 2048 })
 ```
 
-`ParamSet` lives in `sketch-core::config` — `{family, params}`, with the params type per family implementing `SketchParams`, `serde` round-tripping. `params.rs` becomes a `fn default_params_for(family) -> ParamSet` helper used by the single-config path.
+`ParamSet` lives in `sketch-core::config` — `{algorithm, params}`, with the params type per algorithm implementing `SketchParams`, `serde` round-tripping. `params.rs` becomes a `fn default_params_for(algorithm) -> ParamSet` helper used by the single-config path.
 
 Impact: all 21 wrappers get a signature change. Mechanical, one commit.
 
@@ -126,7 +126,7 @@ Same v1 schema. One new optional field:
 
 ## 6. Implementation phases
 
-1. **`sketch-core::config::ParamSet`** — typed per-family enum + serde + unit tests.
+1. **`sketch-core::config::ParamSet`** — typed per-algorithm enum + serde + unit tests.
 2. **Wrapper refactor** — 21 wrappers switch to `new(&ParamSet)`; `params.rs` becomes a defaults helper. `bench` keeps working with today's CLI (falls back to default single config).
 3. **`--config` parser + default grids** — Cartesian expansion, unknown-key error, unit-tested.
 4. **Sweep loop in `bench`** — iterate `(impl × config)`, emit one record per pair.
@@ -156,6 +156,6 @@ cms is an error naming the missing field, rather than silently pairing your
 Error: --config: bad parameter: cms params: missing field `cols`
 ```
 
-Omitting `--config` entirely still sweeps the family's default grid. The
+Omitting `--config` entirely still sweeps the algorithm's default grid. The
 change is deliberate: a partially-specified grid produced a config the
 operator never wrote, under a report that looked fully specified.

@@ -1,5 +1,5 @@
 //! DDSketch wrapper: `asap_sketchlib::DDSketch`.
-//! Quantile family with relative-error guarantee `alpha`:
+//! Quantile algorithm with relative-error guarantee `alpha`:
 //! `estimate_quantile(phi) -> f64` (value at quantile).
 
 use aqpbm_core::accuracy::quantile::QuantileValue;

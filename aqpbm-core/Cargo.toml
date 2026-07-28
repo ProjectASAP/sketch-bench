@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The benchmark framework: the Sketch/InitSketch/BenchImpl traits an implementation plugs into, the per-statistic capability traits and their comparators, the cell runners, Probe, Workload, MetricsMask and the v1 report schema. Names no sketch family — the wrapped implementations live in sketch-bench."
+description = "The benchmark framework: the Sketch/InitSketch/BenchImpl traits an implementation plugs into, the per-statistic capability traits and their comparators, the cell runners, Probe, Workload, MetricsMask and the v1 report schema. Names no sketch algorithm — the wrapped implementations live in sketch-bench."
 
 [features]
 # Back the `LatencyRecorder` with a real hdrhistogram. Off → it

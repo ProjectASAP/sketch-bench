@@ -5,7 +5,7 @@ The embedded half of sketchlib-tool. Downstream ASAP apps
 in a `Probe<S, Sampler>` and samples flow to an `Exporter`
 (stdout / file / gRPC / prometheus — last two deferred, see
 `TODO.md` at repo root) in the same v1 JSONL shape the offline
-`sketchlib bench` CLI produces.
+`approxbench bench` CLI produces.
 
 ## Enabling / disabling — three levels
 
@@ -103,7 +103,7 @@ Sampler::every_period(Duration::from_secs(1), 10, exporter, tag)
 Sampler::disabled(exporter, tag)
 ```
 
-Each emitted `Record` (v1 JSONL, same shape as `sketchlib bench`
+Each emitted `Record` (v1 JSONL, same shape as `approxbench bench`
 output) carries `mode: "runtime"` + the user-supplied `Source`
 tag (e.g. `"data-collector"`), so ASAPController can join live
 records against offline baselines without schema translation.

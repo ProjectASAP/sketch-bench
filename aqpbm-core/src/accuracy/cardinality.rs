@@ -1,4 +1,4 @@
-//! Cardinality-family ground truth (HLL). Exact distinct
+//! Cardinality-algorithm ground truth (HLL). Exact distinct
 //! count from `items`; reports relative error.
 
 use crate::accumulator::Accumulator;

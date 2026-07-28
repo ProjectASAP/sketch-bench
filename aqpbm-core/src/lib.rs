@@ -19,7 +19,7 @@ pub mod report;
 pub mod runner;
 pub mod workload;
 
-// Only the open axis. The concrete per-family params structs live with the
+// Only the open axis. The concrete per-algorithm params structs live with the
 // implementations that consume them, in `sketch-bench::params`.
 pub use config::{ParamSet, SketchParams};
 // The generator is its own crate: independent product surface, its own on-disk

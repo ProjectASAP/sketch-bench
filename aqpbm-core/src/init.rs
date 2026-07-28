@@ -38,17 +38,17 @@ pub trait InitSketch: Accumulator + Sized {
 
 /// A catalog row's identity — what the record is labelled with. Separate from
 /// construction because every row has a name whether or not it builds the same
-/// way. The family is read off `Params::FAMILY`, never spelled here.
+/// way. The algorithm is read off `Params::ALGORITHM`, never spelled here.
 pub trait BenchImpl: Accumulator {
-    /// The parameters this impl is built from. `Params::FAMILY` is the row's
-    /// family.
+    /// The parameters this impl is built from. `Params::ALGORITHM` is the row's
+    /// algorithm.
     type Params: SketchParams;
 
-    /// This impl's name within the family (`"oxide"`, `"lib-hip"`, ...).
+    /// This impl's name within the algorithm (`"oxide"`, `"lib-hip"`, ...).
     const IMPL: &'static str;
 
-    /// The family, derived — never written by hand. A `const` rather than a
+    /// The algorithm, derived — never written by hand. A `const` rather than a
     /// method so a catalog can read a row's identity off the type in `const`
     /// context, and build its list and its dispatch from one table.
-    const FAMILY: &'static str = <Self::Params as SketchParams>::FAMILY;
+    const ALGORITHM: &'static str = <Self::Params as SketchParams>::ALGORITHM;
 }

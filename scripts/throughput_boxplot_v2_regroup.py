@@ -3,15 +3,15 @@
 reading the existing per-panel long-form CSVs (no benchmarks re-run here).
 
 Groups:
-  * `insert/`     — cross-impl insertion throughput, one figure per family.
+  * `insert/`     — cross-impl insertion throughput, one figure per algorithm.
                     polars is excluded; it belongs in `vs_polars/`.
-  * `query/`      — cross-impl query throughput, one figure per family.
+  * `query/`      — cross-impl query throughput, one figure per algorithm.
                     HLL Classic is dropped (Classic vs HIP story lives in the
                     raw CSV). KLL uses a log y-axis because oxide's quantile()
                     is O(num_levels) per call and runs ~4 decades slower than
                     the cached / amortised alternatives.
   * `vs_polars/`  — asap_sketchlib vs polars(exact) only. One figure per
-                    family × {insert, query}. CMS/CS uses a 2×2 sub-grid
+                    algorithm × {insert, query}. CMS/CS uses a 2×2 sub-grid
                     over the four shape configs.
 
 CMS/CS panels are rendered as 2×2 sub-grids (CMS@2K, CMS@32K, CS@2K, CS@32K)
@@ -142,7 +142,7 @@ def _annotate_polars_finalize(ax, labels: list[str], positions: list[float],
     exact-baseline really also pays the finalize cost we annotate here."""
     if not finalize_ns:
         return
-    op_by_family = {
+    op_by_algorithm = {
         "HLL": "+n_unique",
         "KLL": "+sort",
         "CMS@2K": "+groupby", "CMS@32K": "+groupby",
@@ -157,7 +157,7 @@ def _annotate_polars_finalize(ax, labels: list[str], positions: list[float],
         mean_ns = sum(ns_list) / len(ns_list)
         if mean_ns < 1e6:  # < 1ms — too cheap to be interesting
             continue
-        op = op_by_family.get(group, "+finalize")
+        op = op_by_algorithm.get(group, "+finalize")
         mean_ms = mean_ns / 1e6
         label = (f"{op}\n{mean_ms / 1000:.2f} s" if mean_ms >= 1000
                  else f"{op}\n{mean_ms:.0f} ms")

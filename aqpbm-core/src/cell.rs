@@ -230,7 +230,7 @@ where
 {
     let wk = <S::Item as BenchItem>::materialise(spec)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL)
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
         .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
 }
 
@@ -248,7 +248,7 @@ where
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
     Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL).run_timed::<S, _, _>(
+        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_timed::<S, _, _>(
             move || S::build(params, workers).expect("construction proven by the probe above"),
             insert_body,
         ),
@@ -272,7 +272,7 @@ where
     let wk = <S::Item as BenchItem>::materialise(spec)?;
     S::init(params)?; // probe
     Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::FAMILY, S::IMPL).run_accuracy::<S, _, G, _>(
+        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_accuracy::<S, _, G, _>(
             || built::<S>(params),
             insert_body,
             gt,

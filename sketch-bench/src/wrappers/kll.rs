@@ -1,4 +1,4 @@
-//! KLL wrappers: `oxide`, `sketchlib` (a.k.a. asap_sketchlib). Quantile family:
+//! KLL wrappers: `oxide`, `sketchlib` (a.k.a. asap_sketchlib). Quantile algorithm:
 //! `estimate_quantile(phi) -> f64`. `sketch_oxide`'s `quantile` takes
 //! `&mut self` (it sorts lazily), so its inner sketch sits in a `RefCell` —
 //! `QuantileOps::estimate_quantile` is `&self` for everyone else's pure reads.

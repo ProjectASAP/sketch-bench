@@ -4,15 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Unified `sketchlib` CLI: `bench` + `profile` + `workload` subcommands over every sketch impl in the repo."
+description = "Unified `approxbench` CLI: `bench` + `profile` + `workload` subcommands over every sketch impl in the repo."
 
 [[bin]]
-name = "sketchlib"
+name = "approxbench"
 path = "src/main.rs"
 
 [features]
 default = ["heap-jemalloc"]
-# When on, sketchlib links jemalloc as its global allocator and
+# When on, approxbench links jemalloc as its global allocator and
 # sketch-bench samples `tikv-jemalloc-ctl::stats::allocated` into
 # `bench.heap_allocated_kb`. Turn off with `--no-default-features`
 # to fall back to the system allocator (heap_allocated_kb then

@@ -3,7 +3,7 @@
 # Phase 2 of docs/MERGE_PLAN.md: cargo workspace shared by the
 # new `sketch-*` crates. The monolithic legacy `rust/` crate and
 # the per-sketch `throughput/<family>/rust/` + `accuracy/<stat>/rust/`
-# harnesses have all been retired in favour of `sketchlib bench`.
+# harnesses have all been retired in favour of `approxbench bench`.
 [workspace]
 resolver = "2"
 members = [

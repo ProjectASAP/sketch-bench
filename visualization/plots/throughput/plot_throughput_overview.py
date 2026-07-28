@@ -120,16 +120,16 @@ def load_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def throughput_samples(op: str, family: str, implementation: str, rows: list[dict[str, str]]) -> list[float]:
+def throughput_samples(op: str, algorithm: str, implementation: str, rows: list[dict[str, str]]) -> list[float]:
     if op == "insert":
         return [float(row["throughput_items_per_sec"]) for row in rows if row["implementation"] == implementation]
 
     matching = [row for row in rows if row["implementation"] == implementation]
-    if family == "freq":
+    if algorithm == "freq":
         return [float(row["throughput_queries_per_sec"]) for row in matching]
-    if family == "cardinality":
+    if algorithm == "cardinality":
         return [(1e9 / float(row["nanoseconds"])) if float(row["nanoseconds"]) > 0 else 0.0 for row in matching]
-    if family == "quantile" and implementation.startswith("polars_quantile"):
+    if algorithm == "quantile" and implementation.startswith("polars_quantile"):
         batches: dict[tuple[int, int], dict[str, float]] = {}
         for row in matching:
             key = (int(row["run"]), int(row["repeat"]))
@@ -191,18 +191,18 @@ def render(op: str, output: Path, polars_engine: str) -> None:
     panel_sources = sources_for(op, polars_engine)
     ylabel = "Throughput (items/sec)" if op == "insert" else "Throughput (queries/sec)"
 
-    for ax, family in zip(axes, ("freq", "cardinality", "quantile")):
+    for ax, algorithm in zip(axes, ("freq", "cardinality", "quantile")):
         grouped: dict[str, list[float]] = {}
-        for path, implementations in panel_sources[family]:
+        for path, implementations in panel_sources[algorithm]:
             rows = load_rows(path)
             for implementation in implementations:
-                samples = throughput_samples(op, family, implementation, rows)
+                samples = throughput_samples(op, algorithm, implementation, rows)
                 if samples:
                     grouped[implementation] = samples
 
-        implementations = [name for name in PANELS[family]["implementations"] if name in grouped]
+        implementations = [name for name in PANELS[algorithm]["implementations"] if name in grouped]
         if not implementations:
-            raise ValueError(f"no data found for {family}")
+            raise ValueError(f"no data found for {algorithm}")
 
         medians = [statistics.median(grouped[name]) for name in implementations]
         positions = list(range(len(implementations)))
@@ -231,7 +231,7 @@ def render(op: str, output: Path, polars_engine: str) -> None:
 
         max_height = max(max(values) for values in grouped.values())
         ax.set_ylim(0, max_height * 1.2)
-        ax.set_title(PANELS[family]["title"])
+        ax.set_title(PANELS[algorithm]["title"])
         ax.set_ylabel(ylabel)
         ax.set_xticks(positions)
         ax.set_xticklabels([LABELS[name] for name in implementations], rotation=22, ha="right")

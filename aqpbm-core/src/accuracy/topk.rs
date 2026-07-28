@@ -1,4 +1,4 @@
-//! Top-k family ground truth. Exact top-k from a HashMap
+//! Top-k algorithm ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
 use crate::accumulator::Accumulator;

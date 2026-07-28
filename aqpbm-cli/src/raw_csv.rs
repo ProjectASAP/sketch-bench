@@ -1,5 +1,5 @@
-//! Writes the CSV files for `sketchlib bench --raw-csv DIR`. The *content* —
-//! headers, family-specific columns, filenames — is rendered by
+//! Writes the CSV files for `approxbench bench --raw-csv DIR`. The *content* —
+//! headers, algorithm-specific columns, filenames — is rendered by
 //! [`sketch_bench::legacy_csv`]; this is only the sink, mirroring how
 //! `ReportSink` writes the JSONL the `Record` schema produces.
 
@@ -15,14 +15,14 @@ use sketch_bench::params::ParamSet;
 #[allow(clippy::too_many_arguments)]
 pub fn write_runs(
     dir: &Path,
-    family: &str,
+    algorithm: &str,
     impl_name: &str,
     params: Option<&ParamSet>,
     seed: u64,
     workers: usize,
     report: &BenchReport,
 ) -> Result<()> {
-    let files = legacy_csv::render(family, impl_name, params, seed, workers, report);
+    let files = legacy_csv::render(algorithm, impl_name, params, seed, workers, report);
     if files.is_empty() {
         return Ok(());
     }

@@ -1,7 +1,7 @@
 //! Scoring a sketch against an exact answer: the [`GroundTruth`] trait, the
 //! [`Comparison`] it returns, the per-statistic capability traits, and the
 //! comparators. A comparator binds a *capability* ([`CardinalityOps`],
-//! [`FrequencyOps`], …), not a family, so it scores any implementation that
+//! [`FrequencyOps`], …), not an algorithm, so it scores any implementation that
 //! declares that capability. See `docs/DESIGN.md` §5.6.
 
 use std::collections::BTreeMap;
@@ -31,7 +31,7 @@ pub struct Comparison {
     pub queries: u64,
     pub query_wall_ns: u64,
     /// Optional per-call samples, populated only when the comparator carries
-    /// the `record_calls` flag (set by `sketchlib bench --raw-csv`). `None`
+    /// the `record_calls` flag (set by `approxbench bench --raw-csv`). `None`
     /// otherwise, so production runs pay nothing.
     pub query_calls: Option<Vec<QueryCallSample>>,
 }

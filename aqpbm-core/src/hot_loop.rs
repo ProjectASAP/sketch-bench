@@ -19,7 +19,7 @@ pub fn warmup_cpu_once() {
 
 /// Burn CPU so the cpufreq governor ramps to max turbo before timing starts.
 /// Duration from `BENCH_WARMUP_SECS`, **defaulting to 0** — a library must not
-/// burn a caller's CPU; `sketchlib`'s `main` sets the measurement default.
+/// burn a caller's CPU; `approxbench`'s `main` sets the measurement default.
 fn warmup_cpu_from_env() {
     let secs: u64 = std::env::var("BENCH_WARMUP_SECS")
         .ok()

@@ -1,7 +1,7 @@
-//! `sketchlib` — unified CLI for sketchlib-tool.
+//! `approxbench` — unified CLI for sketchlib-tool.
 //!
-//! `bench` measures one `(impl, config)` cell of a sketch family,
-//! `list-impls` enumerates the catalog's `(family, impl)` pairs, and
+//! `bench` measures one `(impl, config)` cell of a sketch algorithm,
+//! `list-impls` enumerates the catalog's `(algorithm, impl)` pairs, and
 //! `workload` generates or inspects synthetic `.bin` workloads.
 
 mod cli;
@@ -60,7 +60,7 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
             "all" => MetricsMask::all(),
             "" => MetricsMask::empty(),
             other => {
-                eprintln!("sketchlib: unknown metric flag '{other}', ignoring");
+                eprintln!("approxbench: unknown metric flag '{other}', ignoring");
                 MetricsMask::empty()
             }
         };
@@ -69,12 +69,12 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
 }
 
 /// Validate `--sketch`/`--impl` and report whether `--accuracy` can score it.
-fn select_impl(family: &str, impl_name: &str) -> Result<bool> {
-    if !catalog::family_exists(family) {
-        bail!("unknown sketch family: {family}");
+fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
+    if !catalog::algorithm_exists(algorithm) {
+        bail!("unknown sketch algorithm: {algorithm}");
     }
-    catalog::scores_accuracy(family, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for family '{family}'"))
+    catalog::scores_accuracy(algorithm, impl_name)
+        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))
 }
 
 /// Open the `--report` destination. `None` or `"-"` → stdout.
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::ListImpls => {
-            println!("# family       impl                         description");
+            println!("# algorithm       impl                         description");
             for line in catalog::list() {
                 println!("{line}");
             }
@@ -236,7 +236,7 @@ fn run_bench(args: BenchArgs) -> Result<()> {
             sink.write_line(&r.to_jsonl())?;
         }
         eprintln!(
-            "sketchlib: merged {} repeats into {} record(s)",
+            "approxbench: merged {} repeats into {} record(s)",
             args.repeats,
             records.len()
         );
@@ -298,13 +298,13 @@ fn run_bench(args: BenchArgs) -> Result<()> {
 
     if accuracy_cfg.enabled && !scores_accuracy {
         eprintln!(
-            "sketchlib: --accuracy has no comparator for {}/{} (throughput-only row) — running without ground truth",
+            "approxbench: --accuracy has no comparator for {}/{} (throughput-only row) — running without ground truth",
             args.sketch, args.impl_name
         );
     }
 
     eprintln!(
-        "sketchlib: {}/{} config={} runs={} warmup={}",
+        "approxbench: {}/{} config={} runs={} warmup={}",
         args.sketch,
         args.impl_name,
         params_pretty(&params),

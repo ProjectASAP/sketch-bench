@@ -2,7 +2,7 @@
 """Configurable accuracy bar chart with error bars.
 
 Reads one or more `accuracy.jsonl` reports (emitted by
-`sketchlib bench --accuracy --report ...`) and draws a bar chart where
+`approxbench bench --accuracy --report ...`) and draws a bar chart where
 the x-axis is `sketch type x dimension` and the y-axis is an accuracy
 metric. Bars are grouped/coloured by implementation; error bars are
 configurable.
@@ -11,10 +11,10 @@ The error metric is NOT comparable across statistic groups — HLL is a
 cardinality relative error, CMS/CountSketch is a frequency relative
 error, KLL/DD is a quantile rank error. Use `--layout facet` to keep
 each group on its own y-axis, or `--layout combined` (the single shared
-axis you asked for) and read across families with that caveat in mind.
+axis you asked for) and read across algorithms with that caveat in mind.
 
 Error-bar sources (see `--error`):
-  * If several input records share a (family, impl, dimension) key —
+  * If several input records share a (algorithm, impl, dimension) key —
     e.g. you ran the bench across multiple `--seed`s and appended to the
     same JSONL — the spread is computed across those records (real CI /
     stddev / IQR).
@@ -23,17 +23,17 @@ Error-bar sources (see `--error`):
     whisker where the comparator provides it.
 
 Examples:
-  # Single combined axis, mean +/- 95% CI, all families in the report
+  # Single combined axis, mean +/- 95% CI, all algorithms in the report
   plot_accuracy_bars.py --input output/accuracy/accuracy.jsonl \
       --output visualization/plots/accuracy/accuracy_bars.png
 
   # Just HLL + CMS, median +/- IQR, log y
   plot_accuracy_bars.py --input output/accuracy/*.jsonl \
-      --families hll,cms --bar-stat median --error iqr --log \
+      --algorithms hll,cms --bar-stat median --error iqr --log \
       --output /tmp/acc.png
 
   # Force KLL to be plotted as a relative error instead of rank error
-  plot_accuracy_bars.py --input out.jsonl --families kll \
+  plot_accuracy_bars.py --input out.jsonl --algorithms kll \
       --metric mean_relative_err --output /tmp/kll.png
 """
 from __future__ import annotations
@@ -55,10 +55,10 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 # ----------------------------------------------------------------------
-# Family metadata. Kept in sync with aqpbm-cli/src/raw_csv.rs (dimension
+# Algorithm metadata. Kept in sync with aqpbm-cli/src/raw_csv.rs (dimension
 # param columns) and sketch-bench/src/accuracy/*.rs (comparator json keys).
 # ----------------------------------------------------------------------
-FAMILY_GROUP = {
+ALGORITHM_GROUP = {
     "hll": "cardinality",
     "cms": "frequency",
     "countsketch": "frequency",
@@ -83,8 +83,8 @@ METRIC_P99_PARTNER = {
     "mean_rank_err": "max_rank_err",
 }
 
-# Default dimension param key per family (the first is preferred).
-FAMILY_DIM_KEYS = {
+# Default dimension param key per algorithm (the first is preferred).
+ALGORITHM_DIM_KEYS = {
     "hll": ["registers", "lg_k"],
     "cms": ["cols", "rows"],
     "countsketch": ["cols", "rows"],
@@ -118,17 +118,17 @@ def impl_color(impl: str, assigned: dict[str, str]) -> str:
     return assigned[impl]
 
 
-def family_of(rec: dict) -> str:
+def algorithm_of(rec: dict) -> str:
     cfg = rec.get("sketch_config") or {}
-    return cfg.get("family") or rec.get("sketch") or "?"
+    return cfg.get("algorithm") or rec.get("sketch") or "?"
 
 
 def dimension_label(rec: dict, dim_key: str | None) -> str | None:
     """Return the dimension value (as a string) for this record."""
     cfg = rec.get("sketch_config") or {}
     params = cfg.get("params") or {}
-    fam = family_of(rec)
-    keys = [dim_key] if dim_key else FAMILY_DIM_KEYS.get(fam, list(params.keys()))
+    algo = algorithm_of(rec)
+    keys = [dim_key] if dim_key else ALGORITHM_DIM_KEYS.get(algo, list(params.keys()))
     for k in keys:
         if k and k in params:
             return str(params[k])
@@ -141,10 +141,10 @@ def accuracy_section(rec: dict) -> dict | None:
     return acc if isinstance(acc, dict) else None
 
 
-def pick_metric(fam: str, requested: str) -> str:
+def pick_metric(algo: str, requested: str) -> str:
     if requested != "auto":
         return requested
-    group = FAMILY_GROUP.get(fam, "frequency")
+    group = ALGORITHM_GROUP.get(algo, "frequency")
     return GROUP_DEFAULT_METRIC.get(group, "relative_error_mean")
 
 
@@ -232,20 +232,20 @@ def load_records(paths: list[Path]) -> list[dict]:
 
 def build_groups(
     records: list[dict],
-    families: set[str] | None,
+    algorithms: set[str] | None,
     impls: set[str] | None,
     metric_arg: str,
     dim_key: str | None,
 ):
-    """Collapse records into {(family, dim): {impl: ([samples],[p99])}}."""
+    """Collapse records into {(algorithm, dim): {impl: ([samples],[p99])}}."""
     groups: dict[tuple, dict[str, tuple[list, list]]] = defaultdict(
         lambda: defaultdict(lambda: ([], []))
     )
     metric_by_group: dict[str, str] = {}
     skipped = 0
     for rec in records:
-        fam = family_of(rec)
-        if families and fam not in families:
+        algo = algorithm_of(rec)
+        if algorithms and algo not in algorithms:
             continue
         impl = rec.get("impl") or "?"
         if impls and impl not in impls:
@@ -254,15 +254,15 @@ def build_groups(
         if not acc:
             skipped += 1
             continue
-        metric = pick_metric(fam, metric_arg)
-        metric_by_group[FAMILY_GROUP.get(fam, "other")] = metric
+        metric = pick_metric(algo, metric_arg)
+        metric_by_group[ALGORITHM_GROUP.get(algo, "other")] = metric
         if metric not in acc:
             skipped += 1
             continue
         dim = dimension_label(rec, dim_key)
         if dim is None:
             continue
-        samples, p99 = groups[(fam, dim)][impl]
+        samples, p99 = groups[(algo, dim)][impl]
         samples.append(float(acc[metric]))
         partner = METRIC_P99_PARTNER.get(metric)
         if partner and partner in acc:
@@ -270,7 +270,7 @@ def build_groups(
     if not groups:
         raise SystemExit(
             "no records carried the requested accuracy metric "
-            "(run with --accuracy, or pick --metric to match the family)"
+            "(run with --accuracy, or pick --metric to match the algorithm)"
         )
     return groups, skipped
 
@@ -287,16 +287,16 @@ def dim_sort_key(dim: str):
 
 def draw_axis(ax, groups, args, impl_order, assigned_colors):
     scale = 100.0 if args.percent else 1.0
-    # Ordered x positions: sort by (family, numeric dimension).
+    # Ordered x positions: sort by (algorithm, numeric dimension).
     group_keys = sorted(groups.keys(), key=lambda k: (k[0], dim_sort_key(k[1])))
     n_impl = len(impl_order)
     bar_w = 0.8 / max(1, n_impl)
 
     xticks, xlabels = [], []
-    for gi, (fam, dim) in enumerate(group_keys):
+    for gi, (algo, dim) in enumerate(group_keys):
         xticks.append(gi)
-        xlabels.append(f"{fam}\n{dim}")
-        by_impl = groups[(fam, dim)]
+        xlabels.append(f"{algo}\n{dim}")
+        by_impl = groups[(algo, dim)]
         for ii, impl in enumerate(impl_order):
             if impl not in by_impl:
                 continue
@@ -346,7 +346,7 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
-        "--families",
+        "--algorithms",
         default="",
         help="comma list to include (default: all present, e.g. hll,cms,kll)",
     )
@@ -356,14 +356,14 @@ def main() -> None:
     parser.add_argument(
         "--metric",
         default="auto",
-        help="accuracy json key to plot; 'auto' picks the family default "
+        help="accuracy json key to plot; 'auto' picks the algorithm default "
         "(cardinality->relative_error, frequency->relative_error_mean, "
         "quantile->mean_rank_err)",
     )
     parser.add_argument(
         "--dimension",
         default=None,
-        help="param key to use as the x-axis dimension (default: family default)",
+        help="param key to use as the x-axis dimension (default: algorithm default)",
     )
     parser.add_argument(
         "--bar-stat", choices=["mean", "median"], default="mean"
@@ -373,14 +373,14 @@ def main() -> None:
         choices=["ci95", "stddev", "iqr", "p99", "none"],
         default="ci95",
         help="error-bar source (ci95/stddev/iqr across records sharing a "
-        "(family,dim,impl) key; p99 = within-record upper whisker)",
+        "(algorithm,dim,impl) key; p99 = within-record upper whisker)",
     )
     parser.add_argument(
         "--layout",
         choices=["combined", "facet"],
         default="combined",
         help="combined = single shared y-axis; facet = one panel per "
-        "statistic group (recommended when mixing families)",
+        "statistic group (recommended when mixing algorithms)",
     )
     parser.add_argument(
         "--percent", action="store_true", help="scale metric by 100 (for relative errors)"
@@ -389,11 +389,11 @@ def main() -> None:
     parser.add_argument("--title", default=None)
     args = parser.parse_args()
 
-    families = {f.strip() for f in args.families.split(",") if f.strip()} or None
+    algorithms = {f.strip() for f in args.algorithms.split(",") if f.strip()} or None
     impls = {i.strip() for i in args.impls.split(",") if i.strip()} or None
 
     records = load_records(args.input)
-    groups, skipped = build_groups(records, families, impls, args.metric, args.dimension)
+    groups, skipped = build_groups(records, algorithms, impls, args.metric, args.dimension)
 
     impl_order = sorted({impl for g in groups.values() for impl in g})
     assigned_colors: dict[str, str] = {}
@@ -404,8 +404,8 @@ def main() -> None:
     if args.layout == "facet":
         # One panel per statistic group present.
         present_groups: dict[str, dict] = defaultdict(dict)
-        for (fam, dim), by_impl in groups.items():
-            present_groups[FAMILY_GROUP.get(fam, "other")][(fam, dim)] = by_impl
+        for (algo, dim), by_impl in groups.items():
+            present_groups[ALGORITHM_GROUP.get(algo, "other")][(algo, dim)] = by_impl
         gnames = sorted(present_groups)
         fig, axes = plt.subplots(
             len(gnames), 1, figsize=(max(10, 1.6 * sum(len(g) for g in present_groups.values())), 4.5 * len(gnames)), squeeze=False

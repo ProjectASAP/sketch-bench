@@ -1,5 +1,5 @@
 //! CountSketch wrappers — 5 variants (`oxide` + 4× sketchlib).
-//! Same family as CMS: each declares `FrequencyOps`.
+//! Same algorithm as CMS: each declares `FrequencyOps`.
 
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
@@ -217,7 +217,7 @@ impl MemoryFootprint for CsLibVector2dRegular {
 
 // ---------- statistic membership ----------
 //
-// A different family from CMS (its own params) answering the same statistic.
+// A different algorithm from CMS (its own params) answering the same statistic.
 
 impl FrequencyOps for CsOxide {
     type Key = i64;

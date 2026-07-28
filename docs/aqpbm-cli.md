@@ -85,7 +85,7 @@ One invocation is one cell, so every option below selects a single value.
 Two environment variables complete the surface.
 
 - `BENCH_WARMUP_SECS` sets the CPU ramp, and the frontend supplies ten seconds only when it is unset.
-- `SKETCHLIB_REPEAT_CHILD` is reserved: the repeat driver sets it on a child, and its presence is what stops that child recursing.
+- `APPROXBENCH_REPEAT_CHILD` is reserved: the repeat driver sets it on a child, and its presence is what stops that child recursing.
 
 ### 4.3 A worked invocation
 

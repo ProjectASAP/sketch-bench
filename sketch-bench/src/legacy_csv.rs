@@ -21,7 +21,7 @@ pub struct CsvFile {
 /// file to append to, empty when no pass maps to one (a lone LATENCY pass,
 /// whose per-op timer would muddle the throughput plot).
 pub fn render(
-    family: &str,
+    algorithm: &str,
     impl_name: &str,
     params: Option<&ParamSet>,
     seed: u64,
@@ -32,33 +32,33 @@ pub fn render(
     // These CSV headers are an external contract — `throughput/scripts/*.py`
     // read the exact column list, and the frontend appends, so a run lands in
     // whatever file already exists.
-    let fam = family.to_string();
+    let algo = algorithm.to_string();
 
     // Parallel ("octo") impls go to a separate combined file whose
     // `sketch_type, implementation, num_workers,...` header spans cms/cs/hll.
     // Only THROUGHPUT emits, so the wall column reflects a clean hot path.
     if impl_name == "lib-fastpath-parallel" {
         if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
-            out.push(octo_file(family, workers, report));
+            out.push(octo_file(algorithm, workers, report));
         }
         return out;
     }
 
-    let legacy_impl = legacy_impl_name(family, impl_name);
-    let param_cols = ParamCols::from(family, params);
+    let legacy_impl = legacy_impl_name(algorithm, impl_name);
+    let param_cols = ParamCols::from(algorithm, params);
 
     // Only THROUGHPUT produces a clean insert-phase wall clock: LATENCY is
     // inflated by per-op timing, and ACCURACY belongs to the query CSV.
     if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
         out.push(CsvFile {
-            name: format!("{fam}_throughput_results_rust.csv"),
-            header: insert_header(family),
+            name: format!("{algo}_throughput_results_rust.csv"),
+            header: insert_header(algorithm),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_insert_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_insert_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -71,7 +71,7 @@ pub fn render(
 
     if has_per_call {
         // Per-call CSV — one row per (run, call). Takes precedence over the
-        // aggregate query CSV for these three families, whose plot scripts
+        // aggregate query CSV for these three algorithms, whose plot scripts
         // read the per-call columns.
         let mut rows: Vec<String> = Vec::new();
         for (run_idx, run) in report.per_run.iter().enumerate() {
@@ -79,7 +79,7 @@ pub fn render(
             if let Some(calls) = run.query_calls.as_ref() {
                 for sample in calls {
                     rows.push(format_per_call_row(
-                        family,
+                        algorithm,
                         &legacy_impl,
                         &param_cols,
                         run_no,
@@ -90,8 +90,8 @@ pub fn render(
             }
         }
         out.push(CsvFile {
-            name: format!("{fam}_throughput_query_results_rust.csv"),
-            header: per_call_query_header(family),
+            name: format!("{algo}_throughput_query_results_rust.csv"),
+            header: per_call_query_header(algorithm),
             rows,
         });
 
@@ -100,14 +100,14 @@ pub fn render(
         // compare without per-call timer overhead.
         if report.per_run.iter().any(|r| r.queries_executed > 0) {
             out.push(CsvFile {
-                name: format!("{fam}_throughput_query_tight_results_rust.csv"),
-                header: query_header(family),
+                name: format!("{algo}_throughput_query_tight_results_rust.csv"),
+                header: query_header(algorithm),
                 rows: report
                     .per_run
                     .iter()
                     .enumerate()
                     .map(|(idx, run)| {
-                        format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                        format_query_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
                     })
                     .collect(),
             });
@@ -115,14 +115,14 @@ pub fn render(
     } else if report.per_run.iter().any(|r| r.queries_executed > 0) {
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
         out.push(CsvFile {
-            name: format!("{fam}_throughput_query_results_rust.csv"),
-            header: query_header(family),
+            name: format!("{algo}_throughput_query_results_rust.csv"),
+            header: query_header(algorithm),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_query_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -131,10 +131,10 @@ pub fn render(
 }
 
 /// The octo CSV: one combined file, `implementation = "octo"` with `sketch_type`
-/// carrying the family. `total_nanoseconds` is the **build** wall, not the insert
+/// carrying the algorithm. `total_nanoseconds` is the **build** wall, not the insert
 /// wall — these rows do their real work in finalize.
-fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
-    let sketch_type = legacy_sketch_type(family);
+fn octo_file(algorithm: &str, workers: usize, report: &BenchReport) -> CsvFile {
+    let sketch_type = legacy_sketch_type(algorithm);
     let rows = report
         .per_run
         .iter()
@@ -156,10 +156,10 @@ fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
     }
 }
 
-/// Map a family name to the legacy `sketch_type` column value used by
+/// Map an algorithm name to the legacy `sketch_type` column value used by
 /// `plot_octo_throughput.py`.
-fn legacy_sketch_type(family: &str) -> &'static str {
-    match family {
+fn legacy_sketch_type(algorithm: &str) -> &'static str {
+    match algorithm {
         "countsketch" => "cs",
         "cms" => "cms",
         "hll" => "hll",
@@ -167,12 +167,12 @@ fn legacy_sketch_type(family: &str) -> &'static str {
     }
 }
 
-fn per_call_query_header(family: &str) -> String {
-    let lead = leading_label(family);
-    let params = param_header(family);
-    // Family-specific per-call tail; KLL/DD carry `repeat, percentile` ahead
+fn per_call_query_header(algorithm: &str) -> String {
+    let lead = leading_label(algorithm);
+    let params = param_header(algorithm);
+    // Algorithm-specific per-call tail; KLL/DD carry `repeat, percentile` ahead
     // of `call_index` to match the legacy header order.
-    let tail = match family {
+    let tail = match algorithm {
         "hll" => "call_index,nanoseconds,estimate",
         "kll" | "dd" => "repeat,percentile,call_index,nanoseconds,estimate",
         _ => "call_index,nanoseconds,estimate",
@@ -186,7 +186,7 @@ fn per_call_query_header(family: &str) -> String {
 }
 
 fn format_per_call_row(
-    family: &str,
+    algorithm: &str,
     legacy_impl: &str,
     params: &ParamCols,
     run_no: usize,
@@ -194,7 +194,7 @@ fn format_per_call_row(
     sample: &aqpbm_core::metrics::QueryCallSample,
 ) -> String {
     // Per-call rows always index by `run` (legacy convention), even for
-    // cms-style families that label aggregate rows with `seed` — only HLL /
+    // cms-style algorithms that label aggregate rows with `seed` — only HLL /
     // KLL / DD reach this path and they all use `run`.
     let lead = run_no.to_string();
     let params_str = params.join_values();
@@ -203,7 +203,7 @@ fn format_per_call_row(
     } else {
         format!(",{params_str}")
     };
-    let tail = match family {
+    let tail = match algorithm {
         "hll" => format!(
             "{},{},{}",
             sample.call_index,
@@ -232,8 +232,8 @@ fn format_per_call_row(
     format!("{legacy_impl},rust,{lead}{middle},{total_items},{tail}")
 }
 
-/// Per-family construction-param columns extracted from a `ParamSet`.
-/// Each family's columns are listed in the order they appear in the CSV header
+/// Per-algorithm construction-param columns extracted from a `ParamSet`.
+/// Each algorithm's columns are listed in the order they appear in the CSV header
 /// (after the leading bookkeeping columns).
 #[derive(Clone)]
 struct ParamCols {
@@ -242,14 +242,14 @@ struct ParamCols {
 
 impl ParamCols {
     /// Build one row's parameter values, **always** exactly as many as
-    /// `legacy_param_columns(family)` names — a short row silently shifts every
+    /// `legacy_param_columns(algorithm)` names — a short row silently shifts every
     /// later column. A final pass reconciles against the header, filling with `0`.
-    fn from(family: &str, params: Option<&ParamSet>) -> Self {
+    fn from(algorithm: &str, params: Option<&ParamSet>) -> Self {
         let mut found: Vec<(&'static str, String)> = Vec::new();
         // Values come from the params object generically; only the two places
         // where the header is *not* a list of parameters need naming.
         if let Some(params) = params {
-            match family {
+            match algorithm {
                 // `registers` is derived from `lg_k`, not a parameter.
                 "hll" => {
                     let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
@@ -272,7 +272,7 @@ impl ParamCols {
                     // not the params object, which is alphabetical. Driving from
                     // `fields()` swaps cms to `2048,5` under `rows,cols`.
                     let fields = params.fields();
-                    for col in legacy_param_columns(family) {
+                    for col in legacy_param_columns(algorithm) {
                         if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
                             found.push((col, legacy_float_format(v)));
                         }
@@ -280,7 +280,7 @@ impl ParamCols {
                 }
             }
         }
-        let cols = legacy_param_columns(family)
+        let cols = legacy_param_columns(algorithm)
             .iter()
             .map(|&col| {
                 let v = found
@@ -303,24 +303,24 @@ impl ParamCols {
     }
 }
 
-fn legacy_impl_name(family: &str, impl_name: &str) -> String {
+fn legacy_impl_name(algorithm: &str, impl_name: &str) -> String {
     if impl_name.starts_with("lib-") {
         let suffix = impl_name.trim_start_matches("lib-").replace('-', "_");
-        format!("rust_sketchlib_{family}_{suffix}")
+        format!("rust_sketchlib_{algorithm}_{suffix}")
     } else if impl_name == "lib" {
-        format!("rust_sketchlib_{family}")
+        format!("rust_sketchlib_{algorithm}")
     } else {
-        format!("rust_{}_{}", impl_name.replace('-', "_"), family)
+        format!("rust_{}_{}", impl_name.replace('-', "_"), algorithm)
     }
 }
 
-/// File stem for a family's CSVs. `i64` keeps the historical name so existing
+/// File stem for an algorithm's CSVs. `i64` keeps the historical name so existing
 /// files keep accumulating and existing scripts keep resolving; anything else
 /// is suffixed.
 
-fn insert_header(family: &str) -> String {
-    let lead = leading_label(family);
-    let params = param_header(family);
+fn insert_header(algorithm: &str) -> String {
+    let lead = leading_label(algorithm);
+    let params = param_header(algorithm);
     if params.is_empty() {
         format!(
             "implementation,language,{lead},total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
@@ -332,9 +332,9 @@ fn insert_header(family: &str) -> String {
     }
 }
 
-fn query_header(family: &str) -> String {
-    let lead = leading_label(family);
-    let params = param_header(family);
+fn query_header(algorithm: &str) -> String {
+    let lead = leading_label(algorithm);
+    let params = param_header(algorithm);
     if params.is_empty() {
         format!(
             "implementation,language,{lead},total_items,total_queries,total_nanoseconds,throughput_queries_per_sec"
@@ -347,10 +347,10 @@ fn query_header(family: &str) -> String {
 }
 
 /// CMS / CountSketch index their legacy rows by `seed` (one row per re-seeded
-/// run); the other families use a `run` ordinal. Match the legacy header so
+/// run); the other algorithms use a `run` ordinal. Match the legacy header so
 /// plot scripts that look up `row["seed"]` / `row["run"]` still parse.
-fn leading_label(family: &str) -> &'static str {
-    match family {
+fn leading_label(algorithm: &str) -> &'static str {
+    match algorithm {
         "cms" | "countsketch" => "seed",
         _ => "run",
     }
@@ -366,11 +366,11 @@ fn legacy_float_format(v: &str) -> String {
     }
 }
 
-/// The CSV header, verbatim. A per-family table on purpose: it encodes an
-/// **external file format**, not an abstraction over families — `registers` is
+/// The CSV header, verbatim. A per-algorithm table on purpose: it encodes an
+/// **external file format**, not an abstraction over algorithms — `registers` is
 /// derived and nitro's `rows`/`cols` are sentinels, so deriving it would break.
-fn param_header(family: &str) -> &'static str {
-    match family {
+fn param_header(algorithm: &str) -> &'static str {
+    match algorithm {
         "hll" => "lg_k,registers",
         "kll" => "k",
         "cms" | "countsketch" => "rows,cols",
@@ -393,8 +393,8 @@ fn param_header(family: &str) -> &'static str {
 /// The same set of columns as `param_header` but as separate names, used to
 /// populate sentinel `0`s for unparameterized impls so their CSV rows match
 /// the legacy width.
-fn legacy_param_columns(family: &str) -> &'static [&'static str] {
-    match family {
+fn legacy_param_columns(algorithm: &str) -> &'static [&'static str] {
+    match algorithm {
         "hll" => &["lg_k", "registers"],
         "kll" => &["k"],
         "cms" | "countsketch" => &["rows", "cols"],
@@ -411,14 +411,14 @@ fn legacy_param_columns(family: &str) -> &'static [&'static str] {
 }
 
 fn format_insert_row(
-    family: &str,
+    algorithm: &str,
     legacy_impl: &str,
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
     run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
-    let lead = leading_value(family, seed, run_idx);
+    let lead = leading_value(algorithm, seed, run_idx);
     let total_items = run.items_inserted.max(1);
     let total_ns = run.insert_wall_time_ns.max(1);
     let throughput = (total_items as f64) * 1_000_000_000.0 / (total_ns as f64);
@@ -435,14 +435,14 @@ fn format_insert_row(
 }
 
 fn format_query_row(
-    family: &str,
+    algorithm: &str,
     legacy_impl: &str,
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
     run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
-    let lead = leading_value(family, seed, run_idx);
+    let lead = leading_value(algorithm, seed, run_idx);
     let total_items = run.items_inserted;
     let total_queries = run.queries_executed.max(1);
     let total_ns = run.query_wall_time_ns.max(1);
@@ -458,8 +458,8 @@ fn format_query_row(
     )
 }
 
-fn leading_value(family: &str, seed: u64, run_idx: usize) -> String {
-    match family {
+fn leading_value(algorithm: &str, seed: u64, run_idx: usize) -> String {
+    match algorithm {
         "cms" | "countsketch" => seed.to_string(),
         _ => run_idx.to_string(),
     }
@@ -574,30 +574,30 @@ mod param_column_order_tests {
                 vec!["8", "256"],
             ),
         ];
-        for (family, params, expected) in cases {
-            let cols = ParamCols::from(family, Some(&params));
+        for (algorithm, params, expected) in cases {
+            let cols = ParamCols::from(algorithm, Some(&params));
             let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
-            let header: Vec<&str> = param_header(family).split(',').collect();
-            assert_eq!(names, header, "{family}: column order must match header");
+            let header: Vec<&str> = param_header(algorithm).split(',').collect();
+            assert_eq!(names, header, "{algorithm}: column order must match header");
             let values: Vec<&str> = cols.cols.iter().map(|(_, v)| v.as_str()).collect();
-            assert_eq!(values, expected, "{family}: values misaligned");
+            assert_eq!(values, expected, "{algorithm}: values misaligned");
         }
     }
 
-    /// Every family, every params object, one value per header column. Silent by
+    /// Every algorithm, every params object, one value per header column. Silent by
     /// construction: `csv.DictReader` zips positionally and pads the tail, so a
     /// short row shifts every later column and raises nothing.
     #[test]
     fn every_row_has_one_value_per_header_column() {
         let empty = ParamSet {
-            family: String::new(),
+            algorithm: String::new(),
             params: serde_json::json!({}),
         };
         let wrong_keys = ParamSet {
-            family: String::new(),
+            algorithm: String::new(),
             params: serde_json::json!({ "nonsense": 1 }),
         };
-        for family in [
+        for algorithm in [
             "hll",
             "kll",
             "cms",
@@ -609,21 +609,21 @@ mod param_column_order_tests {
             "univmon",
             "hydra",
         ] {
-            let width = param_header(family).split(',').count();
+            let width = param_header(algorithm).split(',').count();
             for (label, params) in [
                 ("none", None),
                 ("empty", Some(&empty)),
                 ("wrong keys", Some(&wrong_keys)),
             ] {
-                let cols = ParamCols::from(family, params);
+                let cols = ParamCols::from(algorithm, params);
                 assert_eq!(
                     cols.join_values().split(',').count(),
                     width,
-                    "{family} with {label} params: row width must match header"
+                    "{algorithm} with {label} params: row width must match header"
                 );
                 let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
-                let header: Vec<&str> = param_header(family).split(',').collect();
-                assert_eq!(names, header, "{family} with {label} params");
+                let header: Vec<&str> = param_header(algorithm).split(',').collect();
+                assert_eq!(names, header, "{algorithm} with {label} params");
             }
         }
     }

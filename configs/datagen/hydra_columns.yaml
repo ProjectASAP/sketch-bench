@@ -4,7 +4,7 @@
 # seed are steered independently.
 #
 # Run with:
-#   sketchlib bench --sketch hydra --impl lib-cm \
+#   approxbench bench --sketch hydra --impl lib-cm \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" --accuracy
 #

@@ -128,11 +128,11 @@ where
         if p.k == 0 {
             return Err(BuildError("topk needs k >= 1".into()));
         }
-        // The inner sketch is built from its **own** family's params, so its
+        // The inner sketch is built from its **own** algorithm's params, so its
         // `init` validates `rows`/`cols` exactly as it does for a plain CMS
         // row — a fixed-shape inner still rejects a shape it cannot serve.
         let inner_cfg = ParamSet {
-            family: <S::Params as SketchParams>::FAMILY.to_string(),
+            algorithm: <S::Params as SketchParams>::ALGORITHM.to_string(),
             params: serde_json::json!({ "rows": p.rows, "cols": p.cols }),
         };
         Ok(Self {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn the_cms_backed_row_ranks_the_stream_correctly() {
         let cfg = ParamSet {
-            family: "topk".to_string(),
+            algorithm: "topk".to_string(),
             params: serde_json::json!({ "rows": 5, "cols": 4096, "k": 2 }),
         };
         let mut s = TopKHeap::<super::super::cms::CmsOxide>::init(&cfg).unwrap();

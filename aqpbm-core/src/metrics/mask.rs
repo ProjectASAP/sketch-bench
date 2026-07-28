@@ -1,4 +1,4 @@
-//! `MetricsMask` — which metric families a sink collects. Named by both
+//! `MetricsMask` — which metric algorithms a sink collects. Named by both
 //! consumers of the `MetricsSink` contract, the offline
 //! [`FullSink`](crate::metrics::FullSink) and `sketch-runtime::Sampler`, which
 //! is why it sits here rather than in either. See `docs/DESIGN.md` §5.3.
@@ -6,7 +6,7 @@
 use bitflags::bitflags;
 
 bitflags! {
-    /// Which metric families are collected during a run. Each bit gates both the
+    /// Which metric algorithms are collected during a run. Each bit gates both the
     /// construction cost and the hot-path overhead of its recorder. An empty mask
     /// is legal, and useful as a minimal smoke test.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -17,7 +17,7 @@
     - depends on nothing else in the workspace, knows nothing about sketches.
       named for the program, not for its first consumer
 - Various sketch from different library connectet into the BM-framework
-    - 41 rows, 8 families (hll kll cms countsketch elastic nitro dd univmon)
+    - 41 rows, 8 algorithms (hll kll cms countsketch elastic nitro dd univmon)
     - 3 libraries (sketch_oxide, datasketches, asap_sketchlib) + exact + null baseline
 - Merge benchmark
     - split the stream into N shards, one sketch each, time only the fold
@@ -27,9 +27,9 @@
     - generator: i64, u64, f64, string. adding one is a `DType` variant, a
       `GenValue` impl, and one arm in the dispatch `match` -- which has no
       `_`, so a missing arm does not compile. it used to be 14 scattered edits
-    - benchmark: i64 everywhere; f64 on the ordered families (kll, dd);
+    - benchmark: i64 everywhere; f64 on the ordered algorithms (kll, dd);
       string on the text rows (elastic, nitro, univmon). all via `--dtype`
-    - hash families stay i64-only for f64 on purpose -- f64 is not `Hash` in
+    - hash algorithms stay i64-only for f64 on purpose -- f64 is not `Hash` in
       Rust and hashing its bits would retrace the i64 curve. quantile rows
       refuse strings: a lexicographic quantile is a different question
     - u64 generates but nothing consumes it
@@ -68,7 +68,7 @@
 
 ## No / In-Progress
 
-- a continuous value domain for the quantile families
+- a continuous value domain for the quantile algorithms
     - every shape draws from a finite `cardinality`, so kll/dd are always
       scored on tied data whatever the dtype
 - range constraint on the key space (currently always `[0, cardinality)`)
