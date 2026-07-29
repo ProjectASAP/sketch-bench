@@ -244,6 +244,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             rss_peak_kb: None,
             heap_allocated_kb: None,
             memory_bytes: None,
+            heap_bytes_net: None,
+            heap_bytes_peak: None,
             accuracy: None,
             merge_time_ms: None,
             merge_shards: None,

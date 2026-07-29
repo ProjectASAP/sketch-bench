@@ -26,10 +26,12 @@ fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
 }
 
 // ---------- sketch_oxide ----------
+// No `rows` / `cols` field: the crate rounds the width it derives from ε up to
+// a power of two, so a stored request would disagree with the table actually
+// allocated at every non-power-of-two `cols`. Nothing to disagree with is the
+// only way to keep the footprint honest across a library upgrade too.
 pub struct CmsOxide {
     inner: sketch_oxide::frequency::CountMinSketch,
-    rows: usize,
-    cols: usize,
 }
 
 impl InitSketch for CmsOxide {
@@ -39,11 +41,7 @@ impl InitSketch for CmsOxide {
         let (epsilon, delta) = dims_to_err(p.rows, p.cols);
         let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
             .map_err(|e| BuildError(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}")))?;
-        Ok(Self {
-            inner,
-            rows: p.rows,
-            cols: p.cols,
-        })
+        Ok(Self { inner })
     }
 }
 
@@ -67,10 +65,13 @@ impl Accumulator for CmsOxide {
 
 impl MemoryFootprint for CmsOxide {
     fn memory_bytes(&self) -> usize {
-        // The crate's counters are `table: Vec<u64>`, not 32-bit. Sizing this
-        // as `u32` halved every reported CMS footprint, which made CMS look
+        // Read off the built sketch, not off the requested `(rows, cols)`: the
+        // crate derives its width from ε and rounds it up to a power of two, so
+        // `cols = 3000` allocates 4096 and a request-derived figure under-reports
+        // by 27%. The counters are `table: Vec<u64>`, not 32-bit — sizing them
+        // as `u32` once halved every reported CMS footprint, which made CMS look
         // twice as space-efficient as CountSketch at identical accuracy.
-        self.rows * self.cols * std::mem::size_of::<u64>()
+        self.inner.depth() * self.inner.width() * std::mem::size_of::<u64>()
     }
 }
 
@@ -396,17 +397,77 @@ mod tests {
         assert_eq!(sketch.memory_bytes(), 5 * 2048 * 8);
     }
 
-    /// Both oxide sketches allocate one 8-byte counter per cell, so at one shape
-    /// they must report one footprint — CMS looked 2× cheaper than CountSketch
-    /// at identical measured accuracy while this was skewed.
+    /// Two configs the crate resolves to one table must report one footprint.
+    /// `cols` is a request: the width is derived from ε and rounded up to a
+    /// power of two, so 3000 and 4096 build the same sketch and score the same
+    /// error. Reporting the request would put those two identical measurements
+    /// at x-positions 27% apart on every accuracy-vs-memory plot.
+    ///
+    /// Stated as an equality between two configs rather than a pinned number, so
+    /// it keeps holding if the crate changes how it rounds.
     #[test]
-    fn oxide_cms_and_countsketch_agree_at_one_shape() {
+    fn oxide_cms_reports_the_table_it_built_not_the_one_requested() {
+        let of = |cols: usize| {
+            CmsOxide::init(&ParamSet::of(&CmsParams { rows: 5, cols }))
+                .expect("both are valid oxide shapes")
+                .memory_bytes()
+        };
+        assert_eq!(
+            of(3000),
+            of(4096),
+            "cols=3000 and cols=4096 resolve to one table, so one footprint"
+        );
+    }
+
+    /// The same property for CountSketch, where the crate also floors the depth
+    /// at 3 so the median has enough estimates to be one. A `rows=2` request
+    /// therefore builds 3 rows and must say so.
+    #[test]
+    fn oxide_countsketch_reports_the_depth_it_built_not_the_one_requested() {
+        let of = |rows: usize| {
+            CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams { rows, cols: 2048 }))
+                .expect("both are valid oxide shapes")
+                .memory_bytes()
+        };
+        assert_eq!(
+            of(2),
+            of(3),
+            "rows=2 and rows=3 resolve to one table, so one footprint"
+        );
+    }
+
+    /// The two oxide rows do **not** land on one table at one nominal shape, and
+    /// this pins by how much.
+    ///
+    /// `CmsOxide` asks for `cols` through `ε = e/cols`, and the crate's
+    /// `ceil(2/ε).next_power_of_two()` returns exactly `cols` at every power of
+    /// two. `CsOxide` asks through `ε = sqrt(3/cols)`, and `3/ε²` does not
+    /// round-trip in `f64`: it lands a hair above `cols`, `ceil` takes it to
+    /// `cols + 1`, and the power-of-two rounding then doubles it. So `cols=2048`
+    /// builds 2048 columns of Count-Min and 4096 of CountSketch.
+    ///
+    /// Both footprints below are truthful about what was allocated. What is not
+    /// settled is whether `cols` should mean the same thing to both rows, which
+    /// is a question about the panel, not about this formula. Until it is
+    /// settled, a CMS-vs-CountSketch comparison at one `--config` is comparing
+    /// two counter budgets, and this test is where that fact is written down.
+    #[test]
+    fn the_two_oxide_rows_resolve_one_config_to_different_tables() {
         let cms = CmsOxide::init(&shape()).expect("5x2048 is a valid oxide shape");
         let cs = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
             rows: 5,
             cols: 2048,
         }))
         .expect("5x2048 is a valid oxide shape");
-        assert_eq!(cms.memory_bytes(), cs.memory_bytes());
+
+        // 8 bytes per counter on both sides: `table: Vec<u64>` and `Vec<i64>`.
+        // Sizing either as 32-bit once halved a reported footprint and made one
+        // algorithm look twice as space-efficient at identical measured accuracy.
+        assert_eq!(cms.memory_bytes(), 5 * 2048 * 8, "CMS builds the width asked for");
+        assert_eq!(
+            cs.memory_bytes(),
+            5 * 4096 * 8,
+            "CountSketch's ε round-trip doubles the width, and the footprint says so"
+        );
     }
 }

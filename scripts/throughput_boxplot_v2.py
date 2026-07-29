@@ -221,7 +221,7 @@ SKETCHLIB_STEPS = [
     (PANEL_HLL,    "HLL",     "asap_sketchlib (HIP)",
      lambda: cli_bench("hll",         "lib-hip",                  "lg_k=14",           RAW_DIR / "hll"), []),
     (PANEL_KLL,    "KLL",     "asap_sketchlib",
-     lambda: cli_bench("kll",         "lib",                      "k=200",             RAW_DIR / "kll",
+     lambda: cli_bench("kll",         "lib-cdf",                  "k=200",             RAW_DIR / "kll",
                        warmup_runs=WARMUP_RUNS_KLL), []),
 ]
 
@@ -268,7 +268,7 @@ BASELINE_STEPS = [
     # KLL — no C++ DataSketches query (Insert-Opt fork has no quantile API);
     # final_kll is InsertOptimized (also no query).
     (PANEL_KLL,    "KLL",     "oxide",
-     lambda: cli_bench("kll",         "oxide",        "k=200",             RAW_DIR / "kll",
+     lambda: cli_bench("kll",         "oxide-cdf",    "k=200",             RAW_DIR / "kll",
                        warmup_runs=WARMUP_RUNS_KLL), []),
     (PANEL_KLL,    "KLL",     "datasketches (C++)",
      lambda: cpp_bench(CPP_BUILD / "kll" / "datasketches_kll", 200,   RAW_DIR / "kll", "ds_kll"), []),

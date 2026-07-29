@@ -152,8 +152,8 @@ def panel_kll() -> dict[str, list[float]]:
     pdir = RAW_DIR / "kll"
     cfg = "k=200"
     return {
-        "sketchlib":               read_throughputs(cli_bench("kll", "lib", cfg, pdir)),
-        "oxide":                   read_throughputs(cli_bench("kll", "oxide", cfg, pdir)),
+        "sketchlib":               read_throughputs(cli_bench("kll", "lib-cdf", cfg, pdir)),
+        "oxide":                   read_throughputs(cli_bench("kll", "oxide-cdf", cfg, pdir)),
         "datasketches (C++)":      read_throughputs(cpp_bench(CPP_BUILD / "kll" / "datasketches_kll", 200, pdir, "ds_kll")),
         "InsertOptimized (Final)": read_throughputs(cpp_bench(CPP_BUILD / "kll" / "final_kll", 200, pdir, "final_kll")),
     }

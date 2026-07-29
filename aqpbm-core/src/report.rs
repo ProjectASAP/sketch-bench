@@ -117,6 +117,18 @@ pub struct BenchSection {
     pub heap_allocated_kb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_bytes: Option<u64>,
+    /// Net bytes the tracking allocator attributes to this sketch's lifetime.
+    /// **Measured**, where [`Self::memory_bytes`] is derived from the row's own
+    /// formula, so the two answer the same question by different means and a
+    /// wide gap between them is a formula that has drifted from the structure it
+    /// describes. Needs `heap-track` on the linking binary; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heap_bytes_net: Option<u64>,
+    /// High-water mark of the same counter across construction and insert, so a
+    /// resize or an intermediate buffer is visible instead of being smoothed
+    /// away by the steady-state figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heap_bytes_peak: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
     /// Wall time to fold `merge_shards` sketches into one, per run; absent

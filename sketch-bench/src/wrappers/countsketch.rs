@@ -25,10 +25,12 @@ fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
 }
 
 // ---------- sketch_oxide CountSketch ----------
+// No `rows` / `cols` field, for the same reason as `CmsOxide`, plus one this
+// row has and that one does not: the crate floors its depth at 3 so the median
+// is taken over enough estimates to mean something, and a request of 1 or 2
+// rows builds 3.
 pub struct CsOxide {
     inner: sketch_oxide::frequency::CountSketch,
-    rows: usize,
-    cols: usize,
 }
 
 impl InitSketch for CsOxide {
@@ -40,11 +42,7 @@ impl InitSketch for CsOxide {
                 "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
             ))
         })?;
-        Ok(Self {
-            inner,
-            rows: p.rows,
-            cols: p.cols,
-        })
+        Ok(Self { inner })
     }
 }
 
@@ -66,7 +64,10 @@ impl Accumulator for CsOxide {
 
 impl MemoryFootprint for CsOxide {
     fn memory_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i64>()
+        // Off the built sketch: the crate rounds the width up to a power of two
+        // and floors the depth at 3, so at `rows=2` a request-derived figure
+        // under-reports by a third. Backing store is `table: Vec<i64>`.
+        self.inner.depth() * self.inner.width() * std::mem::size_of::<i64>()
     }
 }
 

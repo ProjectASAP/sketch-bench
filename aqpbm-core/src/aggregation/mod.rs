@@ -106,6 +106,18 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     } else {
         (None, None)
     };
+    // The tracking allocator's readings, on the same bit as the other memory
+    // fields. `max` for both: every run builds its own sketch, so these are N
+    // readings of one quantity, and the largest is the one a capacity plan has
+    // to survive. Absent unless the linking binary installed the shim.
+    let (heap_bytes_net, heap_bytes_peak) = if mask.contains(MetricsMask::MEMORY) {
+        (
+            runs.iter().filter_map(|r| r.heap_bytes_net).max(),
+            runs.iter().filter_map(|r| r.heap_bytes_peak).max(),
+        )
+    } else {
+        (None, None)
+    };
     let memory_bytes = runs.iter().filter_map(|r| r.memory_bytes).next_back();
 
     let latency_ns = if mask.contains(MetricsMask::LATENCY) {
@@ -145,6 +157,8 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         rss_peak_kb,
         heap_allocated_kb,
         memory_bytes,
+        heap_bytes_net,
+        heap_bytes_peak,
         accuracy,
         // Filled in by the merge pass, which owns these.
         merge_time_ms: None,

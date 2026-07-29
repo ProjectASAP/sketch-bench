@@ -49,7 +49,7 @@ fi
 # Canonical (algorithm, impl, --config) tuples.
 config_for() {
     case "$1" in
-        kll)          echo "lib|k=200" ;;
+        kll)          echo "lib-cdf|k=200" ;;
         hll)          echo "lib|lg_k=14" ;;
         cms)          echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;
         countsketch)  echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;

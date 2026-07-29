@@ -53,8 +53,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # countsketch algorithm is "cs").
 DEFAULT_COMBOS: list[tuple[str, str, str]] = [
     # Rust track — names from aqpbm-cli/src/dispatch.rs
-    ("rust", "kll",         "lib"),
-    ("rust", "kll",         "oxide"),
+    ("rust", "kll",         "lib-cdf"),
+    ("rust", "kll",         "oxide-cdf"),
     ("rust", "countsketch", "oxide"),
     ("rust", "countsketch", "lib-fixedmatrix-fast"),
     # C++ track — names from cpp-bench/<dir>/<impl>_<dir>

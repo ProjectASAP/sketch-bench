@@ -308,10 +308,21 @@ pub const ROWS: &[Row] = &[
     scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
     parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
     // -------- KLL (quantile, rank error) --------
-    ordered::<kll::KllOxide<i64>, kll::KllOxide<f64>, RankErrorGT>(
-        "sketch_oxide::quantiles::KllSketch",
+    // Two libraries × two query paths. Both libraries offer both paths, so the
+    // path belongs on the impl axis: one row per library would have compared
+    // libraries and query strategies in the same column.
+    ordered::<kll::KllOxidePerCall<i64>, kll::KllOxidePerCall<f64>, RankErrorGT>(
+        "sketch_oxide KllSketch: quantile() per call",
     ),
-    ordered::<kll::KllLib<i64>, kll::KllLib<f64>, RankErrorGT>("asap_sketchlib::KLL"),
+    ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
+        "sketch_oxide KllSketch: cdf() built in prepare",
+    ),
+    ordered::<kll::KllLibPerCall<i64>, kll::KllLibPerCall<f64>, RankErrorGT>(
+        "asap_sketchlib::KLL: quantile() per call",
+    ),
+    ordered::<kll::KllLibCdf<i64>, kll::KllLibCdf<f64>, RankErrorGT>(
+        "asap_sketchlib::KLL: cdf() built in prepare",
+    ),
     scored::<polars::PolarsQuantileKll, RankErrorGT>("polars exact: 101-point quantile grid"),
     // -------- CMS (frequency) --------
     scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
