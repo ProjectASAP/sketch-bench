@@ -72,6 +72,7 @@ A **cell** is one row, at one parameter point, against one workload, and it is t
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
 A **pass** is one metric group measured over its own population of runs: `throughput`, `latency`, `accuracy`, or `merge`.
 Those four are the primary bits of the metrics mask, and metrics are not all free to collect together, which is why each takes a fresh population.
+Measuring latency means timestamping every item, and that cost depresses a throughput number taken in the same traversal.
 The secondary bits, CPU and memory, record at phase boundaries only, so they attach to every pass without contaminating it.
 
 - **`BenchReport`, one per pass.** The in-process result: the row's identity, the workload's description, every measured run's `RunMetrics`, and the aggregated `BenchSection`.
