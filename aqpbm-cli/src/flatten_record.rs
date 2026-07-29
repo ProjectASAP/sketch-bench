@@ -31,13 +31,10 @@ pub struct MergedRecord {
     pub runs: usize,
     pub source: Source,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<Value>,
     pub workload: WorkloadDescription,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<Value>,
 
     #[serde(flatten)]
@@ -50,43 +47,42 @@ pub struct MergedRecord {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InsertMetrics {
-    #[serde(rename = "insert_timestamp", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "insert_throughput_items_per_sec", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_throughput_items_per_sec")]
     pub throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "insert_throughput_samples", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_throughput_samples")]
     pub throughput_samples: Option<Vec<f64>>,
-    #[serde(rename = "insert_cpu_time_ms", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
-    #[serde(rename = "insert_wall_time_ms", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_wall_time_ms")]
     pub wall_time_ms: Option<RunStats>,
-    #[serde(rename = "insert_rss_peak_kb", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_rss_peak_kb")]
     pub rss_peak_kb: Option<u64>,
-    #[serde(rename = "insert_heap_allocated_kb", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "insert_heap_allocated_kb")]
     pub heap_allocated_kb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueryMetrics {
-    #[serde(rename = "query_timestamp", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "query_throughput_items_per_sec", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_throughput_items_per_sec")]
     pub throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "query_cpu_time_ms", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
-    #[serde(rename = "query_wall_time_ms", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_wall_time_ms")]
     pub wall_time_ms: Option<RunStats>,
-    #[serde(rename = "query_rss_peak_kb", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_rss_peak_kb")]
     pub rss_peak_kb: Option<u64>,
-    #[serde(rename = "query_heap_allocated_kb", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "query_heap_allocated_kb")]
     pub heap_allocated_kb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LatencyMetrics {
-    #[serde(rename = "latency_timestamp", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "latency_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ns: Option<LatencySummary>,
 }
 
