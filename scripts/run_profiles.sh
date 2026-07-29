@@ -107,8 +107,8 @@ bench() {
     local label=$1; shift
     echo ""
     echo "─── $algorithm / $label ───────────────────────────────────"
-    "$BINARY" bench \
-        --sketch    "$algorithm" \
+    "$BINARY" sketchbench \
+        --algorithm  "$algorithm" \
         --runs      "$RUNS" \
         --warmup-runs "$WARMUP" \
         --metrics   "$METRICS" \

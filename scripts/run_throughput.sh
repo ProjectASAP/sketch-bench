@@ -77,8 +77,8 @@ run_algorithm() {
   fi
   echo "===== throughput: ${ALGORITHM} (impl=${IMPL_FILTER}) ====="
   # shellcheck disable=SC2086
-  cargo run --release --quiet -p aqpbm-cli -- bench \
-    --sketch "${ALGORITHM}" --impl "${IMPL_FILTER}" \
+  cargo run --release --quiet -p aqpbm-cli -- sketchbench \
+    --algorithm "${ALGORITHM}" --impl "${IMPL_FILTER}" \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     ${ACCURACY} \
     "${CONFIG_ARGS[@]}" \
@@ -96,8 +96,8 @@ run_octo() {
       local ALGO="${algo_cfg%%|*}"
       local CFG="${algo_cfg#*|}"
       echo "===== throughput: ${ALGO}/lib-fastpath-parallel workers=${n} ====="
-      cargo run --release --quiet -p aqpbm-cli -- bench \
-        --sketch "${ALGO}" --impl lib-fastpath-parallel \
+      cargo run --release --quiet -p aqpbm-cli -- sketchbench \
+        --algorithm "${ALGO}" --impl lib-fastpath-parallel \
         --config "${CFG}" \
         --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
         --workers "${n}" \

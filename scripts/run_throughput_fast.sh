@@ -121,8 +121,8 @@ run_one() {
     taskset -c "${PIN_CORE}" bash -c "
 end=\$((SECONDS+${WARMUP_SECONDS}))
 while [ \$SECONDS -lt \$end ]; do :; done
-exec '${BIN_PATH}' bench \
-  --sketch '${algorithm}' \
+exec '${BIN_PATH}' sketchbench \
+  --algorithm '${algorithm}' \
   --impl '${impl}' \
   --metrics throughput \
   --config '${params}' \

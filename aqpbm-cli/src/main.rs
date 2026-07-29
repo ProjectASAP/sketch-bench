@@ -1,7 +1,7 @@
-//! `approxbench` — unified CLI for sketchlib-tool.
+//! `approxbench`, the approximate query processing benchmark suite.
 //!
-//! `bench` measures one `(impl, config)` cell of a sketch algorithm,
-//! `list-impls` enumerates the catalog's `(algorithm, impl)` pairs, and
+//! `sketchbench` measures one cell of the sketch bundle, `sketchbench
+//! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs, and
 //! `workload` generates or inspects synthetic `.bin` workloads.
 
 mod cli;
@@ -36,7 +36,7 @@ use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
 use clap::Parser;
 use sketch_bench::params::ParamSet;
 
-use cli::{BenchArgs, Cli, Cmd};
+use cli::{Cli, Cmd, SketchbenchArgs};
 // The catalog — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
@@ -68,10 +68,10 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
     m
 }
 
-/// Validate `--sketch`/`--impl` and report whether `--accuracy` can score it.
+/// Validate `--algorithm`/`--impl` and report whether `--accuracy` can score it.
 fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
     if !catalog::algorithm_exists(algorithm) {
-        bail!("unknown sketch algorithm: {algorithm}");
+        bail!("unknown algorithm: {algorithm}");
     }
     catalog::scores_accuracy(algorithm, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))
@@ -116,16 +116,20 @@ impl ReportSink {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::ListImpls => {
-            println!("# algorithm       impl                         description");
-            for line in catalog::list() {
-                println!("{line}");
-            }
-            Ok(())
-        }
-        Cmd::Bench(args) => run_bench(args),
+        Cmd::Sketchbench(args) => run_sketchbench(args),
         Cmd::Workload(args) => workload_cmd::run(args),
     }
+}
+
+/// `--list-impls` prints and exits. Enumerating a bundle's catalog hangs off
+/// that bundle's subcommand, since a second bundle would make a free-standing
+/// `list-impls` ambiguous about whose catalog it means.
+fn list_impls() -> Result<()> {
+    println!("# algorithm       impl                         description");
+    for line in catalog::list() {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 /// Load a `--spec` file as either one column spec or a list of them.
@@ -164,7 +168,7 @@ fn load_spec(path: &str) -> Result<WorkloadSpec> {
 /// Resolve where this run's items come from, in precedence order: `--input` >
 /// `--spec` > the `--workload` flags. The flag path builds the same `GenSpec`
 /// the spec path would, so it is sugar for a `keys`/`zipf` spec — one generator.
-fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
+fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.input.as_deref() {
         return Ok(WorkloadSpec::File {
             path: path.to_string(),
@@ -217,7 +221,18 @@ fn workload_spec(args: &BenchArgs) -> Result<WorkloadSpec> {
 /// measurement run wants it — linking the runner should not cost ten seconds.
 const DEFAULT_WARMUP_SECS: &str = "10";
 
-fn run_bench(args: BenchArgs) -> Result<()> {
+fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
+    // Selects no cell and writes no record, so it runs before anything is
+    // validated and ignores every other option.
+    if args.list_impls {
+        return list_impls();
+    }
+    // `required_unless_present = "list_impls"` on both, so clap has already
+    // rejected the invocation that reaches here without them.
+    let (algorithm, impl_name) = match (args.algorithm.as_deref(), args.impl_name.as_deref()) {
+        (Some(a), Some(i)) => (a.to_string(), i.to_string()),
+        _ => bail!("--algorithm and --impl are both required unless --list-impls is given"),
+    };
     if args.repeats == 0 {
         bail!("--repeats must be >= 1");
     }
@@ -287,26 +302,25 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         record_query_calls: args.accuracy && args.raw_csv.is_some(),
     };
 
-    let scores_accuracy = select_impl(&args.sketch, &args.impl_name)?;
+    let scores_accuracy = select_impl(&algorithm, &impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
     // construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => catalog::config_point(&args.sketch, s)?,
-        None => ParamSet::empty(&args.sketch),
+        Some(s) => catalog::config_point(&algorithm, s)?,
+        None => ParamSet::empty(&algorithm),
     };
 
     if accuracy_cfg.enabled && !scores_accuracy {
         eprintln!(
-            "approxbench: --accuracy has no comparator for {}/{} (throughput-only row) — running without ground truth",
-            args.sketch, args.impl_name
+            "approxbench: --accuracy has no comparator for {algorithm}/{impl_name} (throughput-only row) — running without ground truth"
         );
     }
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
-        args.sketch,
-        args.impl_name,
+        algorithm,
+        impl_name,
         params_pretty(&params),
         cfg.runs,
         cfg.warmup_runs,
@@ -316,15 +330,15 @@ fn run_bench(args: BenchArgs) -> Result<()> {
     // missed fixed shape, or a missing param all surface here. The tool ran
     // exactly what it was asked, so it fails rather than skipping on.
     let reports = catalog::run(
-        &args.sketch,
-        &args.impl_name,
+        &algorithm,
+        &impl_name,
         &cfg,
         &spec,
         &params,
         &accuracy_cfg,
         width,
     )
-    .map_err(|e| anyhow::anyhow!("{}/{} cannot run: {e}", args.sketch, args.impl_name))?;
+    .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
     // `catalog::run` returns one report per metric pass; emit each on its own
     // JSONL line and CSV row group. A downstream group-by on
@@ -334,8 +348,8 @@ fn run_bench(args: BenchArgs) -> Result<()> {
         if let Some(dir) = args.raw_csv.as_deref() {
             raw_csv::write_runs(
                 std::path::Path::new(dir),
-                &args.sketch,
-                &args.impl_name,
+                &algorithm,
+                &impl_name,
                 Some(&params),
                 cfg.seed,
                 cfg.threads,

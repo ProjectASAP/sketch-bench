@@ -39,8 +39,11 @@ rand = "0.8"
 rand_distr = "0.4"
 rand_xoshiro = "0.6"
 
-# CLI parsing.
-clap = { version = "4", features = ["derive"] }
+# CLI parsing. `wrap_help` is what makes `--help` reflow to the terminal
+# width, and to 100 columns when stdout is a pipe. `docs/aqpbm-cli-reference.md`
+# is written at that width, so without it every option renders as one long
+# line and `scripts/dump_cli_reference.sh` can never match.
+clap = { version = "4", features = ["derive", "wrap_help"] }
 
 # Errors.
 thiserror = "1"

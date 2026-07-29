@@ -62,8 +62,8 @@ fi
 run_algorithm() {
   local ALGORITHM="$1"
   echo "===== accuracy: ${ALGORITHM} ====="
-  cargo run --release --quiet -p aqpbm-cli -- bench \
-    --sketch "${ALGORITHM}" --impl all \
+  cargo run --release --quiet -p aqpbm-cli -- sketchbench \
+    --algorithm "${ALGORITHM}" --impl all \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     --accuracy --accuracy-probes "${PROBES}" \
     --raw-csv "${OUTPUT_DIR}" \

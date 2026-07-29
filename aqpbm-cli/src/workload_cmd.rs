@@ -1,7 +1,7 @@
 //! `approxbench workload generate|describe` — produce and inspect synthetic
 //! `.bin` workloads. Generation writes a raw little-endian value stream plus a
-//! `foo.bin.meta.json` provenance sidecar: the stream feeds `bench --input`,
-//! while the sidecar is ignored there and read back by `describe`.
+//! `foo.bin.meta.json` provenance sidecar: the stream feeds `sketchbench
+//! --input`, while the sidecar is ignored there and read back by `describe`.
 
 use std::path::Path;
 
@@ -42,9 +42,9 @@ pub struct GenerateArgs {
     /// Output `.bin` path. Parent directories are created if missing.
     #[arg(long)]
     out: String,
-    /// Physical output type: i64 | u64 | f64. `bench --input` reads i64 only;
-    /// f64 is benchmarkable through `bench --dtype f64`, which generates
-    /// in-process. u64 has no consumer in this repo.
+    /// Physical output type: i64 | u64 | f64. `sketchbench --input` reads i64
+    /// only; f64 is benchmarkable through `sketchbench --dtype f64`, which
+    /// generates in-process. u64 has no consumer in this repo.
     #[arg(long, default_value = "i64")]
     dtype: String,
     /// Uniform: max key (exclusive). Zipf: key-space size.
@@ -56,7 +56,7 @@ pub struct GenerateArgs {
     /// Monotonic-timestamp: starting value (first emitted value).
     #[arg(long, default_value_t = 0)]
     start: i64,
-    /// Monotonic-timestamp: unit label — nanos | millis | secs.
+    /// Monotonic-timestamp: unit label: nanos | millis | secs.
     #[arg(long, default_value = "nanos")]
     unit: String,
     /// Monotonic-timestamp: inter-arrival gap as `kind:param`
@@ -64,15 +64,15 @@ pub struct GenerateArgs {
     /// `--shape monotonic-timestamp`.
     #[arg(long)]
     gap: Option<String>,
-    /// Monotonic-timestamp: minimum gap (1 → strictly increasing,
-    /// 0 → duplicates allowed).
+    /// Monotonic-timestamp: minimum gap (1 gives strictly increasing,
+    /// 0 allows duplicates).
     #[arg(long, default_value_t = 1)]
     min_gap: u64,
     /// Skewed-categorical: size of the id domain (ids `0..n`). Required
     /// for `--shape skewed-categorical` (use `--spec` for explicit ids).
     #[arg(long)]
     categories: Option<usize>,
-    /// Skewed-categorical: weight scheme — `uniform` | `zipf:s`.
+    /// Skewed-categorical: weight scheme: `uniform` | `zipf:s`.
     #[arg(long, default_value = "zipf:1.1")]
     weights: String,
     /// Read the full spec from a `.yaml`/`.yml`/`.json` file. Overrides
