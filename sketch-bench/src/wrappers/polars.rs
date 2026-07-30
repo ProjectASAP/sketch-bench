@@ -31,7 +31,12 @@ impl InitSketch for PolarsCardinality {
     /// Polars computes the exact answer and has no `(rows, cols)` to tune, so it
     /// ignores the `ParamSet` and builds unconditionally. Its record carries
     /// whatever config the cell was given.
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: HllParams = config.parse()?;
         Ok(Self {
             buf: Vec::new(),
             estimate: 0.0,
@@ -125,7 +130,12 @@ pub struct PolarsFrequencyCms(PolarsFrequencyCore);
 
 impl InitSketch for PolarsFrequencyCms {
     /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: CmsParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -153,7 +163,12 @@ pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 
 impl InitSketch for PolarsFrequencyCs {
     /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: CountSketchParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -237,7 +252,12 @@ pub struct PolarsQuantileKll(PolarsQuantileCore);
 
 impl InitSketch for PolarsQuantileKll {
     /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: KllParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -265,7 +285,12 @@ pub struct PolarsQuantileDd(PolarsQuantileCore);
 
 impl InitSketch for PolarsQuantileDd {
     /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: DdParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -450,7 +475,12 @@ pub struct PolarsSubpopFrequency {
 }
 
 impl InitSketch for PolarsSubpopFrequency {
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: HydraCmsParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -533,7 +563,12 @@ pub struct PolarsSubpopCardinality {
 }
 
 impl InitSketch for PolarsSubpopCardinality {
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: HydraHllParams = config.parse()?;
         Ok(Self::default())
     }
 }
@@ -610,7 +645,12 @@ pub struct PolarsSubpopQuantile {
 }
 
 impl InitSketch for PolarsSubpopQuantile {
-    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+    fn init(config: &ParamSet) -> Result<Self, BuildError> {
+        // Exact, so no knob here does anything. The config is still parsed
+        // and discarded: this row is the baseline its sketch siblings are
+        // scored against, and a config they refuse must not quietly produce
+        // a number here.
+        let _p: HydraKllParams = config.parse()?;
         Ok(Self::default())
     }
 }

@@ -211,16 +211,17 @@ impl BenchImpl for HydraHll {
 
 // ---------- hydra-kll: subpopulation quantile ----------
 
-// Level count, decay and minimum level capacity of an `asap_sketchlib::KLL`.
-// All three are private constants in the library, reproduced here because a
-// cell's footprint is a function of them and the library exposes no accessor
-// for its own capacity.
+// Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
+// in the library, reproduced here because a cell's footprint is a function of
+// them and the library exposes no accessor for its own capacity.
 const KLL_MAX_LEVELS: usize = 61;
 const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
-/// The `m` the library's `init_kll` passes, its minimum level capacity.
-const KLL_MIN_LEVEL: usize = 8;
+/// The `m` the library's `init_kll` passes, its minimum level capacity, and the
+/// floor it silently raises a smaller `k` to. Same cell as the `kll` rows, so
+/// the bound is theirs: see [`crate::wrappers::kll::LIB_K_MIN`].
+const KLL_MIN_LEVEL: usize = crate::wrappers::kll::LIB_K_MIN as usize;
 /// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
-const KLL_MAX_CACHEABLE_K: usize = 26_602;
+const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
 
 /// Retained slots one KLL cell allocates at construction.
 ///
@@ -261,8 +262,20 @@ impl InitSketch for HydraKll {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: HydraKllParams = config.parse()?;
         check_grid(p.rows, p.cols, "hydra-kll")?;
-        if p.cell_k == 0 {
-            return Err(BuildError("hydra-kll: cell_k must be > 0".into()));
+        // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and
+        // it clamps `k` to its own range without saying so. Refuse here for the
+        // same reason those rows do: outside the range the grid would be built
+        // at a `cell_k` the record does not name. Below the floor every value
+        // gave one sketch at `cell_k = 8`; above the ceiling every value gave
+        // one sketch at 26602, while the footprint column kept climbing.
+        if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k)
+        {
+            return Err(BuildError(format!(
+                "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
+                p.cell_k,
+                crate::wrappers::kll::LIB_K_MIN,
+                crate::wrappers::kll::LIB_K_MAX
+            )));
         }
         let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
         Ok(Self {

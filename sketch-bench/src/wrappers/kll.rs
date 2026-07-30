@@ -56,6 +56,30 @@ fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, BuildError> {
         .map_err(|e| BuildError(format!("oxide KLL rejected k={k16}: {e:?}")))
 }
 
+/// The range `asap_sketchlib::KLL::init` keeps a `k` in. Below the floor it
+/// raises `k` to `m`, above the ceiling it caps; both silently. Reproduced here
+/// so the two `lib` rows refuse instead, which is the only way the `k` in the
+/// record is the `k` that ran. See [`LIB_K_RANGE`]'s use in `hydra.rs`, which
+/// has the same cell and the same bound.
+pub const LIB_K_MIN: u32 = 8;
+pub const LIB_K_MAX: u32 = 26_602;
+
+/// The `lib` counterpart of [`oxide_kll`]: same contract, different bound. A
+/// `k` this library cannot hold is an error naming both, not a run at some
+/// other `k` reported as the one asked for.
+fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::KLL<T>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue,
+{
+    if !(LIB_K_MIN..=LIB_K_MAX).contains(&k) {
+        return Err(BuildError(format!(
+            "asap KLL: k={k} outside [{LIB_K_MIN}, {LIB_K_MAX}]; the library clamps \
+             to that range, so any other k would run at a value this record does not name"
+        )));
+    }
+    Ok(asap_sketchlib::KLL::<T>::init_kll(k as i32))
+}
+
 /// Answer a quantile out of a prebuilt `(value, cumulative_rank)` table, the
 /// shape `sketch_oxide::KllSketch::cdf` returns: ascending by value, with the
 /// cumulative rank normalised to `[0, 1]`.
@@ -220,7 +244,7 @@ where
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: KllParams = config.parse()?;
         Ok(Self {
-            inner: asap_sketchlib::KLL::<T>::init_kll(p.k as i32),
+            inner: lib_kll::<T>(p.k)?,
             k: p.k,
         })
     }
@@ -277,7 +301,7 @@ where
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: KllParams = config.parse()?;
         Ok(Self {
-            inner: asap_sketchlib::KLL::<T>::init_kll(p.k as i32),
+            inner: lib_kll::<T>(p.k)?,
             k: p.k,
             cdf: RefCell::new(None),
         })
@@ -409,6 +433,51 @@ mod tests {
         assert!(
             differs,
             "k=50 and k=800 answered identically at all 99 interior grid points, \
+             so k is not reaching the sketch"
+        );
+    }
+
+    /// The `lib` rows refuse the `k` values their library would silently clamp.
+    ///
+    /// This is the bug those rows had. Below the floor, `k = 1`, `4` and `8` all
+    /// built one sketch at `k = 8` while `memory_bytes` reported 32, 128 and 256
+    /// bytes — an eightfold spread on the memory axis for a single measurement.
+    /// Above the ceiling, `k = 40000` and `k = 65535` both built at 26602 while
+    /// the footprint kept climbing past 2 MB.
+    #[test]
+    fn lib_refuses_a_k_the_library_would_clamp() {
+        for k in [0, 1, 7, LIB_K_MAX + 1, 65_535] {
+            let Err(err) = KllLibPerCall::<i64>::init(&params(k)) else {
+                panic!("k={k} is clamped by the library, so it must be refused");
+            };
+            let err = err.to_string();
+            assert!(
+                err.contains(&k.to_string()) && err.contains("26602"),
+                "error should name the k and the bound: {err}"
+            );
+            assert!(KllLibCdf::<i64>::init(&params(k)).is_err(), "cdf row at k={k}");
+        }
+        // The ends of the range are inside it.
+        for k in [LIB_K_MIN, LIB_K_MAX] {
+            assert!(KllLibPerCall::<i64>::init(&params(k)).is_ok(), "k={k}");
+        }
+    }
+
+    /// Inside the range, `k` reaches the sketch. The companion to the test
+    /// above: refusing out-of-range values would be worth nothing if the
+    /// in-range ones were still ignored.
+    #[test]
+    fn lib_honours_k() {
+        let items = stream();
+        let small: KllLibPerCall<i64> = fed(8, &items);
+        let large: KllLibPerCall<i64> = fed(800, &items);
+        let differs = (1..100).any(|p| {
+            let phi = p as f64 / 100.0;
+            small.estimate_quantile(phi) != large.estimate_quantile(phi)
+        });
+        assert!(
+            differs,
+            "k=8 and k=800 answered identically at every interior grid point, \
              so k is not reaching the sketch"
         );
     }

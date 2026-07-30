@@ -69,8 +69,12 @@ pub struct SketchbenchArgs {
     pub list_impls: bool,
 
     /// Construction config for this cell: `'k1=v1 k2=v2'`, one value per key.
-    /// Omitted gives a parameterless point, which tunable impls reject by name.
+    /// Omitted gives a parameterless point, which every row rejects by name.
     /// A comma list is an error: one invocation is one cell, never a grid.
+    ///
+    /// A row builds at exactly the values given or refuses them, naming the
+    /// bound it has. Nothing is clamped, rounded or ignored, so the
+    /// `sketch_config` in the record is always the config that ran.
     #[arg(long, help_heading = "Construction")]
     pub config: Option<String>,
     /// Worker threads for the parallel-insert algorithms (`*-parallel`). Every

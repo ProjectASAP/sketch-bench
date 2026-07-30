@@ -6,16 +6,25 @@
 
 use std::sync::Barrier;
 
-use aqpbm_core::init::{BenchImpl, BuildError};
 use crate::params::{CmsParams, CountSketchParams, HllParams};
-use aqpbm_core::config::ParamSet;
+use crate::wrappers::require_shape;
 use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::config::ParamSet;
+use aqpbm_core::init::{BenchImpl, BuildError};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use asap_sketchlib::{
     impl_fixed_matrix, Count, CountMin, DataInput, ErtlMLE, FastPath, HyperLogLog,
 };
 
 impl_fixed_matrix!(M5x32K, i32, 5, 32768);
+
+/// The shape every worker's matrix is baked at, and the `lg_k` its HLL is fixed
+/// at. Written here because these rows *check* the request against them: the
+/// per-worker sketch is a compile-time type, so any other config is unbuildable
+/// and is refused instead of being accepted and ignored.
+pub const PARALLEL_ROWS: usize = 5;
+pub const PARALLEL_COLS: usize = 32768;
+pub const PARALLEL_HLL_LG_K: u8 = 14;
 
 /// CMS, parallel-insert FastPath.
 pub struct ParallelCmsFastPath {
@@ -25,10 +34,12 @@ pub struct ParallelCmsFastPath {
 
 impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
     /// Not an `InitSketch`: it needs the worker count, a run knob (`--workers`)
-    /// rather than a sketch parameter. Parses the config to reject a malformed
-    /// one, then ignores its values — the shape is fixed internally.
+    /// rather than a sketch parameter. The construction config is checked
+    /// against the baked shape and refused if it differs, exactly as the
+    /// single-threaded fixed-matrix rows do.
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
-        let _p: CmsParams = config.parse()?;
+        let p: CmsParams = config.parse()?;
+        require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
         Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
@@ -52,7 +63,7 @@ impl Accumulator for ParallelCmsFastPath {
 
 impl MemoryFootprint for ParallelCmsFastPath {
     fn memory_bytes(&self) -> usize {
-        self.workers * (5 * 32768 * std::mem::size_of::<i32>())
+        self.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
@@ -65,7 +76,8 @@ pub struct ParallelCsFastPath {
 
 impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
-        let _p: CountSketchParams = config.parse()?;
+        let p: CountSketchParams = config.parse()?;
+        require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
         Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
@@ -89,7 +101,7 @@ impl Accumulator for ParallelCsFastPath {
 
 impl MemoryFootprint for ParallelCsFastPath {
     fn memory_bytes(&self) -> usize {
-        self.workers * (5 * 32768 * std::mem::size_of::<i32>())
+        self.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
             + self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
@@ -102,7 +114,15 @@ pub struct ParallelHllFastPath {
 
 impl aqpbm_core::cell::ParallelInit for ParallelHllFastPath {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
-        let _p: HllParams = config.parse()?;
+        let p: HllParams = config.parse()?;
+        // `HyperLogLog<ErtlMLE>` is the P14 alias, so this row exists at one
+        // precision. Refuse the others instead of running at 14 under their name.
+        if p.lg_k != PARALLEL_HLL_LG_K {
+            return Err(BuildError(format!(
+                "parallel HLL: fixed at lg_k={PARALLEL_HLL_LG_K}, requested lg_k={}",
+                p.lg_k
+            )));
+        }
         Ok(Self {
             buf: Vec::new(),
             workers: workers.max(1),
@@ -126,10 +146,11 @@ impl Accumulator for ParallelHllFastPath {
 
 impl MemoryFootprint for ParallelHllFastPath {
     fn memory_bytes(&self) -> usize {
-        // Each worker holds an HLL with ErtlMLE registers — leave
-        // it at a coarse upper bound (P14 default for the
-        // sketchlib HLL ≈ 16k regs × 1 byte).
-        self.workers * (1 << 14) + self.buf.capacity() * std::mem::size_of::<i64>()
+        // Each worker holds an HLL with ErtlMLE registers, one byte each.
+        // `build` has already refused any lg_k other than the one baked in, so
+        // this is the precision that ran and not a coarse upper bound.
+        self.workers * (1usize << PARALLEL_HLL_LG_K)
+            + self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
 

@@ -4,7 +4,7 @@
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CountSketchParams;
-use crate::wrappers::require_shape;
+use crate::wrappers::{require_resolved_shape, require_shape};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -17,18 +17,27 @@ use crate::wrappers::cms::{
 
 // sketch_oxide::frequency::CountSketch sizes its table as
 // `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
-// Inverting that for a target column count w gives ε = sqrt(3/w).
+//
+// Inverting that for a target width needs `3/ε²` to land *on* `cols`, and
+// `ε = sqrt(3/cols)` does not: the square root and the square do not round-trip
+// in `f64`, so `3/ε²` came out a hair above `cols`, `ceil` took it to `cols + 1`
+// and the power-of-two rounding doubled the table. Every request built twice the
+// counters it named. Solving against `cols - 0.5` puts the quotient half an
+// integer below the boundary, which no single ulp can cross.
 fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
-    let epsilon = (3.0 / cols as f64).sqrt();
-    let delta = (-(rows as f64)).exp();
+    let epsilon = (3.0 / (cols as f64 - 0.5)).sqrt();
+    let delta = (-(rows as f64 - 0.5)).exp();
     (epsilon, delta)
 }
 
 // ---------- sketch_oxide CountSketch ----------
-// No `rows` / `cols` field, for the same reason as `CmsOxide`, plus one this
-// row has and that one does not: the crate floors its depth at 3 so the median
-// is taken over enough estimates to mean something, and a request of 1 or 2
-// rows builds 3.
+// No `rows` / `cols` field, for the same reason as `CmsOxide`: `init` proves the
+// built table matches the request, so the sketch is the only place either
+// figure is read from.
+//
+// One bound this row has and the Count-Min one does not: the crate floors its
+// depth at 3, so the median is taken over enough estimates to be one. `rows < 3`
+// is therefore unreachable, and refused by name.
 pub struct CsOxide {
     inner: sketch_oxide::frequency::CountSketch,
 }
@@ -42,6 +51,11 @@ impl InitSketch for CsOxide {
                 "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
             ))
         })?;
+        require_resolved_shape(
+            "oxide CountSketch",
+            (inner.depth(), inner.width()),
+            (p.rows, p.cols),
+        )?;
         Ok(Self { inner })
     }
 }

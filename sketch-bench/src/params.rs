@@ -33,7 +33,11 @@ macro_rules! sketch_params {
 pub struct HllParams {
     pub lg_k: u8,
 }
-sketch_params!(HllParams, "hll", HllParams { lg_k: 10 });
+// 14 and not some smaller default: it is the one precision every row in the
+// family can build at. `asap_sketchlib` puts the register count in a storage
+// type and ships three of them, so its rows exist at 12, 14 and 16 only, and a
+// canonical point outside that set would be one no `lib` row could take.
+sketch_params!(HllParams, "hll", HllParams { lg_k: 14 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

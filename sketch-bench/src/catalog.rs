@@ -16,11 +16,13 @@ use aqpbm_core::accuracy::subpopulation::{
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
-use aqpbm_core::init::{BenchImpl, InitSketch};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
-use crate::params::{ParamSet, TopkParams};
+use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+
+use crate::params::{HllParams, ParamSet, TopkParams};
 use crate::wrappers::{
     cms, countsketch, dd, elastic, hll, hydra, kll, nitro, parallel, polars, topk, univmon,
 };
@@ -260,6 +262,34 @@ where
     cell::run_cell_parallel::<S>(cfg, spec, params)
 }
 
+/// A row whose construction parameter selects a *type* rather than a field.
+/// `asap_sketchlib` puts the HLL register count in the storage type, so `lg_k`
+/// picks a monomorphisation and this dispatch is what turns a runtime value
+/// back into one. Same shape as [`run_ordered`], and for the same reason: an
+/// enum inside the wrapper would put a branch in `update`, on rows whose whole
+/// purpose is to price that insert.
+fn run_lib_hll<S12, S14, S16, G>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    acc: &AccuracyCfg,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+{
+    let p: HllParams = params.parse().map_err(BuildError::from)?;
+    match p.lg_k {
+        12 => run_scored::<S12, G>(cfg, spec, params, acc, width),
+        14 => run_scored::<S14, G>(cfg, spec, params, acc, width),
+        16 => run_scored::<S16, G>(cfg, spec, params, acc, width),
+        other => Err(RunError::Build(hll::unsupported_precision(other))),
+    }
+}
+
 // ---------- the row constructors ----------
 // Each reads `S::FAMILY` / `S::ALGORITHM` / `S::IMPL` off the type and fixes
 // `scores_accuracy`. `const fn`, so `ROWS` stays `const` and a bad row fails at
@@ -299,6 +329,28 @@ where
         picks_width: true,
         takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
         run: run_ordered::<Si, Sf, G>,
+    }
+}
+
+/// The three precisions are one row: they are one algorithm at one impl, and
+/// `lg_k` is the knob that moves between them. `S14` names the row, the way the
+/// `i64` half names an [`ordered`] one.
+const fn lib_hll<S12, S14, S16, G>(description: &'static str) -> Row
+where
+    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+{
+    Row {
+        family: S14::FAMILY,
+        algorithm: S14::ALGORITHM,
+        impl_name: S14::IMPL,
+        description,
+        scores_accuracy: true,
+        picks_width: false,
+        takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
+        run: run_lib_hll::<S12, S14, S16, G>,
     }
 }
 
@@ -343,19 +395,25 @@ where
 /// the wrapper it names; nothing else in this file changes.
 pub const ROWS: &[Row] = &[
     // -------- HLL (cardinality) --------
-    scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog"),
+    scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)"),
     scored::<hll::HllDatasketches, CardinalityGT>("datasketches::hll::HllSketch (Hll8)"),
-    scored::<hll::HllLib, CardinalityGT>(
-        "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate",
-    ),
+    lib_hll::<
+        hll::HllLib<HllBucketListP12>,
+        hll::HllLib<HllBucketListP14>,
+        hll::HllLib<HllBucketListP16>,
+        CardinalityGT,
+    >("asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}"),
     scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
     // -------- HLL, HIP estimator --------
     // Its own algorithm: the estimate is maintained on the insert path instead
     // of scanned at query time, so it is different arithmetic and a different
     // number, not a different implementation of one number.
-    scored::<hll::HllLibHip, CardinalityGT>(
-        "asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate",
-    ),
+    lib_hll::<
+        hll::HllLibHip<HllBucketListP12>,
+        hll::HllLibHip<HllBucketListP14>,
+        hll::HllLibHip<HllBucketListP16>,
+        CardinalityGT,
+    >("asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}"),
     // -------- HLL, parallel insert --------
     parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
     // -------- KLL (quantile, rank error) --------
@@ -367,13 +425,13 @@ pub const ROWS: &[Row] = &[
         "sketch_oxide KllSketch: quantile() per call",
     ),
     ordered::<kll::KllLibPerCall<i64>, kll::KllLibPerCall<f64>, RankErrorGT>(
-        "asap_sketchlib::KLL: quantile() per call",
+        "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
     ),
     ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: cdf() built in prepare",
     ),
     ordered::<kll::KllLibCdf<i64>, kll::KllLibCdf<f64>, RankErrorGT>(
-        "asap_sketchlib::KLL: cdf() built in prepare",
+        "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
     ),
     scored::<polars::PolarsQuantileKll, RankErrorGT>("polars exact: 101-point quantile grid"),
     // -------- CMS (frequency) --------

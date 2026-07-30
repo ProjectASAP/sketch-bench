@@ -6,7 +6,7 @@
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CmsParams;
-use crate::wrappers::require_shape;
+use crate::wrappers::{require_resolved_shape, require_shape};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -16,12 +16,22 @@ use asap_sketchlib::{
     impl_fixed_matrix, CountMin, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D,
 };
 
-/// Convert `(rows, cols)` → `(epsilon, delta)` for the oxide / datasketches
-/// APIs, which take error bounds rather than raw dimensions. Matches
-/// `5 / 2048` → `0.0013 / 0.0067` within float tolerance.
+/// Convert `(rows, cols)` → `(epsilon, delta)` for the oxide API, which takes
+/// error bounds and derives the dimensions back out of them.
+///
+/// The inversion has to land on the library's own arithmetic, which is
+/// `width = ceil(2/ε).next_power_of_two()` and `depth = ceil(ln(1/δ))`. Solving
+/// for `ceil(2/ε) = cols` gives `ε = 2/cols`, and the half-step below keeps the
+/// quotient off the integer boundary where one float ulp would tip the `ceil`
+/// to `cols + 1` and the power-of-two rounding would then double the table.
+/// That is exactly the bug the CountSketch side of this pair had.
+///
+/// This is a claim about `sketch_oxide` 0.1.6, so nothing rests on it being
+/// right: [`require_resolved_shape`] checks the built sketch and refuses if the
+/// library resolved the request to anything else.
 fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
-    let epsilon = std::f64::consts::E / cols as f64;
-    let delta = (-(rows as f64)).exp();
+    let epsilon = 2.0 / (cols as f64 - 0.5);
+    let delta = (-(rows as f64 - 0.5)).exp();
     (epsilon, delta)
 }
 
@@ -41,6 +51,11 @@ impl InitSketch for CmsOxide {
         let (epsilon, delta) = dims_to_err(p.rows, p.cols);
         let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
             .map_err(|e| BuildError(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}")))?;
+        require_resolved_shape(
+            "oxide CMS",
+            (inner.depth(), inner.width()),
+            (p.rows, p.cols),
+        )?;
         Ok(Self { inner })
     }
 }
@@ -424,62 +439,50 @@ mod tests {
         assert_eq!(sketch.memory_bytes(), 5 * 2048 * 8);
     }
 
-    /// Two configs the crate resolves to one table must report one footprint.
-    /// `cols` is a request: the width is derived from ε and rounded up to a
-    /// power of two, so 3000 and 4096 build the same sketch and score the same
-    /// error. Reporting the request would put those two identical measurements
-    /// at x-positions 27% apart on every accuracy-vs-memory plot.
+    /// A `cols` the crate cannot resolve exactly is refused, naming the table it
+    /// would have built.
     ///
-    /// Stated as an equality between two configs rather than a pinned number, so
-    /// it keeps holding if the crate changes how it rounds.
+    /// This used to build: `cols = 3000` and `cols = 4096` both allocated 4096
+    /// columns, scored identical error, and were recorded as two different
+    /// configs. That put one measurement at two x-positions 27% apart on every
+    /// accuracy-vs-memory plot. A refusal is the only honest answer, since the
+    /// error bound the API takes cannot express 3000 columns.
     #[test]
-    fn oxide_cms_reports_the_table_it_built_not_the_one_requested() {
-        let of = |cols: usize| {
-            CmsOxide::init(&ParamSet::of(&CmsParams { rows: 5, cols }))
-                .expect("both are valid oxide shapes")
-                .memory_bytes()
+    fn oxide_cms_refuses_a_cols_it_cannot_resolve_exactly() {
+        let Err(err) = CmsOxide::init(&ParamSet::of(&CmsParams {
+            rows: 5,
+            cols: 3000,
+        })) else {
+            panic!("cols=3000 resolves to a 4096-wide table, so it must be refused");
         };
-        assert_eq!(
-            of(3000),
-            of(4096),
-            "cols=3000 and cols=4096 resolve to one table, so one footprint"
-        );
+        let err = err.to_string();
+        assert!(err.contains("3000") && err.contains("4096"), "{err}");
     }
 
-    /// The same property for CountSketch, where the crate also floors the depth
-    /// at 3 so the median has enough estimates to be one. A `rows=2` request
-    /// therefore builds 3 rows and must say so.
+    /// The same for CountSketch's depth floor: the crate takes a median across
+    /// rows and refuses to do it over fewer than 3, so `rows = 2` cannot be
+    /// honoured and is refused instead of quietly building 3.
     #[test]
-    fn oxide_countsketch_reports_the_depth_it_built_not_the_one_requested() {
-        let of = |rows: usize| {
-            CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams { rows, cols: 2048 }))
-                .expect("both are valid oxide shapes")
-                .memory_bytes()
+    fn oxide_countsketch_refuses_a_depth_below_its_floor() {
+        let Err(err) = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
+            rows: 2,
+            cols: 2048,
+        })) else {
+            panic!("rows=2 resolves to a 3-row table, so it must be refused");
         };
-        assert_eq!(
-            of(2),
-            of(3),
-            "rows=2 and rows=3 resolve to one table, so one footprint"
-        );
+        assert!(err.to_string().contains("2048"), "{err}");
     }
 
-    /// The two oxide rows do **not** land on one table at one nominal shape, and
-    /// this pins by how much.
+    /// One `--config`, one counter budget, across the two oxide rows.
     ///
-    /// `CmsOxide` asks for `cols` through `ε = e/cols`, and the crate's
-    /// `ceil(2/ε).next_power_of_two()` returns exactly `cols` at every power of
-    /// two. `CsOxide` asks through `ε = sqrt(3/cols)`, and `3/ε²` does not
-    /// round-trip in `f64`: it lands a hair above `cols`, `ceil` takes it to
-    /// `cols + 1`, and the power-of-two rounding then doubles it. So `cols=2048`
-    /// builds 2048 columns of Count-Min and 4096 of CountSketch.
-    ///
-    /// Both footprints below are truthful about what was allocated. What is not
-    /// settled is whether `cols` should mean the same thing to both rows, which
-    /// is a question about the panel, not about this formula. Until it is
-    /// settled, a CMS-vs-CountSketch comparison at one `--config` is comparing
-    /// two counter budgets, and this test is where that fact is written down.
+    /// This is the property the ε inversions exist to hold. It did not hold
+    /// before: CountSketch asked through `ε = sqrt(3/cols)`, `3/ε²` did not
+    /// round-trip in `f64`, `ceil` took it to `cols + 1` and the power-of-two
+    /// rounding doubled it, so `cols = 2048` built 2048 columns of Count-Min and
+    /// 4096 of CountSketch. A CMS-vs-CountSketch comparison at one config was
+    /// comparing two budgets.
     #[test]
-    fn the_two_oxide_rows_resolve_one_config_to_different_tables() {
+    fn the_two_oxide_rows_resolve_one_config_to_one_shape() {
         let cms = CmsOxide::init(&shape()).expect("5x2048 is a valid oxide shape");
         let cs = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
             rows: 5,
@@ -490,11 +493,29 @@ mod tests {
         // 8 bytes per counter on both sides: `table: Vec<u64>` and `Vec<i64>`.
         // Sizing either as 32-bit once halved a reported footprint and made one
         // algorithm look twice as space-efficient at identical measured accuracy.
-        assert_eq!(cms.memory_bytes(), 5 * 2048 * 8, "CMS builds the width asked for");
-        assert_eq!(
-            cs.memory_bytes(),
-            5 * 4096 * 8,
-            "CountSketch's ε round-trip doubles the width, and the footprint says so"
-        );
+        assert_eq!(cms.memory_bytes(), 5 * 2048 * 8);
+        assert_eq!(cs.memory_bytes(), 5 * 2048 * 8);
+    }
+
+    /// Every power-of-two width in the range a sweep would walk resolves
+    /// exactly, on both rows. The inversion is arithmetic on floats, so the
+    /// property worth pinning is that it holds across the range and not just at
+    /// the one shape the tests above happen to use.
+    #[test]
+    fn every_power_of_two_shape_round_trips_on_both_oxide_rows() {
+        for lg in 3..=16u32 {
+            let cols = 1usize << lg;
+            for rows in 3..=8usize {
+                let cms = CmsOxide::init(&ParamSet::of(&CmsParams { rows, cols }))
+                    .unwrap_or_else(|e| panic!("cms {rows}x{cols}: {e}"));
+                assert_eq!(cms.memory_bytes(), rows * cols * 8, "cms {rows}x{cols}");
+                let cs = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
+                    rows,
+                    cols,
+                }))
+                .unwrap_or_else(|e| panic!("countsketch {rows}x{cols}: {e}"));
+                assert_eq!(cs.memory_bytes(), rows * cols * 8, "countsketch {rows}x{cols}");
+            }
+        }
     }
 }
