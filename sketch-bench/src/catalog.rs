@@ -367,6 +367,8 @@ pub const ROWS: &[Row] = &[
     plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
     plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
     // -------- Hydra (per-subpopulation frequency over labelled records) --------
+    // The cell type names the algorithm, because the cell decides which
+    // statistic the grid answers. See the module header in `wrappers/hydra.rs`.
     scored::<hydra::HydraCms, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
     ),
@@ -432,8 +434,8 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::params::{
-        CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraParams, KllParams,
-        NitroParams, SketchParams, TopkParams, UnivMonParams,
+        CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraCmsParams,
+        KllParams, NitroParams, SketchParams, TopkParams, UnivMonParams,
     };
     use std::collections::BTreeSet;
 
@@ -449,7 +451,7 @@ mod tests {
             "dd" => ParamSet::of(&DdParams::canonical()),
             "elastic" => ParamSet::of(&ElasticParams::canonical()),
             "nitro" => ParamSet::of(&NitroParams::canonical()),
-            "hydra" => ParamSet::of(&HydraParams::canonical()),
+            "hydra-cms" => ParamSet::of(&HydraCmsParams::canonical()),
             "topk" => ParamSet::of(&TopkParams::canonical()),
             "univmon" => ParamSet::of(&UnivMonParams::canonical()),
             other => panic!("no canonical params known for algorithm '{other}'"),

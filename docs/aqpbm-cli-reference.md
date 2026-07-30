@@ -39,7 +39,8 @@ Usage: approxbench sketchbench [OPTIONS] --algorithm <ALGORITHM> --impl <IMPL_NA
 Identity:
       --algorithm <ALGORITHM>
           Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic, nitro, univmon,
-          hydra). `--list-impls` prints every (algorithm, impl) pair
+          hydra-cms). The Hydra cell type is on this axis because it decides which statistic
+          the grid answers. `--list-impls` prints every (algorithm, impl) pair
 
       --impl <IMPL_NAME>
           Implementation within the algorithm, exactly one (`oxide`). `--list-impls` shows the
@@ -74,8 +75,8 @@ Workload:
           options; `--input` wins over it.
 
           A file holding a *list* of specs is a multi-column stream: the last column is the
-          value, the ones before it are labels. The rows ingesting labelled records (`hydra`)
-          need one; every other row refuses it.
+          value, the ones before it are labels. The rows ingesting labelled records (the
+          `hydra-*` algorithms) need one; every other row refuses it.
 
       --workload <WORKLOAD>
           Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is set

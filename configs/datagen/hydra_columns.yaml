@@ -1,10 +1,12 @@
-# A multi-column stream for the record-ingesting rows (`hydra`): a list of
-# specs, where the last column is the value and the ones before it are labels.
-# Each column is an ordinary single-column spec, so its cardinality, skew and
-# seed are steered independently.
+# A multi-column stream for the record-ingesting rows (the `hydra-*`
+# algorithms): a list of specs, where the last column is the value and the ones
+# before it are labels. Each column is an ordinary single-column spec, so its
+# cardinality, skew and seed are steered independently.
 #
-# Run with:
-#   approxbench bench --sketch hydra --impl lib-cm \
+# The cell type is on the algorithm axis, so which statistic you get is chosen
+# by `--algorithm`:
+#
+#   approxbench sketchbench --algorithm hydra-cms --impl lib \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" --accuracy
 #
@@ -17,8 +19,9 @@
 #
 # The columns here share the default alphabet, so their value domains overlap: a
 # query for label `"abc"` cannot distinguish the key1 group from the key2 group,
-# and the estimate absorbs both. Give each column its own `string.alphabet` to
-# make the domains disjoint and isolate the sketch's own error.
+# and the estimate absorbs both. This is #74. Give each column its own
+# `string.alphabet` to make the domains disjoint and isolate the sketch's own
+# error.
 
 # key1: the column the comparator groups by.
 - shape: keys

@@ -119,25 +119,39 @@ pub struct DdParams {
 }
 sketch_params!(DdParams, "dd", DdParams { alpha: 0.005 });
 
-/// Hydra is two nested shapes, so it takes two pairs of dimensions: `rows` and
-/// `cols` size the outer grid a subpopulation key hashes into, `cell_rows` and
-/// `cell_cols` size the counter array inside every one of those cells.
+// ---------- Hydra, one algorithm per cell type ----------
+//
+// The cell type is on the algorithm axis, not the impl axis, because each cell
+// answers a different statistic and is scored by a different comparator. See
+// `docs/sketch-bench.md` on what makes a panel meaningful. Every cell type
+// comes from `asap_sketchlib::sketch_framework::Hydra`, so each has one impl,
+// `lib`.
+//
+// Splitting them is also what lets each keep an ordinary params struct with
+// `deny_unknown_fields` on: a single `hydra` algorithm carrying every cell
+// type's knobs would have to accept one cell's parameter on another's row and
+// ignore it.
+
+/// Hydra over Count-Min cells: two nested shapes, so two pairs of dimensions.
+/// `rows` and `cols` size the outer grid a subpopulation key hashes into,
+/// `cell_rows` and `cell_cols` size the counter array inside every one of those
+/// cells.
 ///
 /// Memory is their product, so the two pairs are not interchangeable knobs: a
 /// grid of 1024 columns holding 2048-column cells is three orders of magnitude
 /// past either one alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HydraParams {
+pub struct HydraCmsParams {
     pub rows: usize,
     pub cols: usize,
     pub cell_rows: usize,
     pub cell_cols: usize,
 }
 sketch_params!(
-    HydraParams,
-    "hydra",
-    HydraParams {
+    HydraCmsParams,
+    "hydra-cms",
+    HydraCmsParams {
         rows: 3,
         cols: 128,
         cell_rows: 3,

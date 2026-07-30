@@ -47,7 +47,9 @@ pub enum Cmd {
 )]
 pub struct SketchbenchArgs {
     /// Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic,
-    /// nitro, univmon, hydra). `--list-impls` prints every (algorithm, impl)
+    /// nitro, univmon, hydra-cms). The Hydra cell type is on this axis because
+    /// it decides which statistic the grid answers.
+    /// `--list-impls` prints every (algorithm, impl)
     /// pair.
     #[arg(long, required_unless_present = "list_impls", help_heading = "Identity")]
     pub algorithm: Option<String>,
@@ -87,7 +89,8 @@ pub struct SketchbenchArgs {
     ///
     /// A file holding a *list* of specs is a multi-column stream: the last
     /// column is the value, the ones before it are labels. The rows ingesting
-    /// labelled records (`hydra`) need one; every other row refuses it.
+    /// labelled records (the `hydra-*` algorithms) need one; every other row
+    /// refuses it.
     #[arg(long, help_heading = "Workload")]
     pub spec: Option<String>,
     /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is

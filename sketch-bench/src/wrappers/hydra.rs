@@ -1,20 +1,29 @@
-//! Hydra wrapper — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022), the
+//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022), the
 //! grid-of-sketches that answers per-subpopulation queries out of one shared
 //! structure.
 //!
-//! Two things separate this row from every other one in the catalog.
+//! Two things separate these rows from every other one in the catalog.
 //!
-//! Its item is a **record**, not a key: a stream of `d` label columns plus a
-//! value, so it ingests `Labeled<i64>` and reads its workload from a column
-//! list. And its insert **fans out**: one record is written into every non-empty
-//! subset of its labels, so `d` labels cost `2^d - 1` cell insertions. The
-//! reported throughput is records per second, which is the only denominator
-//! comparable across `d`; multiply by `2^d - 1` for cell insertions.
+//! Their item is a **record**, not a key: a stream of `d` label columns plus a
+//! value, so they ingest `Labeled<V>` and read their workload from a column
+//! list. And their insert **fans out**: one record is written into every
+//! non-empty subset of its labels, so `d` labels cost `2^d - 1` cell
+//! insertions. The reported throughput is records per second, which is the only
+//! denominator comparable across `d`; multiply by `2^d - 1` for cell
+//! insertions.
 //!
-//! With a Count-Min counter in each cell, the statistic is
-//! [`SubpopFrequencyOps`]: how often a value occurred *within* a subpopulation.
-//! The size of the subpopulation itself is a different statistic that a
-//! Count-Min cell cannot answer, and would want an HLL-celled row.
+//! # Why the cell type is on the algorithm axis
+//!
+//! What sits in a cell decides which statistic the grid answers, so it is a
+//! different question and not a different answer to one question. A Count-Min
+//! cell counts occurrences of a value inside a group, which is
+//! [`SubpopFrequencyOps`], and it structurally cannot report the size of the
+//! group itself. A cell holding a cardinality or an ordered sketch answers a
+//! statistic this row has no way to reach, and would be scored by a different
+//! comparator.
+//!
+//! So the cell type names the algorithm, `hydra-cms` here, and the impl axis is
+//! left to say which library the grid came from.
 
 use asap_sketchlib::input::HydraCounter;
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, Vector2D};
@@ -26,25 +35,45 @@ use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::workload::Labeled;
 
-use crate::params::HydraParams;
+use crate::params::HydraCmsParams;
+
+/// Refuse a zero grid dimension by name. Split out from the cell's own checks
+/// because the outer grid is the shape every cell type has in common.
+fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), BuildError> {
+    for (name, v) in [("rows", rows), ("cols", cols)] {
+        if v == 0 {
+            return Err(BuildError(format!("{algorithm}: {name} must be > 0")));
+        }
+    }
+    Ok(())
+}
+
+/// Bytes the grid itself costs, on top of the counters inside the cells: every
+/// cell is an enum around a sketch struct, and `Hydra` keeps one more of them
+/// as the prototype it clones into new cells.
+///
+/// Reported separately from the counter bytes so each row's footprint states
+/// the same two components. #75 records that leaving this out is a fixed
+/// under-report.
+fn grid_overhead_bytes(rows: usize, cols: usize) -> usize {
+    (rows * cols + 1) * std::mem::size_of::<HydraCounter>()
+}
+
+// ---------- hydra-cms: subpopulation frequency ----------
 
 /// Hydra over Count-Min cells.
 pub struct HydraCms {
     inner: Hydra,
-    params: HydraParams,
+    params: HydraCmsParams,
 }
 
 impl InitSketch for HydraCms {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraParams = config.parse()?;
-        for (name, v) in [
-            ("rows", p.rows),
-            ("cols", p.cols),
-            ("cell_rows", p.cell_rows),
-            ("cell_cols", p.cell_cols),
-        ] {
+        let p: HydraCmsParams = config.parse()?;
+        check_grid(p.rows, p.cols, "hydra-cms")?;
+        for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
             if v == 0 {
-                return Err(BuildError(format!("hydra: {name} must be > 0")));
+                return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
             }
         }
         let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
@@ -92,18 +121,17 @@ impl SubpopFrequencyOps for HydraCms {
 
 impl MemoryFootprint for HydraCms {
     /// The grid holds `rows * cols` cells and every cell is a full Count-Min of
-    /// `i32` counters, so the footprint is the product of both shapes.
+    /// `i32` counters, so the counter term is the product of both shapes.
     fn memory_bytes(&self) -> usize {
         let p = &self.params;
         p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
+            + grid_overhead_bytes(p.rows, p.cols)
     }
 }
 
-// ---------- catalog identity ----------
-
 impl BenchImpl for HydraCms {
-    type Params = HydraParams;
-    const IMPL: &'static str = "lib-cm";
+    type Params = HydraCmsParams;
+    const IMPL: &'static str = "lib";
 }
 
 #[cfg(test)]
@@ -112,7 +140,7 @@ mod tests {
     use aqpbm_core::config::SketchParams;
 
     fn built() -> HydraCms {
-        HydraCms::init(&ParamSet::of(&HydraParams {
+        HydraCms::init(&ParamSet::of(&HydraCmsParams {
             rows: 3,
             cols: 64,
             cell_rows: 3,
@@ -177,7 +205,7 @@ mod tests {
 
     #[test]
     fn zero_dimensions_are_refused_by_name() {
-        let bad = ParamSet::of(&HydraParams {
+        let bad = ParamSet::of(&HydraCmsParams {
             rows: 3,
             cols: 0,
             cell_rows: 3,
@@ -190,16 +218,21 @@ mod tests {
         assert!(err.contains("cols"), "error should name the field: {err}");
     }
 
-    /// Footprint is the product of both shapes, which is the property that makes
-    /// the two dimension pairs non-interchangeable.
+    /// Footprint is the product of both shapes plus the grid's own cells, which
+    /// is the property that makes the two dimension pairs non-interchangeable.
     #[test]
     fn footprint_is_the_product_of_both_shapes() {
         let h = built();
-        assert_eq!(h.memory_bytes(), 3 * 64 * 3 * 256 * 4);
+        let counters = 3 * 64 * 3 * 256 * 4;
+        assert_eq!(h.memory_bytes(), counters + grid_overhead_bytes(3, 64));
+        // The counters still dominate, so the overhead term must not be what
+        // the number is mostly made of.
+        assert!(h.memory_bytes() < counters * 2);
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(HydraCms::init(&ParamSet::of(&HydraParams::canonical())).is_ok());
+        assert!(HydraCms::init(&ParamSet::of(&HydraCmsParams::canonical())).is_ok());
     }
+
 }
