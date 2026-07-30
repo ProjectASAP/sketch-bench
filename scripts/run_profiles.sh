@@ -45,7 +45,7 @@
 #                  .bench.accuracy.l1_err
 #
 # Notes:
-# - lib-fastpath-parallel impls have no accuracy comparator; they appear
+# - the `*-parallel` algorithms have no accuracy comparator; they appear
 #   in output with .bench.accuracy absent.
 # - polars impls are DataFrame batch-insert baselines, not streaming
 #   sketches; their memory/CPU cost is not directly comparable.

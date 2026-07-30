@@ -102,7 +102,7 @@ def panel_cms_2k() -> dict[str, list[float]]:
     pdir = RAW_DIR / "cms_2k"
     cfg = "rows=5 cols=2048"
     return {
-        "sketchlib (fixed matrix)": read_throughputs(cli_bench("cms", "lib-fixedmatrix-fast", cfg, pdir)),
+        "sketchlib (fixed matrix)": read_throughputs(cli_bench("cms-fastpath-fixedmatrix", "lib", cfg, pdir)),
         "oxide":                    read_throughputs(cli_bench("cms", "oxide", cfg, pdir)),
         "datasketches (Rust)":      read_throughputs(cli_bench("cms", "datasketches", cfg, pdir)),
         "datasketches (C++)":       read_throughputs(cpp_bench(CPP_BUILD / "cms" / "datasketches_cms", 2048, pdir, "ds_cms_2k")),
@@ -113,7 +113,7 @@ def panel_cs_2k() -> dict[str, list[float]]:
     pdir = RAW_DIR / "cs_2k"
     cfg = "rows=5 cols=2048"
     return {
-        "sketchlib (fixed matrix)": read_throughputs(cli_bench("countsketch", "lib-fixedmatrix-fast", cfg, pdir)),
+        "sketchlib (fixed matrix)": read_throughputs(cli_bench("countsketch-fastpath-fixedmatrix", "lib", cfg, pdir)),
         "oxide":                    read_throughputs(cli_bench("countsketch", "oxide", cfg, pdir)),
         # final_cs is hard-coded 5x2048; --k is unused for InsertOpt CountSketch
         "InsertOptimized (Final)":  read_throughputs(cpp_bench(CPP_BUILD / "cs" / "final_cs", None, pdir, "final_cs_2k")),
@@ -127,12 +127,12 @@ def panel_cms_cs_32k() -> tuple[list[str], dict[str, list[float]]]:
     cfg = "rows=5 cols=32768"
     data = {}
     # CMS half (4 bars)
-    data[("CMS@32K", "sketchlib (fixed matrix)")] = read_throughputs(cli_bench("cms", "lib-fixedmatrix-fast-32k", cfg, pdir))
+    data[("CMS@32K", "sketchlib (fixed matrix)")] = read_throughputs(cli_bench("cms-fastpath-fixedmatrix", "lib", cfg, pdir))
     data[("CMS@32K", "oxide")]                    = read_throughputs(cli_bench("cms", "oxide", cfg, pdir))
     data[("CMS@32K", "datasketches (Rust)")]      = read_throughputs(cli_bench("cms", "datasketches", cfg, pdir))
     data[("CMS@32K", "datasketches (C++)")]       = read_throughputs(cpp_bench(CPP_BUILD / "cms" / "datasketches_cms", 32768, pdir, "ds_cms_32k"))
     # CS half (2 bars only — datasketches has no CountSketch)
-    data[("CS@32K",  "sketchlib (fixed matrix)")] = read_throughputs(cli_bench("countsketch", "lib-fixedmatrix-fast-32k", cfg, pdir))
+    data[("CS@32K",  "sketchlib (fixed matrix)")] = read_throughputs(cli_bench("countsketch-fastpath-fixedmatrix", "lib", cfg, pdir))
     data[("CS@32K",  "oxide")]                    = read_throughputs(cli_bench("countsketch", "oxide", cfg, pdir))
     return data
 
@@ -152,8 +152,8 @@ def panel_kll() -> dict[str, list[float]]:
     pdir = RAW_DIR / "kll"
     cfg = "k=200"
     return {
-        "sketchlib":               read_throughputs(cli_bench("kll", "lib-cdf", cfg, pdir)),
-        "oxide":                   read_throughputs(cli_bench("kll", "oxide-cdf", cfg, pdir)),
+        "sketchlib":               read_throughputs(cli_bench("kll-cdf", "lib", cfg, pdir)),
+        "oxide":                   read_throughputs(cli_bench("kll-cdf", "oxide", cfg, pdir)),
         "datasketches (C++)":      read_throughputs(cpp_bench(CPP_BUILD / "kll" / "datasketches_kll", 200, pdir, "ds_kll")),
         "InsertOptimized (Final)": read_throughputs(cpp_bench(CPP_BUILD / "kll" / "final_kll", 200, pdir, "final_kll")),
     }

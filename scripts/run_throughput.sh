@@ -7,9 +7,12 @@
 # `throughput/octo/`. All of those are now reachable through the
 # aqpbm-cli wrappers:
 #
-#   sketch-bench/src/wrappers/polars.rs    — *.polars   (exact baselines)
-#   sketch-bench/src/wrappers/parallel.rs  — *.lib-fastpath-parallel (octo)
-#   sketch-bench/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — regular impls
+#   sketch-bench/src/wrappers/polars.rs    — */polars   (exact baselines)
+#   sketch-bench/src/wrappers/parallel.rs  — *-parallel/lib (octo)
+#   sketch-bench/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — the rest
+#
+# `--algorithm` takes the structural variant too (`cms-fastpath-vector2d`, not
+# `cms`), and `--impl` takes the library alone. `--list-impls` prints the pairs.
 #
 # Output layout mirrors the legacy `throughput/<algorithm>/output/`
 # shape so the plot scripts under `visualization/plots/throughput/`
@@ -88,16 +91,22 @@ run_algorithm() {
 }
 
 run_octo() {
-  # Parallel-insert impl across the worker-count sweep. Each
+  # Parallel-insert rows across the worker-count sweep. Each
   # invocation appends to `octo_throughput_results_rust.csv`.
+  #
+  # Parallel insert is its own algorithm, and its per-worker sketch is a
+  # compile-time shape, so the config below is the only one these rows build at.
   IFS=',' read -ra WORKERS <<<"${WORKERS_LIST}"
   for n in "${WORKERS[@]}"; do
-    for algo_cfg in "cms|rows=5 cols=32768" "countsketch|rows=5 cols=32768" "hll|lg_k=14"; do
+    for algo_cfg in \
+        "cms-fastpath-fixedmatrix-32k-parallel|rows=5 cols=32768" \
+        "countsketch-fastpath-fixedmatrix-32k-parallel|rows=5 cols=32768" \
+        "hll-fastpath-parallel|lg_k=14"; do
       local ALGO="${algo_cfg%%|*}"
       local CFG="${algo_cfg#*|}"
-      echo "===== throughput: ${ALGO}/lib-fastpath-parallel workers=${n} ====="
+      echo "===== throughput: ${ALGO}/lib workers=${n} ====="
       cargo run --release --quiet -p aqpbm-cli -- sketchbench \
-        --algorithm "${ALGO}" --impl lib-fastpath-parallel \
+        --algorithm "${ALGO}" --impl lib \
         --config "${CFG}" \
         --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
         --workers "${n}" \

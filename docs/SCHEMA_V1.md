@@ -15,15 +15,16 @@ non-Rust emitter (currently just C++) can produce bytes that
 | field | required | notes |
 |---|---|---|
 | `schema_version` | yes | integer; currently **2**. |
-| `sketch` | yes | family name. Lowercase. Examples: `"hll"`, `"cms"`, `"cs"`, `"kll"`. |
-| `impl` | yes | implementation key. Rust uses `"oxide"` / `"lib"` / etc.; C++ uses `"datasketches"` / `"final"` / `"naive"` / etc. |
+| `sketch` | yes | algorithm name, structural variant included. Lowercase. Examples: `"hll"`, `"hll-hip"`, `"kll-cdf"`, `"cms-fastpath-vector2d"`. |
+| `family` | optional | the family `sketch` belongs to: the algorithms sharing one parameter vocabulary, e.g. `"cms"` for every `cms-*`. Group by this to compare libraries, by `sketch` to compare variants. Absent in records written before it existed. |
+| `impl` | yes | the implementing library, and only that. Rust uses `"oxide"` / `"datasketches"` / `"lib"` / `"polars"`; C++ uses `"datasketches"` / `"final"` / `"naive"` / etc. |
 | `language` | recommended | `"rust"` or `"cpp"`. Optional — missing is interpreted as `"rust"` for back-compat with pre-`language` records. |
 | `workload` | yes | `WorkloadDescription` (see below). |
 | `mode` | yes | `"bench" \| "profile" \| "runtime"`. C++ track always emits `"bench"`. |
 | `runs` | yes | number of measured runs aggregated into this record. |
 | `bench` | optional | `BenchSection` — measured numbers. Required for `mode = "bench"`. |
 | `profile` | optional | `ProfileSection` — micro-architectural data. Not used by C++ track yet. |
-| `sketch_config` | optional | free-form JSON of construction params. |
+| `sketch_config` | optional | free-form JSON of construction params. Always the config the run was built at: a row that cannot honour a value refuses it rather than adjusting it, so this never needs reading against what the library actually did. |
 | `source` | yes | `"cli" \| "asap-fusion" \| "data-collector" \| "asap-query" \| "cpp-bench"`. The C++ track always emits `"cpp-bench"`. |
 | `timestamp` | yes | RFC3339 / ISO-8601 with a `Z` suffix or numeric offset. |
 
@@ -79,7 +80,7 @@ finalize. For those, `finalize_time_ms` is `0.0` and the two throughput
 columns are **equal by construction**, not merely close.
 
 They diverge for implementations that defer the build — every `*/polars`
-row, and the `*/lib-fastpath-parallel` rows. Those buffer the stream into a
+row, and the `*-parallel/lib` rows. Those buffer the stream into a
 `Vec` in `update` and do all the real work in finalize, so their
 `throughput_items_per_sec` is the cost of a `Vec::push` and overstates them
 by orders of magnitude. **`build_throughput_items_per_sec` is the column to

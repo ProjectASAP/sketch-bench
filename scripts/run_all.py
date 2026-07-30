@@ -52,11 +52,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # where `cpp_dir` is the on-disk dir name in cpp-bench/ (which for the
 # countsketch algorithm is "cs").
 DEFAULT_COMBOS: list[tuple[str, str, str]] = [
-    # Rust track — names from aqpbm-cli/src/dispatch.rs
-    ("rust", "kll",         "lib-cdf"),
-    ("rust", "kll",         "oxide-cdf"),
+    # Rust track — `approxbench sketchbench --list-impls` names these. The
+    # algorithm carries the structural variant, the impl is the library.
+    ("rust", "kll-cdf",     "lib"),
+    ("rust", "kll-cdf",     "oxide"),
     ("rust", "countsketch", "oxide"),
-    ("rust", "countsketch", "lib-fixedmatrix-fast"),
+    ("rust", "countsketch-fastpath-fixedmatrix", "lib"),
     # C++ track — names from cpp-bench/<dir>/<impl>_<dir>
     ("cpp",  "kll",         "datasketches"),
     ("cpp",  "kll",         "final"),

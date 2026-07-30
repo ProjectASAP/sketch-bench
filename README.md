@@ -134,6 +134,7 @@ The legacy harness still works as before while the migration proceeds. Everythin
 1. Generate/verify input data (done automatically by the scripts).
 2. Execute the benchmark you want, from the repo root:
    ```bash
+   scripts/example_config_override.py   # guided tour of --config, run this first
    scripts/run_throughput.sh            # all algorithms incl. octo + polars
    scripts/run_accuracy.sh              # all statistics, --accuracy on
    scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
@@ -163,9 +164,12 @@ The legacy harness still works as before while the migration proceeds. Everythin
   fixed_size → final / naive → cached_level_capacities → no_min_max →
   no_self_move_protection → pcg_random → final). All emit v1 JSONL.
 - `sketch-cli/`: unified `approxbench bench` — every Rust impl + the polars
-  exact baselines + the `lib-fastpath-parallel` (octo) variants. The
+  exact baselines + the `*-parallel/lib` (octo) rows. The
   per-algorithm `throughput/<algorithm>/rust/` and `accuracy/<statistic>/rust/`
   trees have been retired into git history.
+- `scripts/example_config_override.py`: a runnable tour of the `--config`
+  surface, showing what each family's knobs do, that they reach the sketch,
+  and what a row says when it cannot build at the point it was given.
 - `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
   that fan `approxbench bench` over all algorithms and dump CSVs the legacy
   plot scripts (now under `visualization/plots/throughput/` and

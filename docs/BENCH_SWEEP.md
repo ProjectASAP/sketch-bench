@@ -82,7 +82,7 @@ Straw-man — tune these to match the paper's plots. One grid per algorithm; use
 
 ### 3.1 Impls that don't honour a knob
 
-Some wrappers bake dimensions at compile time (e.g. `lib-fixedmatrix-custom-fast` is hard-coded `5 × 65538`). For those, sweep runs the single supported config and prints one stderr line explaining the skip. The JSONL stream stays clean.
+Some wrappers bake dimensions at compile time (e.g. `cms-fastpath-fixedmatrix` is hard-coded `5 × 65538`). Those refuse any other config by name, so a sweep over them is a sweep of one point.
 
 ---
 

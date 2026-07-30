@@ -209,19 +209,19 @@ PANEL_KLL = "kll"
 
 SKETCHLIB_STEPS = [
     (PANEL_CMS_CS, "CMS@2K",  "asap_sketchlib",
-     lambda: cli_bench("cms",         "lib-fixedmatrix-fast",     "rows=5 cols=2048",  RAW_DIR / "cms_cs"), []),
+     lambda: cli_bench("cms-fastpath-fixedmatrix",  "lib", "rows=5 cols=2048",  RAW_DIR / "cms_cs"), []),
     (PANEL_CMS_CS, "CMS@32K", "asap_sketchlib",
-     lambda: cli_bench("cms",         "lib-fixedmatrix-fast-32k", "rows=5 cols=32768", RAW_DIR / "cms_cs"), []),
+     lambda: cli_bench("cms-fastpath-fixedmatrix", "lib", "rows=5 cols=32768", RAW_DIR / "cms_cs"), []),
     (PANEL_CMS_CS, "CS@2K",   "asap_sketchlib",
-     lambda: cli_bench("countsketch", "lib-fixedmatrix-fast",     "rows=5 cols=2048",  RAW_DIR / "cms_cs"), []),
+     lambda: cli_bench("countsketch-fastpath-fixedmatrix",  "lib", "rows=5 cols=2048",  RAW_DIR / "cms_cs"), []),
     (PANEL_CMS_CS, "CS@32K",  "asap_sketchlib",
-     lambda: cli_bench("countsketch", "lib-fixedmatrix-fast-32k", "rows=5 cols=32768", RAW_DIR / "cms_cs"), []),
+     lambda: cli_bench("countsketch-fastpath-fixedmatrix", "lib", "rows=5 cols=32768", RAW_DIR / "cms_cs"), []),
     (PANEL_HLL,    "HLL",     "asap_sketchlib (Classic)",
      lambda: cli_bench("hll",         "lib",                      "lg_k=14",           RAW_DIR / "hll"), []),
     (PANEL_HLL,    "HLL",     "asap_sketchlib (HIP)",
-     lambda: cli_bench("hll",         "lib-hip",                  "lg_k=14",           RAW_DIR / "hll"), []),
+     lambda: cli_bench("hll-hip",     "lib", "lg_k=14",           RAW_DIR / "hll"), []),
     (PANEL_KLL,    "KLL",     "asap_sketchlib",
-     lambda: cli_bench("kll",         "lib-cdf",                  "k=200",             RAW_DIR / "kll",
+     lambda: cli_bench("kll-cdf",     "lib", "k=200",             RAW_DIR / "kll",
                        warmup_runs=WARMUP_RUNS_KLL), []),
 ]
 
@@ -268,7 +268,7 @@ BASELINE_STEPS = [
     # KLL — no C++ DataSketches query (Insert-Opt fork has no quantile API);
     # final_kll is InsertOptimized (also no query).
     (PANEL_KLL,    "KLL",     "oxide",
-     lambda: cli_bench("kll",         "oxide-cdf",    "k=200",             RAW_DIR / "kll",
+     lambda: cli_bench("kll-cdf",     "oxide", "k=200",             RAW_DIR / "kll",
                        warmup_runs=WARMUP_RUNS_KLL), []),
     (PANEL_KLL,    "KLL",     "datasketches (C++)",
      lambda: cpp_bench(CPP_BUILD / "kll" / "datasketches_kll", 200,   RAW_DIR / "kll", "ds_kll"), []),

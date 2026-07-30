@@ -388,7 +388,7 @@ estimate how much the last few seconds of that process wobbled. Dividing their
 spread by `sqrt(N)` produced an interval far tighter than the command's own
 reproducibility, and raising N made it narrower and *more* wrong. Four
 identical invocations produced four mutually disjoint 95% intervals; measured
-on `cms/lib-fixedmatrix-fast-32k`, the cross-process stddev was **3x** the
+on `cms-fastpath-fixedmatrix/lib`, the cross-process stddev was **3x** the
 within-process stddev.
 
 So a repeat is a whole process (`sketch-cli/src/repeat.rs`): `--repeats R`

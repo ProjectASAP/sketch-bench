@@ -38,15 +38,15 @@ Usage: approxbench sketchbench [OPTIONS] --algorithm <ALGORITHM> --impl <IMPL_NA
 
 Identity:
       --algorithm <ALGORITHM>
-          Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic, nitro, univmon,
-          hydra-cms, hydra-hll, hydra-kll). The Hydra cell type is on this axis because it
-          decides which statistic the grid answers. `--list-impls` prints every (algorithm,
-          impl) pair
+          Accumulator algorithm, structural variant included: `cms` and `cms-fastpath-vector2d`
+          are two of them, because a different hash strategy gives different estimates. Matched
+          exactly, since one invocation measures one cell. `--list-impls` prints every
+          (algorithm, impl) pair, grouped by the family they share knobs with
 
       --impl <IMPL_NAME>
-          Implementation within the algorithm, exactly one (`oxide`). `--list-impls` shows the
-          choices. One invocation measures one (impl, config) cell; to race several, invoke once
-          per impl
+          Implementing library, and only that: `oxide`, `datasketches`, `lib` or `polars`.
+          `--list-impls` shows which the algorithm offers. One invocation measures one (impl,
+          config) cell; to race several, invoke once per impl
 
       --list-impls
           Print every (algorithm, impl) pair this bundle offers, then exit. Selects no cell and
@@ -55,13 +55,17 @@ Identity:
 Construction:
       --config <CONFIG>
           Construction config for this cell: `'k1=v1 k2=v2'`, one value per key. Omitted gives a
-          parameterless point, which tunable impls reject by name. A comma list is an error: one
-          invocation is one cell, never a grid
+          parameterless point, which every row rejects by name. A comma list is an error: one
+          invocation is one cell, never a grid.
+          
+          A row builds at exactly the values given or refuses them, naming the bound it has.
+          Nothing is clamped, rounded or ignored, so the `sketch_config` in the record is always
+          the config that ran.
 
       --workers <WORKERS>
-          Worker threads for the parallel-insert impls (`lib-fastpath-parallel`). Other impls
-          ignore it; `1` is single-threaded
-
+          Worker threads for the parallel-insert algorithms (`*-parallel`). Every other row
+          ignores it; `1` is single-threaded
+          
           [default: 1]
 
 Workload:
@@ -74,7 +78,7 @@ Workload:
           Generate in-process from a `datagen` spec file (examples in `configs/datagen/`),
           unlocking every generator shape without a disk round-trip. Wins over the inline
           options; `--input` wins over it.
-
+          
           A file holding a *list* of specs is a multi-column stream: the last column is the
           value, the ones before it are labels. The rows ingesting labelled records (the
           `hydra-*` algorithms) need one; every other row refuses it. `hydra-kll` reads the
@@ -82,68 +86,68 @@ Workload:
 
       --workload <WORKLOAD>
           Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is set
-
+          
           [default: uniform]
 
       --size <SIZE>
           Number of items in the workload
-
+          
           [default: 1000000]
 
       --cardinality <CARDINALITY>
           Cardinality (uniform: max key; zipf: key-space size)
-
+          
           [default: 100000]
 
       --zipf-s <ZIPF_S>
           Zipf `s` exponent (only used when `--workload zipf`)
-
+          
           [default: 1.1]
 
       --dtype <DTYPE>
           Numeric width for the ordered algorithms (`kll`, `dd`): `i64` or `f64`. The one
           item-type choice left, since every other row's is fixed by its wrapper, and `f64`
           elsewhere is refused by name. Encoding only
-
+          
           [default: i64]
 
       --alphabet <ALPHABET>
           Alphabet for generated string keys, for the rows whose wrappers take text. Character
           order is the digit order of the positional encoding, so a rank always renders the same
           key. Overridden by `--spec`'s own `string:` block
-
+          
           [default: abcdefghijklmnopqrstuvwxyz0123456789]
 
       --key-len <KEY_LEN>...
           Inclusive length bounds for generated string keys; equal values give a fixed length.
           Key length dominates the cost of a hashing insert path, so it is the knob worth
           sweeping
-
+          
           [default: 8 24]
 
       --seed <SEED>
           Seed for reproducibility
-
+          
           [default: 42]
 
 Repetition:
       --runs <RUNS>
           Measured runs inside one process, summarised as mean / stddev / `throughput_samples`.
           They share a process, so they support no confidence interval. See `--repeats`
-
+          
           [default: 10]
 
       --warmup-runs <WARMUP_RUNS>
           Runs discarded before measurement begins. A cold allocator and a cold cache measure
           the wrong thing
-
+          
           [default: 3]
 
       --repeats <REPEATS>
           Re-execute the whole invocation in this many separate processes and report the 95% CI
           over their means. The only setting that makes `ci95` appear. At 1 no interval is
           claimed. Costs R times the wall clock
-
+          
           [default: 1]
 
 Measurement content:
@@ -159,14 +163,14 @@ Measurement content:
       --accuracy-probes <ACCURACY_PROBES>
           Cap on distinct keys probed by the frequency comparator; `0` probes every one. Ignored
           by the cardinality / quantile / top-k comparators
-
+          
           [default: 100000]
 
       --merge-shards <MERGE_SHARDS>
           Split the stream into this many shards, time folding them into one, and compare
           against the whole stream; `1` skips the pass. Linear sketches merge exactly, so a gap
           is a defect; for KLL it is the result
-
+          
           [default: 1]
 
 Output:
@@ -177,15 +181,6 @@ Output:
           Output directory for long-format CSVs, one row per measured run, named
           `<algorithm>_throughput[_query]_results_rust.csv`. Coexists with `--report`; for plot
           scripts that consume that CSV shape
-
-      --flat
-          Write one line for the whole cell instead of one line per pass. Every metric field
-          carries the name of the pass that produced it, and the cell's identity is written once.
-          The shape a leaderboard consumes
-
-      --pass-prefix <PASS_PREFIX>
-          Rename a pass on the wire under `--flat`, as `pass=prefix`, repeatable. Only for
-          holding a consumer's existing field names steady while it migrates
 
 Options:
   -h, --help

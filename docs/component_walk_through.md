@@ -127,7 +127,7 @@ This crate connects to `aqpbm-cli` such that user can use this benchmark.
 - `params`: per-algorithm construction parameters, and where the algorithm names are declared
 - `legacy_csv`: the domain-specific long-format CSV rendering
 
-Note: A *algorithm* is the algorithm (`hll`, `cms`, `kll`) and an *impl* is one library's version of it (`oxide`, `datasketches`, `polars`, `lib-hip`), so `(hll, oxide)` names one benchmarkable row.
+Note: An *algorithm* names what is measured, structural variant included (`hll`, `hll-hip`, `cms-fastpath-vector2d`), and an *impl* names the library implementing it (`oxide`, `datasketches`, `polars`, `lib`), so `(hll, oxide)` names one benchmarkable row. Algorithms sharing a parameter vocabulary form a *family*, which is the axis a cross-library comparison groups by.
 
 Algorithm names are written in exactly two places: the `ALGORITHM` consts in `params`, and `legacy_csv`'s per-algorithm header table.
 The second is pinned rather than derived, because plot scripts read those columns positionally and renaming one silently shifts every later column.
@@ -186,7 +186,8 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 | `aqp-bench` | V2 placeholder: a second bundle sitting parallel to `sketch-bench`. | Open — stated above as "may be changed" |
 | `approxbench` | The CLI binary name. | Likely — same "sketch" question as the crates |
 | algorithm | The algorithm: `hll`, `cms`, `countsketch`, `kll`, `dd`, `topk`, `elastic`, `nitro`, `univmon`. | likely |
-| impl | One library's version of an algorithm: `oxide`, `datasketches`, `polars`, `lib`, `lib-hip`, `lib-fixedmatrix-fast`, … | likely |
+| impl | The library implementing an algorithm: `oxide`, `datasketches`, `polars`, `lib`. Nothing else goes in this column. | likely |
+| family | The algorithms sharing one parameter vocabulary: `cms` covers every `cms-*`. Group by it to compare libraries, by `algorithm` to compare variants. | likely |
 | row | One `(algorithm, impl)` pair — the unit that can be benchmarked. | No |
 | cell | One row measured against one workload at one config. What `run_cell` runs. | likely |
 | run | One measured iteration inside a cell (`--runs N`), all in the same process. | likely |

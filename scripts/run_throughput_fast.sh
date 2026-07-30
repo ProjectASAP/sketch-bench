@@ -2,10 +2,10 @@
 # Run approxbench's slim throughput path on the canonical four
 # algorithms (kll/cms/countsketch/hll):
 #
-#   kll          k=200
-#   hll          lg_k=14
-#   cms          rows=5 cols=2048   (impl: lib-fixedmatrix-fast)
-#   countsketch  rows=5 cols=2048   (impl: lib-fixedmatrix-fast)
+#   kll-cdf                              k=200
+#   hll                                  lg_k=14
+#   cms-fastpath-fixedmatrix          rows=5 cols=2048
+#   countsketch-fastpath-fixedmatrix  rows=5 cols=2048
 #
 # Wraps the run in CPU pin / governor / pre-warm logic — single
 # core, performance governor, an optional no-turbo lock, and a 2s
@@ -46,13 +46,15 @@ if [[ ${#ALGORITHMS[@]} -eq 0 ]]; then
     ALGORITHMS=(kll cms countsketch hll)
 fi
 
-# Canonical (algorithm, impl, --config) tuples.
+# Canonical (algorithm, impl, --config) tuples, keyed by the short family name
+# the caller types. The algorithm the binary is given carries the structural
+# variant; the impl is the library.
 config_for() {
     case "$1" in
-        kll)          echo "lib-cdf|k=200" ;;
-        hll)          echo "lib|lg_k=14" ;;
-        cms)          echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;
-        countsketch)  echo "lib-fixedmatrix-fast|rows=5 cols=2048" ;;
+        kll)          echo "kll-cdf|lib|k=200" ;;
+        hll)          echo "hll|lib|lg_k=14" ;;
+        cms)          echo "cms-fastpath-fixedmatrix|lib|rows=5 cols=2048" ;;
+        countsketch)  echo "countsketch-fastpath-fixedmatrix|lib|rows=5 cols=2048" ;;
         *) echo "unknown algorithm: $1" >&2; exit 1 ;;
     esac
 }
@@ -110,11 +112,13 @@ else
 fi
 
 run_one() {
-    local algorithm="$1"
+    local family="$1"
     local cfg
-    cfg=$(config_for "${algorithm}")
-    local impl="${cfg%%|*}"
-    local params="${cfg#*|}"
+    cfg=$(config_for "${family}")
+    local algorithm="${cfg%%|*}"
+    local rest="${cfg#*|}"
+    local impl="${rest%%|*}"
+    local params="${rest#*|}"
 
     echo "# === ${algorithm} / ${impl} / ${params} ===" >&2
     # Bash-quoted exec so the pre-warm busy-loop runs on the pinned core.

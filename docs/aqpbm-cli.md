@@ -152,3 +152,5 @@ approxbench sketchbench \
 
 No report path is given, so records land on stdout while progress lands on stderr.
 Redirecting stdout yields clean JSONL.
+
+`scripts/example_config_override.py` walks the same surface as a runnable tour: what each family's knobs are, that they reach the structure, that an odd point is honoured exactly, and what a row says when it cannot build at the point it was given.

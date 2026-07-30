@@ -102,7 +102,9 @@ pub trait InitSketch: Accumulator + Sized {
 
 pub trait BenchImpl: Accumulator {
     type Params: SketchParams;                 // ALGORITHM is read off this, never written here
-    const IMPL: &'static str;                  // "oxide", "lib-hip", ...
+    const IMPL: &'static str;                  // the library: "oxide", "lib", ...
+    const ALGORITHM: &'static str;             // defaults to Params::FAMILY; a
+                                               // structural variant overrides it
     const ALGORITHM: &'static str = <Self::Params as SketchParams>::ALGORITHM;
 }
 pub trait MemoryFootprint {
