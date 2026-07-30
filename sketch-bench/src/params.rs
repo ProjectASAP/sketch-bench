@@ -123,14 +123,12 @@ sketch_params!(DdParams, "dd", DdParams { alpha: 0.005 });
 //
 // The cell type is on the algorithm axis, not the impl axis, because each cell
 // answers a different statistic and is scored by a different comparator. See
-// `docs/sketch-bench.md` on what makes a panel meaningful. Every cell type
-// comes from `asap_sketchlib::sketch_framework::Hydra`, so each has one impl,
-// `lib`.
+// `docs/sketch-bench.md` on what makes a panel meaningful. All three come from
+// `asap_sketchlib::sketch_framework::Hydra`, so all three have one impl, `lib`.
 //
 // Splitting them is also what lets each keep an ordinary params struct with
 // `deny_unknown_fields` on: a single `hydra` algorithm carrying every cell
-// type's knobs would have to accept one cell's parameter on another's row and
-// ignore it.
+// type's knobs would have to accept `cell_k` on a Count-Min row and ignore it.
 
 /// Hydra over Count-Min cells: two nested shapes, so two pairs of dimensions.
 /// `rows` and `cols` size the outer grid a subpopulation key hashes into,
@@ -175,6 +173,28 @@ sketch_params!(
     HydraHllParams,
     "hydra-hll",
     HydraHllParams { rows: 3, cols: 128 }
+);
+
+/// Hydra over KLL cells: the grid shape plus the cell's accuracy parameter.
+///
+/// `cell_k` is the KLL `k`, named with the `cell_` prefix the Count-Min row
+/// uses for the same reason: it sizes the structure inside a cell, and reading
+/// it as a grid dimension would understate the footprint by the grid area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraKllParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_k: u32,
+}
+sketch_params!(
+    HydraKllParams,
+    "hydra-kll",
+    HydraKllParams {
+        rows: 3,
+        cols: 128,
+        cell_k: 200
+    }
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

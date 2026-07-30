@@ -387,6 +387,7 @@ fn param_header(algorithm: &str) -> &'static str {
         // together.
         "hydra-cms" => "rows,cols,cell_rows,cell_cols",
         "hydra-hll" => "rows,cols",
+        "hydra-kll" => "rows,cols,cell_k",
         _ => "",
     }
 }
@@ -409,6 +410,7 @@ fn legacy_param_columns(algorithm: &str) -> &'static [&'static str] {
         // cell is fixed-shape, so that row genuinely has only the grid.
         "hydra-cms" => &["rows", "cols", "cell_rows", "cell_cols"],
         "hydra-hll" => &["rows", "cols"],
+        "hydra-kll" => &["rows", "cols", "cell_k"],
         _ => &[],
     }
 }
@@ -612,6 +614,7 @@ mod param_column_order_tests {
             "univmon",
             "hydra-cms",
             "hydra-hll",
+            "hydra-kll",
         ] {
             let width = param_header(algorithm).split(',').count();
             for (label, params) in [

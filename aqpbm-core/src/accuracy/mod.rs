@@ -18,7 +18,8 @@ pub mod topk;
 
 // The capability traits that declare which sketch answers which statistic.
 pub use statistic::{
-    CardinalityOps, FrequencyOps, QuantileOps, SubpopCardinalityOps, SubpopFrequencyOps, TopKOps,
+    CardinalityOps, FrequencyOps, QuantileOps, SubpopCardinalityOps, SubpopFrequencyOps,
+    SubpopQuantileOps, TopKOps,
 };
 
 /// Output of a single ground-truth comparison run: named scalars plus the

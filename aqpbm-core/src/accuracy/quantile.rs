@@ -244,7 +244,7 @@ where
 // ---------- helpers ----------
 
 /// Count of elements strictly less than `x` in a sorted slice.
-fn lower_bound(sorted: &[f64], x: f64) -> usize {
+pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();
     while lo < hi {
@@ -259,7 +259,7 @@ fn lower_bound(sorted: &[f64], x: f64) -> usize {
 }
 
 /// Count of elements `<= x` in a sorted slice.
-fn upper_bound(sorted: &[f64], x: f64) -> usize {
+pub(crate) fn upper_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();
     while lo < hi {

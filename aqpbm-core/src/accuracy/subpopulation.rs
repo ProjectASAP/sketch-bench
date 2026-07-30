@@ -3,19 +3,23 @@
 //!
 //! A record stream carries `d` label columns and one value, and a grouped
 //! sketch stores every column subset. Which population is scored depends on
-//! what the cells hold, and the comparators here differ in exactly that.
+//! what the cells hold, and the three comparators here differ in exactly that.
 //!
 //! - [`SubpopFrequencyGT`] scores **(label, value) pairs**: the counters live
 //!   inside a group and count values.
 //! - [`SubpopCardinalityGT`] scores **subpopulations**: how many distinct
 //!   values a group held, which a counter array structurally cannot answer.
+//! - [`SubpopRankErrorGT`] scores **subpopulations**, in rank-error units: the
+//!   ordered statistic inside a group.
 //!
-//! Both ship error in the same vocabulary as the ungrouped frequency
+//! The first two ship error in the same vocabulary as the ungrouped frequency
 //! comparator (`are_top1`…`are_top1000`, `are_all`, `aae_*`), so a grouped
-//! row's numbers land in the columns an ungrouped row already fills.
+//! row's numbers land in the columns an ungrouped row already fills. The third
+//! ships rank error, matching [`RankErrorGT`](super::quantile::RankErrorGT),
+//! because that is the ruler its statistic is defined against.
 //!
-//! Both score one label column, named in `label_column`. #54 records that this
-//! is a fraction of what the sketch is paying for.
+//! All three score one label column, named in `label_column`. #54 records that
+//! this is a fraction of what the sketch is paying for.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -27,7 +31,8 @@ use crate::accumulator::Accumulator;
 use crate::workload::Labeled;
 
 use super::frequency::percentile;
-use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps};
+use super::quantile::{lower_bound, upper_bound, QuantileValue};
+use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps, SubpopQuantileOps};
 use super::{Comparison, GroundTruth};
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -183,9 +188,9 @@ where
 /// Shuffled so probe order does not hand the baseline the locality that
 /// encounter order would. Fixed seed, so the choice is reproducible.
 ///
-/// Generic over what a key is, because the grouped comparators probe different
-/// populations: a (group, value) pair for frequency, a bare group for
-/// cardinality.
+/// Generic over what a key is, because the three grouped comparators probe
+/// different populations: a (group, value) pair for frequency, a group for
+/// cardinality and for the ordered statistic.
 fn sample_ranked<T: Copy>(ranked: &[(T, u64)], max_probes: usize) -> Vec<T> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
@@ -308,10 +313,131 @@ where
     }
 }
 
+// ---------- subpopulation quantile ----------
+
+/// Number of quantiles probed per group. The same 101-point grid
+/// [`RankErrorGT`](super::quantile::RankErrorGT) uses, so a grouped rank error
+/// and an ungrouped one are read on the same ruler.
+const GROUP_GRID_POINTS: usize = 101;
+
+/// Ground truth for a grouped quantile sketch: the ordered statistic inside one
+/// subpopulation, scored in rank-error units.
+///
+/// Cost is worth stating: this issues `groups * 101` estimate calls, and a
+/// grouped sketch answers each one out of several grid rows. `max_probes` caps
+/// the group count for that reason, and it is the knob to reach for before the
+/// grid size when an accuracy run is slow.
+pub struct SubpopRankErrorGT {
+    /// Which label column the subpopulation is taken over.
+    pub label_column: usize,
+    /// Cap on how many groups are probed. `0` = every group.
+    pub max_probes: usize,
+}
+
+impl<S, V> GroundTruth<S> for SubpopRankErrorGT
+where
+    V: QuantileValue,
+    S: Accumulator<Item = Labeled<V>> + SubpopQuantileOps,
+{
+    fn compare(&self, sketch: &S, items: &[Labeled<V>]) -> Comparison {
+        // The exact ordered truth per group: every value the group carried,
+        // sorted. Not deduplicated, because rank is over occurrences.
+        let mut per_group: HashMap<&str, Vec<f64>> = HashMap::new();
+        for it in items {
+            let Some(label) = it.label(self.label_column) else {
+                continue;
+            };
+            per_group.entry(label).or_default().push(it.value.to_f64());
+        }
+        for values in per_group.values_mut() {
+            values.sort_by(f64::total_cmp);
+        }
+
+        // Rank by group size descending, so a cap keeps the groups whose rank
+        // error is measurable at all: a two-element group has almost no ranks
+        // to be wrong about.
+        let mut ranked: Vec<(&str, u64)> = per_group
+            .iter()
+            .map(|(g, v)| (*g, v.len() as u64))
+            .collect();
+        ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        let probed = sample_ranked(&ranked, self.max_probes);
+
+        let mut sum_mean = 0.0f64;
+        let mut max_err = 0.0f64;
+        let mut queries = 0u64;
+        let mut query_ns = 0u64;
+        let mut scored_groups = 0usize;
+
+        for group in &probed {
+            let Some(sorted) = per_group.get(group) else {
+                continue;
+            };
+            if sorted.is_empty() {
+                continue;
+            }
+            let mut estimates = [0.0f64; GROUP_GRID_POINTS];
+            let start = Instant::now();
+            for (i, slot) in estimates.iter_mut().enumerate() {
+                *slot = sketch.estimate_subpop_quantile(&[group], i as f64 / 100.0);
+            }
+            query_ns += start.elapsed().as_nanos() as u64;
+            queries += GROUP_GRID_POINTS as u64;
+
+            let nf = sorted.len() as f64;
+            let mut group_sum = 0.0f64;
+            for (i, est) in estimates.iter().enumerate() {
+                // Same rank-interval rule as the ungrouped comparator: the
+                // returned value occupies `[lower, upper]`, so a target inside
+                // that interval is not an error.
+                let target = (i as f64 / 100.0) * nf;
+                let lower = lower_bound(sorted, *est) as f64;
+                let upper = upper_bound(sorted, *est) as f64;
+                let raw = if target < lower {
+                    lower - target
+                } else if target > upper {
+                    target - upper
+                } else {
+                    0.0
+                };
+                let err = raw / nf;
+                group_sum += err;
+                if err > max_err {
+                    max_err = err;
+                }
+            }
+            sum_mean += group_sum / GROUP_GRID_POINTS as f64;
+            scored_groups += 1;
+        }
+
+        let mean = if scored_groups > 0 {
+            sum_mean / scored_groups as f64
+        } else {
+            0.0
+        };
+
+        let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
+        metrics.insert("mean_rank_err".into(), mean);
+        metrics.insert("max_rank_err".into(), max_err);
+        metrics.insert("grid_points".into(), GROUP_GRID_POINTS as f64);
+        metrics.insert("items".into(), items.len() as f64);
+        metrics.insert("probes".into(), scored_groups as f64);
+        metrics.insert("subpopulations".into(), per_group.len() as f64);
+        metrics.insert("label_column".into(), self.label_column as f64);
+
+        Comparison {
+            metrics,
+            queries,
+            query_wall_ns: query_ns,
+            query_calls: None,
+        }
+    }
+}
+
 // ---------- shared error summary ----------
 
-/// The error summary one probe sweep produces, in the vocabulary the grouped
-/// counting comparators share. Kept as one type so a metric cannot be
+/// The error summary one probe sweep produces, in the vocabulary the two
+/// grouped counting comparators share. Kept as one type so a metric cannot be
 /// spelled one way in one comparator and another way in the next.
 struct ErrSummary {
     are: f64,

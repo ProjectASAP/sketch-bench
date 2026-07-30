@@ -54,6 +54,20 @@ pub trait SubpopCardinalityOps {
     fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64;
 }
 
+// ---------- subpopulation quantile ----------
+
+/// Answers "within the records carrying these labels, what value sits at this
+/// quantile", scored by
+/// [`SubpopRankErrorGT`](super::subpopulation::SubpopRankErrorGT).
+///
+/// The population is the subpopulation and the answer is ordered, so this is
+/// the grouped form of [`QuantileOps`] and is scored in the same rank-error
+/// units.
+pub trait SubpopQuantileOps {
+    /// `labels` in column order; `phi` is a fraction in `0.0..=1.0`.
+    fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64;
+}
+
 // ---------- quantile ----------
 
 /// Answers "what value sits at this quantile". Two rulers score it — rank

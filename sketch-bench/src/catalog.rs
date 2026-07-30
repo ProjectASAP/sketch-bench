@@ -10,7 +10,9 @@ use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
-use aqpbm_core::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT};
+use aqpbm_core::accuracy::subpopulation::{
+    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
+};
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
@@ -116,6 +118,21 @@ where
     /// Column 0, for the same reason as [`SubpopFrequencyGT`].
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         SubpopCardinalityGT {
+            label_column: 0,
+            max_probes: acc.max_probes,
+        }
+    }
+}
+
+impl<S: Accumulator> GroundTruthCalculator<S> for SubpopRankErrorGT
+where
+    Self: GroundTruth<S>,
+{
+    /// Column 0, and `max_probes` caps groups instead of keys: this comparator
+    /// issues 101 estimate calls per group, so the cap bites much sooner here
+    /// than it does for the two counting comparators.
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        SubpopRankErrorGT {
             label_column: 0,
             max_probes: acc.max_probes,
         }
@@ -389,6 +406,9 @@ pub const ROWS: &[Row] = &[
     scored::<hydra::HydraHll, SubpopCardinalityGT>(
         "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
     ),
+    scored::<hydra::HydraKll, SubpopRankErrorGT>(
+        "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+    ),
     // -------- Nitro / UnivMon (no query capability; throughput-only) --------
     plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),
     plain::<nitro::NitroOxide>("sketch_oxide::frequency::NitroSketch<CountMinSketch>"),
@@ -452,7 +472,8 @@ mod tests {
     use super::*;
     use crate::params::{
         CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraCmsParams,
-        HydraHllParams, KllParams, NitroParams, SketchParams, TopkParams, UnivMonParams,
+        HydraHllParams, HydraKllParams, KllParams, NitroParams, SketchParams, TopkParams,
+        UnivMonParams,
     };
     use std::collections::BTreeSet;
 
@@ -470,6 +491,7 @@ mod tests {
             "nitro" => ParamSet::of(&NitroParams::canonical()),
             "hydra-cms" => ParamSet::of(&HydraCmsParams::canonical()),
             "hydra-hll" => ParamSet::of(&HydraHllParams::canonical()),
+            "hydra-kll" => ParamSet::of(&HydraKllParams::canonical()),
             "topk" => ParamSet::of(&TopkParams::canonical()),
             "univmon" => ParamSet::of(&UnivMonParams::canonical()),
             other => panic!("no canonical params known for algorithm '{other}'"),
