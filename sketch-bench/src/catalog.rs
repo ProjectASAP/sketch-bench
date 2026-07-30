@@ -403,11 +403,20 @@ pub const ROWS: &[Row] = &[
     scored::<hydra::HydraCms, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
     ),
+    scored::<polars::PolarsSubpopFrequency, SubpopFrequencyGT>(
+        "polars exact: group_by(subset, v).agg(len) over every label subset",
+    ),
     scored::<hydra::HydraHll, SubpopCardinalityGT>(
         "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
     ),
+    scored::<polars::PolarsSubpopCardinality, SubpopCardinalityGT>(
+        "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
+    ),
     scored::<hydra::HydraKll, SubpopRankErrorGT>(
         "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+    ),
+    scored::<polars::PolarsSubpopQuantile, SubpopRankErrorGT>(
+        "polars exact: sorted values per label subset, quantile by rank",
     ),
     // -------- Nitro / UnivMon (no query capability; throughput-only) --------
     plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),

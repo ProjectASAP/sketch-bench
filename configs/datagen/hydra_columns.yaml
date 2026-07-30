@@ -3,8 +3,8 @@
 # before it are labels. Each column is an ordinary single-column spec, so its
 # cardinality, skew and seed are steered independently.
 #
-# The cell type is on the algorithm axis, so which statistic you get is chosen
-# by `--algorithm`:
+# All three Hydra algorithms read this one file. The cell type is on the
+# algorithm axis, so which statistic you get is chosen by `--algorithm`:
 #
 #   approxbench sketchbench --algorithm hydra-cms --impl lib \
 #     --spec configs/datagen/hydra_columns.yaml \
@@ -21,6 +21,10 @@
 # `hydra-kll` reads the value column as `f64` and the other two read it as
 # `i64`. The column spec is the same either way; only the rendering differs.
 #
+# Swap `--impl lib` for `--impl polars` to get the exact answer to the same
+# question, through the same machinery. That row is what tells you how much of
+# a reported error is the sketch.
+#
 # Two things worth knowing before reading the numbers.
 #
 # A record is written into every non-empty subset of its labels, so `d` labels
@@ -30,9 +34,12 @@
 #
 # The columns here share the default alphabet, so their value domains overlap: a
 # query for label `"abc"` cannot distinguish the key1 group from the key2 group,
-# and the estimate absorbs both. This is #74. Give each column its own
-# `string.alphabet` to make the domains disjoint and isolate the sketch's own
-# error.
+# and the estimate absorbs both. This is #74, and it is the reason the `polars`
+# rows do not score zero on this file: at `rows=3 cols=1024` the exact
+# `hydra-cms` baseline reports `are_all = 0.58` against a sketch's 0.74, so most
+# of what the sketch appears to get wrong is the key space and not the sketch.
+# Give each column its own `string.alphabet` to make the domains disjoint, and
+# the baselines drop to exactly zero.
 
 # key1: the column the comparator groups by.
 - shape: keys

@@ -6,12 +6,19 @@
 
 use std::collections::HashMap;
 
-use aqpbm_core::accuracy::{CardinalityOps, FrequencyOps, QuantileOps, TopKOps};
+use aqpbm_core::accuracy::{
+    CardinalityOps, FrequencyOps, QuantileOps, SubpopCardinalityOps, SubpopFrequencyOps,
+    SubpopQuantileOps, TopKOps,
+};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
-use crate::params::{CmsParams, CountSketchParams, DdParams, HllParams, KllParams, TopkParams};
+use crate::params::{
+    CmsParams, CountSketchParams, DdParams, HllParams, HydraCmsParams, HydraHllParams,
+    HydraKllParams, KllParams, TopkParams,
+};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::workload::Labeled;
 use polars::prelude::*;
 
 /// `hll/polars` — distinct count via `n_unique`.
@@ -377,6 +384,300 @@ impl TopKOps for PolarsTopK {
 
 impl BenchImpl for PolarsTopK {
     type Params = TopkParams;
+    const IMPL: &'static str = "polars";
+}
+
+// ---------- the grouped baselines ----------
+//
+// One per Hydra algorithm. These differ from the baselines above in what they
+// have to reproduce: a grouped sketch writes each record into every non-empty
+// subset of its labels, so a baseline that grouped by one column would be
+// answering an easier question and its throughput would not be comparable.
+// The fan-out happens in `prepare`, which is where every polars row does its
+// work; the insert column stays a `Vec::push`.
+//
+// # Their error should be zero, and if it is not that is a finding
+//
+// A depth-1 subset key is the bare label string, with nothing naming the column
+// it came from. These baselines reproduce that key space exactly, so when two
+// label columns share a value their groups collide here too. The comparator's
+// ground truth does not model that collision, so a non-zero error on one of
+// these rows is the aliasing #74 records and not an approximation.
+
+/// The `;`-joined key of one label subset, in column order. This is the format
+/// `Hydra::update` builds internally, reproduced so the baseline and the sketch
+/// answer to the same key.
+fn subset_key(parts: &[&str], mask: usize) -> String {
+    let mut out = String::new();
+    for (j, part) in parts.iter().enumerate() {
+        if (mask >> j) & 1 == 1 {
+            if !out.is_empty() {
+                out.push(';');
+            }
+            out.push_str(part);
+        }
+    }
+    out
+}
+
+/// Expand one record into `(subset_key, value)` rows, one per non-empty subset
+/// of its labels. Empty label parts are dropped, matching the library's
+/// `split(';').filter(|s| !s.is_empty())`.
+fn fan_out<V: Copy>(key: &str, value: V, keys: &mut Vec<String>, values: &mut Vec<V>) {
+    let parts: Vec<&str> = key.split(';').filter(|s| !s.is_empty()).collect();
+    for mask in 1..(1usize << parts.len()) {
+        keys.push(subset_key(&parts, mask));
+        values.push(value);
+    }
+}
+
+/// `hydra-cms/polars` — exact subpopulation frequency.
+#[derive(Default)]
+pub struct PolarsSubpopFrequency {
+    buf: Vec<Labeled<i64>>,
+    counts: HashMap<(String, i64), u64>,
+}
+
+impl InitSketch for PolarsSubpopFrequency {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Ok(Self::default())
+    }
+}
+
+impl Accumulator for PolarsSubpopFrequency {
+    type Item = Labeled<i64>;
+
+    #[inline(always)]
+    fn update(&mut self, r: &Labeled<i64>) {
+        self.buf.push(r.clone());
+    }
+
+    fn prepare(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.key, r.value, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .group_by([col("g"), col("v")])
+            .agg([len().alias("count")])
+            .collect()
+            .expect("polars group_by collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let vals = result.column("v").expect("v column");
+        let vals = vals.i64().expect("i64 values");
+        let counts = result
+            .column("count")
+            .expect("count column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.counts.reserve(groups.len());
+        for ((g, v), c) in groups.into_iter().zip(vals.into_iter()).zip(counts) {
+            if let (Some(g), Some(v), Some(c)) = (g, v, c) {
+                self.counts.insert((g.to_string(), v), c);
+            }
+        }
+    }
+}
+
+impl SubpopFrequencyOps for PolarsSubpopFrequency {
+    type Value = i64;
+    fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
+        self.counts
+            .get(&(labels.join(";"), *value))
+            .copied()
+            .unwrap_or(0) as f64
+    }
+}
+
+impl MemoryFootprint for PolarsSubpopFrequency {
+    fn memory_bytes(&self) -> usize {
+        self.buf.capacity() * std::mem::size_of::<Labeled<i64>>()
+            + self.counts.capacity() * (std::mem::size_of::<(String, i64)>() + 8)
+    }
+}
+
+impl BenchImpl for PolarsSubpopFrequency {
+    type Params = HydraCmsParams;
+    const IMPL: &'static str = "polars";
+}
+
+/// `hydra-hll/polars` — exact subpopulation cardinality.
+#[derive(Default)]
+pub struct PolarsSubpopCardinality {
+    buf: Vec<Labeled<i64>>,
+    distinct: HashMap<String, u64>,
+}
+
+impl InitSketch for PolarsSubpopCardinality {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Ok(Self::default())
+    }
+}
+
+impl Accumulator for PolarsSubpopCardinality {
+    type Item = Labeled<i64>;
+
+    #[inline(always)]
+    fn update(&mut self, r: &Labeled<i64>) {
+        self.buf.push(r.clone());
+    }
+
+    fn prepare(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.key, r.value, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .group_by([col("g")])
+            .agg([col("v").n_unique().alias("c")])
+            .collect()
+            .expect("polars group_by collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let counts = result
+            .column("c")
+            .expect("c column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.distinct.reserve(groups.len());
+        for (g, c) in groups.into_iter().zip(counts) {
+            if let (Some(g), Some(c)) = (g, c) {
+                self.distinct.insert(g.to_string(), c);
+            }
+        }
+    }
+}
+
+impl SubpopCardinalityOps for PolarsSubpopCardinality {
+    fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+        self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
+    }
+}
+
+impl MemoryFootprint for PolarsSubpopCardinality {
+    fn memory_bytes(&self) -> usize {
+        self.buf.capacity() * std::mem::size_of::<Labeled<i64>>()
+            + self.distinct.capacity() * (std::mem::size_of::<String>() + 8)
+    }
+}
+
+impl BenchImpl for PolarsSubpopCardinality {
+    type Params = HydraHllParams;
+    const IMPL: &'static str = "polars";
+}
+
+/// `hydra-kll/polars` — exact subpopulation quantile.
+#[derive(Default)]
+pub struct PolarsSubpopQuantile {
+    buf: Vec<Labeled<f64>>,
+    sorted: HashMap<String, Vec<f64>>,
+}
+
+impl InitSketch for PolarsSubpopQuantile {
+    fn init(_config: &ParamSet) -> Result<Self, BuildError> {
+        Ok(Self::default())
+    }
+}
+
+impl Accumulator for PolarsSubpopQuantile {
+    type Item = Labeled<f64>;
+
+    #[inline(always)]
+    fn update(&mut self, r: &Labeled<f64>) {
+        self.buf.push(r.clone());
+    }
+
+    /// Sorted by `(group, value)` in one pass and then split on the group
+    /// boundary, which is a DataFrame sort rather than a per-group one: the
+    /// grouped aggregation would hand back a list column this then has to
+    /// unnest, and the ordered answer needs the values anyway.
+    fn prepare(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.key, r.value, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .sort(["g", "v"], Default::default())
+            .collect()
+            .expect("polars sort collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let vals = result.column("v").expect("v column");
+        let vals = vals.f64().expect("f64 values");
+
+        for (g, v) in groups.into_iter().zip(vals) {
+            if let (Some(g), Some(v)) = (g, v) {
+                // Already ascending within a group, so push keeps it sorted.
+                self.sorted.entry(g.to_string()).or_default().push(v);
+            }
+        }
+    }
+}
+
+impl SubpopQuantileOps for PolarsSubpopQuantile {
+    /// `floor(phi * n)`, clamped to the last index. That is the index whose
+    /// rank interval contains `phi * n`, which is what the rank-error
+    /// comparator scores against, so an exact answer scores zero.
+    fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
+        let Some(values) = self.sorted.get(&labels.join(";")) else {
+            return f64::NAN;
+        };
+        if values.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((phi * values.len() as f64).floor() as usize).min(values.len() - 1);
+        values[idx]
+    }
+}
+
+impl MemoryFootprint for PolarsSubpopQuantile {
+    fn memory_bytes(&self) -> usize {
+        self.buf.capacity() * std::mem::size_of::<Labeled<f64>>()
+            + self
+                .sorted
+                .values()
+                .map(|v| v.capacity() * std::mem::size_of::<f64>())
+                .sum::<usize>()
+    }
+}
+
+impl BenchImpl for PolarsSubpopQuantile {
+    type Params = HydraKllParams;
     const IMPL: &'static str = "polars";
 }
 
