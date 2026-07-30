@@ -386,6 +386,7 @@ fn param_header(algorithm: &str) -> &'static str {
         // `every_row_has_one_value_per_header_column` is what holds the two lists
         // together.
         "hydra-cms" => "rows,cols,cell_rows,cell_cols",
+        "hydra-hll" => "rows,cols",
         _ => "",
     }
 }
@@ -404,8 +405,10 @@ fn legacy_param_columns(algorithm: &str) -> &'static [&'static str] {
         "elastic" => &["buckets", "depth"],
         "univmon" => &["layers", "max_stream"],
         // Both shapes, because Hydra's cost is their product: a row carrying
-        // only the grid would read as a far smaller sketch than it is.
+        // only the grid would read as a far smaller sketch than it is. The HLL
+        // cell is fixed-shape, so that row genuinely has only the grid.
         "hydra-cms" => &["rows", "cols", "cell_rows", "cell_cols"],
+        "hydra-hll" => &["rows", "cols"],
         _ => &[],
     }
 }
@@ -608,6 +611,7 @@ mod param_column_order_tests {
             "elastic",
             "univmon",
             "hydra-cms",
+            "hydra-hll",
         ] {
             let width = param_header(algorithm).split(',').count();
             for (label, params) in [

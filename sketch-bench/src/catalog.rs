@@ -10,7 +10,7 @@ use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
-use aqpbm_core::accuracy::subpopulation::SubpopFrequencyGT;
+use aqpbm_core::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT};
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
@@ -103,6 +103,19 @@ where
     /// one it scores instead of pooling them.
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         SubpopFrequencyGT {
+            label_column: 0,
+            max_probes: acc.max_probes,
+        }
+    }
+}
+
+impl<S: Accumulator> GroundTruthCalculator<S> for SubpopCardinalityGT
+where
+    Self: GroundTruth<S>,
+{
+    /// Column 0, for the same reason as [`SubpopFrequencyGT`].
+    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+        SubpopCardinalityGT {
             label_column: 0,
             max_probes: acc.max_probes,
         }
@@ -366,11 +379,15 @@ pub const ROWS: &[Row] = &[
     // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
     plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
     plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
-    // -------- Hydra (per-subpopulation frequency over labelled records) --------
-    // The cell type names the algorithm, because the cell decides which
-    // statistic the grid answers. See the module header in `wrappers/hydra.rs`.
+    // -------- Hydra (per-subpopulation statistics over labelled records) --------
+    // One algorithm per cell type, because the cell decides which statistic the
+    // grid answers and each is scored by a different comparator. See the module
+    // header in `wrappers/hydra.rs`.
     scored::<hydra::HydraCms, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+    ),
+    scored::<hydra::HydraHll, SubpopCardinalityGT>(
+        "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
     ),
     // -------- Nitro / UnivMon (no query capability; throughput-only) --------
     plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),
@@ -435,7 +452,7 @@ mod tests {
     use super::*;
     use crate::params::{
         CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraCmsParams,
-        KllParams, NitroParams, SketchParams, TopkParams, UnivMonParams,
+        HydraHllParams, KllParams, NitroParams, SketchParams, TopkParams, UnivMonParams,
     };
     use std::collections::BTreeSet;
 
@@ -452,6 +469,7 @@ mod tests {
             "elastic" => ParamSet::of(&ElasticParams::canonical()),
             "nitro" => ParamSet::of(&NitroParams::canonical()),
             "hydra-cms" => ParamSet::of(&HydraCmsParams::canonical()),
+            "hydra-hll" => ParamSet::of(&HydraHllParams::canonical()),
             "topk" => ParamSet::of(&TopkParams::canonical()),
             "univmon" => ParamSet::of(&UnivMonParams::canonical()),
             other => panic!("no canonical params known for algorithm '{other}'"),

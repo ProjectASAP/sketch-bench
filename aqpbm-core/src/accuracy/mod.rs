@@ -17,7 +17,9 @@ pub mod subpopulation;
 pub mod topk;
 
 // The capability traits that declare which sketch answers which statistic.
-pub use statistic::{CardinalityOps, FrequencyOps, QuantileOps, SubpopFrequencyOps, TopKOps};
+pub use statistic::{
+    CardinalityOps, FrequencyOps, QuantileOps, SubpopCardinalityOps, SubpopFrequencyOps, TopKOps,
+};
 
 /// Output of a single ground-truth comparison run: named scalars plus the
 /// timing of the estimate calls issued. Only the sketch's own estimate call is

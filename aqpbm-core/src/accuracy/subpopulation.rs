@@ -1,18 +1,25 @@
-//! Ground truth for a grouped frequency sketch: the frequency of a value
-//! *within* one subpopulation.
+//! Ground truth for the grouped sketches: a statistic taken *within* one
+//! subpopulation, one comparator per statistic.
 //!
-//! A record stream carries `d` label columns and one value. The population
-//! scored here is the set of **(label, value) pairs** observed at one column,
-//! which is what a grouped counter array actually stores: the counters live
-//! inside a group and count values, so the size of the group is a different
-//! statistic and not this one.
+//! A record stream carries `d` label columns and one value, and a grouped
+//! sketch stores every column subset. Which population is scored depends on
+//! what the cells hold, and the comparators here differ in exactly that.
 //!
-//! Error ships in the same vocabulary as the ungrouped frequency comparator
-//! (`are_top1`…`are_top1000`, `are_all`, `aae_*`), so a grouped row's numbers
-//! land in the columns an ungrouped row already fills.
+//! - [`SubpopFrequencyGT`] scores **(label, value) pairs**: the counters live
+//!   inside a group and count values.
+//! - [`SubpopCardinalityGT`] scores **subpopulations**: how many distinct
+//!   values a group held, which a counter array structurally cannot answer.
+//!
+//! Both ship error in the same vocabulary as the ungrouped frequency
+//! comparator (`are_top1`…`are_top1000`, `are_all`, `aae_*`), so a grouped
+//! row's numbers land in the columns an ungrouped row already fills.
+//!
+//! Both score one label column, named in `label_column`. #54 records that this
+//! is a fraction of what the sketch is paying for.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::Instant;
 
@@ -20,7 +27,7 @@ use crate::accumulator::Accumulator;
 use crate::workload::Labeled;
 
 use super::frequency::percentile;
-use super::statistic::SubpopFrequencyOps;
+use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps};
 use super::{Comparison, GroundTruth};
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -57,7 +64,7 @@ where
         let mut ranked: Vec<((&str, &V), u64)> = exact.iter().map(|(k, c)| (*k, *c)).collect();
         ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-        let all_probes = sample_distinct(&ranked, self.max_probes);
+        let all_probes = sample_ranked(&ranked, self.max_probes);
 
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         let mut queries = 0u64;
@@ -172,23 +179,208 @@ where
     percentile(&errs, 0.99)
 }
 
-/// The distinct pairs, shuffled, then capped at `max_probes` (`0` = no cap).
+/// The ranked keys, shuffled, then capped at `max_probes` (`0` = no cap).
 /// Shuffled so probe order does not hand the baseline the locality that
 /// encounter order would. Fixed seed, so the choice is reproducible.
-fn sample_distinct<'a, V>(
-    ranked: &[((&'a str, &'a V), u64)],
-    max_probes: usize,
-) -> Vec<(&'a str, &'a V)> {
+///
+/// Generic over what a key is, because the grouped comparators probe different
+/// populations: a (group, value) pair for frequency, a bare group for
+/// cardinality.
+fn sample_ranked<T: Copy>(ranked: &[(T, u64)], max_probes: usize) -> Vec<T> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
-    let mut out: Vec<(&str, &V)> = ranked.iter().map(|(pair, _)| *pair).collect();
+    let mut out: Vec<T> = ranked.iter().map(|(key, _)| *key).collect();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
     out.shuffle(&mut rng);
     if max_probes != 0 && out.len() > max_probes {
         out.truncate(max_probes);
     }
     out
+}
+
+// ---------- subpopulation cardinality ----------
+
+/// Ground truth for a grouped cardinality sketch: how many distinct values one
+/// subpopulation held.
+///
+/// The population is the **subpopulation**, one entry per distinct label at the
+/// scored column. That is a different population from the one
+/// [`SubpopFrequencyGT`] scores, so at the same workload the two report the
+/// same `subpopulations` and a different `probes`.
+///
+/// `top1`…`top1000` rank groups by true distinct count descending, which is the
+/// grouped analogue of ranking pairs by frequency: the prefix names the groups
+/// a sketch is most likely to be asked about and least able to hide error in.
+pub struct SubpopCardinalityGT {
+    /// Which label column the subpopulation is taken over.
+    pub label_column: usize,
+    /// Cap on how many groups the `all` population probes. `0` = every group.
+    pub max_probes: usize,
+}
+
+impl<S, V> GroundTruth<S> for SubpopCardinalityGT
+where
+    V: Eq + Hash,
+    S: Accumulator<Item = Labeled<V>> + SubpopCardinalityOps,
+{
+    fn compare(&self, sketch: &S, items: &[Labeled<V>]) -> Comparison {
+        // One pass: a record contributes its value to exactly one group at this
+        // column, and the group's truth is the size of that set.
+        let mut distinct: HashMap<&str, HashSet<&V>> = HashMap::new();
+        for it in items {
+            let Some(label) = it.label(self.label_column) else {
+                continue;
+            };
+            distinct.entry(label).or_default().insert(&it.value);
+        }
+        let exact: HashMap<&str, u64> = distinct
+            .iter()
+            .map(|(group, values)| (*group, values.len() as u64))
+            .collect();
+
+        let mut ranked: Vec<(&str, u64)> = exact.iter().map(|(g, c)| (*g, *c)).collect();
+        ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+
+        let all_probes = sample_ranked(&ranked, self.max_probes);
+
+        let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
+        let mut queries = 0u64;
+        let mut query_ns = 0u64;
+
+        // Query throughput is attributed to the `all` sweep only: the top-k
+        // prefixes re-query groups `all` already covers.
+        let mut probe = |groups: &[&str], label: &str, metrics: &mut BTreeMap<String, f64>| {
+            if groups.is_empty() {
+                return;
+            }
+            let mut estimates = Vec::with_capacity(groups.len());
+            let start = Instant::now();
+            for group in groups {
+                estimates.push(sketch.estimate_subpop_cardinality(&[group]));
+            }
+            if label == "all" {
+                query_ns += start.elapsed().as_nanos() as u64;
+                queries += groups.len() as u64;
+            }
+
+            let summary = summarise(
+                groups
+                    .iter()
+                    .zip(estimates.iter())
+                    .map(|(g, est)| (*est, *exact.get(*g).unwrap_or(&0) as f64)),
+            );
+            summary.write(label, metrics);
+        };
+
+        for k in TOP_K_REPORTED {
+            if k > ranked.len() {
+                break;
+            }
+            let groups: Vec<&str> = ranked[..k].iter().map(|(g, _)| *g).collect();
+            probe(&groups, &format!("top{k}"), &mut metrics);
+        }
+        probe(&all_probes, "all", &mut metrics);
+
+        if let Some(v) = metrics.get("are_all").copied() {
+            metrics.insert("relative_error_mean".into(), v);
+        }
+        if let Some(v) = metrics.get("probes_all").copied() {
+            metrics.insert("probes".into(), v);
+        }
+        metrics.insert(
+            "relative_error_p99".into(),
+            p99_over(
+                &all_probes,
+                |g| sketch.estimate_subpop_cardinality(&[g]),
+                |g| *exact.get(g).unwrap_or(&0) as f64,
+            ),
+        );
+        metrics.insert("subpopulations".into(), exact.len() as f64);
+        metrics.insert("label_column".into(), self.label_column as f64);
+
+        Comparison {
+            metrics,
+            queries,
+            query_wall_ns: query_ns,
+            query_calls: None,
+        }
+    }
+}
+
+// ---------- shared error summary ----------
+
+/// The error summary one probe sweep produces, in the vocabulary the grouped
+/// counting comparators share. Kept as one type so a metric cannot be
+/// spelled one way in one comparator and another way in the next.
+struct ErrSummary {
+    are: f64,
+    aae: f64,
+    l1: f64,
+    l2: f64,
+    n: f64,
+}
+
+impl ErrSummary {
+    /// `are_*` and `aae_*` under `label`, plus `l1_err` / `l2_err` when the
+    /// sweep is the unfiltered `all` population. The top-k prefixes have no
+    /// norms because a norm over a prefix is not a norm.
+    fn write(&self, label: &str, metrics: &mut BTreeMap<String, f64>) {
+        metrics.insert(format!("are_{label}"), self.are);
+        metrics.insert(format!("aae_{label}"), self.aae);
+        metrics.insert(format!("probes_{label}"), self.n);
+        if label == "all" {
+            metrics.insert("l1_err".into(), self.l1);
+            metrics.insert("l2_err".into(), self.l2);
+        }
+    }
+}
+
+/// Fold `(estimate, truth)` pairs into the summary. Relative error is averaged
+/// over the entries with a non-zero truth only, because dividing by a zero
+/// truth is undefined and counting it as zero error would reward a miss.
+fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
+    let (mut are, mut aae, mut l1, mut l2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let (mut n, mut counted) = (0usize, 0usize);
+    for (est, truth) in pairs {
+        let diff = (est - truth).abs();
+        l1 += diff;
+        l2 += diff * diff;
+        aae += diff;
+        if truth > 0.0 {
+            are += diff / truth;
+            counted += 1;
+        }
+        n += 1;
+    }
+    ErrSummary {
+        are: if counted > 0 {
+            are / counted as f64
+        } else {
+            0.0
+        },
+        aae: if n > 0 { aae / n as f64 } else { 0.0 },
+        l1,
+        l2: l2.sqrt(),
+        n: n as f64,
+    }
+}
+
+/// p99 of the per-key relative error over the unfiltered population, for the
+/// comparators whose key is a bare group.
+fn p99_over<K>(keys: &[K], estimate: impl Fn(&K) -> f64, truth: impl Fn(&K) -> f64) -> f64 {
+    let mut errs: Vec<f64> = keys
+        .iter()
+        .filter_map(|k| {
+            let t = truth(k);
+            if t <= 0.0 {
+                return None;
+            }
+            Some((estimate(k) - t).abs() / t)
+        })
+        .collect();
+    errs.sort_by(f64::total_cmp);
+    percentile(&errs, 0.99)
 }
 
 #[cfg(test)]

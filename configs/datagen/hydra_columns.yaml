@@ -10,6 +10,10 @@
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" --accuracy
 #
+#   approxbench sketchbench --algorithm hydra-hll --impl lib \
+#     --spec configs/datagen/hydra_columns.yaml \
+#     --config "rows=3 cols=1024" --accuracy
+#
 # Two things worth knowing before reading the numbers.
 #
 # A record is written into every non-empty subset of its labels, so `d` labels
@@ -40,7 +44,8 @@
   size: 200000
   seed: 2
 
-# value: what the Count-Min cells count inside each subpopulation.
+# value: what the cells hold inside each subpopulation. Count-Min counts its
+# occurrences, HyperLogLog counts how many of it are distinct.
 - shape: keys
   cardinality: 1000
   dist:

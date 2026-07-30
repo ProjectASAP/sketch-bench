@@ -159,6 +159,24 @@ sketch_params!(
     }
 );
 
+/// Hydra over HyperLogLog cells: the grid shape and nothing else.
+///
+/// The library fixes the cell at `HyperLogLog<ErtlMLE>`, which is
+/// `HyperLogLogP14`, so a cell is 2^14 one-byte registers and there is no cell
+/// parameter to expose. A `lg_k` here would be a knob the row reads and cannot
+/// act on, which is the defect #58 records against the fixed-shape rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraHllParams {
+    pub rows: usize,
+    pub cols: usize,
+}
+sketch_params!(
+    HydraHllParams,
+    "hydra-hll",
+    HydraHllParams { rows: 3, cols: 128 }
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnivMonParams {

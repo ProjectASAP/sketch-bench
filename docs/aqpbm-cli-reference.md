@@ -39,8 +39,8 @@ Usage: approxbench sketchbench [OPTIONS] --algorithm <ALGORITHM> --impl <IMPL_NA
 Identity:
       --algorithm <ALGORITHM>
           Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic, nitro, univmon,
-          hydra-cms). The Hydra cell type is on this axis because it decides which statistic
-          the grid answers. `--list-impls` prints every (algorithm, impl) pair
+          hydra-cms, hydra-hll). The Hydra cell type is on this axis because it decides which
+          statistic the grid answers. `--list-impls` prints every (algorithm, impl) pair
 
       --impl <IMPL_NAME>
           Implementation within the algorithm, exactly one (`oxide`). `--list-impls` shows the

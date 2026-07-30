@@ -38,6 +38,22 @@ pub trait SubpopFrequencyOps {
     fn estimate_subpop_frequency(&self, labels: &[&str], value: &Self::Value) -> f64;
 }
 
+// ---------- subpopulation cardinality ----------
+
+/// Answers "within the records carrying these labels, how many *distinct*
+/// values were there", scored by
+/// [`SubpopCardinalityGT`](super::subpopulation::SubpopCardinalityGT).
+///
+/// This is the statistic [`SubpopFrequencyOps`] structurally cannot answer. A
+/// counter array under a grouped sketch counts occurrences of a value inside a
+/// group and has no way to report the size of the group itself. The population
+/// here is the **subpopulation**, not a (subpopulation, value) pair, so the
+/// query takes no value.
+pub trait SubpopCardinalityOps {
+    /// `labels` in column order, same key vocabulary as [`SubpopFrequencyOps`].
+    fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64;
+}
+
 // ---------- quantile ----------
 
 /// Answers "what value sits at this quantile". Two rulers score it — rank

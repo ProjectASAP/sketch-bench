@@ -47,8 +47,8 @@ pub enum Cmd {
 )]
 pub struct SketchbenchArgs {
     /// Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic,
-    /// nitro, univmon, hydra-cms). The Hydra cell type is on this axis because
-    /// it decides which statistic the grid answers.
+    /// nitro, univmon, hydra-cms, hydra-hll). The Hydra cell type is on this
+    /// axis because it decides which statistic the grid answers.
     /// `--list-impls` prints every (algorithm, impl)
     /// pair.
     #[arg(long, required_unless_present = "list_impls", help_heading = "Identity")]
