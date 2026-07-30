@@ -259,9 +259,28 @@ impl FrequencyOps for CsLibVector2dRegular {
 }
 
 // ---------- catalog identity ----------
+// Named on the same rule as the Count-Min rows: hash strategy and storage
+// backend name the algorithm, the library names the impl.
 
 impl BenchImpl for CsOxide { type Params = CountSketchParams; const IMPL: &'static str = "oxide"; }
-impl BenchImpl for CsLibFixedmatrixFast { type Params = CountSketchParams; const IMPL: &'static str = "lib-fixedmatrix-fast"; }
-impl BenchImpl for CsLibFixedmatrixFast32k { type Params = CountSketchParams; const IMPL: &'static str = "lib-fixedmatrix-fast-32k"; }
-impl BenchImpl for CsLibVector2dFast { type Params = CountSketchParams; const IMPL: &'static str = "lib-vector2d-fast"; }
-impl BenchImpl for CsLibVector2dRegular { type Params = CountSketchParams; const IMPL: &'static str = "lib-vector2d-regular"; }
+
+impl BenchImpl for CsLibFixedmatrixFast {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-2k";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CsLibFixedmatrixFast32k {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CsLibVector2dFast {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-fastpath-vector2d";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CsLibVector2dRegular {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-regularpath-vector2d";
+    const IMPL: &'static str = "lib";
+}

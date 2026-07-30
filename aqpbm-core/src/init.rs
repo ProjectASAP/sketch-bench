@@ -38,17 +38,36 @@ pub trait InitSketch: Accumulator + Sized {
 
 /// A catalog row's identity — what the record is labelled with. Separate from
 /// construction because every row has a name whether or not it builds the same
-/// way. The algorithm is read off `Params::ALGORITHM`, never spelled here.
+/// way.
+///
+/// Two names, on two axes. [`Self::IMPL`] says **who** implements it, which is
+/// the library: `oxide`, `datasketches`, `lib`, `polars`. [`Self::ALGORITHM`]
+/// says **what** is being implemented, down to the structural variant: `hll`
+/// and `hll-hip` are two algorithms because a different estimator gives a
+/// different answer, and `cms-fastpath-vector2d` and `cms-regularpath-vector2d`
+/// are two because a different hash strategy does.
+///
+/// Variants of one structure share a parameter vocabulary, so they share a
+/// [`Self::Params`], and `Params::FAMILY` is what groups them back together for
+/// a cross-library comparison.
 pub trait BenchImpl: Accumulator {
-    /// The parameters this impl is built from. `Params::ALGORITHM` is the row's
-    /// algorithm.
+    /// The parameters this impl is built from. `Params::FAMILY` is the row's
+    /// family.
     type Params: SketchParams;
 
-    /// This impl's name within the algorithm (`"oxide"`, `"lib-hip"`, ...).
+    /// The implementing library (`"oxide"`, `"datasketches"`, `"lib"`,
+    /// `"polars"`). Nothing else belongs here: a storage backend or a code path
+    /// is part of *what* is being measured and goes in [`Self::ALGORITHM`].
     const IMPL: &'static str;
 
-    /// The algorithm, derived — never written by hand. A `const` rather than a
-    /// method so a catalog can read a row's identity off the type in `const`
-    /// context, and build its list and its dispatch from one table.
-    const ALGORITHM: &'static str = <Self::Params as SketchParams>::ALGORITHM;
+    /// The algorithm this row measures. Defaults to the family's base name, so
+    /// a row with no structural variant writes nothing; a variant overrides it
+    /// with `family-variant`. A `const` rather than a method so a catalog can
+    /// read a row's identity off the type in `const` context, and build its
+    /// list and its dispatch from one table.
+    const ALGORITHM: &'static str = <Self::Params as SketchParams>::FAMILY;
+
+    /// The family, derived — never written by hand. Rows sharing it answer the
+    /// same question from the same knobs, which is what makes them comparable.
+    const FAMILY: &'static str = <Self::Params as SketchParams>::FAMILY;
 }

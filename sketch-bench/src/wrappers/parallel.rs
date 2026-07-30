@@ -209,8 +209,23 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
 
 // ---------- catalog identity ----------
 // These build through `ParallelInit`, not `InitSketch` — identity is declared
-// the same way regardless.
+// the same way regardless. Parallel insert is a different structure, not a
+// different library, so it names the algorithm; the two matrix rows name the
+// shape they are baked at, because that shape is not something a caller can
+// move and the name should not suggest otherwise.
 
-impl BenchImpl for ParallelCmsFastPath { type Params = CmsParams; const IMPL: &'static str = "lib-fastpath-parallel"; }
-impl BenchImpl for ParallelCsFastPath { type Params = CountSketchParams; const IMPL: &'static str = "lib-fastpath-parallel"; }
-impl BenchImpl for ParallelHllFastPath { type Params = HllParams; const IMPL: &'static str = "lib-fastpath-parallel"; }
+impl BenchImpl for ParallelCmsFastPath {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-32k-parallel";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for ParallelCsFastPath {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k-parallel";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for ParallelHllFastPath {
+    type Params = HllParams;
+    const ALGORITHM: &'static str = "hll-fastpath-parallel";
+    const IMPL: &'static str = "lib";
+}

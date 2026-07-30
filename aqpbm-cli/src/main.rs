@@ -125,7 +125,8 @@ fn main() -> Result<()> {
 /// that bundle's subcommand, since a second bundle would make a free-standing
 /// `list-impls` ambiguous about whose catalog it means.
 fn list_impls() -> Result<()> {
-    println!("# algorithm       impl                         description");
+    // The catalog owns the header too: it is the one place that knows how wide
+    // the algorithm column has to be for the rows underneath it.
     for line in catalog::list() {
         println!("{line}");
     }
@@ -343,11 +344,16 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // `catalog::run` returns one report per metric pass; emit each on its own
     // JSONL line and CSV row group. A downstream group-by on
     // (sketch, impl, sketch_config, workload) merges them back.
+    // Resolved once: `catalog::run` succeeded, so the row exists and so does
+    // its family.
+    let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
+
     let mut sink = ReportSink::open(args.report.as_deref())?;
     for report in &reports {
         if let Some(dir) = args.raw_csv.as_deref() {
             raw_csv::write_runs(
                 std::path::Path::new(dir),
+                family,
                 &algorithm,
                 &impl_name,
                 Some(&params),
@@ -358,6 +364,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         }
         let mut record = report.to_record();
         record.sketch_config = Some(params.to_json_value());
+        // The algorithm names the structural variant, so a reader grouping by
+        // it compares variants. The family is what groups the variants back
+        // together, which is the axis a cross-library comparison is taken over.
+        record.family = Some(family.to_string());
         sink.write_line(&record.to_jsonl())?;
     }
     Ok(())

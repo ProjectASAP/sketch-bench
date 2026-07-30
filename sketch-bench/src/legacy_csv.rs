@@ -21,6 +21,7 @@ pub struct CsvFile {
 /// file to append to, empty when no pass maps to one (a lone LATENCY pass,
 /// whose per-op timer would muddle the throughput plot).
 pub fn render(
+    family: &str,
     algorithm: &str,
     impl_name: &str,
     params: Option<&ParamSet>,
@@ -32,33 +33,38 @@ pub fn render(
     // These CSV headers are an external contract — `throughput/scripts/*.py`
     // read the exact column list, and the frontend appends, so a run lands in
     // whatever file already exists.
-    let algo = algorithm.to_string();
+    //
+    // Every shape decision below is keyed on the **family**: one file per
+    // family, with the columns that family's knobs produce. The algorithm's
+    // structural variant lands in the `implementation` column instead, which is
+    // where a plot script already expects to tell rows apart.
+    let algo = family.to_string();
 
-    // Parallel ("octo") impls go to a separate combined file whose
+    // Parallel ("octo") rows go to a separate combined file whose
     // `sketch_type, implementation, num_workers,...` header spans cms/cs/hll.
     // Only THROUGHPUT emits, so the wall column reflects a clean hot path.
-    if impl_name == "lib-fastpath-parallel" {
+    if algorithm.ends_with("-parallel") {
         if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
-            out.push(octo_file(algorithm, workers, report));
+            out.push(octo_file(family, workers, report));
         }
         return out;
     }
 
-    let legacy_impl = legacy_impl_name(algorithm, impl_name);
-    let param_cols = ParamCols::from(algorithm, params);
+    let legacy_impl = legacy_impl_name(family, algorithm, impl_name);
+    let param_cols = ParamCols::from(family, params);
 
     // Only THROUGHPUT produces a clean insert-phase wall clock: LATENCY is
     // inflated by per-op timing, and ACCURACY belongs to the query CSV.
     if report.config.metrics.contains(MetricsMask::THROUGHPUT) {
         out.push(CsvFile {
             name: format!("{algo}_throughput_results_rust.csv"),
-            header: insert_header(algorithm),
+            header: insert_header(family),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_insert_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_insert_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -79,7 +85,7 @@ pub fn render(
             if let Some(calls) = run.query_calls.as_ref() {
                 for sample in calls {
                     rows.push(format_per_call_row(
-                        algorithm,
+                        family,
                         &legacy_impl,
                         &param_cols,
                         run_no,
@@ -91,7 +97,7 @@ pub fn render(
         }
         out.push(CsvFile {
             name: format!("{algo}_throughput_query_results_rust.csv"),
-            header: per_call_query_header(algorithm),
+            header: per_call_query_header(family),
             rows,
         });
 
@@ -101,13 +107,13 @@ pub fn render(
         if report.per_run.iter().any(|r| r.queries_executed > 0) {
             out.push(CsvFile {
                 name: format!("{algo}_throughput_query_tight_results_rust.csv"),
-                header: query_header(algorithm),
+                header: query_header(family),
                 rows: report
                     .per_run
                     .iter()
                     .enumerate()
                     .map(|(idx, run)| {
-                        format_query_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
+                        format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                     })
                     .collect(),
             });
@@ -116,13 +122,13 @@ pub fn render(
         // Aggregate query CSV — CMS / CountSketch / Nitro style.
         out.push(CsvFile {
             name: format!("{algo}_throughput_query_results_rust.csv"),
-            header: query_header(algorithm),
+            header: query_header(family),
             rows: report
                 .per_run
                 .iter()
                 .enumerate()
                 .map(|(idx, run)| {
-                    format_query_row(algorithm, &legacy_impl, &param_cols, seed, idx + 1, run)
+                    format_query_row(family, &legacy_impl, &param_cols, seed, idx + 1, run)
                 })
                 .collect(),
         });
@@ -133,8 +139,8 @@ pub fn render(
 /// The octo CSV: one combined file, `implementation = "octo"` with `sketch_type`
 /// carrying the algorithm. `total_nanoseconds` is the **build** wall, not the insert
 /// wall — these rows do their real work in finalize.
-fn octo_file(algorithm: &str, workers: usize, report: &BenchReport) -> CsvFile {
-    let sketch_type = legacy_sketch_type(algorithm);
+fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
+    let sketch_type = legacy_sketch_type(family);
     let rows = report
         .per_run
         .iter()
@@ -156,10 +162,10 @@ fn octo_file(algorithm: &str, workers: usize, report: &BenchReport) -> CsvFile {
     }
 }
 
-/// Map an algorithm name to the legacy `sketch_type` column value used by
+/// Map a family name to the legacy `sketch_type` column value used by
 /// `plot_octo_throughput.py`.
-fn legacy_sketch_type(algorithm: &str) -> &'static str {
-    match algorithm {
+fn legacy_sketch_type(family: &str) -> &'static str {
+    match family {
         "countsketch" => "cs",
         "cms" => "cms",
         "hll" => "hll",
@@ -303,15 +309,28 @@ impl ParamCols {
     }
 }
 
-fn legacy_impl_name(algorithm: &str, impl_name: &str) -> String {
-    if impl_name.starts_with("lib-") {
-        let suffix = impl_name.trim_start_matches("lib-").replace('-', "_");
-        format!("rust_sketchlib_{algorithm}_{suffix}")
-    } else if impl_name == "lib" {
-        format!("rust_sketchlib_{algorithm}")
+/// The legacy `implementation` column: `rust_<library>_<family>[_<variant>]`.
+///
+/// It has to be unique per row, because that column is the only thing telling
+/// the rows in one family's file apart. The variant now lives in the algorithm
+/// name rather than the impl name, so it is read from there; `lib` keeps its
+/// historical spelling of `sketchlib`.
+fn legacy_impl_name(family: &str, algorithm: &str, impl_name: &str) -> String {
+    let library = if impl_name == "lib" {
+        "sketchlib"
     } else {
-        format!("rust_{}_{}", impl_name.replace('-', "_"), algorithm)
+        impl_name
+    };
+    let variant = algorithm
+        .strip_prefix(family)
+        .unwrap_or("")
+        .trim_start_matches('-');
+    let mut name = format!("rust_{library}_{family}");
+    if !variant.is_empty() {
+        name.push('_');
+        name.push_str(variant);
     }
+    name.replace('-', "_")
 }
 
 /// File stem for an algorithm's CSVs. `i64` keeps the historical name so existing
@@ -474,19 +493,69 @@ fn leading_value(algorithm: &str, seed: u64, run_idx: usize) -> String {
 mod tests {
     use super::*;
 
+    /// A row with no structural variant keeps the name it has always had, so
+    /// the files those rows already wrote keep accumulating.
     #[test]
-    fn legacy_impl_names_match_history() {
-        assert_eq!(legacy_impl_name("hll", "oxide"), "rust_oxide_hll");
+    fn legacy_impl_names_match_history_for_unvaried_rows() {
+        assert_eq!(legacy_impl_name("hll", "hll", "oxide"), "rust_oxide_hll");
         assert_eq!(
-            legacy_impl_name("hll", "datasketches"),
+            legacy_impl_name("hll", "hll", "datasketches"),
             "rust_datasketches_hll"
         );
-        assert_eq!(legacy_impl_name("hll", "lib"), "rust_sketchlib_hll");
+        assert_eq!(legacy_impl_name("hll", "hll", "lib"), "rust_sketchlib_hll");
         assert_eq!(
-            legacy_impl_name("cms", "lib-fixedmatrix-custom-fast"),
-            "rust_sketchlib_cms_fixedmatrix_custom_fast"
+            legacy_impl_name("nitro", "nitro", "lib"),
+            "rust_sketchlib_nitro"
         );
-        assert_eq!(legacy_impl_name("nitro", "lib"), "rust_sketchlib_nitro");
+    }
+
+    /// A variant appends its own name. This column is the only thing telling
+    /// one family's rows apart inside that family's file, so two variants of
+    /// one library must not collapse onto one label — they used to be
+    /// distinguished by the impl name, which is now `lib` for all of them.
+    #[test]
+    fn a_variant_is_distinguishable_within_its_family() {
+        assert_eq!(
+            legacy_impl_name("cms", "cms-fastpath-fixedmatrix-custom", "lib"),
+            "rust_sketchlib_cms_fastpath_fixedmatrix_custom"
+        );
+        assert_eq!(
+            legacy_impl_name("cms", "cms-fastpath-vector2d", "lib"),
+            "rust_sketchlib_cms_fastpath_vector2d"
+        );
+        assert_eq!(
+            legacy_impl_name("cms", "cms-regularpath-vector2d", "lib"),
+            "rust_sketchlib_cms_regularpath_vector2d"
+        );
+        assert_eq!(
+            legacy_impl_name("kll", "kll-percall", "oxide"),
+            "rust_oxide_kll_percall"
+        );
+        assert_eq!(
+            legacy_impl_name("kll", "kll-cdf", "oxide"),
+            "rust_oxide_kll_cdf"
+        );
+    }
+
+    /// Every row in the catalog lands on a distinct legacy label. The failure
+    /// this guards against is silent: two rows sharing a label append
+    /// indistinguishable lines to one file, and the plot averages them together.
+    #[test]
+    fn every_catalog_row_gets_its_own_legacy_label() {
+        use std::collections::BTreeMap;
+        let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+        for r in crate::catalog::ROWS {
+            if r.algorithm.ends_with("-parallel") {
+                continue; // one combined octo file, labelled by sketch_type
+            }
+            let label = legacy_impl_name(r.family, r.algorithm, r.impl_name);
+            if let Some(prev) = seen.insert(label.clone(), (r.algorithm, r.impl_name)) {
+                panic!(
+                    "{}/{} and {}/{} both render as '{label}'",
+                    prev.0, prev.1, r.algorithm, r.impl_name
+                );
+            }
+        }
     }
 
     #[test]

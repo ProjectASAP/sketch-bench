@@ -367,14 +367,41 @@ impl FrequencyOps for CmsLibVector2dRegular {
 }
 
 // ---------- catalog identity ----------
+// `IMPL` is the library. The hash strategy (`fastpath` packs one hash and slices
+// a column out of it per row, `regularpath` hashes once per row) and the storage
+// backend (`vector2d` sizes at runtime, `fixedmatrix` bakes the shape into the
+// type) both change what is being measured, not who wrote it, so they name the
+// algorithm. `CmsParams` is the vocabulary all of them share, which is what
+// keeps them one family.
 
 impl BenchImpl for CmsOxide { type Params = CmsParams; const IMPL: &'static str = "oxide"; }
 impl BenchImpl for CmsDatasketches { type Params = CmsParams; const IMPL: &'static str = "datasketches"; }
-impl BenchImpl for CmsLibFixedmatrixCustomFast { type Params = CmsParams; const IMPL: &'static str = "lib-fixedmatrix-custom-fast"; }
-impl BenchImpl for CmsLibFixedmatrixFast { type Params = CmsParams; const IMPL: &'static str = "lib-fixedmatrix-fast"; }
-impl BenchImpl for CmsLibFixedmatrixFast32k { type Params = CmsParams; const IMPL: &'static str = "lib-fixedmatrix-fast-32k"; }
-impl BenchImpl for CmsLibVector2dFast { type Params = CmsParams; const IMPL: &'static str = "lib-vector2d-fast"; }
-impl BenchImpl for CmsLibVector2dRegular { type Params = CmsParams; const IMPL: &'static str = "lib-vector2d-regular"; }
+
+impl BenchImpl for CmsLibFixedmatrixCustomFast {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-custom";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CmsLibFixedmatrixFast {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-2k";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CmsLibFixedmatrixFast32k {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-32k";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CmsLibVector2dFast {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-fastpath-vector2d";
+    const IMPL: &'static str = "lib";
+}
+impl BenchImpl for CmsLibVector2dRegular {
+    type Params = CmsParams;
+    const ALGORITHM: &'static str = "cms-regularpath-vector2d";
+    const IMPL: &'static str = "lib";
+}
 
 #[cfg(test)]
 mod tests {

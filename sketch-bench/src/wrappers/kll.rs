@@ -18,6 +18,11 @@
 //! query strategies in one column, and the ~500× gap that produced reads as a
 //! library difference when most of it is the strategy.
 //!
+//! The split lives on the **algorithm** axis, as `kll-percall` and `kll-cdf`.
+//! The two paths give different answers, so they are two questions, and putting
+//! them here leaves the impl axis free to mean the one thing it should mean:
+//! which library. Each algorithm then holds `oxide` against `lib` directly.
+//!
 //! `sketch_oxide`'s `quantile` and `cdf` both take `&mut self` (it sorts
 //! lazily), so its inner sketch sits in a `RefCell`: `QuantileOps::estimate_quantile`
 //! is `&self`, for everyone else's pure reads.
@@ -326,32 +331,37 @@ where
 }
 
 // ---------- catalog identity ----------
-// The impl name states the query path, because that is what separates these
-// rows from each other. There is deliberately no plain `oxide` or `lib`: those
-// names used to mean one arbitrary path each, so leaving them alive would let a
-// stale caller silently receive the other one.
+// The **algorithm** states the query path, because that is what separates these
+// rows from each other and the two paths answer differently. The impl is the
+// library alone. There is deliberately no bare `kll` row: that name used to
+// mean one arbitrary path per library, so leaving it alive would let a stale
+// caller silently receive whichever one it was.
 
 impl<T: QuantileValue> BenchImpl for KllOxidePerCall<T> {
     type Params = KllParams;
-    const IMPL: &'static str = "oxide-percall";
+    const ALGORITHM: &'static str = "kll-percall";
+    const IMPL: &'static str = "oxide";
 }
 impl<T: QuantileValue> BenchImpl for KllOxideCdf<T> {
     type Params = KllParams;
-    const IMPL: &'static str = "oxide-cdf";
+    const ALGORITHM: &'static str = "kll-cdf";
+    const IMPL: &'static str = "oxide";
 }
 impl<T> BenchImpl for KllLibPerCall<T>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     type Params = KllParams;
-    const IMPL: &'static str = "lib-percall";
+    const ALGORITHM: &'static str = "kll-percall";
+    const IMPL: &'static str = "lib";
 }
 impl<T> BenchImpl for KllLibCdf<T>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     type Params = KllParams;
-    const IMPL: &'static str = "lib-cdf";
+    const ALGORITHM: &'static str = "kll-cdf";
+    const IMPL: &'static str = "lib";
 }
 
 #[cfg(test)]

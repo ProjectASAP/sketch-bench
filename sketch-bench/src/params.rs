@@ -1,19 +1,26 @@
-//! Construction parameters for each sketch algorithm. These live next to the
+//! Construction parameters for each sketch family. These live next to the
 //! wrappers that consume them, not in `aqpbm-core`: the core owns the *open*
 //! algorithm axis and deliberately knows no algorithm names, so concrete algorithms are
 //! declared by whoever ships the implementations. See `aqpbm_core::config`.
+//!
+//! One struct is one **family**, not one algorithm. `cms`,
+//! `cms-fastpath-vector2d` and `cms-regularpath-vector2d` are three algorithms
+//! measuring three structures, but a reader configures all three with the same
+//! `rows` and `cols`, so they share [`CmsParams`] and the family name it
+//! declares. A structural variant that needed a *different* knob would be a
+//! different family, which is why the three Hydra cell types have three structs.
 
 use serde::{Deserialize, Serialize};
 
 // Re-exported so callers reach the whole parameter vocabulary —
-// the open axis from `aqpbm-core` plus this crate's algorithms —
+// the open axis from `aqpbm-core` plus this crate's families —
 // through one module.
-pub use aqpbm_core::config::{ParamSet, SketchParams};
+pub use aqpbm_core::config::{in_family, ParamSet, SketchParams};
 
 macro_rules! sketch_params {
-    ($ty:ident, $algorithm:literal, $canonical:expr) => {
+    ($ty:ident, $family:literal, $canonical:expr) => {
         impl SketchParams for $ty {
-            const ALGORITHM: &'static str = $algorithm;
+            const FAMILY: &'static str = $family;
             fn canonical() -> Self {
                 $canonical
             }
@@ -294,7 +301,7 @@ mod tests {
         fn check<P: SketchParams + PartialEq + std::fmt::Debug>() {
             let p = P::canonical();
             let set = ParamSet::of(&p);
-            assert_eq!(set.algorithm(), P::ALGORITHM);
+            assert_eq!(set.algorithm(), P::FAMILY);
             assert_eq!(set.parse::<P>().unwrap(), p);
         }
         check::<HllParams>();
@@ -306,6 +313,40 @@ mod tests {
         check::<DdParams>();
         check::<NitroParams>();
         check::<TopkParams>();
+    }
+
+    /// Which algorithm names each vocabulary answers to. Pinned per family
+    /// rather than trusted to the prefix rule, because the failure it guards
+    /// against is silent: a params type that accidentally owned a neighbouring
+    /// family's names would accept that family's config and build at it.
+    #[test]
+    fn each_family_owns_its_variants_and_no_neighbours() {
+        assert!(CmsParams::owns("cms"));
+        assert!(CmsParams::owns("cms-fastpath-vector2d"));
+        assert!(CmsParams::owns("cms-regularpath-vector2d"));
+        assert!(!CmsParams::owns("countsketch"));
+        assert!(!CmsParams::owns("topk-cms"));
+        assert!(!CmsParams::owns("hydra-cms"));
+
+        assert!(CountSketchParams::owns("countsketch-fastpath-vector2d"));
+        assert!(!CountSketchParams::owns("cms"));
+
+        assert!(HllParams::owns("hll"));
+        assert!(HllParams::owns("hll-hip"));
+        assert!(!HllParams::owns("hydra-hll"));
+
+        assert!(KllParams::owns("kll-percall"));
+        assert!(KllParams::owns("kll-cdf"));
+        assert!(!KllParams::owns("hydra-kll"));
+
+        assert!(TopkParams::owns("topk-cms"));
+        assert!(!TopkParams::owns("cms"));
+
+        // The three Hydra cell types take different knobs, so they are three
+        // families and none of them owns another's name.
+        assert!(HydraCmsParams::owns("hydra-cms"));
+        assert!(!HydraCmsParams::owns("hydra-hll"));
+        assert!(!HydraHllParams::owns("hydra-kll"));
     }
 
     #[test]

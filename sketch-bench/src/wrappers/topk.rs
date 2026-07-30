@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::params::TopkParams;
 use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::{FrequencyOps, TopKOps};
-use aqpbm_core::config::{ParamSet, SketchParams};
+use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 
@@ -130,9 +130,10 @@ where
         }
         // The inner sketch is built from its **own** algorithm's params, so its
         // `init` validates `rows`/`cols` exactly as it does for a plain CMS
-        // row — a fixed-shape inner still rejects a shape it cannot serve.
+        // row — a fixed-shape inner still rejects a shape it cannot serve, and
+        // an oxide inner still refuses a `cols` it cannot resolve exactly.
         let inner_cfg = ParamSet {
-            algorithm: <S::Params as SketchParams>::ALGORITHM.to_string(),
+            algorithm: S::ALGORITHM.to_string(),
             params: serde_json::json!({ "rows": p.rows, "cols": p.cols }),
         };
         Ok(Self {
@@ -145,17 +146,20 @@ where
 }
 
 // ---------- catalog identity ----------
-// One tracker, two rows: the `IMPL` name distinguishes which counter array is
-// underneath.
+// One tracker, two rows. Which counter array sits underneath decides what the
+// estimates are, not who wrote the code, so it names the **algorithm**; both
+// arrays come from `sketch_oxide`, so both rows are `oxide`.
 
 impl BenchImpl for TopKHeap<super::cms::CmsOxide> {
     type Params = TopkParams;
-    const IMPL: &'static str = "cms-heap";
+    const ALGORITHM: &'static str = "topk-cms";
+    const IMPL: &'static str = "oxide";
 }
 
 impl BenchImpl for TopKHeap<super::countsketch::CsOxide> {
     type Params = TopkParams;
-    const IMPL: &'static str = "cs-heap";
+    const ALGORITHM: &'static str = "topk-cs";
+    const IMPL: &'static str = "oxide";
 }
 
 #[cfg(test)]

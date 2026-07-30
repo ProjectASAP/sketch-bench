@@ -18,7 +18,15 @@ pub const SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub schema_version: u32,
+    /// The algorithm this run measured, structural variant included
+    /// (`cms-fastpath-vector2d`, not `cms`).
     pub sketch: String,
+    /// The family [`Self::sketch`] belongs to. Rows sharing it answer the same
+    /// question from the same knobs, so this is what a cross-library comparison
+    /// groups by; `sketch` is what a variant comparison groups by. Additive and
+    /// optional, so records written before it still read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
     #[serde(rename = "impl")]
     pub impl_name: String,
     /// Implementation language, so readers can split Rust from C++ records when
@@ -231,6 +239,7 @@ impl Record {
         Self {
             schema_version: SCHEMA_VERSION,
             sketch: sketch.into(),
+            family: None,
             impl_name: impl_name.into(),
             language: Language::Rust,
             sketch_config: None,

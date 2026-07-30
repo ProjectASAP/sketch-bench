@@ -325,13 +325,24 @@ impl QuantileOps for PolarsQuantileDd {
 }
 
 // ---------- catalog identity ----------
-// Each exact baseline is named `polars` inside whichever algorithm its params type
-// places it in — the algorithm falls out of `Params`.
+// Each exact baseline is named `polars` inside whichever algorithm its params
+// type places it in. A baseline sits on the family's **base** algorithm, so it
+// is the one exact answer every structural variant of that family is scored
+// against, and the algorithm falls out of `Params`.
+//
+// The quantile baseline is the exception: `kll` has no base algorithm, since
+// every KLL row states a query path. This one arranges its answer once in
+// `prepare` and reads it back, which is what `kll-cdf` names, so that is where
+// it belongs.
 
 impl BenchImpl for PolarsCardinality { type Params = HllParams; const IMPL: &'static str = "polars"; }
 impl BenchImpl for PolarsFrequencyCms { type Params = CmsParams; const IMPL: &'static str = "polars"; }
 impl BenchImpl for PolarsFrequencyCs { type Params = CountSketchParams; const IMPL: &'static str = "polars"; }
-impl BenchImpl for PolarsQuantileKll { type Params = KllParams; const IMPL: &'static str = "polars"; }
+impl BenchImpl for PolarsQuantileKll {
+    type Params = KllParams;
+    const ALGORITHM: &'static str = "kll-cdf";
+    const IMPL: &'static str = "polars";
+}
 impl BenchImpl for PolarsQuantileDd { type Params = DdParams; const IMPL: &'static str = "polars"; }
 
 /// `topk/polars` — the exact top-k baseline, reusing the frequency baseline's

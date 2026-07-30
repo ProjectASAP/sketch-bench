@@ -46,16 +46,17 @@ pub enum Cmd {
     override_usage = "approxbench sketchbench [OPTIONS] --algorithm <ALGORITHM> --impl <IMPL_NAME>\n       approxbench sketchbench --list-impls"
 )]
 pub struct SketchbenchArgs {
-    /// Accumulator algorithm (hll, kll, cms, countsketch, dd, topk, elastic,
-    /// nitro, univmon, hydra-cms, hydra-hll, hydra-kll). The Hydra cell type is
-    /// on this axis because it decides which statistic the grid answers.
-    /// `--list-impls` prints every (algorithm, impl)
-    /// pair.
+    /// Accumulator algorithm, structural variant included: `cms` and
+    /// `cms-fastpath-vector2d` are two of them, because a different hash
+    /// strategy gives different estimates. Matched exactly, since one
+    /// invocation measures one cell. `--list-impls` prints every
+    /// (algorithm, impl) pair, grouped by the family they share knobs with.
     #[arg(long, required_unless_present = "list_impls", help_heading = "Identity")]
     pub algorithm: Option<String>,
-    /// Implementation within the algorithm, exactly one (`oxide`).
-    /// `--list-impls` shows the choices. One invocation measures one
-    /// (impl, config) cell; to race several, invoke once per impl.
+    /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
+    /// `polars`. `--list-impls` shows which the algorithm offers. One
+    /// invocation measures one (impl, config) cell; to race several, invoke
+    /// once per impl.
     #[arg(
         long = "impl",
         required_unless_present = "list_impls",
@@ -72,8 +73,8 @@ pub struct SketchbenchArgs {
     /// A comma list is an error: one invocation is one cell, never a grid.
     #[arg(long, help_heading = "Construction")]
     pub config: Option<String>,
-    /// Worker threads for the parallel-insert impls (`lib-fastpath-parallel`).
-    /// Other impls ignore it; `1` is single-threaded.
+    /// Worker threads for the parallel-insert algorithms (`*-parallel`). Every
+    /// other row ignores it; `1` is single-threaded.
     #[arg(long, default_value_t = 1, help_heading = "Construction")]
     pub workers: usize,
 

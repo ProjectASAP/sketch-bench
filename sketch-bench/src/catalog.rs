@@ -46,11 +46,19 @@ type RunFn = fn(
     Numeric,
 ) -> Result<Vec<BenchReport>, RunError>;
 
-/// One catalog entry. Built only by the four constructors below, so `algorithm`,
-/// `impl_name` and `scores_accuracy` are always projections of the row's type
-/// and its runner — never hand-written strings that could drift from it.
+/// One catalog entry. Built only by the constructors below, so `family`,
+/// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
+/// row's type and its runner — never hand-written strings that could drift from
+/// it.
 pub struct Row {
+    /// Rows sharing this answer the same question from the same knobs, so this
+    /// is what a cross-library comparison groups by. Derived from the row's
+    /// params type: one parameter vocabulary is one family.
+    pub family: &'static str,
+    /// The algorithm, structural variant included. `--algorithm` matches this
+    /// exactly, because one invocation measures one cell.
     pub algorithm: &'static str,
+    /// The implementing library, and only that.
     pub impl_name: &'static str,
     /// The one field that is genuinely new data, and so is written in [`ROWS`].
     pub description: &'static str,
@@ -252,9 +260,10 @@ where
     cell::run_cell_parallel::<S>(cfg, spec, params)
 }
 
-// ---------- the four row constructors ----------
-// Each reads `S::ALGORITHM` / `S::IMPL` off the type and fixes `scores_accuracy`.
-// `const fn`, so `ROWS` stays `const` and a bad row fails at compile time.
+// ---------- the row constructors ----------
+// Each reads `S::FAMILY` / `S::ALGORITHM` / `S::IMPL` off the type and fixes
+// `scores_accuracy`. `const fn`, so `ROWS` stays `const` and a bad row fails at
+// compile time.
 
 const fn scored<S, G>(description: &'static str) -> Row
 where
@@ -263,6 +272,7 @@ where
     G: GroundTruthCalculator<S>,
 {
     Row {
+        family: S::FAMILY,
         algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
@@ -281,6 +291,7 @@ where
 {
     Row {
         // Both halves are the same row; the i64 one names it.
+        family: Si::FAMILY,
         algorithm: Si::ALGORITHM,
         impl_name: Si::IMPL,
         description,
@@ -291,12 +302,14 @@ where
     }
 }
 
+
 const fn plain<S>(description: &'static str) -> Row
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: BenchItem,
 {
     Row {
+        family: S::FAMILY,
         algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
@@ -313,6 +326,7 @@ where
     S::Item: BenchItem,
 {
     Row {
+        family: S::FAMILY,
         algorithm: S::ALGORITHM,
         impl_name: S::IMPL,
         description,
@@ -334,21 +348,29 @@ pub const ROWS: &[Row] = &[
     scored::<hll::HllLib, CardinalityGT>(
         "asap_sketchlib::HyperLogLog<Classic> (P14): O(m) estimate",
     ),
-    scored::<hll::HllLibHip, CardinalityGT>("asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate"),
     scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
+    // -------- HLL, HIP estimator --------
+    // Its own algorithm: the estimate is maintained on the insert path instead
+    // of scanned at query time, so it is different arithmetic and a different
+    // number, not a different implementation of one number.
+    scored::<hll::HllLibHip, CardinalityGT>(
+        "asap_sketchlib::HyperLogLogHIP (P14): O(1) estimate",
+    ),
+    // -------- HLL, parallel insert --------
     parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
     // -------- KLL (quantile, rank error) --------
-    // Two libraries × two query paths. Both libraries offer both paths, so the
-    // path belongs on the impl axis: one row per library would have compared
-    // libraries and query strategies in the same column.
+    // Two query paths × two libraries. The paths answer differently, so the path
+    // names the algorithm and each algorithm holds the two libraries against
+    // each other. One row per library would have compared libraries and query
+    // strategies in the same column.
     ordered::<kll::KllOxidePerCall<i64>, kll::KllOxidePerCall<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: quantile() per call",
     ),
-    ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
-        "sketch_oxide KllSketch: cdf() built in prepare",
-    ),
     ordered::<kll::KllLibPerCall<i64>, kll::KllLibPerCall<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: quantile() per call",
+    ),
+    ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
+        "sketch_oxide KllSketch: cdf() built in prepare",
     ),
     ordered::<kll::KllLibCdf<i64>, kll::KllLibCdf<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: cdf() built in prepare",
@@ -357,6 +379,7 @@ pub const ROWS: &[Row] = &[
     // -------- CMS (frequency) --------
     scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
     scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
+    scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     scored::<cms::CmsLibFixedmatrixCustomFast, FrequencyGT>(
         "asap CMS, custom FixedMatrix (5x65538), FastPath",
     ),
@@ -366,10 +389,10 @@ pub const ROWS: &[Row] = &[
     ),
     scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
     scored::<cms::CmsLibVector2dRegular, FrequencyGT>("asap CMS, Vector2D, RegularPath"),
-    scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     parallel_row::<parallel::ParallelCmsFastPath>("asap CMS, FastPath, parallel insert on M5x32K"),
     // -------- CountSketch (frequency) --------
     scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
+    scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     scored::<countsketch::CsLibFixedmatrixFast, FrequencyGT>(
         "asap Count, FixedMatrix (5x2048), FastPath",
     ),
@@ -378,7 +401,6 @@ pub const ROWS: &[Row] = &[
     ),
     scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
     scored::<countsketch::CsLibVector2dRegular, FrequencyGT>("asap Count, Vector2D, RegularPath"),
-    scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
     parallel_row::<parallel::ParallelCsFastPath>("asap Count, FastPath, parallel insert on M5x32K"),
     // -------- DDSketch (quantile, relative error) --------
     ordered::<dd::DdLib<i64>, dd::DdLib<f64>, RelativeErrorGT>(
@@ -432,14 +454,51 @@ fn find(algorithm: &str, impl_name: &str) -> Option<&'static Row> {
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
+/// One line per row, grouped by family with a blank line between groups, since
+/// the family is what a reader picks from before they pick a variant. Rows keep
+/// declaration order inside a family.
+///
+/// The algorithm column is sized to the longest name present, so adding a
+/// longer variant widens the table instead of breaking its alignment. The first
+/// line is the header, so a caller prints exactly what this returns.
 pub fn list() -> Vec<String> {
-    ROWS.iter()
-        .map(|r| format!("{:12} {:28} {}", r.algorithm, r.impl_name, r.description))
-        .collect()
+    let algo_w = ROWS
+        .iter()
+        .map(|r| r.algorithm.len())
+        .max()
+        .unwrap_or(0)
+        .max("# algorithm".len());
+    let impl_w = ROWS.iter().map(|r| r.impl_name.len()).max().unwrap_or(0);
+    let mut out = Vec::with_capacity(ROWS.len() + 8);
+    out.push(format!(
+        "{:algo_w$}  {:impl_w$}  description",
+        "# algorithm", "impl"
+    ));
+    let mut current: Option<&str> = None;
+    for r in ROWS {
+        if current != Some(r.family) {
+            out.push(String::new());
+            current = Some(r.family);
+        }
+        out.push(format!(
+            "{:algo_w$}  {:impl_w$}  {}",
+            r.algorithm, r.impl_name, r.description
+        ));
+    }
+    out
 }
 
 pub fn algorithm_exists(algorithm: &str) -> bool {
     ROWS.iter().any(|r| r.algorithm == algorithm)
+}
+
+/// The family an algorithm belongs to, for the record's `family` field. `None`
+/// if the algorithm is unknown, which the frontend has already ruled out by the
+/// time it asks.
+pub fn family_of(algorithm: &str) -> Option<&'static str> {
+    ROWS.iter()
+        .find(|r| r.algorithm == algorithm)
+        .map(|r| r.family)
 }
 
 /// Does `--accuracy` score this row? `None` if the row is unknown.
@@ -486,24 +545,26 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// One buildable config per algorithm, from each params type's own
-    /// `canonical()`. The `panic!` arm is what makes a newly added algorithm
-    /// show up here rather than silently skipping the tests below.
-    fn canonical_params(algorithm: &str) -> ParamSet {
-        match algorithm {
-            "hll" => ParamSet::of(&HllParams::canonical()),
-            "kll" => ParamSet::of(&KllParams::canonical()),
-            "cms" => ParamSet::of(&CmsParams::canonical()),
-            "countsketch" => ParamSet::of(&CountSketchParams::canonical()),
-            "dd" => ParamSet::of(&DdParams::canonical()),
-            "elastic" => ParamSet::of(&ElasticParams::canonical()),
-            "nitro" => ParamSet::of(&NitroParams::canonical()),
-            "hydra-cms" => ParamSet::of(&HydraCmsParams::canonical()),
-            "hydra-hll" => ParamSet::of(&HydraHllParams::canonical()),
-            "hydra-kll" => ParamSet::of(&HydraKllParams::canonical()),
-            "topk" => ParamSet::of(&TopkParams::canonical()),
-            "univmon" => ParamSet::of(&UnivMonParams::canonical()),
-            other => panic!("no canonical params known for algorithm '{other}'"),
+    /// One buildable config per family, from each params type's own
+    /// `canonical()`, tagged with the row's own algorithm. The `panic!` arm is
+    /// what makes a newly added family show up here rather than silently
+    /// skipping the tests below.
+    fn canonical_params(row: &Row) -> ParamSet {
+        let a = row.algorithm;
+        match row.family {
+            "hll" => ParamSet::of_algorithm(a, &HllParams::canonical()),
+            "kll" => ParamSet::of_algorithm(a, &KllParams::canonical()),
+            "cms" => ParamSet::of_algorithm(a, &CmsParams::canonical()),
+            "countsketch" => ParamSet::of_algorithm(a, &CountSketchParams::canonical()),
+            "dd" => ParamSet::of_algorithm(a, &DdParams::canonical()),
+            "elastic" => ParamSet::of_algorithm(a, &ElasticParams::canonical()),
+            "nitro" => ParamSet::of_algorithm(a, &NitroParams::canonical()),
+            "hydra-cms" => ParamSet::of_algorithm(a, &HydraCmsParams::canonical()),
+            "hydra-hll" => ParamSet::of_algorithm(a, &HydraHllParams::canonical()),
+            "hydra-kll" => ParamSet::of_algorithm(a, &HydraKllParams::canonical()),
+            "topk" => ParamSet::of_algorithm(a, &TopkParams::canonical()),
+            "univmon" => ParamSet::of_algorithm(a, &UnivMonParams::canonical()),
+            other => panic!("no canonical params known for family '{other}'"),
         }
     }
 
@@ -521,6 +582,58 @@ mod tests {
                 r.impl_name
             );
         }
+    }
+
+    /// A row's algorithm must sit in the family whose vocabulary it parses, or
+    /// `--config` would be checked against knobs the row does not take. The
+    /// `ALGORITHM` override is a hand-written string, so this is the one thing
+    /// about a row's identity the type system does not already guarantee.
+    #[test]
+    fn every_algorithm_belongs_to_its_family() {
+        for r in ROWS {
+            assert!(
+                crate::params::in_family(r.algorithm, r.family),
+                "row {}/{} declares family '{}', which its algorithm is not in",
+                r.algorithm,
+                r.impl_name,
+                r.family
+            );
+        }
+    }
+
+    /// The impl axis carries the library and nothing else. A storage backend, a
+    /// code path or a query strategy in this column is the defect this naming
+    /// exists to prevent: it makes the column mean two things at once, so
+    /// "which library is faster" stops being answerable by grouping on it.
+    #[test]
+    fn impl_names_are_library_names() {
+        const LIBRARIES: [&str; 4] = ["oxide", "datasketches", "lib", "polars"];
+        for r in ROWS {
+            assert!(
+                LIBRARIES.contains(&r.impl_name),
+                "row {}/{}: '{}' is not a library name; a structural variant \
+                 belongs in the algorithm",
+                r.algorithm,
+                r.impl_name,
+                r.impl_name
+            );
+        }
+    }
+
+    /// Every family has at least one row a `--config` sweep can walk, and every
+    /// family's rows are reachable by name. A family whose every row were fixed
+    /// shape would be a panel with no x-axis.
+    #[test]
+    fn every_family_is_reachable_by_name() {
+        for r in ROWS {
+            assert_eq!(
+                family_of(r.algorithm),
+                Some(r.family),
+                "{} does not resolve to its own family",
+                r.algorithm
+            );
+        }
+        assert_eq!(family_of("no-such-algorithm"), None);
     }
 
     /// A small workload spec, enough for any row to build and ingest. The item
@@ -580,10 +693,10 @@ mod tests {
     fn every_catalog_entry_runs() {
         let (cfg, acc) = smoke_cfg();
         for r in ROWS {
-            // Canonical, not `empty`: every algorithm's params have required
-            // fields, so `empty` built only the 5 polars rows that ignore
-            // their config — the other 31 were "checked" without ever running.
-            let params = canonical_params(r.algorithm);
+            // Canonical, not `empty`: every family's params have required
+            // fields, so `empty` builds nothing at all now that the exact
+            // baselines parse their config too.
+            let params = canonical_params(r);
             let got = run(
                 r.algorithm,
                 r.impl_name,
@@ -624,8 +737,8 @@ mod tests {
             ("rows=5 cols=2048 k=0", false),  // a top-k of nothing
             ("rows=5 cols=2048", false),      // no `k` at all
         ] {
-            let params = config_point("topk", cfg_spec).unwrap();
-            for r in ROWS.iter().filter(|r| r.algorithm == "topk") {
+            for r in ROWS.iter().filter(|r| r.family == "topk") {
+                let params = config_point(r.algorithm, cfg_spec).unwrap();
                 let got = run(
                     r.algorithm,
                     r.impl_name,

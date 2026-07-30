@@ -208,4 +208,10 @@ impl CardinalityOps for HllLibHip {
 impl BenchImpl for HllOxide { type Params = HllParams; const IMPL: &'static str = "oxide"; }
 impl BenchImpl for HllDatasketches { type Params = HllParams; const IMPL: &'static str = "datasketches"; }
 impl BenchImpl for HllLib { type Params = HllParams; const IMPL: &'static str = "lib"; }
-impl BenchImpl for HllLibHip { type Params = HllParams; const IMPL: &'static str = "lib-hip"; }
+// The HIP estimator answers the same question by different arithmetic and gets
+// different numbers, so it is its own algorithm and not an impl of `hll`.
+impl BenchImpl for HllLibHip {
+    type Params = HllParams;
+    const ALGORITHM: &'static str = "hll-hip";
+    const IMPL: &'static str = "lib";
+}

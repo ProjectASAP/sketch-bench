@@ -3,19 +3,50 @@
 //! The algorithm axis is open: [`ParamSet`] carries the algorithm name plus its
 //! parameters as JSON, and each params type declares its own name, its own
 //! canonical config, and — through serde — its own parsing and field names.
+//!
+//! One params type is one **family**. An algorithm named `cms` and one named
+//! `cms-fastpath-vector2d` build from the same `{rows, cols}` vocabulary, so
+//! they are one family and one params type serves both. Which variants exist is
+//! the catalog's business; which vocabulary they share is this type's.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use aqpbm_datagen::SketchError;
 
-/// Construction parameters for one sketch algorithm. `deny_unknown_fields` on each
+/// Is `algorithm` the family `family`, or one of its variants?
+///
+/// A variant is the family name, a `-`, then the variant's own name. The rule
+/// lives here so the one place an algorithm name is related to its parameter
+/// vocabulary is one function, not a prefix test repeated per params type.
+///
+/// The `-` is what keeps `countsketch` out of the `cms` family, and
+/// `topk-cms` out of it too.
+pub fn in_family(algorithm: &str, family: &str) -> bool {
+    algorithm == family
+        || algorithm
+            .strip_prefix(family)
+            .is_some_and(|rest| rest.starts_with('-'))
+}
+
+/// Construction parameters for one sketch family. `deny_unknown_fields` on each
 /// implementor turns a typo in `--config` into an error naming the offending key.
 pub trait SketchParams: Serialize + DeserializeOwned + Clone + std::fmt::Debug {
-    /// The `--sketch` name this parameterises.
-    const ALGORITHM: &'static str;
+    /// The family this vocabulary names. Also the algorithm name of the family's
+    /// base row, the one declaring no variant.
+    const FAMILY: &'static str;
 
-    /// One representative, buildable config for the algorithm. Lives on the params
+    /// Does the algorithm named `algorithm` build from this vocabulary?
+    ///
+    /// The default accepts the family's variants as well as the family itself,
+    /// because a variant is a different way of implementing the same structure
+    /// and takes the same knobs. A params type whose name must match exactly
+    /// overrides this.
+    fn owns(algorithm: &str) -> bool {
+        in_family(algorithm, Self::FAMILY)
+    }
+
+    /// One representative, buildable config for the family. Lives on the params
     /// type, not a table keyed by algorithm name, so it cannot drift from what it
     /// configures. Not a sweep — it is the single point acceptance tests build.
     fn canonical() -> Self;
@@ -31,27 +62,40 @@ pub struct ParamSet {
 }
 
 impl ParamSet {
-    /// Erase a typed params value.
+    /// Erase a typed params value, tagged with the family's base algorithm.
+    /// [`Self::of_algorithm`] is the version that names a variant.
     pub fn of<P: SketchParams>(p: &P) -> Self {
+        Self::of_algorithm(P::FAMILY, p)
+    }
+
+    /// Erase a typed params value under a named algorithm, which must be one
+    /// `P` owns. Panics otherwise: a caller naming an algorithm from another
+    /// family has a bug this cannot paper over.
+    pub fn of_algorithm<P: SketchParams>(algorithm: &str, p: &P) -> Self {
+        assert!(
+            P::owns(algorithm),
+            "algorithm '{algorithm}' does not build from the '{}' vocabulary",
+            P::FAMILY
+        );
         Self {
-            algorithm: P::ALGORITHM.to_string(),
+            algorithm: algorithm.to_string(),
             params: serde_json::to_value(p).expect("params -> JSON should not fail"),
         }
     }
 
-    /// Recover the typed value. Fails if this set belongs to another algorithm, or
+    /// Recover the typed value. Fails if this set belongs to another family, or
     /// if the JSON does not match `P` — which is how a misspelled `--config` key
     /// is reported, with serde naming it and listing the valid ones.
     pub fn parse<P: SketchParams>(&self) -> Result<P, SketchError> {
-        if self.algorithm != P::ALGORITHM {
+        if !P::owns(&self.algorithm) {
             return Err(SketchError::BadParam(format!(
-                "params are for algorithm '{}', not '{}'",
+                "params are for algorithm '{}', which is not in the '{}' family",
                 self.algorithm,
-                P::ALGORITHM
+                P::FAMILY
             )));
         }
         serde_json::from_value(self.params.clone())
-            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", P::ALGORITHM)))
+            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", self.algorithm)))
     }
 
     pub fn algorithm(&self) -> &str {
@@ -164,7 +208,7 @@ mod tests {
     }
 
     impl SketchParams for FakeParams {
-        const ALGORITHM: &'static str = "fake";
+        const FAMILY: &'static str = "fake";
         fn canonical() -> Self {
             FakeParams {
                 rows: 5,
@@ -180,7 +224,7 @@ mod tests {
     }
 
     impl SketchParams for OtherParams {
-        const ALGORITHM: &'static str = "other";
+        const FAMILY: &'static str = "other";
         fn canonical() -> Self {
             OtherParams { lg_k: 14 }
         }
@@ -195,10 +239,40 @@ mod tests {
     }
 
     impl SketchParams for FloatParams {
-        const ALGORITHM: &'static str = "float";
+        const FAMILY: &'static str = "float";
         fn canonical() -> Self {
             FloatParams { alpha: 0.01 }
         }
+    }
+
+    /// The rule that decides whether an algorithm builds from a given
+    /// vocabulary. The `-` matters: without it `countsketch` would answer to
+    /// the `cms` vocabulary and a `cms` config would be accepted by a
+    /// CountSketch row.
+    #[test]
+    fn a_family_covers_its_variants_and_nothing_else() {
+        assert!(in_family("cms", "cms"));
+        assert!(in_family("cms-fastpath-vector2d", "cms"));
+        assert!(!in_family("countsketch", "cms"));
+        assert!(!in_family("topk-cms", "cms"));
+        assert!(!in_family("cmsx", "cms"));
+        assert!(!in_family("cm", "cms"));
+    }
+
+    /// A variant keeps its own name in the record while parsing through the
+    /// family's vocabulary — the property that lets one params type serve every
+    /// variant without the record losing which one ran.
+    #[test]
+    fn a_variant_parses_through_its_family_vocabulary() {
+        let p = ParamSet::of_algorithm("fake-fastpath", &FakeParams::canonical());
+        assert_eq!(p.algorithm(), "fake-fastpath");
+        assert_eq!(p.parse::<FakeParams>().unwrap(), FakeParams::canonical());
+    }
+
+    #[test]
+    #[should_panic(expected = "does not build from")]
+    fn naming_an_algorithm_from_another_family_panics() {
+        ParamSet::of_algorithm("other-hip", &FakeParams::canonical());
     }
 
     #[test]

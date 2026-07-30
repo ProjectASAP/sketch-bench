@@ -15,6 +15,7 @@ use sketch_bench::params::ParamSet;
 #[allow(clippy::too_many_arguments)]
 pub fn write_runs(
     dir: &Path,
+    family: &str,
     algorithm: &str,
     impl_name: &str,
     params: Option<&ParamSet>,
@@ -22,7 +23,9 @@ pub fn write_runs(
     workers: usize,
     report: &BenchReport,
 ) -> Result<()> {
-    let files = legacy_csv::render(algorithm, impl_name, params, seed, workers, report);
+    // One file per family, so a variant does not fork the plot script's input;
+    // the variant is what makes the `implementation` column unique inside it.
+    let files = legacy_csv::render(family, algorithm, impl_name, params, seed, workers, report);
     if files.is_empty() {
         return Ok(());
     }
