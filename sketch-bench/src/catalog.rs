@@ -20,11 +20,17 @@ use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
-use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+use asap_sketchlib::{
+    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
+    MatrixStorage,
+};
+
+use aqpbm_core::accuracy::FrequencyOps;
 
 use crate::params::{HllParams, ParamSet, TopkParams};
 use crate::wrappers::{
-    cms, countsketch, dd, elastic, hll, hydra, kll, nitro, parallel, polars, topk, univmon,
+    cms, countsketch, dd, elastic, fixed_matrix, hll, hydra, kll, nitro, parallel, polars, topk,
+    univmon,
 };
 
 // ---------- what a row is ----------
@@ -262,6 +268,88 @@ where
     cell::run_cell_parallel::<S>(cfg, spec, params)
 }
 
+/// A row whose `(rows, cols)` selects a *type* rather than sizing a field.
+///
+/// `impl_fixed_matrix!` bakes the dimensions into the storage type, which is
+/// what the row exists to price, so the shape is a monomorphisation and the
+/// dispatch is what turns two runtime integers back into one. Same shape as
+/// [`run_lib_hll`], and the same reason.
+/// Both fixed-matrix rows are frequency rows, so the comparator is named here
+/// instead of being a type parameter. That is not a shortcut: a comparator
+/// parameter would have to hold for *every* storage type the dispatch can
+/// select, which is a bound over all `M` and not something a caller can state.
+/// Requiring the row to be `FrequencyOps` at every shape says the same thing in
+/// a form the compiler accepts, and [`FrequencyGT`] follows from it.
+fn run_fixed_matrix<W: FixedMatrixRow>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    acc: &AccuracyCfg,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    let (rows, cols) = W::shape(params)?;
+    let visitor = RunFixedMatrix::<W> {
+        cfg,
+        spec,
+        params,
+        acc,
+        width,
+        _row: std::marker::PhantomData,
+    };
+    fixed_matrix::with_fixed_matrix(rows, cols, visitor).unwrap_or_else(|| {
+        Err(RunError::Build(BuildError(fixed_matrix::unsupported_shape(
+            W::ALGORITHM,
+            rows,
+            cols,
+        ))))
+    })
+}
+
+/// The half of a fixed-matrix row that does not depend on the storage type:
+/// which algorithm it is, and how to read its shape out of a `ParamSet`.
+/// Implemented once per sketch type, in the wrapper that owns it.
+pub trait FixedMatrixRow {
+    const ALGORITHM: &'static str;
+    /// The row's concrete type at storage `M`, which is what actually runs.
+    type At<
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    >: Accumulator<Item = i64>
+        + InitSketch
+        + BenchImpl
+        + MemoryFootprint
+        + FrequencyOps<Key = i64>;
+    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
+}
+
+/// Carries the run's arguments into the monomorphisation the shape selected.
+struct RunFixedMatrix<'a, W> {
+    cfg: &'a BenchConfig,
+    spec: &'a WorkloadSpec,
+    params: &'a ParamSet,
+    acc: &'a AccuracyCfg,
+    width: Numeric,
+    _row: std::marker::PhantomData<W>,
+}
+
+impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, W> {
+    type Out = Result<Vec<BenchReport>, RunError>;
+
+    fn visit<M>(self) -> Self::Out
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    {
+        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.acc, self.width)
+    }
+}
+
 /// A row whose construction parameter selects a *type* rather than a field.
 /// `asap_sketchlib` puts the HLL register count in the storage type, so `lg_k`
 /// picks a monomorphisation and this dispatch is what turns a runtime value
@@ -354,6 +442,23 @@ where
     }
 }
 
+/// The shape-dispatching counterpart of [`scored`]: identity comes off the
+/// row's `FixedMatrixRow` impl and its params type, because no one storage type
+/// names a row that exists at every shape.
+const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
+    description: &'static str,
+) -> Row {
+    Row {
+        family: P::FAMILY,
+        algorithm: W::ALGORITHM,
+        impl_name: "lib",
+        description,
+        scores_accuracy: true,
+        picks_width: false,
+        takes_columns: false,
+        run: run_fixed_matrix::<W>,
+    }
+}
 
 const fn plain<S>(description: &'static str) -> Row
 where
@@ -438,12 +543,8 @@ pub const ROWS: &[Row] = &[
     scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
     scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
     scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
-    scored::<cms::CmsLibFixedmatrixCustomFast, FrequencyGT>(
-        "asap CMS, custom FixedMatrix (5x65538), FastPath",
-    ),
-    scored::<cms::CmsLibFixedmatrixFast, FrequencyGT>("asap CMS, FixedMatrix (5x2048), FastPath"),
-    scored::<cms::CmsLibFixedmatrixFast32k, FrequencyGT>(
-        "asap CMS, FixedMatrix (5x32768), FastPath",
+    fixed_matrix_row::<cms::CmsFixedMatrixRow, crate::params::CmsParams>(
+        "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
     ),
     scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
     scored::<cms::CmsLibVector2dRegular, FrequencyGT>("asap CMS, Vector2D, RegularPath"),
@@ -451,11 +552,8 @@ pub const ROWS: &[Row] = &[
     // -------- CountSketch (frequency) --------
     scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
     scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
-    scored::<countsketch::CsLibFixedmatrixFast, FrequencyGT>(
-        "asap Count, FixedMatrix (5x2048), FastPath",
-    ),
-    scored::<countsketch::CsLibFixedmatrixFast32k, FrequencyGT>(
-        "asap Count, FixedMatrix (5x32768), FastPath",
+    fixed_matrix_row::<countsketch::CsFixedMatrixRow, crate::params::CountSketchParams>(
+        "asap Count, FixedMatrix (shape baked at compile time), FastPath",
     ),
     scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
     scored::<countsketch::CsLibVector2dRegular, FrequencyGT>("asap Count, Vector2D, RegularPath"),

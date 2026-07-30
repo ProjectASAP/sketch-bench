@@ -7,6 +7,7 @@ pub mod cms;
 pub mod countsketch;
 pub mod dd;
 pub mod elastic;
+pub mod fixed_matrix;
 pub mod hll;
 pub mod hydra;
 pub mod kll;

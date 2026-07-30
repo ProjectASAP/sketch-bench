@@ -8,12 +8,11 @@ use crate::wrappers::{require_resolved_shape, require_shape};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::memory_footprint::MemoryFootprint;
-use asap_sketchlib::{Count, DataInput, FastPath, FixedMatrix, RegularPath, Vector2D};
-use sketch_oxide::Mergeable as _;
-
-use crate::wrappers::cms::{
-    CountMinMatrix5x32K, CMS_FIXED_32K_COLS, CMS_FIXED_32K_ROWS, CMS_FIXED_COLS, CMS_FIXED_ROWS,
+use asap_sketchlib::{
+    Count, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
+    Vector2D,
 };
+use sketch_oxide::Mergeable as _;
 
 // sketch_oxide::frequency::CountSketch sizes its table as
 // `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
@@ -86,19 +85,29 @@ impl MemoryFootprint for CsOxide {
 }
 
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
-// Compile-time fixed at (5, 2048): builds only when the
-// requested config matches that shape, else a `BuildError`.
-pub struct CsLibFixedmatrixFast(pub Count<FixedMatrix, FastPath>);
+//
+// One row over every compiled-in shape, exactly as the Count-Min side. The
+// shapes are shared: a matrix is a matrix, and both sketches read the same table
+// in `wrappers::fixed_matrix`.
 
-impl InitSketch for CsLibFixedmatrixFast {
+pub struct CsLibFixedmatrix<M: MatrixStorage>(pub Count<M, FastPath>);
+
+impl<M> InitSketch for CsLibFixedmatrix<M>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CountSketchParams = config.parse()?;
-        require_shape(p.rows, p.cols, CMS_FIXED_ROWS, CMS_FIXED_COLS)?;
-        Ok(Self(Count::<FixedMatrix, FastPath>::default()))
+        let inner = Count::<M, FastPath>::from_storage(M::default());
+        require_shape(p.rows, p.cols, inner.rows(), inner.cols())?;
+        Ok(Self(inner))
     }
 }
 
-impl Accumulator for CsLibFixedmatrixFast {
+impl<M> Accumulator for CsLibFixedmatrix<M>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
     type Item = i64;
     #[inline(always)]
     fn update(&mut self, v: &i64) {
@@ -112,44 +121,30 @@ impl Accumulator for CsLibFixedmatrixFast {
     }
 }
 
-impl MemoryFootprint for CsLibFixedmatrixFast {
+impl<M> MemoryFootprint for CsLibFixedmatrix<M>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
     fn memory_bytes(&self) -> usize {
-        CMS_FIXED_ROWS * CMS_FIXED_COLS * std::mem::size_of::<i32>()
+        self.0.rows() * self.0.cols() * std::mem::size_of::<i32>()
     }
 }
 
-// ---------- asap_sketchlib: FixedMatrix 5x32768 + FastPath ----------
-// Same code path as the 5x2048 variant, at 5x32768 for the CMS+CS 32K panel.
-// Reuses the `CountMinMatrix5x32K` shape declared in cms.rs.
-pub struct CsLibFixedmatrixFast32k(pub Count<CountMinMatrix5x32K, FastPath>);
+/// The CountSketch counterpart of `CmsFixedMatrixRow`.
+pub struct CsFixedMatrixRow;
 
-impl InitSketch for CsLibFixedmatrixFast32k {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: CountSketchParams = config.parse()?;
-        require_shape(p.rows, p.cols, CMS_FIXED_32K_ROWS, CMS_FIXED_32K_COLS)?;
-        Ok(Self(Count::<CountMinMatrix5x32K, FastPath>::from_storage(
-            CountMinMatrix5x32K::default(),
-        )))
-    }
-}
-
-impl Accumulator for CsLibFixedmatrixFast32k {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.0.insert(&DataInput::I64(*v));
-    }
-
-    /// Counter-wise addition; Count Accumulator is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.0.merge(&other.0);
-        Ok(())
-    }
-}
-
-impl MemoryFootprint for CsLibFixedmatrixFast32k {
-    fn memory_bytes(&self) -> usize {
-        CMS_FIXED_32K_ROWS * CMS_FIXED_32K_COLS * std::mem::size_of::<i32>()
+impl crate::catalog::FixedMatrixRow for CsFixedMatrixRow {
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix";
+    type At<
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    > = CsLibFixedmatrix<M>;
+    fn shape(params: &ParamSet) -> Result<(usize, usize), aqpbm_core::cell::RunError> {
+        let p: CountSketchParams = params.parse().map_err(BuildError::from)?;
+        Ok((p.rows, p.cols))
     }
 }
 
@@ -244,14 +239,10 @@ impl FrequencyOps for CsOxide {
     }
 }
 
-impl FrequencyOps for CsLibFixedmatrixFast {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
-        self.0.estimate(&DataInput::I64(*key)) as u64
-    }
-}
-
-impl FrequencyOps for CsLibFixedmatrixFast32k {
+impl<M> FrequencyOps for CsLibFixedmatrix<M>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
     type Key = i64;
     fn estimate_frequency(&self, key: &i64) -> u64 {
         self.0.estimate(&DataInput::I64(*key)) as u64
@@ -278,14 +269,12 @@ impl FrequencyOps for CsLibVector2dRegular {
 
 impl BenchImpl for CsOxide { type Params = CountSketchParams; const IMPL: &'static str = "oxide"; }
 
-impl BenchImpl for CsLibFixedmatrixFast {
+impl<M> BenchImpl for CsLibFixedmatrix<M>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
     type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-2k";
-    const IMPL: &'static str = "lib";
-}
-impl BenchImpl for CsLibFixedmatrixFast32k {
-    type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k";
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix";
     const IMPL: &'static str = "lib";
 }
 impl BenchImpl for CsLibVector2dFast {
