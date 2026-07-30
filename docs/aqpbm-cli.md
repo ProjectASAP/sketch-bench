@@ -11,7 +11,7 @@ Three stages, in order.
 - **Resolve** turns an **invocation**, one execution of the binary with its argv and its environment, into one cell.
   A **cell** is one algorithm, one implementation of it, one parameter point and one workload.
   A cell is the unit that gets measured, and one invocation measures exactly one.
-  Expanding a panel of many cells is the driver script's loop.
+  Expanding a **panel**, the rows of one algorithm at one workload and one parameter point, is the driver script's loop.
 
 - **Dispatch** hands the cell to the **bundle** the subcommand names.
   A bundle is a crate holding wrapped implementations, and a catalog resolving an `(algorithm, impl)` pair to one of them.
@@ -45,7 +45,7 @@ Its own work is what only a binary can do: install a global allocator, own the p
 - **The environment.** Two variables, one setting the CPU ramp that brings the clock to a steady state, one marking a repeat child.
   Both are named in §4.2, because a variable an operator sets is command surface.
 
-- **The bundle's catalog.** Which `(algorithm, impl)` rows exist, whether a row can be scored, and whether a parameter point builds that algorithm.
+- **The bundle's catalog.** Which rows exist, whether a row can be scored, whether it takes multi-column input, and whether a parameter point builds.
   Every one of those is asked before dispatch, so a request the catalog rejects fails before the cell is built.
 
 - **The build.** Cargo features decide what the process can measure about its own memory.
