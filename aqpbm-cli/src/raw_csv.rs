@@ -1,4 +1,4 @@
-//! Writes the CSV files for `approxbench bench --raw-csv DIR`. The *content* —
+//! Writes the CSV files for `approxbench sketchbench --raw-csv DIR`. The *content* —
 //! headers, algorithm-specific columns, filenames — is rendered by
 //! [`sketch_bench::legacy_csv`]; this is only the sink, mirroring how
 //! `ReportSink` writes the JSONL the `Record` schema produces.

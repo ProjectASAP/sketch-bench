@@ -34,7 +34,7 @@ pub struct Comparison {
     pub queries: u64,
     pub query_wall_ns: u64,
     /// Optional per-call samples, populated only when the comparator carries
-    /// the `record_calls` flag (set by `approxbench bench --raw-csv`). `None`
+    /// the `record_calls` flag (set by `approxbench sketchbench --raw-csv`). `None`
     /// otherwise, so production runs pay nothing.
     pub query_calls: Option<Vec<QueryCallSample>>,
 }

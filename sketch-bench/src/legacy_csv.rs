@@ -333,10 +333,6 @@ fn legacy_impl_name(family: &str, algorithm: &str, impl_name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// File stem for an algorithm's CSVs. `i64` keeps the historical name so existing
-/// files keep accumulating and existing scripts keep resolving; anything else
-/// is suffixed.
-
 fn insert_header(family: &str) -> String {
     let lead = leading_label(family);
     let params = param_header(family);

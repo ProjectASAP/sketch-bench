@@ -56,9 +56,7 @@ side-by-side throughput / CPU / memory reference point and to
 sanity-check the ground-truth wiring. The dispatch marks it
 `Unparameterized`, so sweeps run it once regardless of grid size.
 
-The baselines live under `sketch-bench/src/baselines/` organised by
-**statistic** — not by sketch algorithm — so a single exact algorithm
-serves every sketch that answers the same question:
+The ground-truth comparators live under `aqpbm-core/src/accuracy/`, organised by **statistic** and not by sketch algorithm, so a single exact algorithm serves every sketch that answers the same question:
 
 | module             | statistic    | exact algorithm        | sketches that share this baseline |
 |--------------------|--------------|------------------------|-----------------------------------|
@@ -66,8 +64,8 @@ serves every sketch that answers the same question:
 | `frequency.rs`     | frequency    | `HashMap<i64, u64>`    | `cms`, `countsketch`, `elastic`   |
 | `quantile.rs`      | quantile     | sorted `Vec<i64>`      | `kll`, `dd` (DDSketch)            |
 
-`sketch_bench::baselines::Statistic::for_algorithm(...)` is the
-canonical algorithm → statistic lookup.
+There is no algorithm to statistic lookup function.
+A wrapper implements the capability traits in `aqpbm_core::accuracy::statistic` for the statistics it answers, and its row in `sketch_bench::catalog` names the comparator that scores it.
 
 `sketchlib-tool` is:
 
@@ -83,10 +81,13 @@ The two concepts are kept strictly separate throughout the code, CLI, and report
 | **What** | End-to-end behavior on a workload | Microarchitectural + allocation behavior |
 | **Metrics** | Throughput, latency p50/p95/p99, CPU time, RSS, heap peak, accuracy, 95% CI over N runs | L1/L2/LLC miss rates, branch mispredicts, TLB misses, IPC, cache-simulation, allocation hotspots, flamegraphs |
 | **Overhead** | Low — safe for always-on embedding | Higher — CLI-only |
-| **CLI** | `approxbench bench …` | `approxbench profile …` |
+| **CLI** | `approxbench sketchbench …` | not built yet |
 | **Crate** | `sketch-bench` | `sketch-profile` |
 
-Both write the same JSONL schema (see [`docs/DESIGN.md §4.4`](docs/DESIGN.md)) so the visualization layer consumes either.
+The profile column is a plan, not a shipped feature.
+`approxbench` today has two subcommands, `sketchbench` and `workload`, and there is no profiling subcommand or `sketch-profile` crate yet.
+
+Both are specified to write the same JSONL schema (see [`docs/DESIGN.md §4.4`](docs/DESIGN.md)) so the visualization layer consumes either.
 
 ## Target crate layout (post-merge)
 
@@ -96,7 +97,7 @@ sketch-bench/
 ├── sketch-bench/           # macro metrics (throughput, latency, CPU, memory, accuracy, CI)
 ├── sketch-profile/         # micro metrics (hw counters, perf, cachegrind, heaptrack, vtune)
 ├── sketch-runtime/         # embedded sampler + exporters (stdout, prometheus, grpc)
-├── sketch-cli/             # unified `approxbench` binary
+├── aqpbm-cli/              # unified `approxbench` binary
 ├── cpp-bench/              # C++ track of sketch-bench (v1 JSONL via cpp-bench/common/)
 ├── input/ scripts/         # shared datasets + top-level orchestrators
 ├── visualization/          # JSON/JSONL viewer (tables + charts) + per-algorithm
@@ -113,7 +114,9 @@ Downstream apps depend on `sketch-core + sketch-runtime` — not on `sketch-benc
 
 ## Current behavior (pre-migration)
 
-The legacy harness still works as before while the migration proceeds. Everything below describes the existing repo; over time it will be superseded by `approxbench bench` / `approxbench profile` subcommands.
+The legacy harness still works as before while the migration proceeds.
+Everything below describes the existing repo; over time it will be superseded by the `approxbench sketchbench` subcommand.
+The profiling subcommand it is meant to sit beside is not built yet.
 
 ### Methodology
 
@@ -140,11 +143,11 @@ The legacy harness still works as before while the migration proceeds. Everythin
    scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
    ```
 
-   Both scripts wrap `approxbench bench --raw-csv DIR` and dump
+   Both scripts wrap `approxbench sketchbench --raw-csv DIR` and dump
    long-format CSVs into `output/throughput/` and `output/accuracy/`
    respectively. The per-algorithm Rust harnesses that used to live
    under `throughput/<algorithm>/rust/` and `accuracy/<statistic>/rust/`
-   have been retired in favour of `sketch-cli` (recoverable from
+   have been retired in favour of `aqpbm-cli` (recoverable from
    git history). The per-algorithm C++ harnesses have likewise been
    ported onto `cpp-bench/common/` (`cpp-bench/{hll,cms,cs,kll}/`).
 3. C++ benchmarks build through one top-level CMake project:
@@ -153,7 +156,7 @@ The legacy harness still works as before while the migration proceeds. Everythin
    cmake --build cpp-bench/build
    ./cpp-bench/build/{hll,cms,cs,kll}/<impl>_<algorithm> --workload ... --report-path ...
    ```
-   `scripts/run_all.py` orchestrates both tracks (Rust via `approxbench bench`, C++ via the binaries above) into a single v1-JSONL report.
+   `scripts/run_all.py` orchestrates both tracks (Rust via `approxbench sketchbench`, C++ via the binaries above) into a single v1-JSONL report.
 4. Open `visualization/index.html` via a local server (see `visualization/README.md`) to view tables and charts.
 
 ### Benchmarks at a glance
@@ -163,7 +166,7 @@ The legacy harness still works as before while the migration proceeds. Everythin
   the full CS/KLL optimization-evolution series (naive → fastrange →
   fixed_size → final / naive → cached_level_capacities → no_min_max →
   no_self_move_protection → pcg_random → final). All emit v1 JSONL.
-- `sketch-cli/`: unified `approxbench bench` — every Rust impl + the polars
+- `aqpbm-cli/`: unified `approxbench sketchbench` — every Rust impl + the polars
   exact baselines + the `*-parallel/lib` (octo) rows. The
   per-algorithm `throughput/<algorithm>/rust/` and `accuracy/<statistic>/rust/`
   trees have been retired into git history.
@@ -171,7 +174,7 @@ The legacy harness still works as before while the migration proceeds. Everythin
   surface, showing what each family's knobs do, that they reach the sketch,
   and what a row says when it cannot build at the point it was given.
 - `scripts/run_throughput.sh`, `scripts/run_accuracy.sh`: orchestrators
-  that fan `approxbench bench` over all algorithms and dump CSVs the legacy
+  that fan `approxbench sketchbench` over all algorithms and dump CSVs the legacy
   plot scripts (now under `visualization/plots/throughput/` and
   `visualization/plots/accuracy/`) still consume unchanged.
 - `visualization/`: JSON/JSONL loader for charts and tables across all
@@ -187,7 +190,7 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 - New Rust impls: add a wrapper under `sketch-cli/src/wrappers/<algorithm>.rs`,
   register it in `sketch-cli/src/dispatch.rs` (one `IMPLS` row + one macro
   invocation), pick an `AccuracyKind`. The old per-algorithm `rust/` trees are
-  gone; everything new flows through `approxbench bench`.
+  gone; everything new flows through `approxbench sketchbench`.
 - New C++ benches: land them under `cpp-bench/<algorithm>/` on the new
   v1-JSONL framework (`cpp-bench/common/`); follow `cpp-bench/kll/` or
   `cpp-bench/cs/` as templates.
