@@ -92,4 +92,4 @@ esac
 
 echo "----"
 echo "JSONL report : ${REPORT}"
-echo "Legacy CSVs  : ${OUTPUT_DIR}/<algorithm>_throughput_*_results_rust.csv"
+echo "Legacy CSVs  : ${OUTPUT_DIR}/<family>_throughput_*_results_rust.csv"

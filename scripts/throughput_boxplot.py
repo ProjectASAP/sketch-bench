@@ -45,7 +45,7 @@ def run(cmd: list[str]) -> None:
 def cli_bench(algorithm: str, impl: str, config: str, panel_dir: Path) -> Path:
     """Run aqpbm-cli bench for one impl and return the per-run CSV path."""
     panel_dir.mkdir(parents=True, exist_ok=True)
-    # raw-csv writes a fixed filename '<algorithm>_throughput_results_rust.csv'
+    # raw-csv writes a fixed filename '<family>_throughput_results_rust.csv'
     # so we isolate per-impl runs into per-impl subdirs to avoid clobber.
     impl_dir = panel_dir / f"{algorithm}__{impl.replace('-', '_')}__{config.replace(' ', '_').replace('=', '')}"
     if impl_dir.exists():

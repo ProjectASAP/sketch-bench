@@ -17,7 +17,7 @@
     - depends on nothing else in the workspace, knows nothing about sketches.
       named for the program, not for its first consumer
 - Various sketch from different library connectet into the BM-framework
-    - 41 rows, 8 algorithms (hll kll cms countsketch elastic nitro dd univmon)
+    - 41 rows over 12 families (hll kll cms countsketch elastic nitro dd univmon topk hydra-cms hydra-hll hydra-kll); a family holds one or more algorithms
     - 3 libraries (sketch_oxide, datasketches, asap_sketchlib) + exact + null baseline
 - Merge benchmark
     - split the stream into N shards, one sketch each, time only the fold

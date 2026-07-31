@@ -3,11 +3,12 @@
 //! algorithm axis and deliberately knows no algorithm names, so concrete algorithms are
 //! declared by whoever ships the implementations. See `aqpbm_core::config`.
 //!
-//! One struct is one **family**, not one algorithm. `cms`,
-//! `cms-fastpath-vector2d` and `cms-regularpath-vector2d` are three algorithms
-//! measuring three structures, but a reader configures all three with the same
-//! `rows` and `cols`, so they share [`CmsParams`] and the family name it
-//! declares. A structural variant that needed a *different* knob would be a
+//! One struct is one **family**, not one algorithm. Five algorithms measure
+//! five Count-Min structures — `cms`, `cms-fastpath-vector2d`,
+//! `cms-regularpath-vector2d`, `cms-fastpath-fixedmatrix` and
+//! `cms-fastpath-fixedmatrix-32k-parallel` — but a reader configures every one
+//! of them with the same `rows` and `cols`, so they share [`CmsParams`] and the
+//! family name it declares. A structural variant that needed a *different* knob would be a
 //! different family, which is why the three Hydra cell types have three structs.
 
 use serde::{Deserialize, Serialize};

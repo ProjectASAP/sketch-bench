@@ -14,7 +14,7 @@ non-Rust emitter (currently just C++) can produce bytes that
 
 | field | required | notes |
 |---|---|---|
-| `schema_version` | yes | integer; currently **2**. |
+| `schema_version` | yes | integer; currently **3**. |
 | `sketch` | yes | algorithm name, structural variant included. Lowercase. Examples: `"hll"`, `"hll-hip"`, `"kll-cdf"`, `"cms-fastpath-vector2d"`. |
 | `family` | optional | the family `sketch` belongs to: the algorithms sharing one parameter vocabulary, e.g. `"cms"` for every `cms-*`. Group by this to compare libraries, by `sketch` to compare variants. Absent in records written before it existed. |
 | `impl` | yes | the implementing library, and only that. Rust uses `"oxide"` / `"datasketches"` / `"lib"` / `"polars"`; C++ uses `"datasketches"` / `"final"` / `"naive"` / etc. |

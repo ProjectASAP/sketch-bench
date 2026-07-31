@@ -101,11 +101,10 @@ pub trait InitSketch: Accumulator + Sized {
 }
 
 pub trait BenchImpl: Accumulator {
-    type Params: SketchParams;                 // ALGORITHM is read off this, never written here
+    type Params: SketchParams;                 // the family's parameter vocabulary
     const IMPL: &'static str;                  // the library: "oxide", "lib", ...
-    const ALGORITHM: &'static str;             // defaults to Params::FAMILY; a
-                                               // structural variant overrides it
-    const ALGORITHM: &'static str = <Self::Params as SketchParams>::ALGORITHM;
+    const ALGORITHM: &'static str = <Self::Params as SketchParams>::FAMILY;  // a variant overrides
+    const FAMILY: &'static str = <Self::Params as SketchParams>::FAMILY;     // derived, never written
 }
 pub trait MemoryFootprint {
     fn memory_bytes(&self) -> usize;           // best-effort; a tight upper bound is fine

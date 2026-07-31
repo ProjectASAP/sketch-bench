@@ -82,7 +82,7 @@ Straw-man — tune these to match the paper's plots. One grid per algorithm; use
 
 ### 3.1 Impls that don't honour a knob
 
-Some wrappers bake dimensions at compile time (e.g. `cms-fastpath-fixedmatrix` is hard-coded `5 × 65538`). Those refuse any other config by name, so a sweep over them is a sweep of one point.
+Some wrappers bake dimensions at compile time. `cms-fastpath-fixedmatrix` sweeps the shapes some build instantiated (52 today) and refuses the rest by name, telling the caller which line of source to add; the `*-parallel` rows are baked at one shape and take only that.
 
 ---
 

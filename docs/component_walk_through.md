@@ -129,7 +129,7 @@ This crate connects to `aqpbm-cli` such that user can use this benchmark.
 
 Note: An *algorithm* names what is measured, structural variant included (`hll`, `hll-hip`, `cms-fastpath-vector2d`), and an *impl* names the library implementing it (`oxide`, `datasketches`, `polars`, `lib`), so `(hll, oxide)` names one benchmarkable row. Algorithms sharing a parameter vocabulary form a *family*, which is the axis a cross-library comparison groups by.
 
-Algorithm names are written in exactly two places: the `ALGORITHM` consts in `params`, and `legacy_csv`'s per-algorithm header table.
+Family names are written in exactly one place, the `FAMILY` consts in `params`; an algorithm name is written once more, in the `BenchImpl` of the row that is a structural variant, and `legacy_csv`'s per-algorithm header table.
 The second is pinned rather than derived, because plot scripts read those columns positionally and renaming one silently shifts every later column.
 Everywhere else the algorithm comes from the type: a row's `BenchImpl` derives it from `Params::ALGORITHM`, so `"hll"` is written once and `catalog` spells no algorithm name at all.
 
@@ -185,7 +185,7 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 | `sketch-runtime` | Embedded sampler + exporters for downstream apps. | Open — the crate itself is under discussion |
 | `aqp-bench` | V2 placeholder: a second bundle sitting parallel to `sketch-bench`. | Open — stated above as "may be changed" |
 | `approxbench` | The CLI binary name. | Likely — same "sketch" question as the crates |
-| algorithm | The algorithm: `hll`, `cms`, `countsketch`, `kll`, `dd`, `topk`, `elastic`, `nitro`, `univmon`. | likely |
+| algorithm | What is measured, structural variant included: `hll`, `hll-hip`, `kll-percall`, `kll-cdf`, `cms`, `cms-fastpath-vector2d`, … `--list-impls` prints them all. | likely |
 | impl | The library implementing an algorithm: `oxide`, `datasketches`, `polars`, `lib`. Nothing else goes in this column. | likely |
 | family | The algorithms sharing one parameter vocabulary: `cms` covers every `cms-*`. Group by it to compare libraries, by `algorithm` to compare variants. | likely |
 | row | One `(algorithm, impl)` pair — the unit that can be benchmarked. | No |

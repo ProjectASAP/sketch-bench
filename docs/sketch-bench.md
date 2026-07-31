@@ -47,13 +47,13 @@ Benchmarking a sketch of your own does not go through this crate, which exists f
 - **The catalog listing.** One line per row: algorithm, impl, and a description naming the concrete type wrapped, grouped by family.
 
 ```
-hll-hip                       lib     asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}
-cms-fastpath-fixedmatrix  lib     asap CMS, FixedMatrix (5x32768), FastPath
-kll-cdf                       polars  polars exact: 101-point quantile grid
+hll-hip                   lib     asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}
+cms-fastpath-fixedmatrix  lib     asap CMS, FixedMatrix (shape baked at compile time), FastPath
+kll-cdf                   polars  polars exact: 101-point quantile grid
 ```
 
-- **Answers about a row, before it runs.** Whether an algorithm exists, whether a row is scored for accuracy, and whether it takes multi-column input.
-  A grouped row consumes labelled records, several columns of label plus a value, and a frontend that guessed would fail at construction.
+- **Answers about a row, before it runs.** Whether an algorithm exists, which family it belongs to, and whether a row is scored for accuracy.
+  Whether a row takes multi-column input is known too, off the row's item type, but no caller has needed to ask: a grouped row consumes labelled records, and one handed a single-column spec refuses by name at construction.
 
 - **Errors.** Every refusal names the offending value.
   - an unknown algorithm
@@ -79,7 +79,6 @@ pub fn list() -> Vec<String>;
 pub fn algorithm_exists(algorithm: &str) -> bool;
 pub fn family_of(algorithm: &str) -> Option<&'static str>;                // None: unknown row
 pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool>;  // None: unknown row
-pub fn takes_columns(algorithm: &str, impl_name: &str) -> Option<bool>;    // None: unknown row
 
 // One parameter point for an algorithm, from the CLI's `--config` string.
 pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet>;
@@ -94,21 +93,24 @@ pub fn run(algorithm: &str, impl_name: &str,
 A row's set of acceptable parameter points is tabulated nowhere, and the answer is what the row's `init` does with the `ParamSet`.
 Only a constructor taking the row's type builds an entry, so the listed name and the dispatched type are one fact.
 
-Five shapes exhaust the ways rows differ behind that one signature.
+Six shapes exhaust the ways rows differ behind that one signature.
 
 ```
-scored     one type   + one comparator     timed passes, plus accuracy when asked
-ordered    two types  + one comparator     as scored, with the numeric width picking the type
-lib-hll    three types + one comparator    as scored, with `lg_k` picking the type
-plain      one type,  no comparator        timed passes only; the row answers no query
-parallel   one type,  built with workers   timed passes only; construction takes a run knob
+scored        one type    + one comparator     timed passes, plus accuracy when asked
+ordered       two types   + one comparator     as scored, with the numeric width picking the type
+lib-hll       three types + one comparator     as scored, with `lg_k` picking the type
+fixed-matrix  a table of types + one comparator as scored, with `(rows, cols)` picking the type
+plain         one type,  no comparator         timed passes only; the row answers no query
+parallel      one type,  built with workers    timed passes only; construction takes a run knob
 ```
 
-The two multi-type shapes exist for the same reason: a library that puts a construction parameter in a *type* forces the choice to be made where a type can still be named, which is the dispatch and not the wrapper.
+The three multi-type shapes exist for one reason: a library that puts a construction parameter in a *type* forces the choice to be made where a type can still be named, which is the dispatch and not the wrapper.
 Resolving it inside the wrapper would mean an enum, and a branch per insert on rows that exist to price that insert.
+They differ only in how many types there are and where the set is written: two spelled in the signature, three in a const, and a table generated beside the types it admits.
 
 An **exact baseline** is a row computing the exact answer: it declares the same capability, takes its family's parameters, and runs through identical machinery.
-It sits on the family's base algorithm, so every structural variant of that family is scored against one exact answer.
+It sits on one algorithm of its family, and every other algorithm in that family is read against it.
+Which one is a judgement per family: usually the family's base algorithm, but `kll` has no base algorithm — every KLL row states a query path — so its baseline sits on `kll-cdf`, the path it actually takes.
 
 ### 4.2 The two name axes
 
@@ -154,9 +156,8 @@ The `FAMILY` const in the params struct is the one place a family's name is writ
 
 - **What the sampling and universal algorithms are scored under.** Giving them comparators means naming a statistic, a moment estimate or a heavy-hitter set, whose definition is an `aqpbm-core` decision.
 
-- **Whether a fixed-shape row should be a row at all.** Three Count-Min variants differ only in a baked matrix size, which is a value their family already has a knob for.
-  As rows they price what a compile-time shape buys, and their config is a single point that must be typed exactly.
-  As one row taking `rows` and `cols` they would sweep like their peers, at the cost of losing the compile-time specialisation that is the thing being measured.
+- **How wide the compiled-in shape table should be.** A fixed-matrix row sweeps only the shapes some build instantiated, so the table decides what is measurable without recompiling.
+  Widening it is nearly free in compile time and costs rlib size; the current ceiling is set by an unoptimised build materialising the largest array on a test thread's stack, not by anything about the measurement.
 
 - **Whether the exact baselines should take a config at all.** They compute the exact answer, so no value changes what they return, and they parse the config only to refuse what their siblings refuse.
   Accepting anything would let a config that fails on every sketch row still produce a baseline number.

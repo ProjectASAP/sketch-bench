@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_profiles.sh — CPU-accuracy and memory-accuracy profiles
 #
-# Runs all four sketch algorithms (hll, kll, cms, countsketch)
+# Runs the four sketch families (hll, kll, cms, countsketch)
 # across three workloads (zipf, uniform, file) using the default
 # config grids. Emits one JSONL file per (algorithm, workload) in
 # output/profiles/, plus a combined all.jsonl.

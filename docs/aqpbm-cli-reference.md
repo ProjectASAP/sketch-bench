@@ -105,9 +105,9 @@ Workload:
           [default: 1.1]
 
       --dtype <DTYPE>
-          Numeric width for the ordered algorithms (`kll`, `dd`): `i64` or `f64`. The one
-          item-type choice left, since every other row's is fixed by its wrapper, and `f64`
-          elsewhere is refused by name. Encoding only
+          Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`, `dd`): `i64` or
+          `f64`. The one item-type choice left, since every other row's is fixed by its wrapper,
+          and `f64` elsewhere is refused by name. Encoding only
           
           [default: i64]
 
@@ -179,8 +179,9 @@ Output:
 
       --raw-csv <RAW_CSV>
           Output directory for long-format CSVs, one row per measured run, named
-          `<algorithm>_throughput[_query]_results_rust.csv`. Coexists with `--report`; for plot
-          scripts that consume that CSV shape
+          `<family>_throughput[_query]_results_rust.csv` — one file per family, so a structural
+          variant does not fork the file a plot script reads; the variant lands in the
+          `implementation` column. Coexists with `--report`
 
 Options:
   -h, --help

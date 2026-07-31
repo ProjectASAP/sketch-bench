@@ -9,9 +9,9 @@
 //!
 //! So the set is written down here and dispatched over at run time, the same way
 //! `hll`'s `lg_k` selects a register-storage type. Instantiating a shape is
-//! close to free — 36 of them measured at no detectable compile time and about
-//! 26 KiB of rlib each — so the grid below is dense enough that a caller has to
-//! be trying to fall outside it.
+//! close to free: a trial grid of 36 measured at no detectable compile time and
+//! about 26 KiB of rlib each, which is why the table below can afford 52 and
+//! still leave a caller having to try to fall outside it.
 //!
 //! # Adding a shape
 //!

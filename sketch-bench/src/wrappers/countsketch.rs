@@ -1,5 +1,6 @@
-//! CountSketch wrappers — 5 variants (`oxide` + 4× sketchlib).
-//! Same algorithm as CMS: each declares `FrequencyOps`.
+//! CountSketch wrappers — four types (`oxide` + 3× sketchlib), each declaring
+//! `FrequencyOps`. Same shapes and the same three routes as the Count-Min
+//! wrappers next door, including one generic row over the shared shape table.
 
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};

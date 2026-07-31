@@ -112,9 +112,10 @@ pub struct SketchbenchArgs {
     /// Zipf `s` exponent (only used when `--workload zipf`).
     #[arg(long, default_value_t = 1.1, help_heading = "Workload")]
     pub zipf_s: f64,
-    /// Numeric width for the ordered algorithms (`kll`, `dd`): `i64` or `f64`.
-    /// The one item-type choice left, since every other row's is fixed by its
-    /// wrapper, and `f64` elsewhere is refused by name. Encoding only.
+    /// Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`,
+    /// `dd`): `i64` or `f64`. The one item-type choice left, since every other
+    /// row's is fixed by its wrapper, and `f64` elsewhere is refused by name.
+    /// Encoding only.
     #[arg(long, default_value = "i64", help_heading = "Workload")]
     pub dtype: String,
     /// Alphabet for generated string keys, for the rows whose wrappers take
@@ -185,8 +186,9 @@ pub struct SketchbenchArgs {
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
     /// Output directory for long-format CSVs, one row per measured run, named
-    /// `<algorithm>_throughput[_query]_results_rust.csv`. Coexists with
-    /// `--report`; for plot scripts that consume that CSV shape.
+    /// `<family>_throughput[_query]_results_rust.csv` — one file per family, so
+    /// a structural variant does not fork the file a plot script reads; the
+    /// variant lands in the `implementation` column. Coexists with `--report`.
     #[arg(long, help_heading = "Output")]
     pub raw_csv: Option<String>,
 

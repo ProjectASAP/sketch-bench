@@ -137,7 +137,7 @@ pub fn render(
 }
 
 /// The octo CSV: one combined file, `implementation = "octo"` with `sketch_type`
-/// carrying the algorithm. `total_nanoseconds` is the **build** wall, not the insert
+/// carrying the family. `total_nanoseconds` is the **build** wall, not the insert
 /// wall — these rows do their real work in finalize.
 fn octo_file(family: &str, workers: usize, report: &BenchReport) -> CsvFile {
     let sketch_type = legacy_sketch_type(family);
@@ -173,12 +173,12 @@ fn legacy_sketch_type(family: &str) -> &'static str {
     }
 }
 
-fn per_call_query_header(algorithm: &str) -> String {
-    let lead = leading_label(algorithm);
-    let params = param_header(algorithm);
-    // Algorithm-specific per-call tail; KLL/DD carry `repeat, percentile` ahead
+fn per_call_query_header(family: &str) -> String {
+    let lead = leading_label(family);
+    let params = param_header(family);
+    // Family-specific per-call tail; KLL/DD carry `repeat, percentile` ahead
     // of `call_index` to match the legacy header order.
-    let tail = match algorithm {
+    let tail = match family {
         "hll" => "call_index,nanoseconds,estimate",
         "kll" | "dd" => "repeat,percentile,call_index,nanoseconds,estimate",
         _ => "call_index,nanoseconds,estimate",
@@ -238,8 +238,8 @@ fn format_per_call_row(
     format!("{legacy_impl},rust,{lead}{middle},{total_items},{tail}")
 }
 
-/// Per-algorithm construction-param columns extracted from a `ParamSet`.
-/// Each algorithm's columns are listed in the order they appear in the CSV header
+/// Per-family construction-param columns extracted from a `ParamSet`.
+/// Each family's columns are listed in the order they appear in the CSV header
 /// (after the leading bookkeeping columns).
 #[derive(Clone)]
 struct ParamCols {
@@ -337,9 +337,9 @@ fn legacy_impl_name(family: &str, algorithm: &str, impl_name: &str) -> String {
 /// files keep accumulating and existing scripts keep resolving; anything else
 /// is suffixed.
 
-fn insert_header(algorithm: &str) -> String {
-    let lead = leading_label(algorithm);
-    let params = param_header(algorithm);
+fn insert_header(family: &str) -> String {
+    let lead = leading_label(family);
+    let params = param_header(family);
     if params.is_empty() {
         format!(
             "implementation,language,{lead},total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
@@ -351,9 +351,9 @@ fn insert_header(algorithm: &str) -> String {
     }
 }
 
-fn query_header(algorithm: &str) -> String {
-    let lead = leading_label(algorithm);
-    let params = param_header(algorithm);
+fn query_header(family: &str) -> String {
+    let lead = leading_label(family);
+    let params = param_header(family);
     if params.is_empty() {
         format!(
             "implementation,language,{lead},total_items,total_queries,total_nanoseconds,throughput_queries_per_sec"
@@ -368,8 +368,8 @@ fn query_header(algorithm: &str) -> String {
 /// CMS / CountSketch index their legacy rows by `seed` (one row per re-seeded
 /// run); the other algorithms use a `run` ordinal. Match the legacy header so
 /// plot scripts that look up `row["seed"]` / `row["run"]` still parse.
-fn leading_label(algorithm: &str) -> &'static str {
-    match algorithm {
+fn leading_label(family: &str) -> &'static str {
+    match family {
         "cms" | "countsketch" => "seed",
         _ => "run",
     }
@@ -385,11 +385,11 @@ fn legacy_float_format(v: &str) -> String {
     }
 }
 
-/// The CSV header, verbatim. A per-algorithm table on purpose: it encodes an
-/// **external file format**, not an abstraction over algorithms — `registers` is
+/// The CSV header, verbatim. A per-family table on purpose: it encodes an
+/// **external file format**, not an abstraction over families — `registers` is
 /// derived and nitro's `rows`/`cols` are sentinels, so deriving it would break.
-fn param_header(algorithm: &str) -> &'static str {
-    match algorithm {
+fn param_header(family: &str) -> &'static str {
+    match family {
         "hll" => "lg_k,registers",
         "kll" => "k",
         "cms" | "countsketch" => "rows,cols",
@@ -414,8 +414,8 @@ fn param_header(algorithm: &str) -> &'static str {
 /// The same set of columns as `param_header` but as separate names, used to
 /// populate sentinel `0`s for unparameterized impls so their CSV rows match
 /// the legacy width.
-fn legacy_param_columns(algorithm: &str) -> &'static [&'static str] {
-    match algorithm {
+fn legacy_param_columns(family: &str) -> &'static [&'static str] {
+    match family {
         "hll" => &["lg_k", "registers"],
         "kll" => &["k"],
         "cms" | "countsketch" => &["rows", "cols"],

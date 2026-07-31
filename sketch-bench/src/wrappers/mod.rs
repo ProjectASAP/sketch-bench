@@ -21,14 +21,22 @@ use aqpbm_core::init::BuildError;
 
 // ---------- refusing a config the row cannot honour ----------
 //
-// Both helpers below exist for one rule: a row that cannot build at the
+// All four helpers below exist for one rule: a row that cannot build at the
 // requested parameters says so, and never builds at different ones under the
 // requested label. The record's `sketch_config` is then always the config that
 // ran, which is what lets a plot key on it.
+//
+// They divide by how the wrapped library states its domain. `require_shape`:
+// one shape, baked into a type. `require_range` / `require_positive`: a bound
+// the library asserts on, so it has to be checked before the call.
+// `require_resolved_shape`: no stated domain at all, only what the library
+// resolved the request to, which is readable off the built structure.
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
 /// shape; any other requested config is a `BuildError` naming both shapes.
-/// Shared by the fixed CMS and CountSketch wrappers.
+/// Shared by the fixed-matrix CMS and CountSketch rows, which read the shape
+/// off the storage they were monomorphised at, and by the parallel rows, whose
+/// per-worker sketch is a compile-time type.
 pub(crate) fn require_shape(
     rows: usize,
     cols: usize,

@@ -194,7 +194,7 @@ where
     }
 }
 
-// ---------- the four ways a row runs ----------
+// ---------- the ways a row runs ----------
 
 /// Timed measurement, plus accuracy scored against `G` when `--accuracy` is on.
 fn run_scored<S, G>(

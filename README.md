@@ -43,8 +43,8 @@ Covered algorithms / impls (21 sketch + 3 exact = 24 total):
 |---|---|
 | `hll` | `oxide`, `datasketches`, `lib` (asap_sketchlib), `exact` |
 | `kll` | `oxide`, `lib`, `exact` |
-| `cms` | `oxide`, `datasketches`, `lib-{fixedmatrix-custom-fast,fixedmatrix-fast,vector2d-fast,vector2d-regular}`, `exact` |
-| `countsketch` | `oxide`, `lib-{fixedmatrix-fast,vector2d-fast,vector2d-regular}` |
+| `cms`, `cms-fastpath-{fixedmatrix,vector2d}`, `cms-regularpath-vector2d` | `oxide`, `datasketches`, `lib`, `polars` |
+| `countsketch`, `countsketch-fastpath-{fixedmatrix,vector2d}`, `countsketch-regularpath-vector2d` | `oxide`, `lib`, `polars` |
 | `elastic` | `oxide`, `lib` |
 | `nitro` | `oxide`, `lib` |
 | `univmon` | `oxide`, `lib` |

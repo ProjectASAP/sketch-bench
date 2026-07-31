@@ -1,7 +1,13 @@
-//! Count-Min Accumulator wrappers — 7 variants, every one declaring
-//! `FrequencyOps` (`&i64` point lookup → `u64` count estimate). `oxide`,
-//! `datasketches` and the `lib_vector2d_*` pair tune via `(rows, cols)`; the
-//! `lib_fixedmatrix_*` variants bake their shape in (5x65538, 5x2048, 5x32768).
+//! Count-Min Accumulator wrappers — five types, every one declaring
+//! `FrequencyOps` (`&i64` point lookup → `u64` count estimate).
+//!
+//! All of them take `(rows, cols)` and honour it, by three different routes.
+//! `oxide` inverts the error bounds its API takes and checks the table it got
+//! back. `datasketches` range-checks the `(u8, u32)` its API narrows to.
+//! `CmsLibVector2dFast` / `CmsLibVector2dRegular` size at run time.
+//! `CmsLibFixedmatrix<M>` is generic over a storage type that bakes the shape
+//! in, so the shape selects a monomorphisation from the table in
+//! `wrappers::fixed_matrix` and the catalog dispatches on it.
 
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
