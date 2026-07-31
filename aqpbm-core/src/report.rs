@@ -220,6 +220,104 @@ pub struct LatencySummary {
     pub count: u64,
 }
 
+/// Flattened form of the 2-4 [`Record`]s that share one (sketch, impl,
+/// sketch_config, workload) identity — one row per cell instead of one row
+/// per pass. Built by `aqpbm-cli`'s `flatten_record` from a throughput
+/// pass, a query/accuracy pass, an optional latency pass, and an optional
+/// merge pass. Field names on the wire match `scripts/merge_passes.py`'s
+/// current output, so existing consumers don't need to change. Lives next
+/// to [`Record`] rather than in the CLI crate since it's a JSONL wire
+/// shape like `Record`, not CLI-specific logic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergedRecord {
+    pub schema_version: u32,
+    pub sketch: String,
+    #[serde(rename = "impl")]
+    pub impl_name: String,
+    pub language: Language,
+    pub mode: Mode,
+    pub runs: usize,
+    pub source: Source,
+
+    pub sketch_config: Option<serde_json::Value>,
+    pub workload: WorkloadDescription,
+
+    pub memory_bytes: Option<u64>,
+    /// Net bytes the tracking allocator attributes to this sketch's
+    /// lifetime — **measured**, where [`Self::memory_bytes`] is a
+    /// self-reported formula. Only present when the source binary was built
+    /// with `heap-track`; kept as its own field (not merged into
+    /// `memory_bytes`) so a gap between the two stays visible instead of
+    /// being silently papered over.
+    pub heap_bytes_net: Option<u64>,
+    /// High-water mark of the same counter across construction and insert.
+    pub heap_bytes_peak: Option<u64>,
+    pub accuracy: Option<serde_json::Value>,
+
+    #[serde(flatten)]
+    pub insert: InsertMetrics,
+    #[serde(flatten)]
+    pub query: QueryMetrics,
+    #[serde(flatten)]
+    pub latency: LatencyMetrics,
+    #[serde(flatten)]
+    pub merge: MergeMetrics,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InsertMetrics {
+    #[serde(rename = "insert_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "insert_throughput_items_per_sec")]
+    pub throughput_items_per_sec: Option<RunStats>,
+    #[serde(rename = "insert_throughput_samples")]
+    pub throughput_samples: Option<Vec<f64>>,
+    #[serde(rename = "insert_build_throughput_items_per_sec")]
+    pub build_throughput_items_per_sec: Option<RunStats>,
+    #[serde(rename = "insert_finalize_time_ms")]
+    pub finalize_time_ms: Option<RunStats>,
+    #[serde(rename = "insert_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "insert_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "insert_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "insert_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QueryMetrics {
+    #[serde(rename = "query_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "query_throughput_items_per_sec")]
+    pub throughput_items_per_sec: Option<RunStats>,
+    #[serde(rename = "query_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "query_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "query_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "query_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LatencyMetrics {
+    #[serde(rename = "latency_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    pub latency_ns: Option<LatencySummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MergeMetrics {
+    #[serde(rename = "merge_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    pub merge_time_ms: Option<RunStats>,
+    pub merge_shards: Option<usize>,
+    pub merge_supported: Option<bool>,
+}
+
 impl Record {
     pub fn new(
         sketch: impl Into<String>,

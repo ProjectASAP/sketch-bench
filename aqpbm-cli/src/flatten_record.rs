@@ -1,116 +1,50 @@
-//! Output data structure + flatten logic for a planned `approxbench merge`
-//! command — the intended Rust replacement for `scripts/merge_passes.py`.
+//! Flatten logic for a planned `approxbench merge` command — the intended
+//! Rust replacement for `scripts/merge_passes.py`.
 //!
 //! The CLI emits one raw [`Record`] per metric pass (see the comment at
 //! `main.rs`'s `run_bench`: "A downstream group-by on (sketch, impl,
 //! sketch_config, workload) merges them back."). [`flatten_record`] is that
-//! downstream step: given the 2-3 [`Record`]s that share one identity
-//! (one insert pass, one query/accuracy pass, optionally one latency pass),
-//! it folds them into a single [`MergedRecord`] row. Field names on the
-//! wire match `merge_passes.py`'s current output, so existing consumers
-//! don't need to change.
+//! downstream step: given the 2-4 [`Record`]s that share one identity
+//! (one insert pass, one query/accuracy pass, optionally a latency pass,
+//! optionally a merge pass), it folds them into a single [`MergedRecord`]
+//! row. [`MergedRecord`] itself lives in `aqpbm_core` alongside [`Record`]
+//! — it's a JSONL wire shape, not CLI-specific logic.
 //!
 //! Grouping records by identity, and splitting a re-run (the same pass
 //! appearing twice) into two separate calls to `flatten_record` instead of
 //! silently overwriting, is the caller's job — not implemented here yet.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use aqpbm_core::report::{CpuTime, Language, LatencySummary, Mode, RunStats, Source};
-use aqpbm_core::{Record, WorkloadDescription};
+use aqpbm_core::{
+    BenchSection, InsertMetrics, LatencyMetrics, MergeMetrics, MergedRecord, QueryMetrics, Record,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MergedRecord {
-    pub schema_version: u32,
-    pub sketch: String,
-    #[serde(rename = "impl")]
-    pub impl_name: String,
-    pub language: Language,
-    pub mode: Mode,
-    pub runs: usize,
-    pub source: Source,
-
-    pub sketch_config: Option<Value>,
-    pub workload: WorkloadDescription,
-
-    pub memory_bytes: Option<u64>,
-    pub accuracy: Option<Value>,
-
-    #[serde(flatten)]
-    pub insert: InsertMetrics,
-    #[serde(flatten)]
-    pub query: QueryMetrics,
-    #[serde(flatten)]
-    pub latency: LatencyMetrics,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct InsertMetrics {
-    #[serde(rename = "insert_timestamp")]
-    pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "insert_throughput_items_per_sec")]
-    pub throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "insert_throughput_samples")]
-    pub throughput_samples: Option<Vec<f64>>,
-    #[serde(rename = "insert_cpu_time_ms")]
-    pub cpu_time_ms: Option<CpuTime>,
-    #[serde(rename = "insert_wall_time_ms")]
-    pub wall_time_ms: Option<RunStats>,
-    #[serde(rename = "insert_rss_peak_kb")]
-    pub rss_peak_kb: Option<u64>,
-    #[serde(rename = "insert_heap_allocated_kb")]
-    pub heap_allocated_kb: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct QueryMetrics {
-    #[serde(rename = "query_timestamp")]
-    pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "query_throughput_items_per_sec")]
-    pub throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "query_cpu_time_ms")]
-    pub cpu_time_ms: Option<CpuTime>,
-    #[serde(rename = "query_wall_time_ms")]
-    pub wall_time_ms: Option<RunStats>,
-    #[serde(rename = "query_rss_peak_kb")]
-    pub rss_peak_kb: Option<u64>,
-    #[serde(rename = "query_heap_allocated_kb")]
-    pub heap_allocated_kb: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LatencyMetrics {
-    #[serde(rename = "latency_timestamp")]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub latency_ns: Option<LatencySummary>,
-}
-
-/// Which pass a `Record` belongs to. Prefers the schema's own
-/// `bench.pass` field (added in schema v3) when present; falls back to
-/// sniffing which throughput-shaped field is set, for records written
-/// before that field existed.
-fn pass_of(record: &Record) -> &'static str {
-    let bench = match record.bench.as_ref() {
-        Some(b) => b,
-        None => return "query",
-    };
-    if let Some(p) = bench.pass.as_deref() {
-        match p {
-            "throughput" => return "insert",
-            "latency" => return "latency",
-            "accuracy" => return "query",
-            _ => {} // "merge" (shard-merge pass) or unrecognised: fall through to sniffing
-        }
-    }
-    if bench.throughput_items_per_sec.is_some() {
-        "insert"
-    } else if bench.latency_ns.is_some() {
-        "latency"
-    } else {
-        // query_throughput_items_per_sec set, or a memory-only second
-        // pass with neither — both belong in the query/accuracy slot.
-        "query"
+/// Which pass a `Record` belongs to, per its own `bench.pass` field
+/// (schema v3+). Every name `--metrics` can produce (`throughput`,
+/// `latency`, `accuracy`, `merge`) is matched explicitly; anything else —
+/// a missing `bench` section, a missing `pass` value, or a `pass` value
+/// none of these arms names — is an error rather than a guess. Which of
+/// these slots get shown, and how, is the leaderboard's call, not this
+/// function's: its job is only to keep the flattened record complete.
+fn pass_of(record: &Record) -> Result<&'static str, String> {
+    let bench = record.bench.as_ref().ok_or_else(|| {
+        format!(
+            "flatten_record: {}/{} record has no bench section, so its pass is unknown",
+            record.sketch, record.impl_name
+        )
+    })?;
+    match bench.pass.as_deref() {
+        Some("throughput") => Ok("insert"),
+        Some("latency") => Ok("latency"),
+        Some("accuracy") => Ok("query"),
+        Some("merge") => Ok("merge"),
+        Some(other) => Err(format!(
+            "flatten_record: {}/{} record has unrecognized bench.pass '{other}'",
+            record.sketch, record.impl_name
+        )),
+        None => Err(format!(
+            "flatten_record: {}/{} record has bench section but no bench.pass set",
+            record.sketch, record.impl_name
+        )),
     }
 }
 
@@ -121,12 +55,12 @@ fn pass_of(record: &Record) -> &'static str {
 /// exactly one insert / one query / one latency record, not a rerun's
 /// worth of duplicates.
 ///
-/// Returns `Err` naming the field if a record's `bench` section carries a
-/// field this function doesn't explicitly know how to place. This is
-/// deliberate: silently dropping or silently absorbing an unrecognized
-/// field would hide a schema drift (a new metric nobody taught this
-/// function about, or a bug) behind output that still "looks fine" —
-/// failing loudly forces it to be noticed and handled.
+/// Every `BenchSection` field is bound by name below (not `..`), so a
+/// field this function doesn't yet place is a **compile error**, not a
+/// silently dropped or silently absorbed value: adding a field to
+/// `BenchSection` without teaching this function about it fails the build,
+/// which is stronger than a runtime check and can't drift out of date the
+/// way a hand-maintained list of field names could.
 pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
     let base = records.first().expect("flatten_record requires at least one record");
 
@@ -141,83 +75,94 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         sketch_config: base.sketch_config.clone(),
         workload: base.workload.clone(),
         memory_bytes: None,
+        heap_bytes_net: None,
+        heap_bytes_peak: None,
         accuracy: None,
         insert: InsertMetrics::default(),
         query: QueryMetrics::default(),
         latency: LatencyMetrics::default(),
+        merge: MergeMetrics::default(),
     };
 
     for record in records {
-        let phase = pass_of(record);
+        let phase = pass_of(record)?;
         let Some(bench) = record.bench.as_ref() else {
             continue;
         };
 
-        // memory_bytes: insert's structural footprint wins if present;
-        // otherwise take whatever pass offers it first.
-        if let Some(mb) = bench.memory_bytes {
-            if phase == "insert" || out.memory_bytes.is_none() {
-                out.memory_bytes = Some(mb);
-            }
+        // Named field-by-field, not `..`: a field added to `BenchSection`
+        // that isn't listed here fails the build instead of being
+        // silently dropped. See the doc comment above.
+        let BenchSection {
+            pass: _,
+            throughput_items_per_sec,
+            throughput_samples,
+            build_throughput_items_per_sec,
+            finalize_time_ms,
+            query_throughput_items_per_sec,
+            latency_ns,
+            cpu_time_ms,
+            wall_time_ms,
+            rss_peak_kb,
+            heap_allocated_kb,
+            memory_bytes,
+            heap_bytes_net,
+            heap_bytes_peak,
+            accuracy,
+            merge_time_ms,
+            merge_shards,
+            merge_supported,
+        } = bench;
+
+        // Structural footprint fields: pass-invariant (the sketch has one
+        // size, however many passes measure it), so first value wins
+        // rather than favoring any particular pass. `heap_bytes_net` is
+        // kept separate from `memory_bytes` rather than overriding it —
+        // see the field doc on `MergedRecord::heap_bytes_net`.
+        if let Some(mb) = memory_bytes {
+            out.memory_bytes.get_or_insert(*mb);
         }
-        if bench.accuracy.is_some() {
-            out.accuracy = bench.accuracy.clone();
+        if let Some(hb) = heap_bytes_net {
+            out.heap_bytes_net.get_or_insert(*hb);
+        }
+        if let Some(hp) = heap_bytes_peak {
+            out.heap_bytes_peak.get_or_insert(*hp);
+        }
+        if accuracy.is_some() {
+            out.accuracy = accuracy.clone();
         }
 
         match phase {
             "insert" => {
                 out.insert.timestamp = Some(record.timestamp);
-                out.insert.throughput_items_per_sec = bench.throughput_items_per_sec;
-                out.insert.throughput_samples = bench.throughput_samples.clone();
-                out.insert.cpu_time_ms = bench.cpu_time_ms;
-                out.insert.wall_time_ms = bench.wall_time_ms;
-                out.insert.rss_peak_kb = bench.rss_peak_kb;
-                out.insert.heap_allocated_kb = bench.heap_allocated_kb;
+                out.insert.throughput_items_per_sec = *throughput_items_per_sec;
+                out.insert.throughput_samples = throughput_samples.clone();
+                out.insert.build_throughput_items_per_sec = *build_throughput_items_per_sec;
+                out.insert.finalize_time_ms = *finalize_time_ms;
+                out.insert.cpu_time_ms = *cpu_time_ms;
+                out.insert.wall_time_ms = *wall_time_ms;
+                out.insert.rss_peak_kb = *rss_peak_kb;
+                out.insert.heap_allocated_kb = *heap_allocated_kb;
             }
             "query" => {
                 out.query.timestamp = Some(record.timestamp);
-                out.query.throughput_items_per_sec = bench.query_throughput_items_per_sec;
-                out.query.cpu_time_ms = bench.cpu_time_ms;
-                out.query.wall_time_ms = bench.wall_time_ms;
-                out.query.rss_peak_kb = bench.rss_peak_kb;
-                out.query.heap_allocated_kb = bench.heap_allocated_kb;
+                out.query.throughput_items_per_sec = *query_throughput_items_per_sec;
+                out.query.cpu_time_ms = *cpu_time_ms;
+                out.query.wall_time_ms = *wall_time_ms;
+                out.query.rss_peak_kb = *rss_peak_kb;
+                out.query.heap_allocated_kb = *heap_allocated_kb;
             }
             "latency" => {
                 out.latency.timestamp = Some(record.timestamp);
-                out.latency.latency_ns = bench.latency_ns;
+                out.latency.latency_ns = *latency_ns;
             }
-            _ => {}
-        }
-
-        // Fail loudly on any bench field this function doesn't place
-        // explicitly above, instead of dropping it or silently absorbing
-        // it into a catch-all.
-        let bench_value = serde_json::to_value(bench)
-            .map_err(|e| format!("flatten_record: could not inspect bench section: {e}"))?;
-        if let Value::Object(bench_map) = bench_value {
-            let named: &[&str] = &[
-                "pass",
-                "throughput_items_per_sec",
-                "throughput_samples",
-                "query_throughput_items_per_sec",
-                "latency_ns",
-                "cpu_time_ms",
-                "wall_time_ms",
-                "rss_peak_kb",
-                "heap_allocated_kb",
-                "memory_bytes",
-                "accuracy",
-            ];
-            for (k, v) in bench_map {
-                if named.contains(&k.as_str()) || v.is_null() {
-                    continue;
-                }
-                return Err(format!(
-                    "flatten_record: unrecognized bench field '{k}' on {}/{} (pass={phase}) — \
-                     add explicit handling in flatten_record before merging this data",
-                    out.sketch, out.impl_name
-                ));
+            "merge" => {
+                out.merge.timestamp = Some(record.timestamp);
+                out.merge.merge_time_ms = *merge_time_ms;
+                out.merge.merge_shards = *merge_shards;
+                out.merge.merge_supported = *merge_supported;
             }
+            _ => unreachable!("pass_of only returns insert/query/latency/merge"),
         }
     }
 
