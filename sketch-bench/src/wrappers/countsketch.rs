@@ -4,7 +4,7 @@
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CountSketchParams;
-use crate::wrappers::{require_resolved_shape, require_shape};
+use crate::wrappers::{require_positive, require_resolved_shape, require_shape};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -158,6 +158,12 @@ pub struct CsLibVector2dFast {
 impl InitSketch for CsLibVector2dFast {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CountSketchParams = config.parse()?;
+        // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
+        // zero-row matrix builds happily and then answers every query out of an
+        // empty fold. Refuse both here, as the fixed-shape rows in this file
+        // already refuse a shape they cannot serve.
+        require_positive("asap Count Vector2D FastPath", "rows", p.rows)?;
+        require_positive("asap Count Vector2D FastPath", "cols", p.cols)?;
         Ok(Self {
             inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
@@ -196,6 +202,12 @@ pub struct CsLibVector2dRegular {
 impl InitSketch for CsLibVector2dRegular {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CountSketchParams = config.parse()?;
+        // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
+        // zero-row matrix builds happily and then answers every query out of an
+        // empty fold. Refuse both here, as the fixed-shape rows in this file
+        // already refuse a shape they cannot serve.
+        require_positive("asap Count Vector2D RegularPath", "rows", p.rows)?;
+        require_positive("asap Count Vector2D RegularPath", "cols", p.cols)?;
         Ok(Self {
             inner: Count::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,

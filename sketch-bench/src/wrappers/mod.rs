@@ -43,6 +43,46 @@ pub(crate) fn require_shape(
     Ok(())
 }
 
+/// Refuse a parameter outside the range the wrapped library accepts, naming the
+/// value and the bound.
+///
+/// The bound arrives as an argument because it is the *library's*, not the
+/// parameter vocabulary's: `lg_k` is 4..=18 for one library and {12,14,16} for
+/// another, and each row states its own. Use this wherever the library would
+/// otherwise assert, panic or truncate.
+pub(crate) fn require_range<T>(
+    what: &str,
+    name: &str,
+    got: T,
+    lo: T,
+    hi: T,
+) -> Result<(), BuildError>
+where
+    T: PartialOrd + std::fmt::Display,
+{
+    if got < lo || got > hi {
+        return Err(BuildError(format!(
+            "{what}: {name}={got} outside [{lo}, {hi}], which is what this library accepts"
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse a dimension of zero, for a library that has a floor and no ceiling.
+///
+/// Separate from [`require_range`] because printing `usize::MAX` as the upper
+/// bound would state a limit the library does not have, and a reader chasing a
+/// refusal should not have to work out that 18446744073709551615 means "no
+/// ceiling".
+pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(), BuildError> {
+    if got == 0 {
+        return Err(BuildError(format!(
+            "{what}: {name} must be at least 1, got {got}"
+        )));
+    }
+    Ok(())
+}
+
 /// Refuse a `(rows, cols)` the library did not resolve to exactly, naming what
 /// it built instead.
 ///

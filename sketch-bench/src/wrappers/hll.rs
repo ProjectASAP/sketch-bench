@@ -4,6 +4,7 @@
 
 use aqpbm_core::accuracy::CardinalityOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use crate::wrappers::require_range;
 use crate::params::HllParams;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
@@ -63,9 +64,16 @@ pub struct HllDatasketches {
     hll_type: datasketches::hll::HllType,
 }
 
+/// What `datasketches::hll::HllSketch::new` accepts. It asserts rather than
+/// returning an error, so the bound has to be stated on this side: the twin of
+/// [`LIB_PRECISIONS`], for the library that expresses its domain as a range
+/// instead of a set of types.
+pub const DS_LG_K: (u8, u8) = (4, 21);
+
 impl InitSketch for HllDatasketches {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: HllParams = config.parse()?;
+        require_range("datasketches HLL", "lg_k", p.lg_k, DS_LG_K.0, DS_LG_K.1)?;
         let hll_type = datasketches::hll::HllType::Hll8;
         Ok(Self {
             inner: datasketches::hll::HllSketch::new(p.lg_k, hll_type),
@@ -347,5 +355,35 @@ mod tests {
         assert!(HllLib::<HllBucketListP12>::init(&params(LIB_PRECISIONS[0])).is_ok());
         assert!(HllLib::<HllBucketListP14>::init(&params(LIB_PRECISIONS[1])).is_ok());
         assert!(HllLib::<HllBucketListP16>::init(&params(LIB_PRECISIONS[2])).is_ok());
+    }
+
+    /// The datasketches row asserts inside its own constructor, so the bound is
+    /// stated here. `lg_k = 3` and `lg_k = 22` both aborted the process before.
+    #[test]
+    fn datasketches_refuses_a_precision_outside_its_range() {
+        for lg_k in [0u8, 3, 22, 255] {
+            let err = HllDatasketches::init(&params(lg_k))
+                .err()
+                .unwrap_or_else(|| panic!("lg_k={lg_k} is outside [4, 21] and must be refused"));
+            assert!(err.to_string().contains(&lg_k.to_string()), "{err}");
+        }
+        for lg_k in [DS_LG_K.0, 14, DS_LG_K.1] {
+            assert!(HllDatasketches::init(&params(lg_k)).is_ok(), "lg_k={lg_k} is legal");
+        }
+    }
+
+    /// The three HLL libraries have three different domains, and each states
+    /// its own. What they must not do is disagree about a value *all* of them
+    /// reject, which is what a caller sweeping the axis will hit first.
+    #[test]
+    fn every_hll_row_refuses_a_precision_no_library_has() {
+        for lg_k in [0u8, 3, 30] {
+            assert!(HllOxide::init(&params(lg_k)).is_err(), "oxide lg_k={lg_k}");
+            assert!(HllDatasketches::init(&params(lg_k)).is_err(), "datasketches lg_k={lg_k}");
+            assert!(
+                HllLib::<HllBucketListP14>::init(&params(lg_k)).is_err(),
+                "lib lg_k={lg_k}"
+            );
+        }
     }
 }

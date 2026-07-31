@@ -6,7 +6,9 @@
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CmsParams;
-use crate::wrappers::{require_resolved_shape, require_shape};
+use crate::wrappers::{
+    require_positive, require_range, require_resolved_shape, require_shape,
+};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -91,6 +93,21 @@ impl MemoryFootprint for CmsOxide {
 }
 
 // ---------- datasketches ----------
+//
+// The API takes `(u8, u32)` where the parameter vocabulary is `(usize, usize)`,
+// and it asserts rather than returning an error. Both facts have to be handled
+// before the call: a bare `as u8` turns `rows = 257` into a one-row sketch, and
+// `rows = 256` into a zero-row one that aborts the process inside C++.
+
+/// What `datasketches::countmin::CountMinSketch::new` accepts. The three
+/// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
+/// the `u8` the API takes.
+const DS_CMS_ROWS: (usize, usize) = (1, u8::MAX as usize);
+const DS_CMS_COLS: (usize, usize) = (3, u32::MAX as usize);
+/// `num_hashes * num_buckets < MAX_TABLE_ENTRIES`. A product bound, so no
+/// per-parameter range catches it.
+const DS_CMS_MAX_ENTRIES: usize = 1 << 30;
+
 pub struct CmsDatasketches {
     inner: datasketches::countmin::CountMinSketch,
     rows: usize,
@@ -100,8 +117,30 @@ pub struct CmsDatasketches {
 impl InitSketch for CmsDatasketches {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
+        require_range("datasketches CMS", "rows", p.rows, DS_CMS_ROWS.0, DS_CMS_ROWS.1)?;
+        require_range("datasketches CMS", "cols", p.cols, DS_CMS_COLS.0, DS_CMS_COLS.1)?;
+        // Checked, because the point of the bound is that the product is what
+        // overflows: `usize::MAX` rows-worth of columns must not wrap into a
+        // small number that passes.
+        let entries = p.rows.checked_mul(p.cols).unwrap_or(usize::MAX);
+        if entries >= DS_CMS_MAX_ENTRIES {
+            return Err(BuildError(format!(
+                "datasketches CMS: rows x cols = {entries} counters, and this library \
+                 caps a table at {DS_CMS_MAX_ENTRIES}"
+            )));
+        }
+        // The ranges above make the casts lossless; this proves it against the
+        // built sketch rather than against that reasoning, so a library that
+        // starts rounding its dimensions turns into a refusal here instead of a
+        // silently different table. Same guard the oxide row uses.
+        let inner = datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32);
+        require_resolved_shape(
+            "datasketches CMS",
+            (inner.num_hashes() as usize, inner.num_buckets() as usize),
+            (p.rows, p.cols),
+        )?;
         Ok(Self {
-            inner: datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32),
+            inner,
             rows: p.rows,
             cols: p.cols,
         })
@@ -215,6 +254,12 @@ pub struct CmsLibVector2dFast {
 impl InitSketch for CmsLibVector2dFast {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
+        // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
+        // zero-row matrix builds happily and then answers every query out of an
+        // empty fold. Refuse both here, as the fixed-shape rows in this file
+        // already refuse a shape they cannot serve.
+        require_positive("asap CMS Vector2D FastPath", "rows", p.rows)?;
+        require_positive("asap CMS Vector2D FastPath", "cols", p.cols)?;
         Ok(Self {
             inner: CountMin::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
@@ -253,6 +298,12 @@ pub struct CmsLibVector2dRegular {
 impl InitSketch for CmsLibVector2dRegular {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
+        // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
+        // zero-row matrix builds happily and then answers every query out of an
+        // empty fold. Refuse both here, as the fixed-shape rows in this file
+        // already refuse a shape they cannot serve.
+        require_positive("asap CMS Vector2D RegularPath", "rows", p.rows)?;
+        require_positive("asap CMS Vector2D RegularPath", "cols", p.cols)?;
         Ok(Self {
             inner: CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
@@ -451,5 +502,73 @@ mod tests {
                 assert_eq!(cs.memory_bytes(), rows * cols * 8, "countsketch {rows}x{cols}");
             }
         }
+    }
+
+    /// The datasketches API takes `(u8, u32)` and asserts inside C++, so every
+    /// bound has to be checked on this side. Each value below reproduced a
+    /// distinct failure before the guards existed.
+    #[test]
+    fn datasketches_refuses_what_its_api_cannot_take() {
+        let build = |rows: usize, cols: usize| CmsDatasketches::init(&ParamSet::of(&CmsParams { rows, cols }));
+        for (rows, cols, why) in [
+            (0usize, 1024usize, "aborted inside C++: num_hashes must be at least 1"),
+            (256, 1024, "`as u8` made it 0, then the same abort"),
+            (257, 1024, "`as u8` made it 1: a one-row sketch labelled 257"),
+            (5, 2, "aborted: num_buckets must be at least 3"),
+            (5, 4_294_967_296, "`as u32` made it 0, then abort"),
+            (5, 4_294_968_320, "`as u32` made it 1024: reported 160 GiB, allocated 682 KiB"),
+            (3, 1 << 30, "aborted: the table-entry cap is a product bound"),
+        ] {
+            let err = build(rows, cols)
+                .err()
+                .unwrap_or_else(|| panic!("{rows}x{cols} must be refused ({why})"));
+            let err = err.to_string();
+            assert!(
+                err.contains(&rows.to_string()) || err.contains(&cols.to_string()),
+                "the refusal should name the value: {err}"
+            );
+        }
+        // The whole legal domain still builds, including both ends.
+        for (rows, cols) in [(1usize, 3usize), (5, 2048), (255, 4096)] {
+            assert!(build(rows, cols).is_ok(), "{rows}x{cols} is legal");
+        }
+    }
+
+    /// A `Vector2D` row used to call the library straight through. `cols = 0`
+    /// aborted in `ilog2`, and `rows = 0` was worse: it built, ingested, and
+    /// wrote a *scored* record whose error was `i32::MAX` — a garbage number
+    /// that survived into the output.
+    #[test]
+    fn vector2d_rows_refuse_a_degenerate_shape() {
+        for (rows, cols) in [(0usize, 1024usize), (5, 0), (0, 0)] {
+            let p = ParamSet::of(&CmsParams { rows, cols });
+            assert!(CmsLibVector2dFast::init(&p).is_err(), "fastpath {rows}x{cols}");
+            assert!(CmsLibVector2dRegular::init(&p).is_err(), "regularpath {rows}x{cols}");
+            let q = ParamSet::of(&crate::params::CountSketchParams { rows, cols });
+            assert!(
+                crate::wrappers::countsketch::CsLibVector2dFast::init(&q).is_err(),
+                "cs fastpath {rows}x{cols}"
+            );
+            assert!(
+                crate::wrappers::countsketch::CsLibVector2dRegular::init(&q).is_err(),
+                "cs regularpath {rows}x{cols}"
+            );
+        }
+        assert!(CmsLibVector2dFast::init(&ParamSet::of(&CmsParams { rows: 1, cols: 1 })).is_ok());
+    }
+
+    /// Every row in the family agrees on a degenerate shape. This is the
+    /// property the whole guard pass exists to restore: one config used to give
+    /// four different answers across seven rows — refused, aborted, silently
+    /// accepted, and accepted-with-a-scored-record.
+    #[test]
+    fn the_frequency_rows_agree_on_a_degenerate_shape() {
+        let p = ParamSet::of(&CmsParams { rows: 0, cols: 1024 });
+        assert!(CmsOxide::init(&p).is_err(), "oxide");
+        assert!(CmsDatasketches::init(&p).is_err(), "datasketches");
+        assert!(CmsLibVector2dFast::init(&p).is_err(), "vector2d fastpath");
+        assert!(CmsLibVector2dRegular::init(&p).is_err(), "vector2d regularpath");
+        // The fixed-shape and parallel rows already refused it, via require_shape.
+        assert!(CmsLibFixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>::init(&p).is_err());
     }
 }
