@@ -40,8 +40,9 @@ pub use memory_footprint::MemoryFootprint;
 pub use metrics::{FullSink, MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
-    BenchSection, CpuTime, ExternalReports, HwCounters, LatencySummary, Mode, ProfileSection,
-    Record, RunStats, Source, SCHEMA_VERSION,
+    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics, LatencyMetrics,
+    LatencySummary, MergeMetrics, MergedRecord, Mode, ProfileSection, QueryMetrics, Record,
+    RunStats, Source, SCHEMA_VERSION,
 };
 pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};
 pub use workload::{

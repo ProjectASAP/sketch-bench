@@ -5,6 +5,7 @@
 //! `workload` generates or inspects synthetic `.bin` workloads.
 
 mod cli;
+mod flatten_record;
 mod raw_csv;
 mod repeat;
 mod workload_cmd;
