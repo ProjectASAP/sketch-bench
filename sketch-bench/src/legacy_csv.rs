@@ -77,7 +77,7 @@ pub fn render(
 
     if has_per_call {
         // Per-call CSV — one row per (run, call). Takes precedence over the
-        // aggregate query CSV for these three algorithms, whose plot scripts
+        // aggregate query CSV for these three families, whose plot scripts
         // read the per-call columns.
         let mut rows: Vec<String> = Vec::new();
         for (run_idx, run) in report.per_run.iter().enumerate() {
@@ -192,7 +192,7 @@ fn per_call_query_header(family: &str) -> String {
 }
 
 fn format_per_call_row(
-    algorithm: &str,
+    family: &str,
     legacy_impl: &str,
     params: &ParamCols,
     run_no: usize,
@@ -200,7 +200,7 @@ fn format_per_call_row(
     sample: &aqpbm_core::metrics::QueryCallSample,
 ) -> String {
     // Per-call rows always index by `run` (legacy convention), even for
-    // cms-style algorithms that label aggregate rows with `seed` — only HLL /
+    // cms-style families that label aggregate rows with `seed` — only HLL /
     // KLL / DD reach this path and they all use `run`.
     let lead = run_no.to_string();
     let params_str = params.join_values();
@@ -209,7 +209,7 @@ fn format_per_call_row(
     } else {
         format!(",{params_str}")
     };
-    let tail = match algorithm {
+    let tail = match family {
         "hll" => format!(
             "{},{},{}",
             sample.call_index,
@@ -248,14 +248,14 @@ struct ParamCols {
 
 impl ParamCols {
     /// Build one row's parameter values, **always** exactly as many as
-    /// `legacy_param_columns(algorithm)` names — a short row silently shifts every
+    /// `legacy_param_columns(family)` names — a short row silently shifts every
     /// later column. A final pass reconciles against the header, filling with `0`.
-    fn from(algorithm: &str, params: Option<&ParamSet>) -> Self {
+    fn from(family: &str, params: Option<&ParamSet>) -> Self {
         let mut found: Vec<(&'static str, String)> = Vec::new();
         // Values come from the params object generically; only the two places
         // where the header is *not* a list of parameters need naming.
         if let Some(params) = params {
-            match algorithm {
+            match family {
                 // `registers` is derived from `lg_k`, not a parameter.
                 "hll" => {
                     let lg_k = params.fields().into_iter().find(|(k, _)| k == "lg_k");
@@ -278,7 +278,7 @@ impl ParamCols {
                     // not the params object, which is alphabetical. Driving from
                     // `fields()` swaps cms to `2048,5` under `rows,cols`.
                     let fields = params.fields();
-                    for col in legacy_param_columns(algorithm) {
+                    for col in legacy_param_columns(family) {
                         if let Some((_, v)) = fields.iter().find(|(k, _)| k == col) {
                             found.push((col, legacy_float_format(v)));
                         }
@@ -286,7 +286,7 @@ impl ParamCols {
                 }
             }
         }
-        let cols = legacy_param_columns(algorithm)
+        let cols = legacy_param_columns(family)
             .iter()
             .map(|&col| {
                 let v = found
@@ -435,14 +435,14 @@ fn legacy_param_columns(family: &str) -> &'static [&'static str] {
 }
 
 fn format_insert_row(
-    algorithm: &str,
+    family: &str,
     legacy_impl: &str,
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
     run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
-    let lead = leading_value(algorithm, seed, run_idx);
+    let lead = leading_value(family, seed, run_idx);
     let total_items = run.items_inserted.max(1);
     let total_ns = run.insert_wall_time_ns.max(1);
     let throughput = (total_items as f64) * 1_000_000_000.0 / (total_ns as f64);
@@ -459,14 +459,14 @@ fn format_insert_row(
 }
 
 fn format_query_row(
-    algorithm: &str,
+    family: &str,
     legacy_impl: &str,
     params: &ParamCols,
     seed: u64,
     run_idx: usize,
     run: &aqpbm_core::metrics::RunMetrics,
 ) -> String {
-    let lead = leading_value(algorithm, seed, run_idx);
+    let lead = leading_value(family, seed, run_idx);
     let total_items = run.items_inserted;
     let total_queries = run.queries_executed.max(1);
     let total_ns = run.query_wall_time_ns.max(1);
@@ -482,8 +482,8 @@ fn format_query_row(
     )
 }
 
-fn leading_value(algorithm: &str, seed: u64, run_idx: usize) -> String {
-    match algorithm {
+fn leading_value(family: &str, seed: u64, run_idx: usize) -> String {
+    match family {
         "cms" | "countsketch" => seed.to_string(),
         _ => run_idx.to_string(),
     }
@@ -648,13 +648,13 @@ mod param_column_order_tests {
                 vec!["8", "256"],
             ),
         ];
-        for (algorithm, params, expected) in cases {
-            let cols = ParamCols::from(algorithm, Some(&params));
+        for (family, params, expected) in cases {
+            let cols = ParamCols::from(family, Some(&params));
             let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
-            let header: Vec<&str> = param_header(algorithm).split(',').collect();
-            assert_eq!(names, header, "{algorithm}: column order must match header");
+            let header: Vec<&str> = param_header(family).split(',').collect();
+            assert_eq!(names, header, "{family}: column order must match header");
             let values: Vec<&str> = cols.cols.iter().map(|(_, v)| v.as_str()).collect();
-            assert_eq!(values, expected, "{algorithm}: values misaligned");
+            assert_eq!(values, expected, "{family}: values misaligned");
         }
     }
 
@@ -671,7 +671,7 @@ mod param_column_order_tests {
             algorithm: String::new(),
             params: serde_json::json!({ "nonsense": 1 }),
         };
-        for algorithm in [
+        for family in [
             "hll",
             "kll",
             "cms",
@@ -685,21 +685,21 @@ mod param_column_order_tests {
             "hydra-hll",
             "hydra-kll",
         ] {
-            let width = param_header(algorithm).split(',').count();
+            let width = param_header(family).split(',').count();
             for (label, params) in [
                 ("none", None),
                 ("empty", Some(&empty)),
                 ("wrong keys", Some(&wrong_keys)),
             ] {
-                let cols = ParamCols::from(algorithm, params);
+                let cols = ParamCols::from(family, params);
                 assert_eq!(
                     cols.join_values().split(',').count(),
                     width,
-                    "{algorithm} with {label} params: row width must match header"
+                    "{family} with {label} params: row width must match header"
                 );
                 let names: Vec<&str> = cols.cols.iter().map(|(n, _)| *n).collect();
-                let header: Vec<&str> = param_header(algorithm).split(',').collect();
-                assert_eq!(names, header, "{algorithm} with {label} params");
+                let header: Vec<&str> = param_header(family).split(',').collect();
+                assert_eq!(names, header, "{family} with {label} params");
             }
         }
     }

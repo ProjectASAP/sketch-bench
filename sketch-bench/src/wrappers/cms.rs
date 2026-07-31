@@ -1,7 +1,7 @@
 //! Count-Min Accumulator wrappers — five types, every one declaring
 //! `FrequencyOps` (`&i64` point lookup → `u64` count estimate).
 //!
-//! All of them take `(rows, cols)` and honour it, by three different routes.
+//! All of them take `(rows, cols)` and honour it, by four different routes.
 //! `oxide` inverts the error bounds its API takes and checks the table it got
 //! back. `datasketches` range-checks the `(u8, u32)` its API narrows to.
 //! `CmsLibVector2dFast` / `CmsLibVector2dRegular` size at run time.
