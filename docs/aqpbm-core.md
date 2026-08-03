@@ -14,8 +14,10 @@ Every part below is stated over a statistic or over an item type, which is what 
 ### 2.1 What counts as measurable
 
 An **accumulator** is anything that takes items one at a time and builds state from them, and that is the whole of what core requires.
-Ingesting items, answering a statistic, and reporting a footprint are three separate claims, and an implementation declares each one it can honour.
 A **row** is a `(algorithm, impl)` pair realised as a Rust type.
+
+Everything past ingestion is a **claim**: merge, the deferred build, the memory footprint, and one claim per statistic in §2.6.
+A row declares the claims it can honour, and ingestion is the one thing every row does, so it is never claimed.
 
 ### 2.2 Construction from an opaque parameter object
 
@@ -32,6 +34,7 @@ Core matches the name as a string and never reads the parameters, whose vocabula
 A **workload** is the materialised, ordered item stream plus its provenance, replayed in full by every run.
 `aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the row's item type.
 One carrier exists per item type: numbers, strings, bytes and labelled values.
+Adding an item type means one more carrier and one more rule to materialise it.
 
 ### 2.4 The runner and the timed loop
 
@@ -44,11 +47,13 @@ Core drives the runs, warms up ahead of them, and decides what sits inside a tim
 A **pass** is one metric group measured over its own population of runs: `throughput`, `latency`, `accuracy`, or `merge`.
 Splitting one request into passes is what stops a metric from paying for another metric's instrumentation.
 The cost of answering a query is measured inside the accuracy pass, since a comparator's probes are the only queries a run makes.
+A metric sampled only at the boundaries of the insert phase contaminates nothing, so it needs no pass and rides along with every one.
+A new pass adds a value of the record's `pass` field, which every reader grouping on that field must learn.
 
 ### 2.6 The statistics and their comparators
 
-A **capability** is one statistic, declared by the row that answers it.
-The set is closed here, so admitting a new statistic changes this crate and admitting a new algorithm does not.
+A **capability** is a claim on one statistic, and the set of statistics is closed here.
+Admitting a new statistic changes this crate, and admitting a new algorithm does not.
 
 ```
 cardinality         how many distinct items are there
@@ -69,6 +74,7 @@ One capability can carry several comparators: a quantile answer scores as a rank
 A sink is four hooks, around update and around query, and a probe is the wrapper that wears them.
 
 The offline runner and `sketch-runtime`, the sampler linked into a live application, want the same four hooks.
+A fifth hook would change every probe that wears the sink, so the four are a fixed shape.
 
 ### 2.8 Aggregation and the record
 
@@ -92,6 +98,7 @@ Core folds a pass's runs into a mean, a stddev, the per-run samples and a count,
 
 A line names its producer: `mode` says whether a bench run, a profile run or an embedded sampler made it, and `source` says which program did.
 Core owns the profile slot beside the bench one, so one reader deserialises every kind of line.
+A new field is additive and optional, and changing what an existing field means is a `schema_version` bump.
 
 ## 3. What is guaranteed
 
@@ -101,7 +108,7 @@ Core owns the profile slot beside the bench one, so one reader deserialises ever
 
 - **Absent and zero stay distinguishable.** An optional metric is omitted when the pass did not measure it, so a zero in a record is a measurement.
 
-- **A capability gap is a value.** A row that provides no merge records that fact in the output, and never as a missing line.
+- **An unmade claim is a value.** A row that does not merge records that fact in the output, and every other unmade claim is recorded the same way.
 
 - **A cell fails whole or not at all.** Construction is proved once before any measurement, so a cell that cannot be built fails with a message instead of a partial result.
 
@@ -136,6 +143,14 @@ pub trait MemoryFootprint {
 ```
 
 `update` takes its item by reference, so a wrapper carrying strings or byte slices is not charged for a clone on the hot path.
+
+A row whose construction takes a run knob implements a second init trait, since a worker count is no part of a sketch's parameters.
+
+```rust
+pub trait ParallelInit: Accumulator + Sized {
+    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError>;
+}
+```
 
 A row declares a statistic by implementing that statistic's trait, one per entry in §2.6, each with the query shape it wants.
 
