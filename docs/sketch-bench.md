@@ -12,9 +12,11 @@ Four things cannot be written without knowing an algorithm by name, and all four
   A wrapper claims exactly what the library beneath it provides: `merge` and `prepare` are stated where the library has them, and left unstated otherwise.
 - **The catalog.** The list itself, binding each `(algorithm, impl)` pair to the type implementing it.
 - **The construction parameters.** `hll` takes an `lg_k` while `cms` takes a `rows` and a `cols`, and no generic layer can say that.
-- **The choice of comparator for each row.** A KLL states its error as a rank error and a DDSketch as a relative error.
+- **The choice of comparator for each row.** Core ships the comparators, and one capability can carry several.
+  A KLL states its error as a rank error and a DDSketch as a relative error.
 
 Everything that spells an algorithm name or names a third-party sketch library is here.
+`aqpbm-core` is the exact complement, holding everything measurement can state without naming one.
 Benchmarking a sketch of your own does not go through this crate, which exists for the CLI.
 
 ## 2. Inputs
@@ -64,7 +66,7 @@ kll-cdf                   polars  polars exact: 101-point quantile grid
   - a value the wrapped library would silently clamp, round or ignore
 
   The last one is the rule the others are instances of: a row builds at exactly the parameters it was given, or it refuses them and says what bound it has.
-  Building at anything else would put a config in the record that is not the config that ran, and every plot keys on that field.
+  That is how a row discharges core's guarantee that the config in a record is the config that ran.
 
 ## 4. Interfaces
 
@@ -110,7 +112,9 @@ They differ only in how many types there are and where the set is written: two s
 
 An **exact baseline** is a row computing the exact answer: it declares the same capability, takes its family's parameters, and runs through identical machinery.
 It sits on one algorithm of its family, and every other algorithm in that family is read against it.
-Which one is a judgement per family: usually the family's base algorithm, but `kll` has no base algorithm — every KLL row states a query path — so its baseline sits on `kll-cdf`, the path it actually takes.
+Which one is a judgement per family: usually the family's base algorithm.
+`kll` has no base algorithm, since every KLL row states a query path, so its baseline sits on `kll-cdf`, the path it takes.
+A baseline is timed like every other row, and the exact answer a comparator scores against is computed inside core.
 
 ### 4.2 The two name axes
 
@@ -151,10 +155,11 @@ The `FAMILY` const in the params struct is the one place a family's name is writ
 - **Whether the parallel rows belong in this catalog.** They answer no query and they discard their per-worker state, so they share only the dispatch surface with every other row.
   Keeping them as rows means one dispatch surface; a subcommand of their own means a second one for a single shape.
 
-- **Whether top-k is an algorithm or a capability.** As an algorithm it gets its own panel, duplicating the frequency algorithms' `rows` and `cols`.
+- **Whether top-k is its own algorithm or a capability the frequency rows declare.** As an algorithm it gets its own panel, duplicating the frequency algorithms' `rows` and `cols`.
   As a capability on the frequency rows it would compare against them directly, at the cost of a `k` meaning nothing to a frequency row.
 
-- **What the sampling and universal algorithms are scored under.** Giving them comparators means naming a statistic, a moment estimate or a heavy-hitter set, whose definition is an `aqpbm-core` decision.
+- **What the sampling and universal algorithms are scored under.** No capability in core's list fits a moment estimate or a heavy-hitter set.
+  Scoring them means adding a statistic to core, a wider change than adding a row here.
 
 - **How wide the compiled-in shape table should be.** A fixed-matrix row sweeps only the shapes some build instantiated, so the table decides what is measurable without recompiling.
   Widening it is nearly free in compile time and costs rlib size; the current ceiling is set by an unoptimised build materialising the largest array on a test thread's stack, not by anything about the measurement.

@@ -2,8 +2,12 @@
 
 ## 1. Purpose
 
-Core is the place that defines the functionality used by more than one caller.
-If a functionality is tied to one caller, whether that is a bundle of implementations, a frontend or an embedded path, it does **not** belong to this crate.
+Core is everything the benchmark can say about measuring an accumulator without naming an algorithm.
+A rule, a metric or a type that has to spell `hll` belongs to a bundle of implementations, and that bundle is `sketch-bench`.
+
+In an algorithm's place core names a **statistic**: the question a sketch can be asked, such as cardinality or frequency.
+An algorithm is one way of answering one statistic, so core fixes the list of statistics and holds no list of algorithms.
+Every part below is stated over a statistic or over an item type, which is what keeps that list out.
 
 ## 2. The parts
 
@@ -21,43 +25,58 @@ A **`ParamSet`** is an algorithm name plus that algorithm's construction paramet
 {"algorithm": "cms", "params": {"rows": 5, "cols": 32768}}
 ```
 
-The envelope is shared and the contents belong to one bundle.
-Carrying the object is therefore functionality in this crate, and inspecting it is not.
+Core matches the name as a string and never reads the parameters, whose vocabulary is known only to the bundle defining that family.
 
 ### 2.3 Workload materialisation
 
 A **workload** is the materialised, ordered item stream plus its provenance, replayed in full by every run.
-Core materialises it at the item type the row declares, and ships one carrier per item type: numbers, strings, bytes and labelled values.
+`aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the row's item type.
+One carrier exists per item type: numbers, strings, bytes and labelled values.
 
 ### 2.4 The runner and the timed loop
 
 A **cell** is one row, at one parameter point, against one workload.
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
-Driving the runs, warming up ahead of them, and deciding what sits inside a timed region are one functionality.
+Core drives the runs, warms up ahead of them, and decides what sits inside a timed region.
 
 ### 2.5 Passes and the metrics mask
 
 A **pass** is one metric group measured over its own population of runs: `throughput`, `latency`, `accuracy`, or `merge`.
 Splitting one request into passes is what stops a metric from paying for another metric's instrumentation.
+The cost of answering a query is measured inside the accuracy pass, since a comparator's probes are the only queries a run makes.
 
-### 2.6 Ground truth and the comparators
+### 2.6 The statistics and their comparators
+
+A **capability** is one statistic, declared by the row that answers it.
+The set is closed here, so admitting a new statistic changes this crate and admitting a new algorithm does not.
+
+```
+cardinality         how many distinct items are there
+frequency           how many times did this key occur
+quantile            which value sits at this fraction
+top-k               which k keys are heaviest, and how heavy
+subpop-cardinality  cardinality, within the records carrying a set of labels
+subpop-frequency    frequency, within the records carrying a set of labels
+subpop-quantile     quantile, within the records carrying a set of labels
+```
 
 A comparator binds a capability, never an algorithm, so it scores any implementation that declares that capability.
 That is what lets ground truth, and the scoring of an answer against it, live in a crate naming no algorithm.
+One capability can carry several comparators: a quantile answer scores as a rank error or as a relative error, and the row chooses.
 
 ### 2.7 The recorders
 
 A sink is four hooks, around update and around query, and a probe is the wrapper that wears them.
 
-The offline runner and the embedded sampler are two callers wanting the same hooks.
+The offline runner and `sketch-runtime`, the sampler linked into a live application, want the same four hooks.
 
 ### 2.8 Aggregation and the record
 
-Folding a pass's runs into a mean, a stddev, the per-run samples and a count is one functionality, and so is the line that fold serialises to.
+Core folds a pass's runs into a mean, a stddev, the per-run samples and a count, then serialises the fold as one line.
 
 ```json
 {"schema_version": 3,
- "sketch": "cms", "impl": "oxide", "language": "rust",
+ "sketch": "cms", "family": "cms", "impl": "oxide", "language": "rust",
  "sketch_config": {"algorithm": "cms", "params": {"rows": 5, "cols": 32768}},
  "workload": {"shape": "zipf", "size": 1000000, "cardinality": 10000, "zipf_s": 1.1, "seed": 42},
  "mode": "bench", "runs": 10,
@@ -68,6 +87,8 @@ Folding a pass's runs into a mean, a stddev, the per-run samples and a count is 
            "memory_bytes": 40960},
  "source": "cli", "timestamp": "2026-07-27T09:14:22.481Z"}
 ```
+
+`sketch` carries the algorithm with its structural variant, `family` the group it belongs to, so a reader picks an axis without parsing names.
 
 A line names its producer: `mode` says whether a bench run, a profile run or an embedded sampler made it, and `source` says which program did.
 Core owns the profile slot beside the bench one, so one reader deserialises every kind of line.
@@ -83,6 +104,9 @@ Core owns the profile slot beside the bench one, so one reader deserialises ever
 - **A capability gap is a value.** A row that provides no merge records that fact in the output, and never as a missing line.
 
 - **A cell fails whole or not at all.** Construction is proved once before any measurement, so a cell that cannot be built fails with a message instead of a partial result.
+
+- **The config in a record is the config that ran.** A construction that would clamp, round or ignore a requested value fails instead.
+  Every plot keys on that field, so a value nothing was measured at can never reach it.
 
 ## 4. Interfaces
 
@@ -112,7 +136,13 @@ pub trait MemoryFootprint {
 ```
 
 `update` takes its item by reference, so a wrapper carrying strings or byte slices is not charged for a clone on the hot path.
-A capability trait states the query shape its own statistic wants.
+
+A row declares a statistic by implementing that statistic's trait, one per entry in §2.6, each with the query shape it wants.
+
+```rust
+pub trait CardinalityOps { fn estimate_distinct(&self) -> f64; }
+pub trait FrequencyOps { type Key; fn estimate_frequency(&self, key: &Self::Key) -> u64; }
+```
 
 ### 4.2 What a frontend calls
 
@@ -134,7 +164,15 @@ Each call returns one `BenchReport` per pass the mask selected, and every record
 Recovering a typed value from a `ParamSet` fails for a set of another algorithm, which the error names.
 A single point also parses from whitespace-separated `key=value` tokens, typed by inspection: `rows=5` a number, `exact=true` a boolean.
 
-### 4.4 The report format
+### 4.4 The comparator and the report format
+
+A comparator computes the exact answer from the raw items and scores the sketch against it.
+
+```rust
+pub trait GroundTruth<S: Accumulator> {                      // the `G` of `score_cell`
+    fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison;
+}
+```
 
 `Comparison` is a comparator's output, a flat map of named scalars, so aggregation folds every key across runs without knowing any statistic's shape.
 The grouping key for anything that pools records is `(sketch, impl, sketch_config, workload, pass)`, and pooling two passes averages two experiments.
