@@ -3,11 +3,8 @@
 ## 1. Purpose
 
 Core is everything the benchmark can say about measuring an accumulator without naming an algorithm.
-A rule, a metric or a type that has to spell `hll` belongs to a bundle of implementations, and that bundle is `sketch-bench`.
-
-In an algorithm's place core names a **statistic**: the question a sketch can be asked, such as cardinality or frequency.
-An algorithm is one way of answering one statistic, so core fixes the list of statistics and holds no list of algorithms.
-Every part below is stated over a statistic or over an item type, which is what keeps that list out.
+A **statistic** is the question a sketch can be asked, and an algorithm is one way of answering it.
+Core names statistics, so anything that has to spell `hll` sits in a bundle of implementations.
 
 ## 2. The parts
 
@@ -50,9 +47,12 @@ The cost of answering a query is measured inside the accuracy pass, since a comp
 A metric sampled only at the boundaries of the insert phase contaminates nothing, so it needs no pass and rides along with every one.
 A new pass adds a value of the record's `pass` field, which every reader grouping on that field must learn.
 
+The merge pass shards a run's items contiguously and folds them in sequence, and the shard count is the only knob.
+One arrangement keeps the merge column comparable across rows, since a second would need a record field of its own.
+
 ### 2.6 The statistics and their comparators
 
-A **capability** is a claim on one statistic, and the set of statistics is closed here.
+A **capability** is a claim on one statistic, and this crate is where the set of statistics is fixed.
 Admitting a new statistic changes this crate, and admitting a new algorithm does not.
 
 ```
@@ -99,6 +99,11 @@ Core folds a pass's runs into a mean, a stddev, the per-run samples and a count,
 A line names its producer: `mode` says whether a bench run, a profile run or an embedded sampler made it, and `source` says which program did.
 Core owns the profile slot beside the bench one, so one reader deserialises every kind of line.
 A new field is additive and optional, and changing what an existing field means is a `schema_version` bump.
+
+### 2.9 What else belongs here
+
+The rule in §1 decides membership, and the parts above are what it admits.
+Anything measurable that can be stated without naming an algorithm is core's, and gaining a subsection here is how it enters.
 
 ## 3. What is guaranteed
 
@@ -199,9 +204,6 @@ Reading process heap use requires jemalloc, which the feature forces on the link
 Per-sketch allocation accounting compiles in a counting allocator, which the linking binary installs as its global and which counts the whole process.
 
 ## 5. Open questions
-
-- **Merge topology.** Contiguous shards folded sequentially measure one point in a space that also holds interleaved shards, hash partitioning, and tree folds.
-  Admitting more means new record fields so the numbers stay comparable; fixing one keeps the column simple and measures one arrangement.
 
 - **Who chooses the probe set.** Each comparator picks its own probe count and population, which lets a statistic ask for what it needs.
   Two algorithms' query-throughput numbers then rest on different probe counts.
