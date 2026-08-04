@@ -49,6 +49,8 @@ A new pass adds a value of the record's `pass` field, which every reader groupin
 
 The merge pass shards a run's items contiguously and folds them in sequence, and the shard count is the only knob.
 One arrangement keeps the merge column comparable across rows, since a second would need a record field of its own.
+Three answers about a fold stay apart: whether the row merges at all, whether a fold was measured, and whether the fold that ran succeeded.
+The first is a claim, the second follows the rule for an unmeasured metric, and the third is the outcome of one execution.
 
 ### 2.6 The statistics and their comparators
 

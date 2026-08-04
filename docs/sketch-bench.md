@@ -10,6 +10,8 @@ Four things cannot be written without knowing an algorithm by name, and all four
 
 - **The wrappers.** A **wrapper** is a newtype over one third-party sketch, implementing the framework's traits on that sketch's behalf.
   A wrapper claims exactly what the library beneath it provides: `merge` and `prepare` are stated where the library has them, and left unstated otherwise.
+  An answer passes through as the library returns it, and its type follows the library's own.
+  Where the library's documentation prescribes a treatment the wrapper applies it, and where it says nothing the value is reported unchanged.
 - **The catalog.** The list itself, binding each `(algorithm, impl)` pair to the type implementing it.
 - **The construction parameters.** `hll` takes an `lg_k` while `cms` takes a `rows` and a `cols`, and no generic layer can say that.
 - **The choice of comparator for each row.** Core ships the comparators, and one capability can carry several.
