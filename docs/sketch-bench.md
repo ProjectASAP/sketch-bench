@@ -6,7 +6,7 @@
 
 With all the wheels in other crates, the work of really comparing something is done in this crate.
 
-Four things cannot be written without knowing an algorithm by name, and all four are this crate's:
+Five things cannot be written without knowing an algorithm by name, and all five are this crate's:
 
 - **The wrappers.** A **wrapper** is a newtype over one third-party sketch, implementing the framework's traits on that sketch's behalf.
   A wrapper claims exactly what the library beneath it provides: `merge` and `prepare` are stated where the library has them, and left unstated otherwise.
@@ -16,6 +16,7 @@ Four things cannot be written without knowing an algorithm by name, and all four
 - **The construction parameters.** `hll` takes an `lg_k` while `cms` takes a `rows` and a `cols`, and so on for every family.
 - **The choice of comparator for each row.** Core ships the comparators, and one capability can carry several.
   A KLL states its error as a rank error and a DDSketch as a relative error.
+- **The exact baselines.** The implementation that answers a capability exactly, and which sketch it stands beside.
 
 Consider this crate to be something that wraps around existing functionalities and can be used by `aqpbm-cli`.
 
@@ -38,7 +39,8 @@ Consider this crate to be something that wraps around existing functionalities a
   `sketch_oxide` is a Rust sketch library covering cardinality, frequency, quantile, universal and elastic sketches.
   `datasketches` binds Apache DataSketches, the reference implementation.
   `asap_sketchlib` is the project's own library, supplying several structural variants per family: the variations it exposes are the trade-offs the benchmark exists to price, so each is its own algorithm.
-  `polars` is a DataFrame engine, and it backs the exact baselines.
+  `polars` is a DataFrame engine.
+  A polars row can serve as the exact baseline for a capability, and it is also timed and scored like every other row.
 
 - **Build-time features.** Three cargo features, each forwarding to the `aqpbm-core` feature of the same name.
 
@@ -91,31 +93,6 @@ pub fn run(algorithm: &str, impl_name: &str,
            acc: &AccuracyCfg, width: Numeric) -> Result<Vec<BenchReport>>;
 ```
 
-`run` is the whole dispatch surface.
-A row's set of acceptable parameter points is tabulated nowhere, and the answer is what the row's `init` does with the `ParamSet`.
-Only a constructor taking the row's type builds an entry, so the listed name and the dispatched type are one fact.
-
-Six shapes exhaust the ways rows differ behind that one signature.
-
-```
-scored        one type    + one comparator     timed passes, plus accuracy when asked
-ordered       two types   + one comparator     as scored, with the numeric width picking the type
-lib-hll       three types + one comparator     as scored, with `lg_k` picking the type
-fixed-matrix  a table of types + one comparator as scored, with `(rows, cols)` picking the type
-plain         one type,  no comparator         timed passes only; the row answers no query
-parallel      one type,  built with workers    timed passes only; construction takes a run knob
-```
-
-The three multi-type shapes exist for one reason: a library that puts a construction parameter in a *type* forces the choice to be made where a type can still be named, which is the dispatch and not the wrapper.
-Resolving it inside the wrapper would mean an enum, and a branch per insert on rows that exist to price that insert.
-They differ only in how many types there are and where the set is written: two spelled in the signature, three in a const, and a table generated beside the types it admits.
-
-An **exact baseline** is a row computing the exact answer: it declares the same capability, takes its family's parameters, and runs through identical machinery.
-It sits on one algorithm of its family, and every other algorithm in that family is read against it.
-Which one is a judgement per family: usually the family's base algorithm.
-`kll` has no base algorithm, since every KLL row states a query path, so its baseline sits on `kll-cdf`, the path it takes.
-A baseline is timed like every other row, and the exact answer a comparator scores against is computed inside core.
-
 ### 4.2 The two name axes
 
 A row has two names, and each answers one question.
@@ -131,7 +108,14 @@ A **family** groups the variants back together: it is the set of algorithms shar
 The family is derived, never written, since one params struct is one family.
 It reaches the record as its own field, so a reader picks the axis instead of parsing names.
 
-### 4.3 The parameter schema
+### 4.3 Sketch and baseline
+
+An **exact baseline** is a row computing the exact answer: it declares the same capability and runs through identical machinery.
+Some sketches answer more than one statistic, so a sketch is paired with a baseline once per capability, and this crate names the pairing.
+This crate also provides the baseline implementations, built on ordinary data structures such as a hash map.
+A baseline is timed like every other row, and the exact answer a comparator scores against is computed inside core.
+
+### 4.4 The parameter schema
 
 A family's parameters are a struct that denies unknown fields, plus one macro invocation binding it to a family name and a canonical point.
 A misspelled key becomes an error naming it, because a run at parameters other than those requested is worse than a refusal.
@@ -152,17 +136,13 @@ The `FAMILY` const in the params struct is the one place a family's name is writ
 
 ## 5. Open questions
 
-- **Whether the parallel rows belong in this catalog.** They answer no query and they discard their per-worker state, so they share only the dispatch surface with every other row.
-  Keeping them as rows means one dispatch surface; a subcommand of their own means a second one for a single shape.
-
-- **Whether top-k is its own algorithm or a capability the frequency rows declare.** As an algorithm it gets its own panel, duplicating the frequency algorithms' `rows` and `cols`.
-  As a capability on the frequency rows it would compare against them directly, at the cost of a `k` meaning nothing to a frequency row.
-
 - **What the sampling and universal algorithms are scored under.** No capability in core's list fits a moment estimate or a heavy-hitter set.
   Scoring them means adding a statistic to core, a wider change than adding a row here.
 
-- **How wide the compiled-in shape table should be.** A fixed-matrix row sweeps only the shapes some build instantiated, so the table decides what is measurable without recompiling.
-  Widening it is nearly free in compile time and costs rlib size; the current ceiling is set by an unoptimised build materialising the largest array on a test thread's stack, not by anything about the measurement.
+- **How wide the compiled-in matrix table should be.** A CMS row whose shape is baked at compile time runs only at the shapes some build instantiated.
+  The table therefore decides what is measurable without recompiling.
+  Widening it is nearly free in compile time but costs rlib size.
+  The ceiling comes from an unoptimised build materialising the largest array on a test thread's stack, so it is a property of the build alone.
 
 - **Whether the exact baselines should take a config at all.** They compute the exact answer, so no value changes what they return, and they parse the config only to refuse what their siblings refuse.
   Accepting anything would let a config that fails on every sketch row still produce a baseline number.
