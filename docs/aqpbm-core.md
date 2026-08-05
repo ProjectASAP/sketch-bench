@@ -3,8 +3,8 @@
 ## 1. Purpose
 
 Core is a crate that contains the common functionalities.
-It provides functionalites including (and may not limit to) statistical analysis, ground truth, timing, memory measurement, etc..
-If an intuition about what goes to this crate is required, it will be: if anything ties to something specific, this thing should not goes to `aqpbm-core` crate.
+It provides functionalities including, and not limited to, statistical analysis, ground truth, timing and memory measurement.
+If an intuition about what goes into this crate is required, it is this: anything tied to something specific does not go into `aqpbm-core`.
 
 ## 2. The parts
 
@@ -16,32 +16,32 @@ A **`ParamSet`** is an algorithm name plus that algorithm's construction paramet
 {"algorithm": "cms", "params": {"rows": 5, "cols": 32768}}
 ```
 
-Core matches the name as a string and pass the parameter to an appropriate constructor (likely in some bundle). `aqpbm-core` never reads the parameters, whose vocabulary is known only to the bundle defining that family.
+Core matches the name as a string and passes the parameters to an appropriate constructor, likely one in a bundle. `aqpbm-core` never reads the parameters, whose vocabulary is known only to the bundle defining that family.
 
 ### 2.2 Workload materialisation
 
 A **workload** is the materialised, ordered item stream plus its provenance, replayed in full by every run.
-`aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the row's item type.
+`aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the implementation's item type.
 One carrier exists per item type: numbers, strings, bytes and labelled values.
 Adding an item type means one more carrier and one more rule to materialise it.
 
 ### 2.3 The runner and the timed loop
 
-A **cell** is one row of data, at one parameter point, against one workload.
+A **cell** is one implementation, at one parameter point, against one workload.
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
 Core drives the runs, warms up ahead of them, and decides what sits inside a timed region.
 
-### 2.5 Passes and the metrics mask
+### 2.4 Passes and the metrics mask
 
-A **pass** is one metric group measured over its own population of runs.
-Currently there are `throughput`, `latency` and `accuracy`.
-User may request multiple metrics in one request.
-Splitting one request into passes is what stops a metric from paying for another metric's instrumentation (e.g., throughput and accuracy needs two seperate benchmark).
+A **pass** is one metric group measured over its own population of runs: `throughput`, `latency` or `accuracy`.
+An **operation** is what a metric is taken over, one of `insert`, `query` or `merge`.
+A measurement names both: insert throughput, query accuracy, merge latency.
+A user may request multiple metrics in one request.
+Splitting one request into passes is what stops a metric from paying for another metric's instrumentation (e.g. throughput and accuracy need two separate benchmarks).
 
-### 2.6 The statistics and their comparators
+### 2.5 The statistics and their comparators
 
-A **capability** is a claim on one statistic.
-Currently, **capability** includes the following:
+A **capability** is one statistic, declared by the implementation that answers it, and the capabilities are:
 ```
 cardinality         how many distinct items are there
 frequency           how many times did this key occur
@@ -55,16 +55,16 @@ subpop-quantile     quantile, within the records carrying a set of labels
 The core crate provides ground truth (the comparator) of each **capability**.
 A comparator binds a capability.
 Multiple algorithms can bind to the same **capability**.
-One capability can carry several comparators: a quantile answer scores as a rank error or as a relative error, and the row chooses.
+One capability can carry several comparators: a quantile answer scores as a rank error or as a relative error, and the caller chooses.
 
-### 2.7 The recorders
+### 2.6 The recorders
 
 A sink is four hooks, around update and around query, and a probe is the wrapper that wears them.
 
 The offline runner and `sketch-runtime`, the sampler linked into a live application, want the same four hooks.
 A fifth hook would change every probe that wears the sink, so the four are a fixed shape.
 
-### 2.8 Aggregation and the record
+### 2.7 Aggregation and the record
 
 Core folds a pass's runs into a mean, a stddev, the per-run samples and a count, then serialises the fold as one line.
 
@@ -92,11 +92,12 @@ A new field is additive and optional, and changing what an existing field means 
 
 - **An interval is never taken inside one process.** Core writes none, and the field stays empty until a caller that re-executes the process fills it.
 
-- **A row is never credited with work it deferred.** Only `update` is timed as ingest, and `prepare` runs on its own clock.
+- **An implementation is never credited with work it deferred.** Only `update` is timed as ingest, and `prepare` runs on its own clock.
 
 - **Absent and zero stay distinguishable.** An optional metric is omitted when the pass did not measure it, so a zero in a record is a measurement.
 
-- **An unmade claim is a value.** A row that does not merge records that fact in the output, and every other unmade claim is recorded the same way.
+- **What an implementation cannot do is a value.** An implementation that does not merge records that fact in the output, and never as a missing line.
+  The deferred build, the footprint and each statistic are recorded the same way.
 
 - **A cell fails whole or not at all.** Construction is proved once before any measurement, so a cell that cannot be built fails with a message instead of a partial result.
 
@@ -132,7 +133,7 @@ pub trait MemoryFootprint {
 
 `update` takes its item by reference, so a wrapper carrying strings or byte slices is not charged for a clone on the hot path.
 
-A row whose construction takes a run knob implements a second init trait, since a worker count is no part of a sketch's parameters.
+An implementation whose construction takes a run knob implements a second init trait, since a worker count is no part of a sketch's parameters.
 
 ```rust
 pub trait ParallelInit: Accumulator + Sized {
@@ -140,7 +141,7 @@ pub trait ParallelInit: Accumulator + Sized {
 }
 ```
 
-A row declares a statistic by implementing that statistic's trait, one per entry in §2.6, each with the query shape it wants.
+An implementation declares a statistic by implementing that statistic's trait, one per entry in §2.5, each with the query shape it wants.
 
 ```rust
 pub trait CardinalityOps { fn estimate_distinct(&self) -> f64; }
@@ -158,7 +159,7 @@ run_cell_parallel::<S>(&BenchConfig, &WorkloadSpec, &ParamSet) -> Result<Vec<Ben
 score_cell::<S, G>(&BenchConfig, &WorkloadSpec, &ParamSet, &G) -> Result<Vec<BenchReport>, RunError>
 ```
 
-The merge pass spans both calls: `run_cell` times the fold, and `score_cell` scores its result against a single-pass reference.
+Merge is measured on both sides: `run_cell` times the fold, and `score_cell` scores its result against a single-pass reference.
 `BenchConfig` carries the measured-run count, the warm-up count, the metrics mask, the merge shard count and the worker count.
 Each call returns one `BenchReport` per pass the mask selected, and every record carries a `pass` label.
 
@@ -195,5 +196,5 @@ Per-sketch allocation accounting compiles in a counting allocator, which the lin
 - **Naming the deferred build.** The method is `prepare` and the metrics it feeds are `finalize_time_ms` and `build_throughput_items_per_sec`, so one of the two names should move.
   Moving the method breaks every implementation; moving the fields is a schema bump coordinated across every producer and reader.
 
-- **Per-thread allocation accounting.** The allocation counters are process-global atomics, so a parallel-insert row's heap numbers describe the process.
+- **Per-thread allocation accounting.** The allocation counters are process-global atomics, so the heap numbers of a parallel insert describe the process.
   Per-thread accounting needs a thread-local shim plus a rule for which threads belong to the measurement, and the rule is the harder half.

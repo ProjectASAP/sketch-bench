@@ -4,7 +4,7 @@
 
 ## 1. Purpose
 
-With all the wheels in other crate, to really compare something, the work is done in this crate.
+With all the wheels in other crates, the work of really comparing something is done in this crate.
 
 Four things cannot be written without knowing an algorithm by name, and all four are this crate's:
 
@@ -13,13 +13,11 @@ Four things cannot be written without knowing an algorithm by name, and all four
   An answer passes through as the library returns it, and its type follows the library's own.
   Where the library's documentation prescribes a treatment the wrapper applies it, and where it says nothing the value is reported unchanged.
 - **The catalog.** The list itself, binding each `(algorithm, impl)` pair to the type implementing it.
-- **The construction parameters.** `hll` takes an `lg_k` while `cms` takes a `rows` and a `cols`, and no generic layer can say that.
+- **The construction parameters.** `hll` takes an `lg_k` while `cms` takes a `rows` and a `cols`, and so on for every family.
 - **The choice of comparator for each row.** Core ships the comparators, and one capability can carry several.
   A KLL states its error as a rank error and a DDSketch as a relative error.
 
-Everything that spells an algorithm name or names a third-party sketch library is here.
-`aqpbm-core` is the exact complement, holding everything measurement can state without naming one.
-Benchmarking a sketch of your own does not go through this crate, which exists for the CLI.
+Consider this crate to be something that wraps around existing functionalities and can be used by `aqpbm-cli`.
 
 ## 2. Inputs
 
