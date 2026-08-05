@@ -21,12 +21,13 @@ Core matches the name as a string and passes the parameters to an appropriate co
 ### 2.2 Workload materialisation
 
 A **workload** is the materialised, ordered item stream plus its provenance, replayed in full by every run.
-`aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the implementation's item type.
-One carrier exists per item type: numbers, strings, bytes and labelled values.
+Generated items come from `aqpbm-datagen`, and replayed items come from a file core reads itself.
+Core materialises them at the implementation's item type, with one carrier per item type: numbers, strings, bytes and labelled values.
 Adding an item type means one more carrier and one more rule to materialise it.
 
 ### 2.3 The runner and the timed loop
 
+An **accumulator** is anything that takes items one at a time and builds state from them, and core requires nothing more.
 A **cell** is one implementation, at one parameter point, against one workload.
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
 Core drives the runs, warms up ahead of them, and decides what sits inside a timed region.
