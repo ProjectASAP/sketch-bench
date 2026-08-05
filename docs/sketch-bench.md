@@ -4,7 +4,7 @@
 
 ## 1. Purpose
 
-The crate answers one question: given two strings, which sketch is that?
+With all the wheels in other crate, to really compare something, the work is done in this crate.
 
 Four things cannot be written without knowing an algorithm by name, and all four are this crate's:
 

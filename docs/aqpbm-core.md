@@ -2,21 +2,13 @@
 
 ## 1. Purpose
 
-Core is everything the benchmark can say about measuring an accumulator without naming an algorithm.
-A **statistic** is the question a sketch can be asked, and an algorithm is one way of answering it.
-Core names statistics, so anything that has to spell `hll` sits in a bundle of implementations.
+Core is a crate that contains the common functionalities.
+It provides functionalites including (and may not limit to) statistical analysis, ground truth, timing, memory measurement, etc..
+If an intuition about what goes to this crate is required, it will be: if anything ties to something specific, this thing should not goes to `aqpbm-core` crate.
 
 ## 2. The parts
 
-### 2.1 What counts as measurable
-
-An **accumulator** is anything that takes items one at a time and builds state from them, and that is the whole of what core requires.
-A **row** is a `(algorithm, impl)` pair realised as a Rust type.
-
-Everything past ingestion is a **claim**: merge, the deferred build, the memory footprint, and one claim per statistic in §2.6.
-A row declares the claims it can honour, and ingestion is the one thing every row does, so it is never claimed.
-
-### 2.2 Construction from an opaque parameter object
+### 2.1 Construction from an opaque parameter object
 
 A **`ParamSet`** is an algorithm name plus that algorithm's construction parameters, carried as a JSON object.
 
@@ -24,39 +16,32 @@ A **`ParamSet`** is an algorithm name plus that algorithm's construction paramet
 {"algorithm": "cms", "params": {"rows": 5, "cols": 32768}}
 ```
 
-Core matches the name as a string and never reads the parameters, whose vocabulary is known only to the bundle defining that family.
+Core matches the name as a string and pass the parameter to an appropriate constructor (likely in some bundle). `aqpbm-core` never reads the parameters, whose vocabulary is known only to the bundle defining that family.
 
-### 2.3 Workload materialisation
+### 2.2 Workload materialisation
 
 A **workload** is the materialised, ordered item stream plus its provenance, replayed in full by every run.
 `aqpbm-datagen` produces the items, generated from a shape or replayed from a file, and core materialises them at the row's item type.
 One carrier exists per item type: numbers, strings, bytes and labelled values.
 Adding an item type means one more carrier and one more rule to materialise it.
 
-### 2.4 The runner and the timed loop
+### 2.3 The runner and the timed loop
 
-A **cell** is one row, at one parameter point, against one workload.
+A **cell** is one row of data, at one parameter point, against one workload.
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
 Core drives the runs, warms up ahead of them, and decides what sits inside a timed region.
 
 ### 2.5 Passes and the metrics mask
 
-A **pass** is one metric group measured over its own population of runs: `throughput`, `latency`, `accuracy`, or `merge`.
-Splitting one request into passes is what stops a metric from paying for another metric's instrumentation.
-The cost of answering a query is measured inside the accuracy pass, since a comparator's probes are the only queries a run makes.
-A metric sampled only at the boundaries of the insert phase contaminates nothing, so it needs no pass and rides along with every one.
-A new pass adds a value of the record's `pass` field, which every reader grouping on that field must learn.
-
-The merge pass shards a run's items contiguously and folds them in sequence, and the shard count is the only knob.
-One arrangement keeps the merge column comparable across rows, since a second would need a record field of its own.
-Three answers about a fold stay apart: whether the row merges at all, whether a fold was measured, and whether the fold that ran succeeded.
-The first is a claim, the second follows the rule for an unmeasured metric, and the third is the outcome of one execution.
+A **pass** is one metric group measured over its own population of runs.
+Currently there are `throughput`, `latency` and `accuracy`.
+User may request multiple metrics in one request.
+Splitting one request into passes is what stops a metric from paying for another metric's instrumentation (e.g., throughput and accuracy needs two seperate benchmark).
 
 ### 2.6 The statistics and their comparators
 
-A **capability** is a claim on one statistic, and this crate is where the set of statistics is fixed.
-Admitting a new statistic changes this crate, and admitting a new algorithm does not.
-
+A **capability** is a claim on one statistic.
+Currently, **capability** includes the following:
 ```
 cardinality         how many distinct items are there
 frequency           how many times did this key occur
@@ -67,8 +52,9 @@ subpop-frequency    frequency, within the records carrying a set of labels
 subpop-quantile     quantile, within the records carrying a set of labels
 ```
 
-A comparator binds a capability, never an algorithm, so it scores any implementation that declares that capability.
-That is what lets ground truth, and the scoring of an answer against it, live in a crate naming no algorithm.
+The core crate provides ground truth (the comparator) of each **capability**.
+A comparator binds a capability.
+Multiple algorithms can bind to the same **capability**.
 One capability can carry several comparators: a quantile answer scores as a rank error or as a relative error, and the row chooses.
 
 ### 2.7 The recorders
@@ -101,11 +87,6 @@ Core folds a pass's runs into a mean, a stddev, the per-run samples and a count,
 A line names its producer: `mode` says whether a bench run, a profile run or an embedded sampler made it, and `source` says which program did.
 Core owns the profile slot beside the bench one, so one reader deserialises every kind of line.
 A new field is additive and optional, and changing what an existing field means is a `schema_version` bump.
-
-### 2.9 What else belongs here
-
-The rule in §1 decides membership, and the parts above are what it admits.
-Anything measurable that can be stated without naming an algorithm is core's, and gaining a subsection here is how it enters.
 
 ## 3. What is guaranteed
 
