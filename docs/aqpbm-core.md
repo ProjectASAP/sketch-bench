@@ -35,7 +35,8 @@ Core drives the runs, warms up ahead of them, and decides what sits inside a tim
 ### 2.4 Passes and the metrics mask
 
 A **pass** is one metric group measured over its own population of runs: `throughput`, `latency` or `accuracy`.
-An **operation** is what a metric is taken over, one of `insert`, `query` or `merge`.
+An **operation** is what a metric is taken over, one of `insert`, `query`, `merge` or `prepare`.
+Insert and query are assumed of every implementation, and merge and prepare are declared.
 A measurement names both: insert throughput, query accuracy, merge latency.
 A user may request multiple metrics in one request.
 Splitting one request into passes is what stops a metric from paying for another metric's instrumentation (e.g. throughput and accuracy need two separate benchmarks).
@@ -193,9 +194,6 @@ Per-sketch allocation accounting compiles in a counting allocator, which the lin
 - **Who chooses the probe set.** Each comparator picks its own probe count and population, which lets a statistic ask for what it needs.
   Two algorithms' query-throughput numbers then rest on different probe counts.
   A shared probe budget in the configuration would make them comparable, at the cost of a knob that means something different for each statistic.
-
-- **Naming the deferred build.** The method is `prepare` and the metrics it feeds are `finalize_time_ms` and `build_throughput_items_per_sec`, so one of the two names should move.
-  Moving the method breaks every implementation; moving the fields is a schema bump coordinated across every producer and reader.
 
 - **Per-thread allocation accounting.** The allocation counters are process-global atomics, so the heap numbers of a parallel insert describe the process.
   Per-thread accounting needs a thread-local shim plus a rule for which threads belong to the measurement, and the rule is the harder half.
