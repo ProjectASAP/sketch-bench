@@ -191,6 +191,11 @@ pub struct SketchbenchArgs {
     /// variant lands in the `implementation` column. Coexists with `--report`.
     #[arg(long, help_heading = "Output")]
     pub raw_csv: Option<String>,
+    /// Write one line for the whole cell instead of one per pass, folding the
+    /// cell's records into a single flattened row. The per-pass shape is the
+    /// default; this is the shape a leaderboard reads.
+    #[arg(long, default_value_t = false, help_heading = "Output")]
+    pub flat: bool,
 
     #[arg(
         short = 'h',

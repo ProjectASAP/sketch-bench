@@ -350,6 +350,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
+    let mut records = Vec::with_capacity(reports.len());
     for report in &reports {
         if let Some(dir) = args.raw_csv.as_deref() {
             raw_csv::write_runs(
@@ -369,7 +370,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // it compares variants. The family is what groups the variants back
         // together, which is the axis a cross-library comparison is taken over.
         record.family = Some(family.to_string());
-        sink.write_line(&record.to_jsonl())?;
+        records.push(record);
+    }
+
+    // One invocation is one cell, so every record here shares an identity and
+    // the whole vector is exactly what `flatten_record` expects.
+    if args.flat {
+        let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
+        sink.write_line(&serde_json::to_string(&merged)?)?;
+    } else {
+        for record in &records {
+            sink.write_line(&record.to_jsonl())?;
+        }
     }
     Ok(())
 }
