@@ -91,6 +91,10 @@ pub struct BenchSection {
     /// (sketch, impl, config, workload); group by this before pooling any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
+    /// Which operation the metrics in this record were taken over —
+    /// `"insert"`, `"query"`, `"merge"` or `"prepare"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
     /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
     /// Deferred-build rows buffer in `update`, so this times their `Vec::push`
     /// — compare [`Self::build_throughput_items_per_sec`] instead.

@@ -146,6 +146,7 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
 
     BenchSection {
         pass: mask.pass_name().map(str::to_string),
+        operation: None,
         throughput_items_per_sec: throughput,
         throughput_samples,
         build_throughput_items_per_sec: build_throughput,

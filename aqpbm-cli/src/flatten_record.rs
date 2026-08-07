@@ -95,6 +95,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         // silently dropped. See the doc comment above.
         let BenchSection {
             pass: _,
+            operation: _,
             throughput_items_per_sec,
             throughput_samples,
             build_throughput_items_per_sec,
