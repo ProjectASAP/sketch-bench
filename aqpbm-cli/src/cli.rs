@@ -157,15 +157,19 @@ pub struct SketchbenchArgs {
     #[arg(long, default_value_t = 1, help_heading = "Repetition")]
     pub repeats: usize,
 
-    /// Comma-separated: throughput,latency,cpu,memory,accuracy,merge. Each of
-    /// throughput, latency, accuracy and merge is one pass over the workload;
-    /// cpu and memory attach to whichever passes run. Default: all except
-    /// merge.
+    /// Comma-separated: throughput,latency,accuracy,cpu,memory. What is
+    /// measured. Crossed with `--operations` to give the measurements this run
+    /// takes; cpu and memory attach to every one instead of forming their own.
     #[arg(long, help_heading = "Measurement content")]
     pub metrics: Option<String>,
-    /// Compute ground-truth accuracy per run, one comparator per algorithm.
-    /// Rows declaring no query capability are not scored: they still run, timed
-    /// only, after a stderr note.
+    /// Comma-separated: insert,query,merge,prepare. What each metric is
+    /// measured over. Insert and query are assumed of every implementation and
+    /// are the default; merge and prepare are declared, so ask for them by
+    /// name. A combination nothing implements simply produces no record.
+    #[arg(long, help_heading = "Measurement content")]
+    pub operations: Option<String>,
+    /// Alias for `--metrics accuracy`. Rows declaring no query capability are
+    /// not scored: they still run, timed only, after a stderr note.
     #[arg(long, default_value_t = false, help_heading = "Measurement content")]
     pub accuracy: bool,
     /// Cap on distinct keys probed by the frequency comparator; `0` probes
@@ -176,8 +180,8 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub accuracy_probes: usize,
-    /// Split the stream into this many shards, time folding them into one, and
-    /// compare against the whole stream; `1` skips the pass. Linear sketches
+    /// How many shards the merge operation folds. A knob, never a selector:
+    /// measuring merge is asked for with `--operations merge`. Linear sketches
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 1, help_heading = "Measurement content")]
     pub merge_shards: usize,

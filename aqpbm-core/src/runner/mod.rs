@@ -20,10 +20,10 @@ use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
 use crate::memory_footprint::MemoryFootprint;
 use crate::metrics::{
-    CpuTimeSampler, FullSink, ItemsPerSec, JemallocAllocated, MetricsMask, Rss, RunMetrics,
-    WallClock,
+    cells, Cell, CpuTimeSampler, FullSink, JemallocAllocated, Metric, MetricsMask, Operation, Rss,
+    RunMetrics, WallClock,
 };
-use crate::report::{BenchSection, Mode, Record, RunStats, Source};
+use crate::report::{Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
 
 /// Drives `config.runs + config.warmup_runs` iterations against a fixed
@@ -60,47 +60,34 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
     {
-        let passes = self.config.metrics.passes();
-        if passes.is_empty() {
+        let cells = cells(self.config.operations, self.config.metrics);
+        if cells.is_empty() {
             return Vec::new();
         }
         warmup_cpu_once();
-        let mut reports = Vec::with_capacity(passes.len());
-        for pass_mask in passes {
-            // Accuracy needs the ground truth; it belongs to `run_accuracy`.
-            if pass_mask.contains(MetricsMask::ACCURACY) {
-                continue;
-            }
+        let mut reports = Vec::with_capacity(cells.len());
+        for cell in cells {
             let mut pass_cfg = self.config.clone();
-            pass_cfg.metrics = pass_mask;
-            if pass_mask.contains(MetricsMask::MERGE) {
-                // Merge lives on *both* sides: the fold is timed here, its
-                // post-merge correctness scored in `run_accuracy`. Folding a
-                // single shard measures nothing, so skip it.
-                if pass_cfg.merge_shards < 2 {
-                    continue;
+            pass_cfg.metrics = cell.mask();
+            // Accuracy needs a comparator; those cells belong to
+            // `run_accuracy`. `NoGT` + `None` on the rest is what keeps `G`
+            // off this signature.
+            let report = match (cell.operation, cell.metric) {
+                (Operation::Insert, Metric::Throughput) | (Operation::Insert, Metric::Latency) => {
+                    self.run_pass::<S, _, NoGT, _>(cell, &mut factory, &mut insert, None, pass_cfg)
                 }
-                reports.push(self.run_merge_pass::<S, _, NoGT, _>(
-                    &mut factory,
-                    &mut insert,
-                    None,
-                    pass_cfg,
-                ));
-            } else if pass_mask == MetricsMask::THROUGHPUT {
-                // A throughput pass with no CPU/MEMORY bits takes a slim path
-                // that skips RunMetrics and the snapshots. Both paths time the
-                // insert loop and `prepare` alike, so no throughput column moves.
-                reports.push(self.run_throughput_pass_with(&mut factory, &mut insert, pass_cfg));
-            } else {
-                // `NoGT` + `None`: these passes ignore ground truth. Naming the
-                // type here is what keeps `G` off the public signature.
-                reports.push(self.run_pass::<S, _, NoGT, _>(
-                    &mut factory,
-                    &mut insert,
-                    None,
-                    pass_cfg,
-                ));
-            }
+                // Folding a single shard measures nothing.
+                (Operation::Merge, Metric::Latency) if pass_cfg.merge_shards >= 2 => self
+                    .run_merge_pass::<S, _, NoGT, _>(
+                        cell,
+                        &mut factory,
+                        &mut insert,
+                        None,
+                        pass_cfg,
+                    ),
+                _ => continue,
+            };
+            reports.push(report);
         }
         reports
     }
@@ -121,146 +108,27 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
-        let passes = self.config.metrics.passes();
-        if passes.is_empty() {
+        let cells = cells(self.config.operations, self.config.metrics);
+        if cells.is_empty() {
             return Vec::new();
         }
         warmup_cpu_once();
         let mut reports = Vec::new();
-        for pass_mask in passes {
+        for cell in cells {
             let mut pass_cfg = self.config.clone();
-            pass_cfg.metrics = pass_mask;
-            if pass_mask.contains(MetricsMask::MERGE) {
-                // `MetricsMask::all()` sets the MERGE bit, so the guard belongs
-                // here: asking for "all metrics" must not silently acquire a
-                // pass with no shards to fold.
-                if pass_cfg.merge_shards < 2 {
-                    continue;
+            pass_cfg.metrics = cell.mask();
+            let report = match (cell.operation, cell.metric) {
+                (Operation::Query, Metric::Accuracy) => {
+                    self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
                 }
-                let mut report = self.run_merge_pass(&mut factory, &mut insert, Some(gt), pass_cfg);
-                // `run_timed` owns merge timing; this half keeps only the
-                // post-merge accuracy, so the two never both claim a
-                // `merge_time_ms` — this fold only produces a sketch to score.
-                report.bench.merge_time_ms = None;
-                reports.push(report);
-            } else if pass_mask.contains(MetricsMask::ACCURACY) {
-                reports.push(self.run_pass(&mut factory, &mut insert, Some(gt), pass_cfg));
-            }
+                (Operation::Merge, Metric::Accuracy) if pass_cfg.merge_shards >= 2 => {
+                    self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
+                }
+                _ => continue,
+            };
+            reports.push(report);
         }
         reports
-    }
-
-    /// Throughput-only fast path; the insert closure monomorphizes at the
-    /// *caller's* crate so LLVM folds the wrapper's update into the hot loop.
-    /// `prepare` runs outside the timed loop, on its own clock.
-    #[inline(always)]
-    fn run_throughput_pass_with<S, F, Insert>(
-        &self,
-        factory: &mut F,
-        // `&mut Insert`, not `Insert`: the other path reaches `insert_loop`
-        // through one `&mut` too, and taking it by value here would instantiate
-        // two different `insert_loop` types that only fold thanks to LTO.
-        insert: &mut Insert,
-        pass_cfg: BenchConfig,
-    ) -> BenchReport
-    where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
-        W::Item: Clone,
-        F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-    {
-        let items = self.workload.items();
-        let n_items = items.len() as u64;
-        let total = pass_cfg.runs + pass_cfg.warmup_runs;
-        let mut ns_list: Vec<(u64, u64)> = Vec::with_capacity(pass_cfg.runs);
-
-        for trial in 0..total {
-            let mut sketch = factory();
-            let ns = insert_loop(&mut sketch, items, insert);
-            // Outside `insert_loop` by construction — it is the one function
-            // that defines what an insert costs, and nothing else may enter
-            // its timed region. See `hot_loop::insert_loop`.
-            let finalize_wall = WallClock::start();
-            sketch.prepare();
-            std::hint::black_box(&sketch);
-            let finalize_ns = finalize_wall.elapsed_ns();
-            if trial >= pass_cfg.warmup_runs {
-                ns_list.push((ns, finalize_ns));
-            }
-        }
-
-        let mut w = Welford::new();
-        let mut build_w = Welford::new();
-        let mut fin_w = Welford::new();
-        let mut samples: Vec<f64> = Vec::with_capacity(ns_list.len());
-        for &(ns, finalize_ns) in &ns_list {
-            if ns > 0 {
-                let v = ItemsPerSec::compute(n_items, ns);
-                w.push(v);
-                samples.push(v);
-                // Same guard as the ingest column so both summarise the same
-                // set of runs — see `aggregation::aggregate`, which this path
-                // deliberately mirrors rather than reimplements differently.
-                build_w.push(ItemsPerSec::compute(
-                    n_items,
-                    ns.saturating_add(finalize_ns),
-                ));
-                fin_w.push(finalize_ns as f64 / 1_000_000.0);
-            }
-        }
-        // No `ci95` on any of these: they are iterations of one process, not
-        // independent samples of this implementation. See `RunStats::ci95`.
-        let stats = |w: Welford| {
-            if w.n() == 0 {
-                None
-            } else {
-                Some(RunStats {
-                    mean: w.mean(),
-                    stddev: w.stddev(),
-                    ci95: None,
-                    n: w.n(),
-                })
-            }
-        };
-        let throughput = stats(w);
-        let build_throughput = stats(build_w);
-        let finalize_time_ms = stats(fin_w);
-        let throughput_samples = if samples.is_empty() {
-            None
-        } else {
-            Some(samples)
-        };
-
-        let bench = BenchSection {
-            pass: pass_cfg.metrics.pass_name().map(str::to_string),
-            operation: None,
-            throughput_items_per_sec: throughput,
-            throughput_samples,
-            build_throughput_items_per_sec: build_throughput,
-            finalize_time_ms,
-            query_throughput_items_per_sec: None,
-            latency_ns: None,
-            cpu_time_ms: None,
-            wall_time_ms: None,
-            rss_peak_kb: None,
-            heap_allocated_kb: None,
-            memory_bytes: None,
-            heap_bytes_net: None,
-            heap_bytes_peak: None,
-            accuracy: None,
-            merge_time_ms: None,
-            merge_shards: None,
-            merge_supported: None,
-        };
-
-        BenchReport {
-            sketch: self.sketch_name.clone(),
-            impl_name: self.impl_name.clone(),
-            workload: self.workload.description(),
-            per_run: Vec::new(),
-            bench,
-            config: pass_cfg,
-        }
     }
 
     /// Build `merge_shards` sketches over contiguous slices, fold them into one,
@@ -268,6 +136,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// sketches merge losslessly, so a gap is a defect; KLL's gap is the point.
     fn run_merge_pass<S, F, G, Insert>(
         &self,
+        cell: Cell,
         factory: &mut F,
         insert: &mut Insert,
         ground_truth: Option<&G>,
@@ -389,10 +258,13 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             pass_cfg.metrics
         };
         let mut bench = aggregate(&per_run, agg_mask);
-        // `agg_mask` says what to aggregate, not which pass ran — it carries the
-        // borrowed ACCURACY bit. Restate the pass mask, or the record claims the
-        // accuracy pass; those are different runs, and consumers group by this.
-        bench.pass = pass_cfg.metrics.pass_name().map(str::to_string);
+        bench.operation = Some(cell.operation.name().to_string());
+        bench.pass = Some(cell.metric.name().to_string());
+        // The fold's cost belongs to the cell that asked for it. The scored
+        // cell folds only to have something to query, so it reports no time.
+        if cell.metric != Metric::Latency {
+            bench.merge_time_ms = None;
+        }
         // Nothing in this pass is timed end-to-end: shard filling is
         // deliberately excluded and only the fold is measured, so a
         // `wall_time_ms` of 0 would claim a measurement that was not taken.
@@ -424,6 +296,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
     fn run_pass<S, F, G, Insert>(
         &self,
+        cell: Cell,
         factory: &mut F,
         insert: &mut Insert,
         ground_truth: Option<&G>,
@@ -436,7 +309,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
-        let accuracy_pass = pass_cfg.metrics.contains(MetricsMask::ACCURACY);
+        let accuracy_pass = cell.metric == Metric::Accuracy;
 
         // A repetition is only worth running if it draws its own sample: error
         // is deterministic given (data, parameters), so repeats over one fixed
@@ -461,7 +334,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             let workload: &W = resampled.as_ref().unwrap_or(self.workload);
             let items = workload.items();
 
-            let (metrics, final_sketch) = if pass_cfg.metrics.contains(MetricsMask::LATENCY) {
+            let (metrics, final_sketch) = if cell.metric == Metric::Latency {
                 // The latency pass deliberately does NOT use `insert`: its
                 // instrument *is* the per-update `Probe` boundary. `aggregate`
                 // suppresses throughput here because the mask lacks the bit.
@@ -496,7 +369,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        let bench = aggregate(&per_run, pass_cfg.metrics);
+        let mut bench = aggregate(&per_run, pass_cfg.metrics);
+        bench.operation = Some(cell.operation.name().to_string());
+        bench.pass = Some(cell.metric.name().to_string());
         // `runs` says how many were measured, not asked for: a non-resamplable
         // workload measures once, and `runs: 10` beside `accuracy_runs: 1` is
         // self-contradictory and inflates any confidence proxy taken from it.

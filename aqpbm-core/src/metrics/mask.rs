@@ -16,118 +16,218 @@ bitflags! {
         const CPU        = 1 << 2;
         const MEMORY     = 1 << 3;
         const ACCURACY   = 1 << 4;
-        /// Build K shard sketches, time folding them into one, then compare
-        /// the merged result against the whole stream.
-        const MERGE      = 1 << 5;
     }
 }
 
-/// Every primary pass, paired with the name that identifies it in a record.
-const PRIMARY_PASSES: [(MetricsMask, &str); 4] = [
-    (MetricsMask::THROUGHPUT, "throughput"),
-    (MetricsMask::LATENCY, "latency"),
-    (MetricsMask::ACCURACY, "accuracy"),
-    (MetricsMask::MERGE, "merge"),
+bitflags! {
+    /// Which operations to measure over. A separate set from [`MetricsMask`]:
+    /// one says *what is measured*, this says *what it is measured over*, and a
+    /// request is the cross product of the two.
+    ///
+    /// Insert and query are assumed of every implementation; merge and prepare
+    /// are declared, so a caller asks for them by name.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct OperationMask: u32 {
+        const INSERT  = 1 << 0;
+        const QUERY   = 1 << 1;
+        const MERGE   = 1 << 2;
+        const PREPARE = 1 << 3;
+    }
+}
+
+/// One operation, as a value. The mask is a set and cannot be matched
+/// exhaustively; this can, which is what lets the runner's dispatch be
+/// checked by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Insert,
+    Query,
+    Merge,
+    Prepare,
+}
+
+/// One metric, as a value. Same reason as [`Operation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Metric {
+    Throughput,
+    Latency,
+    Accuracy,
+}
+
+/// One measurement: a metric taken over an operation. This is what a record
+/// names, and what the runner dispatches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cell {
+    pub operation: Operation,
+    pub metric: Metric,
+    /// The phase-boundary bits that ride along. They contaminate nothing, so
+    /// they attach to every cell instead of forming cells of their own.
+    pub secondary: MetricsMask,
+}
+
+impl Cell {
+    /// The bits this cell records: its own metric, plus the phase-boundary
+    /// bits riding along. What the recorders and the aggregator gate on.
+    pub fn mask(self) -> MetricsMask {
+        let primary = match self.metric {
+            Metric::Throughput => MetricsMask::THROUGHPUT,
+            Metric::Latency => MetricsMask::LATENCY,
+            Metric::Accuracy => MetricsMask::ACCURACY,
+        };
+        primary | self.secondary
+    }
+}
+
+impl Operation {
+    /// The name this operation carries in a record.
+    pub fn name(self) -> &'static str {
+        match self {
+            Operation::Insert => "insert",
+            Operation::Query => "query",
+            Operation::Merge => "merge",
+            Operation::Prepare => "prepare",
+        }
+    }
+}
+
+impl Metric {
+    /// The name this metric carries in a record's `pass` field.
+    pub fn name(self) -> &'static str {
+        match self {
+            Metric::Throughput => "throughput",
+            Metric::Latency => "latency",
+            Metric::Accuracy => "accuracy",
+        }
+    }
+}
+
+/// Every operation the mask can hold, in the order cells are produced.
+const OPERATIONS: [(OperationMask, Operation); 4] = [
+    (OperationMask::INSERT, Operation::Insert),
+    (OperationMask::QUERY, Operation::Query),
+    (OperationMask::MERGE, Operation::Merge),
+    (OperationMask::PREPARE, Operation::Prepare),
 ];
 
-impl MetricsMask {
-    /// Bits that record at phase boundaries only (start / finish
-    /// of the insert phase, not per-update). Free to attach to
-    /// any primary pass without contaminating its measurement.
-    pub const SECONDARY: MetricsMask =
-        MetricsMask::from_bits_truncate(Self::CPU.bits() | Self::MEMORY.bits());
+/// Every metric the mask can hold, in the order cells are produced.
+const METRICS: [(MetricsMask, Metric); 3] = [
+    (MetricsMask::THROUGHPUT, Metric::Throughput),
+    (MetricsMask::LATENCY, Metric::Latency),
+    (MetricsMask::ACCURACY, Metric::Accuracy),
+];
 
-    /// Split this mask into one sub-mask per `BenchRunner` pass: each primary
-    /// bit gets its own pass, secondary bits (CPU / MEMORY) attach to all of
-    /// them, and secondary-only masks run as a single pass.
-    pub fn passes(self) -> Vec<MetricsMask> {
-        let secondary = self & Self::SECONDARY;
-        let mut out = Vec::new();
-        for (primary, _) in PRIMARY_PASSES {
-            if self.contains(primary) {
-                out.push(primary | secondary);
+/// The cells a request selects: every (operation, metric) the two masks name
+/// between them. A cell with no implementation is still produced, and the
+/// runner is what finds nothing to run for it.
+pub fn cells(operations: OperationMask, metrics: MetricsMask) -> Vec<Cell> {
+    let secondary = metrics & MetricsMask::SECONDARY;
+    let mut out = Vec::new();
+    for (op_bit, operation) in OPERATIONS {
+        if !operations.contains(op_bit) {
+            continue;
+        }
+        for (metric_bit, metric) in METRICS {
+            if metrics.contains(metric_bit) {
+                out.push(Cell {
+                    operation,
+                    metric,
+                    secondary,
+                });
             }
         }
-        if out.is_empty() && !secondary.is_empty() {
-            out.push(secondary);
-        }
-        out
     }
+    out
+}
 
-    /// PASS bit to str name
-    pub fn pass_name(self) -> Option<&'static str> {
-        PRIMARY_PASSES
-            .iter()
-            .find(|(bit, _)| self.contains(*bit))
-            .map(|(_, name)| *name)
-    }
+impl MetricsMask {
+    /// Bits that record at phase boundaries only (start / finish of the insert
+    /// phase, not per-update). They contaminate nothing, so they ride along
+    /// with every cell instead of forming cells of their own.
+    pub const SECONDARY: MetricsMask =
+        MetricsMask::from_bits_truncate(Self::CPU.bits() | Self::MEMORY.bits());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn passes_throughput_only() {
-        let p = MetricsMask::THROUGHPUT.passes();
-        assert_eq!(p, vec![MetricsMask::THROUGHPUT]);
-    }
-
-    #[test]
-    fn passes_throughput_plus_latency_splits_into_two() {
-        let p = (MetricsMask::THROUGHPUT | MetricsMask::LATENCY).passes();
-        assert_eq!(p, vec![MetricsMask::THROUGHPUT, MetricsMask::LATENCY],);
-    }
-
-    #[test]
-    fn passes_attaches_memory_cpu_to_every_primary() {
-        let p = MetricsMask::all().passes();
-        assert_eq!(p.len(), 4);
-        for m in &p {
-            assert!(m.contains(MetricsMask::CPU));
-            assert!(m.contains(MetricsMask::MEMORY));
-        }
-    }
-
-    #[test]
-    fn passes_secondary_only_runs_one_pass() {
-        let p = (MetricsMask::CPU | MetricsMask::MEMORY).passes();
-        assert_eq!(p, vec![MetricsMask::CPU | MetricsMask::MEMORY]);
-    }
-
-    #[test]
-    fn passes_empty_returns_empty() {
-        assert!(MetricsMask::empty().passes().is_empty());
-    }
-
-    #[test]
-    fn every_pass_has_a_distinct_name() {
-        // The property consumers rely on: a record's `pass` identifies which
-        // run produced it, so two passes must never share a name.
-        let names: Vec<&str> = MetricsMask::all()
-            .passes()
+    fn names(cells: &[Cell]) -> Vec<(&'static str, &'static str)> {
+        cells
             .iter()
-            .map(|p| p.pass_name().expect("every pass has a primary bit"))
-            .collect();
-        let unique: std::collections::BTreeSet<_> = names.iter().collect();
+            .map(|c| (c.operation.name(), c.metric.name()))
+            .collect()
+    }
+
+    #[test]
+    fn one_operation_one_metric_is_one_cell() {
+        let c = cells(OperationMask::INSERT, MetricsMask::THROUGHPUT);
+        assert_eq!(names(&c), vec![("insert", "throughput")]);
+    }
+
+    #[test]
+    fn the_request_is_the_cross_product() {
+        let c = cells(
+            OperationMask::INSERT | OperationMask::MERGE,
+            MetricsMask::THROUGHPUT | MetricsMask::LATENCY,
+        );
         assert_eq!(
-            names.len(),
-            unique.len(),
-            "duplicate pass name in {names:?}"
+            names(&c),
+            vec![
+                ("insert", "throughput"),
+                ("insert", "latency"),
+                ("merge", "throughput"),
+                ("merge", "latency"),
+            ]
         );
     }
 
     #[test]
-    fn every_named_pass_runs_under_all() {
-        // A bit added to the table must produce a pass, not just a name.
-        assert_eq!(MetricsMask::all().passes().len(), PRIMARY_PASSES.len());
+    fn a_cell_with_no_implementation_is_still_produced() {
+        // Selection does not judge. Nothing implements insert accuracy; the
+        // runner is what finds nothing to run for it.
+        let c = cells(OperationMask::INSERT, MetricsMask::ACCURACY);
+        assert_eq!(names(&c), vec![("insert", "accuracy")]);
     }
 
     #[test]
-    fn a_secondary_only_pass_has_no_name() {
-        // CPU/MEMORY attach to a pass, they do not constitute one.
-        let secondary = (MetricsMask::CPU | MetricsMask::MEMORY).passes();
-        assert_eq!(secondary.len(), 1);
-        assert_eq!(secondary[0].pass_name(), None);
+    fn secondary_bits_ride_along_and_form_no_cell_of_their_own() {
+        let c = cells(
+            OperationMask::INSERT,
+            MetricsMask::THROUGHPUT | MetricsMask::CPU | MetricsMask::MEMORY,
+        );
+        assert_eq!(names(&c), vec![("insert", "throughput")]);
+        assert_eq!(c[0].secondary, MetricsMask::CPU | MetricsMask::MEMORY);
+    }
+
+    #[test]
+    fn secondary_bits_alone_select_nothing() {
+        // They attach to a measurement; they are not one.
+        assert!(cells(
+            OperationMask::all(),
+            MetricsMask::CPU | MetricsMask::MEMORY
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn an_empty_mask_on_either_axis_selects_nothing() {
+        assert!(cells(OperationMask::empty(), MetricsMask::all()).is_empty());
+        assert!(cells(OperationMask::all(), MetricsMask::empty()).is_empty());
+    }
+
+    #[test]
+    fn all_by_all_is_the_whole_grid() {
+        // Four operations by three metrics. The grid is the thing this crate
+        // can be asked for, whatever it happens to implement.
+        assert_eq!(cells(OperationMask::all(), MetricsMask::all()).len(), 12);
+    }
+
+    #[test]
+    fn a_cell_records_its_own_metric_plus_whatever_rides_along() {
+        let c = cells(
+            OperationMask::MERGE,
+            MetricsMask::LATENCY | MetricsMask::MEMORY,
+        );
+        assert_eq!(c[0].mask(), MetricsMask::LATENCY | MetricsMask::MEMORY);
     }
 }

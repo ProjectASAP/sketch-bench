@@ -299,7 +299,17 @@ impl<E: Exporter> Sampler<E> {
         });
 
         let bench = BenchSection {
-            pass: self.mask.pass_name().map(str::to_string),
+            // A sampler watches a live application ingesting, so its operation
+            // is always insert. It reports whatever its mask collected in one
+            // record, and names the headline metric.
+            operation: Some("insert".to_string()),
+            pass: if self.mask.contains(MetricsMask::THROUGHPUT) {
+                Some("throughput".to_string())
+            } else if self.mask.contains(MetricsMask::LATENCY) {
+                Some("latency".to_string())
+            } else {
+                None
+            },
             throughput_items_per_sec: Some(RunStats {
                 mean: throughput,
                 stddev: 0.0,

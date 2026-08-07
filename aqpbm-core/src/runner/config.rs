@@ -6,7 +6,7 @@
 // `MetricsMask` lives in `crate::metrics` so that `sketch-runtime`
 // can name it without depending on the runner. Re-exported here so
 // callers reaching for the runner's config find it in one place.
-pub use crate::metrics::MetricsMask;
+pub use crate::metrics::{MetricsMask, OperationMask};
 
 /// Configuration for one `BenchRunner` invocation.
 #[derive(Debug, Clone)]
@@ -20,6 +20,10 @@ pub struct BenchConfig {
     pub warmup_runs: usize,
     /// Which metric algorithms to record.
     pub metrics: MetricsMask,
+    /// Which operations to record them over. The request is the cross product
+    /// of this and `metrics`; a cell with no implementation simply produces
+    /// nothing.
+    pub operations: OperationMask,
     /// Reserved: how many queries to run per measured iteration. The runner
     /// does not read it — the `GroundTruth` comparators own the query phase
     /// and pick their own probe counts.
@@ -42,6 +46,9 @@ impl Default for BenchConfig {
             runs: 10,
             warmup_runs: 3,
             metrics: MetricsMask::all(),
+            // Insert and query are assumed of every implementation; merge and
+            // prepare are declared, so a caller asks for them by name.
+            operations: OperationMask::INSERT | OperationMask::QUERY,
             query_count: None,
             threads: 1,
             merge_shards: 1,

@@ -196,7 +196,8 @@ mod tests {
         };
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 5);
         rec.bench = Some(BenchSection {
-            pass: Some("merge".into()),
+            pass: Some("latency".into()),
+            operation: Some("merge".into()),
             throughput_items_per_sec: Some(stats(mean)),
             throughput_samples: Some(vec![mean, mean + 1.0]),
             build_throughput_items_per_sec: Some(stats(mean * 0.9)),

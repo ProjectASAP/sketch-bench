@@ -145,7 +145,10 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     let _ = n; // n is implicit in each RunStats.n
 
     BenchSection {
-        pass: mask.pass_name().map(str::to_string),
+        // Folding numbers is this function's whole job. Which measurement they
+        // belong to is decided where the measurement is dispatched, and the
+        // runner stamps it on the way out.
+        pass: None,
         operation: None,
         throughput_items_per_sec: throughput,
         throughput_samples,

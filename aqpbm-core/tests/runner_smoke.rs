@@ -8,6 +8,7 @@ use aqpbm_core::workload::I64Workload;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::CardinalityOps;
 use aqpbm_core::runner::{BenchConfig, BenchRunner};
+use aqpbm_core::metrics::OperationMask;
 use aqpbm_core::metrics::MetricsMask;
 
 /// Trivial exact-counting "sketch" — not a real sketch, but
@@ -242,22 +243,23 @@ fn runner_respects_mask_noop_when_empty() {
     assert!(reports.is_empty());
 }
 
-/// The merge pass populates `accuracy` too, so a consumer guessing the pass from
-/// which fields are set cannot tell it apart. Pins that the record states the
-/// *pass* mask, not the ACCURACY-widened aggregation mask.
+/// Merge is an operation and accuracy is a metric, so the two measurements of
+/// the merge operation are told apart by the pair. Pins the property a
+/// consumer grouping records depends on: no two of them share it.
 #[test]
-fn the_merge_pass_is_labelled_merge_not_accuracy() {
+fn the_two_merge_measurements_carry_different_names() {
     let workload = I64Workload::uniform(4_000, 500, 7);
     let cfg = BenchConfig {
         runs: 2,
         warmup_runs: 0,
-        metrics: MetricsMask::MERGE | MetricsMask::ACCURACY,
+        metrics: MetricsMask::ACCURACY,
+        operations: OperationMask::QUERY | OperationMask::MERGE,
         merge_shards: 4,
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    // Both merge and accuracy compare against ground truth, so both belong to
-    // the accuracy half of the run.
+    // Both cells compare against ground truth, so both belong to the accuracy
+    // half of the run.
     let reports = runner.run_accuracy(
         || ExactCounter {
             seen: Default::default(),
@@ -269,17 +271,22 @@ fn the_merge_pass_is_labelled_merge_not_accuracy() {
     let merge = reports
         .iter()
         .find(|r| r.bench.merge_shards.is_some())
-        .expect("a merge pass ran");
+        .expect("a merge measurement ran");
     assert!(
         merge.bench.accuracy.is_some(),
-        "the merge pass should publish post-merge accuracy — otherwise this \
-         test is not exercising the collision it exists for"
+        "merge accuracy is the point of this cell — otherwise this test is \
+         not exercising the collision it exists for"
     );
-    assert_eq!(merge.bench.pass.as_deref(), Some("merge"));
+    assert_eq!(merge.bench.operation.as_deref(), Some("merge"));
+    assert_eq!(merge.bench.pass.as_deref(), Some("accuracy"));
 
-    let accuracy = reports
+    let query = reports
         .iter()
         .find(|r| r.bench.merge_shards.is_none())
-        .expect("an accuracy pass ran");
-    assert_eq!(accuracy.bench.pass.as_deref(), Some("accuracy"));
+        .expect("a query measurement ran");
+    assert_eq!(query.bench.operation.as_deref(), Some("query"));
+    assert_eq!(query.bench.pass.as_deref(), Some("accuracy"));
+
+    // The pair is what separates them; the metric alone no longer does.
+    assert_ne!(merge.bench.operation, query.bench.operation);
 }

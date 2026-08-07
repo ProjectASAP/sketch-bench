@@ -31,7 +31,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::runner::BenchConfig;
 use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
 use clap::Parser;
@@ -57,12 +57,37 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
             "cpu" => MetricsMask::CPU,
             "memory" => MetricsMask::MEMORY,
             "accuracy" => MetricsMask::ACCURACY,
-            "merge" => MetricsMask::MERGE,
             "all" => MetricsMask::all(),
             "" => MetricsMask::empty(),
             other => {
                 eprintln!("approxbench: unknown metric flag '{other}', ignoring");
                 MetricsMask::empty()
+            }
+        };
+    }
+    m
+}
+
+/// Which operations the metrics are taken over. Insert and query are assumed
+/// of every implementation, so they are what an absent flag means; merge and
+/// prepare are declared, and are asked for by name.
+fn parse_operations(s: Option<&str>) -> OperationMask {
+    let s = match s {
+        Some(v) => v,
+        None => return OperationMask::INSERT | OperationMask::QUERY,
+    };
+    let mut m = OperationMask::empty();
+    for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
+        m |= match token.as_str() {
+            "insert" => OperationMask::INSERT,
+            "query" => OperationMask::QUERY,
+            "merge" => OperationMask::MERGE,
+            "prepare" => OperationMask::PREPARE,
+            "all" => OperationMask::all(),
+            "" => OperationMask::empty(),
+            other => {
+                eprintln!("approxbench: unknown operation '{other}', ignoring");
+                OperationMask::empty()
             }
         };
     }
@@ -274,22 +299,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     };
     let spec = workload_spec(&args)?;
     let mut metrics_mask = parse_mask(args.metrics.as_deref());
-    if args.merge_shards > 1 {
-        metrics_mask |= MetricsMask::MERGE;
-    }
-    // No `else` clearing the bit: the runner already skips a merge pass with
-    // fewer than two shards, so one guard covers CLI and library callers
-    // alike.
+    let operations_mask = parse_operations(args.operations.as_deref());
+    // `--merge-shards` no longer selects anything: it says how many shards the
+    // merge operation folds, and `--operations merge` is what asks for it.
     if args.accuracy {
-        // --accuracy implies the accuracy mask bit, regardless of
-        // what --metrics said. Otherwise the runner would build the
-        // GT but silently drop its output.
+        // The alias. `--accuracy` and `--metrics accuracy` name the same cell.
         metrics_mask |= MetricsMask::ACCURACY;
     }
     let cfg = BenchConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
+        operations: operations_mask,
         query_count: None,
         threads: args.workers.max(1),
         merge_shards: args.merge_shards,
