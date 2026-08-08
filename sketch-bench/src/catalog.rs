@@ -15,7 +15,7 @@ use aqpbm_core::accuracy::subpopulation::{
 };
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
+use aqpbm_core::cell::{self, BenchItem, ParallelInit, RunError, WorkloadSpec};
 use aqpbm_core::runner::{needs_ground_truth, NoGT};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -47,13 +47,8 @@ pub enum Numeric {
 }
 
 /// The executable half of a row: everything the frontend can hand a cell.
-type RunFn = fn(
-    &BenchConfig,
-    &WorkloadSpec,
-    &ParamSet,
-    &AccuracyCfg,
-    Numeric,
-) -> Result<Vec<BenchReport>, RunError>;
+type RunFn =
+    fn(&BenchConfig, &WorkloadSpec, &ParamSet, Numeric) -> Result<Vec<BenchReport>, RunError>;
 
 /// The comparators a row can be scored by, keyed by the name `--comparator`
 /// selects them with.
@@ -101,7 +96,7 @@ trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
     /// several comparators, and this is what tells them apart on the command
     /// line.
     const NAME: &'static str;
-    fn build(acc: &AccuracyCfg, params: &ParamSet) -> Self;
+    fn build(params: &ParamSet) -> Self;
 }
 
 impl<S: Accumulator> GroundTruthCalculator<S> for CardinalityGT
@@ -109,9 +104,8 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "cardinality";
-    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
-        CardinalityGT {
-        }
+    fn build(_params: &ParamSet) -> Self {
+        CardinalityGT
     }
 }
 
@@ -120,10 +114,8 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "frequency";
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
-        FrequencyGT {
-            max_probes: acc.max_probes,
-        }
+    fn build(_params: &ParamSet) -> Self {
+        FrequencyGT
     }
 }
 
@@ -135,10 +127,9 @@ where
     /// Scores column 0. A grouped sketch stores every column subset, but each
     /// one is its own population with its own error, so a comparator names the
     /// one it scores instead of pooling them.
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_params: &ParamSet) -> Self {
         SubpopFrequencyGT {
             label_column: 0,
-            max_probes: acc.max_probes,
         }
     }
 }
@@ -149,10 +140,9 @@ where
 {
     const NAME: &'static str = "subpop-cardinality";
     /// Column 0, for the same reason as [`SubpopFrequencyGT`].
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_params: &ParamSet) -> Self {
         SubpopCardinalityGT {
             label_column: 0,
-            max_probes: acc.max_probes,
         }
     }
 }
@@ -162,13 +152,11 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "subpop-rank-error";
-    /// Column 0, and `max_probes` caps groups instead of keys: this comparator
-    /// issues 101 estimate calls per group, so the cap bites much sooner here
-    /// than it does for the two counting comparators.
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    /// Column 0, for the same reason as [`SubpopFrequencyGT`]. The most
+    /// expensive comparator in the catalog: 101 estimate calls per group.
+    fn build(_params: &ParamSet) -> Self {
         SubpopRankErrorGT {
             label_column: 0,
-            max_probes: acc.max_probes,
         }
     }
 }
@@ -178,7 +166,7 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "rank-error";
-    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_params: &ParamSet) -> Self {
         RankErrorGT {
         }
     }
@@ -189,7 +177,7 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "relative-error";
-    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_params: &ParamSet) -> Self {
         RelativeErrorGT {
         }
     }
@@ -203,7 +191,7 @@ where
     /// Scores against the same `k` the sketch was built with — a different prefix
     /// would measure the mismatch, not the sketch. Infallible because the timed
     /// half runs first, so an unreadable `k` has already failed the build.
-    fn build(_acc: &AccuracyCfg, params: &ParamSet) -> Self {
+    fn build(params: &ParamSet) -> Self {
         TopkGT {
             k: params
                 .parse::<TopkParams>()
@@ -220,7 +208,6 @@ fn run_scored<S, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    acc: &AccuracyCfg,
     _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
@@ -231,7 +218,7 @@ where
     // A comparator is built when the request reaches a square that cannot run
     // without one. Nobody has to ask for it: needing one is a property of the
     // squares selected, not a separate decision.
-    let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(acc, params));
+    let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(params));
     Ok(cell::run_cell::<S, G>(cfg, spec, params, gt.as_ref())?)
 }
 
@@ -242,7 +229,6 @@ fn run_ordered<Si, Sf, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    acc: &AccuracyCfg,
     width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
@@ -251,8 +237,8 @@ where
     G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
 {
     match width {
-        Numeric::I64 => run_scored::<Si, G>(cfg, spec, params, acc, width),
-        Numeric::F64 => run_scored::<Sf, G>(cfg, spec, params, acc, width),
+        Numeric::I64 => run_scored::<Si, G>(cfg, spec, params, width),
+        Numeric::F64 => run_scored::<Sf, G>(cfg, spec, params, width),
     }
 }
 
@@ -261,7 +247,6 @@ fn run_plain<S>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    _acc: &AccuracyCfg,
     _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
@@ -276,7 +261,6 @@ fn run_parallel<S>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    _acc: &AccuracyCfg,
     _width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
@@ -302,7 +286,6 @@ fn run_fixed_matrix<W: FixedMatrixRow>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    acc: &AccuracyCfg,
     width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError> {
     let (rows, cols) = W::shape(params)?;
@@ -310,7 +293,6 @@ fn run_fixed_matrix<W: FixedMatrixRow>(
         cfg,
         spec,
         params,
-        acc,
         width,
         _row: std::marker::PhantomData,
     };
@@ -348,7 +330,6 @@ struct RunFixedMatrix<'a, W> {
     cfg: &'a BenchConfig,
     spec: &'a WorkloadSpec,
     params: &'a ParamSet,
-    acc: &'a AccuracyCfg,
     width: Numeric,
     _row: std::marker::PhantomData<W>,
 }
@@ -364,7 +345,7 @@ impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, 
             + Clone
             + 'static,
     {
-        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.acc, self.width)
+        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.width)
     }
 }
 
@@ -378,7 +359,6 @@ fn run_lib_hll<S12, S14, S16, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    acc: &AccuracyCfg,
     width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError>
 where
@@ -389,9 +369,9 @@ where
 {
     let p: HllParams = params.parse().map_err(BuildError::from)?;
     match p.lg_k {
-        12 => run_scored::<S12, G>(cfg, spec, params, acc, width),
-        14 => run_scored::<S14, G>(cfg, spec, params, acc, width),
-        16 => run_scored::<S16, G>(cfg, spec, params, acc, width),
+        12 => run_scored::<S12, G>(cfg, spec, params, width),
+        14 => run_scored::<S14, G>(cfg, spec, params, width),
+        16 => run_scored::<S16, G>(cfg, spec, params, width),
         other => Err(RunError::Build(hll::unsupported_precision(other))),
     }
 }
@@ -711,7 +691,6 @@ pub fn run(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-    acc: &AccuracyCfg,
     width: Numeric,
     comparator: Option<&str>,
 ) -> Result<Vec<BenchReport>> {
@@ -739,7 +718,7 @@ pub fn run(
                 )
             })?,
     };
-    Ok(run(cfg, spec, params, acc, width)?)
+    Ok(run(cfg, spec, params, width)?)
 }
 
 /// The comparator names a row admits, for an error message.
@@ -897,22 +876,17 @@ mod tests {
         }
     }
 
-    fn smoke_cfg() -> (BenchConfig, AccuracyCfg) {
-        (
-            BenchConfig {
-                runs: 1,
-                warmup_runs: 0,
-                // Only squares something measures. The default request reaches
-                // `(insert, accuracy)` and `(query, latency)`, which nothing
-                // does, and reaching an empty square is an error.
-                metrics: MetricsMask::THROUGHPUT,
-                operations: OperationMask::INSERT,
-                ..Default::default()
-            },
-            AccuracyCfg {
-                max_probes: 0,
-            },
-        )
+    fn smoke_cfg() -> BenchConfig {
+        BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            // Only squares something measures. The default request reaches
+            // `(insert, accuracy)` and `(query, latency)`, which nothing
+            // does, and reaching an empty square is an error.
+            metrics: MetricsMask::THROUGHPUT,
+            operations: OperationMask::INSERT,
+            ..Default::default()
+        }
     }
 
     /// Every row actually builds and ingests — the part the types cannot state.
@@ -920,7 +894,7 @@ mod tests {
     /// for the list and the dispatch to disagree about.
     #[test]
     fn every_catalog_entry_runs() {
-        let (cfg, acc) = smoke_cfg();
+        let cfg = smoke_cfg();
         for r in ROWS {
             // Canonical, not `empty`: every family's params have required
             // fields, so `empty` builds nothing at all now that the exact
@@ -932,7 +906,6 @@ mod tests {
                 &cfg,
                 &spec_for(r),
                 &params,
-                &acc,
                 Numeric::I64,
                 None,
             );
@@ -960,7 +933,7 @@ mod tests {
     #[test]
     fn topk_rows_accept_and_reject_the_same_configs() {
         let spec = smoke_spec();
-        let (cfg, acc) = smoke_cfg();
+        let cfg = smoke_cfg();
         for (cfg_spec, buildable) in [
             ("rows=5 cols=2048 k=5", true),
             ("rows=5 cols=2048 kk=5", false), // misspelled `k`
@@ -975,7 +948,6 @@ mod tests {
                     &cfg,
                     &spec,
                     &params,
-                    &acc,
                     Numeric::I64,
                     None,
                 );

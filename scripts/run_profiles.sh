@@ -76,7 +76,6 @@ CARDINALITY=100000
 ZIPF_S=1.1
 SEED=42
 METRICS="cpu,memory,accuracy,throughput"
-ACCURACY_PROBES=20000
 # ────────────────────────────────────────────────────────────────
 
 OUT_DIR=output/profiles
@@ -113,7 +112,6 @@ bench() {
         --warmup-runs "$WARMUP" \
         --metrics   "$METRICS" \
         --accuracy \
-        --accuracy-probes     "$ACCURACY_PROBES" \
         --report    "$OUT_DIR/${algorithm}_${label}.jsonl" \
         "$@"
 }

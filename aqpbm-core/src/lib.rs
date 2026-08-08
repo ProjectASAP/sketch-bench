@@ -33,7 +33,7 @@ pub use aqpbm_datagen::{
 };
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
-pub use cell::{run_cell, AccuracyCfg, BenchItem, RunError, WorkloadSpec};
+pub use cell::{run_cell, BenchItem, RunError, WorkloadSpec};
 pub use init::{BenchImpl, BuildError, InitSketch};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use memory_footprint::MemoryFootprint;

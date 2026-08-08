@@ -152,26 +152,28 @@ Repetition:
 
 Measurement content:
       --metrics <METRICS>
-          Comma-separated: throughput,latency,cpu,memory,accuracy,merge. Each of throughput,
-          latency, accuracy and merge is one pass over the workload; cpu and memory attach to
-          whichever passes run. Default: all except merge
+          Comma-separated: throughput,latency,accuracy,cpu,memory. What is measured. Crossed
+          with `--operations` to give the measurements this run takes; cpu and memory attach to
+          every one instead of forming their own. Required: nothing is measured that was not
+          asked for
 
-      --accuracy
-          Compute ground-truth accuracy per run, one comparator per algorithm. Rows declaring no
-          query capability are not scored: they still run, timed only, after a stderr note
+      --comparator <COMPARATOR>
+          Which comparator scores this row, by name. A row admits only the comparators its
+          capabilities can answer, and the catalog is what lists them; omitted takes the row's
+          first
 
-      --accuracy-probes <ACCURACY_PROBES>
-          Cap on distinct keys probed by the frequency comparator; `0` probes every one. Ignored
-          by the cardinality / quantile / top-k comparators
-          
-          [default: 100000]
+      --operations <OPERATIONS>
+          Comma-separated: insert,query,merge,prepare. What is measured over. Crossed with
+          `--metrics` to give the measurements this run takes.
+          Required, like `--metrics`: a square nothing measures is refused by name, so a request
+          states which squares it wants rather than inheriting a guess
 
       --merge-shards <MERGE_SHARDS>
-          Split the stream into this many shards, time folding them into one, and compare
-          against the whole stream; `1` skips the pass. Linear sketches merge exactly, so a gap
-          is a defect; for KLL it is the result
+          How many shards the merge operation folds. A knob, never a selector: measuring merge
+          is asked for with `--operations merge`. Linear sketches merge exactly, so a gap is a
+          defect; for KLL it is the result
           
-          [default: 1]
+          [default: 2]
 
 Output:
       --report <REPORT>

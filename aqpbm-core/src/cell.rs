@@ -1,8 +1,7 @@
 //! Running **one cell** — one `(impl, config)` measured against one workload.
 //!
-//! [`run_cell`] takes the timed half (throughput / latency / CPU / memory),
-//! monomorphised so the wrapper's `update` inlines; [`score_cell`] takes the
-//! untimed accuracy half. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
+//! [`run_cell`] runs one square of the grid, monomorphised so the wrapper's
+//! `update` inlines. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
 
 use crate::accumulator::Accumulator;
 use crate::config::ParamSet;
@@ -16,16 +15,6 @@ use aqpbm_datagen::{GenSpec, GenValue};
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::runner::{BenchConfig, BenchReport, BenchRunner};
-
-// ---------- accuracy settings the frontend fills in ----------
-
-/// Accuracy knobs. Consumed only by [`score_cell`] / the ground-truth calculator — the timed
-/// path never sees them.
-#[derive(Debug, Clone, Copy)]
-pub struct AccuracyCfg {
-    /// Cap on distinct keys probed by frequency comparators. `0` → no cap.
-    pub max_probes: usize,
-}
 
 // ---------- where items come from, and what they materialise to ----------
 

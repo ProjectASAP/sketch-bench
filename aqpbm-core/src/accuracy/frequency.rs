@@ -17,12 +17,8 @@ use super::GroundTruth;
 /// Prefixes of one sorted array, so the whole curve costs one sort.
 const TOP_K_REPORTED: [usize; 4] = [1, 10, 100, 1000];
 
-pub struct FrequencyGT {
-    /// Cap on how many distinct keys the `*_all` population probes. `0` =
-    /// every distinct key. The top-k prefixes are never capped by this: they
-    /// are the k heaviest keys, which is a bounded set by definition.
-    pub max_probes: usize,
-}
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FrequencyGT;
 
 /// Everything the probe set and the scoring read: the exact counts, the true
 /// ranking, and the unfiltered population the `*_all` keys come from.
@@ -51,7 +47,7 @@ where
         }
         let mut by_count: Vec<(K, u64)> = exact.iter().map(|(k, c)| (k.clone(), *c)).collect();
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let all = sample_distinct(&by_count, self.max_probes);
+        let all = shuffled(&by_count);
         let ranked = by_count.into_iter().map(|(k, _)| k).collect();
         FrequencyTruth { exact, ranked, all }
     }
@@ -161,19 +157,17 @@ where
     }
 }
 
-/// The distinct keys, shuffled, then capped at `max_probes` (`0` = no cap).
-/// No threshold knob: the top-k prefixes answer the same question without
-/// asking an operator to pick a heavy-hitter cutoff in advance.
-fn sample_distinct<K: Clone>(ranked: &[(K, u64)], max_probes: usize) -> Vec<K> {
+/// Every distinct key, shuffled. Shuffled so probe order does not hand the
+/// baseline the locality that encounter order would, and the seed is fixed so
+/// that order is reproducible. No cap and no threshold knob: scoring accuracy
+/// means comparing against the truth, and a sampled population is not it.
+fn shuffled<K: Clone>(ranked: &[(K, u64)]) -> Vec<K> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
     let mut out: Vec<K> = ranked.iter().map(|(k, _)| k.clone()).collect();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
     out.shuffle(&mut rng);
-    if max_probes != 0 && out.len() > max_probes {
-        out.truncate(max_probes);
-    }
     out
 }
 
@@ -211,7 +205,7 @@ mod tests {
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();
-        let gt = FrequencyGT { max_probes: 0 };
+        let gt = FrequencyGT;
         let cmp = crate::accuracy::run_probes(&gt, &NullFreq, &items, false);
         for key in ["are_all", "are_top1", "are_top10"] {
             let v = cmp.metrics[key];
@@ -232,7 +226,7 @@ mod tests {
         items.extend(std::iter::repeat(1).take(100));
         items.extend(std::iter::repeat(2).take(50));
         items.extend(3..=200);
-        let gt = FrequencyGT { max_probes: 0 };
+        let gt = FrequencyGT;
         let cmp = crate::accuracy::run_probes(&gt, &NullFreq, &items, false);
         // top1 is key 1, so AAE over it is exactly its true count.
         assert_eq!(cmp.metrics["aae_top1"], 100.0);

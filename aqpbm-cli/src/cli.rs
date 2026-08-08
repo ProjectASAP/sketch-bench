@@ -182,14 +182,6 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub operations: Option<String>,
-    /// Cap on distinct keys probed by the frequency comparator; `0` probes
-    /// every one. Ignored by the cardinality / quantile / top-k comparators.
-    #[arg(
-        long,
-        default_value_t = 100_000,
-        help_heading = "Measurement content"
-    )]
-    pub accuracy_probes: usize,
     /// How many shards the merge operation folds. A knob, never a selector:
     /// measuring merge is asked for with `--operations merge`. Linear sketches
     /// merge exactly, so a gap is a defect; for KLL it is the result.

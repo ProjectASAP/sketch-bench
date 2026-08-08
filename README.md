@@ -31,7 +31,7 @@ cargo run -p sketch-cli --release -- bench \
 cargo run -p sketch-cli --release -- bench \
     --sketch cms --config 'rows=5 cols=1024,2048,4096' \
     --workload zipf --size 1000000 --cardinality 100000 \
-    --runs 10 --accuracy --accuracy-probes 20000 \
+    --runs 10 --accuracy \
     --report out.jsonl
 ```
 

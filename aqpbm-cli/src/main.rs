@@ -41,7 +41,7 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The catalog — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::cell::{AccuracyCfg, WorkloadSpec};
+use aqpbm_core::cell::WorkloadSpec;
 use sketch_bench::catalog;
 
 /// What is measured. No default and no `all`: a request says which squares of
@@ -314,13 +314,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         merge_shards: args.merge_shards,
         seed: args.seed,
     };
-    let accuracy_cfg = AccuracyCfg {
-        max_probes: args.accuracy_probes,
-        // Per-call CSV (hll/kll/dd) is only emittable when both
-        // `--raw-csv` and `--accuracy` are on: the comparator is
-        // what owns the query phase + per-call instrumentation.
-    };
-
     let scores_accuracy = select_impl(&algorithm, &impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
@@ -355,7 +348,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         &cfg,
         &spec,
         &params,
-        &accuracy_cfg,
         width,
         args.comparator.as_deref(),
     )

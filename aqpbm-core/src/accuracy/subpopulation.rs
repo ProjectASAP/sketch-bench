@@ -42,9 +42,6 @@ pub struct SubpopFrequencyGT {
     /// stores every column subset, but each one is its own population with its
     /// own error, so a comparator scores one and names it.
     pub label_column: usize,
-    /// Cap on how many distinct pairs the `all` population probes. `0` = every
-    /// observed pair.
-    pub max_probes: usize,
 }
 
 /// The exact per-(group, value) counts, the ranking, and the unfiltered
@@ -81,7 +78,7 @@ where
         let mut by_count: Vec<((String, V), u64)> =
             exact.iter().map(|(k, c)| (k.clone(), *c)).collect();
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let all = sample_ranked(&by_count, self.max_probes);
+        let all = sample_ranked(&by_count);
         let ranked = by_count.into_iter().map(|(k, _)| k).collect();
         SubpopFreqTruth { exact, ranked, all }
     }
@@ -198,23 +195,20 @@ fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
 }
 
 
-/// The ranked keys, shuffled, then capped at `max_probes` (`0` = no cap).
-/// Shuffled so probe order does not hand the baseline the locality that
-/// encounter order would. Fixed seed, so the choice is reproducible.
+/// The ranked keys, shuffled. Shuffled so probe order does not hand the
+/// baseline the locality that encounter order would. Fixed seed, so the order
+/// is reproducible. No cap: a sampled population is not the truth.
 ///
 /// Generic over what a key is, because the three grouped comparators probe
 /// different populations: a (group, value) pair for frequency, a group for
 /// cardinality and for the ordered statistic.
-fn sample_ranked<T: Clone>(ranked: &[(T, u64)], max_probes: usize) -> Vec<T> {
+fn sample_ranked<T: Clone>(ranked: &[(T, u64)]) -> Vec<T> {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
     let mut out: Vec<T> = ranked.iter().map(|(key, _)| key.clone()).collect();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
     out.shuffle(&mut rng);
-    if max_probes != 0 && out.len() > max_probes {
-        out.truncate(max_probes);
-    }
     out
 }
 
@@ -234,8 +228,6 @@ fn sample_ranked<T: Clone>(ranked: &[(T, u64)], max_probes: usize) -> Vec<T> {
 pub struct SubpopCardinalityGT {
     /// Which label column the subpopulation is taken over.
     pub label_column: usize,
-    /// Cap on how many groups the `all` population probes. `0` = every group.
-    pub max_probes: usize,
 }
 
 /// Exact distinct-value counts per group, plus the ranking and the unfiltered
@@ -273,7 +265,7 @@ where
         let mut by_count: Vec<(String, u64)> =
             exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let all = sample_ranked(&by_count, self.max_probes);
+        let all = sample_ranked(&by_count);
         let ranked = by_count.into_iter().map(|(g, _)| g).collect();
         SubpopCardTruth { exact, ranked, all }
     }
@@ -357,14 +349,13 @@ const GROUP_GRID_POINTS: usize = 101;
 /// subpopulation, scored in rank-error units.
 ///
 /// Cost is worth stating: this issues `groups * 101` estimate calls, and a
-/// grouped sketch answers each one out of several grid rows. `max_probes` caps
-/// the group count for that reason, and it is the knob to reach for before the
-/// grid size when an accuracy run is slow.
+/// grouped sketch answers each one out of several grid rows. It is the most
+/// expensive comparator here, and it pays in full: scoring a sample of the
+/// groups would report the error of that sample under the name of the whole.
+/// A run that is too slow wants fewer groups in the workload.
 pub struct SubpopRankErrorGT {
     /// Which label column the subpopulation is taken over.
     pub label_column: usize,
-    /// Cap on how many groups are probed. `0` = every group.
-    pub max_probes: usize,
 }
 
 /// The ordered statistic inside each group, plus the groups worth probing.
@@ -407,7 +398,7 @@ where
             .map(|(g, v)| (g.clone(), v.len() as u64))
             .collect();
         by_size.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let probed = sample_ranked(&by_size, self.max_probes);
+        let probed = sample_ranked(&by_size);
         SubpopRankTruth {
             per_group,
             probed,
@@ -630,7 +621,6 @@ mod tests {
     fn null_estimator_scores_exactly_one_on_are() {
         let gt = SubpopFrequencyGT {
             label_column: 0,
-            max_probes: 0,
         };
         let cmp = crate::accuracy::run_probes(&gt, &NullSubpop, &records(), false);
         for key in ["are_all", "are_top1"] {
@@ -658,7 +648,6 @@ mod tests {
         }
         let gt = SubpopFrequencyGT {
             label_column: 0,
-            max_probes: 0,
         };
         let cmp = crate::accuracy::run_probes(&gt, &exact, &items, false);
         assert_eq!(cmp.metrics["are_all"], 0.0);
@@ -674,7 +663,6 @@ mod tests {
         let items = records();
         let gt = SubpopFrequencyGT {
             label_column: 0,
-            max_probes: 0,
         };
         let cmp = crate::accuracy::run_probes(&gt, &NullSubpop, &items, false);
         // Distinct pairs at column 0: (a,10) (a,20) (b,30) → 3 pairs, 2 groups.
@@ -694,7 +682,6 @@ mod tests {
         let by_col1 = crate::accuracy::run_probes(
             &SubpopFrequencyGT {
                 label_column: 1,
-                max_probes: 0,
             },
             &NullSubpop,
             &items,
