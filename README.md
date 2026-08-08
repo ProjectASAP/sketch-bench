@@ -27,8 +27,8 @@ cargo run -p aqpbm-cli --release -- sketchbench \
     --report out.jsonl
 
 # Accuracy is scored against ground truth, and the comparator issues the
-# queries, so the operation is `query`. `--list-impls` names each row's
-# comparators; omitted takes the row's default.
+# queries, so the operation is `query`. Omitting `--comparator` takes the row's
+# default, and naming one a row does not admit is refused with the list it does.
 cargo run -p aqpbm-cli --release -- sketchbench \
     --algorithm cms --impl oxide --config 'rows=5 cols=4096' \
     --workload zipf --size 1000000 --cardinality 100000 \
