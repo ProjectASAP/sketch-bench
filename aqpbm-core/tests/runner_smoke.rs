@@ -311,3 +311,45 @@ fn the_two_merge_measurements_carry_different_names() {
     // The pair is what separates them; the metric alone no longer does.
     assert_ne!(merge.bench.operation, query.bench.operation);
 }
+
+/// A square places its own metric and nothing else. The folding functions do
+/// not know which square is being folded, so this is the property that keeps a
+/// record from carrying a column it did not measure.
+#[test]
+fn a_square_places_only_its_own_metric() {
+    let workload = I64Workload::uniform(4_000, 500, 7);
+    let cfg = BenchConfig {
+        runs: 2,
+        warmup_runs: 0,
+        metrics: MetricsMask::THROUGHPUT | MetricsMask::LATENCY,
+        operations: OperationMask::INSERT,
+        ..Default::default()
+    };
+    let reports = BenchRunner::new(cfg, &workload, "exact", "squares")
+        .run::<_, _, NoGT, _>(
+            || ExactCounter {
+                seen: Default::default(),
+            },
+            |s, it| s.update(it),
+            None,
+        )
+        .expect("both squares are measured");
+
+    let throughput = reports
+        .iter()
+        .find(|r| r.bench.metric.as_deref() == Some("throughput"))
+        .expect("the throughput square ran");
+    assert!(throughput.bench.throughput_items_per_sec.is_some());
+    assert!(throughput.bench.latency_ns.is_none());
+
+    let latency = reports
+        .iter()
+        .find(|r| r.bench.metric.as_deref() == Some("latency"))
+        .expect("the latency square ran");
+    assert!(latency.bench.latency_ns.is_some());
+    assert!(latency.bench.throughput_items_per_sec.is_none());
+    // The deferred build's columns ride on the insert throughput square, so
+    // they must not appear on the latency one either.
+    assert!(latency.bench.build_throughput_items_per_sec.is_none());
+    assert!(latency.bench.finalize_time_ms.is_none());
+}

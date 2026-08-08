@@ -16,7 +16,7 @@ pub use config::BenchConfig;
 use crate::accumulator::Accumulator;
 use crate::cell::RunError;
 use crate::accuracy::{run_probes, Comparison, GroundTruth};
-use crate::aggregation::aggregate;
+use crate::aggregation as fold;
 use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
 use crate::memory_footprint::MemoryFootprint;
@@ -24,8 +24,61 @@ use crate::metrics::{
     cells, Cell, CpuTimeSampler, FullSink, JemallocAllocated, Metric, MetricsMask, Operation, Rss,
     RunMetrics, WallClock,
 };
-use crate::report::{Mode, Record, RunStats, Source};
+use crate::report::{BenchSection, Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
+
+
+/// Assemble one square's record. The match says what the square produces; the
+/// folding functions know nothing about squares, and everything below it rides
+/// along with all of them.
+fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
+    use Metric::{Accuracy, Latency, Throughput};
+    use Operation::{Insert, Merge, Prepare, Query};
+
+    let mut bench = BenchSection {
+        metric: Some(cell.metric.name().to_string()),
+        operation: Some(cell.operation.name().to_string()),
+        ..Default::default()
+    };
+    match (cell.operation, cell.metric) {
+        (Insert, Throughput) => {
+            bench.throughput_items_per_sec = fold::throughput(runs);
+            bench.throughput_samples = fold::throughput_samples(runs);
+            // The deferred build's two columns ride on the insert record for
+            // want of squares of their own.
+            bench.build_throughput_items_per_sec = fold::build_throughput(runs);
+            bench.finalize_time_ms = fold::finalize_time_ms(runs);
+        }
+        (Insert, Latency) => bench.latency_ns = fold::latency_from_recorder(runs),
+        (Query, Throughput) => bench.query_throughput_items_per_sec = fold::query_throughput(runs),
+        (Query, Latency) => bench.latency_ns = fold::latency_from_calls(runs),
+        (Query, Accuracy) => bench.accuracy = fold::accuracy(runs),
+        (Merge, Accuracy) => bench.accuracy = fold::accuracy(runs),
+        // The fold's own timing is filled by `run_merge_pass`, which is what
+        // holds the clock around it.
+        (Merge, Latency) => {}
+        (Insert, Accuracy)
+        | (Query, Accuracy | Latency | Throughput)
+        | (Merge, Throughput)
+        | (Prepare, Throughput | Latency | Accuracy) => {}
+    }
+
+    // Phase-boundary readings contaminate nothing, so they ride along with
+    // every square.
+    if cell.secondary.contains(MetricsMask::CPU) {
+        bench.cpu_time_ms = fold::cpu_time_ms(runs);
+    }
+    if cell.secondary.contains(MetricsMask::MEMORY) {
+        let m = fold::memory_maxima(runs);
+        bench.rss_peak_kb = m.rss_peak_kb;
+        bench.heap_allocated_kb = m.heap_allocated_kb;
+        bench.heap_bytes_net = m.heap_bytes_net;
+        bench.heap_bytes_peak = m.heap_bytes_peak;
+    }
+    bench.wall_time_ms = fold::wall_time_ms(runs);
+    bench.memory_bytes = fold::memory_bytes(runs);
+    bench
+}
 
 /// A square the grid admits and nothing measures.
 fn unmeasured(cell: Cell) -> RunError {
@@ -249,7 +302,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        let mut bench = aggregate(&per_run, cell);
+        let mut bench = section(cell, &per_run);
         bench.operation = Some(cell.operation.name().to_string());
         bench.metric = Some(cell.metric.name().to_string());
         // The fold's cost belongs to the cell that asked for it. The scored
@@ -371,7 +424,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        let mut bench = aggregate(&per_run, cell);
+        let mut bench = section(cell, &per_run);
         bench.operation = Some(cell.operation.name().to_string());
         bench.metric = Some(cell.metric.name().to_string());
         // `runs` says how many were measured, not asked for: a non-resamplable
