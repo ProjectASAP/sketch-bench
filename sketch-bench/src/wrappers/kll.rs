@@ -529,11 +529,10 @@ mod tests {
     /// becoming badly wrong, not to pin a ratio that legitimately moves.
     #[test]
     fn the_lib_query_paths_answer_differently() {
-        use aqpbm_core::accuracy::{quantile::RankErrorGT, GroundTruth};
+        use aqpbm_core::accuracy::quantile::RankErrorGT;
 
         let items = stream();
         let gt = RankErrorGT {
-            record_calls: false,
         };
         let per_call: KllLibPerCall<i64> = fed(200, &items);
         let cdf: KllLibCdf<i64> = fed(200, &items);

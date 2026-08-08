@@ -298,14 +298,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
-    let mut metrics_mask = parse_mask(args.metrics.as_deref());
+    let metrics_mask = parse_mask(args.metrics.as_deref());
     let operations_mask = parse_operations(args.operations.as_deref());
     // `--merge-shards` no longer selects anything: it says how many shards the
     // merge operation folds, and `--operations merge` is what asks for it.
-    if args.accuracy {
-        // The alias. `--accuracy` and `--metrics accuracy` name the same cell.
-        metrics_mask |= MetricsMask::ACCURACY;
-    }
     let cfg = BenchConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
@@ -317,12 +313,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         seed: args.seed,
     };
     let accuracy_cfg = AccuracyCfg {
-        enabled: args.accuracy,
         max_probes: args.accuracy_probes,
         // Per-call CSV (hll/kll/dd) is only emittable when both
         // `--raw-csv` and `--accuracy` are on: the comparator is
         // what owns the query phase + per-call instrumentation.
-        record_query_calls: args.accuracy && args.raw_csv.is_some(),
     };
 
     let scores_accuracy = select_impl(&algorithm, &impl_name)?;
@@ -334,9 +328,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&algorithm),
     };
 
-    if accuracy_cfg.enabled && !scores_accuracy {
+    // Asking for a square that needs a comparator, of a row that has none.
+    if aqpbm_core::runner::needs_ground_truth(operations_mask, metrics_mask) && !scores_accuracy {
         eprintln!(
-            "approxbench: --accuracy has no comparator for {algorithm}/{impl_name} (throughput-only row) — running without ground truth"
+            "approxbench: {algorithm}/{impl_name} declares no query capability, so the squares over the query operation measure nothing"
         );
     }
 

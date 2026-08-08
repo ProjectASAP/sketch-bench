@@ -16,12 +16,7 @@ use super::GroundTruth;
 const QUERY_TIMING_REPEATS: usize = 4096;
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct CardinalityGT {
-    /// Retained for the one-row-per-call CSV shape's construction. Whether
-    /// calls are timed individually is the runner's decision now, taken per
-    /// square, so this no longer gates anything here.
-    pub record_calls: bool,
-}
+pub struct CardinalityGT;
 
 impl<S, K> GroundTruth<S> for CardinalityGT
 where

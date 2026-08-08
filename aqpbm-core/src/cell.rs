@@ -23,12 +23,8 @@ use crate::runner::{BenchConfig, BenchReport, BenchRunner};
 /// path never sees them.
 #[derive(Debug, Clone, Copy)]
 pub struct AccuracyCfg {
-    pub enabled: bool,
     /// Cap on distinct keys probed by frequency comparators. `0` → no cap.
     pub max_probes: usize,
-    /// Record per-call query samples (the legacy per-call CSV). Honoured by
-    /// cardinality / quantile comparators.
-    pub record_query_calls: bool,
 }
 
 // ---------- where items come from, and what they materialise to ----------
@@ -66,6 +62,9 @@ pub enum RunError {
         operation: &'static str,
         metric: &'static str,
     },
+    /// Merge was asked for with nothing to fold. A request that cannot be
+    /// measured says so, the way an empty square does, instead of vanishing.
+    NothingToFold { shards: usize },
 }
 
 impl std::fmt::Display for RunError {
@@ -76,6 +75,10 @@ impl std::fmt::Display for RunError {
             RunError::NotMeasured { operation, metric } => {
                 write!(f, "nothing measures the {metric} of {operation}")
             }
+            RunError::NothingToFold { shards } => write!(
+                f,
+                "merge folds {shards} shards into one, so there is nothing to fold; ask for at least 2"
+            ),
         }
     }
 }

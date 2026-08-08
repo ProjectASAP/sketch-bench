@@ -31,9 +31,10 @@ pub struct BenchConfig {
     /// Worker threads for the insert phase, read by the parallel-insert cells.
     /// `1` — a single-threaded run — for every other row.
     pub threads: usize,
-    /// Shards the merge pass splits the stream into; `1` skips the pass.
-    /// Contiguous ranges folded sequentially into one accumulator — both the
-    /// partitioning and the fold topology are real axes, fixed here for now.
+    /// How many shards the merge operation folds. A knob, never a selector:
+    /// whether merge is measured is decided by `operations`. Contiguous ranges
+    /// folded sequentially into one accumulator; both the partitioning and the
+    /// fold topology are real axes, fixed here for now.
     pub merge_shards: usize,
     /// The run's nominal seed, carried through to the legacy CSV's `seed`
     /// column. Does NOT seed the workload — workloads own their own seed.
@@ -51,7 +52,7 @@ impl Default for BenchConfig {
             operations: OperationMask::INSERT | OperationMask::QUERY,
             query_count: None,
             threads: 1,
-            merge_shards: 1,
+            merge_shards: 2,
             seed: 0,
         }
     }

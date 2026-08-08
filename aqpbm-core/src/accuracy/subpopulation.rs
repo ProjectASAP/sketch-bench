@@ -25,7 +25,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::time::Instant;
 
 use crate::accumulator::Accumulator;
 use crate::workload::Labeled;
@@ -33,7 +32,7 @@ use crate::workload::Labeled;
 use super::frequency::percentile;
 use super::quantile::{lower_bound, upper_bound, QuantileValue};
 use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps, SubpopQuantileOps};
-use super::{Comparison, GroundTruth};
+use super::GroundTruth;
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
 const TOP_K_REPORTED: [usize; 4] = [1, 10, 100, 1000];
@@ -104,7 +103,7 @@ where
         let est: HashMap<&(String, V), f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
-        let mut population = |pairs: &[(String, V)], label: &str, m: &mut BTreeMap<String, f64>| {
+        let population = |pairs: &[(String, V)], label: &str, m: &mut BTreeMap<String, f64>| {
             if pairs.is_empty() {
                 return;
             }
@@ -194,30 +193,6 @@ fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
     out
 }
 
-/// p99 of the per-pair relative error over the unfiltered population.
-fn p99_relative_error<S, V>(
-    sketch: &S,
-    pairs: &[(&str, &V)],
-    exact: &HashMap<(&str, &V), u64>,
-) -> f64
-where
-    V: Eq + Hash + Clone,
-    S: Accumulator<Item = Labeled<V>> + SubpopFrequencyOps<Value = V>,
-{
-    let mut errs: Vec<f64> = pairs
-        .iter()
-        .filter_map(|pair| {
-            let truth = *exact.get(pair).unwrap_or(&0) as f64;
-            if truth <= 0.0 {
-                return None;
-            }
-            let est = sketch.estimate_subpop_frequency(&[pair.0], pair.1);
-            Some((est - truth).abs() / truth)
-        })
-        .collect();
-    errs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    percentile(&errs, 0.99)
-}
 
 /// The ranked keys, shuffled, then capped at `max_probes` (`0` = no cap).
 /// Shuffled so probe order does not hand the baseline the locality that
@@ -317,7 +292,7 @@ where
             probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
-        let mut population = |groups: &[String], label: &str, m: &mut BTreeMap<String, f64>| {
+        let population = |groups: &[String], label: &str, m: &mut BTreeMap<String, f64>| {
             if groups.is_empty() {
                 return;
             }
@@ -574,22 +549,6 @@ fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
     }
 }
 
-/// p99 of the per-key relative error over the unfiltered population, for the
-/// comparators whose key is a bare group.
-fn p99_over<K>(keys: &[K], estimate: impl Fn(&K) -> f64, truth: impl Fn(&K) -> f64) -> f64 {
-    let mut errs: Vec<f64> = keys
-        .iter()
-        .filter_map(|k| {
-            let t = truth(k);
-            if t <= 0.0 {
-                return None;
-            }
-            Some((estimate(k) - t).abs() / t)
-        })
-        .collect();
-    errs.sort_by(f64::total_cmp);
-    percentile(&errs, 0.99)
-}
 
 #[cfg(test)]
 mod tests {

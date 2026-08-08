@@ -89,7 +89,7 @@ where
         let estimates: HashMap<&K, u64> = probes.iter().zip(answers).map(|(k, v)| (k, *v)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
-        let mut population = |keys: &[K], label: &str, metrics: &mut BTreeMap<String, f64>| {
+        let population = |keys: &[K], label: &str, metrics: &mut BTreeMap<String, f64>| {
             if keys.is_empty() {
                 return;
             }

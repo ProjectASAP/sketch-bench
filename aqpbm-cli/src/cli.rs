@@ -173,10 +173,6 @@ pub struct SketchbenchArgs {
     /// name. A combination nothing implements simply produces no record.
     #[arg(long, help_heading = "Measurement content")]
     pub operations: Option<String>,
-    /// Alias for `--metrics accuracy`. Rows declaring no query capability are
-    /// not scored: they still run, timed only, after a stderr note.
-    #[arg(long, default_value_t = false, help_heading = "Measurement content")]
-    pub accuracy: bool,
     /// Cap on distinct keys probed by the frequency comparator; `0` probes
     /// every one. Ignored by the cardinality / quantile / top-k comparators.
     #[arg(
@@ -188,7 +184,7 @@ pub struct SketchbenchArgs {
     /// How many shards the merge operation folds. A knob, never a selector:
     /// measuring merge is asked for with `--operations merge`. Linear sketches
     /// merge exactly, so a gap is a defect; for KLL it is the result.
-    #[arg(long, default_value_t = 1, help_heading = "Measurement content")]
+    #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.

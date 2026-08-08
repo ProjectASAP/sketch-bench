@@ -15,14 +15,14 @@ pub use config::BenchConfig;
 // folds the wrapper's `update` in across the crate boundary. See `hot_loop`.
 use crate::accumulator::Accumulator;
 use crate::cell::RunError;
-use crate::accuracy::{run_probes, Comparison, GroundTruth};
+use crate::accuracy::{run_probes, GroundTruth};
 use crate::aggregation as fold;
 use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
 use crate::memory_footprint::MemoryFootprint;
 use crate::metrics::{
-    cells, Cell, CpuTimeSampler, FullSink, JemallocAllocated, Metric, MetricsMask, Operation, Rss,
-    RunMetrics, WallClock,
+    cells, Cell, CpuTimeSampler, FullSink, JemallocAllocated, Metric, MetricsMask, Operation,
+    OperationMask, Rss, RunMetrics, WallClock,
 };
 use crate::report::{BenchSection, Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
@@ -58,7 +58,6 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         // holds the clock around it.
         (Merge, Latency) => {}
         (Insert, Accuracy)
-        | (Query, Accuracy | Latency | Throughput)
         | (Merge, Throughput)
         | (Prepare, Throughput | Latency | Accuracy) => {}
     }
@@ -78,6 +77,21 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
     bench.wall_time_ms = fold::wall_time_ms(runs);
     bench.memory_bytes = fold::memory_bytes(runs);
     bench
+}
+
+/// Whether a request reaches any square that cannot run without a comparator.
+/// Wider than "measures accuracy": issuing the queries is what a comparator
+/// does, so every square over the query operation needs one, and so does the
+/// scored half of merge.
+///
+/// A caller builds a comparator when this says to, instead of being asked.
+pub fn needs_ground_truth(operations: OperationMask, metrics: MetricsMask) -> bool {
+    cells(operations, metrics).into_iter().any(|c| {
+        matches!(
+            (c.operation, c.metric),
+            (Operation::Query, _) | (Operation::Merge, Metric::Accuracy)
+        )
+    })
 }
 
 /// A square the grid admits and nothing measures.
@@ -144,10 +158,6 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         for cell in cells {
             let mut pass_cfg = self.config.clone();
             pass_cfg.metrics = cell.mask();
-            // Folding one shard measures nothing, so the merge squares only
-            // run when there are shards to fold.
-            let folds = pass_cfg.merge_shards >= 2;
-
             // The grid. No `_` arm: adding an operation or a metric fails to
             // compile until the new squares say what they measure.
             let report = match (cell.operation, cell.metric) {
@@ -165,14 +175,24 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 (Query, Accuracy) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
                 (Merge, Throughput) => return Err(unmeasured(cell)),
-                (Merge, Latency) if folds => {
+                (Merge, Latency) => {
+                    if pass_cfg.merge_shards < 2 {
+                        return Err(RunError::NothingToFold {
+                            shards: pass_cfg.merge_shards,
+                        });
+                    }
                     Some(self.run_merge_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
                 }
-                (Merge, Latency) => None,
-                (Merge, Accuracy) if folds => ground_truth.map(|gt| {
-                    self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
-                }),
-                (Merge, Accuracy) => None,
+                (Merge, Accuracy) => {
+                    if pass_cfg.merge_shards < 2 {
+                        return Err(RunError::NothingToFold {
+                            shards: pass_cfg.merge_shards,
+                        });
+                    }
+                    ground_truth.map(|gt| {
+                        self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
+                    })
+                }
                 (Prepare, Throughput) => return Err(unmeasured(cell)),
                 (Prepare, Latency) => return Err(unmeasured(cell)),
                 (Prepare, Accuracy) => return Err(unmeasured(cell)),
@@ -203,7 +223,9 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         G: GroundTruth<S>,
     {
         let items = self.workload.items();
-        let shards = pass_cfg.merge_shards.max(2);
+        // No clamp: the guard above refused anything below two, so this is the
+        // number the caller asked for and the number the record will report.
+        let shards = pass_cfg.merge_shards;
         let mut per_run: Vec<RunMetrics> = Vec::with_capacity(pass_cfg.runs);
         let mut merge_ns: Vec<u64> = Vec::new();
         let mut supported = true;

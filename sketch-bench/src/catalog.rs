@@ -16,10 +16,9 @@ use aqpbm_core::accuracy::subpopulation::{
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
-use aqpbm_core::runner::NoGT;
+use aqpbm_core::runner::{needs_ground_truth, NoGT};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use asap_sketchlib::{
@@ -110,9 +109,8 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "cardinality";
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         CardinalityGT {
-            record_calls: acc.record_query_calls,
         }
     }
 }
@@ -180,9 +178,8 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "rank-error";
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         RankErrorGT {
-            record_calls: acc.record_query_calls,
         }
     }
 }
@@ -192,9 +189,8 @@ where
     Self: GroundTruth<S>,
 {
     const NAME: &'static str = "relative-error";
-    fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
+    fn build(_acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         RelativeErrorGT {
-            record_calls: acc.record_query_calls,
         }
     }
 }
@@ -232,9 +228,10 @@ where
     S::Item: BenchItem,
     G: GroundTruthCalculator<S>,
 {
-    // One walk of the grid: the squares needing a comparator run when there is
-    // one, and are skipped when there is not.
-    let gt = acc.enabled.then(|| G::build(acc, params));
+    // A comparator is built when the request reaches a square that cannot run
+    // without one. Nobody has to ask for it: needing one is a property of the
+    // squares selected, not a separate decision.
+    let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(acc, params));
     Ok(cell::run_cell::<S, G>(cfg, spec, params, gt.as_ref())?)
 }
 
@@ -766,6 +763,7 @@ pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aqpbm_core::metrics::{MetricsMask, OperationMask};
     use crate::params::{
         CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraCmsParams,
         HydraHllParams, HydraKllParams, KllParams, NitroParams, SketchParams, TopkParams,
@@ -912,9 +910,7 @@ mod tests {
                 ..Default::default()
             },
             AccuracyCfg {
-                enabled: false,
                 max_probes: 0,
-                record_query_calls: false,
             },
         )
     }

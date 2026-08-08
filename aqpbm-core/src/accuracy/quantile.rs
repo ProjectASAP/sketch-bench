@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 
 use super::statistic::QuantileOps;
 use super::GroundTruth;
-use crate::metrics::QueryCallSample;
 
 /// Number of times the 101-percentile sweep is repeated when `record_calls`
 /// is on, matching the KLL / DD query binaries' `REPEATS_PER_RUN = 10`.
@@ -79,10 +78,6 @@ impl QuantileValue for f64 {
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RankErrorGT {
-    /// Capture per-call samples for the legacy
-    /// `kll_throughput_query_results_rust.csv` shape (one row
-    /// per (run, repeat, percentile) tuple). Off by default.
-    pub record_calls: bool,
 }
 
 impl<S> GroundTruth<S> for RankErrorGT
@@ -154,9 +149,6 @@ where
 /// Relative-error comparator for DDSketch-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RelativeErrorGT {
-    /// Capture per-call samples for the legacy
-    /// `dd_throughput_query_results_rust.csv` shape. Off by default.
-    pub record_calls: bool,
 }
 
 impl<S> GroundTruth<S> for RelativeErrorGT

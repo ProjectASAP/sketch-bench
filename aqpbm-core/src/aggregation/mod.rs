@@ -8,7 +8,7 @@ pub mod welford;
 use welford::Welford;
 
 use crate::metrics::{ItemsPerSec, RunMetrics};
-use crate::report::{BenchSection, CpuTime, LatencySummary, RunStats};
+use crate::report::{CpuTime, LatencySummary, RunStats};
 
 /// Roll up `RunMetrics` into one `BenchSection` for one square of the grid.
 /// A field the square did not measure is suppressed, which is what keeps "not
@@ -239,14 +239,12 @@ mod tests {
     /// does, so these tests read the same shape a record carries.
     struct ThroughputView {
         throughput_items_per_sec: Option<RunStats>,
-        throughput_samples: Option<Vec<f64>>,
         build_throughput_items_per_sec: Option<RunStats>,
         finalize_time_ms: Option<RunStats>,
     }
     fn throughput_view(runs: &[RunMetrics]) -> ThroughputView {
         ThroughputView {
             throughput_items_per_sec: throughput(runs),
-            throughput_samples: throughput_samples(runs),
             build_throughput_items_per_sec: build_throughput(runs),
             finalize_time_ms: finalize_time_ms(runs),
         }
