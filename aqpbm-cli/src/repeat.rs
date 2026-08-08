@@ -21,10 +21,12 @@ pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Identifies the measurement a record belongs to across repeats: algorithm, impl,
-/// params, workload, pass. The pass matters because one invocation emits several
-/// records sharing the rest, and pooling them averages two populations.
-type GroupKey = (String, String, String, String, String);
+/// Identifies the measurement a record belongs to across repeats: algorithm,
+/// impl, params, workload, operation, metric.
+/// The last two matter because one invocation emits several records sharing the
+/// rest, and pooling two of them averages two populations.
+/// Both are needed, since one metric over two operations is two measurements.
+type GroupKey = (String, String, String, String, String, String);
 
 fn group_key(r: &Record) -> GroupKey {
     (
@@ -35,6 +37,10 @@ fn group_key(r: &Record) -> GroupKey {
             .map(|v| v.to_string())
             .unwrap_or_default(),
         serde_json::to_string(&r.workload).unwrap_or_default(),
+        r.bench
+            .as_ref()
+            .and_then(|b| b.operation.clone())
+            .unwrap_or_default(),
         r.bench
             .as_ref()
             .and_then(|b| b.metric.clone())
@@ -289,6 +295,23 @@ mod tests {
                  re-aggregated across processes"
             );
         }
+    }
+
+    /// Two squares of one metric are two measurements, so the key that pools
+    /// repeats has to carry the operation too. Keyed on the metric alone they
+    /// pooled, and one record came back wearing the other's operation.
+    #[test]
+    fn one_metric_over_two_operations_stays_two_groups() {
+        let mut insert = record(100.0);
+        let mut query = record(200.0);
+        for (r, op) in [(&mut insert, "insert"), (&mut query, "query")] {
+            let b = r.bench.as_mut().expect("bench section");
+            b.operation = Some(op.into());
+            b.metric = Some("throughput".into());
+        }
+        let a = group_key(&insert);
+        let b = group_key(&query);
+        assert_ne!(a, b, "one key for two squares pools two populations");
     }
 
     /// The reason the axis exists: R independent processes support an interval,
