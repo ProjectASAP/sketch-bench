@@ -86,11 +86,16 @@ pub enum Source {
 /// placeholders.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchSection {
-    /// Which pass produced this record — `"throughput"`, `"latency"`,
-    /// `"accuracy"` or `"merge"`. One invocation emits several records per
-    /// (sketch, impl, config, workload); group by this before pooling any.
+    /// What this record measured — `"throughput"`, `"latency"` or
+    /// `"accuracy"`. Half of a measurement's identity; [`Self::operation`] is
+    /// the other half, and one invocation emits one record per pair.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pass: Option<String>,
+    pub metric: Option<String>,
+    /// Which operation it was measured over — `"insert"`, `"query"`, `"merge"`
+    /// or `"prepare"`. Group by this and [`Self::metric`] together before
+    /// pooling anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
     /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
     /// Deferred-build rows buffer in `update`, so this times their `Vec::push`
     /// — compare [`Self::build_throughput_items_per_sec`] instead.
@@ -140,11 +145,17 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
     /// Wall time to fold `merge_shards` sketches into one, per run; absent
-    /// unless the merge pass ran. Scales with sketch *state*, not stream
-    /// length, so compare against `memory_bytes`, not insert throughput.
+    /// unless the merge operation was measured. Scales with sketch *state*,
+    /// not stream length, so compare against `memory_bytes`, not insert
+    /// throughput.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_time_ms: Option<RunStats>,
-    /// How many shards were folded. Present whenever the merge pass ran, even
+    /// Folds per second. A fold is `merge_shards - 1` merge calls, so the unit
+    /// is folds: merge consumes sketches, not a stream, and items per second
+    /// would have no denominator here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_folds_per_sec: Option<RunStats>,
+    /// How many shards were folded. Present whenever merge was measured, even
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
@@ -228,14 +239,10 @@ pub struct LatencySummary {
     pub count: u64,
 }
 
-/// Flattened form of the 2-4 [`Record`]s that share one (sketch, impl,
-/// sketch_config, workload) identity — one row per cell instead of one row
-/// per pass. Built by `aqpbm-cli`'s `flatten_record` from a throughput
-/// pass, a query/accuracy pass, an optional latency pass, and an optional
-/// merge pass. Field names on the wire match `scripts/merge_passes.py`'s
-/// current output, so existing consumers don't need to change. Lives next
-/// to [`Record`] rather than in the CLI crate since it's a JSONL wire
-/// shape like `Record`, not CLI-specific logic.
+/// Flattened form of the [`Record`]s that share one (sketch, impl,
+/// sketch_config, workload) identity: one row per cell, where the record
+/// stream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.
+/// Lives beside [`Record`] because it is a JSONL wire shape, not CLI logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergedRecord {
     pub schema_version: u32,
@@ -260,16 +267,18 @@ pub struct MergedRecord {
     pub heap_bytes_net: Option<u64>,
     /// High-water mark of the same counter across construction and insert.
     pub heap_bytes_peak: Option<u64>,
-    pub accuracy: Option<serde_json::Value>,
 
+    // One slot per operation, and within a slot one field per metric. A
+    // measurement is named by both, so a flattened row that named only one of
+    // them had two squares landing in the same place.
     #[serde(flatten)]
     pub insert: InsertMetrics,
     #[serde(flatten)]
     pub query: QueryMetrics,
     #[serde(flatten)]
-    pub latency: LatencyMetrics,
-    #[serde(flatten)]
     pub merge: MergeMetrics,
+    #[serde(flatten)]
+    pub prepare: PrepareMetrics,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -282,8 +291,8 @@ pub struct InsertMetrics {
     pub throughput_samples: Option<Vec<f64>>,
     #[serde(rename = "insert_build_throughput_items_per_sec")]
     pub build_throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "insert_finalize_time_ms")]
-    pub finalize_time_ms: Option<RunStats>,
+    #[serde(rename = "insert_latency_ns")]
+    pub latency_ns: Option<LatencySummary>,
     #[serde(rename = "insert_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "insert_wall_time_ms")]
@@ -300,6 +309,12 @@ pub struct QueryMetrics {
     pub timestamp: Option<DateTime<Utc>>,
     #[serde(rename = "query_throughput_items_per_sec")]
     pub throughput_items_per_sec: Option<RunStats>,
+    #[serde(rename = "query_latency_ns")]
+    pub latency_ns: Option<LatencySummary>,
+    /// The comparator's scores. Only this operation has them: accuracy is
+    /// what an answer can be scored for, and query is what produces one.
+    #[serde(rename = "query_accuracy")]
+    pub accuracy: Option<serde_json::Value>,
     #[serde(rename = "query_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "query_wall_time_ms")]
@@ -311,19 +326,42 @@ pub struct QueryMetrics {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LatencyMetrics {
-    #[serde(rename = "latency_timestamp")]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub latency_ns: Option<LatencySummary>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MergeMetrics {
     #[serde(rename = "merge_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
+    /// How long one fold took: the latency reading of this operation.
     pub merge_time_ms: Option<RunStats>,
+    /// How many folds a second: the throughput reading of the same clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_folds_per_sec: Option<RunStats>,
     pub merge_shards: Option<usize>,
     pub merge_supported: Option<bool>,
+    #[serde(rename = "merge_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "merge_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "merge_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "merge_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
+}
+
+/// The deferred build. Only a latency: a build happens once per sketch, so
+/// there is no rate to state and nothing it answers to be scored against.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrepareMetrics {
+    #[serde(rename = "prepare_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "prepare_finalize_time_ms")]
+    pub finalize_time_ms: Option<RunStats>,
+    #[serde(rename = "prepare_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "prepare_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "prepare_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "prepare_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
 }
 
 impl Record {
@@ -373,7 +411,7 @@ mod tests {
         };
         let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
         rec.bench = Some(BenchSection {
-            pass: None,
+            metric: None,
             throughput_items_per_sec: Some(RunStats {
                 mean: 4.2e7,
                 stddev: 1.1e6,

@@ -6,7 +6,7 @@
 // `MetricsMask` lives in `crate::metrics` so that `sketch-runtime`
 // can name it without depending on the runner. Re-exported here so
 // callers reaching for the runner's config find it in one place.
-pub use crate::metrics::MetricsMask;
+pub use crate::metrics::{MetricsMask, OperationMask};
 
 /// Configuration for one `BenchRunner` invocation.
 #[derive(Debug, Clone)]
@@ -20,16 +20,17 @@ pub struct BenchConfig {
     pub warmup_runs: usize,
     /// Which metric algorithms to record.
     pub metrics: MetricsMask,
-    /// Reserved: how many queries to run per measured iteration. The runner
-    /// does not read it — the `GroundTruth` comparators own the query phase
-    /// and pick their own probe counts.
-    pub query_count: Option<usize>,
+    /// Which operations to record them over. The request is the cross product
+    /// of this and `metrics`; a cell with no implementation simply produces
+    /// nothing.
+    pub operations: OperationMask,
     /// Worker threads for the insert phase, read by the parallel-insert cells.
     /// `1` — a single-threaded run — for every other row.
     pub threads: usize,
-    /// Shards the merge pass splits the stream into; `1` skips the pass.
-    /// Contiguous ranges folded sequentially into one accumulator — both the
-    /// partitioning and the fold topology are real axes, fixed here for now.
+    /// How many shards the merge operation folds. A knob, never a selector:
+    /// whether merge is measured is decided by `operations`. Contiguous ranges
+    /// folded sequentially into one accumulator; both the partitioning and the
+    /// fold topology are real axes, fixed here for now.
     pub merge_shards: usize,
     /// The run's nominal seed, carried through to the legacy CSV's `seed`
     /// column. Does NOT seed the workload — workloads own their own seed.
@@ -41,10 +42,13 @@ impl Default for BenchConfig {
         Self {
             runs: 10,
             warmup_runs: 3,
-            metrics: MetricsMask::all(),
-            query_count: None,
+            // Empty, both of them: a caller states which squares it wants.
+            // Nothing is measured that was not asked for, and that holds for a
+            // library caller as much as for the command line.
+            metrics: MetricsMask::empty(),
+            operations: OperationMask::empty(),
             threads: 1,
-            merge_shards: 1,
+            merge_shards: 2,
             seed: 0,
         }
     }

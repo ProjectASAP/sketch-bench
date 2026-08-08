@@ -90,7 +90,6 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
         "--warmup-runs", "0",
         "--accuracy",
         "--metrics", "accuracy",
-        "--accuracy-probes", "200",
     ]
     if algorithm.startswith("hydra"):
         cmd += ["--spec", str(HYDRA_SPEC)]

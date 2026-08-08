@@ -31,7 +31,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_core::metrics::MetricsMask;
+use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::runner::BenchConfig;
 use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
 use clap::Parser;
@@ -41,14 +41,13 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The catalog — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::cell::{AccuracyCfg, WorkloadSpec};
+use aqpbm_core::cell::WorkloadSpec;
 use sketch_bench::catalog;
 
-fn parse_mask(s: Option<&str>) -> MetricsMask {
-    let s = match s {
-        Some(v) => v,
-        None => return MetricsMask::all(),
-    };
+/// What is measured. No default and no `all`: a request says which squares of
+/// the grid it wants, and a shorthand that sweeps the grid would sweep squares
+/// nothing measures.
+fn parse_mask(s: &str) -> Result<MetricsMask> {
     let mut m = MetricsMask::empty();
     for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
         m |= match token.as_str() {
@@ -57,19 +56,38 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
             "cpu" => MetricsMask::CPU,
             "memory" => MetricsMask::MEMORY,
             "accuracy" => MetricsMask::ACCURACY,
-            "merge" => MetricsMask::MERGE,
-            "all" => MetricsMask::all(),
             "" => MetricsMask::empty(),
-            other => {
-                eprintln!("approxbench: unknown metric flag '{other}', ignoring");
-                MetricsMask::empty()
-            }
+            // Refused, not warned past: a misspelling that measured nothing
+            // and exited zero looks to a driver script like a run that
+            // produced no data.
+            other => bail!(
+                "unknown metric '{other}'; --metrics takes throughput, latency, accuracy, cpu, memory"
+            ),
         };
     }
-    m
+    Ok(m)
 }
 
-/// Validate `--algorithm`/`--impl` and report whether `--accuracy` can score it.
+/// Which operations the metrics are taken over. No default, for the same
+/// reason as the metrics: nothing is measured that was not asked for.
+fn parse_operations(s: &str) -> Result<OperationMask> {
+    let mut m = OperationMask::empty();
+    for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
+        m |= match token.as_str() {
+            "insert" => OperationMask::INSERT,
+            "query" => OperationMask::QUERY,
+            "merge" => OperationMask::MERGE,
+            "prepare" => OperationMask::PREPARE,
+            "" => OperationMask::empty(),
+            other => bail!(
+                "unknown operation '{other}'; --operations takes insert, query, merge, prepare"
+            ),
+        };
+    }
+    Ok(m)
+}
+
+/// Validate `--algorithm`/`--impl` and report whether a comparator can score it.
 fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
     if !catalog::algorithm_exists(algorithm) {
         bail!("unknown algorithm: {algorithm}");
@@ -247,6 +265,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
                  repeat column, so every repeat would append indistinguishable rows"
             );
         }
+        if args.flat {
+            bail!(
+                "--flat cannot be combined with --repeats: a flattened row holds one value \
+                 per square, and folding the repeats into it would have to decide which \
+                 repeat that value came from"
+            );
+        }
         let records = repeat::run_repeats(args.repeats)?;
         let mut sink = ReportSink::open(args.report.as_deref())?;
         for r in &records {
@@ -273,37 +298,29 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
-    let mut metrics_mask = parse_mask(args.metrics.as_deref());
-    if args.merge_shards > 1 {
-        metrics_mask |= MetricsMask::MERGE;
-    }
-    // No `else` clearing the bit: the runner already skips a merge pass with
-    // fewer than two shards, so one guard covers CLI and library callers
-    // alike.
-    if args.accuracy {
-        // --accuracy implies the accuracy mask bit, regardless of
-        // what --metrics said. Otherwise the runner would build the
-        // GT but silently drop its output.
-        metrics_mask |= MetricsMask::ACCURACY;
-    }
+    // clap makes both required whenever a cell is selected, so the `bail`s
+    // are unreachable from the command line and exist for the type.
+    let metrics_mask = parse_mask(
+        args.metrics
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--metrics is required"))?,
+    )?;
+    let operations_mask = parse_operations(
+        args.operations
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--operations is required"))?,
+    )?;
+    // `--merge-shards` no longer selects anything: it says how many shards the
+    // merge operation folds, and `--operations merge` is what asks for it.
     let cfg = BenchConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
-        query_count: None,
+        operations: operations_mask,
         threads: args.workers.max(1),
         merge_shards: args.merge_shards,
         seed: args.seed,
     };
-    let accuracy_cfg = AccuracyCfg {
-        enabled: args.accuracy,
-        max_probes: args.accuracy_probes,
-        // Per-call CSV (hll/kll/dd) is only emittable when both
-        // `--raw-csv` and `--accuracy` are on: the comparator is
-        // what owns the query phase + per-call instrumentation.
-        record_query_calls: args.accuracy && args.raw_csv.is_some(),
-    };
-
     let scores_accuracy = select_impl(&algorithm, &impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
@@ -313,9 +330,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&algorithm),
     };
 
-    if accuracy_cfg.enabled && !scores_accuracy {
+    // Asking for a square that needs a comparator, of a row that has none.
+    if aqpbm_core::runner::needs_ground_truth(operations_mask, metrics_mask) && !scores_accuracy {
         eprintln!(
-            "approxbench: --accuracy has no comparator for {algorithm}/{impl_name} (throughput-only row) — running without ground truth"
+            "approxbench: {algorithm}/{impl_name} declares no query capability, so the squares over the query operation measure nothing"
         );
     }
 
@@ -337,12 +355,12 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         &cfg,
         &spec,
         &params,
-        &accuracy_cfg,
         width,
+        args.comparator.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
-    // `catalog::run` returns one report per metric pass; emit each on its own
+    // `catalog::run` returns one report per square; emit each on its own
     // JSONL line and CSV row group. A downstream group-by on
     // (sketch, impl, sketch_config, workload) merges them back.
     // Resolved once: `catalog::run` succeeded, so the row exists and so does
@@ -350,6 +368,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
+    let mut records = Vec::with_capacity(reports.len());
     for report in &reports {
         if let Some(dir) = args.raw_csv.as_deref() {
             raw_csv::write_runs(
@@ -369,7 +388,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // it compares variants. The family is what groups the variants back
         // together, which is the axis a cross-library comparison is taken over.
         record.family = Some(family.to_string());
-        sink.write_line(&record.to_jsonl())?;
+        records.push(record);
+    }
+
+    // One invocation is one cell, so every record here shares an identity and
+    // the whole vector is exactly what `flatten_record` expects.
+    if args.flat {
+        let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
+        sink.write_line(&serde_json::to_string(&merged)?)?;
+    } else {
+        for record in &records {
+            sink.write_line(&record.to_jsonl())?;
+        }
     }
     Ok(())
 }

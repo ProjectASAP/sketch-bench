@@ -233,6 +233,14 @@ mod tests {
         // Pinned exactly, so a future representation change cannot silently
         // alter the record shape the way the enum -> Value move altered key
         // order. Asserting only field *values* would not have caught that.
+        //
+        // `aqpbm_core::config` has a test of this name too, and this one is
+        // not a copy of it. That one pins the bytes of a synthetic params
+        // type, which nothing outside the test reads. These are the bytes a
+        // real algorithm writes into `sketch_config`, which is a contract with
+        // whoever reads the records. The generic behaviour the two share is
+        // core's to test, and this file tests it once, here, where the bytes
+        // mean something.
         let p = ParamSet::of(&CmsParams {
             rows: 5,
             cols: 2048,
@@ -270,32 +278,6 @@ mod tests {
                 cols: 2048
             }
         );
-    }
-
-    #[test]
-    fn roundtrips_through_json() {
-        let p = ParamSet::of(&HllParams { lg_k: 14 });
-        let back: ParamSet = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
-        assert_eq!(p, back);
-        assert_eq!(back.parse::<HllParams>().unwrap().lg_k, 14);
-    }
-
-    #[test]
-    fn parsing_as_the_wrong_algorithm_fails() {
-        let p = ParamSet::of(&HllParams { lg_k: 14 });
-        let err = p.parse::<CmsParams>().unwrap_err().to_string();
-        assert!(err.contains("hll") && err.contains("cms"), "{err}");
-    }
-
-    #[test]
-    fn unknown_keys_are_rejected_by_name() {
-        // `deny_unknown_fields` is what names the offending key.
-        let p = ParamSet {
-            algorithm: "cms".into(),
-            params: serde_json::json!({"rows": 5, "colz": 2048}),
-        };
-        let err = p.parse::<CmsParams>().unwrap_err().to_string();
-        assert!(err.contains("colz"), "error should name the bad key: {err}");
     }
 
     #[test]
@@ -352,20 +334,5 @@ mod tests {
         assert!(HydraCmsParams::owns("hydra-cms"));
         assert!(!HydraCmsParams::owns("hydra-hll"));
         assert!(!HydraHllParams::owns("hydra-kll"));
-    }
-
-    #[test]
-    fn fields_are_ordered_and_stringified() {
-        let p = ParamSet::of(&CmsParams {
-            rows: 5,
-            cols: 2048,
-        });
-        assert_eq!(
-            p.fields(),
-            vec![
-                ("cols".to_string(), "2048".to_string()),
-                ("rows".to_string(), "5".to_string())
-            ]
-        );
     }
 }

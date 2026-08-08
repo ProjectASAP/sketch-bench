@@ -6,15 +6,12 @@
 
 use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use super::statistic::QuantileOps;
-use super::{Comparison, GroundTruth};
-use crate::metrics::QueryCallSample;
+use super::GroundTruth;
 
 /// Number of times the 101-percentile sweep is repeated when `record_calls`
 /// is on, matching the KLL / DD query binaries' `REPEATS_PER_RUN = 10`.
-const RAW_REPEATS_PER_RUN: usize = 10;
 const NUM_PERCENTILES: usize = 101;
 
 /// Lossy-cast to f64, for the numeric item types quantile sketches take.
@@ -81,10 +78,6 @@ impl QuantileValue for f64 {
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RankErrorGT {
-    /// Capture per-call samples for the legacy
-    /// `kll_throughput_query_results_rust.csv` shape (one row
-    /// per (run, repeat, percentile) tuple). Off by default.
-    pub record_calls: bool,
 }
 
 impl<S> GroundTruth<S> for RankErrorGT
@@ -92,48 +85,54 @@ where
     S: Accumulator + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
-    fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
-        if items.is_empty() {
-            return Comparison {
-                metrics: metrics_from([("items", 0.0), ("mean_rank_err", 0.0)]),
-                queries: 0,
-                query_wall_ns: 0,
-                query_calls: None,
-            };
-        }
+    /// Every value the stream carried, sorted. Rank is over occurrences, so
+    /// nothing is deduplicated.
+    type Truth = Vec<f64>;
+    /// One fraction of the grid.
+    type Probe = f64;
+    type Answer = f64;
+
+    fn truth(&self, items: &[S::Item]) -> Vec<f64> {
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        sorted
+    }
 
-        // Time only the `estimate_quantile` boundary.
-        let mut estimates: [f64; 101] = [0.0; 101];
-        let q_start = Instant::now();
-        for (i, slot) in estimates.iter_mut().enumerate() {
-            let q = i as f64 / 100.0;
-            *slot = sketch.estimate_quantile(q);
+    fn probes(&self, truth: &Vec<f64>) -> Vec<f64> {
+        if truth.is_empty() {
+            return Vec::new();
         }
-        let q_ns = q_start.elapsed().as_nanos() as u64;
+        (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
+    }
 
-        let query_calls = if self.record_calls {
-            Some(capture_quantile_calls(sketch))
-        } else {
-            None
-        };
+    fn ask(&self, sketch: &S, probe: &f64) -> f64 {
+        sketch.estimate_quantile(*probe)
+    }
 
-        let n = sorted.len();
-        let nf = n as f64;
+    fn probe_as_f64(&self, probe: &f64) -> f64 {
+        *probe
+    }
+
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
+    }
+
+    fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
+        if truth.is_empty() || probes.is_empty() {
+            return metrics_from([("items", 0.0), ("mean_rank_err", 0.0)]);
+        }
+        let nf = truth.len() as f64;
         let mut max_rank_err = 0.0_f64;
         let mut sum_rank_err = 0.0_f64;
-
-        for (i, est) in estimates.iter().enumerate() {
-            let q = i as f64 / 100.0;
+        for (q, est) in probes.iter().zip(answers) {
             // The returned value occupies the rank interval `[lower, upper]`:
             // error 0 if `q*n` falls inside, else distance to the near edge.
-            let lower = lower_bound(&sorted, *est);
-            let upper = upper_bound(&sorted, *est);
+            let lower = lower_bound(truth, *est);
+            let upper = upper_bound(truth, *est);
             let target = q * nf;
-            let raw_err = if (target as f64) < lower as f64 {
+            let raw_err = if target < lower as f64 {
                 lower as f64 - target
-            } else if (target as f64) > upper as f64 {
+            } else if target > upper as f64 {
                 target - upper as f64
             } else {
                 0.0
@@ -144,19 +143,12 @@ where
                 max_rank_err = err;
             }
         }
-
-        let mean = sum_rank_err / estimates.len() as f64;
-        Comparison {
-            metrics: metrics_from([
-                ("items", n as f64),
-                ("grid_points", NUM_PERCENTILES as f64),
-                ("mean_rank_err", mean),
-                ("max_rank_err", max_rank_err),
-            ]),
-            queries: 101,
-            query_wall_ns: q_ns,
-            query_calls,
-        }
+        metrics_from([
+            ("items", nf),
+            ("grid_points", NUM_PERCENTILES as f64),
+            ("mean_rank_err", sum_rank_err / probes.len() as f64),
+            ("max_rank_err", max_rank_err),
+        ])
     }
 }
 
@@ -165,9 +157,6 @@ where
 /// Relative-error comparator for DDSketch-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RelativeErrorGT {
-    /// Capture per-call samples for the legacy
-    /// `dd_throughput_query_results_rust.csv` shape. Off by default.
-    pub record_calls: bool,
 }
 
 impl<S> GroundTruth<S> for RelativeErrorGT
@@ -175,75 +164,88 @@ where
     S: Accumulator + QuantileOps,
     S::Item: Clone + PartialOrd + ToF64,
 {
-    fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison {
-        if items.is_empty() {
-            return Comparison {
-                metrics: metrics_from([("items", 0.0), ("mean_relative_err", 0.0)]),
-                queries: 0,
-                query_wall_ns: 0,
-                query_calls: None,
-            };
-        }
+    type Truth = Vec<f64>;
+    type Probe = f64;
+    type Answer = f64;
+
+    fn truth(&self, items: &[S::Item]) -> Vec<f64> {
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        sorted
+    }
 
-        let mut estimates: [f64; 101] = [0.0; 101];
-        let q_start = Instant::now();
-        for (i, slot) in estimates.iter_mut().enumerate() {
-            let q = i as f64 / 100.0;
-            *slot = sketch.estimate_quantile(q);
+    fn probes(&self, truth: &Vec<f64>) -> Vec<f64> {
+        if truth.is_empty() {
+            return Vec::new();
         }
-        let q_ns = q_start.elapsed().as_nanos() as u64;
+        (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
+    }
 
-        let query_calls = if self.record_calls {
-            Some(capture_quantile_calls(sketch))
-        } else {
-            None
-        };
+    fn ask(&self, sketch: &S, probe: &f64) -> f64 {
+        sketch.estimate_quantile(*probe)
+    }
 
+    fn probe_as_f64(&self, probe: &f64) -> f64 {
+        *probe
+    }
+
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
+    }
+
+    fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
+        if truth.is_empty() || probes.is_empty() {
+            return metrics_from([("items", 0.0), ("mean_relative_err", 0.0)]);
+        }
         let mut max_rel_err = 0.0_f64;
         let mut sum_rel = 0.0_f64;
         let mut n_rel = 0usize;
-        for (i, est) in estimates.iter().enumerate() {
-            let q = i as f64 / 100.0;
-            let truth = type7_quantile(&sorted, q);
-            // Skip grid points where truth is ~0 — relative
-            // error is undefined there. DDSketch's guarantee is
-            // for non-zero quantiles anyway.
-            if truth.abs() <= f64::EPSILON {
+        for (q, est) in probes.iter().zip(answers) {
+            let t = type7_quantile(truth, *q);
+            // Skip grid points where truth is ~0 — relative error is undefined
+            // there, and DDSketch's guarantee is for non-zero quantiles anyway.
+            if t.abs() <= f64::EPSILON {
                 continue;
             }
-            let rel = (est - truth).abs() / truth.abs();
+            let rel = (est - t).abs() / t.abs();
             sum_rel += rel;
             n_rel += 1;
             if rel > max_rel_err {
                 max_rel_err = rel;
             }
         }
-        let mean = if n_rel == 0 {
-            0.0
-        } else {
-            sum_rel / n_rel as f64
-        };
-
-        Comparison {
-            metrics: metrics_from([
-                ("items", items.len() as f64),
-                ("grid_points", NUM_PERCENTILES as f64),
-                ("evaluated_points", n_rel as f64),
-                ("mean_relative_err", mean),
-                ("max_relative_err", max_rel_err),
-            ]),
-            queries: 101,
-            query_wall_ns: q_ns,
-            query_calls,
-        }
+        metrics_from([
+            ("items", truth.len() as f64),
+            ("grid_points", NUM_PERCENTILES as f64),
+            ("evaluated_points", n_rel as f64),
+            (
+                "mean_relative_err",
+                if n_rel == 0 { 0.0 } else { sum_rel / n_rel as f64 },
+            ),
+            ("max_relative_err", max_rel_err),
+        ])
     }
 }
 
 // ---------- helpers ----------
 
 /// Count of elements strictly less than `x` in a sorted slice.
+/// Type-7 linear interpolation on a pre-sorted f64 slice — the
+/// NumPy / R / Prometheus default quantile. This is the ground
+/// truth `RelativeErrorGT` scores DDSketch against.
+fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let q = q.clamp(0.0, 1.0);
+    let n = sorted.len();
+    let rank = q * (n - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = (lower + 1).min(n - 1);
+    let weight = rank - rank.floor();
+    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+}
+
 pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();
@@ -273,50 +275,6 @@ pub(crate) fn upper_bound(sorted: &[f64], x: f64) -> usize {
     lo
 }
 
-/// Independently-time each `estimate_quantile` call across
-/// `RAW_REPEATS_PER_RUN` × `NUM_PERCENTILES` for the per-call CSV shape. The
-/// sweep is by `p`, so the recorded `percentile` is `p as f64 / 100.0`.
-fn capture_quantile_calls<S>(sketch: &S) -> Vec<QueryCallSample>
-where
-    S: QuantileOps,
-{
-    let mut samples = Vec::with_capacity(RAW_REPEATS_PER_RUN * NUM_PERCENTILES);
-    let mut call_index = 0usize;
-    for repeat in 1..=RAW_REPEATS_PER_RUN {
-        for p in 0..NUM_PERCENTILES {
-            call_index += 1;
-            let rank = p as f64 / 100.0;
-            let t0 = Instant::now();
-            let q = sketch.estimate_quantile(rank);
-            let ns = t0.elapsed().as_nanos() as u64;
-            std::hint::black_box(&q);
-            samples.push(QueryCallSample {
-                call_index,
-                nanoseconds: ns,
-                estimate: q,
-                percentile: rank,
-                repeat,
-            });
-        }
-    }
-    samples
-}
-
-/// Type-7 linear interpolation on a pre-sorted f64 slice — the
-/// NumPy / R / Prometheus default quantile. This is the ground
-/// truth `RelativeErrorGT` scores DDSketch against.
-fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    let q = q.clamp(0.0, 1.0);
-    let n = sorted.len();
-    let rank = q * (n - 1) as f64;
-    let lower = rank.floor() as usize;
-    let upper = (lower + 1).min(n - 1);
-    let weight = rank - rank.floor();
-    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
-}
 
 /// Build the flat metric map a `Comparison` carries.
 fn metrics_from<const N: usize>(pairs: [(&str, f64); N]) -> BTreeMap<String, f64> {

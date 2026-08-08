@@ -15,7 +15,7 @@ pub mod time;
 // other recorders, though the histogram lives in `crate::latency` — the embedded
 // sampler wants it without the rest of the metric machinery.
 pub use crate::latency::{LatencyRecorder, LatencySnapshot};
-pub use mask::MetricsMask;
+pub use mask::{cells, Cell, Metric, MetricsMask, Operation, OperationMask};
 pub use memory::{JemallocAllocated, Rss};
 pub use run::{FullSink, QueryCallSample, RunMetrics};
 pub use throughput::ItemsPerSec;

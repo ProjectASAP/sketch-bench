@@ -1,59 +1,49 @@
-//! Flatten logic for a planned `approxbench merge` command — the intended
-//! Rust replacement for `scripts/merge_passes.py`.
+//! What `--flat` does: fold one cell's records into one row.
 //!
-//! The CLI emits one raw [`Record`] per metric pass (see the comment at
-//! `main.rs`'s `run_bench`: "A downstream group-by on (sketch, impl,
-//! sketch_config, workload) merges them back."). [`flatten_record`] is that
-//! downstream step: given the 2-4 [`Record`]s that share one identity
-//! (one insert pass, one query/accuracy pass, optionally a latency pass,
-//! optionally a merge pass), it folds them into a single [`MergedRecord`]
-//! row. [`MergedRecord`] itself lives in `aqpbm_core` alongside [`Record`]
-//! — it's a JSONL wire shape, not CLI-specific logic.
+//! The row holds one slot per operation, and a metric is a field inside a
+//! slot. A square is named by both, so a slot keyed on either name alone
+//! would hold two squares at once.
 //!
-//! Grouping records by identity, and splitting a re-run (the same pass
-//! appearing twice) into two separate calls to `flatten_record` instead of
-//! silently overwriting, is the caller's job — not implemented here yet.
+//! [`MergedRecord`] lives in `aqpbm_core` beside [`Record`], being a wire
+//! shape and not CLI logic. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
-    BenchSection, InsertMetrics, LatencyMetrics, MergeMetrics, MergedRecord, QueryMetrics, Record,
+    BenchSection, InsertMetrics, MergeMetrics, MergedRecord, PrepareMetrics, QueryMetrics, Record,
 };
 
-/// Which pass a `Record` belongs to, per its own `bench.pass` field
-/// (schema v3+). Every name `--metrics` can produce (`throughput`,
-/// `latency`, `accuracy`, `merge`) is matched explicitly; anything else —
-/// a missing `bench` section, a missing `pass` value, or a `pass` value
-/// none of these arms names — is an error rather than a guess. Which of
-/// these slots get shown, and how, is the leaderboard's call, not this
-/// function's: its job is only to keep the flattened record complete.
-fn pass_of(record: &Record) -> Result<&'static str, String> {
+/// Which slot a `Record` lands in, per its own `bench.operation` field. Every
+/// name `--operations` can produce is matched explicitly; anything else — a
+/// missing `bench` section, a missing `operation` value, or one none of these
+/// arms names — is an error rather than a guess. Which of these slots get
+/// shown, and how, is the leaderboard's call, not this function's: its job is
+/// only to keep the flattened record complete.
+fn operation_of(record: &Record) -> Result<&'static str, String> {
     let bench = record.bench.as_ref().ok_or_else(|| {
         format!(
             "flatten_record: {}/{} record has no bench section, so its pass is unknown",
             record.sketch, record.impl_name
         )
     })?;
-    match bench.pass.as_deref() {
-        Some("throughput") => Ok("insert"),
-        Some("latency") => Ok("latency"),
-        Some("accuracy") => Ok("query"),
+    match bench.operation.as_deref() {
+        Some("insert") => Ok("insert"),
+        Some("query") => Ok("query"),
         Some("merge") => Ok("merge"),
+        Some("prepare") => Ok("prepare"),
         Some(other) => Err(format!(
-            "flatten_record: {}/{} record has unrecognized bench.pass '{other}'",
+            "flatten_record: {}/{} record has unrecognized bench.operation '{other}'",
             record.sketch, record.impl_name
         )),
         None => Err(format!(
-            "flatten_record: {}/{} record has bench section but no bench.pass set",
+            "flatten_record: {}/{} record has bench section but no bench.operation set",
             record.sketch, record.impl_name
         )),
     }
 }
 
-/// Fold the 2-3 `Record`s that share one (sketch, impl, sketch_config,
-/// workload) identity into a single [`MergedRecord`]. Callers are
-/// responsible for grouping records by identity and for handling repeat
-/// runs (the same pass appearing twice) *before* calling this — pass it
-/// exactly one insert / one query / one latency record, not a rerun's
-/// worth of duplicates.
+/// Fold the `Record`s that share one (sketch, impl, sketch_config, workload)
+/// identity into a single [`MergedRecord`]. Callers are responsible for
+/// grouping records by identity before calling this: pass it one record per
+/// square, not a rerun's worth of duplicates.
 ///
 /// Every `BenchSection` field is bound by name below (not `..`), so a
 /// field this function doesn't yet place is a **compile error**, not a
@@ -77,15 +67,14 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         memory_bytes: None,
         heap_bytes_net: None,
         heap_bytes_peak: None,
-        accuracy: None,
         insert: InsertMetrics::default(),
         query: QueryMetrics::default(),
-        latency: LatencyMetrics::default(),
         merge: MergeMetrics::default(),
+        prepare: PrepareMetrics::default(),
     };
 
     for record in records {
-        let phase = pass_of(record)?;
+        let operation = operation_of(record)?;
         let Some(bench) = record.bench.as_ref() else {
             continue;
         };
@@ -94,7 +83,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         // that isn't listed here fails the build instead of being
         // silently dropped. See the doc comment above.
         let BenchSection {
-            pass: _,
+            metric: _,
+            operation: _,
             throughput_items_per_sec,
             throughput_samples,
             build_throughput_items_per_sec,
@@ -110,15 +100,15 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             heap_bytes_peak,
             accuracy,
             merge_time_ms,
+            merge_folds_per_sec,
             merge_shards,
             merge_supported,
         } = bench;
 
-        // Structural footprint fields: pass-invariant (the sketch has one
-        // size, however many passes measure it), so first value wins
-        // rather than favoring any particular pass. `heap_bytes_net` is
-        // kept separate from `memory_bytes` rather than overriding it —
-        // see the field doc on `MergedRecord::heap_bytes_net`.
+        // A sketch has one size however many squares measured it, so the
+        // first value wins and no square is favoured. `heap_bytes_net` stays
+        // separate from `memory_bytes`: see the field doc on
+        // `MergedRecord::heap_bytes_net`.
         if let Some(mb) = memory_bytes {
             out.memory_bytes.get_or_insert(*mb);
         }
@@ -128,43 +118,222 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         if let Some(hp) = heap_bytes_peak {
             out.heap_bytes_peak.get_or_insert(*hp);
         }
-        if accuracy.is_some() {
-            out.accuracy = accuracy.clone();
+        // Assigned with `get_or_insert`-style guards on the fields two squares
+        // of one operation both carry: `(insert, throughput)` and
+        // `(insert, latency)` each bring their own `wall_time_ms`, and whichever
+        // arrives second must not blank what the first placed.
+        macro_rules! keep {
+            ($slot:expr, $v:expr) => {
+                if $v.is_some() {
+                    $slot = $v.clone();
+                }
+            };
         }
-
-        match phase {
+        match operation {
             "insert" => {
                 out.insert.timestamp = Some(record.timestamp);
-                out.insert.throughput_items_per_sec = *throughput_items_per_sec;
-                out.insert.throughput_samples = throughput_samples.clone();
-                out.insert.build_throughput_items_per_sec = *build_throughput_items_per_sec;
-                out.insert.finalize_time_ms = *finalize_time_ms;
-                out.insert.cpu_time_ms = *cpu_time_ms;
-                out.insert.wall_time_ms = *wall_time_ms;
-                out.insert.rss_peak_kb = *rss_peak_kb;
-                out.insert.heap_allocated_kb = *heap_allocated_kb;
+                keep!(out.insert.throughput_items_per_sec, *throughput_items_per_sec);
+                keep!(out.insert.throughput_samples, throughput_samples.clone());
+                keep!(
+                    out.insert.build_throughput_items_per_sec,
+                    *build_throughput_items_per_sec
+                );
+                keep!(out.insert.latency_ns, *latency_ns);
+                keep!(out.insert.cpu_time_ms, *cpu_time_ms);
+                keep!(out.insert.wall_time_ms, *wall_time_ms);
+                keep!(out.insert.rss_peak_kb, *rss_peak_kb);
+                keep!(out.insert.heap_allocated_kb, *heap_allocated_kb);
             }
             "query" => {
                 out.query.timestamp = Some(record.timestamp);
-                out.query.throughput_items_per_sec = *query_throughput_items_per_sec;
-                out.query.cpu_time_ms = *cpu_time_ms;
-                out.query.wall_time_ms = *wall_time_ms;
-                out.query.rss_peak_kb = *rss_peak_kb;
-                out.query.heap_allocated_kb = *heap_allocated_kb;
-            }
-            "latency" => {
-                out.latency.timestamp = Some(record.timestamp);
-                out.latency.latency_ns = *latency_ns;
+                keep!(
+                    out.query.throughput_items_per_sec,
+                    *query_throughput_items_per_sec
+                );
+                keep!(out.query.latency_ns, *latency_ns);
+                keep!(out.query.accuracy, accuracy.clone());
+                keep!(out.query.cpu_time_ms, *cpu_time_ms);
+                keep!(out.query.wall_time_ms, *wall_time_ms);
+                keep!(out.query.rss_peak_kb, *rss_peak_kb);
+                keep!(out.query.heap_allocated_kb, *heap_allocated_kb);
             }
             "merge" => {
                 out.merge.timestamp = Some(record.timestamp);
-                out.merge.merge_time_ms = *merge_time_ms;
-                out.merge.merge_shards = *merge_shards;
-                out.merge.merge_supported = *merge_supported;
+                keep!(out.merge.merge_time_ms, *merge_time_ms);
+                keep!(out.merge.merge_folds_per_sec, *merge_folds_per_sec);
+                keep!(out.merge.merge_shards, *merge_shards);
+                keep!(out.merge.merge_supported, *merge_supported);
+                keep!(out.merge.cpu_time_ms, *cpu_time_ms);
+                keep!(out.merge.wall_time_ms, *wall_time_ms);
+                keep!(out.merge.rss_peak_kb, *rss_peak_kb);
+                keep!(out.merge.heap_allocated_kb, *heap_allocated_kb);
             }
-            _ => unreachable!("pass_of only returns insert/query/latency/merge"),
+            "prepare" => {
+                out.prepare.timestamp = Some(record.timestamp);
+                keep!(out.prepare.finalize_time_ms, *finalize_time_ms);
+                keep!(out.prepare.cpu_time_ms, *cpu_time_ms);
+                keep!(out.prepare.wall_time_ms, *wall_time_ms);
+                keep!(out.prepare.rss_peak_kb, *rss_peak_kb);
+                keep!(out.prepare.heap_allocated_kb, *heap_allocated_kb);
+            }
+            _ => unreachable!("operation_of only returns insert/query/merge/prepare"),
         }
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aqpbm_core::report::{LatencySummary, Mode, RunStats};
+    use aqpbm_core::WorkloadDescription;
+
+    fn stats(mean: f64) -> RunStats {
+        RunStats {
+            mean,
+            stddev: 0.0,
+            ci95: None,
+            n: 1,
+        }
+    }
+
+    fn latency(count: u64) -> LatencySummary {
+        LatencySummary {
+            p50: 10,
+            p95: 20,
+            p99: 30,
+            p999: 40,
+            max: 50,
+            count,
+        }
+    }
+
+    fn record(operation: &str, metric: &str, bench: BenchSection) -> Record {
+        let wd = WorkloadDescription {
+            shape: "uniform".into(),
+            size: 1000,
+            cardinality: Some(100),
+            zipf_s: None,
+            source_path: None,
+            seed: Some(1),
+            spec: None,
+        };
+        let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 1);
+        rec.bench = Some(BenchSection {
+            operation: Some(operation.into()),
+            metric: Some(metric.into()),
+            ..bench
+        });
+        rec
+    }
+
+    /// Two squares of one metric over two operations. Keyed on the metric they
+    /// were the same slot, and the second silently blanked the first.
+    #[test]
+    fn one_metric_over_two_operations_keeps_both_numbers() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(900.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "query",
+                "throughput",
+                BenchSection {
+                    query_throughput_items_per_sec: Some(stats(700.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both squares are named");
+        assert_eq!(out.insert.throughput_items_per_sec.unwrap().mean, 900.0);
+        assert_eq!(out.query.throughput_items_per_sec.unwrap().mean, 700.0);
+    }
+
+    /// Both latencies are `latency_ns` in their own record, so the flattened
+    /// row is where they must stop being one field. `count` tells them apart:
+    /// inserts are counted per item, probes per question.
+    #[test]
+    fn insert_and_query_latency_are_two_fields() {
+        let rows = vec![
+            record(
+                "insert",
+                "latency",
+                BenchSection {
+                    latency_ns: Some(latency(30_000)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "query",
+                "latency",
+                BenchSection {
+                    latency_ns: Some(latency(2_381)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both squares are named");
+        assert_eq!(out.insert.latency_ns.unwrap().count, 30_000);
+        assert_eq!(out.query.latency_ns.unwrap().count, 2_381);
+    }
+
+    /// Two squares of one operation. Both carry a `wall_time_ms`, and the one
+    /// arriving second must not blank the field the first filled.
+    #[test]
+    fn two_squares_of_one_operation_share_a_slot_without_erasing() {
+        let rows = vec![
+            record(
+                "merge",
+                "latency",
+                BenchSection {
+                    merge_time_ms: Some(stats(0.15)),
+                    merge_shards: Some(4),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "merge",
+                "throughput",
+                BenchSection {
+                    merge_folds_per_sec: Some(stats(19_496.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both squares are named");
+        assert_eq!(out.merge.merge_time_ms.unwrap().mean, 0.15);
+        assert_eq!(out.merge.merge_folds_per_sec.unwrap().mean, 19_496.0);
+        assert_eq!(out.merge.merge_shards, Some(4));
+    }
+
+    /// The deferred build has its own slot, so it is no longer read off the
+    /// insert record by a caller who asked only about inserting.
+    #[test]
+    fn prepare_carries_its_own_finalize_time() {
+        let rows = vec![record(
+            "prepare",
+            "latency",
+            BenchSection {
+                finalize_time_ms: Some(stats(0.005)),
+                ..Default::default()
+            },
+        )];
+        let out = flatten_record(&rows).expect("the square is named");
+        assert_eq!(out.prepare.finalize_time_ms.unwrap().mean, 0.005);
+    }
+
+    /// A record whose operation this function does not place is an error, not
+    /// a guess: a silently dropped square reads as a square nobody asked for.
+    #[test]
+    fn an_unplaceable_operation_is_refused_by_name() {
+        let rows = vec![record("teleport", "latency", BenchSection::default())];
+        let err = flatten_record(&rows).expect_err("no slot holds it");
+        assert!(err.contains("teleport"), "{err}");
+    }
 }

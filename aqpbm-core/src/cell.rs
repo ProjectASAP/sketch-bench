@@ -1,8 +1,7 @@
 //! Running **one cell** — one `(impl, config)` measured against one workload.
 //!
-//! [`run_cell`] takes the timed half (throughput / latency / CPU / memory),
-//! monomorphised so the wrapper's `update` inlines; [`score_cell`] takes the
-//! untimed accuracy half. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
+//! [`run_cell`] runs one square of the grid, monomorphised so the wrapper's
+//! `update` inlines. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
 
 use crate::accumulator::Accumulator;
 use crate::config::ParamSet;
@@ -16,20 +15,6 @@ use aqpbm_datagen::{GenSpec, GenValue};
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
 use crate::runner::{BenchConfig, BenchReport, BenchRunner};
-
-// ---------- accuracy settings the frontend fills in ----------
-
-/// Accuracy knobs. Consumed only by [`score_cell`] / the ground-truth calculator — the timed
-/// path never sees them.
-#[derive(Debug, Clone, Copy)]
-pub struct AccuracyCfg {
-    pub enabled: bool,
-    /// Cap on distinct keys probed by frequency comparators. `0` → no cap.
-    pub max_probes: usize,
-    /// Record per-call query samples (the legacy per-call CSV). Honoured by
-    /// cardinality / quantile comparators.
-    pub record_query_calls: bool,
-}
 
 // ---------- where items come from, and what they materialise to ----------
 
@@ -59,6 +44,16 @@ impl WorkloadSpec {
 pub enum RunError {
     Workload(anyhow::Error),
     Build(BuildError),
+    /// A square of the grid nothing measures. Selection does not judge whether
+    /// a combination is meaningful, so asking for one is legal; this is where
+    /// the caller finds out there is nothing behind it.
+    NotMeasured {
+        operation: &'static str,
+        metric: &'static str,
+    },
+    /// Merge was asked for with nothing to fold. A request that cannot be
+    /// measured says so, the way an empty square does, instead of vanishing.
+    NothingToFold { shards: usize },
 }
 
 impl std::fmt::Display for RunError {
@@ -66,6 +61,13 @@ impl std::fmt::Display for RunError {
         match self {
             RunError::Workload(e) => e.fmt(f),
             RunError::Build(e) => e.fmt(f),
+            RunError::NotMeasured { operation, metric } => {
+                write!(f, "nothing measures the {metric} of {operation}")
+            }
+            RunError::NothingToFold { shards } => write!(
+                f,
+                "merge folds {shards} shards into one, so there is nothing to fold; ask for at least 2"
+            ),
         }
     }
 }
@@ -219,50 +221,11 @@ pub trait ParallelInit: Accumulator + Sized {
 
 /// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
 /// ground truth — the ground-truth calculator never touches the hot path.
-pub fn run_cell<S>(
+pub fn run_cell<S, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
-    S::init(params)?; // probe: the cell fails here if it cannot build
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
-        .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
-}
-
-/// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
-pub fn run_cell_parallel<S>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
-    let workers = cfg.threads;
-    S::build(params, workers)?; // probe
-    Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_timed::<S, _, _>(
-            move || S::build(params, workers).expect("construction proven by the probe above"),
-            insert_body,
-        ),
-    )
-}
-
-/// Run the **accuracy** half of a cell against ground truth `gt`. Untimed, so
-/// the calculator is free to live here. The caller supplies the one for this
-/// sketch's track.
-pub fn score_cell<S, G>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    gt: &G,
+    gt: Option<&G>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
@@ -270,12 +233,33 @@ where
     G: GroundTruth<S>,
 {
     let wk = <S::Item as BenchItem>::materialise(spec)?;
-    S::init(params)?; // probe
-    Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_accuracy::<S, _, G, _>(
-            || built::<S>(params),
-            insert_body,
-            gt,
-        ),
+    S::init(params)?; // probe: the cell fails here if it cannot build
+    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+        || built::<S>(params),
+        insert_body,
+        gt,
     )
 }
+
+/// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
+pub fn run_cell_parallel<S, G>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    gt: Option<&G>,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S: ParallelInit + BenchImpl + MemoryFootprint,
+    S::Item: BenchItem,
+    G: GroundTruth<S>,
+{
+    let wk = <S::Item as BenchItem>::materialise(spec)?;
+    let workers = cfg.threads;
+    S::build(params, workers)?; // probe
+    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+        move || S::build(params, workers).expect("construction proven by the probe above"),
+        insert_body,
+        gt,
+    )
+}
+

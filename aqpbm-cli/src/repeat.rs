@@ -21,10 +21,12 @@ pub fn is_child() -> bool {
     std::env::var_os(CHILD_ENV).is_some()
 }
 
-/// Identifies the measurement a record belongs to across repeats: algorithm, impl,
-/// params, workload, pass. The pass matters because one invocation emits several
-/// records sharing the rest, and pooling them averages two populations.
-type GroupKey = (String, String, String, String, String);
+/// Identifies the measurement a record belongs to across repeats: algorithm,
+/// impl, params, workload, operation, metric.
+/// The last two matter because one invocation emits several records sharing the
+/// rest, and pooling two of them averages two populations.
+/// Both are needed, since one metric over two operations is two measurements.
+type GroupKey = (String, String, String, String, String, String);
 
 fn group_key(r: &Record) -> GroupKey {
     (
@@ -37,7 +39,11 @@ fn group_key(r: &Record) -> GroupKey {
         serde_json::to_string(&r.workload).unwrap_or_default(),
         r.bench
             .as_ref()
-            .and_then(|b| b.pass.clone())
+            .and_then(|b| b.operation.clone())
+            .unwrap_or_default(),
+        r.bench
+            .as_ref()
+            .and_then(|b| b.metric.clone())
             .unwrap_or_default(),
     )
 }
@@ -144,9 +150,9 @@ fn merge(records: Vec<Record>) -> Record {
         bench.wall_time_ms = Some(wall);
     }
     // The fold is a timing like any other, and it varies across processes for
-    // the same reasons: arena, layout, governor. Left out, the merge pass was
-    // the one pass whose record said `runs: R` while its number came from
-    // repeat 1 alone and carried no interval.
+    // the same reasons: arena, layout, governor. Left out, merge was the one
+    // square whose record said `runs: R` while its number came from repeat 1
+    // alone and carried no interval.
     if let (Some(m), _) = across(records.iter(), |b| b.merge_time_ms) {
         bench.merge_time_ms = Some(m);
     }
@@ -196,7 +202,8 @@ mod tests {
         };
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 5);
         rec.bench = Some(BenchSection {
-            pass: Some("merge".into()),
+            metric: Some("latency".into()),
+            operation: Some("merge".into()),
             throughput_items_per_sec: Some(stats(mean)),
             throughput_samples: Some(vec![mean, mean + 1.0]),
             build_throughput_items_per_sec: Some(stats(mean * 0.9)),
@@ -222,6 +229,7 @@ mod tests {
             heap_bytes_peak: Some(65536),
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_time_ms: Some(stats(0.4)),
+            merge_folds_per_sec: None,
             merge_shards: Some(4),
             merge_supported: Some(true),
         });
@@ -289,8 +297,25 @@ mod tests {
         }
     }
 
+    /// Two squares of one metric are two measurements, so the key that pools
+    /// repeats has to carry the operation too. Keyed on the metric alone they
+    /// pooled, and one record came back wearing the other's operation.
+    #[test]
+    fn one_metric_over_two_operations_stays_two_groups() {
+        let mut insert = record(100.0);
+        let mut query = record(200.0);
+        for (r, op) in [(&mut insert, "insert"), (&mut query, "query")] {
+            let b = r.bench.as_mut().expect("bench section");
+            b.operation = Some(op.into());
+            b.metric = Some("throughput".into());
+        }
+        let a = group_key(&insert);
+        let b = group_key(&query);
+        assert_ne!(a, b, "one key for two squares pools two populations");
+    }
+
     /// The reason the axis exists: R independent processes support an interval,
-    /// and the merge pass must get one like every other pass.
+    /// and the merge square must get one like every other square.
     #[test]
     fn merge_time_gets_an_interval_across_repeats() {
         let merged = merge((0..3).map(|i| record(100.0 + i as f64)).collect());

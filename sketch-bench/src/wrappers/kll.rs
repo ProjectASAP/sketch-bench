@@ -529,11 +529,10 @@ mod tests {
     /// becoming badly wrong, not to pin a ratio that legitimately moves.
     #[test]
     fn the_lib_query_paths_answer_differently() {
-        use aqpbm_core::accuracy::{quantile::RankErrorGT, GroundTruth};
+        use aqpbm_core::accuracy::quantile::RankErrorGT;
 
         let items = stream();
         let gt = RankErrorGT {
-            record_calls: false,
         };
         let per_call: KllLibPerCall<i64> = fed(200, &items);
         let cdf: KllLibCdf<i64> = fed(200, &items);
@@ -549,8 +548,8 @@ mod tests {
         );
 
         let err = |c: aqpbm_core::accuracy::Comparison| c.metrics["mean_rank_err"];
-        let per_call_err = err(gt.compare(&per_call, &items));
-        let cdf_err = err(gt.compare(&cdf, &items));
+        let per_call_err = err(aqpbm_core::accuracy::run_probes(&gt, &per_call, &items, false));
+        let cdf_err = err(aqpbm_core::accuracy::run_probes(&gt, &cdf, &items, false));
         assert!(
             cdf_err < per_call_err * 3.0,
             "the CDF path's rank error ({cdf_err}) is far past the per-call \

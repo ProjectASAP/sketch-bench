@@ -5,10 +5,9 @@ use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::time::Instant;
 
 use super::statistic::TopKOps;
-use super::{Comparison, GroundTruth};
+use super::GroundTruth;
 
 pub struct TopkGT {
     pub k: usize,
@@ -19,7 +18,13 @@ where
     K: Eq + Hash + Ord + Clone,
     S: Accumulator<Item = K> + TopKOps<Key = K>,
 {
-    fn compare(&self, sketch: &S, items: &[K]) -> Comparison {
+    /// The true k heaviest keys, in the total order every top-k impl ranks by.
+    type Truth = Vec<(K, u64)>;
+    /// One question: the whole list. A probe carries nothing.
+    type Probe = ();
+    type Answer = Vec<(K, u64)>;
+
+    fn truth(&self, items: &[K]) -> Vec<(K, u64)> {
         let mut exact: HashMap<K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it.clone()).or_insert(0) += 1;
@@ -30,13 +35,27 @@ where
         // order, and an exact source scores below 1.0 against itself.
         exact_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         exact_vec.truncate(self.k);
+        exact_vec
+    }
 
-        let q_start = Instant::now();
-        let est: Vec<(K, u64)> = sketch.estimate_topk(self.k);
-        let q_ns = q_start.elapsed().as_nanos() as u64;
-        let est_set: std::collections::HashSet<K> = est.iter().map(|(k, _)| k.clone()).collect();
-        let truth_set: std::collections::HashSet<K> =
-            exact_vec.iter().map(|(k, _)| k.clone()).collect();
+    fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
+        vec![()]
+    }
+
+    fn ask(&self, sketch: &S, _probe: &()) -> Vec<(K, u64)> {
+        sketch.estimate_topk(self.k)
+    }
+
+    fn score(
+        &self,
+        truth: &Vec<(K, u64)>,
+        _probes: &[()],
+        answers: &[Vec<(K, u64)>],
+    ) -> BTreeMap<String, f64> {
+        let empty = Vec::new();
+        let est = answers.first().unwrap_or(&empty);
+        let est_set: std::collections::HashSet<&K> = est.iter().map(|(k, _)| k).collect();
+        let truth_set: std::collections::HashSet<&K> = truth.iter().map(|(k, _)| k).collect();
 
         let tp = est_set.intersection(&truth_set).count() as f64;
         let precision = if est.is_empty() {
@@ -50,20 +69,15 @@ where
             tp / truth_set.len() as f64
         };
 
-        Comparison {
-            metrics: [
-                ("k".to_string(), (self.k) as f64),
-                ("precision_at_k".to_string(), (precision) as f64),
-                ("recall_at_k".to_string(), (recall) as f64),
-                ("true_top_k_count".to_string(), (truth_set.len()) as f64),
-                ("est_top_k_count".to_string(), (est.len()) as f64),
-            ]
-            .into_iter()
-            .collect::<BTreeMap<String, f64>>(),
-            queries: 1,
-            query_wall_ns: q_ns,
-            query_calls: None,
-        }
+        [
+            ("k".to_string(), self.k as f64),
+            ("precision_at_k".to_string(), precision),
+            ("recall_at_k".to_string(), recall),
+            ("true_top_k_count".to_string(), truth_set.len() as f64),
+            ("est_top_k_count".to_string(), est.len() as f64),
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -152,7 +166,7 @@ mod tests {
         let items = tied_at_the_boundary();
         let gt = TopkGT { k: 3 };
         for _ in 0..32 {
-            let cmp = gt.compare(&exact_source(&items), &items);
+            let cmp = crate::accuracy::run_probes(&gt, &exact_source(&items), &items, false);
             assert_eq!(cmp.metrics["precision_at_k"], 1.0, "{:?}", cmp.metrics);
             assert_eq!(cmp.metrics["recall_at_k"], 1.0, "{:?}", cmp.metrics);
         }
@@ -166,9 +180,9 @@ mod tests {
         let items = tied_at_the_boundary();
         let sketch = exact_source(&items);
         let gt = TopkGT { k: 3 };
-        let first = gt.compare(&sketch, &items);
+        let first = crate::accuracy::run_probes(&gt, &sketch, &items, false);
         for _ in 0..32 {
-            assert_eq!(gt.compare(&sketch, &items).metrics, first.metrics);
+            assert_eq!(crate::accuracy::run_probes(&gt, &sketch, &items, false).metrics, first.metrics);
         }
     }
 }

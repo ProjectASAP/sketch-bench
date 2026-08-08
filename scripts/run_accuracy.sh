@@ -19,7 +19,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VARIANT="all"
 OUTPUT_DIR="${REPO_ROOT}/output/accuracy"
 DATA="${ACCURACY_DATASET:-${REPO_ROOT}/input/benchmark_data_10m_int64_zipf_s11_k100000.bin}"
-PROBES="${ACCURACY_PROBES:-100000}"
 RUNS="${ACCURACY_RUNS:-10}"
 WARMUP="${ACCURACY_WARMUP:-3}"
 
@@ -28,7 +27,6 @@ while [[ $# -gt 0 ]]; do
     --variant)         VARIANT="$2"; shift 2 ;;
     --output-dir)      OUTPUT_DIR="$2"; shift 2 ;;
     --data)            DATA="$2"; shift 2 ;;
-    --probes)          PROBES="$2"; shift 2 ;;
     # Removed with `--accuracy-min-count`: it asked for a heavy-hitter
     # threshold chosen in advance, and its empty-result fallback
     # substituted a different population under the same metric name.
@@ -65,7 +63,7 @@ run_algorithm() {
   cargo run --release --quiet -p aqpbm-cli -- sketchbench \
     --algorithm "${ALGORITHM}" --impl all \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
-    --accuracy --accuracy-probes "${PROBES}" \
+    --accuracy \
     --raw-csv "${OUTPUT_DIR}" \
     --report "${REPORT}"
 }

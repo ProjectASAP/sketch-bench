@@ -2,7 +2,7 @@
 //! sketch, nothing that knows *which* sketches exist. See `docs/DESIGN.md` §3.1.
 //!
 //! Implement [`accumulator::Accumulator`], [`init::InitSketch`], [`init::BenchImpl`]
-//! + one capability trait per statistic, then call [`cell::run_cell`]/[`cell::score_cell`].
+//! + one capability trait per statistic, then call [`cell::run_cell`].
 
 pub mod accumulator;
 pub mod accuracy;
@@ -33,15 +33,16 @@ pub use aqpbm_datagen::{
 };
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
-pub use cell::{run_cell, score_cell, AccuracyCfg, BenchItem, RunError, WorkloadSpec};
+pub use cell::{run_cell, BenchItem, RunError, WorkloadSpec};
 pub use init::{BenchImpl, BuildError, InitSketch};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use memory_footprint::MemoryFootprint;
 pub use metrics::{FullSink, MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
-    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics, LatencyMetrics,
-    LatencySummary, MergeMetrics, MergedRecord, Mode, ProfileSection, QueryMetrics, Record,
+    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics,
+    LatencySummary, MergeMetrics, MergedRecord, Mode, PrepareMetrics, ProfileSection,
+    QueryMetrics, Record,
     RunStats, Source, SCHEMA_VERSION,
 };
 pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};

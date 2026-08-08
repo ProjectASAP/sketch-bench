@@ -32,13 +32,19 @@ A **cell** is one implementation, at one parameter point, against one workload.
 A **run** is one measured iteration over a freshly constructed accumulator inside one process.
 Core drives the runs, warms up ahead of them, and decides what sits inside a timed region.
 
-### 2.4 Passes and the metrics mask
+### 2.4 Squares and the masks
 
-A **pass** is one metric group measured over its own population of runs: `throughput`, `latency` or `accuracy`.
-An **operation** is what a metric is taken over, one of `insert`, `query` or `merge`.
-A measurement names both: insert throughput, query accuracy, merge latency.
-A user may request multiple metrics in one request.
-Splitting one request into passes is what stops a metric from paying for another metric's instrumentation (e.g. throughput and accuracy need two separate benchmarks).
+A **metric** is what a measurement reads: `throughput`, `latency` or `accuracy`.
+An **operation** is what a metric is taken over, one of `insert`, `query`, `merge` or `prepare`.
+Insert and query are assumed of every implementation, and merge and prepare are declared.
+A **square** names both, and a measurement is one square: insert throughput, query accuracy, merge latency.
+
+A request names a set of operations and a set of metrics, and selects their cross product.
+Each square gets its own population of runs, which is what stops a metric from paying for another metric's instrumentation.
+Throughput and accuracy need two separate benchmarks for that reason.
+
+Some squares are permanently empty, and a request reaching one is refused by name.
+Accuracy applies only to an operation that produces an answer, so query is the only operation it is measured over.
 
 ### 2.5 The statistics and their comparators
 
@@ -67,7 +73,7 @@ A fifth hook would change every probe that wears the sink, so the four are a fix
 
 ### 2.7 Aggregation and the record
 
-Core folds a pass's runs into a mean, a stddev, the per-run samples and a count, then serialises the fold as one line.
+Core folds a square's runs into a mean, a stddev, the per-run samples and a count, then serialises the fold as one line.
 
 ```json
 {"schema_version": 3,
@@ -75,10 +81,9 @@ Core folds a pass's runs into a mean, a stddev, the per-run samples and a count,
  "sketch_config": {"algorithm": "cms", "params": {"rows": 5, "cols": 32768}},
  "workload": {"shape": "zipf", "size": 1000000, "cardinality": 10000, "zipf_s": 1.1, "seed": 42},
  "mode": "bench", "runs": 10,
- "bench": {"pass": "throughput",
+ "bench": {"operation": "insert", "metric": "throughput",
            "throughput_items_per_sec":       {"mean": 4.21e7, "stddev": 1.1e6, "n": 10},
            "build_throughput_items_per_sec": {"mean": 4.21e7, "stddev": 1.1e6, "n": 10},
-           "finalize_time_ms":               {"mean": 0.0,    "stddev": 0.0,   "n": 10},
            "memory_bytes": 40960},
  "source": "cli", "timestamp": "2026-07-27T09:14:22.481Z"}
 ```
@@ -95,7 +100,7 @@ A new field is additive and optional, and changing what an existing field means 
 
 - **An implementation is never credited with work it deferred.** Only `update` is timed as ingest, and `prepare` runs on its own clock.
 
-- **Absent and zero stay distinguishable.** An optional metric is omitted when the pass did not measure it, so a zero in a record is a measurement.
+- **Absent and zero stay distinguishable.** An optional metric is omitted when the square did not measure it, so a zero in a record is a measurement.
 
 - **What an implementation cannot do is a value.** An implementation that does not merge records that fact in the output, and never as a missing line.
   The deferred build, the footprint and each statistic are recorded the same way.
@@ -152,17 +157,17 @@ pub trait FrequencyOps { type Key; fn estimate_frequency(&self, key: &Self::Key)
 ### 4.2 What a frontend calls
 
 ```rust
-// The timed half: throughput, latency, the merge fold, plus CPU and memory.
-run_cell::<S>(&BenchConfig, &WorkloadSpec, &ParamSet)          -> Result<Vec<BenchReport>, RunError>
-run_cell_parallel::<S>(&BenchConfig, &WorkloadSpec, &ParamSet) -> Result<Vec<BenchReport>, RunError>
-
-// The untimed half: accuracy and post-merge accuracy, scored against a comparator.
-score_cell::<S, G>(&BenchConfig, &WorkloadSpec, &ParamSet, &G) -> Result<Vec<BenchReport>, RunError>
+// Every square the request selected. A comparator is supplied when one of them
+// needs an answer scored, and refused when the request reaches an empty square.
+run_cell::<S, G>(&BenchConfig, &WorkloadSpec, &ParamSet, Option<&G>)
+    -> Result<Vec<BenchReport>, RunError>
+run_cell_parallel::<S>(&BenchConfig, &WorkloadSpec, &ParamSet)
+    -> Result<Vec<BenchReport>, RunError>
 ```
 
-Merge is measured on both sides: `run_cell` times the fold, and `score_cell` scores its result against a single-pass reference.
-`BenchConfig` carries the measured-run count, the warm-up count, the metrics mask, the merge shard count and the worker count.
-Each call returns one `BenchReport` per pass the mask selected, and every record carries a `pass` label.
+One entry point takes every square, so which instrument a square needs is decided in one place.
+`BenchConfig` carries the measured-run count, the warm-up count, the two masks, the merge shard count and the worker count.
+Each call returns one `BenchReport` per square selected, and every record names its operation and its metric.
 
 ### 4.3 The parameter surface
 
@@ -172,15 +177,25 @@ A single point also parses from whitespace-separated `key=value` tokens, typed b
 ### 4.4 The comparator and the report format
 
 A comparator computes the exact answer from the raw items and scores the sketch against it.
+It is four steps, because the runner owns the clock and a comparator that timed itself would decide what a query costs.
 
 ```rust
-pub trait GroundTruth<S: Accumulator> {                      // the `G` of `score_cell`
-    fn compare(&self, sketch: &S, items: &[S::Item]) -> Comparison;
+pub trait GroundTruth<S: Accumulator> {           // the `G` of `run_cell`
+    type Truth; type Probe; type Answer;
+
+    fn truth(&self, items: &[S::Item]) -> Self::Truth;        // the exact answer
+    fn probes(&self, truth: &Self::Truth) -> Vec<Self::Probe>;// what to ask
+    fn ask(&self, sketch: &S, probe: &Self::Probe) -> Self::Answer;
+    fn score(&self, truth: &Self::Truth, probes: &[Self::Probe],
+             answers: &[Self::Answer]) -> Comparison;         // the error metrics
 }
 ```
 
+`ask` does one thing: it puts one question.
+The runner is what surrounds it, so the same set of questions serves the query latency square and the query accuracy square.
+
 `Comparison` is a comparator's output, a flat map of named scalars, so aggregation folds every key across runs without knowing any statistic's shape.
-The grouping key for anything that pools records is `(sketch, impl, sketch_config, workload, pass)`, and pooling two passes averages two experiments.
+The grouping key for anything that pools records is `(sketch, impl, sketch_config, workload, operation, metric)`, and pooling two squares averages two experiments.
 
 ### 4.5 The build-time surface
 
@@ -193,9 +208,6 @@ Per-sketch allocation accounting compiles in a counting allocator, which the lin
 - **Who chooses the probe set.** Each comparator picks its own probe count and population, which lets a statistic ask for what it needs.
   Two algorithms' query-throughput numbers then rest on different probe counts.
   A shared probe budget in the configuration would make them comparable, at the cost of a knob that means something different for each statistic.
-
-- **Naming the deferred build.** The method is `prepare` and the metrics it feeds are `finalize_time_ms` and `build_throughput_items_per_sec`, so one of the two names should move.
-  Moving the method breaks every implementation; moving the fields is a schema bump coordinated across every producer and reader.
 
 - **Per-thread allocation accounting.** The allocation counters are process-global atomics, so the heap numbers of a parallel insert describe the process.
   Per-thread accounting needs a thread-local shim plus a rule for which threads belong to the measurement, and the rule is the harder half.
