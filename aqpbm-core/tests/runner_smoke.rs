@@ -263,53 +263,39 @@ fn runner_respects_mask_noop_when_empty() {
     assert!(reports.is_empty());
 }
 
-/// Merge is an operation and accuracy is a metric, so the two measurements of
-/// the merge operation are told apart by the pair. Pins the property a
-/// consumer grouping records depends on: no two of them share it.
+/// Scoring a folded sketch means querying it, which is the query operation
+/// wearing merge's name. Merge produces no answer, so the square is empty and
+/// asking for it is refused rather than answered with somebody else's number.
 #[test]
-fn the_two_merge_measurements_carry_different_names() {
+fn merge_has_no_accuracy() {
     let workload = I64Workload::uniform(4_000, 500, 7);
     let cfg = BenchConfig {
         runs: 2,
         warmup_runs: 0,
         metrics: MetricsMask::ACCURACY,
-        operations: OperationMask::QUERY | OperationMask::MERGE,
+        operations: OperationMask::MERGE,
         merge_shards: 4,
         ..Default::default()
     };
-    let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    // Both cells compare against ground truth, so both belong to the accuracy
-    // half of the run.
-    let reports = runner.run(
-        || ExactCounter {
-            seen: Default::default(),
-        },
-        |s, it| s.update(it),
-        Some(&CardinalityGT::default()),
-    )
-    .expect("every square asked for is measured");
-
-    let merge = reports
-        .iter()
-        .find(|r| r.bench.merge_shards.is_some())
-        .expect("a merge measurement ran");
+    let err = BenchRunner::new(cfg, &workload, "exact", "smoke")
+        .run(
+            || ExactCounter {
+                seen: Default::default(),
+            },
+            |s, it| s.update(it),
+            Some(&CardinalityGT),
+        )
+        .expect_err("merge accuracy is an empty square");
     assert!(
-        merge.bench.accuracy.is_some(),
-        "merge accuracy is the point of this cell — otherwise this test is \
-         not exercising the collision it exists for"
+        matches!(
+            err,
+            aqpbm_core::RunError::NotMeasured {
+                operation: "merge",
+                metric: "accuracy"
+            }
+        ),
+        "expected the square to be refused by name, got {err:?}"
     );
-    assert_eq!(merge.bench.operation.as_deref(), Some("merge"));
-    assert_eq!(merge.bench.metric.as_deref(), Some("accuracy"));
-
-    let query = reports
-        .iter()
-        .find(|r| r.bench.merge_shards.is_none())
-        .expect("a query measurement ran");
-    assert_eq!(query.bench.operation.as_deref(), Some("query"));
-    assert_eq!(query.bench.metric.as_deref(), Some("accuracy"));
-
-    // The pair is what separates them; the metric alone no longer does.
-    assert_ne!(merge.bench.operation, query.bench.operation);
 }
 
 /// A square places its own metric and nothing else. The folding functions do

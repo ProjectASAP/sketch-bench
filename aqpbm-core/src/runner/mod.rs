@@ -53,11 +53,11 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         (Query, Throughput) => bench.query_throughput_items_per_sec = fold::query_throughput(runs),
         (Query, Latency) => bench.latency_ns = fold::latency_from_calls(runs),
         (Query, Accuracy) => bench.accuracy = fold::accuracy(runs),
-        (Merge, Accuracy) => bench.accuracy = fold::accuracy(runs),
         // The fold's own timing is filled by `run_merge_pass`, which is what
         // holds the clock around it.
         (Merge, Latency) => {}
         (Insert, Accuracy)
+        | (Merge, Accuracy)
         | (Merge, Throughput)
         | (Prepare, Throughput | Latency | Accuracy) => {}
     }
@@ -81,17 +81,13 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
 
 /// Whether a request reaches any square that cannot run without a comparator.
 /// Wider than "measures accuracy": issuing the queries is what a comparator
-/// does, so every square over the query operation needs one, and so does the
-/// scored half of merge.
+/// does, so every square over the query operation needs one.
 ///
 /// A caller builds a comparator when this says to, instead of being asked.
 pub fn needs_ground_truth(operations: OperationMask, metrics: MetricsMask) -> bool {
-    cells(operations, metrics).into_iter().any(|c| {
-        matches!(
-            (c.operation, c.metric),
-            (Operation::Query, _) | (Operation::Merge, Metric::Accuracy)
-        )
-    })
+    cells(operations, metrics)
+        .into_iter()
+        .any(|c| c.operation == Operation::Query)
 }
 
 /// A square the grid admits and nothing measures.
@@ -181,18 +177,12 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                             shards: pass_cfg.merge_shards,
                         });
                     }
-                    Some(self.run_merge_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                    Some(self.run_merge_pass::<S, _, _>(cell, &mut factory, &mut insert, pass_cfg))
                 }
-                (Merge, Accuracy) => {
-                    if pass_cfg.merge_shards < 2 {
-                        return Err(RunError::NothingToFold {
-                            shards: pass_cfg.merge_shards,
-                        });
-                    }
-                    ground_truth.map(|gt| {
-                        self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
-                    })
-                }
+                // Scoring a folded sketch means querying it, which is the
+                // query operation wearing merge's name. Merge itself produces
+                // no answer to be right or wrong about.
+                (Merge, Accuracy) => return Err(unmeasured(cell)),
                 (Prepare, Throughput) => return Err(unmeasured(cell)),
                 (Prepare, Latency) => return Err(unmeasured(cell)),
                 (Prepare, Accuracy) => return Err(unmeasured(cell)),
@@ -207,12 +197,11 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// Build `merge_shards` sketches over contiguous slices, fold them into one,
     /// and compare against the whole stream. Only the fold is timed. Linear
     /// sketches merge losslessly, so a gap is a defect; KLL's gap is the point.
-    fn run_merge_pass<S, F, G, Insert>(
+    fn run_merge_pass<S, F, Insert>(
         &self,
         cell: Cell,
         factory: &mut F,
         insert: &mut Insert,
-        ground_truth: Option<&G>,
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
@@ -220,7 +209,6 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         W::Item: Clone,
         F: FnMut() -> S,
         Insert: FnMut(&mut S, &W::Item),
-        G: GroundTruth<S>,
     {
         let items = self.workload.items();
         // No clamp: the guard above refused anything below two, so this is the
@@ -271,56 +259,13 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             std::hint::black_box(&acc);
             acc.prepare();
 
-            // Warm the query path before the one measured comparison: otherwise
-            // the first comparator call is the first query ever issued against
-            // this sketch, and `query_throughput` measures a cold path.
-            if run_idx < pass_cfg.warmup_runs {
-                if let Some(gt) = ground_truth {
-                    std::hint::black_box(run_probes(gt, &acc, items, false));
-                }
-            }
-
             if run_idx >= pass_cfg.warmup_runs {
                 merge_ns.push(ns);
-                let mut metrics = RunMetrics {
+                per_run.push(RunMetrics {
                     items_inserted: items.len() as u64,
                     memory_bytes: Some(acc.memory_bytes() as u64),
                     ..RunMetrics::empty()
-                };
-                // Accuracy attaches on the first measured run only: this loop
-                // re-folds the **same** draw, so N copies would claim N
-                // independent draws. Later runs still time `merge_time_ms`.
-                if let (Some(gt), true) = (ground_truth, per_run.is_empty()) {
-                    let merged = run_probes(gt, &acc, items, false);
-                    metrics.queries_executed = merged.queries;
-                    metrics.query_wall_time_ns = merged.query_wall_ns;
-
-                    // Is merging lossless here? Only meaningful within one
-                    // draw, so the single-pass reference is built over the same
-                    // items. "Lossless" = indistinguishable on this probe set.
-                    let mut single = factory();
-                    for it in items {
-                        insert(&mut single, it);
-                    }
-                    single.prepare();
-                    let reference = run_probes(gt, &single, items, false);
-                    // A non-finite metric would compare unequal to itself and
-                    // pin this to "lossy" forever, so treat it as unknown
-                    // rather than silently reporting a false negative.
-                    let comparable = merged
-                        .metrics
-                        .values()
-                        .chain(reference.metrics.values())
-                        .all(|v| v.is_finite());
-                    let lossless = comparable && merged.metrics == reference.metrics;
-
-                    let mut m = merged.metrics;
-                    if comparable {
-                        m.insert("merge_lossless".into(), if lossless { 1.0 } else { 0.0 });
-                    }
-                    metrics.accuracy = Some(m);
-                }
-                per_run.push(metrics);
+                });
             }
         }
 
