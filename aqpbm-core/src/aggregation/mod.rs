@@ -319,14 +319,18 @@ mod tests {
     }
 
 
+    /// No runs is not a rate of zero. A square that measured nothing must
+    /// leave the field absent, since a zero there is a measurement.
     #[test]
-    fn aggregate_empty_returns_none_metrics() {
+    fn no_runs_leaves_the_column_absent() {
         let out = throughput_view(&[]);
         assert!(out.throughput_items_per_sec.is_none());
     }
 
+    /// The fold is over per-run rates, so the reported mean is the mean of
+    /// the rates and not the rate of the totals. 10M/s and 20M/s make 15M/s.
     #[test]
-    fn aggregate_matches_manual_mean() {
+    fn throughput_is_the_mean_of_the_per_run_rates() {
         let runs = vec![
             rm(1_000_000, 100_000_000, 100_000_000), // 10M/s
             rm(1_000_000, 50_000_000, 50_000_000),   // 20M/s
