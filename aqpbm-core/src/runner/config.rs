@@ -24,10 +24,6 @@ pub struct BenchConfig {
     /// of this and `metrics`; a cell with no implementation simply produces
     /// nothing.
     pub operations: OperationMask,
-    /// Reserved: how many queries to run per measured iteration. The runner
-    /// does not read it — the `GroundTruth` comparators own the query phase
-    /// and pick their own probe counts.
-    pub query_count: Option<usize>,
     /// Worker threads for the insert phase, read by the parallel-insert cells.
     /// `1` — a single-threaded run — for every other row.
     pub threads: usize,
@@ -50,7 +46,6 @@ impl Default for BenchConfig {
             // Insert and query are assumed of every implementation; merge and
             // prepare are declared, so a caller asks for them by name.
             operations: OperationMask::INSERT | OperationMask::QUERY,
-            query_count: None,
             threads: 1,
             merge_shards: 2,
             seed: 0,

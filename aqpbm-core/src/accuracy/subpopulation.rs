@@ -94,6 +94,10 @@ where
         sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
     }
 
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
+    }
+
     fn score(
         &self,
         truth: &SubpopFreqTruth<V>,
@@ -282,6 +286,10 @@ where
         sketch.estimate_subpop_cardinality(&[probe.as_str()])
     }
 
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
+    }
+
     fn score(
         &self,
         truth: &SubpopCardTruth,
@@ -423,6 +431,14 @@ where
 
     fn ask(&self, sketch: &S, probe: &(String, f64)) -> f64 {
         sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
+    }
+
+    fn probe_as_f64(&self, probe: &(String, f64)) -> f64 {
+        probe.1
+    }
+
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
     }
 
     fn score(

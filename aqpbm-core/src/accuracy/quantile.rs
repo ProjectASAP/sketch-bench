@@ -109,6 +109,14 @@ where
         sketch.estimate_quantile(*probe)
     }
 
+    fn probe_as_f64(&self, probe: &f64) -> f64 {
+        *probe
+    }
+
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
+    }
+
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
         if truth.is_empty() || probes.is_empty() {
             return metrics_from([("items", 0.0), ("mean_rank_err", 0.0)]);
@@ -175,6 +183,14 @@ where
 
     fn ask(&self, sketch: &S, probe: &f64) -> f64 {
         sketch.estimate_quantile(*probe)
+    }
+
+    fn probe_as_f64(&self, probe: &f64) -> f64 {
+        *probe
+    }
+
+    fn answer_as_f64(&self, answer: &f64) -> f64 {
+        *answer
     }
 
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {

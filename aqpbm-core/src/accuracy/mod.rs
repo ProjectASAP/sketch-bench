@@ -84,6 +84,19 @@ pub trait GroundTruth<S: Accumulator> {
         probes: &[Self::Probe],
         answers: &[Self::Answer],
     ) -> BTreeMap<String, f64>;
+
+    /// The question as a number, for the per-call CSV. `NAN` where the
+    /// question carries none: a cardinality estimate asks nothing, and a key
+    /// is not a quantity.
+    fn probe_as_f64(&self, _probe: &Self::Probe) -> f64 {
+        f64::NAN
+    }
+
+    /// The answer as a number, on the same terms. `NAN` where one answer is a
+    /// whole list.
+    fn answer_as_f64(&self, _answer: &Self::Answer) -> f64 {
+        f64::NAN
+    }
 }
 
 /// Put the whole probe set to the sketch, timing it. This is step ③, and it
@@ -114,8 +127,10 @@ where
                 samples.push(QueryCallSample {
                     call_index: i,
                     nanoseconds: ns,
-                    estimate: f64::NAN,
-                    percentile: f64::NAN,
+                    estimate: gt.answer_as_f64(&answer),
+                    percentile: gt.probe_as_f64(probe),
+                    // The probe set is swept once, so there is no outer
+                    // repetition to number.
                     repeat: 0,
                 });
                 answers.push(answer);

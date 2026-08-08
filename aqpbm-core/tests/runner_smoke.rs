@@ -55,7 +55,6 @@ fn runner_end_to_end_produces_valid_jsonl() {
         // reaching an empty square is an error, which the grid test covers.
         metrics: MetricsMask::THROUGHPUT | MetricsMask::LATENCY,
         operations: OperationMask::INSERT,
-        query_count: Some(1),
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
@@ -248,7 +247,6 @@ fn runner_respects_mask_noop_when_empty() {
         runs: 2,
         warmup_runs: 0,
         metrics: MetricsMask::empty(),
-        query_count: None,
         ..Default::default()
     };
     let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run::<_, _, NoGT, _>(

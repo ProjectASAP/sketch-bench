@@ -307,7 +307,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
         operations: operations_mask,
-        query_count: None,
         threads: args.workers.max(1),
         merge_shards: args.merge_shards,
         seed: args.seed,

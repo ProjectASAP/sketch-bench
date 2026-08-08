@@ -416,7 +416,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // instrument *is* the per-update `Probe` boundary. `aggregate`
                 // suppresses throughput here because the mask lacks the bit.
                 let sink = FullSink::new(pass_cfg.metrics);
-                run_once(factory, sink, items, &pass_cfg)
+                run_once(factory, sink, items)
             } else {
                 run_once_clean(factory, insert, items, &pass_cfg)
             };
@@ -468,12 +468,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 /// One measured run through `Probe<S, FullSink>`: time the insert phase, return
 /// metrics plus sketch. Under `heap-track` the `before` snapshot lands after
 /// `items` but before `factory()`, so constructor allocations are attributed.
-fn run_once<S, F>(
-    factory: &mut F,
-    mut sink: FullSink,
-    items: &[S::Item],
-    config: &BenchConfig,
-) -> (RunMetrics, S)
+fn run_once<S, F>(factory: &mut F, mut sink: FullSink, items: &[S::Item]) -> (RunMetrics, S)
 where
     S: Accumulator + MemoryFootprint,
     S::Item: Clone,
@@ -510,10 +505,6 @@ where
 
     #[cfg(feature = "heap-track")]
     let heap_after = crate::metrics::heap_track::snapshot();
-
-    // Query timing belongs to the `GroundTruth` comparators, which know the
-    // algorithm-specific query shape; `query_count` is unread as a result.
-    let _ = config.query_count;
 
     let memory_bytes = sketch.memory_bytes() as u64;
     let mut metrics = sink.finalize(Some(memory_bytes));
