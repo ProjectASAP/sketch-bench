@@ -59,6 +59,13 @@ impl WorkloadSpec {
 pub enum RunError {
     Workload(anyhow::Error),
     Build(BuildError),
+    /// A square of the grid nothing measures. Selection does not judge whether
+    /// a combination is meaningful, so asking for one is legal; this is where
+    /// the caller finds out there is nothing behind it.
+    NotMeasured {
+        operation: &'static str,
+        metric: &'static str,
+    },
 }
 
 impl std::fmt::Display for RunError {
@@ -66,6 +73,9 @@ impl std::fmt::Display for RunError {
         match self {
             RunError::Workload(e) => e.fmt(f),
             RunError::Build(e) => e.fmt(f),
+            RunError::NotMeasured { operation, metric } => {
+                write!(f, "nothing measures the {metric} of {operation}")
+            }
         }
     }
 }
@@ -232,8 +242,11 @@ where
 {
     let wk = <S::Item as BenchItem>::materialise(spec)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
-        .run::<S, _, G, _>(|| built::<S>(params), insert_body, gt))
+    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+        || built::<S>(params),
+        insert_body,
+        gt,
+    )
 }
 
 /// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
@@ -251,12 +264,10 @@ where
     let wk = <S::Item as BenchItem>::materialise(spec)?;
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
-    Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
-            move || S::build(params, workers).expect("construction proven by the probe above"),
-            insert_body,
-            gt,
-        ),
+    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+        move || S::build(params, workers).expect("construction proven by the probe above"),
+        insert_body,
+        gt,
     )
 }
 

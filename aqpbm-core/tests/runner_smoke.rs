@@ -51,25 +51,25 @@ fn runner_end_to_end_produces_valid_jsonl() {
     let cfg = BenchConfig {
         runs: 3,
         warmup_runs: 1,
-        metrics: MetricsMask::all(),
+        // Every square this asks for is one something measures. A request
+        // reaching an empty square is an error, which the grid test covers.
+        metrics: MetricsMask::THROUGHPUT | MetricsMask::LATENCY,
+        operations: OperationMask::INSERT,
         query_count: Some(1),
         ..Default::default()
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
-    // The timed passes carry no ground truth; accuracy is scored separately.
-    // One walk of the grid now: with a comparator in hand every square the
-    // request selects runs, so the timed ones are not asked for twice.
-    let reports = runner.run(
-        || ExactCounter {
-            seen: Default::default(),
-        },
-        |s, it| s.update(it),
-        Some(&CardinalityGT::default()),
-    );
+    let reports = runner
+        .run(
+            || ExactCounter {
+                seen: Default::default(),
+            },
+            |s, it| s.update(it),
+            Some(&CardinalityGT::default()),
+        )
+        .expect("every square asked for is measured");
 
-    // insert × {throughput, latency} plus query × {throughput, accuracy}: the
-    // four squares of the default request that something implements.
-    assert_eq!(reports.len(), 4);
+    assert_eq!(reports.len(), 2);
     for r in &reports {
         assert_eq!(r.per_run.len(), 3);
     }
@@ -82,12 +82,29 @@ fn runner_end_to_end_produces_valid_jsonl() {
     assert!(tp.mean > 0.0);
     assert_eq!(tp.n, 3);
 
-    let accuracy = reports
+    // The query side, asked for on its own.
+    let cfg = BenchConfig {
+        runs: 3,
+        warmup_runs: 1,
+        metrics: MetricsMask::ACCURACY,
+        operations: OperationMask::QUERY,
+        ..Default::default()
+    };
+    let scored = BenchRunner::new(cfg, &workload, "exact", "smoke")
+        .run(
+            || ExactCounter {
+                seen: Default::default(),
+            },
+            |s, it| s.update(it),
+            Some(&CardinalityGT::default()),
+        )
+        .expect("query accuracy is measured");
+    let accuracy = scored
         .iter()
         .find(|r| r.bench.accuracy.is_some())
-        .expect("an accuracy pass exists");
+        .expect("an accuracy record exists");
 
-    // v1 JSONL record round-trips for each pass.
+    // v1 JSONL record round-trips.
     let jsonl = accuracy.to_jsonl();
     let back: aqpbm_core::Record = serde_json::from_str(&jsonl).unwrap();
     assert_eq!(back.sketch, "exact");
@@ -151,7 +168,8 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
         },
         |s, it| s.update(it),
         None,
-    );
+    )
+    .expect("every square asked for is measured");
 
     // Once per trial, warm-ups included — a warm-up that skipped the build
     // would leave the first measured run paying cold-path costs.
@@ -208,7 +226,8 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
             },
             |s, it| s.update(it),
             None,
-        );
+        )
+        .expect("every square asked for is measured");
         let bench = &reports[0].bench;
         assert!(
             bench.finalize_time_ms.as_ref().unwrap().mean > 0.0,
@@ -238,8 +257,9 @@ fn runner_respects_mask_noop_when_empty() {
         },
         |s, it| s.update(it),
         None,
-    );
-    // Empty mask ⇒ no passes ⇒ no reports.
+    )
+    .expect("an empty request selects no square, so it cannot reach an empty one");
+    // Empty mask ⇒ no squares ⇒ no reports.
     assert!(reports.is_empty());
 }
 
@@ -266,7 +286,8 @@ fn the_two_merge_measurements_carry_different_names() {
         },
         |s, it| s.update(it),
         Some(&CardinalityGT::default()),
-    );
+    )
+    .expect("every square asked for is measured");
 
     let merge = reports
         .iter()

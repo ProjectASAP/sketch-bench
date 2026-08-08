@@ -129,8 +129,10 @@ pub fn aggregate(runs: &[RunMetrics], cell: Cell) -> BenchSection {
     };
     let memory_bytes = runs.iter().filter_map(|r| r.memory_bytes).next_back();
 
-    let latency_ns = if (cell.operation, cell.metric) == (Operation::Insert, Metric::Latency) {
-        runs.iter()
+    let latency_ns = match (cell.operation, cell.metric) {
+        // Insert latency comes off the `Probe` boundary the recorder wears.
+        (Operation::Insert, Metric::Latency) => runs
+            .iter()
             .rev()
             .find_map(|r| r.latency_ns.as_ref())
             .map(|l| LatencySummary {
@@ -140,9 +142,17 @@ pub fn aggregate(runs: &[RunMetrics], cell: Cell) -> BenchSection {
                 p999: l.p999,
                 max: l.max,
                 count: l.count,
-            })
-    } else {
-        None
+            }),
+        // Query latency comes off the per-call samples the probe loop took.
+        (Operation::Query, Metric::Latency) => {
+            let mut ns: Vec<u64> = runs
+                .iter()
+                .filter_map(|r| r.query_calls.as_ref())
+                .flat_map(|calls| calls.iter().map(|c| c.nanoseconds))
+                .collect();
+            summarise_latency(&mut ns)
+        }
+        _ => None,
     };
 
     let accuracy = if cell.metric == Metric::Accuracy {
@@ -354,4 +364,22 @@ mod tests {
         let out = aggregate(&runs, insert(Metric::Latency));
         assert!(out.throughput_items_per_sec.is_none());
     }
+}
+
+/// Fold per-call durations into the same summary shape the insert recorder
+/// produces, so a query latency and an insert latency are read on one ruler.
+fn summarise_latency(ns: &mut Vec<u64>) -> Option<LatencySummary> {
+    if ns.is_empty() {
+        return None;
+    }
+    ns.sort_unstable();
+    let at = |q: f64| ns[(((ns.len() - 1) as f64) * q).round() as usize];
+    Some(LatencySummary {
+        p50: at(0.50),
+        p95: at(0.95),
+        p99: at(0.99),
+        p999: at(0.999),
+        max: *ns.last().unwrap(),
+        count: ns.len() as u64,
+    })
 }

@@ -19,6 +19,7 @@ use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, Wor
 use aqpbm_core::runner::NoGT;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use asap_sketchlib::{
@@ -903,6 +904,11 @@ mod tests {
             BenchConfig {
                 runs: 1,
                 warmup_runs: 0,
+                // Only squares something measures. The default request reaches
+                // `(insert, accuracy)` and `(query, latency)`, which nothing
+                // does, and reaching an empty square is an error.
+                metrics: MetricsMask::THROUGHPUT,
+                operations: OperationMask::INSERT,
                 ..Default::default()
             },
             AccuracyCfg {

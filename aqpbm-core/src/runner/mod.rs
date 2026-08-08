@@ -14,7 +14,8 @@ pub use config::BenchConfig;
 // sketch-domain knowledge. `insert_loop` stays `#[inline(always)]`, so thin LTO
 // folds the wrapper's `update` in across the crate boundary. See `hot_loop`.
 use crate::accumulator::Accumulator;
-use crate::accuracy::{Comparison, GroundTruth};
+use crate::cell::RunError;
+use crate::accuracy::{run_probes, Comparison, GroundTruth};
 use crate::aggregation::aggregate;
 use crate::aggregation::welford::Welford;
 use crate::hot_loop::{insert_loop, warmup_cpu_once};
@@ -25,6 +26,14 @@ use crate::metrics::{
 };
 use crate::report::{Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
+
+/// A square the grid admits and nothing measures.
+fn unmeasured(cell: Cell) -> RunError {
+    RunError::NotMeasured {
+        operation: cell.operation.name(),
+        metric: cell.metric.name(),
+    }
+}
 
 /// Drives `config.runs + config.warmup_runs` iterations against a fixed
 /// workload, feeding each `Probe<S, FullSink>` into per-run `RunMetrics`.
@@ -62,7 +71,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         mut factory: F,
         mut insert: Insert,
         ground_truth: Option<&G>,
-    ) -> Vec<BenchReport>
+    ) -> Result<Vec<BenchReport>, RunError>
     where
         S: Accumulator<Item = W::Item> + MemoryFootprint,
         W::Item: Clone,
@@ -75,7 +84,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
         let cells = cells(self.config.operations, self.config.metrics);
         if cells.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         warmup_cpu_once();
         let mut reports = Vec::with_capacity(cells.len());
@@ -92,15 +101,17 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 (Ins, Throughput) | (Ins, Latency) => {
                     Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
                 }
-                (Ins, Accuracy) => None,
+                (Ins, Accuracy) => return Err(unmeasured(cell)),
                 // Issuing the queries is the measurement, so this square
                 // needs the comparator as much as accuracy does.
                 (Query, Throughput) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
-                (Query, Latency) => None,
+                // Same loop as query throughput, with the clock inside it.
+                (Query, Latency) => ground_truth
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
                 (Query, Accuracy) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
-                (Merge, Throughput) => None,
+                (Merge, Throughput) => return Err(unmeasured(cell)),
                 (Merge, Latency) if folds => {
                     Some(self.run_merge_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
                 }
@@ -109,15 +120,15 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
                 }),
                 (Merge, Accuracy) => None,
-                (Prepare, Throughput) => None,
-                (Prepare, Latency) => None,
-                (Prepare, Accuracy) => None,
+                (Prepare, Throughput) => return Err(unmeasured(cell)),
+                (Prepare, Latency) => return Err(unmeasured(cell)),
+                (Prepare, Accuracy) => return Err(unmeasured(cell)),
             };
             if let Some(report) = report {
                 reports.push(report);
             }
         }
-        reports
+        Ok(reports)
     }
 
     /// Build `merge_shards` sketches over contiguous slices, fold them into one,
@@ -190,7 +201,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // this sketch, and `query_throughput` measures a cold path.
             if run_idx < pass_cfg.warmup_runs {
                 if let Some(gt) = ground_truth {
-                    std::hint::black_box(gt.compare(&acc, items));
+                    std::hint::black_box(run_probes(gt, &acc, items, false));
                 }
             }
 
@@ -205,7 +216,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // re-folds the **same** draw, so N copies would claim N
                 // independent draws. Later runs still time `merge_time_ms`.
                 if let (Some(gt), true) = (ground_truth, per_run.is_empty()) {
-                    let merged = gt.compare(&acc, items);
+                    let merged = run_probes(gt, &acc, items, false);
                     metrics.queries_executed = merged.queries;
                     metrics.query_wall_time_ns = merged.query_wall_ns;
 
@@ -217,7 +228,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                         insert(&mut single, it);
                     }
                     single.prepare();
-                    let reference = gt.compare(&single, items);
+                    let reference = run_probes(gt, &single, items, false);
                     // A non-finite metric would compare unequal to itself and
                     // pin this to "lossy" forever, so treat it as unknown
                     // rather than silently reporting a false negative.
@@ -293,6 +304,10 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         // Measuring the query operation means issuing queries, and the
         // comparator is what issues them. Wider than measuring accuracy.
         let queries = cell.operation == Operation::Query;
+        // Timing each question on its own is what a latency measurement is,
+        // and what a throughput measurement must not pay for. The runner owns
+        // the choice because it owns the square.
+        let per_call = cell.metric == Metric::Latency;
         // Resampling is an accuracy concern: error is deterministic given
         // (data, parameters), so repeats over one draw would fabricate spread.
         // A timing over the same draw is a real repeat.
@@ -335,7 +350,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // iterations too — otherwise `--warmup-runs` protects only the
             // insert side and the first measured query is a cold one.
             let comparison = if queries {
-                ground_truth.map(|gt| gt.compare(&final_sketch, items))
+                ground_truth.map(|gt| run_probes(gt, &final_sketch, items, per_call))
             } else {
                 None
             };
@@ -557,11 +572,20 @@ impl BenchReport {
     }
 }
 
-/// Placeholder `GroundTruth` for catalog rows that run without a
-/// comparator. Never called; `compare` is a safe default.
+/// Placeholder `GroundTruth` for rows that run without a comparator. It knows
+/// no truth and asks nothing, so a square needing one measures nothing.
 pub struct NoGT;
 impl<S: Accumulator> GroundTruth<S> for NoGT {
-    fn compare(&self, _: &S, _: &[S::Item]) -> Comparison {
-        Comparison::default()
+    type Truth = ();
+    type Probe = ();
+    type Answer = ();
+
+    fn truth(&self, _: &[S::Item]) {}
+    fn probes(&self, _: &()) -> Vec<()> {
+        Vec::new()
+    }
+    fn ask(&self, _: &S, _: &()) {}
+    fn score(&self, _: &(), _: &[()], _: &[()]) -> std::collections::BTreeMap<String, f64> {
+        std::collections::BTreeMap::new()
     }
 }
