@@ -26,66 +26,6 @@ use crate::metrics::{
 use crate::report::{Mode, Record, RunStats, Source};
 use crate::workload::{Workload, WorkloadDescription};
 
-/// How the sketch a square measures comes to exist: one over the whole stream,
-/// or one per shard folded into one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Build {
-    Single,
-    Sharded,
-}
-
-/// What running one square of the grid takes. Everything else a square needs
-/// is read off the cell itself, so this is the whole of what varies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Plan {
-    build: Build,
-    /// Whether the square cannot run without a comparator, which is what
-    /// splits the two halves of a run. Wider than "measures accuracy": query
-    /// throughput needs queries issued, and the comparator is what issues
-    /// them.
-    scored: bool,
-}
-
-impl Plan {
-    const fn timed(build: Build) -> Option<Plan> {
-        Some(Plan {
-            build,
-            scored: false,
-        })
-    }
-    const fn scored(build: Build) -> Option<Plan> {
-        Some(Plan {
-            build,
-            scored: true,
-        })
-    }
-}
-
-/// The grid, written out. Every square of (operation, metric) is named, and
-/// `None` is a square nothing implements — asking for one is legal and simply
-/// measures nothing.
-///
-/// There is no `_` arm on purpose: adding an operation or a metric fails to
-/// compile until this says what the new squares mean.
-fn plan_for(operation: Operation, metric: Metric) -> Option<Plan> {
-    use Metric::{Accuracy, Latency, Throughput};
-    use Operation::{Insert, Merge, Prepare, Query};
-    match (operation, metric) {
-        (Insert, Throughput) => Plan::timed(Build::Single),
-        (Insert, Latency) => Plan::timed(Build::Single),
-        (Insert, Accuracy) => None,
-        (Query, Throughput) => None,
-        (Query, Latency) => None,
-        (Query, Accuracy) => Plan::scored(Build::Single),
-        (Merge, Throughput) => None,
-        (Merge, Latency) => Plan::timed(Build::Sharded),
-        (Merge, Accuracy) => Plan::scored(Build::Sharded),
-        (Prepare, Throughput) => None,
-        (Prepare, Latency) => None,
-        (Prepare, Accuracy) => None,
-    }
-}
-
 /// Drives `config.runs + config.warmup_runs` iterations against a fixed
 /// workload, feeding each `Probe<S, FullSink>` into per-run `RunMetrics`.
 pub struct BenchRunner<'a, W: Workload> {
@@ -110,49 +50,18 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    /// The **timed** passes — throughput, latency, merge, plus CPU/MEMORY bits;
-    /// accuracy runs in [`run_accuracy`](Self::run_accuracy), off the hot loop.
-    /// Each primary bit gets its own report over a fresh population.
-    pub fn run_timed<S, F, Insert>(&self, mut factory: F, mut insert: Insert) -> Vec<BenchReport>
-    where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
-        W::Item: Clone,
-        F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-    {
-        let cells = cells(self.config.operations, self.config.metrics);
-        if cells.is_empty() {
-            return Vec::new();
-        }
-        warmup_cpu_once();
-        let mut reports = Vec::with_capacity(cells.len());
-        for cell in cells {
-            let Some(plan) = plan_for(cell.operation, cell.metric) else {
-                continue;
-            };
-            // A square that cannot run without a comparator belongs to
-            // `run_accuracy`. `NoGT` + `None` on the rest is what keeps `G`
-            // off this signature.
-            if plan.scored {
-                continue;
-            }
-            if let Some(report) =
-                self.run_square::<S, _, NoGT, _>(cell, plan, &mut factory, &mut insert, None)
-            {
-                reports.push(report);
-            }
-        }
-        reports
-    }
-
-    /// The **accuracy** passes — the accuracy pass itself, and the merge pass
-    /// (whose headline output is post-merge accuracy). Untimed relative to the
-    /// hot loop, so carrying `G` here costs the timed numbers nothing.
-    pub fn run_accuracy<S, F, G, Insert>(
+    /// Run every square the request selects. One place, one match: each
+    /// square of the grid either names the call that measures it or says
+    /// nothing measures it.
+    ///
+    /// `ground_truth` is what a square needing a comparator gets. Passing
+    /// `None` runs the squares that need none and skips the rest, which is
+    /// what the timed half of a cell does.
+    pub fn run<S, F, G, Insert>(
         &self,
         mut factory: F,
         mut insert: Insert,
-        gt: &G,
+        ground_truth: Option<&G>,
     ) -> Vec<BenchReport>
     where
         S: Accumulator<Item = W::Item> + MemoryFootprint,
@@ -161,58 +70,51 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
+        use Metric::{Accuracy, Latency, Throughput};
+        use Operation::{Insert as Ins, Merge, Prepare, Query};
+
         let cells = cells(self.config.operations, self.config.metrics);
         if cells.is_empty() {
             return Vec::new();
         }
         warmup_cpu_once();
-        let mut reports = Vec::new();
+        let mut reports = Vec::with_capacity(cells.len());
         for cell in cells {
-            let Some(plan) = plan_for(cell.operation, cell.metric) else {
-                continue;
+            let mut pass_cfg = self.config.clone();
+            pass_cfg.metrics = cell.mask();
+            // Folding one shard measures nothing, so the merge squares only
+            // run when there are shards to fold.
+            let folds = pass_cfg.merge_shards >= 2;
+
+            // The grid. No `_` arm: adding an operation or a metric fails to
+            // compile until the new squares say what they measure.
+            let report = match (cell.operation, cell.metric) {
+                (Ins, Throughput) | (Ins, Latency) => {
+                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                }
+                (Ins, Accuracy) => None,
+                (Query, Throughput) => None,
+                (Query, Latency) => None,
+                (Query, Accuracy) => ground_truth
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
+                (Merge, Throughput) => None,
+                (Merge, Latency) if folds => {
+                    Some(self.run_merge_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                }
+                (Merge, Latency) => None,
+                (Merge, Accuracy) if folds => ground_truth.map(|gt| {
+                    self.run_merge_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)
+                }),
+                (Merge, Accuracy) => None,
+                (Prepare, Throughput) => None,
+                (Prepare, Latency) => None,
+                (Prepare, Accuracy) => None,
             };
-            // The other half. Everything that runs without a comparator is
-            // timed in `run_timed`.
-            if !plan.scored {
-                continue;
-            }
-            if let Some(report) =
-                self.run_square(cell, plan, &mut factory, &mut insert, Some(gt))
-            {
+            if let Some(report) = report {
                 reports.push(report);
             }
         }
         reports
-    }
-
-    /// Run one square. The only place a plan turns into a call, so the two
-    /// halves of a run differ by the comparator they pass and nothing else.
-    /// `None` when the square was selected but has nothing to measure.
-    fn run_square<S, F, G, Insert>(
-        &self,
-        cell: Cell,
-        plan: Plan,
-        factory: &mut F,
-        insert: &mut Insert,
-        ground_truth: Option<&G>,
-    ) -> Option<BenchReport>
-    where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
-        W::Item: Clone,
-        F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-        G: GroundTruth<S>,
-    {
-        let mut pass_cfg = self.config.clone();
-        pass_cfg.metrics = cell.mask();
-        match plan.build {
-            Build::Single => Some(self.run_pass(cell, factory, insert, ground_truth, pass_cfg)),
-            // Folding a single shard measures nothing.
-            Build::Sharded if pass_cfg.merge_shards >= 2 => {
-                Some(self.run_merge_pass(cell, factory, insert, ground_truth, pass_cfg))
-            }
-            Build::Sharded => None,
-        }
     }
 
     /// Build `merge_shards` sketches over contiguous slices, fold them into one,

@@ -16,6 +16,7 @@ use aqpbm_core::accuracy::subpopulation::{
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{self, AccuracyCfg, BenchItem, ParallelInit, RunError, WorkloadSpec};
+use aqpbm_core::runner::NoGT;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
@@ -230,12 +231,10 @@ where
     S::Item: BenchItem,
     G: GroundTruthCalculator<S>,
 {
-    let mut reports = cell::run_cell::<S>(cfg, spec, params)?;
-    if acc.enabled {
-        let gt = G::build(acc, params);
-        reports.extend(cell::score_cell::<S, G>(cfg, spec, params, &gt)?);
-    }
-    Ok(reports)
+    // One walk of the grid: the squares needing a comparator run when there is
+    // one, and are skipped when there is not.
+    let gt = acc.enabled.then(|| G::build(acc, params));
+    Ok(cell::run_cell::<S, G>(cfg, spec, params, gt.as_ref())?)
 }
 
 /// An ordered quantile algorithm (KLL, DDSketch): the row names both widths and
@@ -271,7 +270,7 @@ where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
     S::Item: BenchItem,
 {
-    cell::run_cell::<S>(cfg, spec, params)
+    cell::run_cell::<S, NoGT>(cfg, spec, params, None)
 }
 
 /// A parallel-insert row: built with the worker count, so not an `InitSketch`.
@@ -286,7 +285,7 @@ where
     S: ParallelInit + BenchImpl + MemoryFootprint,
     S::Item: BenchItem,
 {
-    cell::run_cell_parallel::<S>(cfg, spec, params)
+    cell::run_cell_parallel::<S, NoGT>(cfg, spec, params, None)
 }
 
 /// A row whose `(rows, cols)` selects a *type* rather than sizing a field.

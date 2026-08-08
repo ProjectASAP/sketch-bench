@@ -7,7 +7,7 @@ use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::workload::I64Workload;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::CardinalityOps;
-use aqpbm_core::runner::{BenchConfig, BenchRunner};
+use aqpbm_core::runner::{BenchConfig, BenchRunner, NoGT};
 use aqpbm_core::metrics::OperationMask;
 use aqpbm_core::metrics::MetricsMask;
 
@@ -57,19 +57,15 @@ fn runner_end_to_end_produces_valid_jsonl() {
     };
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
     // The timed passes carry no ground truth; accuracy is scored separately.
-    let mut reports = runner.run_timed(
+    // One walk of the grid now: with a comparator in hand every square the
+    // request selects runs, so the timed ones are not asked for twice.
+    let reports = runner.run(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
+        Some(&CardinalityGT::default()),
     );
-    reports.extend(runner.run_accuracy(
-        || ExactCounter {
-            seen: Default::default(),
-        },
-        |s, it| s.update(it),
-        &CardinalityGT::default(),
-    ));
 
     // `MetricsMask::all()` ⇒ throughput + latency (timed) + accuracy = 3 passes.
     assert_eq!(reports.len(), 3);
@@ -146,13 +142,14 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
     };
     let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let f = finalized.clone();
-    let reports = BenchRunner::new(cfg, &workload, "deferred", "slim").run_timed(
+    let reports = BenchRunner::new(cfg, &workload, "deferred", "slim").run::<_, _, NoGT, _>(
         move || DeferredBuilder {
             buf: Vec::new(),
             distinct: 0,
             finalized: f.clone(),
         },
         |s, it| s.update(it),
+        None,
     );
 
     // Once per trial, warm-ups included — a warm-up that skipped the build
@@ -202,13 +199,14 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
         };
         let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let f = finalized.clone();
-        let reports = BenchRunner::new(cfg, &workload, "deferred", "paths").run_timed(
+        let reports = BenchRunner::new(cfg, &workload, "deferred", "paths").run::<_, _, NoGT, _>(
             move || DeferredBuilder {
                 buf: Vec::new(),
                 distinct: 0,
                 finalized: f.clone(),
             },
             |s, it| s.update(it),
+            None,
         );
         let bench = &reports[0].bench;
         assert!(
@@ -233,11 +231,12 @@ fn runner_respects_mask_noop_when_empty() {
         query_count: None,
         ..Default::default()
     };
-    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run_timed(
+    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run::<_, _, NoGT, _>(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
+        None,
     );
     // Empty mask ⇒ no passes ⇒ no reports.
     assert!(reports.is_empty());
@@ -260,12 +259,12 @@ fn the_two_merge_measurements_carry_different_names() {
     let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
     // Both cells compare against ground truth, so both belong to the accuracy
     // half of the run.
-    let reports = runner.run_accuracy(
+    let reports = runner.run(
         || ExactCounter {
             seen: Default::default(),
         },
         |s, it| s.update(it),
-        &CardinalityGT::default(),
+        Some(&CardinalityGT::default()),
     );
 
     let merge = reports

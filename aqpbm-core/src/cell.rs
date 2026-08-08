@@ -219,50 +219,11 @@ pub trait ParallelInit: Accumulator + Sized {
 
 /// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
 /// ground truth — the ground-truth calculator never touches the hot path.
-pub fn run_cell<S>(
+pub fn run_cell<S, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
     params: &ParamSet,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
-    S::init(params)?; // probe: the cell fails here if it cannot build
-    Ok(BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
-        .run_timed::<S, _, _>(|| built::<S>(params), insert_body))
-}
-
-/// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
-pub fn run_cell_parallel<S>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
-    let workers = cfg.threads;
-    S::build(params, workers)?; // probe
-    Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_timed::<S, _, _>(
-            move || S::build(params, workers).expect("construction proven by the probe above"),
-            insert_body,
-        ),
-    )
-}
-
-/// Run the **accuracy** half of a cell against ground truth `gt`. Untimed, so
-/// the calculator is free to live here. The caller supplies the one for this
-/// sketch's track.
-pub fn score_cell<S, G>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    gt: &G,
+    gt: Option<&G>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
@@ -270,12 +231,32 @@ where
     G: GroundTruth<S>,
 {
     let wk = <S::Item as BenchItem>::materialise(spec)?;
-    S::init(params)?; // probe
+    S::init(params)?; // probe: the cell fails here if it cannot build
+    Ok(BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
+        .run::<S, _, G, _>(|| built::<S>(params), insert_body, gt))
+}
+
+/// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
+pub fn run_cell_parallel<S, G>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    gt: Option<&G>,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S: ParallelInit + BenchImpl + MemoryFootprint,
+    S::Item: BenchItem,
+    G: GroundTruth<S>,
+{
+    let wk = <S::Item as BenchItem>::materialise(spec)?;
+    let workers = cfg.threads;
+    S::build(params, workers)?; // probe
     Ok(
-        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run_accuracy::<S, _, G, _>(
-            || built::<S>(params),
+        BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+            move || S::build(params, workers).expect("construction proven by the probe above"),
             insert_body,
             gt,
         ),
     )
 }
+
