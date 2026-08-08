@@ -44,11 +44,15 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         (Insert, Throughput) => {
             bench.throughput_items_per_sec = fold::throughput(runs);
             bench.throughput_samples = fold::throughput_samples(runs);
-            // The deferred build's two columns ride on the insert record for
-            // want of squares of their own.
+            // Not the deferred build's column: this one spans insert *and*
+            // prepare, so it belongs to neither square on its own and rides
+            // with the ingest rate it is meant to be read against.
             bench.build_throughput_items_per_sec = fold::build_throughput(runs);
-            bench.finalize_time_ms = fold::finalize_time_ms(runs);
         }
+        // How long the deferred build takes. The same loop the insert squares
+        // run: `prepare` is timed on its own clock either way, so this square
+        // reads a number that was always being taken.
+        (Prepare, Latency) => bench.finalize_time_ms = fold::finalize_time_ms(runs),
         (Insert, Latency) => bench.latency_ns = fold::latency_from_recorder(runs),
         (Query, Throughput) => bench.query_throughput_items_per_sec = fold::query_throughput(runs),
         (Query, Latency) => bench.latency_ns = fold::latency_from_calls(runs),
@@ -58,7 +62,7 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         (Merge, Latency) | (Merge, Throughput) => {}
         (Insert, Accuracy)
         | (Merge, Accuracy)
-        | (Prepare, Throughput | Latency | Accuracy) => {}
+        | (Prepare, Throughput | Accuracy) => {}
     }
 
     // Phase-boundary readings contaminate nothing, so they ride along with
@@ -200,7 +204,11 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // no answer to be right or wrong about.
                 (Merge, Accuracy) => return Err(unmeasured(cell)),
                 (Prepare, Throughput) => return Err(unmeasured(cell)),
-                (Prepare, Latency) => return Err(unmeasured(cell)),
+                // `prepare` runs at the end of the same insert loop, so this
+                // square is that loop read for a different number.
+                (Prepare, Latency) => {
+                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                }
                 (Prepare, Accuracy) => return Err(unmeasured(cell)),
             };
             if let Some(report) = report {
@@ -349,9 +357,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         // comparator is what issues them. Wider than measuring accuracy.
         let queries = cell.operation == Operation::Query;
         // Timing each question on its own is what a latency measurement is,
-        // and what a throughput measurement must not pay for. The runner owns
-        // the choice because it owns the square.
-        let per_call = cell.metric == Metric::Latency;
+        // and what a throughput measurement must not pay for. Keyed on the
+        // whole square, not the metric alone: it is the *query* latency square
+        // that wants each answer timed separately.
+        let per_call = (cell.operation, cell.metric) == (Operation::Query, Metric::Latency);
+        // Likewise the per-update probe belongs to the insert latency square.
+        // `prepare` shares this loop to reach its finalize clock, and must not
+        // pay the probe boundary on every insert to get there.
+        let per_update = (cell.operation, cell.metric) == (Operation::Insert, Metric::Latency);
         // Resampling is an accuracy concern: error is deterministic given
         // (data, parameters), so repeats over one draw would fabricate spread.
         // A timing over the same draw is a real repeat.
@@ -380,7 +393,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             let workload: &W = resampled.as_ref().unwrap_or(self.workload);
             let items = workload.items();
 
-            let (metrics, final_sketch) = if cell.metric == Metric::Latency {
+            let (metrics, final_sketch) = if per_update {
                 // The latency pass deliberately does NOT use `insert`: its
                 // instrument *is* the per-update `Probe` boundary. `aggregate`
                 // suppresses throughput here because the mask lacks the bit.

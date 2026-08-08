@@ -188,14 +188,44 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
         build.mean,
         ingest.mean
     );
-    assert!(bench.finalize_time_ms.as_ref().unwrap().mean > 0.0);
-
     // And it reaches the JSONL, which is where the number was stranded
     // before: `finalize_wall_time_ns` was measured but had nowhere to go.
     let back: aqpbm_core::Record = serde_json::from_str(&reports[0].to_jsonl()).unwrap();
-    let bench = back.bench.unwrap();
-    assert!(bench.build_throughput_items_per_sec.is_some());
-    assert!(bench.finalize_time_ms.is_some());
+    assert!(back.bench.unwrap().build_throughput_items_per_sec.is_some());
+
+    // The build's own duration is a different square, and asking for it is how
+    // you get it. It rides the same insert loop, so the number is the same one;
+    // what changed is that a caller who never asks no longer receives it.
+    let prepare = finalize_only(&workload);
+    assert!(prepare.finalize_time_ms.as_ref().unwrap().mean > 0.0);
+    let back: aqpbm_core::Record = serde_json::from_str(&reports[0].to_jsonl()).unwrap();
+    assert!(back.bench.is_some());
+}
+
+/// One `(prepare, latency)` request against the deferred builder. Its own call
+/// because the cross product of `insert,prepare` with `throughput` would reach
+/// `(prepare, throughput)`, which is a hole.
+fn finalize_only(workload: &I64Workload) -> aqpbm_core::BenchSection {
+    let cfg = BenchConfig {
+        runs: 3,
+        warmup_runs: 1,
+        metrics: MetricsMask::LATENCY,
+        operations: OperationMask::PREPARE,
+        ..Default::default()
+    };
+    let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reports = BenchRunner::new(cfg, workload, "deferred", "prepare")
+        .run::<_, _, NoGT, _>(
+            move || DeferredBuilder {
+                buf: Vec::new(),
+                distinct: 0,
+                finalized: finalized.clone(),
+            },
+            |s, it| s.update(it),
+            None,
+        )
+        .expect("every square asked for is measured");
+    reports[0].bench.clone()
 }
 
 /// The same sketch through the other two paths: whichever `--metrics` flags are
@@ -230,10 +260,6 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
         )
         .expect("every square asked for is measured");
         let bench = &reports[0].bench;
-        assert!(
-            bench.finalize_time_ms.as_ref().unwrap().mean > 0.0,
-            "{metrics:?} lost the finalize timing"
-        );
         assert!(
             bench.build_throughput_items_per_sec.as_ref().unwrap().mean
                 < bench.throughput_items_per_sec.as_ref().unwrap().mean,
