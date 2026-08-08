@@ -5,17 +5,22 @@ pub mod welford;
 
 use welford::Welford;
 
-use crate::metrics::{ItemsPerSec, MetricsMask, RunMetrics};
+use crate::metrics::{Cell, ItemsPerSec, Metric, MetricsMask, Operation, RunMetrics};
 use crate::report::{BenchSection, CpuTime, LatencySummary, RunStats};
 
-/// Roll up `RunMetrics` into one `BenchSection`. `mask` is the *pass* mask;
-/// fields whose bit is absent are suppressed, distinguishing "not measured
-/// here" from "zero". THROUGHPUT yields three fields — see `BenchSection`.
-pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
+/// Roll up `RunMetrics` into one `BenchSection` for one square of the grid.
+/// A field the square did not measure is suppressed, which is what keeps "not
+/// measured here" apart from "zero".
+///
+/// The square decides, not the mask: throughput over insert and throughput
+/// over query are the same metric on different operations, and they are not
+/// the same column.
+pub fn aggregate(runs: &[RunMetrics], cell: Cell) -> BenchSection {
     let n = runs.len();
+    let mask = cell.mask();
 
     let (throughput, throughput_samples, build_throughput, finalize_time_ms) =
-        if mask.contains(MetricsMask::THROUGHPUT) {
+        if (cell.operation, cell.metric) == (Operation::Insert, Metric::Throughput) {
             let mut w = Welford::new();
             let mut build_w = Welford::new();
             let mut fin_w = Welford::new();
@@ -50,7 +55,11 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
             (None, None, None, None)
         };
 
-    let query_throughput = if mask.contains(MetricsMask::ACCURACY) {
+    // Issuing queries is what the comparator does, so both squares that
+    // measure the query operation get their number from the same two counters.
+    let query_throughput = if cell.operation == Operation::Query
+        || (cell.operation == Operation::Merge && cell.metric == Metric::Accuracy)
+    {
         let mut w = Welford::new();
         for r in runs {
             if r.query_wall_time_ns > 0 {
@@ -120,7 +129,7 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
     };
     let memory_bytes = runs.iter().filter_map(|r| r.memory_bytes).next_back();
 
-    let latency_ns = if mask.contains(MetricsMask::LATENCY) {
+    let latency_ns = if (cell.operation, cell.metric) == (Operation::Insert, Metric::Latency) {
         runs.iter()
             .rev()
             .find_map(|r| r.latency_ns.as_ref())
@@ -136,7 +145,7 @@ pub fn aggregate(runs: &[RunMetrics], mask: MetricsMask) -> BenchSection {
         None
     };
 
-    let accuracy = if mask.contains(MetricsMask::ACCURACY) {
+    let accuracy = if cell.metric == Metric::Accuracy {
         merge_accuracy(runs)
     } else {
         None
@@ -236,6 +245,15 @@ fn runstats_from(w: Welford) -> RunStats {
 mod tests {
     use super::*;
 
+    /// The two squares these tests fold for.
+    fn insert(metric: Metric) -> Cell {
+        Cell {
+            operation: Operation::Insert,
+            metric,
+            secondary: MetricsMask::empty(),
+        }
+    }
+
     fn rm(items: u64, wall_ns: u64, insert_ns: u64) -> RunMetrics {
         RunMetrics {
             items_inserted: items,
@@ -261,7 +279,7 @@ mod tests {
             rm(1_000_000, 100_000_000, 100_000_000),
             rm(1_000_000, 50_000_000, 50_000_000),
         ];
-        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let out = aggregate(&runs, insert(Metric::Throughput));
         let tp = out.throughput_items_per_sec.expect("ingest present");
         let bt = out.build_throughput_items_per_sec.expect("build present");
         assert_eq!(bt.mean, tp.mean);
@@ -279,7 +297,7 @@ mod tests {
         // 10ms of push + 90ms of engine work over 1M items: 100M/s ingest,
         // 10M/s build.
         let runs = vec![rm_deferred(1_000_000, 10_000_000, 90_000_000)];
-        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let out = aggregate(&runs, insert(Metric::Throughput));
         let tp = out.throughput_items_per_sec.expect("ingest present");
         let bt = out.build_throughput_items_per_sec.expect("build present");
         assert!((tp.mean - 100_000_000.0).abs() < 1.0);
@@ -298,7 +316,7 @@ mod tests {
             // perfectly measurable.
             rm_deferred(1_000_000, 0, 90_000_000),
         ];
-        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let out = aggregate(&runs, insert(Metric::Throughput));
         assert_eq!(out.throughput_items_per_sec.unwrap().n, 1);
         assert_eq!(out.build_throughput_items_per_sec.unwrap().n, 1);
         assert_eq!(out.finalize_time_ms.unwrap().n, 1);
@@ -307,14 +325,14 @@ mod tests {
     #[test]
     fn build_throughput_is_suppressed_with_the_throughput_bit() {
         let runs = vec![rm_deferred(1_000_000, 10_000_000, 90_000_000)];
-        let out = aggregate(&runs, MetricsMask::LATENCY);
+        let out = aggregate(&runs, insert(Metric::Latency));
         assert!(out.build_throughput_items_per_sec.is_none());
         assert!(out.finalize_time_ms.is_none());
     }
 
     #[test]
     fn aggregate_empty_returns_none_metrics() {
-        let out = aggregate(&[], MetricsMask::all());
+        let out = aggregate(&[], insert(Metric::Throughput));
         assert!(out.throughput_items_per_sec.is_none());
     }
 
@@ -324,7 +342,7 @@ mod tests {
             rm(1_000_000, 100_000_000, 100_000_000), // 10M/s
             rm(1_000_000, 50_000_000, 50_000_000),   // 20M/s
         ];
-        let out = aggregate(&runs, MetricsMask::THROUGHPUT);
+        let out = aggregate(&runs, insert(Metric::Throughput));
         let tp = out.throughput_items_per_sec.expect("throughput present");
         assert!((tp.mean - 15_000_000.0).abs() < 1.0);
         assert_eq!(tp.n, 2);
@@ -333,7 +351,7 @@ mod tests {
     #[test]
     fn aggregate_suppresses_throughput_when_bit_unset() {
         let runs = vec![rm(1_000_000, 100_000_000, 100_000_000)];
-        let out = aggregate(&runs, MetricsMask::LATENCY);
+        let out = aggregate(&runs, insert(Metric::Latency));
         assert!(out.throughput_items_per_sec.is_none());
     }
 }

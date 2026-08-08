@@ -67,8 +67,9 @@ fn runner_end_to_end_produces_valid_jsonl() {
         Some(&CardinalityGT::default()),
     );
 
-    // `MetricsMask::all()` ⇒ throughput + latency (timed) + accuracy = 3 passes.
-    assert_eq!(reports.len(), 3);
+    // insert × {throughput, latency} plus query × {throughput, accuracy}: the
+    // four squares of the default request that something implements.
+    assert_eq!(reports.len(), 4);
     for r in &reports {
         assert_eq!(r.per_run.len(), 3);
     }

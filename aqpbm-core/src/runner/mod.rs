@@ -93,7 +93,10 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
                 }
                 (Ins, Accuracy) => None,
-                (Query, Throughput) => None,
+                // Issuing the queries is the measurement, so this square
+                // needs the comparator as much as accuracy does.
+                (Query, Throughput) => ground_truth
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
                 (Query, Latency) => None,
                 (Query, Accuracy) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
@@ -235,15 +238,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        // The pass mask carries only MERGE, and `aggregate` suppresses metrics
-        // whose bit is absent. Add ACCURACY when a comparator actually ran, or
-        // post-merge accuracy — the point of this pass — is computed then lost.
-        let agg_mask = if ground_truth.is_some() {
-            pass_cfg.metrics | MetricsMask::ACCURACY
-        } else {
-            pass_cfg.metrics
-        };
-        let mut bench = aggregate(&per_run, agg_mask);
+        let mut bench = aggregate(&per_run, cell);
         bench.operation = Some(cell.operation.name().to_string());
         bench.pass = Some(cell.metric.name().to_string());
         // The fold's cost belongs to the cell that asked for it. The scored
@@ -295,6 +290,12 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         Insert: FnMut(&mut S, &W::Item),
         G: GroundTruth<S>,
     {
+        // Measuring the query operation means issuing queries, and the
+        // comparator is what issues them. Wider than measuring accuracy.
+        let queries = cell.operation == Operation::Query;
+        // Resampling is an accuracy concern: error is deterministic given
+        // (data, parameters), so repeats over one draw would fabricate spread.
+        // A timing over the same draw is a real repeat.
         let accuracy_pass = cell.metric == Metric::Accuracy;
 
         // A repetition is only worth running if it draws its own sample: error
@@ -333,7 +334,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // The comparator owns the query phase, so it runs on warm-up
             // iterations too — otherwise `--warmup-runs` protects only the
             // insert side and the first measured query is a cold one.
-            let comparison = if accuracy_pass {
+            let comparison = if queries {
                 ground_truth.map(|gt| gt.compare(&final_sketch, items))
             } else {
                 None
@@ -355,7 +356,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
         }
 
-        let mut bench = aggregate(&per_run, pass_cfg.metrics);
+        let mut bench = aggregate(&per_run, cell);
         bench.operation = Some(cell.operation.name().to_string());
         bench.pass = Some(cell.metric.name().to_string());
         // `runs` says how many were measured, not asked for: a non-resamplable
