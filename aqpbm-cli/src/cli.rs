@@ -162,6 +162,11 @@ pub struct SketchbenchArgs {
     /// takes; cpu and memory attach to every one instead of forming their own.
     #[arg(long, help_heading = "Measurement content")]
     pub metrics: Option<String>,
+    /// Which comparator scores this row, by name. A row admits only the
+    /// comparators its capabilities can answer, and the catalog is what lists
+    /// them; omitted takes the row's default.
+    #[arg(long, help_heading = "Measurement content")]
+    pub comparator: Option<String>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
     /// measured over. Insert and query are assumed of every implementation and
     /// are the default; merge and prepare are declared, so ask for them by

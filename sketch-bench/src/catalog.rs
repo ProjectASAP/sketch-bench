@@ -54,6 +54,10 @@ type RunFn = fn(
     Numeric,
 ) -> Result<Vec<BenchReport>, RunError>;
 
+/// The comparators a row can be scored by, keyed by the name `--comparator`
+/// selects them with.
+type Comparators = &'static [(&'static str, RunFn)];
+
 /// One catalog entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
 /// row's type and its runner — never hand-written strings that could drift from
@@ -79,6 +83,11 @@ pub struct Row {
     /// list instead of a single-column spec? Derived off the row's item type.
     pub takes_columns: bool,
     run: RunFn,
+    /// The comparators this row admits, by name, first one the default. Every
+    /// entry is checked by the compiler: a calculator the row's capabilities
+    /// cannot satisfy will not build, so the table cannot offer a comparison
+    /// the row could not answer.
+    comparators: Comparators,
 }
 
 // ---------- how a row builds its ground truth ----------
@@ -87,6 +96,10 @@ pub struct Row {
 /// row's params. A trait, not a `fn` argument, so the calculator is named as a
 /// *type* in [`ROWS`] and the row stays `const`.
 trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
+    /// The name `--comparator` selects this one by. One capability can carry
+    /// several comparators, and this is what tells them apart on the command
+    /// line.
+    const NAME: &'static str;
     fn build(acc: &AccuracyCfg, params: &ParamSet) -> Self;
 }
 
@@ -94,6 +107,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for CardinalityGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "cardinality";
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         CardinalityGT {
             record_calls: acc.record_query_calls,
@@ -105,6 +119,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for FrequencyGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "frequency";
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         FrequencyGT {
             max_probes: acc.max_probes,
@@ -116,6 +131,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for SubpopFrequencyGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "subpop-frequency";
     /// Scores column 0. A grouped sketch stores every column subset, but each
     /// one is its own population with its own error, so a comparator names the
     /// one it scores instead of pooling them.
@@ -131,6 +147,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for SubpopCardinalityGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "subpop-cardinality";
     /// Column 0, for the same reason as [`SubpopFrequencyGT`].
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         SubpopCardinalityGT {
@@ -144,6 +161,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for SubpopRankErrorGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "subpop-rank-error";
     /// Column 0, and `max_probes` caps groups instead of keys: this comparator
     /// issues 101 estimate calls per group, so the cap bites much sooner here
     /// than it does for the two counting comparators.
@@ -159,6 +177,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for RankErrorGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "rank-error";
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         RankErrorGT {
             record_calls: acc.record_query_calls,
@@ -170,6 +189,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for RelativeErrorGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "relative-error";
     fn build(acc: &AccuracyCfg, _params: &ParamSet) -> Self {
         RelativeErrorGT {
             record_calls: acc.record_query_calls,
@@ -181,6 +201,7 @@ impl<S: Accumulator> GroundTruthCalculator<S> for TopkGT
 where
     Self: GroundTruth<S>,
 {
+    const NAME: &'static str = "topk";
     /// Scores against the same `k` the sketch was built with — a different prefix
     /// would measure the mismatch, not the sketch. Infallible because the timed
     /// half runs first, so an unreadable `k` has already failed the build.
@@ -398,6 +419,7 @@ where
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_scored::<S, G>,
+        comparators: &[(G::NAME, run_scored::<S, G>)],
     }
 }
 
@@ -417,6 +439,10 @@ where
         picks_width: true,
         takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
         run: run_ordered::<Si, Sf, G>,
+        comparators: &[(
+            <G as GroundTruthCalculator<Si>>::NAME,
+            run_ordered::<Si, Sf, G>,
+        )],
     }
 }
 
@@ -439,6 +465,10 @@ where
         picks_width: false,
         takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
         run: run_lib_hll::<S12, S14, S16, G>,
+        comparators: &[(
+            <G as GroundTruthCalculator<S12>>::NAME,
+            run_lib_hll::<S12, S14, S16, G>,
+        )],
     }
 }
 
@@ -457,6 +487,9 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
         picks_width: false,
         takes_columns: false,
         run: run_fixed_matrix::<W>,
+        // The fixed-matrix rows carry their comparator inside the generated
+        // dispatch, so there is no calculator type here to name.
+        comparators: &[],
     }
 }
 
@@ -474,6 +507,8 @@ where
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_plain::<S>,
+        // Answers no query, so nothing scores it.
+        comparators: &[],
     }
 }
 
@@ -491,6 +526,7 @@ where
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
         run: run_parallel::<S>,
+        comparators: &[],
     }
 }
 
@@ -680,6 +716,7 @@ pub fn run(
     params: &ParamSet,
     acc: &AccuracyCfg,
     width: Numeric,
+    comparator: Option<&str>,
 ) -> Result<Vec<BenchReport>> {
     let row = find(algorithm, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))?;
@@ -688,7 +725,42 @@ pub fn run(
     if width == Numeric::F64 && !row.picks_width {
         anyhow::bail!("{algorithm}/{impl_name} runs over i64 only; drop --dtype f64");
     }
-    Ok((row.run)(cfg, spec, params, acc, width)?)
+    // A named comparator has to be one this row admits. Refused from the
+    // catalog, by name, before anything is generated — the same rule the rest
+    // of the selectors follow.
+    let run = match comparator {
+        None => row.run,
+        Some(name) => row
+            .comparators
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| *f)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{algorithm}/{impl_name} has no comparator '{name}'; it admits {}",
+                    comparators_of(row)
+                )
+            })?,
+    };
+    Ok(run(cfg, spec, params, acc, width)?)
+}
+
+/// The comparator names a row admits, for an error message.
+fn comparators_of(row: &Row) -> String {
+    if row.comparators.is_empty() {
+        return "none".to_string();
+    }
+    row.comparators
+        .iter()
+        .map(|(n, _)| *n)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Which comparators a row admits. `None` for an unknown row, so a frontend
+/// can tell "no such row" from "that row is scored by nothing".
+pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
+    find(algorithm, impl_name).map(|row| row.comparators.iter().map(|(n, _)| *n).collect())
 }
 
 #[cfg(test)]
@@ -861,6 +933,7 @@ mod tests {
                 &params,
                 &acc,
                 Numeric::I64,
+                None,
             );
             // Fixed-matrix rows refuse an off-shape config (a `RunError::Build`
             // surfaced as an error); every other row runs.
@@ -903,6 +976,7 @@ mod tests {
                     &params,
                     &acc,
                     Numeric::I64,
+                    None,
                 );
                 assert_eq!(
                     got.is_ok(),

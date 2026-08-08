@@ -360,6 +360,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         &params,
         &accuracy_cfg,
         width,
+        args.comparator.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
