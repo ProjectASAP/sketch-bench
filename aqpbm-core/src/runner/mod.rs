@@ -53,12 +53,11 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         (Query, Throughput) => bench.query_throughput_items_per_sec = fold::query_throughput(runs),
         (Query, Latency) => bench.latency_ns = fold::latency_from_calls(runs),
         (Query, Accuracy) => bench.accuracy = fold::accuracy(runs),
-        // The fold's own timing is filled by `run_merge_pass`, which is what
-        // holds the clock around it.
-        (Merge, Latency) => {}
+        // Both merge squares are filled by `run_merge_pass`, which is what
+        // holds the clock around the fold.
+        (Merge, Latency) | (Merge, Throughput) => {}
         (Insert, Accuracy)
         | (Merge, Accuracy)
-        | (Merge, Throughput)
         | (Prepare, Throughput | Latency | Accuracy) => {}
     }
 
@@ -88,6 +87,16 @@ pub fn needs_ground_truth(operations: OperationMask, metrics: MetricsMask) -> bo
     cells(operations, metrics)
         .into_iter()
         .any(|c| c.operation == Operation::Query)
+}
+
+/// A `RunStats` when the population is non-empty.
+fn maybe_stats(w: Welford) -> Option<RunStats> {
+    (w.n() > 0).then(|| RunStats {
+        mean: w.mean(),
+        stddev: w.stddev(),
+        ci95: None,
+        n: w.n(),
+    })
 }
 
 /// A square the grid admits and nothing measures.
@@ -170,7 +179,14 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
                 (Query, Accuracy) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
-                (Merge, Throughput) => return Err(unmeasured(cell)),
+                (Merge, Throughput) => {
+                    if pass_cfg.merge_shards < 2 {
+                        return Err(RunError::NothingToFold {
+                            shards: pass_cfg.merge_shards,
+                        });
+                    }
+                    Some(self.run_merge_pass::<S, _, _>(cell, &mut factory, &mut insert, pass_cfg))
+                }
                 (Merge, Latency) => {
                     if pass_cfg.merge_shards < 2 {
                         return Err(RunError::NothingToFold {
@@ -272,28 +288,36 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         let mut bench = section(cell, &per_run);
         bench.operation = Some(cell.operation.name().to_string());
         bench.metric = Some(cell.metric.name().to_string());
-        // The fold's cost belongs to the cell that asked for it. The scored
-        // cell folds only to have something to query, so it reports no time.
-        if cell.metric != Metric::Latency {
-            bench.merge_time_ms = None;
-        }
-        // Nothing in this pass is timed end-to-end: shard filling is
-        // deliberately excluded and only the fold is measured, so a
-        // `wall_time_ms` of 0 would claim a measurement that was not taken.
+        // Nothing here is timed end-to-end: shard filling is deliberately
+        // excluded and only the fold is measured, so a `wall_time_ms` of 0
+        // would claim a measurement that was not taken.
         bench.wall_time_ms = None;
         bench.merge_shards = Some(folded_shards);
         bench.merge_supported = Some(supported);
         if supported && !merge_ns.is_empty() {
             let mut w = Welford::new();
-            for ns in &merge_ns {
-                w.push(*ns as f64 / 1_000_000.0);
+            match cell.metric {
+                // How long one fold takes.
+                Metric::Latency => {
+                    for ns in &merge_ns {
+                        w.push(*ns as f64 / 1_000_000.0);
+                    }
+                    bench.merge_time_ms = maybe_stats(w);
+                }
+                // How many folds a second buys. A fold is `folded_shards - 1`
+                // merge calls, so that is the numerator: the unit is folds,
+                // not items, because merge consumes sketches and not a stream.
+                Metric::Throughput => {
+                    let folds = folded_shards.saturating_sub(1) as f64;
+                    for ns in &merge_ns {
+                        if *ns > 0 {
+                            w.push(folds * 1_000_000_000.0 / *ns as f64);
+                        }
+                    }
+                    bench.merge_folds_per_sec = maybe_stats(w);
+                }
+                Metric::Accuracy => unreachable!("merge has no accuracy square"),
             }
-            bench.merge_time_ms = Some(RunStats {
-                mean: w.mean(),
-                stddev: w.stddev(),
-                ci95: None,
-                n: w.n(),
-            });
         }
 
         BenchReport {

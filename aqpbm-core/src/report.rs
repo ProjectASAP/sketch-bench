@@ -150,6 +150,11 @@ pub struct BenchSection {
     /// throughput.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_time_ms: Option<RunStats>,
+    /// Folds per second. A fold is `merge_shards - 1` merge calls, so the unit
+    /// is folds: merge consumes sketches, not a stream, and items per second
+    /// would have no denominator here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_folds_per_sec: Option<RunStats>,
     /// How many shards were folded. Present whenever merge was measured, even
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,6 +333,8 @@ pub struct MergeMetrics {
     #[serde(rename = "merge_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
     pub merge_time_ms: Option<RunStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_folds_per_sec: Option<RunStats>,
     pub merge_shards: Option<usize>,
     pub merge_supported: Option<bool>,
 }

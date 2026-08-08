@@ -110,6 +110,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             heap_bytes_peak,
             accuracy,
             merge_time_ms,
+            merge_folds_per_sec,
             merge_shards,
             merge_supported,
         } = bench;
@@ -159,6 +160,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             "merge" => {
                 out.merge.timestamp = Some(record.timestamp);
                 out.merge.merge_time_ms = *merge_time_ms;
+                out.merge.merge_folds_per_sec = *merge_folds_per_sec;
                 out.merge.merge_shards = *merge_shards;
                 out.merge.merge_supported = *merge_supported;
             }

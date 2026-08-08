@@ -223,6 +223,7 @@ mod tests {
             heap_bytes_peak: Some(65536),
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_time_ms: Some(stats(0.4)),
+            merge_folds_per_sec: None,
             merge_shards: Some(4),
             merge_supported: Some(true),
         });
