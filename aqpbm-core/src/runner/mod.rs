@@ -394,9 +394,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             let items = workload.items();
 
             let (metrics, final_sketch) = if per_update {
-                // The latency pass deliberately does NOT use `insert`: its
-                // instrument *is* the per-update `Probe` boundary. `aggregate`
-                // suppresses throughput here because the mask lacks the bit.
+                // This square deliberately does NOT use `insert`: its
+                // instrument *is* the per-update `Probe` boundary.
                 let sink = FullSink::new(pass_cfg.metrics);
                 run_once(factory, sink, items)
             } else {
@@ -501,9 +500,9 @@ where
     (metrics, sketch)
 }
 
-/// One measured run with no per-update instrumentation, for the THROUGHPUT and
-/// ACCURACY passes: no `Probe` wrapper, so the sketch's `update` is alone in the
-/// loop. Phase-boundary metrics still attach via direct primitives.
+/// One measured run with no per-update instrumentation: no `Probe` wrapper, so
+/// the sketch's `update` is alone in the loop. Every square but insert latency
+/// takes this path. Phase-boundary metrics still attach via direct primitives.
 #[inline(always)]
 fn run_once_clean<S, F, Insert>(
     factory: &mut F,
@@ -589,7 +588,7 @@ where
     (metrics, sketch)
 }
 
-/// Output of one `BenchRunner` pass. Convertible to the v1 JSONL [`Record`].
+/// Output of one square. Convertible to the v1 JSONL [`Record`].
 #[derive(Debug, Clone)]
 pub struct BenchReport {
     pub sketch: String,

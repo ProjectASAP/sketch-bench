@@ -150,9 +150,9 @@ fn merge(records: Vec<Record>) -> Record {
         bench.wall_time_ms = Some(wall);
     }
     // The fold is a timing like any other, and it varies across processes for
-    // the same reasons: arena, layout, governor. Left out, the merge pass was
-    // the one pass whose record said `runs: R` while its number came from
-    // repeat 1 alone and carried no interval.
+    // the same reasons: arena, layout, governor. Left out, merge was the one
+    // square whose record said `runs: R` while its number came from repeat 1
+    // alone and carried no interval.
     if let (Some(m), _) = across(records.iter(), |b| b.merge_time_ms) {
         bench.merge_time_ms = Some(m);
     }
@@ -315,7 +315,7 @@ mod tests {
     }
 
     /// The reason the axis exists: R independent processes support an interval,
-    /// and the merge pass must get one like every other pass.
+    /// and the merge square must get one like every other square.
     #[test]
     fn merge_time_gets_an_interval_across_repeats() {
         let merged = merge((0..3).map(|i| record(100.0 + i as f64)).collect());

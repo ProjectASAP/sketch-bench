@@ -23,8 +23,7 @@ impl Accumulator for ExactCounter {
     fn update(&mut self, v: &i64) {
         self.seen.insert(*v);
     }
-    /// Set union — exact, so the merge pass can also check that merging
-    /// costs no accuracy, which is the property the pass exists to test.
+    /// Set union, exact, so a fold can be checked to cost no accuracy.
     fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
         self.seen.extend(other.seen.iter().copied());
         Ok(())
@@ -236,7 +235,7 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
     let workload = I64Workload::uniform(20_000, 5_000, 11);
     for metrics in [
         MetricsMask::THROUGHPUT,
-        // Secondary bits attach to the primary pass and route it through
+        // Secondary bits attach to the square and route it through
         // `run_once_clean` instead of the slim path.
         MetricsMask::THROUGHPUT | MetricsMask::MEMORY,
     ] {

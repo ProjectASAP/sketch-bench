@@ -2,7 +2,7 @@
 //! sketch, nothing that knows *which* sketches exist. See `docs/DESIGN.md` §3.1.
 //!
 //! Implement [`accumulator::Accumulator`], [`init::InitSketch`], [`init::BenchImpl`]
-//! + one capability trait per statistic, then call [`cell::run_cell`]/[`cell::score_cell`].
+//! + one capability trait per statistic, then call [`cell::run_cell`].
 
 pub mod accumulator;
 pub mod accuracy;

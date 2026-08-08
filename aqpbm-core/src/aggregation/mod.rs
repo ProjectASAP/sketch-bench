@@ -10,13 +10,6 @@ use welford::Welford;
 use crate::metrics::{ItemsPerSec, RunMetrics};
 use crate::report::{CpuTime, LatencySummary, RunStats};
 
-/// Roll up `RunMetrics` into one `BenchSection` for one square of the grid.
-/// A field the square did not measure is suppressed, which is what keeps "not
-/// measured here" apart from "zero".
-///
-/// The square decides, not the mask: throughput over insert and throughput
-/// over query are the same metric on different operations, and they are not
-/// the same column.
 /// Ingest rate, `items / insert_wall`, with `prepare` excluded. `None` when no
 /// run recorded an insert.
 pub fn throughput(runs: &[RunMetrics]) -> Option<RunStats> {

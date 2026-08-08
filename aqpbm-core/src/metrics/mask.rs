@@ -91,7 +91,7 @@ impl Operation {
 }
 
 impl Metric {
-    /// The name this metric carries in a record's `pass` field.
+    /// The name this metric carries in a record's `metric` field.
     pub fn name(self) -> &'static str {
         match self {
             Metric::Throughput => "throughput",

@@ -1,15 +1,11 @@
-//! The CLI emits one raw [`Record`] per metric pass (see the comment at
-//! `main.rs`'s `run_bench`: "A downstream group-by on (sketch, impl,
-//! sketch_config, workload) merges them back."). [`flatten_record`] is that
-//! downstream step: given the 2-4 [`Record`]s that share one identity
-//! (one insert pass, one query/accuracy pass, optionally a latency pass,
-//! optionally a merge pass), it folds them into a single [`MergedRecord`]
-//! row. [`MergedRecord`] itself lives in `aqpbm_core` alongside [`Record`]
-//! — it's a JSONL wire shape, not CLI-specific logic.
+//! What `--flat` does: fold one cell's records into one row.
 //!
-//! Grouping records by identity, and splitting a re-run (the same pass
-//! appearing twice) into two separate calls to `flatten_record` instead of
-//! silently overwriting, is the caller's job — not implemented here yet.
+//! The row holds one slot per operation, and a metric is a field inside a
+//! slot. A square is named by both, so a slot keyed on either name alone
+//! would hold two squares at once.
+//!
+//! [`MergedRecord`] lives in `aqpbm_core` beside [`Record`], being a wire
+//! shape and not CLI logic. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
     BenchSection, InsertMetrics, MergeMetrics, MergedRecord, PrepareMetrics, QueryMetrics, Record,
@@ -109,11 +105,10 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             merge_supported,
         } = bench;
 
-        // Structural footprint fields: pass-invariant (the sketch has one
-        // size, however many passes measure it), so first value wins
-        // rather than favoring any particular pass. `heap_bytes_net` is
-        // kept separate from `memory_bytes` rather than overriding it —
-        // see the field doc on `MergedRecord::heap_bytes_net`.
+        // A sketch has one size however many squares measured it, so the
+        // first value wins and no square is favoured. `heap_bytes_net` stays
+        // separate from `memory_bytes`: see the field doc on
+        // `MergedRecord::heap_bytes_net`.
         if let Some(mb) = memory_bytes {
             out.memory_bytes.get_or_insert(*mb);
         }

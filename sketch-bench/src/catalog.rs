@@ -70,7 +70,7 @@ pub struct Row {
     pub impl_name: &'static str,
     /// The one field that is genuinely new data, and so is written in [`ROWS`].
     pub description: &'static str,
-    /// Does `--accuracy` score this row? Derived: true iff it was built with a
+    /// Can a comparator score this row? Derived: true iff it was built with a
     /// constructor that takes a ground-truth calculator.
     pub scores_accuracy: bool,
     /// Can this row run at [`Numeric::F64`]? Derived: only `ordered` rows can.
@@ -203,7 +203,7 @@ where
 
 // ---------- the ways a row runs ----------
 
-/// Timed measurement, plus accuracy scored against `G` when `--accuracy` is on.
+/// Every square the request selects, scored against `G` where one needs it.
 fn run_scored<S, G>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
@@ -670,7 +670,7 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
         .map(|r| r.family)
 }
 
-/// Does `--accuracy` score this row? `None` if the row is unknown.
+/// Can a comparator score this row? `None` if the row is unknown.
 pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool> {
     find(algorithm, impl_name).map(|r| r.scores_accuracy)
 }

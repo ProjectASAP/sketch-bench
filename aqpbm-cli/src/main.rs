@@ -87,7 +87,7 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
     Ok(m)
 }
 
-/// Validate `--algorithm`/`--impl` and report whether `--accuracy` can score it.
+/// Validate `--algorithm`/`--impl` and report whether a comparator can score it.
 fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
     if !catalog::algorithm_exists(algorithm) {
         bail!("unknown algorithm: {algorithm}");
@@ -360,7 +360,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
-    // `catalog::run` returns one report per metric pass; emit each on its own
+    // `catalog::run` returns one report per square; emit each on its own
     // JSONL line and CSV row group. A downstream group-by on
     // (sketch, impl, sketch_config, workload) merges them back.
     // Resolved once: `catalog::run` succeeded, so the row exists and so does

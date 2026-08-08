@@ -239,14 +239,10 @@ pub struct LatencySummary {
     pub count: u64,
 }
 
-/// Flattened form of the 2-4 [`Record`]s that share one (sketch, impl,
-/// sketch_config, workload) identity — one row per cell instead of one row
-/// per pass. Built by `aqpbm-cli`'s `flatten_record` from a throughput
-/// pass, a query/accuracy pass, an optional latency pass, and an optional
-/// merge pass. Field names on the wire match `scripts/merge_passes.py`'s
-/// current output, so existing consumers don't need to change. Lives next
-/// to [`Record`] rather than in the CLI crate since it's a JSONL wire
-/// shape like `Record`, not CLI-specific logic.
+/// Flattened form of the [`Record`]s that share one (sketch, impl,
+/// sketch_config, workload) identity: one row per cell, where the record
+/// stream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.
+/// Lives beside [`Record`] because it is a JSONL wire shape, not CLI logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergedRecord {
     pub schema_version: u32,
