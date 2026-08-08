@@ -185,6 +185,11 @@ Output:
           variant does not fork the file a plot script reads; the variant lands in the
           `implementation` column. Coexists with `--report`
 
+      --flat
+          Write one line for the whole cell instead of one per square, folding the cell's
+          records into a single flattened row: one slot per operation, one field per metric. One
+          record per square is the default; this is the shape a leaderboard reads
+
 Options:
   -h, --help
           Print help (see a summary with '-h')

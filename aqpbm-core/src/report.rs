@@ -271,16 +271,18 @@ pub struct MergedRecord {
     pub heap_bytes_net: Option<u64>,
     /// High-water mark of the same counter across construction and insert.
     pub heap_bytes_peak: Option<u64>,
-    pub accuracy: Option<serde_json::Value>,
 
+    // One slot per operation, and within a slot one field per metric. A
+    // measurement is named by both, so a flattened row that named only one of
+    // them had two squares landing in the same place.
     #[serde(flatten)]
     pub insert: InsertMetrics,
     #[serde(flatten)]
     pub query: QueryMetrics,
     #[serde(flatten)]
-    pub latency: LatencyMetrics,
-    #[serde(flatten)]
     pub merge: MergeMetrics,
+    #[serde(flatten)]
+    pub prepare: PrepareMetrics,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -293,8 +295,8 @@ pub struct InsertMetrics {
     pub throughput_samples: Option<Vec<f64>>,
     #[serde(rename = "insert_build_throughput_items_per_sec")]
     pub build_throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "insert_finalize_time_ms")]
-    pub finalize_time_ms: Option<RunStats>,
+    #[serde(rename = "insert_latency_ns")]
+    pub latency_ns: Option<LatencySummary>,
     #[serde(rename = "insert_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "insert_wall_time_ms")]
@@ -311,6 +313,12 @@ pub struct QueryMetrics {
     pub timestamp: Option<DateTime<Utc>>,
     #[serde(rename = "query_throughput_items_per_sec")]
     pub throughput_items_per_sec: Option<RunStats>,
+    #[serde(rename = "query_latency_ns")]
+    pub latency_ns: Option<LatencySummary>,
+    /// The comparator's scores. Only this operation has them: accuracy is
+    /// what an answer can be scored for, and query is what produces one.
+    #[serde(rename = "query_accuracy")]
+    pub accuracy: Option<serde_json::Value>,
     #[serde(rename = "query_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "query_wall_time_ms")]
@@ -322,21 +330,42 @@ pub struct QueryMetrics {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LatencyMetrics {
-    #[serde(rename = "latency_timestamp")]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub latency_ns: Option<LatencySummary>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MergeMetrics {
     #[serde(rename = "merge_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
+    /// How long one fold took: the latency reading of this operation.
     pub merge_time_ms: Option<RunStats>,
+    /// How many folds a second: the throughput reading of the same clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_folds_per_sec: Option<RunStats>,
     pub merge_shards: Option<usize>,
     pub merge_supported: Option<bool>,
+    #[serde(rename = "merge_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "merge_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "merge_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "merge_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
+}
+
+/// The deferred build. Only a latency: a build happens once per sketch, so
+/// there is no rate to state and nothing it answers to be scored against.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrepareMetrics {
+    #[serde(rename = "prepare_timestamp")]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(rename = "prepare_finalize_time_ms")]
+    pub finalize_time_ms: Option<RunStats>,
+    #[serde(rename = "prepare_cpu_time_ms")]
+    pub cpu_time_ms: Option<CpuTime>,
+    #[serde(rename = "prepare_wall_time_ms")]
+    pub wall_time_ms: Option<RunStats>,
+    #[serde(rename = "prepare_rss_peak_kb")]
+    pub rss_peak_kb: Option<u64>,
+    #[serde(rename = "prepare_heap_allocated_kb")]
+    pub heap_allocated_kb: Option<u64>,
 }
 
 impl Record {

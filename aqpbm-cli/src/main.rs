@@ -265,6 +265,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
                  repeat column, so every repeat would append indistinguishable rows"
             );
         }
+        if args.flat {
+            bail!(
+                "--flat cannot be combined with --repeats: a flattened row holds one value \
+                 per square, and folding the repeats into it would have to decide which \
+                 repeat that value came from"
+            );
+        }
         let records = repeat::run_repeats(args.repeats)?;
         let mut sink = ReportSink::open(args.report.as_deref())?;
         for r in &records {
