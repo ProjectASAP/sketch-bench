@@ -32,7 +32,7 @@ Consider this crate to be something that wraps around existing functionalities a
   Omitting a configuration gives a parameterless point, which every row refuses by name.
   A row builds at exactly the point it is given or refuses it, so the values are never clamped to a library's range, rounded to a shape it prefers, or dropped because it has no knob for them.
 
-- **The pass-through configuration.** `WorkloadSpec`, `BenchConfig` and `AccuracyCfg` arrive from the frontend and reach core unread, with one exception.
+- **The forwarded configuration.** `WorkloadSpec` and `BenchConfig` arrive from the frontend and reach core unread, with one exception.
   A comparator scoring a prefix of a ranking reads the row's own `k` out of the `ParamSet`.
 
 - **The wrapped libraries.** Four, each present for a stated reason.
@@ -46,7 +46,7 @@ Consider this crate to be something that wraps around existing functionalities a
 
 ## 3. Outputs
 
-- **Reports, one per pass.** The reports a cell produced: the timed passes always, and the accuracy pass when scoring is on.
+- **Reports, one per square.** One report for each square the request selected, and a square nothing here measures is refused by name.
 
 - **The catalog listing.** One line per row: algorithm, impl, and a description naming the concrete type wrapped, grouped by family.
 
@@ -87,10 +87,11 @@ pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool>;  // No
 // One parameter point for an algorithm, from the CLI's `--config` string.
 pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet>;
 
-// Resolve a row and run one cell against it: one report per pass.
+// Resolve a row and run one cell against it: one report per square.
+// A named comparator must be one the row admits; omitted takes the row's default.
 pub fn run(algorithm: &str, impl_name: &str,
            cfg: &BenchConfig, spec: &WorkloadSpec, params: &ParamSet,
-           acc: &AccuracyCfg, width: Numeric) -> Result<Vec<BenchReport>>;
+           width: Numeric, comparator: Option<&str>) -> Result<Vec<BenchReport>>;
 ```
 
 ### 4.2 The two name axes

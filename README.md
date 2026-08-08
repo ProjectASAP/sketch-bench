@@ -4,38 +4,54 @@
 
 ## Quick start
 
-```
-cargo run -p sketch-cli --release -- list-impls
+A measurement is named by two things: the **operation** it is taken over
+(`insert`, `query`, `merge`, `prepare`) and the **metric** it reads
+(`throughput`, `latency`, `accuracy`). Crossing `--operations` with `--metrics`
+picks the squares a run measures, and both are required: nothing is measured
+that was not asked for. `cpu` and `memory` are readings that ride along with
+every square instead of forming their own.
 
-# default: sweep all impls of an algorithm across the algorithm's default config grid
-cargo run -p sketch-cli --release -- bench \
-    --sketch hll \
-    --workload zipf --size 1000000 --zipf-s 1.1 \
+```
+cargo run -p aqpbm-cli --release -- sketchbench --list-impls
+
+# Insert, read two ways, with cpu and memory riding along
+cargo run -p aqpbm-cli --release -- sketchbench \
+    --algorithm hll --impl oxide --config 'lg_k=14' \
+    --workload zipf --size 1000000 --zipf-s 1.1 --cardinality 100000 \
     --runs 10 --warmup-runs 3 \
-    --metrics throughput,latency,cpu,memory \
+    --operations insert --metrics throughput,latency,cpu,memory \
     --report out.jsonl
 
-# single impl, single config — same as the pre-sweep behaviour
-cargo run -p sketch-cli --release -- bench \
-    --sketch hll --impl oxide --config 'lg_k=14' \
-    --workload zipf --size 1000000 --zipf-s 1.1 --runs 10 --report out.jsonl
-
-# explicit grid: Cartesian product across whitespace-separated keys
-cargo run -p sketch-cli --release -- bench \
-    --sketch cms --config 'rows=3,5 cols=1024,2048,4096' \
-    --workload zipf --size 1000000 --runs 10 --report out.jsonl
-
-# with ground-truth accuracy (CMS / CountSketch / Elastic → frequency rel-err;
-# HLL → cardinality rel-err; KLL → quantile rank-err). Probes up to 100k distinct
-# keys by default for frequency comparators; 0 = probe every distinct key.
-cargo run -p sketch-cli --release -- bench \
-    --sketch cms --config 'rows=5 cols=1024,2048,4096' \
+# Accuracy is scored against ground truth, and the comparator issues the
+# queries, so the operation is `query`. `--list-impls` names each row's
+# comparators; omitted takes the row's default.
+cargo run -p aqpbm-cli --release -- sketchbench \
+    --algorithm cms --impl oxide --config 'rows=5 cols=4096' \
     --workload zipf --size 1000000 --cardinality 100000 \
-    --runs 10 --accuracy \
+    --runs 10 --operations query --metrics accuracy --comparator frequency \
+    --report out.jsonl
+
+# Merge reads the same fold two ways: how long one takes, and how many a second
+cargo run -p aqpbm-cli --release -- sketchbench \
+    --algorithm cms --impl oxide --config 'rows=5 cols=4096' \
+    --workload zipf --size 1000000 --cardinality 100000 \
+    --runs 10 --operations merge --metrics latency,throughput --merge-shards 8 \
+    --report out.jsonl
+
+# One record per square is the default. `--flat` folds a cell's records into
+# one row instead: one slot per operation, one field per metric.
+cargo run -p aqpbm-cli --release -- sketchbench \
+    --algorithm hll --impl oxide --config 'lg_k=14' \
+    --workload zipf --size 1000000 --cardinality 100000 \
+    --runs 10 --operations insert,prepare --metrics latency --flat \
     --report out.jsonl
 ```
 
-`list-impls` enumerates every `(algorithm, impl)` pair. `bench` monomorphises a `BenchRunner` over each `(impl, config)` pair in the sweep and appends one v1 JSONL record per pair (schema in `sketch-core::report::Record`, includes an optional `sketch_config` field that names the params used). Impls with compile-time-fixed shapes are skipped when the requested config doesn't match; stderr logs the skip. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-algorithm default grids.
+`--config` names one point, so a series is one invocation per point. A square
+nothing measures is refused by name: `--operations prepare --metrics
+throughput` is an error, not an empty result.
+
+`--list-impls` enumerates every `(algorithm, impl)` pair. `sketchbench` monomorphises a `BenchRunner` over the one `(impl, config)` cell named and appends one JSONL record per square measured (schema in `aqpbm_core::report::Record`, including a `sketch_config` field that names the params used and the `operation` / `metric` pair that names the square). Impls with compile-time-fixed shapes refuse a config that doesn't match. See [`docs/BENCH_SWEEP.md`](docs/BENCH_SWEEP.md) for the full contract and the per-algorithm default grids.
 
 Covered algorithms / impls (21 sketch + 3 exact = 24 total):
 
@@ -139,7 +155,7 @@ The profiling subcommand it is meant to sit beside is not built yet.
    ```bash
    scripts/example_config_override.py   # guided tour of --config, run this first
    scripts/run_throughput.sh            # all algorithms incl. octo + polars
-   scripts/run_accuracy.sh              # all statistics, --accuracy on
+   scripts/run_accuracy.sh              # all statistics, scored against ground truth
    scripts/run_all.py --workload-file …  # joint Rust + C++ run via cpp-bench/
    ```
 

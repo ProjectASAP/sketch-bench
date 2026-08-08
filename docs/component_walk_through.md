@@ -78,7 +78,7 @@ This is where core functionality lives.
 - `accuracy`: the `GroundTruth` comparator trait + `Comparison`, the per-statistic capability traits (`CardinalityOps`, `FrequencyOps`, `QuantileOps`, `TopKOps`) and the comparators
   - a comparator computes the exact answer from the whole item slice at once, so it is not an `Accumulator`
 - `init`: `InitSketch` (build one from a `ParamSet`) / `BenchImpl` (a row's identity — its impl name, and the algorithm it belongs to)
-- `cell`: `run_cell` / `score_cell` / `run_cell_parallel`, `BenchItem` / `ParallelInit` traits, `WorkloadSpec`, `AccuracyCfg`, `RunError`
+- `cell`: `run_cell` / `run_cell_parallel`, `BenchItem` / `ParallelInit` traits, `WorkloadSpec`, `RunError`
   - consider the data table where each cell is the result of one benchmark
 - `accumulator`: the trait a sketch implements about how the sketch ingests one item, and optionally how it merges and finalises (finalises is none for most sketches)
 - `memory_footprint`, `latency`, `probe`, `workload`, `report`, `config` (params)
@@ -203,11 +203,10 @@ Module names not listed below (`accumulator`, `accuracy`, `aggregation`, `cell`,
 | `ParamSet` | An algorithm name plus its params as JSON. The type-erased form that keeps the algorithm axis open. | likely |
 | `ALGORITHM` | The const on a params struct. One of the two places an algorithm name is written. | likely |
 | `hot_loop` / `insert_loop` | The single timed insert loop. Nothing else is inside the timed region. | likelly |
-| `BenchRunner` | Drives warm-up plus measured iterations, and emits one report per pass. | likely |
-| `BenchConfig` | Knobs for a run: runs, warm-up runs, metrics mask, merge shards, threads, seed. | likely |
-| `run_cell` / `score_cell` / `run_cell_parallel` | The timed half, the accuracy half, and the threaded variant. | likely |
+| `BenchRunner` | Drives warm-up plus measured iterations, and emits one report per square. | likely |
+| `BenchConfig` | Knobs for a run: runs, warm-up runs, the operation and metric masks, merge shards, threads, seed. | likely |
+| `run_cell` / `run_cell_parallel` | Every square the request selected, and the threaded variant. | likely |
 | `WorkloadSpec` | Where a cell's items come from: generated in-process, or loaded from a file. | likely |
-| `AccuracyCfg` | The accuracy knobs the frontend fills in: on/off, probe cap, per-call recording. | No |
 | `RunError` | Why a cell could not run — a config an impl cannot build at, or a width it cannot take. | No |
 | `prepare()` | Deferred build after the last `update` — a polars sort, a KLL CDF. No-op for most sketches. | **Likely** — the method is `prepare`, the metric it feeds is `finalize_*`; the two should agree |
 | `Probe` | The decorator that reports per-update events to a `MetricsSink`. | likely |

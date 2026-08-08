@@ -19,8 +19,8 @@ Three stages, in order.
   Each bundle owns its own subcommand, so two bundles may both offer an algorithm named `cms`.
 
 - **Render** writes the records that come back to the destination the invocation named.
-  It writes one line per pass, or one line for the whole cell when the invocation asks for the flattened shape.
-  §4.3 gives the rule that turns a cell's passes into one row.
+  It writes one line per square, or one line for the whole cell when the invocation asks for the flattened shape.
+  §4.3 gives the rule that turns a cell's squares into one row.
 
 **Repeat runs and aggregation** sits outside those three stages and measures nothing.
 It re-executes one invocation as several child processes, then aggregates what those processes measured.
@@ -53,15 +53,15 @@ Its own work is what only a binary can do: install a global allocator, own the p
 
 ## 3. Outputs
 
-- **The record stream.** One JSONL line per pass, exactly as `aqpbm-core` serialises it.
-  A **pass** is one complete traversal of the workload measuring one thing, and `aqpbm-core` decides how many a cell needs.
+- **The record stream.** One JSONL line per square, exactly as `aqpbm-core` serialises it.
+  A **square** is one operation read for one metric, and the invocation names which squares it wants.
   The stream is appended to the named report path, or written to stdout when no path is named.
   The frontend measures nothing, so the only values it writes into a record are provenance and the aggregate across repeat processes.
   A report file accumulates the cells of many invocations, since the frontend appends and never truncates.
 
 - **The flattened stream.** What the record stream becomes when the invocation asks for it: one JSONL line per cell.
   A leaderboard consumes this shape, so its schema is a contract with a reader outside this workspace.
-  `aqpbm-core` owns that schema, beside the per-pass one, since both are serialised report shapes.
+  `aqpbm-core` owns that schema, beside the per-square one, since both are serialised report shapes.
   The frontend chooses the shape and where it lands, and invents no field.
 
 - **Terminal output.** Stdout carries machine-readable output only: records, and the table a listing flag prints.
@@ -114,10 +114,11 @@ What follows is what each group decides.
 - **Repetition.** How many runs loop inside one process, how many are discarded ahead of them, and how many repeat processes run.
   Runs are discarded first because a cold allocator and a cold cache measure the wrong thing.
 
-- **Measurement content.** Which passes run, and therefore which lines the invocation writes.
+- **Measurement content.** Which squares run, and therefore which lines the invocation writes.
+  Two options name them, one for the operations and one for the metrics, and the squares are the cross product.
 
 - **Output.** The file the record stream is appended to, and stdout when no file is named.
-  One option here picks the flattened shape over the per-pass one, since both describe the same cell.
+  One option here picks the flattened shape over the per-square one, since both describe the same cell.
 
 Two environment variables complete the surface.
 
@@ -129,15 +130,18 @@ Two environment variables complete the surface.
 
 One cell's records become one row, and the row carries the cell's identity once: algorithm, impl, language, construction point, workload and mode.
 
-Each record joins the slot its `bench.pass` names.
-Records sharing a pass combine field by field, since a pass spanning the timed and the scored half emits one record from each.
-One field arriving twice with two values fails the run, because the frontend has no basis for choosing.
+The row holds one slot per operation, and a metric is a field inside a slot.
+A square is named by both, so a slot keyed on either name alone would hold two squares at once.
 
-Every metric field carries the name of the pass that produced it.
-A metric only one pass ever measures keeps that prefix too, so a reader never has to know which passes ran.
-Identity fields are written once and unprefixed.
+Each record joins the slot its operation names.
+Two squares of one operation share a slot and combine field by field, since each fills the fields its own metric produced.
+A field already holding a value keeps it, because the two squares carry a reading each and neither is the other's correction.
 
-A record whose pass has no slot fails the run.
+Every metric field carries the name of the operation it was measured over.
+A metric only one operation ever produces keeps that prefix too, so a reader never has to know which squares ran.
+Identity fields are written once and unprefixed, as are the readings a sketch has one of however many squares measured it.
+
+A record whose operation has no slot fails the run.
 
 ### 4.4 A worked invocation
 
@@ -147,7 +151,9 @@ approxbench sketchbench \
     --config 'rows=5 cols=32768' \           # the construction point: a 5 x 32768 counter matrix
     --workload zipf --zipf-s 1.1 \           # generated keys, Zipf-skewed with exponent 1.1, a typical traffic skew
     --size 1000000 --cardinality 100000 \    # a million items drawn from a hundred thousand distinct keys
-    --runs 10 --warmup-runs 3                # ten measured runs, after three discarded ones
+    --runs 10 --warmup-runs 3 \              # ten measured runs, after three discarded ones
+    --operations insert,query \              # what the metric is measured over
+    --metrics throughput                     # crossed with the operations: two squares, so two records
 ```
 
 No report path is given, so records land on stdout while progress lands on stderr.

@@ -160,11 +160,10 @@ Measurement content:
       --comparator <COMPARATOR>
           Which comparator scores this row, by name. A row admits only the comparators its
           capabilities can answer, and the catalog is what lists them; omitted takes the row's
-          first
+          default
 
       --operations <OPERATIONS>
-          Comma-separated: insert,query,merge,prepare. What is measured over. Crossed with
-          `--metrics` to give the measurements this run takes.
+          Comma-separated: insert,query,merge,prepare. What each metric is measured over.
           Required, like `--metrics`: a square nothing measures is refused by name, so a request
           states which squares it wants rather than inheriting a guess
 
@@ -276,20 +275,38 @@ Generate a synthetic `.bin` workload (+ `.meta.json` sidecar)
 Usage: approxbench workload generate [OPTIONS] --out <OUT>
 
 Options:
-      --shape <SHAPE>              Distribution: uniform | zipf | monotonic-timestamp | skewed-categorical. Ignored when `--spec` is set [default: uniform]
+      --shape <SHAPE>              Distribution: uniform | zipf | monotonic-timestamp |
+                                   skewed-categorical. Ignored when `--spec` is set [default:
+                                   uniform]
       --size <SIZE>                Number of values to generate [default: 1000000]
       --seed <SEED>                Seed for reproducibility [default: 42]
       --out <OUT>                  Output `.bin` path. Parent directories are created if missing
-      --dtype <DTYPE>              Physical output type: i64 | u64 | f64. `sketchbench --input` reads i64 only; f64 is benchmarkable through `sketchbench --dtype f64`, which generates in-process. u64 has no consumer in this repo [default: i64]
-      --cardinality <CARDINALITY>  Uniform: max key (exclusive). Zipf: key-space size [default: 100000]
-      --zipf-s <ZIPF_S>            Zipf `s` exponent (only used when `--shape zipf`) [default: 1.1]
-      --start <START>              Monotonic-timestamp: starting value (first emitted value) [default: 0]
-      --unit <UNIT>                Monotonic-timestamp: unit label: nanos | millis | secs [default: nanos]
-      --gap <GAP>                  Monotonic-timestamp: inter-arrival gap as `kind:param` (const:1000 | geometric:0.01 | exp:0.5 | poisson:5). Required for `--shape monotonic-timestamp`
-      --min-gap <MIN_GAP>          Monotonic-timestamp: minimum gap (1 gives strictly increasing, 0 allows duplicates) [default: 1]
-      --categories <CATEGORIES>    Skewed-categorical: size of the id domain (ids `0..n`). Required for `--shape skewed-categorical` (use `--spec` for explicit ids)
-      --weights <WEIGHTS>          Skewed-categorical: weight scheme: `uniform` | `zipf:s` [default: zipf:1.1]
-      --spec <SPEC>                Read the full spec from a `.yaml`/`.yml`/`.json` file. Overrides `--shape` and its per-shape flags (`--size`/`--seed` still apply only when NOT set here; the spec file is authoritative)
+      --dtype <DTYPE>              Physical output type: i64 | u64 | f64. `sketchbench --input`
+                                   reads i64 only; f64 is benchmarkable through `sketchbench
+                                   --dtype f64`, which generates in-process. u64 has no consumer
+                                   in this repo [default: i64]
+      --cardinality <CARDINALITY>  Uniform: max key (exclusive). Zipf: key-space size [default:
+                                   100000]
+      --zipf-s <ZIPF_S>            Zipf `s` exponent (only used when `--shape zipf`) [default:
+                                   1.1]
+      --start <START>              Monotonic-timestamp: starting value (first emitted value)
+                                   [default: 0]
+      --unit <UNIT>                Monotonic-timestamp: unit label: nanos | millis | secs
+                                   [default: nanos]
+      --gap <GAP>                  Monotonic-timestamp: inter-arrival gap as `kind:param`
+                                   (const:1000 | geometric:0.01 | exp:0.5 | poisson:5). Required
+                                   for `--shape monotonic-timestamp`
+      --min-gap <MIN_GAP>          Monotonic-timestamp: minimum gap (1 gives strictly
+                                   increasing, 0 allows duplicates) [default: 1]
+      --categories <CATEGORIES>    Skewed-categorical: size of the id domain (ids `0..n`).
+                                   Required for `--shape skewed-categorical` (use `--spec` for
+                                   explicit ids)
+      --weights <WEIGHTS>          Skewed-categorical: weight scheme: `uniform` | `zipf:s`
+                                   [default: zipf:1.1]
+      --spec <SPEC>                Read the full spec from a `.yaml`/`.yml`/`.json` file.
+                                   Overrides `--shape` and its per-shape flags
+                                   (`--size`/`--seed` still apply only when NOT set here; the
+                                   spec file is authoritative)
       --no-meta                    Skip writing the `.meta.json` sidecar
   -h, --help                       Print help
 ```
@@ -302,11 +319,13 @@ Print the provenance/stats of a generated `.bin` workload
 Usage: approxbench workload describe <PATH>
 
 Arguments:
-  <PATH>  Path to a generated `.bin` file. Reads `<path>.meta.json` if present, else falls back to loading the raw i64 stream
+  <PATH>  Path to a generated `.bin` file. Reads `<path>.meta.json` if present, else falls back
+          to loading the raw i64 stream
 
 Options:
   -h, --help  Print help
 ```
+
 
 ## Environment
 
