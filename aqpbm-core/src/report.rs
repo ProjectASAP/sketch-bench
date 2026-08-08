@@ -86,13 +86,14 @@ pub enum Source {
 /// placeholders.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchSection {
-    /// Which pass produced this record — `"throughput"`, `"latency"`,
-    /// `"accuracy"` or `"merge"`. One invocation emits several records per
-    /// (sketch, impl, config, workload); group by this before pooling any.
+    /// What this record measured — `"throughput"`, `"latency"` or
+    /// `"accuracy"`. Half of a measurement's identity; [`Self::operation`] is
+    /// the other half, and one invocation emits one record per pair.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pass: Option<String>,
-    /// Which operation the metrics in this record were taken over —
-    /// `"insert"`, `"query"`, `"merge"` or `"prepare"`.
+    pub metric: Option<String>,
+    /// Which operation it was measured over — `"insert"`, `"query"`, `"merge"`
+    /// or `"prepare"`. Group by this and [`Self::metric`] together before
+    /// pooling anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
     /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
@@ -144,11 +145,12 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
     /// Wall time to fold `merge_shards` sketches into one, per run; absent
-    /// unless the merge pass ran. Scales with sketch *state*, not stream
-    /// length, so compare against `memory_bytes`, not insert throughput.
+    /// unless the merge operation was measured. Scales with sketch *state*,
+    /// not stream length, so compare against `memory_bytes`, not insert
+    /// throughput.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_time_ms: Option<RunStats>,
-    /// How many shards were folded. Present whenever the merge pass ran, even
+    /// How many shards were folded. Present whenever merge was measured, even
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
@@ -377,7 +379,7 @@ mod tests {
         };
         let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
         rec.bench = Some(BenchSection {
-            pass: None,
+            metric: None,
             throughput_items_per_sec: Some(RunStats {
                 mean: 4.2e7,
                 stddev: 1.1e6,

@@ -157,7 +157,7 @@ pub fn aggregate(runs: &[RunMetrics], cell: Cell) -> BenchSection {
         // Folding numbers is this function's whole job. Which measurement they
         // belong to is decided where the measurement is dispatched, and the
         // runner stamps it on the way out.
-        pass: None,
+        metric: None,
         operation: None,
         throughput_items_per_sec: throughput,
         throughput_samples,

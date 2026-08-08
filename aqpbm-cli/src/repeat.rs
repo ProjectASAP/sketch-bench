@@ -37,7 +37,7 @@ fn group_key(r: &Record) -> GroupKey {
         serde_json::to_string(&r.workload).unwrap_or_default(),
         r.bench
             .as_ref()
-            .and_then(|b| b.pass.clone())
+            .and_then(|b| b.metric.clone())
             .unwrap_or_default(),
     )
 }
@@ -196,7 +196,7 @@ mod tests {
         };
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 5);
         rec.bench = Some(BenchSection {
-            pass: Some("latency".into()),
+            metric: Some("latency".into()),
             operation: Some("merge".into()),
             throughput_items_per_sec: Some(stats(mean)),
             throughput_samples: Some(vec![mean, mean + 1.0]),

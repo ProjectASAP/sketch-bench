@@ -278,14 +278,14 @@ fn the_two_merge_measurements_carry_different_names() {
          not exercising the collision it exists for"
     );
     assert_eq!(merge.bench.operation.as_deref(), Some("merge"));
-    assert_eq!(merge.bench.pass.as_deref(), Some("accuracy"));
+    assert_eq!(merge.bench.metric.as_deref(), Some("accuracy"));
 
     let query = reports
         .iter()
         .find(|r| r.bench.merge_shards.is_none())
         .expect("a query measurement ran");
     assert_eq!(query.bench.operation.as_deref(), Some("query"));
-    assert_eq!(query.bench.pass.as_deref(), Some("accuracy"));
+    assert_eq!(query.bench.metric.as_deref(), Some("accuracy"));
 
     // The pair is what separates them; the metric alone no longer does.
     assert_ne!(merge.bench.operation, query.bench.operation);

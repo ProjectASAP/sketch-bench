@@ -303,7 +303,7 @@ impl<E: Exporter> Sampler<E> {
             // is always insert. It reports whatever its mask collected in one
             // record, and names the headline metric.
             operation: Some("insert".to_string()),
-            pass: if self.mask.contains(MetricsMask::THROUGHPUT) {
+            metric: if self.mask.contains(MetricsMask::THROUGHPUT) {
                 Some("throughput".to_string())
             } else if self.mask.contains(MetricsMask::LATENCY) {
                 Some("latency".to_string())

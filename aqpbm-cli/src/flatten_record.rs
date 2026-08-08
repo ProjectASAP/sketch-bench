@@ -18,11 +18,10 @@ use aqpbm_core::{
     BenchSection, InsertMetrics, LatencyMetrics, MergeMetrics, MergedRecord, QueryMetrics, Record,
 };
 
-/// Which pass a `Record` belongs to, per its own `bench.pass` field
-/// (schema v3+). Every name `--metrics` can produce (`throughput`,
-/// `latency`, `accuracy`, `merge`) is matched explicitly; anything else —
-/// a missing `bench` section, a missing `pass` value, or a `pass` value
-/// none of these arms names — is an error rather than a guess. Which of
+/// Which slot a `Record` lands in, per its own `bench.metric` field. Every
+/// name `--metrics` can produce is matched explicitly; anything else — a
+/// missing `bench` section, a missing `metric` value, or one none of these
+/// arms names — is an error rather than a guess. Which of
 /// these slots get shown, and how, is the leaderboard's call, not this
 /// function's: its job is only to keep the flattened record complete.
 fn pass_of(record: &Record) -> Result<&'static str, String> {
@@ -32,17 +31,17 @@ fn pass_of(record: &Record) -> Result<&'static str, String> {
             record.sketch, record.impl_name
         )
     })?;
-    match bench.pass.as_deref() {
+    match bench.metric.as_deref() {
         Some("throughput") => Ok("insert"),
         Some("latency") => Ok("latency"),
         Some("accuracy") => Ok("query"),
         Some("merge") => Ok("merge"),
         Some(other) => Err(format!(
-            "flatten_record: {}/{} record has unrecognized bench.pass '{other}'",
+            "flatten_record: {}/{} record has unrecognized bench.metric '{other}'",
             record.sketch, record.impl_name
         )),
         None => Err(format!(
-            "flatten_record: {}/{} record has bench section but no bench.pass set",
+            "flatten_record: {}/{} record has bench section but no bench.metric set",
             record.sketch, record.impl_name
         )),
     }
@@ -94,7 +93,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         // that isn't listed here fails the build instead of being
         // silently dropped. See the doc comment above.
         let BenchSection {
-            pass: _,
+            metric: _,
             operation: _,
             throughput_items_per_sec,
             throughput_samples,

@@ -240,7 +240,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
         let mut bench = aggregate(&per_run, cell);
         bench.operation = Some(cell.operation.name().to_string());
-        bench.pass = Some(cell.metric.name().to_string());
+        bench.metric = Some(cell.metric.name().to_string());
         // The fold's cost belongs to the cell that asked for it. The scored
         // cell folds only to have something to query, so it reports no time.
         if cell.metric != Metric::Latency {
@@ -358,7 +358,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 
         let mut bench = aggregate(&per_run, cell);
         bench.operation = Some(cell.operation.name().to_string());
-        bench.pass = Some(cell.metric.name().to_string());
+        bench.metric = Some(cell.metric.name().to_string());
         // `runs` says how many were measured, not asked for: a non-resamplable
         // workload measures once, and `runs: 10` beside `accuracy_runs: 1` is
         // self-contradictory and inflates any confidence proxy taken from it.
