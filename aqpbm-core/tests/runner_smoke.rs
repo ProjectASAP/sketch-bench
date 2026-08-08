@@ -155,6 +155,7 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
         runs: 3,
         warmup_runs: 1,
         metrics: MetricsMask::THROUGHPUT,
+        operations: OperationMask::INSERT,
         ..Default::default()
     };
     let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -213,6 +214,7 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
             runs: 2,
             warmup_runs: 0,
             metrics,
+            operations: OperationMask::INSERT,
             ..Default::default()
         };
         let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));

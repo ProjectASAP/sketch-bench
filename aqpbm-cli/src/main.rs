@@ -44,11 +44,10 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 use aqpbm_core::cell::{AccuracyCfg, WorkloadSpec};
 use sketch_bench::catalog;
 
-fn parse_mask(s: Option<&str>) -> MetricsMask {
-    let s = match s {
-        Some(v) => v,
-        None => return MetricsMask::all(),
-    };
+/// What is measured. No default and no `all`: a request says which squares of
+/// the grid it wants, and a shorthand that sweeps the grid would sweep squares
+/// nothing measures.
+fn parse_mask(s: &str) -> Result<MetricsMask> {
     let mut m = MetricsMask::empty();
     for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
         m |= match token.as_str() {
@@ -57,25 +56,21 @@ fn parse_mask(s: Option<&str>) -> MetricsMask {
             "cpu" => MetricsMask::CPU,
             "memory" => MetricsMask::MEMORY,
             "accuracy" => MetricsMask::ACCURACY,
-            "all" => MetricsMask::all(),
             "" => MetricsMask::empty(),
-            other => {
-                eprintln!("approxbench: unknown metric flag '{other}', ignoring");
-                MetricsMask::empty()
-            }
+            // Refused, not warned past: a misspelling that measured nothing
+            // and exited zero looks to a driver script like a run that
+            // produced no data.
+            other => bail!(
+                "unknown metric '{other}'; --metrics takes throughput, latency, accuracy, cpu, memory"
+            ),
         };
     }
-    m
+    Ok(m)
 }
 
-/// Which operations the metrics are taken over. Insert and query are assumed
-/// of every implementation, so they are what an absent flag means; merge and
-/// prepare are declared, and are asked for by name.
-fn parse_operations(s: Option<&str>) -> OperationMask {
-    let s = match s {
-        Some(v) => v,
-        None => return OperationMask::INSERT | OperationMask::QUERY,
-    };
+/// Which operations the metrics are taken over. No default, for the same
+/// reason as the metrics: nothing is measured that was not asked for.
+fn parse_operations(s: &str) -> Result<OperationMask> {
     let mut m = OperationMask::empty();
     for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
         m |= match token.as_str() {
@@ -83,15 +78,13 @@ fn parse_operations(s: Option<&str>) -> OperationMask {
             "query" => OperationMask::QUERY,
             "merge" => OperationMask::MERGE,
             "prepare" => OperationMask::PREPARE,
-            "all" => OperationMask::all(),
             "" => OperationMask::empty(),
-            other => {
-                eprintln!("approxbench: unknown operation '{other}', ignoring");
-                OperationMask::empty()
-            }
+            other => bail!(
+                "unknown operation '{other}'; --operations takes insert, query, merge, prepare"
+            ),
         };
     }
-    m
+    Ok(m)
 }
 
 /// Validate `--algorithm`/`--impl` and report whether `--accuracy` can score it.
@@ -298,8 +291,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
-    let metrics_mask = parse_mask(args.metrics.as_deref());
-    let operations_mask = parse_operations(args.operations.as_deref());
+    // clap makes both required whenever a cell is selected, so the `bail`s
+    // are unreachable from the command line and exist for the type.
+    let metrics_mask = parse_mask(
+        args.metrics
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--metrics is required"))?,
+    )?;
+    let operations_mask = parse_operations(
+        args.operations
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--operations is required"))?,
+    )?;
     // `--merge-shards` no longer selects anything: it says how many shards the
     // merge operation folds, and `--operations merge` is what asks for it.
     let cfg = BenchConfig {

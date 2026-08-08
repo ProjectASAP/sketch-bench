@@ -42,10 +42,11 @@ impl Default for BenchConfig {
         Self {
             runs: 10,
             warmup_runs: 3,
-            metrics: MetricsMask::all(),
-            // Insert and query are assumed of every implementation; merge and
-            // prepare are declared, so a caller asks for them by name.
-            operations: OperationMask::INSERT | OperationMask::QUERY,
+            // Empty, both of them: a caller states which squares it wants.
+            // Nothing is measured that was not asked for, and that holds for a
+            // library caller as much as for the command line.
+            metrics: MetricsMask::empty(),
+            operations: OperationMask::empty(),
             threads: 1,
             merge_shards: 2,
             seed: 0,

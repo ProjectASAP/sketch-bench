@@ -160,7 +160,12 @@ pub struct SketchbenchArgs {
     /// Comma-separated: throughput,latency,accuracy,cpu,memory. What is
     /// measured. Crossed with `--operations` to give the measurements this run
     /// takes; cpu and memory attach to every one instead of forming their own.
-    #[arg(long, help_heading = "Measurement content")]
+    /// Required: nothing is measured that was not asked for.
+    #[arg(
+        long,
+        required_unless_present = "list_impls",
+        help_heading = "Measurement content"
+    )]
     pub metrics: Option<String>,
     /// Which comparator scores this row, by name. A row admits only the
     /// comparators its capabilities can answer, and the catalog is what lists
@@ -168,10 +173,14 @@ pub struct SketchbenchArgs {
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
-    /// measured over. Insert and query are assumed of every implementation and
-    /// are the default; merge and prepare are declared, so ask for them by
-    /// name. A combination nothing implements simply produces no record.
-    #[arg(long, help_heading = "Measurement content")]
+    /// measured over. Required, like `--metrics`: a square nothing measures is
+    /// refused by name, so a request states which squares it wants rather than
+    /// inheriting a guess.
+    #[arg(
+        long,
+        required_unless_present = "list_impls",
+        help_heading = "Measurement content"
+    )]
     pub operations: Option<String>,
     /// Cap on distinct keys probed by the frequency comparator; `0` probes
     /// every one. Ignored by the cardinality / quantile / top-k comparators.
