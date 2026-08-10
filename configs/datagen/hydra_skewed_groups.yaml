@@ -1,0 +1,80 @@
+# `hydra_columns.yaml` with one thing changed: the grouped column is skewed, so
+# the subpopulations are not all the same size.
+#
+#   approxbench sketchbench --algorithm hydra-cms --impl lib \
+#     --spec configs/datagen/hydra_skewed_groups.yaml \
+#     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
+#     --metrics accuracy --operations query
+#
+# Swap `--algorithm` for `hydra-hll` (`--config "rows=3 cols=1024"`) or
+# `hydra-kll` (`--config "rows=3 cols=1024 cell_k=200"`), and `--impl lib` for
+# `--impl polars` to get the exact answer to the same question. The label
+# columns take disjoint alphabets, so the `polars` rows score exactly zero here;
+# see `hydra_columns.yaml` for why that is a property of the spec and not of the
+# baseline.
+#
+# # What this file exists to measure
+#
+# In `hydra_columns.yaml` key1 is uniform over 200 values, so every one of the
+# 200 subpopulations holds almost exactly 1000 records. The comparators rank
+# subpopulations by true count descending and report `are_top1`, `are_top10` and
+# `are_top100` over those prefixes. When every group is the same size that
+# ranking is sorting sampling noise, and the prefix names an arbitrary group
+# instead of a heavy one, so the three top-k numbers say nothing the `are_all`
+# number does not.
+#
+# Here key1 is zipf, and the groups span about 40000 records at the head down to
+# about 125 at the tail. The top-k prefixes now name the heavy subpopulations,
+# which is the population a grouped sketch is actually asked about and the one
+# it has the least room to hide error in.
+#
+# # What it does not measure
+#
+# Group *size* varies here. Group *content* does not: the value column is drawn
+# independently of the labels and zipped by row, so every subpopulation still
+# carries the same value distribution, and a group's distinct count and its
+# quantiles remain functions of its size alone. Expressing a per-group value
+# distribution needs vocabulary the spec does not have, which is #54's neighbour
+# and is not something a config file can work around.
+#
+# # Grid load
+#
+# The skew shrinks the observed pair set, so this file puts about 8700 distinct
+# subset keys into the grid against `hydra_columns.yaml`'s 10200. At
+# `cols=1024` that is a comparable load per cell, which is what makes the two
+# files' error numbers worth putting side by side: the variable between them is
+# the skew, not the crowding.
+
+# key1: the column the comparator groups by, skewed so the subpopulations differ
+# in size by two and a half orders of magnitude.
+- shape: keys
+  cardinality: 200
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 1
+  string:
+    alphabet: "abcdefghijklmnopqr"
+
+# key2: a second label, skewed, so the subset fan-out is not uniform. Unchanged
+# from `hydra_columns.yaml`, including the alphabet, which is the other half of
+# the default one.
+- shape: keys
+  cardinality: 50
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 2
+  string:
+    alphabet: "stuvwxyz0123456789"
+
+# value: what the cells hold inside each subpopulation. Unchanged.
+- shape: keys
+  cardinality: 1000
+  dist:
+    kind: zipf
+    s: 1.2
+  size: 200000
+  seed: 3
