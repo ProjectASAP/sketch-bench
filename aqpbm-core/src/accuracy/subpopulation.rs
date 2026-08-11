@@ -18,8 +18,22 @@
 //! ships rank error, matching [`RankErrorGT`](super::quantile::RankErrorGT),
 //! because that is the ruler its statistic is defined against.
 //!
-//! All three score one label column, named in `label_column`. #54 records that
-//! this is a fraction of what the sketch is paying for.
+//! # What these three fix
+//!
+//! - The population is one label column's groups, at subset depth 1. A sketch
+//!   over `d` columns stores `2^d - 1` subsets and is scored on one. See #54.
+//! - Every group that occurred is probed, uncapped, in a fixed shuffled order.
+//!   Groups that did not occur are never probed, so false positives are not
+//!   measured.
+//! - Error is the unweighted mean over population members. A member is a
+//!   (group, value) pair for [`SubpopFrequencyGT`] and a group for the other
+//!   two, which is why `probes` differs between them at one workload.
+//!
+//! A run wanting different ones writes its own [`GroundTruth`] and its sketch's
+//! capability impl, and reuses [`subset_key`], [`rank_and_shuffle`],
+//! [`score_counting_population`], [`summarise`] and [`ErrSummary`]. The test at
+//! the foot of this file is that swap, done: a depth-2 population, scored
+//! without reimplementing any of the above.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -34,8 +48,11 @@ use super::quantile::{lower_bound, upper_bound, QuantileValue};
 use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps, SubpopQuantileOps};
 use super::GroundTruth;
 
-/// Prefix lengths of the true-frequency ranking at which error is reported.
-const TOP_K_REPORTED: [usize; 4] = [1, 10, 100, 1000];
+/// Prefix lengths of the true-value ranking at which error is reported.
+///
+/// Ascending, which [`score_counting_population`] relies on: it stops at the
+/// first prefix longer than the population instead of skipping it.
+pub const TOP_K_REPORTED: [usize; 4] = [1, 10, 100, 1000];
 
 pub struct SubpopFrequencyGT {
     /// Which label column the subpopulation is taken over. A grouped sketch
@@ -66,25 +83,19 @@ where
         // this column.
         let mut exact: HashMap<(String, V), u64> = HashMap::new();
         for it in items {
-            let Some(label) = it.label(self.label_column) else {
+            let Some(group) = subset_key(it, &[self.label_column]) else {
                 continue;
             };
-            *exact
-                .entry((label.to_string(), it.value.clone()))
-                .or_insert(0) += 1;
+            *exact.entry((group, it.value.clone())).or_insert(0) += 1;
         }
-        // Rank by true count descending, ties on the pair, so every top-k
-        // prefix is deterministic across runs and implementations.
-        let mut by_count: Vec<((String, V), u64)> =
-            exact.iter().map(|(k, c)| (k.clone(), *c)).collect();
-        by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let all = sample_ranked(&by_count);
-        let ranked = by_count.into_iter().map(|(k, _)| k).collect();
+        let (ranked, all) = rank_and_shuffle(exact.iter().map(|(k, c)| (k.clone(), *c)));
         SubpopFreqTruth { exact, ranked, all }
     }
 
     fn probes(&self, truth: &SubpopFreqTruth<V>) -> Vec<(String, V)> {
-        union_of(&truth.all, &truth.ranked)
+        // `all` already holds every member exactly once, and the top-k prefixes
+        // are prefixes of a permutation of it, so this one sweep answers both.
+        truth.all.clone()
     }
 
     fn ask(&self, sketch: &S, probe: &(String, V)) -> f64 {
@@ -101,115 +112,60 @@ where
         probes: &[(String, V)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<&(String, V), f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
-        let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
-
-        let population = |pairs: &[(String, V)], label: &str, m: &mut BTreeMap<String, f64>| {
-            if pairs.is_empty() {
-                return;
-            }
-            let (mut are, mut aae, mut l1, mut l2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-            let mut counted = 0usize;
-            for pair in pairs {
-                let e = *est.get(pair).unwrap_or(&0.0);
-                let t = *truth.exact.get(pair).unwrap_or(&0) as f64;
-                let diff = (e - t).abs();
-                l1 += diff;
-                l2 += diff * diff;
-                aae += diff;
-                if t > 0.0 {
-                    are += diff / t;
-                    counted += 1;
-                }
-            }
-            let n = pairs.len() as f64;
-            m.insert(
-                format!("are_{label}"),
-                if counted > 0 { are / counted as f64 } else { 0.0 },
-            );
-            m.insert(format!("aae_{label}"), aae / n);
-            m.insert(format!("probes_{label}"), n);
-            if label == "all" {
-                m.insert("l1_err".into(), l1);
-                m.insert("l2_err".into(), l2.sqrt());
-            }
-        };
-
-        for k in TOP_K_REPORTED {
-            if k > truth.ranked.len() {
-                // Reporting `are_top1000` over 400 distinct pairs would mean
-                // `are_all` under a name claiming otherwise. Omit it.
-                break;
-            }
-            population(&truth.ranked[..k], &format!("top{k}"), &mut metrics);
-        }
-        population(&truth.all, "all", &mut metrics);
-
-        if let Some(v) = metrics.get("are_all").copied() {
-            metrics.insert("relative_error_mean".into(), v);
-        }
-        if let Some(v) = metrics.get("probes_all").copied() {
-            metrics.insert("probes".into(), v);
-        }
-        let mut errs: Vec<f64> = truth
-            .all
-            .iter()
-            .filter_map(|pair| {
-                let t = *truth.exact.get(pair).unwrap_or(&0) as f64;
-                if t <= 0.0 {
-                    return None;
-                }
-                Some((*est.get(pair).unwrap_or(&0.0) - t).abs() / t)
-            })
-            .collect();
-        errs.sort_by(f64::total_cmp);
-        metrics.insert("relative_error_p99".into(), percentile(&errs, 0.99));
-
-        // How many distinct groups the column carried. A grouped sketch's error
-        // is a function of this, so a record without it cannot be read.
-        let groups: std::collections::BTreeSet<&str> =
-            truth.exact.keys().map(|(g, _)| g.as_str()).collect();
-        metrics.insert("subpopulations".into(), groups.len() as f64);
+        let est: HashMap<&(String, V), f64> =
+            probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+        // One member of the population is one (group, value) pair.
+        let groups: HashSet<&str> = truth.exact.keys().map(|(g, _)| g.as_str()).collect();
+        let mut metrics = score_counting_population(&truth.ranked, &truth.all, groups.len(), |pair| {
+            (
+                *est.get(pair).unwrap_or(&0.0),
+                *truth.exact.get(pair).unwrap_or(&0) as f64,
+            )
+        });
         metrics.insert("label_column".into(), self.label_column as f64);
         metrics
     }
 }
 
-/// Everything either population needs, asked once. A prefix re-uses the
-/// answers instead of re-querying.
-fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
-    let mut seen: HashSet<&T> = HashSet::new();
-    let mut out: Vec<T> = Vec::with_capacity(all.len());
-    for t in all {
-        if seen.insert(t) {
-            out.push(t.clone());
+/// The key a grouped sketch files a label subset under: the named columns joined
+/// with `;`, in column order. `None` when the record has no label at one of
+/// them.
+///
+/// This is `Hydra::update`'s internal format, so a comparator that builds its
+/// truth any other way is scoring a key space the sketch does not have. That is
+/// the mistake worth not making twice, which is why this is here and public
+/// rather than inline in each `truth`.
+pub fn subset_key<V>(item: &Labeled<V>, columns: &[usize]) -> Option<String> {
+    let mut out = String::new();
+    for (i, c) in columns.iter().enumerate() {
+        let part = item.label(*c)?;
+        if i > 0 {
+            out.push(';');
         }
+        out.push_str(part);
     }
-    let deepest = *TOP_K_REPORTED.last().unwrap_or(&0);
-    for t in ranked.iter().take(deepest) {
-        if seen.insert(t) {
-            out.push(t.clone());
-        }
-    }
-    out
+    Some(out)
 }
 
-
-/// The ranked keys, shuffled. Shuffled so probe order does not hand the
-/// baseline the locality that encounter order would. Fixed seed, so the order
-/// is reproducible. No cap: a sampled population is not the truth.
+/// A population twice over: ranked by `measure` descending with ties on the key
+/// ascending, and the same members in probe order.
 ///
-/// Generic over what a key is, because the three grouped comparators probe
-/// different populations: a (group, value) pair for frequency, a group for
-/// cardinality and for the ordered statistic.
-fn sample_ranked<T: Clone>(ranked: &[(T, u64)]) -> Vec<T> {
+/// The ranking is what `top1`…`top1000` are prefixes of, so it has to be total
+/// and seed-free. The probe order is shuffled because the probe loop is timed,
+/// and sweeping heaviest-first is not an access pattern a query-throughput
+/// number should be read off; the seed is fixed so the order reproduces across
+/// runs and implementations. Neither is capped or sampled, because a sampled
+/// population is not the truth.
+pub fn rank_and_shuffle<K: Clone + Ord>(members: impl Iterator<Item = (K, u64)>) -> (Vec<K>, Vec<K>) {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
-    let mut out: Vec<T> = ranked.iter().map(|(key, _)| key.clone()).collect();
+    let mut by_measure: Vec<(K, u64)> = members.collect();
+    by_measure.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut shuffled: Vec<K> = by_measure.iter().map(|(k, _)| k.clone()).collect();
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xA5AC_F00D_5EED_BEEF);
-    out.shuffle(&mut rng);
-    out
+    shuffled.shuffle(&mut rng);
+    (by_measure.into_iter().map(|(k, _)| k).collect(), shuffled)
 }
 
 // ---------- subpopulation cardinality ----------
@@ -250,28 +206,24 @@ where
     fn truth(&self, items: &[Labeled<V>]) -> SubpopCardTruth {
         // One pass: a record contributes its value to exactly one group at this
         // column, and the group's truth is the size of that set.
-        let mut distinct: HashMap<&str, HashSet<&V>> = HashMap::new();
+        let mut distinct: HashMap<String, HashSet<&V>> = HashMap::new();
         for it in items {
-            let Some(label) = it.label(self.label_column) else {
+            let Some(group) = subset_key(it, &[self.label_column]) else {
                 continue;
             };
-            distinct.entry(label).or_default().insert(&it.value);
+            distinct.entry(group).or_default().insert(&it.value);
         }
         let exact: HashMap<String, u64> = distinct
-            .iter()
-            .map(|(group, values)| ((*group).to_string(), values.len() as u64))
+            .into_iter()
+            .map(|(group, values)| (group, values.len() as u64))
             .collect();
-
-        let mut by_count: Vec<(String, u64)> =
-            exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
-        by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let all = sample_ranked(&by_count);
-        let ranked = by_count.into_iter().map(|(g, _)| g).collect();
+        let (ranked, all) = rank_and_shuffle(exact.iter().map(|(g, c)| (g.clone(), *c)));
         SubpopCardTruth { exact, ranked, all }
     }
 
     fn probes(&self, truth: &SubpopCardTruth) -> Vec<String> {
-        union_of(&truth.all, &truth.ranked)
+        // One member of the population is one group, and `all` holds each once.
+        truth.all.clone()
     }
 
     fn ask(&self, sketch: &S, probe: &String) -> f64 {
@@ -290,49 +242,15 @@ where
     ) -> BTreeMap<String, f64> {
         let est: HashMap<&String, f64> =
             probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
-        let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
-
-        let population = |groups: &[String], label: &str, m: &mut BTreeMap<String, f64>| {
-            if groups.is_empty() {
-                return;
-            }
-            let summary = summarise(groups.iter().map(|g| {
+        // One member of the population is one group, so `probes` and
+        // `subpopulations` agree here and do not for the frequency comparator.
+        let mut metrics =
+            score_counting_population(&truth.ranked, &truth.all, truth.exact.len(), |g| {
                 (
                     *est.get(g).unwrap_or(&0.0),
                     *truth.exact.get(g).unwrap_or(&0) as f64,
                 )
-            }));
-            summary.write(label, m);
-        };
-
-        for k in TOP_K_REPORTED {
-            if k > truth.ranked.len() {
-                break;
-            }
-            population(&truth.ranked[..k], &format!("top{k}"), &mut metrics);
-        }
-        population(&truth.all, "all", &mut metrics);
-
-        if let Some(v) = metrics.get("are_all").copied() {
-            metrics.insert("relative_error_mean".into(), v);
-        }
-        if let Some(v) = metrics.get("probes_all").copied() {
-            metrics.insert("probes".into(), v);
-        }
-        let mut errs: Vec<f64> = truth
-            .all
-            .iter()
-            .filter_map(|g| {
-                let t = *truth.exact.get(g).unwrap_or(&0) as f64;
-                if t <= 0.0 {
-                    return None;
-                }
-                Some((*est.get(g).unwrap_or(&0.0) - t).abs() / t)
-            })
-            .collect();
-        errs.sort_by(f64::total_cmp);
-        metrics.insert("relative_error_p99".into(), percentile(&errs, 0.99));
-        metrics.insert("subpopulations".into(), truth.exact.len() as f64);
+            });
         metrics.insert("label_column".into(), self.label_column as f64);
         metrics
     }
@@ -361,9 +279,15 @@ pub struct SubpopRankErrorGT {
 /// The ordered statistic inside each group, plus the groups worth probing.
 pub struct SubpopRankTruth {
     per_group: HashMap<String, Vec<f64>>,
-    /// Groups by size descending, capped: a two-element group has almost no
-    /// ranks to be wrong about.
+    /// Every group that occurred, in [`shuffled_keys`] order. Not capped and not
+    /// in size order: a three-record group has almost no ranks to be wrong
+    /// about and still counts as one member of the population, which is what
+    /// makes `mean_rank_err` sensitive to a workload's long tail of tiny
+    /// groups.
     probed: Vec<String>,
+    /// Records in the whole workload, not in the scored groups. The two differ
+    /// only when a record has no label at the scored column, which `truth`
+    /// skips.
     items: usize,
 }
 
@@ -382,23 +306,17 @@ where
         // is over occurrences.
         let mut per_group: HashMap<String, Vec<f64>> = HashMap::new();
         for it in items {
-            let Some(label) = it.label(self.label_column) else {
+            let Some(group) = subset_key(it, &[self.label_column]) else {
                 continue;
             };
-            per_group
-                .entry(label.to_string())
-                .or_default()
-                .push(it.value.to_f64());
+            per_group.entry(group).or_default().push(it.value.to_f64());
         }
         for values in per_group.values_mut() {
             values.sort_by(f64::total_cmp);
         }
-        let mut by_size: Vec<(String, u64)> = per_group
-            .iter()
-            .map(|(g, v)| (g.clone(), v.len() as u64))
-            .collect();
-        by_size.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let probed = sample_ranked(&by_size);
+        // Ranked by size, and only the probe order is kept: this comparator
+        // reports no top-k prefix, so it has nothing to rank for.
+        let (_, probed) = rank_and_shuffle(per_group.iter().map(|(g, v)| (g.clone(), v.len() as u64)));
         SubpopRankTruth {
             per_group,
             probed,
@@ -475,11 +393,17 @@ where
                     max_err = err;
                 }
             }
+            // The 101 points describe one member of the population, so they are
+            // meaned into that member's error before the members are meaned.
             sum_mean += group_sum / GROUP_GRID_POINTS as f64;
             scored_groups += 1;
         }
 
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
+        // Mean over members, unweighted, exactly as the two counting
+        // comparators do it. A 40000-record group and a 125-record one each
+        // count once, so this number moves with a workload's group-size spread
+        // and not only with the sketch.
         metrics.insert(
             "mean_rank_err".into(),
             if scored_groups > 0 {
@@ -491,6 +415,9 @@ where
         metrics.insert("max_rank_err".into(), max_err);
         metrics.insert("grid_points".into(), GROUP_GRID_POINTS as f64);
         metrics.insert("items".into(), truth.items as f64);
+        // Members of the population, matching what the other two report under
+        // this name. The questions asked are `grid_points` times this, and are
+        // reported as `Comparison::queries`.
         metrics.insert("probes".into(), scored_groups as f64);
         metrics.insert("subpopulations".into(), truth.per_group.len() as f64);
         metrics.insert("label_column".into(), self.label_column as f64);
@@ -503,19 +430,19 @@ where
 /// The error summary one probe sweep produces, in the vocabulary the two
 /// grouped counting comparators share. Kept as one type so a metric cannot be
 /// spelled one way in one comparator and another way in the next.
-struct ErrSummary {
-    are: f64,
-    aae: f64,
-    l1: f64,
-    l2: f64,
-    n: f64,
+pub struct ErrSummary {
+    pub are: f64,
+    pub aae: f64,
+    pub l1: f64,
+    pub l2: f64,
+    pub n: f64,
 }
 
 impl ErrSummary {
     /// `are_*` and `aae_*` under `label`, plus `l1_err` / `l2_err` when the
     /// sweep is the unfiltered `all` population. The top-k prefixes have no
     /// norms because a norm over a prefix is not a norm.
-    fn write(&self, label: &str, metrics: &mut BTreeMap<String, f64>) {
+    pub fn write(&self, label: &str, metrics: &mut BTreeMap<String, f64>) {
         metrics.insert(format!("are_{label}"), self.are);
         metrics.insert(format!("aae_{label}"), self.aae);
         metrics.insert(format!("probes_{label}"), self.n);
@@ -526,10 +453,76 @@ impl ErrSummary {
     }
 }
 
+/// Every metric the two counting comparators report, from the one thing they do
+/// not share: `answer`, which gives `(estimate, truth)` for one member of the
+/// population.
+///
+/// `ranked` is the population by true value descending and `all` is the same
+/// members in probe order, so `ranked[..k]` is the top-k prefix. Both are
+/// borrowed and neither is consumed, which is what lets a prefix re-use the
+/// answers already collected instead of re-querying.
+///
+/// A comparator that wants a different roll-up, weighted by group size say,
+/// replaces this call and keeps [`summarise`] and [`ErrSummary`].
+pub fn score_counting_population<K>(
+    ranked: &[K],
+    all: &[K],
+    subpopulations: usize,
+    answer: impl Fn(&K) -> (f64, f64),
+) -> BTreeMap<String, f64> {
+    let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
+
+    let population = |members: &[K], label: &str, m: &mut BTreeMap<String, f64>| {
+        if members.is_empty() {
+            return;
+        }
+        summarise(members.iter().map(&answer)).write(label, m);
+    };
+
+    for k in TOP_K_REPORTED {
+        if k > ranked.len() {
+            // Reporting `are_top1000` over 400 distinct members would mean
+            // `are_all` under a name claiming otherwise. Omit it.
+            break;
+        }
+        population(&ranked[..k], &format!("top{k}"), &mut metrics);
+    }
+    population(all, "all", &mut metrics);
+
+    if let Some(v) = metrics.get("are_all").copied() {
+        metrics.insert("relative_error_mean".into(), v);
+    }
+    if let Some(v) = metrics.get("probes_all").copied() {
+        metrics.insert("probes".into(), v);
+    }
+    let mut errs: Vec<f64> = all
+        .iter()
+        .filter_map(|m| {
+            let (est, truth) = answer(m);
+            if truth <= 0.0 {
+                return None;
+            }
+            Some((est - truth).abs() / truth)
+        })
+        .collect();
+    errs.sort_by(f64::total_cmp);
+    metrics.insert("relative_error_p99".into(), percentile(&errs, 0.99));
+
+    // How many distinct groups the scored column carried. A grouped sketch's
+    // error is a function of this, so a record without it cannot be read.
+    metrics.insert("subpopulations".into(), subpopulations as f64);
+    metrics
+}
+
 /// Fold `(estimate, truth)` pairs into the summary. Relative error is averaged
 /// over the entries with a non-zero truth only, because dividing by a zero
 /// truth is undefined and counting it as zero error would reward a miss.
-fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
+///
+/// Every population this module builds comes out of the truth, so every member
+/// has a truth of at least 1 and that filter never fires here. It is kept
+/// because a population that does probe absent groups, which is what measuring
+/// false positives would take, is exactly the case it exists for.
+pub fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
     let (mut are, mut aae, mut l1, mut l2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
     let (mut n, mut counted) = (0usize, 0usize);
     for (est, truth) in pairs {
@@ -589,11 +582,13 @@ mod tests {
     }
     impl SubpopFrequencyOps for ExactSubpop {
         type Value = i64;
+        /// Joined, not `labels[0]`: the query names a label *subset*, and the
+        /// key a grouped sketch files it under is the join. This is what
+        /// `PolarsSubpopFrequency` does, and answering out of the first label
+        /// alone is the whole of what a wrapper has to change to serve a deeper
+        /// population.
         fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
-            *self
-                .counts
-                .get(&(labels[0].to_string(), *value))
-                .unwrap_or(&0) as f64
+            *self.counts.get(&(labels.join(";"), *value)).unwrap_or(&0) as f64
         }
     }
 
@@ -673,6 +668,120 @@ mod tests {
         assert_eq!(cmp.metrics["aae_top1"], 3.0);
         // 3 distinct pairs: the top-10 prefix must be omitted, not aliased.
         assert!(!cmp.metrics.contains_key("are_top10"));
+    }
+
+    // ---------- the swap, done ----------
+    //
+    // What it costs to be unsatisfied with the choices this module fixes. The
+    // population below is the depth-2 subset, which is #54's missing case and
+    // the one none of the three comparators above can reach.
+    //
+    // Place one is `DepthTwoFreqGT` and its `GroundTruth` impl. Place two is the
+    // sketch's capability impl: no signature moves, because `SubpopFrequencyOps`
+    // already takes a label *subset*, and one line inside does, from answering
+    // out of `labels[0]` to answering out of the join. The shipped `polars`
+    // baseline already had that line; the test double above did not, and this
+    // test is what caught it. Everything else is reused: `subset_key` for the key space,
+    // `rank_and_shuffle` for the ranking and the probe order, and
+    // `score_counting_population` for every metric. Nothing below reimplements
+    // ARE, AAE, the norms, the top-k prefixes or the percentile.
+
+    struct DepthTwoFreqGT {
+        columns: Vec<usize>,
+    }
+
+    impl<S> GroundTruth<S> for DepthTwoFreqGT
+    where
+        S: Accumulator<Item = Labeled<i64>> + SubpopFrequencyOps<Value = i64>,
+    {
+        type Truth = SubpopFreqTruth<i64>;
+        type Probe = (String, i64);
+        type Answer = f64;
+
+        fn truth(&self, items: &[Labeled<i64>]) -> SubpopFreqTruth<i64> {
+            let mut exact: HashMap<(String, i64), u64> = HashMap::new();
+            for it in items {
+                let Some(group) = subset_key(it, &self.columns) else {
+                    continue;
+                };
+                *exact.entry((group, it.value)).or_insert(0) += 1;
+            }
+            let (ranked, all) = rank_and_shuffle(exact.iter().map(|(k, c)| (k.clone(), *c)));
+            SubpopFreqTruth { exact, ranked, all }
+        }
+
+        fn probes(&self, truth: &SubpopFreqTruth<i64>) -> Vec<(String, i64)> {
+            truth.all.clone()
+        }
+
+        fn ask(&self, sketch: &S, probe: &(String, i64)) -> f64 {
+            let labels: Vec<&str> = probe.0.split(';').collect();
+            sketch.estimate_subpop_frequency(&labels, &probe.1)
+        }
+
+        fn answer_as_f64(&self, answer: &f64) -> f64 {
+            *answer
+        }
+
+        fn score(
+            &self,
+            truth: &SubpopFreqTruth<i64>,
+            probes: &[(String, i64)],
+            answers: &[f64],
+        ) -> BTreeMap<String, f64> {
+            let est: HashMap<&(String, i64), f64> =
+                probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+            let groups: HashSet<&str> = truth.exact.keys().map(|(g, _)| g.as_str()).collect();
+            score_counting_population(&truth.ranked, &truth.all, groups.len(), |pair| {
+                (
+                    *est.get(pair).unwrap_or(&0.0),
+                    *truth.exact.get(pair).unwrap_or(&0) as f64,
+                )
+            })
+        }
+    }
+
+    /// The replacement scores a population the shipped comparators cannot, and
+    /// lands on the same scale they do: exactly 1.0 for a null estimator.
+    #[test]
+    fn a_replacement_reaches_the_depth_two_population() {
+        let items = records();
+        let gt = DepthTwoFreqGT {
+            columns: vec![0, 1],
+        };
+        let cmp = crate::accuracy::run_probes(&gt, &NullSubpop, &items, false);
+        // Depth-2 pairs: (a;x,10) (a;y,10) (a;x,20) (b;x,30) (b;y,30) → 5 pairs
+        // over 4 groups, against column 0 alone giving 3 pairs over 2 groups.
+        assert_eq!(cmp.metrics["probes_all"], 5.0);
+        assert_eq!(cmp.metrics["subpopulations"], 4.0);
+        assert_eq!(cmp.metrics["are_all"], 1.0);
+        // The heaviest depth-2 pair is (b;y, 30), which occurs twice.
+        assert_eq!(cmp.metrics["aae_top1"], 2.0);
+        // `label_column` belongs to the depth-1 comparators, so a depth-2
+        // population does not claim one.
+        assert!(!cmp.metrics.contains_key("label_column"));
+    }
+
+    /// And the same replacement scores exactly zero against an exact estimator,
+    /// which is what says its truth and its probes agree on the key space.
+    #[test]
+    fn the_replacement_scores_an_exact_estimator_zero() {
+        let items = records();
+        let mut exact = ExactSubpop {
+            counts: HashMap::new(),
+            column: 0,
+        };
+        // The wrapper needs no change, only the key it files under: this is the
+        // `;`-joined subset key the sketch itself would build.
+        for it in &items {
+            *exact.counts.entry((it.key.clone(), it.value)).or_insert(0) += 1;
+        }
+        let gt = DepthTwoFreqGT {
+            columns: vec![0, 1],
+        };
+        let cmp = crate::accuracy::run_probes(&gt, &exact, &items, false);
+        assert_eq!(cmp.metrics["are_all"], 0.0);
+        assert_eq!(cmp.metrics["l1_err"], 0.0);
     }
 
     /// Scoring a different column is a different population, not a relabelling.

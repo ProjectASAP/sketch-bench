@@ -171,7 +171,7 @@ fn shuffled<K: Clone>(ranked: &[(K, u64)]) -> Vec<K> {
     out
 }
 
-pub(crate) fn percentile(sorted: &[f64], q: f64) -> f64 {
+pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
