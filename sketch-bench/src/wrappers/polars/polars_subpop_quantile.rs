@@ -1,6 +1,6 @@
 //! `hydra-kll/polars` — exact subpopulation quantile over every label subset.
 
-use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -42,6 +42,16 @@ impl Accumulator for PolarsSubpopQuantile {
     /// boundary, which is a DataFrame sort rather than a per-group one: the
     /// grouped aggregation would hand back a list column this then has to
     /// unnest, and the ordered answer needs the values anyway.
+    /// The exact control for the merge square. The runner fills shards with
+    /// `update` only and calls `prepare` after the fold, so concatenating the
+    /// buffers is the whole of it — the DataFrame work then runs over the whole
+    /// stream. Lossless by construction, which is what makes it the control:
+    /// any gap on the sketch beside it is the sketch's.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.buf.extend_from_slice(&other.buf);
+        Ok(())
+    }
+
     fn prepare(&mut self) {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         for r in &self.buf {
@@ -105,4 +115,60 @@ impl MemoryFootprint for PolarsSubpopQuantile {
 impl BenchImpl for PolarsSubpopQuantile {
     type Params = HydraKllParams;
     const IMPL: &'static str = "polars";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(key: &str, value: f64) -> Labeled<f64> {
+        Labeled { key: key.to_string(), value }
+    }
+
+    fn built() -> PolarsSubpopQuantile {
+        PolarsSubpopQuantile::init(&ParamSet::of(&HydraKllParams {
+            rows: 3,
+            cols: 64,
+            cell_k: 200,
+        }))
+        .expect("canonical dimensions build")
+    }
+
+    /// The ordered statistic is over the union, so the fold has to interleave
+    /// the two shards rather than concatenate their sorted runs. `prepare`
+    /// sorts after the merge, which is what makes that true.
+    #[test]
+    fn merging_shards_reorders_across_both() {
+        let left_items: Vec<Labeled<f64>> =
+            (1..=50).map(|v| record("a;x", v as f64 * 2.0)).collect();
+        let right_items: Vec<Labeled<f64>> =
+            (1..=50).map(|v| record("a;x", v as f64 * 2.0 - 1.0)).collect();
+
+        let (mut left, mut right) = (built(), built());
+        for r in &left_items {
+            left.update(r);
+        }
+        for r in &right_items {
+            right.update(r);
+        }
+        left.merge(&right).expect("the exact control merges");
+        left.prepare();
+
+        let mut whole = built();
+        for r in left_items.iter().chain(right_items.iter()) {
+            whole.update(r);
+        }
+        whole.prepare();
+
+        for phi in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert_eq!(
+                left.estimate_subpop_quantile(&["a"], phi),
+                whole.estimate_subpop_quantile(&["a"], phi),
+                "merged and whole-stream disagree at phi={phi}"
+            );
+        }
+        // The union is 1..=100, so the extremes come from opposite shards.
+        assert_eq!(left.estimate_subpop_quantile(&["a"], 0.0), 1.0);
+        assert_eq!(left.estimate_subpop_quantile(&["a"], 1.0), 100.0);
+    }
 }

@@ -1,6 +1,6 @@
 //! `hydra-cms/polars` — exact subpopulation frequency over every label subset.
 
-use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -36,6 +36,16 @@ impl Accumulator for PolarsSubpopFrequency {
     #[inline(always)]
     fn update(&mut self, r: &Labeled<i64>) {
         self.buf.push(r.clone());
+    }
+
+    /// The exact control for the merge square. The runner fills shards with
+    /// `update` only and calls `prepare` after the fold, so concatenating the
+    /// buffers is the whole of it — the DataFrame work then runs over the whole
+    /// stream. Lossless by construction, which is what makes it the control:
+    /// any gap on the sketch beside it is the sketch's.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.buf.extend_from_slice(&other.buf);
+        Ok(())
     }
 
     fn prepare(&mut self) {
@@ -98,4 +108,62 @@ impl MemoryFootprint for PolarsSubpopFrequency {
 impl BenchImpl for PolarsSubpopFrequency {
     type Params = HydraCmsParams;
     const IMPL: &'static str = "polars";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(key: &str, value: i64) -> Labeled<i64> {
+        Labeled { key: key.to_string(), value }
+    }
+
+    fn built() -> PolarsSubpopFrequency {
+        PolarsSubpopFrequency::init(&ParamSet::of(&HydraCmsParams {
+            rows: 3,
+            cols: 64,
+            cell_rows: 3,
+            cell_cols: 256,
+        }))
+        .expect("canonical dimensions build")
+    }
+
+    /// Folding two shards must give the answer the whole stream gives. Exact on
+    /// both sides, so this is an equality and not a tolerance.
+    #[test]
+    fn merging_shards_matches_the_whole_stream() {
+        let left_items = [record("a;x", 10), record("a;y", 10)];
+        let right_items = [record("a;x", 10), record("b;x", 20)];
+
+        let (mut left, mut right) = (built(), built());
+        for r in &left_items {
+            left.update(r);
+        }
+        for r in &right_items {
+            right.update(r);
+        }
+        left.merge(&right).expect("the exact control merges");
+        left.prepare();
+
+        let mut whole = built();
+        for r in left_items.iter().chain(right_items.iter()) {
+            whole.update(r);
+        }
+        whole.prepare();
+
+        for (labels, value) in [
+            (vec!["a"], 10),
+            (vec!["a", "x"], 10),
+            (vec!["b"], 20),
+            (vec!["zzz"], 10),
+        ] {
+            assert_eq!(
+                left.estimate_subpop_frequency(&labels, &value),
+                whole.estimate_subpop_frequency(&labels, &value),
+                "merged and whole-stream disagree at {labels:?}/{value}"
+            );
+        }
+        // The depth-1 group `a` covers three records across both shards.
+        assert_eq!(left.estimate_subpop_frequency(&["a"], &10), 3.0);
+    }
 }

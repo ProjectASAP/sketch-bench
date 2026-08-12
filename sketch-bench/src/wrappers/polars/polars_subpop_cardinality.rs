@@ -1,6 +1,6 @@
 //! `hydra-hll/polars` — exact subpopulation cardinality over every label subset.
 
-use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -36,6 +36,16 @@ impl Accumulator for PolarsSubpopCardinality {
     #[inline(always)]
     fn update(&mut self, r: &Labeled<i64>) {
         self.buf.push(r.clone());
+    }
+
+    /// The exact control for the merge square. The runner fills shards with
+    /// `update` only and calls `prepare` after the fold, so concatenating the
+    /// buffers is the whole of it — the DataFrame work then runs over the whole
+    /// stream. Lossless by construction, which is what makes it the control:
+    /// any gap on the sketch beside it is the sketch's.
+    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
+        self.buf.extend_from_slice(&other.buf);
+        Ok(())
     }
 
     fn prepare(&mut self) {
@@ -92,4 +102,49 @@ impl MemoryFootprint for PolarsSubpopCardinality {
 impl BenchImpl for PolarsSubpopCardinality {
     type Params = HydraHllParams;
     const IMPL: &'static str = "polars";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(key: &str, value: i64) -> Labeled<i64> {
+        Labeled { key: key.to_string(), value }
+    }
+
+    fn built() -> PolarsSubpopCardinality {
+        PolarsSubpopCardinality::init(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }))
+            .expect("canonical dimensions build")
+    }
+
+    /// The value shared across the two shards must be counted once, which is
+    /// the property a concatenating merge has to preserve for a distinct count.
+    #[test]
+    fn merging_shards_does_not_double_count() {
+        let left_items = [record("a;x", 10), record("a;x", 20)];
+        let right_items = [record("a;x", 20), record("a;x", 30)];
+
+        let (mut left, mut right) = (built(), built());
+        for r in &left_items {
+            left.update(r);
+        }
+        for r in &right_items {
+            right.update(r);
+        }
+        left.merge(&right).expect("the exact control merges");
+        left.prepare();
+
+        let mut whole = built();
+        for r in left_items.iter().chain(right_items.iter()) {
+            whole.update(r);
+        }
+        whole.prepare();
+
+        // 10, 20, 30 — three distinct, though 20 occurs in both shards.
+        assert_eq!(left.estimate_subpop_cardinality(&["a"]), 3.0);
+        assert_eq!(
+            left.estimate_subpop_cardinality(&["a"]),
+            whole.estimate_subpop_cardinality(&["a"])
+        );
+    }
 }
