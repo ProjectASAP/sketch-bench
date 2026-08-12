@@ -1,12 +1,15 @@
-//! The catalog: one table naming every `(algorithm, impl)` this crate exposes,
-//! and the dispatch resolving one to a concrete sketch type. It lives here,
-//! not in the CLI, so a future `aqp-bench` can ship its own. A row is a
-//! *type*, not a pair of strings — algorithm, impl name and `scores_accuracy`
-//! are projected off it, so the list and the code cannot drift apart.
+//! This bundle's table: every `(algorithm, impl)` `sketch-bench` exposes, and
+//! the two dispatch shapes whose row type is chosen by a construction
+//! parameter rather than sized by one.
+//!
+//! What a row *is* lives in [`aqpbm_core::catalog`], not here, and that split
+//! is the point: a second bundle depends on the core and publishes its own
+//! [`ROWS`], without depending on this crate or on the libraries it wraps. The
+//! lookups below are this bundle's table bound into the core's, so a frontend
+//! addressing one bundle keeps the call it already had.
 
 use anyhow::Result;
 use aqpbm_core::accumulator::Accumulator;
-
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
@@ -14,9 +17,11 @@ use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::topk::TopkGT;
-use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{self, BenchItem, ParallelInit, RunError, WorkloadSpec};
-use aqpbm_core::runner::{needs_ground_truth, NoGT};
+use aqpbm_core::accuracy::FrequencyOps;
+use aqpbm_core::catalog::{
+    ordered, parallel_row, plain, run_scored, scored, GroundTruthCalculator, Row,
+};
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadSpec};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
@@ -26,249 +31,15 @@ use asap_sketchlib::{
     MatrixStorage,
 };
 
-use aqpbm_core::accuracy::FrequencyOps;
-
-use crate::params::{HllParams, ParamSet, TopkParams};
+use crate::params::{HllParams, ParamSet};
 use crate::wrappers::{
     cms, countsketch, dd, elastic, fixed_matrix, hll, hydra, kll, nitro, parallel, polars, topk,
     univmon,
 };
 
-// ---------- what a row is ----------
-
-/// The one item-type choice a user still makes: an `ordered` row (KLL, DDSketch)
-/// builds at either width, while every other row's item type is fixed by its Rust
-/// type — so the catalog can refuse before generating anything.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Numeric {
-    #[default]
-    I64,
-    F64,
-}
-
-/// The executable half of a row: everything the frontend can hand a cell.
-type RunFn =
-    fn(&BenchConfig, &WorkloadSpec, &ParamSet, Numeric) -> Result<Vec<BenchReport>, RunError>;
-
-/// The comparators a row can be scored by, keyed by the name `--comparator`
-/// selects them with.
-type Comparators = &'static [(&'static str, RunFn)];
-
-/// One catalog entry. Built only by the constructors below, so `family`,
-/// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
-/// row's type and its runner — never hand-written strings that could drift from
-/// it.
-pub struct Row {
-    /// Rows sharing this answer the same question from the same knobs, so this
-    /// is what a cross-library comparison groups by. Derived from the row's
-    /// params type: one parameter vocabulary is one family.
-    pub family: &'static str,
-    /// The algorithm, structural variant included. `--algorithm` matches this
-    /// exactly, because one invocation measures one cell.
-    pub algorithm: &'static str,
-    /// The implementing library, and only that.
-    pub impl_name: &'static str,
-    /// The one field that is genuinely new data, and so is written in [`ROWS`].
-    pub description: &'static str,
-    /// Can a comparator score this row? Derived: true iff it was built with a
-    /// constructor that takes a ground-truth calculator.
-    pub scores_accuracy: bool,
-    /// Can this row run at [`Numeric::F64`]? Derived: only `ordered` rows can.
-    pub picks_width: bool,
-    /// Does this row ingest labelled records, and so need a `--spec` column
-    /// list instead of a single-column spec? Derived off the row's item type.
-    pub takes_columns: bool,
-    run: RunFn,
-    /// The comparators this row admits, by name, first one the default. Every
-    /// entry is checked by the compiler: a calculator the row's capabilities
-    /// cannot satisfy will not build, so the table cannot offer a comparison
-    /// the row could not answer.
-    comparators: Comparators,
-}
-
-// ---------- how a row builds its ground truth ----------
-
-/// A [`GroundTruth`] that constructs itself from the run's accuracy knobs and the
-/// row's params. A trait, not a `fn` argument, so the calculator is named as a
-/// *type* in [`ROWS`] and the row stays `const`.
-trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
-    /// The name `--comparator` selects this one by. One capability can carry
-    /// several comparators, and this is what tells them apart on the command
-    /// line.
-    const NAME: &'static str;
-    fn build(params: &ParamSet) -> Self;
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for CardinalityGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "cardinality";
-    fn build(_params: &ParamSet) -> Self {
-        CardinalityGT
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for FrequencyGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "frequency";
-    fn build(_params: &ParamSet) -> Self {
-        FrequencyGT
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopFrequencyGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "subpop-frequency";
-    /// Scores column 0. A grouped sketch stores every column subset, but each
-    /// one is its own population with its own error, so a comparator names the
-    /// one it scores instead of pooling them.
-    fn build(_params: &ParamSet) -> Self {
-        SubpopFrequencyGT {
-            label_column: 0,
-        }
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopCardinalityGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "subpop-cardinality";
-    /// Column 0, for the same reason as [`SubpopFrequencyGT`].
-    fn build(_params: &ParamSet) -> Self {
-        SubpopCardinalityGT {
-            label_column: 0,
-        }
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopRankErrorGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "subpop-rank-error";
-    /// Column 0, for the same reason as [`SubpopFrequencyGT`]. The most
-    /// expensive comparator in the catalog: 101 estimate calls per group.
-    fn build(_params: &ParamSet) -> Self {
-        SubpopRankErrorGT {
-            label_column: 0,
-        }
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for RankErrorGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "rank-error";
-    fn build(_params: &ParamSet) -> Self {
-        RankErrorGT {
-        }
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for RelativeErrorGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "relative-error";
-    fn build(_params: &ParamSet) -> Self {
-        RelativeErrorGT {
-        }
-    }
-}
-
-impl<S: Accumulator> GroundTruthCalculator<S> for TopkGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "topk";
-    /// Scores against the same `k` the sketch was built with — a different prefix
-    /// would measure the mismatch, not the sketch. Infallible because the timed
-    /// half runs first, so an unreadable `k` has already failed the build.
-    fn build(params: &ParamSet) -> Self {
-        TopkGT {
-            k: params
-                .parse::<TopkParams>()
-                .expect("the row built, so its params parse")
-                .k,
-        }
-    }
-}
-
-// ---------- the ways a row runs ----------
-
-/// Every square the request selects, scored against `G` where one needs it.
-fn run_scored<S, G>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    _width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruthCalculator<S>,
-{
-    // A comparator is built when the request reaches a square that cannot run
-    // without one. Nobody has to ask for it: needing one is a property of the
-    // squares selected, not a separate decision.
-    let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(params));
-    Ok(cell::run_cell::<S, G>(cfg, spec, params, gt.as_ref())?)
-}
-
-/// An ordered quantile algorithm (KLL, DDSketch): the row names both widths and
-/// the caller's [`Numeric`] picks one. The only place a runtime value still
-/// selects an item type.
-fn run_ordered<Si, Sf, G>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
-{
-    match width {
-        Numeric::I64 => run_scored::<Si, G>(cfg, spec, params, width),
-        Numeric::F64 => run_scored::<Sf, G>(cfg, spec, params, width),
-    }
-}
-
-/// A row with no query capability: timed only, no ground truth, nothing to score.
-fn run_plain<S>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    _width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    cell::run_cell::<S, NoGT>(cfg, spec, params, None)
-}
-
-/// A parallel-insert row: built with the worker count, so not an `InitSketch`.
-fn run_parallel<S>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    _width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    cell::run_cell_parallel::<S, NoGT>(cfg, spec, params, None)
-}
+/// Re-exported so a caller addressing this bundle names one path. The type is
+/// the core's: a width is a property of a row, not of a bundle.
+pub use aqpbm_core::catalog::Numeric;
 
 /// A row whose `(rows, cols)` selects a *type* rather than sizing a field.
 ///
@@ -376,53 +147,6 @@ where
     }
 }
 
-// ---------- the row constructors ----------
-// Each reads `S::FAMILY` / `S::ALGORITHM` / `S::IMPL` off the type and fixes
-// `scores_accuracy`. `const fn`, so `ROWS` stays `const` and a bad row fails at
-// compile time.
-
-const fn scored<S, G>(description: &'static str) -> Row
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruthCalculator<S>,
-{
-    Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
-        description,
-        scores_accuracy: true,
-        picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        run: run_scored::<S, G>,
-        comparators: &[(G::NAME, run_scored::<S, G>)],
-    }
-}
-
-const fn ordered<Si, Sf, G>(description: &'static str) -> Row
-where
-    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
-{
-    Row {
-        // Both halves are the same row; the i64 one names it.
-        family: Si::FAMILY,
-        algorithm: Si::ALGORITHM,
-        impl_name: Si::IMPL,
-        description,
-        scores_accuracy: true,
-        picks_width: true,
-        takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
-        run: run_ordered::<Si, Sf, G>,
-        comparators: &[(
-            <G as GroundTruthCalculator<Si>>::NAME,
-            run_ordered::<Si, Sf, G>,
-        )],
-    }
-}
-
 /// The three precisions are one row: they are one algorithm at one impl, and
 /// `lg_k` is the knob that moves between them. `S14` names the row, the way the
 /// `i64` half names an [`ordered`] one.
@@ -469,44 +193,6 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
         comparators: &[],
     }
 }
-
-const fn plain<S>(description: &'static str) -> Row
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
-        description,
-        scores_accuracy: false,
-        picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        run: run_plain::<S>,
-        // Answers no query, so nothing scores it.
-        comparators: &[],
-    }
-}
-
-const fn parallel_row<S>(description: &'static str) -> Row
-where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
-        description,
-        scores_accuracy: false,
-        picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        run: run_parallel::<S>,
-        comparators: &[],
-    }
-}
-
 // ---------- the catalog ----------
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
@@ -617,74 +303,36 @@ pub const ROWS: &[Row] = &[
 ];
 
 // ---------- what the frontend asks ----------
+//
+// This bundle's table bound into the core's lookups. One line each: the logic
+// is the core's and belongs to every bundle, and the only thing that is this
+// bundle's is which table to look in.
 
-fn find(algorithm: &str, impl_name: &str) -> Option<&'static Row> {
-    ROWS.iter()
-        .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
-}
-
-/// One line per row, grouped by family with a blank line between groups, since
-/// the family is what a reader picks from before they pick a variant. Rows keep
-/// declaration order inside a family.
-///
-/// The algorithm column is sized to the longest name present, so adding a
-/// longer variant widens the table instead of breaking its alignment. The first
-/// line is the header, so a caller prints exactly what this returns.
+/// One line per `(algorithm, impl)` in this bundle, grouped by family.
 pub fn list() -> Vec<String> {
-    let algo_w = ROWS
-        .iter()
-        .map(|r| r.algorithm.len())
-        .max()
-        .unwrap_or(0)
-        .max("# algorithm".len());
-    let impl_w = ROWS.iter().map(|r| r.impl_name.len()).max().unwrap_or(0);
-    let mut out = Vec::with_capacity(ROWS.len() + 8);
-    out.push(format!(
-        "{:algo_w$}  {:impl_w$}  description",
-        "# algorithm", "impl"
-    ));
-    let mut current: Option<&str> = None;
-    for r in ROWS {
-        if current != Some(r.family) {
-            out.push(String::new());
-            current = Some(r.family);
-        }
-        out.push(format!(
-            "{:algo_w$}  {:impl_w$}  {}",
-            r.algorithm, r.impl_name, r.description
-        ));
-    }
-    out
+    aqpbm_core::catalog::list(ROWS)
 }
 
 pub fn algorithm_exists(algorithm: &str) -> bool {
-    ROWS.iter().any(|r| r.algorithm == algorithm)
+    aqpbm_core::catalog::algorithm_exists(ROWS, algorithm)
 }
 
-/// The family an algorithm belongs to, for the record's `family` field. `None`
-/// if the algorithm is unknown, which the frontend has already ruled out by the
-/// time it asks.
+/// The family an algorithm belongs to, for the record's `family` field.
 pub fn family_of(algorithm: &str) -> Option<&'static str> {
-    ROWS.iter()
-        .find(|r| r.algorithm == algorithm)
-        .map(|r| r.family)
+    aqpbm_core::catalog::family_of(ROWS, algorithm)
 }
 
 /// Can a comparator score this row? `None` if the row is unknown.
 pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool> {
-    find(algorithm, impl_name).map(|r| r.scores_accuracy)
+    aqpbm_core::catalog::scores_accuracy(ROWS, algorithm, impl_name)
 }
 
-/// Parse the single `--config` point for an algorithm, checking the algorithm exists.
+/// Parse the single `--config` point for an algorithm, checking it exists.
 pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet> {
-    if !algorithm_exists(algorithm) {
-        anyhow::bail!("unknown sketch algorithm: {algorithm}");
-    }
-    ParamSet::single(algorithm, spec).map_err(Into::into)
+    aqpbm_core::catalog::config_point(ROWS, algorithm, spec)
 }
 
-/// Resolve `(algorithm, impl)` to a concrete measurement and run it. The timed
-/// half is always run; the accuracy half only when `acc.enabled`.
+/// Resolve `(algorithm, impl)` to a concrete measurement and run it.
 pub fn run(
     algorithm: &str,
     impl_name: &str,
@@ -694,49 +342,13 @@ pub fn run(
     width: Numeric,
     comparator: Option<&str>,
 ) -> Result<Vec<BenchReport>> {
-    let row = find(algorithm, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))?;
-    // Asked for a width this row's type cannot be built at — answerable from
-    // the catalog, before a single item is generated.
-    if width == Numeric::F64 && !row.picks_width {
-        anyhow::bail!("{algorithm}/{impl_name} runs over i64 only; drop --dtype f64");
-    }
-    // A named comparator has to be one this row admits. Refused from the
-    // catalog, by name, before anything is generated — the same rule the rest
-    // of the selectors follow.
-    let run = match comparator {
-        None => row.run,
-        Some(name) => row
-            .comparators
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, f)| *f)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{algorithm}/{impl_name} has no comparator '{name}'; it admits {}",
-                    comparators_of(row)
-                )
-            })?,
-    };
-    Ok(run(cfg, spec, params, width)?)
+    aqpbm_core::catalog::run(ROWS, algorithm, impl_name, cfg, spec, params, width, comparator)
 }
 
-/// The comparator names a row admits, for an error message.
-fn comparators_of(row: &Row) -> String {
-    if row.comparators.is_empty() {
-        return "none".to_string();
-    }
-    row.comparators
-        .iter()
-        .map(|(n, _)| *n)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Which comparators a row admits. `None` for an unknown row, so a frontend
-/// can tell "no such row" from "that row is scored by nothing".
+/// Which comparators a row admits. `None` for an unknown row, so a frontend can
+/// tell "no such row" from "that row is scored by nothing".
 pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
-    find(algorithm, impl_name).map(|row| row.comparators.iter().map(|(n, _)| *n).collect())
+    aqpbm_core::catalog::comparators(ROWS, algorithm, impl_name)
 }
 
 #[cfg(test)]

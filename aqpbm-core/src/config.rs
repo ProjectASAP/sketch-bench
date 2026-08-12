@@ -98,6 +98,17 @@ impl ParamSet {
             .map_err(|e| SketchError::BadParam(format!("{} params: {e}", self.algorithm)))
     }
 
+    /// One field, by name, without naming the family it belongs to.
+    ///
+    /// [`Self::parse`] is the normal way in and wants the whole vocabulary as a
+    /// type. A comparator living in this crate cannot name a bundle's params
+    /// type, and does not need to: it wants one knob the sketch was built with,
+    /// so that the prefix it scores is the prefix the sketch kept. `None` when
+    /// the field is absent or is not a `T`.
+    pub fn field<T: DeserializeOwned>(&self, name: &str) -> Option<T> {
+        serde_json::from_value(self.params.get(name)?.clone()).ok()
+    }
+
     pub fn algorithm(&self) -> &str {
         &self.algorithm
     }
