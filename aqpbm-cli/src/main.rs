@@ -87,7 +87,7 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
     Ok(m)
 }
 
-/// Validate `--algorithm`/`--impl` and report whether a comparator can score it.
+/// Validate `--algorithm`/`--impl` and report whether a ground truth can score it.
 fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
     if !catalog::algorithm_exists(algorithm) {
         bail!("unknown algorithm: {algorithm}");
@@ -330,7 +330,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&algorithm),
     };
 
-    // Asking for a square that needs a comparator, of a row that has none.
+    // Asking for a square that needs a ground truth, of a row that has none.
     if aqpbm_core::runner::needs_ground_truth(operations_mask, metrics_mask) && !scores_accuracy {
         eprintln!(
             "approxbench: {algorithm}/{impl_name} declares no query capability, so the squares over the query operation measure nothing"
@@ -356,7 +356,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         &spec,
         &params,
         width,
-        args.comparator.as_deref(),
+        args.ground_truth.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 

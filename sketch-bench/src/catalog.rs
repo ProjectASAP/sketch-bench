@@ -19,7 +19,7 @@ use aqpbm_core::accuracy::subpopulation::{
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::catalog::{
-    ordered, parallel_row, plain, run_scored, scored, GroundTruthCalculator, Row,
+    ordered, parallel_row, plain, run_scored, scored, GroundTruthCalculator, GroundTruthName, Row,
 };
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadSpec};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
@@ -47,12 +47,10 @@ pub use aqpbm_core::catalog::Numeric;
 /// what the row exists to price, so the shape is a monomorphisation and the
 /// dispatch is what turns two runtime integers back into one. Same shape as
 /// [`run_lib_hll`], and the same reason.
-/// Both fixed-matrix rows are frequency rows, so the comparator is named here
-/// instead of being a type parameter. That is not a shortcut: a comparator
-/// parameter would have to hold for *every* storage type the dispatch can
-/// select, which is a bound over all `M` and not something a caller can state.
-/// Requiring the row to be `FrequencyOps` at every shape says the same thing in
-/// a form the compiler accepts, and [`FrequencyGT`] follows from it.
+/// Both fixed-matrix rows are frequency rows, so the ground truth is named here
+/// instead of being a type parameter: a parameter would have to hold for
+/// *every* storage type the dispatch can select, which is a bound over all `M`
+/// and not something a caller can state.
 fn run_fixed_matrix<W: FixedMatrixRow>(
     cfg: &BenchConfig,
     spec: &WorkloadSpec,
@@ -162,14 +160,10 @@ where
         algorithm: S14::ALGORITHM,
         impl_name: S14::IMPL,
         description,
-        scores_accuracy: true,
+        ground_truth: Some(G::NAME),
         picks_width: false,
         takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
         run: run_lib_hll::<S12, S14, S16, G>,
-        comparators: &[(
-            <G as GroundTruthCalculator<S12>>::NAME,
-            run_lib_hll::<S12, S14, S16, G>,
-        )],
     }
 }
 
@@ -184,13 +178,12 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
         algorithm: W::ALGORITHM,
         impl_name: "lib",
         description,
-        scores_accuracy: true,
+        // Nameable without a storage type, which is why `NAME` is its own
+        // trait: the dispatch below scores every shape with `FrequencyGT`.
+        ground_truth: Some(FrequencyGT::NAME),
         picks_width: false,
         takes_columns: false,
         run: run_fixed_matrix::<W>,
-        // The fixed-matrix rows carry their comparator inside the generated
-        // dispatch, so there is no calculator type here to name.
-        comparators: &[],
     }
 }
 // ---------- the catalog ----------
@@ -322,7 +315,7 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
     aqpbm_core::catalog::family_of(ROWS, algorithm)
 }
 
-/// Can a comparator score this row? `None` if the row is unknown.
+/// Can a ground truth score this `(algorithm, impl)`? `None` if it is unknown.
 pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool> {
     aqpbm_core::catalog::scores_accuracy(ROWS, algorithm, impl_name)
 }
@@ -340,15 +333,14 @@ pub fn run(
     spec: &WorkloadSpec,
     params: &ParamSet,
     width: Numeric,
-    comparator: Option<&str>,
+    ground_truth: Option<&str>,
 ) -> Result<Vec<BenchReport>> {
-    aqpbm_core::catalog::run(ROWS, algorithm, impl_name, cfg, spec, params, width, comparator)
+    aqpbm_core::catalog::run(ROWS, algorithm, impl_name, cfg, spec, params, width, ground_truth)
 }
 
-/// Which comparators a row admits. `None` for an unknown row, so a frontend can
-/// tell "no such row" from "that row is scored by nothing".
-pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
-    aqpbm_core::catalog::comparators(ROWS, algorithm, impl_name)
+/// Every ground truth an `(algorithm, impl)` is registered against.
+pub fn ground_truths(algorithm: &str, impl_name: &str) -> Vec<&'static str> {
+    aqpbm_core::catalog::ground_truths(ROWS, algorithm, impl_name)
 }
 
 #[cfg(test)]
@@ -385,18 +377,19 @@ mod tests {
         }
     }
 
-    /// The one way two rows can still collide: distinct types declaring the same
-    /// `IMPL` under the same algorithm. [`find`] takes the first, so the second is
-    /// dead. Not a compile error — the strings come from two different types.
+    /// A row is `(algorithm, impl, ground truth)`, so two rows may share an
+    /// `(algorithm, impl)` only by scoring differently. A full collision makes
+    /// the second row dead, since the lookup takes the first.
     #[test]
-    fn algorithm_impl_pairs_are_unique() {
+    fn rows_are_unique() {
         let mut seen = BTreeSet::new();
         for r in ROWS {
             assert!(
-                seen.insert((r.algorithm, r.impl_name)),
-                "duplicate row {}/{}",
+                seen.insert((r.algorithm, r.impl_name, r.ground_truth)),
+                "duplicate row {}/{}/{:?}",
                 r.algorithm,
-                r.impl_name
+                r.impl_name,
+                r.ground_truth
             );
         }
     }

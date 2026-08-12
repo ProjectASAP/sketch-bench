@@ -167,11 +167,11 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub metrics: Option<String>,
-    /// Which comparator scores this row, by name. A row admits only the
-    /// comparators its capabilities can answer, and the catalog is what lists
-    /// them; omitted takes the row's default.
+    /// Which ground truth scores this run, by name. A sketch registered against
+    /// several is a row per ground truth, and `--list-impls` is what lists them;
+    /// omitted takes the first row for the (algorithm, impl) pair.
     #[arg(long, help_heading = "Measurement content")]
-    pub comparator: Option<String>,
+    pub ground_truth: Option<String>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
     /// measured over. Required, like `--metrics`: a square nothing measures is
     /// refused by name, so a request states which squares it wants rather than

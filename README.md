@@ -22,13 +22,13 @@ cargo run -p aqpbm-cli --release -- sketchbench \
     --operations insert --metrics throughput,latency,cpu,memory \
     --report out.jsonl
 
-# Accuracy is scored against ground truth, and the comparator issues the
-# queries, so the operation is `query`. `--list-impls` names each row's
-# comparators; omitted takes the row's default.
+# Accuracy is scored against a ground truth, which issues the queries, so the
+# operation is `query`. `--list-impls` names each row's ground truth; omitted
+# takes the first row for the (algorithm, impl) pair.
 cargo run -p aqpbm-cli --release -- sketchbench \
     --algorithm cms --impl oxide --config 'rows=5 cols=4096' \
     --workload zipf --size 1000000 --cardinality 100000 \
-    --runs 10 --operations query --metrics accuracy --comparator frequency \
+    --runs 10 --operations query --metrics accuracy --ground-truth frequency \
     --report out.jsonl
 
 # Merge reads the same fold two ways: how long one takes, and how many a second

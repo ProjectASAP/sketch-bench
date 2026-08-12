@@ -58,6 +58,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         schema_version: base.schema_version,
         sketch: base.sketch.clone(),
         impl_name: base.impl_name.clone(),
+        ground_truth: base.ground_truth.clone(),
         language: base.language,
         mode: base.mode,
         runs: base.runs,
