@@ -1,15 +1,8 @@
-//! This bundle's table: every `(algorithm, impl)` `sketch-bench` exposes, and
-//! the two dispatch shapes whose row type is chosen by a construction
-//! parameter rather than sized by one.
-//!
-//! What a row *is* lives in [`aqpbm_core::catalog`], not here, and that split
-//! is the point: a second bundle depends on the core and publishes its own
-//! [`ROWS`], without depending on this crate or on the libraries it wraps. The
-//! lookups below are this bundle's table bound into the core's, so a frontend
-//! addressing one bundle keeps the call it already had.
+//! This bundle's [`REGISTRY`]: every measurement `sketch-bench` publishes, and
+//! nothing else. What a registration *is* lives in [`aqpbm_core::registry`], so
+//! a second bundle publishes its own table without depending on this crate.
 
 use anyhow::Result;
-use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
@@ -17,180 +10,25 @@ use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::topk::TopkGT;
-use aqpbm_core::accuracy::FrequencyOps;
-use aqpbm_core::catalog::{
-    ordered, parallel_row, plain, run_scored, scored, GroundTruthCalculator, GroundTruthName, Row,
-};
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadSpec};
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::cell::WorkloadSpec;
+use aqpbm_core::registry::{ordered, parallel_row, plain, scored, Registration};
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
-use asap_sketchlib::{
-    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
-    MatrixStorage,
-};
+use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
 
-use crate::params::{HllParams, ParamSet};
+use crate::params::ParamSet;
+use crate::wrappers::fixed_matrix::fixed_matrix_row;
+use crate::wrappers::hll::lib_hll;
 use crate::wrappers::{
-    cms, countsketch, dd, elastic, fixed_matrix, hll, hydra, kll, nitro, parallel, polars, topk,
-    univmon,
+    cms, countsketch, dd, elastic, hll, hydra, kll, nitro, parallel, polars, topk, univmon,
 };
 
-/// Re-exported so a caller addressing this bundle names one path. The type is
-/// the core's: a width is a property of a row, not of a bundle.
-pub use aqpbm_core::catalog::Numeric;
+/// Re-exported so a caller names one path. The type is the core's.
+pub use aqpbm_core::registry::Numeric;
 
-/// A row whose `(rows, cols)` selects a *type* rather than sizing a field.
-///
-/// `impl_fixed_matrix!` bakes the dimensions into the storage type, which is
-/// what the row exists to price, so the shape is a monomorphisation and the
-/// dispatch is what turns two runtime integers back into one. Same shape as
-/// [`run_lib_hll`], and the same reason.
-/// Both fixed-matrix rows are frequency rows, so the ground truth is named here
-/// instead of being a type parameter: a parameter would have to hold for
-/// *every* storage type the dispatch can select, which is a bound over all `M`
-/// and not something a caller can state.
-fn run_fixed_matrix<W: FixedMatrixRow>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError> {
-    let (rows, cols) = W::shape(params)?;
-    let visitor = RunFixedMatrix::<W> {
-        cfg,
-        spec,
-        params,
-        width,
-        _row: std::marker::PhantomData,
-    };
-    fixed_matrix::with_fixed_matrix(rows, cols, visitor).unwrap_or_else(|| {
-        Err(RunError::Build(BuildError(fixed_matrix::unsupported_shape(
-            W::ALGORITHM,
-            rows,
-            cols,
-        ))))
-    })
-}
-
-/// The half of a fixed-matrix row that does not depend on the storage type:
-/// which algorithm it is, and how to read its shape out of a `ParamSet`.
-/// Implemented once per sketch type, in the wrapper that owns it.
-pub trait FixedMatrixRow {
-    const ALGORITHM: &'static str;
-    /// The row's concrete type at storage `M`, which is what actually runs.
-    type At<
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    >: Accumulator<Item = i64>
-        + InitSketch
-        + BenchImpl
-        + MemoryFootprint
-        + FrequencyOps<Key = i64>;
-    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
-}
-
-/// Carries the run's arguments into the monomorphisation the shape selected.
-struct RunFixedMatrix<'a, W> {
-    cfg: &'a BenchConfig,
-    spec: &'a WorkloadSpec,
-    params: &'a ParamSet,
-    width: Numeric,
-    _row: std::marker::PhantomData<W>,
-}
-
-impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, W> {
-    type Out = Result<Vec<BenchReport>, RunError>;
-
-    fn visit<M>(self) -> Self::Out
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.width)
-    }
-}
-
-/// A row whose construction parameter selects a *type* rather than a field.
-/// `asap_sketchlib` puts the HLL register count in the storage type, so `lg_k`
-/// picks a monomorphisation and this dispatch is what turns a runtime value
-/// back into one. Same shape as [`run_ordered`], and for the same reason: an
-/// enum inside the wrapper would put a branch in `update`, on rows whose whole
-/// purpose is to price that insert.
-fn run_lib_hll<S12, S14, S16, G>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
-{
-    let p: HllParams = params.parse().map_err(BuildError::from)?;
-    match p.lg_k {
-        12 => run_scored::<S12, G>(cfg, spec, params, width),
-        14 => run_scored::<S14, G>(cfg, spec, params, width),
-        16 => run_scored::<S16, G>(cfg, spec, params, width),
-        other => Err(RunError::Build(hll::unsupported_precision(other))),
-    }
-}
-
-/// The three precisions are one row: they are one algorithm at one impl, and
-/// `lg_k` is the knob that moves between them. `S14` names the row, the way the
-/// `i64` half names an [`ordered`] one.
-const fn lib_hll<S12, S14, S16, G>(description: &'static str) -> Row
-where
-    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
-{
-    Row {
-        family: S14::FAMILY,
-        algorithm: S14::ALGORITHM,
-        impl_name: S14::IMPL,
-        description,
-        ground_truth: Some(G::NAME),
-        picks_width: false,
-        takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
-        run: run_lib_hll::<S12, S14, S16, G>,
-    }
-}
-
-/// The shape-dispatching counterpart of [`scored`]: identity comes off the
-/// row's `FixedMatrixRow` impl and its params type, because no one storage type
-/// names a row that exists at every shape.
-const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
-    description: &'static str,
-) -> Row {
-    Row {
-        family: P::FAMILY,
-        algorithm: W::ALGORITHM,
-        impl_name: "lib",
-        description,
-        // Nameable without a storage type, which is why `NAME` is its own
-        // trait: the dispatch below scores every shape with `FrequencyGT`.
-        ground_truth: Some(FrequencyGT::NAME),
-        picks_width: false,
-        takes_columns: false,
-        run: run_fixed_matrix::<W>,
-    }
-}
-// ---------- the catalog ----------
-
-/// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
-/// the wrapper it names; nothing else in this file changes.
-pub const ROWS: &[Row] = &[
+/// Every measurement this crate exposes. Adding one is one line here plus the
+/// wrapper it names; scoring a sketch a second way is one more line.
+pub const REGISTRY: &[Registration] = &[
     // -------- HLL (cardinality) --------
     scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)"),
     scored::<hll::HllDatasketches, CardinalityGT>("datasketches::hll::HllSketch (Hll8)"),
@@ -235,7 +73,7 @@ pub const ROWS: &[Row] = &[
     scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
     scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
     scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
-    fixed_matrix_row::<cms::CmsFixedMatrixRow, crate::params::CmsParams>(
+    fixed_matrix_row::<cms::CmsFixedMatrix, crate::params::CmsParams>(
         "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
     ),
     scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
@@ -244,7 +82,7 @@ pub const ROWS: &[Row] = &[
     // -------- CountSketch (frequency) --------
     scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
     scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
-    fixed_matrix_row::<countsketch::CsFixedMatrixRow, crate::params::CountSketchParams>(
+    fixed_matrix_row::<countsketch::CsFixedMatrix, crate::params::CountSketchParams>(
         "asap Count, FixedMatrix (shape baked at compile time), FastPath",
     ),
     scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
@@ -267,9 +105,8 @@ pub const ROWS: &[Row] = &[
     plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
     plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
-    // One algorithm per cell type, because the cell decides which statistic the
-    // grid answers and each is scored by a different comparator. See the module
-    // header in `wrappers/hydra.rs`.
+    // One algorithm per cell type: the cell decides which statistic the grid
+    // answers. See the module header in `wrappers/hydra.rs`.
     scored::<hydra::HydraCms, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
     ),
@@ -296,33 +133,31 @@ pub const ROWS: &[Row] = &[
 ];
 
 // ---------- what the frontend asks ----------
-//
-// This bundle's table bound into the core's lookups. One line each: the logic
-// is the core's and belongs to every bundle, and the only thing that is this
-// bundle's is which table to look in.
+// This bundle's table bound into the core's lookups: the logic belongs to every
+// bundle, and only which table to look in is this one's.
 
-/// One line per `(algorithm, impl)` in this bundle, grouped by family.
+/// One line per registration in this bundle, grouped by family.
 pub fn list() -> Vec<String> {
-    aqpbm_core::catalog::list(ROWS)
+    aqpbm_core::registry::list(REGISTRY)
 }
 
 pub fn algorithm_exists(algorithm: &str) -> bool {
-    aqpbm_core::catalog::algorithm_exists(ROWS, algorithm)
+    aqpbm_core::registry::algorithm_exists(REGISTRY, algorithm)
 }
 
 /// The family an algorithm belongs to, for the record's `family` field.
 pub fn family_of(algorithm: &str) -> Option<&'static str> {
-    aqpbm_core::catalog::family_of(ROWS, algorithm)
+    aqpbm_core::registry::family_of(REGISTRY, algorithm)
 }
 
 /// Can a ground truth score this `(algorithm, impl)`? `None` if it is unknown.
 pub fn scores_accuracy(algorithm: &str, impl_name: &str) -> Option<bool> {
-    aqpbm_core::catalog::scores_accuracy(ROWS, algorithm, impl_name)
+    aqpbm_core::registry::scores_accuracy(REGISTRY, algorithm, impl_name)
 }
 
 /// Parse the single `--config` point for an algorithm, checking it exists.
 pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet> {
-    aqpbm_core::catalog::config_point(ROWS, algorithm, spec)
+    aqpbm_core::registry::config_point(REGISTRY, algorithm, spec)
 }
 
 /// Resolve `(algorithm, impl)` to a concrete measurement and run it.
@@ -335,12 +170,12 @@ pub fn run(
     width: Numeric,
     ground_truth: Option<&str>,
 ) -> Result<Vec<BenchReport>> {
-    aqpbm_core::catalog::run(ROWS, algorithm, impl_name, cfg, spec, params, width, ground_truth)
+    aqpbm_core::registry::run(REGISTRY, algorithm, impl_name, cfg, spec, params, width, ground_truth)
 }
 
 /// Every ground truth an `(algorithm, impl)` is registered against.
 pub fn ground_truths(algorithm: &str, impl_name: &str) -> Vec<&'static str> {
-    aqpbm_core::catalog::ground_truths(ROWS, algorithm, impl_name)
+    aqpbm_core::registry::ground_truths(REGISTRY, algorithm, impl_name)
 }
 
 #[cfg(test)]
@@ -354,11 +189,9 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// One buildable config per family, from each params type's own
-    /// `canonical()`, tagged with the row's own algorithm. The `panic!` arm is
-    /// what makes a newly added family show up here rather than silently
-    /// skipping the tests below.
-    fn canonical_params(row: &Row) -> ParamSet {
+    /// One buildable config per family. The `panic!` arm is what makes a newly
+    /// added family show up here rather than silently skipping the tests below.
+    fn canonical_params(row: &Registration) -> ParamSet {
         let a = row.algorithm;
         match row.family {
             "hll" => ParamSet::of_algorithm(a, &HllParams::canonical()),
@@ -377,16 +210,16 @@ mod tests {
         }
     }
 
-    /// A row is `(algorithm, impl, ground truth)`, so two rows may share an
-    /// `(algorithm, impl)` only by scoring differently. A full collision makes
-    /// the second row dead, since the lookup takes the first.
+    /// Two registrations may share an `(algorithm, impl)` only by scoring
+    /// differently: a full collision makes the second dead, since the lookup
+    /// takes the first.
     #[test]
-    fn rows_are_unique() {
+    fn registrations_are_unique() {
         let mut seen = BTreeSet::new();
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 seen.insert((r.algorithm, r.impl_name, r.ground_truth)),
-                "duplicate row {}/{}/{:?}",
+                "duplicate registration {}/{}/{:?}",
                 r.algorithm,
                 r.impl_name,
                 r.ground_truth
@@ -394,16 +227,15 @@ mod tests {
         }
     }
 
-    /// A row's algorithm must sit in the family whose vocabulary it parses, or
-    /// `--config` would be checked against knobs the row does not take. The
-    /// `ALGORITHM` override is a hand-written string, so this is the one thing
-    /// about a row's identity the type system does not already guarantee.
+    /// An algorithm must sit in the family whose vocabulary it parses, or
+    /// `--config` is checked against knobs the row does not take. `ALGORITHM` is
+    /// hand-written, so this is the one identity the types do not guarantee.
     #[test]
     fn every_algorithm_belongs_to_its_family() {
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 crate::params::in_family(r.algorithm, r.family),
-                "row {}/{} declares family '{}', which its algorithm is not in",
+                "{}/{} declares family '{}', which its algorithm is not in",
                 r.algorithm,
                 r.impl_name,
                 r.family
@@ -411,17 +243,16 @@ mod tests {
         }
     }
 
-    /// The impl axis carries the library and nothing else. A storage backend, a
-    /// code path or a query strategy in this column is the defect this naming
-    /// exists to prevent: it makes the column mean two things at once, so
-    /// "which library is faster" stops being answerable by grouping on it.
+    /// The impl axis carries the library and nothing else. A storage backend or
+    /// a code path here makes the column mean two things, so "which library is
+    /// faster" stops being answerable by grouping on it.
     #[test]
     fn impl_names_are_library_names() {
         const LIBRARIES: [&str; 4] = ["oxide", "datasketches", "lib", "polars"];
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 LIBRARIES.contains(&r.impl_name),
-                "row {}/{}: '{}' is not a library name; a structural variant \
+                "{}/{}: '{}' is not a library name; a structural variant \
                  belongs in the algorithm",
                 r.algorithm,
                 r.impl_name,
@@ -430,12 +261,10 @@ mod tests {
         }
     }
 
-    /// Every family has at least one row a `--config` sweep can walk, and every
-    /// family's rows are reachable by name. A family whose every row were fixed
-    /// shape would be a panel with no x-axis.
+    /// Every family is reachable by name.
     #[test]
     fn every_family_is_reachable_by_name() {
-        for r in ROWS {
+        for r in REGISTRY {
             assert_eq!(
                 family_of(r.algorithm),
                 Some(r.family),
@@ -446,9 +275,8 @@ mod tests {
         assert_eq!(family_of("no-such-algorithm"), None);
     }
 
-    /// A small workload spec, enough for any row to build and ingest. The item
-    /// type is not named here — each row materialises its own
-    /// `Accumulator::Item`.
+    /// Enough for any row to build and ingest. The item type is not named here —
+    /// each row materialises its own `Accumulator::Item`.
     fn smoke_spec() -> WorkloadSpec {
         WorkloadSpec::Generated(column(64, 256, 1))
     }
@@ -465,15 +293,13 @@ mod tests {
         }
     }
 
-    /// The same, for the rows whose item is a record: two label columns and a
-    /// value column. A row states which of the two it wants through
-    /// `Row::takes_columns`, so neither is guessed here.
+    /// The same for record items: two label columns and a value column.
     fn smoke_columns_spec() -> WorkloadSpec {
         WorkloadSpec::Columns(vec![column(8, 256, 1), column(4, 256, 2), column(32, 256, 3)])
     }
 
-    /// The spec shape `row` can actually ingest.
-    fn spec_for(row: &Row) -> WorkloadSpec {
+    /// The spec shape this can actually ingest.
+    fn spec_for(row: &Registration) -> WorkloadSpec {
         if row.takes_columns {
             smoke_columns_spec()
         } else {
@@ -494,13 +320,12 @@ mod tests {
         }
     }
 
-    /// Every row actually builds and ingests — the part the types cannot state.
-    /// A row *is* its runner, so there is no `_` bail to fall into and no strings
-    /// for the list and the dispatch to disagree about.
+    /// Every registration actually builds and ingests — the part types cannot
+    /// state.
     #[test]
-    fn every_catalog_entry_runs() {
+    fn every_registration_runs() {
         let cfg = smoke_cfg();
-        for r in ROWS {
+        for r in REGISTRY {
             // Canonical, not `empty`: every family's params have required
             // fields, so `empty` builds nothing at all now that the exact
             // baselines parse their config too.
@@ -521,7 +346,7 @@ mod tests {
                     assert_eq!(
                         (report.sketch.as_str(), report.impl_name.as_str()),
                         (r.algorithm, r.impl_name),
-                        "row {}/{} emits records labelled {}/{}",
+                        "{}/{} emits records labelled {}/{}",
                         r.algorithm,
                         r.impl_name,
                         report.sketch,
@@ -532,9 +357,8 @@ mod tests {
         }
     }
 
-    /// An algorithm's rows are only comparable if asked the same question, so they
-    /// must agree on which configs are answerable — one row silently accepting a
-    /// config its peers reject scores a different experiment.
+    /// An algorithm's registrations must agree on which configs are answerable:
+    /// one accepting what its peers reject scores a different experiment.
     #[test]
     fn topk_rows_accept_and_reject_the_same_configs() {
         let spec = smoke_spec();
@@ -545,7 +369,7 @@ mod tests {
             ("rows=5 cols=2048 k=0", false),  // a top-k of nothing
             ("rows=5 cols=2048", false),      // no `k` at all
         ] {
-            for r in ROWS.iter().filter(|r| r.family == "topk") {
+            for r in REGISTRY.iter().filter(|r| r.family == "topk") {
                 let params = config_point(r.algorithm, cfg_spec).unwrap();
                 let got = run(
                     r.algorithm,

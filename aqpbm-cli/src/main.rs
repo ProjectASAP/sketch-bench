@@ -38,11 +38,10 @@ use clap::Parser;
 use sketch_bench::params::ParamSet;
 
 use cli::{Cli, Cmd, SketchbenchArgs};
-// The catalog — which sketches exist, how to build them, which ground-truth calculator scores
-// them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
-// not know the set; it asks.
+// CLI does not know what sketch is registered
+// CLI asks for what sketch is registered
 use aqpbm_core::cell::WorkloadSpec;
-use sketch_bench::catalog;
+use sketch_bench::registry;
 
 /// What is measured. No default and no `all`: a request says which squares of
 /// the grid it wants, and a shorthand that sweeps the grid would sweep squares
@@ -89,10 +88,10 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
 
 /// Validate `--algorithm`/`--impl` and report whether a ground truth can score it.
 fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
-    if !catalog::algorithm_exists(algorithm) {
+    if !registry::algorithm_exists(algorithm) {
         bail!("unknown algorithm: {algorithm}");
     }
-    catalog::scores_accuracy(algorithm, impl_name)
+    registry::scores_accuracy(algorithm, impl_name)
         .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))
 }
 
@@ -140,13 +139,9 @@ fn main() -> Result<()> {
     }
 }
 
-/// `--list-impls` prints and exits. Enumerating a bundle's catalog hangs off
-/// that bundle's subcommand, since a second bundle would make a free-standing
-/// `list-impls` ambiguous about whose catalog it means.
+/// `--list-impls` prints and exits
 fn list_impls() -> Result<()> {
-    // The catalog owns the header too: it is the one place that knows how wide
-    // the algorithm column has to be for the rows underneath it.
-    for line in catalog::list() {
+    for line in registry::list() {
         println!("{line}");
     }
     Ok(())
@@ -290,11 +285,11 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
     // The only item-type choice left: an `ordered` row builds at either width.
-    // Every other row's type is fixed by its Rust type, and `catalog::run`
+    // Every other row's type is fixed by its Rust type, and `registry::run`
     // refuses a width it cannot honour before anything is generated.
     let width = match args.dtype.as_str() {
-        "i64" => catalog::Numeric::I64,
-        "f64" => catalog::Numeric::F64,
+        "i64" => registry::Numeric::I64,
+        "f64" => registry::Numeric::F64,
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
@@ -326,7 +321,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // parameterless point when omitted; keys are type-checked at
     // construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => catalog::config_point(&algorithm, s)?,
+        Some(s) => registry::config_point(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
     };
 
@@ -349,7 +344,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // Whether this cell can run is decided at construction: a wrong dtype, a
     // missed fixed shape, or a missing param all surface here. The tool ran
     // exactly what it was asked, so it fails rather than skipping on.
-    let reports = catalog::run(
+    let reports = registry::run(
         &algorithm,
         &impl_name,
         &cfg,
@@ -360,12 +355,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
-    // `catalog::run` returns one report per square; emit each on its own
-    // JSONL line and CSV row group. A downstream group-by on
-    // (sketch, impl, sketch_config, workload) merges them back.
-    // Resolved once: `catalog::run` succeeded, so the row exists and so does
-    // its family.
-    let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
+    let family = registry::family_of(&algorithm).unwrap_or(algorithm.as_str());
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
     let mut records = Vec::with_capacity(reports.len());

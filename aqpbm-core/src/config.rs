@@ -1,13 +1,8 @@
-//! Accumulator-construction parameters.
-//!
-//! The algorithm axis is open: [`ParamSet`] carries the algorithm name plus its
-//! parameters as JSON, and each params type declares its own name, its own
-//! canonical config, and — through serde — its own parsing and field names.
-//!
-//! One params type is one **family**. An algorithm named `cms` and one named
-//! `cms-fastpath-vector2d` build from the same `{rows, cols}` vocabulary, so
-//! they are one family and one params type serves both. Which variants exist is
-//! the catalog's business; which vocabulary they share is this type's.
+//! Accumulator-construction parameters. The algorithm axis is open: [`ParamSet`]
+//! carries the algorithm name plus its parameters as JSON, and each params type
+//! declares its own name, canonical config, and — through serde — its own
+//! parsing. One params type is one **family**: which variants exist is the
+//! registry's business, which vocabulary they share is this type's.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

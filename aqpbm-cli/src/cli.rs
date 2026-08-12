@@ -1,9 +1,7 @@
-//! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch catalog
-//! it dispatches through lives in `sketch_bench::catalog`.
-//!
+//! CLI surface: the clap argument structs. The logic consuming them lives in
+//! `main.rs`, and the registry it dispatches through in `sketch_bench::registry`.
 //! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
-//! hand-authored and authoritative. `scripts/dump_cli_reference.sh` diffs the
+//! hand-authored and authoritative; `scripts/dump_cli_reference.sh` diffs the
 //! built binary against it.
 
 use clap::{Parser, Subcommand};

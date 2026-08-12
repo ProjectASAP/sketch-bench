@@ -10,12 +10,16 @@ use std::time::Instant;
 use crate::accumulator::Accumulator;
 use crate::metrics::QueryCallSample;
 
+pub mod calculator;
 pub mod cardinality;
 pub mod frequency;
 pub mod quantile;
 pub mod statistic;
 pub mod subpopulation;
 pub mod topk;
+
+// How a registration names and builds the ground truth that scores it.
+pub use calculator::{GroundTruthCalculator, GroundTruthName};
 
 // The capability traits that declare which sketch answers which statistic.
 pub use statistic::{

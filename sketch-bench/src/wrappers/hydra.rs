@@ -1,33 +1,8 @@
-//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022), the
-//! grid-of-sketches that answers per-subpopulation queries out of one shared
-//! structure.
-//!
-//! Two things separate these rows from every other one in the catalog.
-//!
-//! Their item is a **record**, not a key: a stream of `d` label columns plus a
-//! value, so they ingest `Labeled<V>` and read their workload from a column
-//! list. And their insert **fans out**: one record is written into every
-//! non-empty subset of its labels, so `d` labels cost `2^d - 1` cell
-//! insertions. The reported throughput is records per second, which is the only
-//! denominator comparable across `d`; multiply by `2^d - 1` for cell
-//! insertions.
-//!
-//! # Why the cell type is on the algorithm axis
-//!
-//! What sits in a cell decides which statistic the grid answers, so it is a
-//! different question and not a different answer to one question.
-//!
-//! - A Count-Min cell counts occurrences of a value inside a group, which is
-//!   [`SubpopFrequencyOps`]. It cannot report the size of the group itself.
-//! - A HyperLogLog cell counts distinct values inside a group, which is
-//!   [`SubpopCardinalityOps`], the statistic the Count-Min row structurally
-//!   cannot reach.
-//! - A KLL cell answers the ordered statistic inside a group, which is
-//!   [`SubpopQuantileOps`], scored in rank error.
-//!
-//! Three comparators, so three algorithms: `hydra-cms`, `hydra-hll` and
-//! `hydra-kll`. All three come from `sketch_framework::Hydra`, so all three
-//! have one impl, `lib`.
+//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022), a grid
+//! of sketches answering per-subpopulation queries. The item is a record, and one
+//! insert fans out into every non-empty label subset, so `d` labels cost
+//! `2^d - 1` cell insertions; throughput is records per second. The cell type is
+//! on the algorithm axis because it decides which statistic the grid answers.
 
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};

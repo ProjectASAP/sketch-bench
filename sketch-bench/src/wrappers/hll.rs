@@ -2,7 +2,10 @@
 //! (a.k.a. asap_sketchlib). All of them declare `CardinalityOps`,
 //! which is what makes them cardinality rows.
 
-use aqpbm_core::accuracy::CardinalityOps;
+use aqpbm_core::accuracy::{CardinalityOps, GroundTruthCalculator};
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadSpec};
+use aqpbm_core::registry::{run_scored, Numeric, Registration};
+use aqpbm_core::runner::{BenchConfig, BenchReport};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::wrappers::require_range;
 use crate::params::HllParams;
@@ -120,7 +123,7 @@ impl MemoryFootprint for HllDatasketches {
 // The register count is a *type* in this library: `HyperLogLogImpl<Variant, R>`
 // picks it through `R`, and `HllBucketListP12 / P14 / P16` are the three it
 // ships. So `lg_k` selects a monomorphisation, which is why these two rows are
-// generic and the catalog dispatches on the requested value. An enum here would
+// generic and `lib_hll` below dispatches on the requested value. An enum would
 // have put a branch in `update`, on the row whose whole purpose is to price
 // that insert.
 //
@@ -130,11 +133,11 @@ impl MemoryFootprint for HllDatasketches {
 // and label the record 13.
 
 /// The `lg_k` values `asap_sketchlib` ships a register storage for. Named once
-/// so the wrapper's check and the catalog's dispatch cannot disagree about it.
+/// so the wrapper's check and the dispatch cannot disagree about it.
 pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
 
 /// The error both `lib` rows give for an `lg_k` this library has no storage
-/// type for. Shared with the catalog's dispatch, so the row that cannot be
+/// type for. Shared with the dispatch, so the precision that cannot be
 /// selected and the row that cannot be built refuse in the same words.
 pub(crate) fn unsupported_precision(lg_k: u8) -> BuildError {
     BuildError(format!(
@@ -151,7 +154,7 @@ pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBuc
 impl<R: asap_sketchlib::HllRegisterStorage> InitSketch for HllLib<R> {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: HllParams = config.parse()?;
-        // The catalog picked `R` off this same `lg_k`, so this only fires for a
+        // The dispatch picked `R` off this same `lg_k`, so this only fires for a
         // direct caller. It fires rather than silently building at `R`, because
         // building at a precision other than the one requested is the defect
         // this row is being fixed for.
@@ -346,7 +349,7 @@ mod tests {
         }
     }
 
-    /// The precisions the catalog dispatches over are the ones the wrapper
+    /// The precisions the dispatch covers are the ones the wrapper
     /// accepts. Two lists that could drift silently: a value in one and not the
     /// other is either an unreachable row or a panic-free dead branch.
     #[test]
@@ -385,5 +388,53 @@ mod tests {
                 "lib lg_k={lg_k}"
             );
         }
+    }
+}
+
+// ---------- the lg_k dispatch, and the registration it serves ----------
+
+/// `asap_sketchlib` puts the HLL register count in the storage type, so `lg_k`
+/// picks a monomorphisation and this turns a runtime value back into one. An
+/// enum inside the wrapper would put a branch in `update`, which is the thing
+/// these rows exist to price.
+fn run_lib_hll<S12, S14, S16, G>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError>
+where
+    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+{
+    let p: HllParams = params.parse().map_err(BuildError::from)?;
+    match p.lg_k {
+        12 => run_scored::<S12, G>(cfg, spec, params, width),
+        14 => run_scored::<S14, G>(cfg, spec, params, width),
+        16 => run_scored::<S16, G>(cfg, spec, params, width),
+        other => Err(RunError::Build(unsupported_precision(other))),
+    }
+}
+
+/// One algorithm at one impl, `lg_k` moving between three precisions. `S14`
+/// names the row, the way the `i64` half names an [`ordered`] one.
+pub const fn lib_hll<S12, S14, S16, G>(description: &'static str) -> Registration
+where
+    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+{
+    Registration {
+        family: S14::FAMILY,
+        algorithm: S14::ALGORITHM,
+        impl_name: S14::IMPL,
+        description,
+        ground_truth: Some(G::NAME),
+        picks_width: false,
+        takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
+        run: run_lib_hll::<S12, S14, S16, G>,
     }
 }

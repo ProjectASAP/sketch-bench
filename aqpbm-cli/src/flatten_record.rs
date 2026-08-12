@@ -1,11 +1,8 @@
-//! What `--flat` does: fold one cell's records into one row.
-//!
-//! The row holds one slot per operation, and a metric is a field inside a
-//! slot. A square is named by both, so a slot keyed on either name alone
-//! would hold two squares at once.
-//!
-//! [`MergedRecord`] lives in `aqpbm_core` beside [`Record`], being a wire
-//! shape and not CLI logic. Grouping records by identity is the caller's job.
+//! What `--flat` does: fold one cell's records into one row. The row holds one
+//! slot per operation and a metric is a field inside a slot, since a square is
+//! named by both and a slot keyed on either alone would hold two at once.
+//! [`MergedRecord`] lives in `aqpbm_core` beside [`Record`], being a wire shape
+//! and not CLI logic. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
     BenchSection, InsertMetrics, MergeMetrics, MergedRecord, PrepareMetrics, QueryMetrics, Record,

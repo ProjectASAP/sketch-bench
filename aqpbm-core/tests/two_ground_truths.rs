@@ -1,12 +1,8 @@
-//! One sketch, two ground truths, two rows.
-//!
-//! A row is `(algorithm, impl, ground truth)`, so scoring a sketch a second way
-//! is a second `scored::<S, G>` line and not an edit to the first. This is that,
-//! end to end: registration, selection by name, and what the record carries.
-//!
-//! Everything here is declared in the test, so `aqpbm-core` still knows no
-//! concrete sketch — that it can be exercised this way *is* the property under
-//! test.
+//! One sketch, two ground truths, two registrations — scoring a sketch a second
+//! way is a second `scored::<S, G>` line, not an edit to the first. End to end:
+//! registration, selection by name, and what the record carries. Everything is
+//! declared here, so `aqpbm-core` still knows no concrete sketch; that it can be
+//! exercised this way *is* the property under test.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +10,7 @@ use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::{CardinalityOps, FrequencyOps};
-use aqpbm_core::catalog::{ground_truths, list, run, scored, Numeric, Row};
+use aqpbm_core::registry::{ground_truths, list, run, scored, Numeric, Registration};
 use aqpbm_core::config::{ParamSet, SketchParams};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -78,8 +74,8 @@ impl FrequencyOps for Tally {
     }
 }
 
-/// The registration under test: one sketch, two lines, no hand-written `Row`.
-static ROWS: &[Row] = &[
+/// The property under test: one sketch, two lines, no hand-written literal.
+static REGISTRY: &[Registration] = &[
     scored::<Tally, CardinalityGT>("exact tally, scored as a cardinality sketch"),
     scored::<Tally, FrequencyGT>("exact tally, scored as a frequency sketch"),
 ];
@@ -112,7 +108,7 @@ fn params() -> ParamSet {
 
 fn go(ground_truth: Option<&str>) -> anyhow::Result<Vec<aqpbm_core::runner::BenchReport>> {
     run(
-        ROWS,
+        REGISTRY,
         "tally",
         "lib",
         &cfg(),
@@ -123,25 +119,25 @@ fn go(ground_truth: Option<&str>) -> anyhow::Result<Vec<aqpbm_core::runner::Benc
     )
 }
 
-/// Both rows exist under one `(algorithm, impl)`, which is the whole point.
+/// Both exist under one `(algorithm, impl)`, which is the whole point.
 #[test]
 fn one_sketch_is_registered_against_two_ground_truths() {
     assert_eq!(
-        ground_truths(ROWS, "tally", "lib"),
+        ground_truths(REGISTRY, "tally", "lib"),
         vec!["cardinality", "frequency"]
     );
-    // Every field still comes off the types: neither row was hand-written.
-    for r in ROWS {
+    // Every field still comes off the types: neither was hand-written.
+    for r in REGISTRY {
         assert_eq!((r.family, r.algorithm, r.impl_name), ("tally", "tally", "lib"));
         assert!(r.scores_accuracy());
     }
 }
 
-/// Naming the ground truth picks the row, and the two really do score
-/// differently: a cardinality row reports `relative_error`, a frequency row
-/// reports the `are_*` curve. Neither key appears in the other.
+/// Naming the ground truth picks the registration, and the two really do score
+/// differently: cardinality reports `relative_error`, frequency the `are_*`
+/// curve. Neither key appears in the other.
 #[test]
-fn the_name_selects_which_row_runs() {
+fn the_name_selects_which_registration_runs() {
     let card = go(Some("cardinality")).unwrap();
     let freq = go(Some("frequency")).unwrap();
 
@@ -161,9 +157,8 @@ fn the_name_selects_which_row_runs() {
     assert!(!freq_metrics.contains_key("relative_error"));
 }
 
-/// The record says which one ran, so two rows of one `(sketch, impl)` are not
-/// indistinguishable downstream. Stamped from the type that ran, not from the
-/// request.
+/// The record says which one ran, so two registrations of one `(sketch, impl)`
+/// are not indistinguishable downstream.
 #[test]
 fn the_record_carries_the_ground_truth_that_scored_it() {
     for name in ["cardinality", "frequency"] {
@@ -177,10 +172,10 @@ fn the_record_carries_the_ground_truth_that_scored_it() {
     }
 }
 
-/// Omitting the name takes the first row registered for the pair, so a caller
-/// that never heard of the axis keeps the behaviour it had.
+/// Omitting the name takes the first registered for the pair, so a caller that
+/// never heard of the axis keeps the behaviour it had.
 #[test]
-fn omitting_the_name_takes_the_first_row() {
+fn omitting_the_name_takes_the_first_registered() {
     let reports = go(None).unwrap();
     assert_eq!(reports[0].ground_truth.as_deref(), Some("cardinality"));
 }
@@ -194,10 +189,10 @@ fn an_unknown_ground_truth_is_refused_by_name() {
     assert!(err.contains("cardinality, frequency"), "{err}");
 }
 
-/// `--list-impls` shows the axis, or a second row would look like a duplicate.
+/// `--list-impls` shows the axis, or a second one would look like a duplicate.
 #[test]
 fn the_listing_shows_the_ground_truth_column() {
-    let lines = list(ROWS);
+    let lines = list(REGISTRY);
     assert!(lines[0].contains("ground-truth"), "{:?}", lines[0]);
     let body: Vec<&String> = lines.iter().filter(|l| l.contains("tally")).collect();
     assert_eq!(body.len(), 2);

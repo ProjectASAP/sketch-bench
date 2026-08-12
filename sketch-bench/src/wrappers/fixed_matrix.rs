@@ -1,33 +1,21 @@
-//! The compile-time matrix shapes the `*-fastpath-fixedmatrix` rows offer.
-//!
-//! `asap_sketchlib::impl_fixed_matrix!` takes its dimensions as **literals** and
-//! bakes them into a `Box<[i32; ROWS * COLS]>`, which is the whole point of the
-//! storage: the compiler folds `row * COLS + col` and the bounds check away, and
-//! pricing that against the runtime-sized `Vector2D` is what these rows exist
-//! for. A shape is therefore a monomorphisation, not a value, and one that was
-//! never compiled cannot be built at run time.
-//!
-//! So the set is written down here and dispatched over at run time, the same way
-//! `hll`'s `lg_k` selects a register-storage type. Instantiating a shape is
-//! close to free: a trial grid of 36 measured at no detectable compile time and
-//! about 26 KiB of rlib each, which is why the table below can afford 52 and
-//! still leave a caller having to try to fall outside it.
-//!
-//! # Adding a shape
-//!
-//! One line in [`fixed_matrix_shapes!`], and it needs a distinct type name.
-//! Nothing else changes: the dispatch, the shape list the error message prints,
-//! and the tests all read off this table.
-//!
-//! # Why the grid has a corner missing
-//!
-//! The widest shape is capped at 327,690 counters, which is what the row already
-//! carried before it became sweepable. Past that, `Box::new([0i32; N])`
-//! materialises the array on the stack before moving it to the heap in unoptimised
-//! builds, and `cargo test` runs each test on a 2 MiB thread. Wide-and-deep is the
-//! corner that trips it, so `cols = 65536` stops at 5 rows.
+//! The compile-time matrix shapes the `*-fastpath-fixedmatrix` registrations
+//! offer, and the dispatch that turns two runtime integers back into one.
+//! `impl_fixed_matrix!` takes literal dimensions, so a shape is a
+//! monomorphisation and one never compiled cannot be built at run time. Adding
+//! one is a line in [`fixed_matrix_shapes!`] with a distinct type name.
 
 use asap_sketchlib::{impl_fixed_matrix, DefaultXxHasher, FastPathHasher, MatrixStorage};
+
+use aqpbm_core::accumulator::Accumulator;
+use aqpbm_core::accuracy::frequency::FrequencyGT;
+use aqpbm_core::accuracy::{FrequencyOps, GroundTruthName};
+use aqpbm_core::cell::{RunError, WorkloadSpec};
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::registry::{run_scored, Numeric, Registration};
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
+use crate::params::{ParamSet, SketchParams};
 
 /// Receives the storage type a `(rows, cols)` pair selects.
 ///
@@ -68,6 +56,10 @@ macro_rules! fixed_matrix_shapes {
     };
 }
 
+// The corner is missing on purpose: `Box::new([0i32; N])` materialises the array
+// on the stack before moving it to the heap in unoptimised builds, and `cargo
+// test` runs each test on a 2 MiB thread. Wide-and-deep is what trips that, so
+// `cols = 65536` stops at 5 rows and the widest shape caps at 327,690 counters.
 fixed_matrix_shapes!(
     M3x256 => (3, 256),
     M3x512 => (3, 512),
@@ -268,5 +260,96 @@ mod tests {
         }
         // It must not read as "the tool does not support this".
         assert!(msg.contains("not a shape the row rejects"), "{msg}");
+    }
+}
+
+// ---------- the registrations these shapes serve ----------
+
+/// A registration whose `(rows, cols)` selects a *type* rather than sizing a field:
+/// `impl_fixed_matrix!` bakes the dimensions in, which is what the row exists to
+/// price, so this dispatch turns two runtime integers back into one
+/// monomorphisation. Same shape as `hll`'s `lg_k` dispatch, and the same reason.
+fn run_fixed_matrix<W: FixedMatrixRegistration>(
+    cfg: &BenchConfig,
+    spec: &WorkloadSpec,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    let (rows, cols) = W::shape(params)?;
+    let visitor = RunFixedMatrix::<W> {
+        cfg,
+        spec,
+        params,
+        width,
+        _row: std::marker::PhantomData,
+    };
+    with_fixed_matrix(rows, cols, visitor).unwrap_or_else(|| {
+        Err(RunError::Build(BuildError(unsupported_shape(
+            W::ALGORITHM,
+            rows,
+            cols,
+        ))))
+    })
+}
+
+/// The half of a fixed-matrix registration independent of the storage type.
+/// Implemented in the wrapper that owns the sketch.
+pub trait FixedMatrixRegistration {
+    const ALGORITHM: &'static str;
+    /// The row's concrete type at storage `M`, which is what actually runs.
+    type At<
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    >: Accumulator<Item = i64>
+        + InitSketch
+        + BenchImpl
+        + MemoryFootprint
+        + FrequencyOps<Key = i64>;
+    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
+}
+
+/// Carries the run's arguments into the monomorphisation the shape selected.
+struct RunFixedMatrix<'a, W> {
+    cfg: &'a BenchConfig,
+    spec: &'a WorkloadSpec,
+    params: &'a ParamSet,
+    width: Numeric,
+    _row: std::marker::PhantomData<W>,
+}
+
+impl<W: FixedMatrixRegistration> FixedMatrixVisitor for RunFixedMatrix<'_, W> {
+    type Out = Result<Vec<BenchReport>, RunError>;
+
+    fn visit<M>(self) -> Self::Out
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    {
+        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.width)
+    }
+}
+
+/// The shape-dispatching counterpart of `scored`: no one storage type names a
+/// row that exists at every shape, so identity comes off `W` and `P`.
+pub const fn fixed_matrix_row<W: FixedMatrixRegistration, P: SketchParams>(
+    description: &'static str,
+) -> Registration {
+    Registration {
+        family: P::FAMILY,
+        algorithm: W::ALGORITHM,
+        impl_name: "lib",
+        description,
+        // Nameable without a storage type, which is why `NAME` is its own
+        // trait: the dispatch scores every shape with `FrequencyGT`.
+        ground_truth: Some(FrequencyGT::NAME),
+        picks_width: false,
+        takes_columns: false,
+        run: run_fixed_matrix::<W>,
     }
 }

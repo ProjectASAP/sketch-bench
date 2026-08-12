@@ -1,13 +1,8 @@
-//! Count-Min Accumulator wrappers — five types, every one declaring
-//! `FrequencyOps` (`&i64` point lookup → `u64` count estimate).
-//!
-//! All of them take `(rows, cols)` and honour it, by four different routes.
-//! `oxide` inverts the error bounds its API takes and checks the table it got
-//! back. `datasketches` range-checks the `(u8, u32)` its API narrows to.
-//! `CmsLibVector2dFast` / `CmsLibVector2dRegular` size at run time.
-//! `CmsLibFixedmatrix<M>` is generic over a storage type that bakes the shape
-//! in, so the shape selects a monomorphisation from the table in
-//! `wrappers::fixed_matrix` and the catalog dispatches on it.
+//! Count-Min wrappers — five types, every one declaring `FrequencyOps`. All take
+//! `(rows, cols)` and honour it by four different routes: `oxide` inverts the
+//! error bounds its API takes, `datasketches` range-checks the `(u8, u32)` it
+//! narrows to, the `Vector2d` pair sizes at run time, and `CmsLibFixedmatrix<M>`
+//! bakes the shape into a storage type from `wrappers::fixed_matrix`.
 
 use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
@@ -178,7 +173,7 @@ impl MemoryFootprint for CmsDatasketches {
 // ---------- asap_sketchlib: FixedMatrix + FastPath ----------
 //
 // One row, every compiled-in shape. The storage carries its dimensions in its
-// type, so the row is generic over the storage and `catalog` picks the
+// type, so the wrapper is generic over the storage and the dispatch picks the
 // monomorphisation from the requested `(rows, cols)`. The set of shapes and the
 // dispatch live in `wrappers::fixed_matrix`.
 //
@@ -196,7 +191,7 @@ where
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
         let inner = CountMin::<M, FastPath>::from_storage(M::default());
-        // The catalog selected `M` from this same pair, so this only fires for a
+        // The dispatch selected `M` from this same pair, so this only fires for a
         // direct caller. It fires rather than silently running at `M`'s shape.
         require_shape(p.rows, p.cols, inner.rows(), inner.cols())?;
         Ok(Self(inner))
@@ -231,11 +226,11 @@ where
 }
 
 /// The shape-independent half of the fixed-matrix Count-Min row: its name, and
-/// how to read a shape out of a config. `catalog` pairs this with the storage
+/// how to read a shape out of a config. The dispatch pairs it with the storage
 /// type the requested shape selects.
-pub struct CmsFixedMatrixRow;
+pub struct CmsFixedMatrix;
 
-impl crate::catalog::FixedMatrixRow for CmsFixedMatrixRow {
+impl crate::wrappers::fixed_matrix::FixedMatrixRegistration for CmsFixedMatrix {
     const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix";
     type At<
         M: MatrixStorage<Counter = i32>

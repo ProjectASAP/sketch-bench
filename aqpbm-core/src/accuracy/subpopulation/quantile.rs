@@ -1,9 +1,7 @@
-//! Subpopulation quantile: the ordered statistic inside one group, in
-//! rank-error units.
-//!
-//! Costs `groups * 101` estimate calls, the most of any ground truth here. A
-//! run that is too slow wants fewer groups in the workload, not a sample of
-//! them — a sampled population is not the truth.
+//! Subpopulation quantile: the ordered statistic inside one group, in rank-error
+//! units. Costs `groups * 101` estimate calls, the most of any ground truth here;
+//! a run that is too slow wants fewer groups in the workload, not a sample of
+//! them, because a sampled population is not the truth.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
