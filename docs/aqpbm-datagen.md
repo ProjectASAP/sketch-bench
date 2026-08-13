@@ -24,6 +24,7 @@ pub struct TableDescription {
     pub column_num: u32,
     pub column_label: Vec<String>,
     pub column_spec: Vec<ColumnSpec>,
+    pub column_connected: Vec<Vec<String>>, // column label describes what columns are related
     pub row_num: u64,
 }
 
@@ -64,6 +65,15 @@ struct NormalParameter {
 
 - **0b0**: no rules
 - **0b0001**: monotonically increase
+
+### column_connected
+
+Sometimes, some data are related across columns.
+For example, source-ip and destination-ip are together to form a heavy flow.
+Thus, the field `column_connected` is used to describe such relation.
+`column_connected` use label to describe which columns are related to each other.
+The requirement is: columns related to each other needs to have identical distribution and distribution parameter.
+They will be generated once, and processed to meet the need.
 
 ## Output
 
