@@ -23,14 +23,16 @@ The input requirement can be defined as this:
 pub struct TableDescription {
     pub column_num: u32,
     pub column_label: Vec<String>,
-    pub column_spec: Vec<ColumnSpec<T>>,
+    pub column_spec: Vec<ColumnSpec>,
     pub row_num: u64,
 }
 
-pub struct ColumnSpec<T> {
+pub struct ColumnSpec {
     pub distribution: DataDistribution,
     pub shift: Option<f64>, // if the data should not range from 0 or normal range of that distribution
-    pub special_rule: u32, // bit mask about special_rule
+    pub cardinality: Option<u64>, // if the data needs a range, the cardinality talks about it
+    pub special_rule: u32, // bit mask about special_rule; 0 means no special rules
+    pub data_type: String, // defines which case of enum ColumnData should be chosen from
 }
 
 enum DataDistribution {
@@ -39,21 +41,29 @@ enum DataDistribution {
     Normal(NormalParameter),
 }
 
-enum ZipfParameter {
-    Skewness(f64),
-    PopulationSize(f64),
+struct ZipfParameter {
+    pub skewness: f64,
+    pub population_size: u64,
+    pub seed: u64,
 }
 
-enum UniformParameter {
-    LowerBound(f64),
-    UpperBound(f64),
+struct UniformParameter {
+    pub lower_bound: f64,
+    pub upper_bound: f64,
+    pub seed: u64,
 }
 
-enum NormalParameter {
-    Mean(f64),
-    StandardDeviation(f64),
+struct NormalParameter {
+    pub mean: f64,
+    pub standard_deviation: f64,
+    pub seed: u64,
 }
 ```
+
+`special_rule` bit map contains the following at this moment:
+
+- **0b0**: no rules
+- **0b0001**: monotonically increase
 
 ## Output
 
@@ -61,9 +71,10 @@ The output is a struct containing data:
 
 ```rust
 pub struct GeneratedTable {
-    pub column_num: u64,
+    pub column_num: u32,
     pub column_title: Vec<String>,
-    pub data: Vec<ColumnData>
+    pub data: Vec<ColumnData>,
+    pub row_num: u64,
 }
 ```
 
