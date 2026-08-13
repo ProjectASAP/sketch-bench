@@ -343,6 +343,14 @@ pub struct GenSpec {
     /// Rendering options for `dtype: string`. Absent means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub string: Option<StringOpts>,
+    /// This column is a **function of** an earlier one, by column index.
+    ///
+    /// Meaningless for a single-column draw and ignored there — a table is the
+    /// only place a column can refer to another. `LabeledWorkload::generate`
+    /// applies it; see its docs for what "function of" costs the dependent
+    /// column's marginal distribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<usize>,
 }
 
 impl GenSpec {
@@ -459,6 +467,7 @@ mod tests {
             size,
             seed,
             string: None,
+            depends_on: None,
         }
     }
 
@@ -798,6 +807,7 @@ mod string_tests {
             size,
             seed: 42,
             string: opts,
+            depends_on: None,
         }
     }
 
@@ -937,6 +947,7 @@ mod string_tests {
             size: 10,
             seed: 1,
             string: None,
+            depends_on: None,
         };
         assert!(s.generate::<String>().is_err());
     }

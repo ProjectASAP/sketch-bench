@@ -1,0 +1,116 @@
+# `hydra_columns.yaml` with one thing changed: a third label column, so the
+# insert fan-out goes from 3 subsets per record to 7.
+#
+#   # what the third label costs per record, at matched grid size
+#   approxbench sketchbench --algorithm hydra-cms --impl lib \
+#     --spec configs/datagen/hydra_three_labels.yaml \
+#     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
+#     --metrics throughput --operations insert
+#
+#   # what the third label costs in error, at matched grid load
+#   approxbench sketchbench --algorithm hydra-cms --impl lib \
+#     --spec configs/datagen/hydra_three_labels.yaml \
+#     --config "rows=3 cols=6144 cell_rows=3 cell_cols=1024" \
+#     --metrics accuracy --operations query
+#
+# Swap `--algorithm` for `hydra-hll` (drop the `cell_*` keys) or `hydra-kll`
+# (`cell_k=200`), and `--impl lib` for `--impl polars` to get the exact answer to
+# the same question. The three label columns take disjoint alphabets, so the
+# `polars` rows score exactly zero here; see `hydra_columns.yaml` for why that is
+# a property of the spec.
+#
+# # What this file exists to measure
+#
+# A record is written into every non-empty subset of its labels, so `d` labels
+# cost `2^d - 1` cell insertions. At `hydra_columns.yaml`'s two labels that is 3;
+# here it is 7. Reported throughput is records per second, which is the only
+# denominator comparable across `d`, so this file against that one is the
+# measurement of what the third label costs. Multiply by `2^d - 1` for cell
+# insertions if you want the per-insertion figure instead.
+#
+# # The two comparisons want different controls, so they want different `cols`
+#
+# Read against `hydra_columns.yaml`, this file changes two things at once: the
+# fan-out per record, and the number of distinct keys the shared grid holds.
+# Which one to hold fixed depends on which number is being read, and there is no
+# single `cols` that serves both.
+#
+# **Throughput wants matched grid size.** Run both files at `cols=1024` and the
+# only difference the insert path sees is how many cells a record touches. That
+# reads 1.21M records/s at `d=2` against 521k at `d=3`, a ratio of 2.32 against
+# a fan-out ratio of 7/3 = 2.33. Running the `d=3` side at `cols=6144` instead
+# reads 383k, a ratio of 3.15, because the grid grew from 38 MB to 226 MB and
+# the extra 0.8 is cache pressure wearing the fan-out's name.
+#
+# **Accuracy wants matched grid load.** The grid is shared by every subset, so
+# the key space grows with `d` and not with the column count. Counting the
+# subsets this workload actually produces:
+#
+#   {key1}             200      {key1,key2}      9946
+#   {key2}              50      {key1,key3}      1600
+#   {key3}               8      {key2,key3}       400
+#                              {key1,key2,key3} 45411
+#                              ---------------------
+#                                        total  57614
+#
+# That is 5.6 times `hydra_columns.yaml`'s 10196, and the depth-3 subset alone is
+# four fifths of it. Scoring this file at `cols=1024` scores a grid 56 times
+# oversubscribed, which is a real Hydra property and is not what a `d` comparison
+# asks about. `cols=6144` holds the load at roughly 9 keys per cell against the
+# two-label file's 10, which is what makes the two error numbers comparable.
+#
+# The footprint moves with `cols`, so memory is comparable across the two files
+# only at matched `cols`, which is to say only alongside the throughput reading.
+#
+# # What is scored
+#
+# One label column, and `SubpopFrequencyGT` scores column 0. Six of the seven
+# subsets here cost insert time, memory and grid occupancy and contribute nothing
+# to the error number. That is #54, and it is worse at `d=3` than at `d=2`: the
+# accuracy figure describes a seventh of what the sketch is paying for.
+
+# key1: the column the comparator groups by. Unchanged from
+# `hydra_columns.yaml` except for the alphabet, which is now a third of the
+# default one so that three columns can be pairwise disjoint.
+- shape: keys
+  cardinality: 200
+  dist:
+    kind: uniform
+  size: 200000
+  seed: 1
+  string:
+    alphabet: "abcdefghijkl"
+
+# key2: a second label, skewed, so the subset fan-out is not uniform.
+- shape: keys
+  cardinality: 50
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 2
+  string:
+    alphabet: "mnopqrstuvwx"
+
+# key3: a third label, low cardinality and skewed, the shape a coarse
+# categorical column has. Kept small on purpose: the depth-3 subset is already
+# four fifths of the key space at 8 values, and a wider third column would make
+# this file a measurement of grid saturation instead of one of fan-out.
+- shape: keys
+  cardinality: 8
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 4
+  string:
+    alphabet: "yz0123456789"
+
+# value: what the cells hold inside each subpopulation. Unchanged.
+- shape: keys
+  cardinality: 1000
+  dist:
+    kind: zipf
+    s: 1.2
+  size: 200000
+  seed: 3

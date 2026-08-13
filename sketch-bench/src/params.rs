@@ -1,15 +1,8 @@
-//! Construction parameters for each sketch family. These live next to the
-//! wrappers that consume them, not in `aqpbm-core`: the core owns the *open*
-//! algorithm axis and deliberately knows no algorithm names, so concrete algorithms are
-//! declared by whoever ships the implementations. See `aqpbm_core::config`.
-//!
-//! One struct is one **family**, not one algorithm. Five algorithms measure
-//! five Count-Min structures — `cms`, `cms-fastpath-vector2d`,
-//! `cms-regularpath-vector2d`, `cms-fastpath-fixedmatrix` and
-//! `cms-fastpath-fixedmatrix-32k-parallel` — but a reader configures every one
-//! of them with the same `rows` and `cols`, so they share [`CmsParams`] and the
-//! family name it declares. A structural variant that needed a *different* knob would be a
-//! different family, which is why the three Hydra cell types have three structs.
+//! Construction parameters per sketch family, next to the wrappers that consume
+//! them: the core owns the open algorithm axis and knows no algorithm names.
+//! One struct is one **family**, not one algorithm — the five Count-Min
+//! algorithms share [`CmsParams`] because a reader configures all five with the
+//! same knobs. A variant needing a *different* knob is a different family.
 
 use serde::{Deserialize, Serialize};
 

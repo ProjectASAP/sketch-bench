@@ -1,31 +1,8 @@
-//! KLL wrappers: `oxide` and `sketchlib` (a.k.a. asap_sketchlib), each as two
-//! rows. Quantile algorithm: `estimate_quantile(phi) -> f64`.
-//!
-//! Both libraries offer the **same two query paths**, and which one a row takes
-//! is the thing these four rows exist to price.
-//!
-//! - **per-call** asks the sketch for one quantile at a time. Each call pays the
-//!   cost of arranging the retained items: `sketch_oxide::KllSketch::quantile`
-//!   collects every level into one weighted vector and sorts it, and
-//!   `asap_sketchlib::KLL::quantile` rebuilds its CDF.
-//! - **cdf** builds that arrangement once in `prepare` and answers out of it.
-//!   The build lands on the finalize clock, so it shows up in
-//!   `finalize_time_ms` and in `build_throughput_items_per_sec` instead of
-//!   silently discounting the query rate.
-//!
-//! Splitting them is what makes the numbers mean something. One row per library,
-//! each taking a different path, would have compared two libraries **and** two
-//! query strategies in one column, and the ~500× gap that produced reads as a
-//! library difference when most of it is the strategy.
-//!
-//! The split lives on the **algorithm** axis, as `kll-percall` and `kll-cdf`.
-//! The two paths give different answers, so they are two questions, and putting
-//! them here leaves the impl axis free to mean the one thing it should mean:
-//! which library. Each algorithm then holds `oxide` against `lib` directly.
-//!
-//! `sketch_oxide`'s `quantile` and `cdf` both take `&mut self` (it sorts
-//! lazily), so its inner sketch sits in a `RefCell`: `QuantileOps::estimate_quantile`
-//! is `&self`, for everyone else's pure reads.
+//! KLL wrappers: `oxide` and `lib`, each at two query paths. `kll-percall` asks
+//! for one quantile per call; `kll-cdf` builds the arrangement once in `prepare`,
+//! so that cost lands on the finalize clock. The path is on the algorithm axis
+//! because the two answer differently — one row per library would have compared
+//! libraries and query strategies in one column, and the gap is mostly path.
 
 use std::cell::RefCell;
 
@@ -108,6 +85,9 @@ fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
 
 /// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
 /// monomorphises `to_f64` away while `T = i64` keeps the cast — the measurement.
+///
+/// `RefCell` because `sketch_oxide`'s `quantile` and `cdf` take `&mut self` (it
+/// sorts lazily), while `QuantileOps::estimate_quantile` is `&self`.
 pub struct KllOxidePerCall<T = i64> {
     inner: RefCell<sketch_oxide::quantiles::KllSketch>,
     k: u32,

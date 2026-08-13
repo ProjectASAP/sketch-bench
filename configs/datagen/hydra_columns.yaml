@@ -32,14 +32,24 @@
 # Reported throughput is records per second, which is the denominator that stays
 # comparable as `d` changes.
 #
-# The columns here share the default alphabet, so their value domains overlap: a
-# query for label `"abc"` cannot distinguish the key1 group from the key2 group,
-# and the estimate absorbs both. This is #74, and it is the reason the `polars`
-# rows do not score zero on this file: at `rows=3 cols=1024` the exact
-# `hydra-cms` baseline reports `are_all = 0.58` against a sketch's 0.74, so most
-# of what the sketch appears to get wrong is the key space and not the sketch.
-# Give each column its own `string.alphabet` to make the domains disjoint, and
-# the baselines drop to exactly zero.
+# The label columns take disjoint alphabets, and that is what makes the `polars`
+# rows score exactly zero here. A depth-1 subset key is the bare label string,
+# carrying nothing that says which column it came from, so two label columns
+# drawing the same string put two populations in one cell and a query for that
+# string cannot tell them apart. Sharing an alphabet does not risk this, it
+# guarantees it: `keys` renders a rank through a fixed positional encoding, so
+# rank `i` is always the same string, and key2's 50 labels would be key1's first
+# 50 exactly. Measured at `rows=3 cols=1024 cell_rows=3 cell_cols=1024`, that
+# put the exact `hydra-cms` baseline at `are_all = 0.586` and the sketch at
+# 0.749, so four fifths of the sketch's apparent error was the key space.
+#
+# Every character a key is built from comes from its column's alphabet, prefix
+# and filler alike, so partitioning the character set makes an equal string
+# impossible instead of unlikely. The two halves below are the default alphabet
+# cut in two. That leaves the rank encoding untouched: at cardinality 200 and 50
+# the prefix is 2 characters under base 36 and still 2 under base 18, and key
+# length is derived from the rank alone, so lengths and per-column distributions
+# are what they were before the split. Only which characters appear changes.
 
 # key1: the column the comparator groups by.
 - shape: keys
@@ -48,6 +58,8 @@
     kind: uniform
   size: 200000
   seed: 1
+  string:
+    alphabet: "abcdefghijklmnopqr"
 
 # key2: a second label, skewed, so the subset fan-out is not uniform.
 - shape: keys
@@ -57,6 +69,8 @@
     s: 1.1
   size: 200000
   seed: 2
+  string:
+    alphabet: "stuvwxyz0123456789"
 
 # value: what the cells hold inside each subpopulation. Count-Min counts its
 # occurrences, HyperLogLog counts how many of it are distinct, KLL orders it.

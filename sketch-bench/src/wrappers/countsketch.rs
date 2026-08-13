@@ -131,10 +131,10 @@ where
     }
 }
 
-/// The CountSketch counterpart of `CmsFixedMatrixRow`.
-pub struct CsFixedMatrixRow;
+/// The CountSketch counterpart of `CmsFixedMatrix`.
+pub struct CsFixedMatrix;
 
-impl crate::catalog::FixedMatrixRow for CsFixedMatrixRow {
+impl crate::wrappers::fixed_matrix::FixedMatrixRegistration for CsFixedMatrix {
     const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix";
     type At<
         M: MatrixStorage<Counter = i32>

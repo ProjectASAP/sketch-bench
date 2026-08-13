@@ -331,6 +331,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
+            // Filled in by `catalog::run_scored`, which knows the type.
+            ground_truth: None,
             workload: self.workload.description(),
             per_run,
             bench,
@@ -438,6 +440,8 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         BenchReport {
             sketch: self.sketch_name.clone(),
             impl_name: self.impl_name.clone(),
+            // Filled in by `catalog::run_scored`, which knows the type.
+            ground_truth: None,
             workload: self.workload.description(),
             per_run,
             bench,
@@ -593,6 +597,9 @@ where
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
+    /// What scored this square, stamped by the runner that ran it. `None` for a
+    /// row that answers no query.
+    pub ground_truth: Option<String>,
     pub workload: WorkloadDescription,
     pub per_run: Vec<RunMetrics>,
     pub bench: crate::report::BenchSection,
@@ -609,6 +616,7 @@ impl BenchReport {
             Mode::Bench,
             self.config.runs,
         );
+        rec.ground_truth = self.ground_truth.clone();
         rec.bench = Some(self.bench.clone());
         rec.source = Source::Cli;
         rec

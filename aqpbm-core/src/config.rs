@@ -1,13 +1,8 @@
-//! Accumulator-construction parameters.
-//!
-//! The algorithm axis is open: [`ParamSet`] carries the algorithm name plus its
-//! parameters as JSON, and each params type declares its own name, its own
-//! canonical config, and — through serde — its own parsing and field names.
-//!
-//! One params type is one **family**. An algorithm named `cms` and one named
-//! `cms-fastpath-vector2d` build from the same `{rows, cols}` vocabulary, so
-//! they are one family and one params type serves both. Which variants exist is
-//! the catalog's business; which vocabulary they share is this type's.
+//! Accumulator-construction parameters. The algorithm axis is open: [`ParamSet`]
+//! carries the algorithm name plus its parameters as JSON, and each params type
+//! declares its own name, canonical config, and — through serde — its own
+//! parsing. One params type is one **family**: which variants exist is the
+//! registry's business, which vocabulary they share is this type's.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -96,6 +91,17 @@ impl ParamSet {
         }
         serde_json::from_value(self.params.clone())
             .map_err(|e| SketchError::BadParam(format!("{} params: {e}", self.algorithm)))
+    }
+
+    /// One field, by name, without naming the family it belongs to.
+    ///
+    /// [`Self::parse`] is the normal way in and wants the whole vocabulary as a
+    /// type. A comparator living in this crate cannot name a bundle's params
+    /// type, and does not need to: it wants one knob the sketch was built with,
+    /// so that the prefix it scores is the prefix the sketch kept. `None` when
+    /// the field is absent or is not a `T`.
+    pub fn field<T: DeserializeOwned>(&self, name: &str) -> Option<T> {
+        serde_json::from_value(self.params.get(name)?.clone()).ok()
     }
 
     pub fn algorithm(&self) -> &str {

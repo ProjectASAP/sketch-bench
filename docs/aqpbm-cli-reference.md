@@ -157,10 +157,10 @@ Measurement content:
           every one instead of forming their own. Required: nothing is measured that was not
           asked for
 
-      --comparator <COMPARATOR>
-          Which comparator scores this row, by name. A row admits only the comparators its
-          capabilities can answer, and the catalog is what lists them; omitted takes the row's
-          default
+      --ground-truth <GROUND_TRUTH>
+          Which ground truth scores this run, by name. A sketch registered against several is a
+          row per ground truth, and `--list-impls` is what lists them; omitted takes the first
+          row for the (algorithm, impl) pair
 
       --operations <OPERATIONS>
           Comma-separated: insert,query,merge,prepare. What each metric is measured over.

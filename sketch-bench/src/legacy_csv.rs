@@ -533,14 +533,14 @@ mod tests {
         );
     }
 
-    /// Every row in the catalog lands on a distinct legacy label. The failure
+    /// Every registration lands on a distinct legacy label. The failure
     /// this guards against is silent: two rows sharing a label append
     /// indistinguishable lines to one file, and the plot averages them together.
     #[test]
-    fn every_catalog_row_gets_its_own_legacy_label() {
+    fn every_registration_gets_its_own_legacy_label() {
         use std::collections::BTreeMap;
         let mut seen: BTreeMap<String, (&str, &str)> = BTreeMap::new();
-        for r in crate::catalog::ROWS {
+        for r in crate::registry::REGISTRY {
             if r.algorithm.ends_with("-parallel") {
                 continue; // one combined octo file, labelled by sketch_type
             }

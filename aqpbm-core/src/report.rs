@@ -29,6 +29,11 @@ pub struct Record {
     pub family: Option<String>,
     #[serde(rename = "impl")]
     pub impl_name: String,
+    /// What scored this run. The third of a row's identity, so two rows of one
+    /// `(sketch, impl)` scored differently are told apart here. Additive and
+    /// optional, so records written before it still read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_truth: Option<String>,
     /// Implementation language, so readers can split Rust from C++ records when
     /// both tracks dump into one JSONL stream. Defaults to `rust`.
     #[serde(default)]
@@ -249,6 +254,8 @@ pub struct MergedRecord {
     pub sketch: String,
     #[serde(rename = "impl")]
     pub impl_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ground_truth: Option<String>,
     pub language: Language,
     pub mode: Mode,
     pub runs: usize,
@@ -377,6 +384,7 @@ impl Record {
             sketch: sketch.into(),
             family: None,
             impl_name: impl_name.into(),
+            ground_truth: None,
             language: Language::Rust,
             sketch_config: None,
             workload,

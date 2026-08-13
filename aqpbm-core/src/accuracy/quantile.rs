@@ -246,7 +246,7 @@ fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
     sorted[lower] * (1.0 - weight) + sorted[upper] * weight
 }
 
-pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
+pub fn lower_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();
     while lo < hi {
@@ -261,7 +261,7 @@ pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
 }
 
 /// Count of elements `<= x` in a sorted slice.
-pub(crate) fn upper_bound(sorted: &[f64], x: f64) -> usize {
+pub fn upper_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();
     while lo < hi {
