@@ -1,5 +1,14 @@
 # Profile-Guided Optimization for `sketchlib`
 
+## Notice
+
+This md file is a record about how PGO can affect the benchmark speed (i.e., higher throughput).
+AI put what happened during performance debugging into this document earlier.
+
+One simple takeaway: PGO can increase the throughput number, but it is incorrect for a benchmark to do it.
+
+## The rest of doc is as is...
+
 When `sketchlib` is built normally, its 28 MB monolithic binary runs the
 asap_sketchlib `Count::<FixedMatrix, FastPath>::insert` hot loop **~75 %
 slower** than the same source code compiled into a 437 KB standalone

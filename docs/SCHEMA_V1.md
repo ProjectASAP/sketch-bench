@@ -1,4 +1,8 @@
-# v1 JSONL `Record` cross-language contract
+# SCHEMA_V1
+
+All commented out. Useless.
+
+<!-- # v1 JSONL `Record` cross-language contract
 
 `sketch-core::report::Record` (`sketch-core/src/report.rs`) is the
 single record shape shared by every track that produces benchmark
@@ -156,4 +160,4 @@ Any new emitter SHOULD have a Rust integration test that reads a
 representative sample of its output and deserialises it via
 `serde_json::from_str::<Record>`. See
 `sketch-core/src/report.rs::tests::cpp_record_roundtrips` for the
-shape such a test takes.
+shape such a test takes. -->

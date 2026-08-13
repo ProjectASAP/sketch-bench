@@ -1,5 +1,8 @@
 # Repo reorganization notes
 
+All commented out.
+
+<!-- 
 Captures the architecture walkthrough and the legacy-reorg work done on
 branch `chore/legacy-reorg`. Standalone — not part of the design docs in
 `docs/`.
@@ -208,4 +211,4 @@ would need a coordinated path-fix commit:
 Promoting these to `legacy/` (the option-C path) is tracked implicitly by
 `docs/MERGE_PLAN.md`'s migration phases. Once each legacy harness is
 absorbed by `sketchlib bench` or by the C++ JSONL adapter (§5), the
-corresponding tree can be moved or deleted.
+corresponding tree can be moved or deleted. -->

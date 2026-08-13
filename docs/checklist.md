@@ -1,4 +1,8 @@
-# Checklist about Sketch Primitive Benchmark
+# Checklist
+
+Forget why this exists. All commented out.
+
+<!-- # Checklist about Sketch Primitive Benchmark
 
 ... which is AQPBMV1
 
@@ -76,4 +80,4 @@
 - Potentially more code refactor / removal
     - including plotting scripts
     - including removal of server
-- match C++ BM to Rust BM
+- match C++ BM to Rust BM -->

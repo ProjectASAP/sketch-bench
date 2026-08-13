@@ -1,4 +1,8 @@
-# `approxbench bench` — config-sweep extension
+# BENCH_SWEEP : PLACEHOLDER
+
+all-commented out
+
+<!-- # `approxbench bench` — config-sweep extension
 
 > Status: **landed**. See the "Changed for the user" section of the PR for the final surface.
 
@@ -158,4 +162,4 @@ Error: --config: bad parameter: cms params: missing field `cols`
 
 Omitting `--config` entirely still sweeps the algorithm's default grid. The
 change is deliberate: a partially-specified grid produced a config the
-operator never wrote, under a report that looked fully specified.
+operator never wrote, under a report that looked fully specified. -->

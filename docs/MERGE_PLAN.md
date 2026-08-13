@@ -1,4 +1,10 @@
-# Merge Plan — `sketch-profiler` → `sketchlib-bench` (→ `sketchlib-tool`)
+# MMERGE_PLAN
+
+Whoever needs this... check the commented source code....
+
+Otherwise, ignore this.
+
+<!-- # Merge Plan — `sketch-profiler` → `sketchlib-bench` (→ `sketchlib-tool`)
 
 Turns two repos into one, under the design in [`DESIGN.md`](DESIGN.md).
 
@@ -151,4 +157,4 @@ One at a time, in this order (cheapest / lowest blast radius first):
 - [ ] Visualization reads the v1 schema exclusively.
 - [ ] At least one downstream app (DataCollector) runs with `Probe<Sketch>` + `sketch-runtime` in production-like conditions, reporting to a test ASAPController.
 - [ ] `sketch-runtime` sampler overhead bench ≤1%.
-- [ ] `docs/DESIGN.md` matches shipped reality (no drift).
+- [ ] `docs/DESIGN.md` matches shipped reality (no drift). -->

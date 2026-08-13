@@ -1,4 +1,8 @@
-# `sketchlib-tool` (repo: `sketch-bench`)
+# Approximate Benchmark
+
+Current [input and output](https://github.com/ProjectASAP/sketch-bench/tree/examples-operation-metric/example) about the executable is located at a different branch from main branch.
+
+<!-- # `sketchlib-tool` (repo: `sketch-bench`)
 
 > Status: **Phase 2–4 + 7-lite landed**. Workspace + `sketch-core` + `sketch-bench` + unified `approxbench` CLI cover every one of the repo's 21 Rust sketch impls end-to-end against the v1 JSONL schema. `sketch-profile` (perf_event/cachegrind/VTune), `sketch-runtime` (embedded sampler), and the C++ binary migration are tracked in [`TODO.md`](TODO.md). See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md) for the full contract.
 
@@ -213,4 +217,4 @@ CMake ≥3.15, a C++17 compiler, Rust stable. This repo expects `sketch-bench/` 
 - New metrics: add under `sketch-bench/metrics/` (macro) or
   `sketch-profile/hw_counters/` (micro), once those crates exist (Phase 2).
 - Runtime integration in downstream apps: follow Phase 9 of
-  [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md).
+  [`docs/MERGE_PLAN.md`](docs/MERGE_PLAN.md). -->
