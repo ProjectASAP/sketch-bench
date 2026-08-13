@@ -1,9 +1,8 @@
-//! Can a bundle wire in its own grouped ground truth, without touching
-//! `aqpbm-core`? This file is the answer: it scores the depth-2 population that
-//! none of the three shipped ground truths reach, declared entirely here.
-//!
-//! An integration test sees only the public API, which is exactly what a bundle
-//! author has — so if this compiles, the swap is available to them.
+//! Can a bundle wire in its own grouped ground truth without touching
+//! `aqpbm-core`? This scores the depth-2 population none of the three shipped
+//! ground truths reach, declared entirely here. An integration test sees only
+//! the public API, which is what a bundle author has — so if it compiles, the
+//! swap is available to them.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -117,6 +116,7 @@ fn spec() -> WorkloadSpec {
         size: 4096,
         seed,
         string: None,
+        depends_on: None,
     };
     // Two label columns then the value column.
     WorkloadSpec::Columns(vec![col(16, 1), col(8, 2), col(64, 3)])

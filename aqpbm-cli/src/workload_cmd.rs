@@ -1,7 +1,8 @@
-//! `approxbench workload generate|describe` — produce and inspect synthetic
-//! `.bin` workloads. Generation writes a raw little-endian value stream plus a
-//! `foo.bin.meta.json` provenance sidecar: the stream feeds `sketchbench
-//! --input`, while the sidecar is ignored there and read back by `describe`.
+//! `approxbench workload generate|describe|head`. Generation writes a raw
+//! little-endian `.bin` plus a `.meta.json` provenance sidecar; the stream feeds
+//! `sketchbench --input` and `describe` reads the sidecar back. `head` writes
+//! nothing and renders a spec's first rows as text, which is the only way to
+//! look at what a spec produces before benchmarking over it.
 
 use std::path::Path;
 
@@ -25,6 +26,8 @@ enum WorkloadCmd {
     Generate(GenerateArgs),
     /// Print the provenance/stats of a generated `.bin` workload.
     Describe(DescribeArgs),
+    /// Render a spec's first rows as text, without writing anything.
+    Head(HeadArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -93,10 +96,22 @@ pub struct DescribeArgs {
     path: String,
 }
 
+#[derive(Parser, Debug)]
+pub struct HeadArgs {
+    /// A `datagen` spec, `.yaml`/`.yml` or JSON. A mapping is one column; a
+    /// list is a table, `n - 1` label columns then the value column.
+    #[arg(long, value_name = "PATH")]
+    spec: String,
+    /// Rows to show.
+    #[arg(short = 'n', long, default_value_t = 10)]
+    rows: usize,
+}
+
 pub fn run(args: WorkloadArgs) -> Result<()> {
     match args.cmd {
         WorkloadCmd::Generate(a) => generate(a),
         WorkloadCmd::Describe(a) => describe(a),
+        WorkloadCmd::Head(a) => head(a),
     }
 }
 
@@ -217,6 +232,7 @@ fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
         // cannot hold strings, so `--alphabet` would configure a path that
         // always errors. `--spec` already sets them for library callers.
         string: None,
+        depends_on: None,
     })
 }
 
@@ -318,4 +334,122 @@ fn print_stats(s: &datagen::BasicStats) {
     println!("max:               {}", fmt(s.max));
     println!("first:             {}", fmt(s.first));
     println!("last:              {}", fmt(s.last));
+}
+
+// ---------- head ----------
+
+/// Load a spec file as one column or a table. The two shapes are unambiguous —
+/// a mapping is never a sequence — so the file picks and no flag has to.
+fn load_columns(path: &str) -> Result<Vec<GenSpec>> {
+    let p = Path::new(path);
+    let text = std::fs::read_to_string(p).with_context(|| format!("reading spec {path}"))?;
+    let yaml = matches!(
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("yaml") | Some("yml")
+    );
+    if yaml {
+        if let Ok(cols) = serde_yaml::from_str::<Vec<GenSpec>>(&text) {
+            return Ok(cols);
+        }
+        return serde_yaml::from_str::<GenSpec>(&text)
+            .map(|c| vec![c])
+            .map_err(|e| anyhow!("spec yaml {path}: {e}"));
+    }
+    if let Ok(cols) = serde_json::from_str::<Vec<GenSpec>>(&text) {
+        return Ok(cols);
+    }
+    serde_json::from_str::<GenSpec>(&text)
+        .map(|c| vec![c])
+        .map_err(|e| anyhow!("spec json {path}: {e}"))
+}
+
+/// Render the first rows of what a spec produces.
+///
+/// Generation is a pure function of `(spec, seed, n)`, so what prints here is
+/// the prefix of what a benchmark over the same spec ingests — not a sample of
+/// it, and not a second draw. A shrunk `size` would be a different workload, so
+/// the spec's own size is generated and the head of it shown.
+fn head(a: HeadArgs) -> Result<()> {
+    let columns = load_columns(&a.spec)?;
+    if columns.is_empty() {
+        bail!("spec {} declares no columns", a.spec);
+    }
+    let rows = a.rows.min(columns[0].size);
+
+    // One column is a value stream; two or more is a table of labels plus a
+    // value, which is what the record-ingesting rows read.
+    if columns.len() == 1 {
+        let values = columns[0]
+            .generate::<i64>()
+            .map_err(|e| anyhow!("generating {}: {e}", a.spec))?;
+        println!("# {} — 1 column, {} rows, showing {rows}", a.spec, columns[0].size);
+        println!();
+        println!("{:>5}  value", "row");
+        for (i, v) in values.iter().take(rows).enumerate() {
+            println!("{i:>5}  {v}");
+        }
+        return Ok(());
+    }
+
+    let workload = aqpbm_core::workload::LabeledWorkload::<i64>::generate(&columns)
+        .map_err(|e| anyhow!("generating {}: {e}", a.spec))?;
+    let items = aqpbm_core::workload::Workload::items(&workload);
+    let labels = columns.len() - 1;
+
+    // Widths from the rows actually shown, so the table fits what is printed
+    // rather than what the whole stream might contain.
+    let shown: Vec<Vec<String>> = items
+        .iter()
+        .take(rows)
+        .map(|r| {
+            let mut cells: Vec<String> = r.labels().map(|s| s.to_string()).collect();
+            cells.push(r.value.to_string());
+            cells
+        })
+        .collect();
+    let header: Vec<String> = (0..labels)
+        .map(|i| {
+            match columns[i].depends_on {
+                // The connection is the one thing about a column that is not
+                // visible in the data, so the header is where it goes.
+                Some(src) => format!("key{i}<-{src}"),
+                None => format!("key{i}"),
+            }
+        })
+        .chain(std::iter::once("value".to_string()))
+        .collect();
+    let widths: Vec<usize> = header
+        .iter()
+        .enumerate()
+        .map(|(c, h)| {
+            shown
+                .iter()
+                .map(|r| r.get(c).map_or(0, |s| s.len()))
+                .max()
+                .unwrap_or(0)
+                .max(h.len())
+        })
+        .collect();
+
+    println!(
+        "# {} — {labels} label column(s) + 1 value, {} rows, showing {rows}",
+        a.spec, columns[0].size
+    );
+    println!();
+    print!("{:>5}", "row");
+    for (h, w) in header.iter().zip(&widths) {
+        print!("  {h:<w$}");
+    }
+    println!();
+    for (i, cells) in shown.iter().enumerate() {
+        print!("{i:>5}");
+        for (cell, w) in cells.iter().zip(&widths) {
+            print!("  {cell:<w$}");
+        }
+        println!();
+    }
+    Ok(())
 }

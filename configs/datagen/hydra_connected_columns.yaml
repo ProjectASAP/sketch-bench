@@ -1,0 +1,67 @@
+# The same two-label stream as `hydra_columns.yaml`, with the second label made
+# a **function of** the first instead of drawn independently.
+#
+#   approxbench workload head --spec configs/datagen/hydra_connected_columns.yaml
+#
+# Independent columns are the easy case for a grouped sketch, and not the one
+# real data usually presents. When key2 is determined by key1 — a city and its
+# country, a user and their tenant — the label subsets stop being independent
+# and the depth-2 key space collapses. Counted over both files at 200,000 rows,
+# not estimated:
+#
+#                              independent        connected
+#   subset {0}                        200              200
+#   subset {1}                         50               48
+#   subset {0,1}                    9,950              200
+#   total keys stored              10,200              448
+#
+# `{1}` reads 48 rather than 50 because 200 sources are assigned into a pool of
+# 50 at random, so a couple of pool values are never drawn. That is a property
+# of the assignment, not a cap: a source column with more distinct values would
+# cover the pool.
+#
+# So a `hydra-*` row over this spec pays the same `2^d - 1` fan-out per record
+# and stores a fraction of the keys. Its per-key load rises, and its error at
+# one grid size should move with it. That is the comparison this file exists
+# for: run it against `hydra_columns.yaml` at one config and the difference is
+# the column correlation, nothing else.
+#
+# The label columns keep the disjoint alphabets `hydra_columns.yaml` uses, and
+# for the same reason: a depth-1 subset key is the bare label string with
+# nothing naming its column, so a shared alphabet would put two populations in
+# one group. See that file's header.
+
+# key1: the source column, drawn independently.
+- shape: keys
+  cardinality: 200
+  dist:
+    kind: uniform
+  size: 200000
+  seed: 1
+  string:
+    alphabet: "abcdefghijklmnopqr"
+
+# key2: a function of key1. Each of key1's 200 labels is assigned one of key2's
+# labels, so a record's second label carries no information the first does not.
+# `cardinality` still sizes the pool it is assigned from; the realised
+# distribution becomes key1's, pushed through that map.
+- shape: keys
+  cardinality: 50
+  dist:
+    kind: zipf
+    s: 1.1
+  size: 200000
+  seed: 2
+  depends_on: 0
+  string:
+    alphabet: "stuvwxyz0123456789"
+
+# value: what the cells hold inside each subpopulation. Unchanged from
+# `hydra_columns.yaml`, so the two files differ in one line.
+- shape: keys
+  cardinality: 1000
+  dist:
+    kind: zipf
+    s: 1.2
+  size: 200000
+  seed: 3

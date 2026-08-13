@@ -171,6 +171,7 @@ impl<T: GenValue> NumericWorkload<T> {
             size,
             seed,
             string: None,
+            depends_on: None,
         })
         .expect("uniform keys over a non-zero cardinality always generate")
     }
@@ -186,6 +187,7 @@ impl<T: GenValue> NumericWorkload<T> {
             size,
             seed,
             string: None,
+            depends_on: None,
         })
     }
 }
@@ -430,13 +432,78 @@ impl<V> Labeled<V> {
     }
 }
 
+/// Rewrite every column that declares `depends_on` so it is a function of the
+/// column it names: each distinct value of the source is assigned one value from
+/// the dependent column's own draw, and every row carrying that source value
+/// gets it.
+///
+/// What this costs, stated because it is not a free knob. The dependent column
+/// keeps its domain — the assigned values come from its own generated pool — but
+/// **not** its marginal distribution, which becomes the source's distribution
+/// pushed through the map. And the pair's realised combinations collapse from
+/// `distinct(source) * distinct(dependent)` to `distinct(source)`, which is the
+/// whole point: for a grouped sketch that is the difference between a depth-2
+/// key space of 10,000 and one of 200.
+///
+/// Seeded from the dependent column's own seed, so the map reproduces and two
+/// runs of one spec agree.
+fn connect_columns(specs: &[GenSpec], labels: &mut [Vec<String>]) -> Result<(), SketchError> {
+    use rand::Rng;
+    use rand::SeedableRng;
+
+    let value_col = specs.len() - 1;
+    for (j, spec) in specs.iter().enumerate() {
+        let Some(source) = spec.depends_on else {
+            continue;
+        };
+        if j == value_col {
+            return Err(SketchError::BadParam(format!(
+                "columns: column {j} is the value column and cannot declare \
+                 `depends_on`; only label columns connect"
+            )));
+        }
+        // Earlier, so the pass below is single and a cycle cannot be written.
+        if source >= j {
+            return Err(SketchError::BadParam(format!(
+                "columns: column {j} declares `depends_on: {source}`, which is \
+                 not an earlier column; a column may only depend on one before it"
+            )));
+        }
+
+        // The dependent column's own distinct values, ordered, so which value a
+        // source maps to is the seed's business and not the hash's.
+        let mut pool: Vec<String> = labels[j].clone();
+        pool.sort_unstable();
+        pool.dedup();
+        if pool.is_empty() {
+            continue;
+        }
+
+        let src = labels[source].clone();
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(spec.seed);
+        let mut assigned: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for (row, key) in src.iter().enumerate() {
+            let mapped = match assigned.get(key) {
+                Some(v) => v.clone(),
+                None => {
+                    let v = pool[rng.gen_range(0..pool.len())].clone();
+                    assigned.insert(key.clone(), v.clone());
+                    v
+                }
+            };
+            labels[j][row] = mapped;
+        }
+    }
+    Ok(())
+}
+
 /// A multi-column workload: `n - 1` label columns followed by one value column,
 /// each its own [`GenSpec`].
 ///
-/// No new generator: every column is one ordinary single-column draw, and this
-/// type only zips them into records. Which means a column's cardinality, skew
-/// and seed are all independently steerable, using the vocabulary that already
-/// exists.
+/// Columns are drawn independently and zipped, so cardinality, skew and seed are
+/// separately steerable. A column may instead declare `depends_on`, which makes
+/// it a function of an earlier one — see [`connect_columns`].
 #[derive(Debug, Clone)]
 pub struct LabeledWorkload<V> {
     items: Vec<Labeled<V>>,
@@ -473,11 +540,12 @@ impl<V: GenValue> LabeledWorkload<V> {
             )));
         }
 
-        let labels: Vec<Vec<String>> = label_specs
+        let mut labels: Vec<Vec<String>> = label_specs
             .iter()
             .map(|s| s.generate::<String>())
             .collect::<Result<_, _>>()?;
         let values = value_spec.generate::<V>()?;
+        connect_columns(columns, &mut labels)?;
 
         let mut items = Vec::with_capacity(size);
         for i in 0..size {
@@ -610,6 +678,7 @@ mod tests {
             size: 32,
             seed: 1,
             string: None,
+            depends_on: None,
         };
         let with_opts = |min_len, max_len| GenSpec {
             string: Some(aqpbm_datagen::StringOpts {
@@ -711,6 +780,7 @@ mod tests {
             size: 32,
             seed: 1,
             string: None,
+            depends_on: None,
         };
         let col = spec.generate::<T>().unwrap();
         io::write_bin(&path, &col).unwrap();
@@ -819,6 +889,7 @@ mod resample_tests {
             size: 2000,
             seed,
             string: None,
+            depends_on: None,
         }
     }
 
@@ -884,6 +955,7 @@ mod labeled_tests {
                 min_len: 3,
                 max_len: 3,
             }),
+            depends_on: None,
         }
     }
 
@@ -896,7 +968,108 @@ mod labeled_tests {
             size,
             seed,
             string: None,
+            depends_on: None,
         }
+    }
+
+
+    /// `three_columns`, with column 1 made a function of column 0.
+    fn connected_columns(size: usize) -> Vec<GenSpec> {
+        let mut cols = three_columns(size);
+        cols[1].depends_on = Some(0);
+        cols
+    }
+
+    /// The property a connection exists for: the pair's realised combinations
+    /// collapse from `distinct(0) * distinct(1)` to `distinct(0)`. For a grouped
+    /// sketch that is the size of the depth-2 key space, which is the thing the
+    /// independent columns could not express.
+    #[test]
+    fn a_connected_column_is_a_function_of_its_source() {
+        let pairs = |cols: &[GenSpec]| -> BTreeSet<(String, String)> {
+            LabeledWorkload::<i64>::generate(cols)
+                .unwrap()
+                .items()
+                .iter()
+                .map(|r| (r.label(0).unwrap().to_string(), r.label(1).unwrap().to_string()))
+                .collect()
+        };
+
+        let free = pairs(&three_columns(2000));
+        let tied = pairs(&connected_columns(2000));
+
+        let sources: BTreeSet<String> = tied.iter().map(|(a, _)| a.clone()).collect();
+        // One column-1 value per column-0 value, and no more.
+        assert_eq!(
+            tied.len(),
+            sources.len(),
+            "a connected column must not give one source two values: {tied:?}"
+        );
+        // Independent columns reach the product; connected ones cannot.
+        assert!(
+            free.len() > tied.len(),
+            "independent {} pairs should exceed connected {}",
+            free.len(),
+            tied.len()
+        );
+    }
+
+    /// The dependent column keeps its own domain — the values it is assigned
+    /// come from its own draw, not the source's.
+    #[test]
+    fn a_connected_column_keeps_its_own_domain() {
+        let free = LabeledWorkload::<i64>::generate(&three_columns(2000)).unwrap();
+        let tied = LabeledWorkload::<i64>::generate(&connected_columns(2000)).unwrap();
+        let domain = |w: &LabeledWorkload<i64>| -> BTreeSet<String> {
+            w.items()
+                .iter()
+                .map(|r| r.label(1).unwrap().to_string())
+                .collect()
+        };
+        assert!(
+            domain(&tied).is_subset(&domain(&free)),
+            "the assigned values must come from column 1's own pool"
+        );
+    }
+
+    /// Seeded from the dependent column's own seed, so one spec gives one table.
+    #[test]
+    fn a_connection_reproduces() {
+        let a = LabeledWorkload::<i64>::generate(&connected_columns(500)).unwrap();
+        let b = LabeledWorkload::<i64>::generate(&connected_columns(500)).unwrap();
+        assert_eq!(a.items(), b.items());
+    }
+
+    /// Forward and self references are refused, which is what makes the pass
+    /// single and a cycle unwritable.
+    #[test]
+    fn a_connection_must_name_an_earlier_column() {
+        for bad in [0usize, 1] {
+            let mut cols = three_columns(100);
+            cols[bad].depends_on = Some(bad);
+            let err = LabeledWorkload::<i64>::generate(&cols)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("earlier column"), "{err}");
+        }
+        let mut cols = three_columns(100);
+        cols[0].depends_on = Some(1);
+        let err = LabeledWorkload::<i64>::generate(&cols)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("earlier column"), "{err}");
+    }
+
+    /// Only label columns connect. The value column is rendered as `V`, not as
+    /// a string, so it has no pool to be assigned from.
+    #[test]
+    fn the_value_column_cannot_be_connected() {
+        let mut cols = three_columns(100);
+        cols[2].depends_on = Some(0);
+        let err = LabeledWorkload::<i64>::generate(&cols)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("value column"), "{err}");
     }
 
     fn three_columns(size: usize) -> Vec<GenSpec> {
@@ -1006,6 +1179,7 @@ mod sink_tests {
             size: 3_000,
             seed: 7,
             string: None,
+            depends_on: None,
         };
         let path = std::env::temp_dir().join("sketchlib_sink_agreement.bin");
 

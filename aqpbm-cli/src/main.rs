@@ -228,6 +228,7 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
             };
             (opts != StringOpts::default()).then_some(opts)
         },
+        depends_on: None,
     }))
 }
 

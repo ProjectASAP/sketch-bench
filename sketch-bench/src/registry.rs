@@ -290,6 +290,7 @@ mod tests {
             size,
             seed,
             string: None,
+            depends_on: None,
         }
     }
 

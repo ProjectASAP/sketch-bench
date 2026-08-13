@@ -1,28 +1,8 @@
-//! The three shipped grouped registrations, each run against its exact
-//! baseline, which must score zero.
-//!
-//! # What this does and does not catch
-//!
-//! It pins that all three run end to end through the shipped `REGISTRY` and
-//! that the depth-1 key space agrees: the ground truth groups on a bare label
-//! and the baseline files one, so a truth that transformed the label — trimmed,
-//! cased, prefixed — reads non-zero here.
-//!
-//! It does **not** catch two things it might look like it does.
-//!
-//! The separator is invisible at depth 1, because a one-column subset key emits
-//! none. Changing `subset_key`'s `;` passes every assertion below;
-//! `bundle_ground_truth.rs` is what fails, because its population is depth 2.
-//!
-//! Nor would it have caught `28ef649`. That was label columns aliasing through
-//! a shared alphabet, which needs the shipped 200/50 cardinalities to bite — at
-//! the sizes below the rank encoding gives the two columns different key
-//! lengths, so a shared alphabet does not collide. That defect lives in the
-//! workload, and only a test over the shipped spec would see it.
-//!
-//! One more thing no comparison against these baselines can see: they store
-//! *every* label subset, so they answer correctly whichever one the ground
-//! truth picks. A ground truth scoring the wrong column still reads zero here.
+//! The three shipped grouped registrations, each against its exact baseline,
+//! which must score zero. Weaker than the name: a depth-1 key holds no
+//! separator, so changing `subset_key`'s `;` passes here and fails
+//! `bundle_ground_truth`; and these baselines store every subset, so a ground
+//! truth scoring the wrong column also reads zero. It would not catch `28ef649`.
 
 use std::collections::BTreeMap;
 

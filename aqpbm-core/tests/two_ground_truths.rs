@@ -99,6 +99,7 @@ fn spec() -> WorkloadSpec {
         size: 256,
         seed: 1,
         string: None,
+        depends_on: None,
     })
 }
 
