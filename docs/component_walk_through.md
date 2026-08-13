@@ -25,52 +25,49 @@ The benchmark framework should add minimal overhead as well as not optimize away
 ### Graphic View of structure
 
 ```mermaid
-%%{init: {'theme': 'default', 'themeVariables': { 'fontSize': '24px' }}}%%
 flowchart TB
-commandline_input(["`**Command from user**
-- what input data needs to be synthesized
-- what instance (like, a sketch implementation) to test
-- what metric to include in output`"])
+commandline_input["`**Command from user**`"]
 
-commandline_input -->|"Request from user about what benchmark to execute"| cli
+commandline_input -->|"1: what to test under what data for what metric"| cli
 
-subgraph Benchmark Components [Main Benchmark Components]
+output["`**Output**
+STDOUT
+JSON/JSONL file on disk`"]
+
+cli ---->|"8: result"| output
+
+subgraph  Main Benchmark Components
 cli["`**aqpbm-cli**
-- command line parameter parsing
-- calling corresponding data generation function
-- pass generated data, benchmark instance, metrics to test, ground truth to aqpbm-core
-- return benchmark result to user`"]
+- cli parameter parsing
+- function argument passing
+- benchmark result report`"]
 
 sketch-bench["`**sketch-bench**
-- sketch instance wrapper
-- registry about what sketch from which library is included and can be compared to what ground truth`"]
+- sketch registry
+- registered sketch wrapper`"]
 
 aqpbm-core["`**aqpbm-core**
-Core functionalities shared by different benchmarks for different targets
-- timing of one operation
-- ground truth of one capability
-- runner for each instance to be benchmarked
-- calculation of result to be report to user`"]
+shared functionalities
+- timing
+- ground truth comparator
+- benchmark runner
+- result report`"]
 
 aqpbm-datagen["`**aqpbm-datagen**
-- generate data in memory following the requests recieved by cli
-- generated data will be provided in-memory, where cli decides who will have the data`"]
+- in-memory data genertion`"]
 
-cli -->|"data generation requirement"| aqpbm-datagen
-aqpbm-datagen -->|"generated data"| cli
+sketch-bench --->|"3: sketch wrapper"| cli
+cli --->|"2: check feasibility"| sketch-bench
 
-cli -->|"check if user request is doable"| sketch-bench
-cli -->|"generated data, wrapper of sketch instance, metric requirement"| aqpbm-core
-aqpbm-core -->|"benchmark result"| cli
+cli --->|"4: data generation requirement"| aqpbm-datagen
+aqpbm-datagen --->|"5:generated data"| cli
+
+cli --->|"6: necessary components"| aqpbm-core
+aqpbm-core --->|"7: benchmark result"| cli
 
 class aqp-bench,runtime future
 
 end
-
-output(["`**Output**
-- STDOUT or JSON/JSONL file on disk`"])
-
-cli --> output
 
 classDef future stroke-dasharray: 5 5
 ```
