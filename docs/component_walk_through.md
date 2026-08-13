@@ -26,17 +26,22 @@ The benchmark framework should add minimal overhead as well as not optimize away
 
 ```mermaid
 flowchart TB
-commandline_input["`**Command from user**`"]
+commandline_input(["`**Command from user**`"]):::io
 
-commandline_input -->|"1: what to test under what data for what metric"| cli
-
-output["`**Output**
+output(["`**Output**
 STDOUT
-JSON/JSONL file on disk`"]
+JSON/JSONL file on disk`"]):::io
 
 cli ---->|"8: result"| output
 
-subgraph  Main Benchmark Components
+commandline_input --->|"1: benchmark setup"| cli
+
+subgraph  Main [Benchmark Framework]
+
+spacer["Benchmark Framework"]:::invisible
+
+style Main fill:#e6f2ff,stroke:#333,stroke-width:2px,font-size:15px,font-weight:bold
+
 cli["`**aqpbm-cli**
 - cli parameter parsing
 - function argument passing
@@ -46,6 +51,9 @@ sketch-bench["`**sketch-bench**
 - sketch registry
 - registered sketch wrapper`"]
 
+aqpbm-datagen["`**aqpbm-datagen**
+- in-memory data genertion`"]
+
 aqpbm-core["`**aqpbm-core**
 shared functionalities
 - timing
@@ -53,11 +61,8 @@ shared functionalities
 - benchmark runner
 - result report`"]
 
-aqpbm-datagen["`**aqpbm-datagen**
-- in-memory data genertion`"]
-
 sketch-bench --->|"3: sketch wrapper"| cli
-cli --->|"2: check feasibility"| sketch-bench
+cli --->|"2: feasibility check"| sketch-bench
 
 cli --->|"4: data generation requirement"| aqpbm-datagen
 aqpbm-datagen --->|"5:generated data"| cli
@@ -67,9 +72,13 @@ aqpbm-core --->|"7: benchmark result"| cli
 
 class aqp-bench,runtime future
 
+spacer~~~cli
+
 end
 
 classDef future stroke-dasharray: 5 5
+classDef invisible fill:none,stroke:none,color:transparent
+classDef io fill:#feeba8
 ```
 
 ## aqpbm-core
