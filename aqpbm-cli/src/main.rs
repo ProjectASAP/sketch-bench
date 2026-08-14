@@ -33,7 +33,10 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::runner::BenchConfig;
-use aqpbm_datagen::{Distribution, GenSpec, Shape, StringOpts};
+use aqpbm_datagen::{
+    ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
+    RULE_NONE,
+};
 use clap::Parser;
 use sketch_bench::params::ParamSet;
 
@@ -152,42 +155,22 @@ fn list_impls() -> Result<()> {
     Ok(())
 }
 
-/// Load a `--spec` file as either one column spec or a list of them.
+/// Load a `--spec` file as one [`TableDescription`].
 ///
-/// The two shapes are unambiguous, since a mapping is never a sequence, so the
-/// file itself picks and no second flag has to. A list is `n - 1` label columns
-/// then one value column, which is what the record-ingesting rows read; every
-/// other row refuses it by name.
+/// One reader, because one description covers both cases: a one-column table is
+/// what a plain row ingests, and a table with a label column before its value
+/// column is what the record-ingesting rows read. Which a row wants is the row's
+/// question, asked at materialisation.
 fn load_spec(path: &str) -> Result<WorkloadSpec> {
-    let p = std::path::Path::new(path);
-    let text =
-        std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))?;
-    let yaml = matches!(
-        p.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("yaml") | Some("yml")
-    );
-    if yaml {
-        if let Ok(columns) = serde_yaml::from_str::<Vec<GenSpec>>(&text) {
-            return Ok(WorkloadSpec::Columns(columns));
-        }
-        return serde_yaml::from_str::<GenSpec>(&text)
-            .map(WorkloadSpec::Generated)
-            .map_err(|e| anyhow::anyhow!("spec yaml {path}: {e}"));
-    }
-    if let Ok(columns) = serde_json::from_str::<Vec<GenSpec>>(&text) {
-        return Ok(WorkloadSpec::Columns(columns));
-    }
-    serde_json::from_str::<GenSpec>(&text)
+    TableDescription::from_path(std::path::Path::new(path))
         .map(WorkloadSpec::Generated)
-        .map_err(|e| anyhow::anyhow!("spec json {path}: {e}"))
+        .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))
 }
 
 /// Resolve where this run's items come from, in precedence order: `--input` >
-/// `--spec` > the `--workload` flags. The flag path builds the same `GenSpec`
-/// the spec path would, so it is sugar for a `keys`/`zipf` spec — one generator.
+/// `--spec` > the `--workload` flags. The flag path builds the same
+/// `TableDescription` the spec path would, so it is sugar for a one-column
+/// description — one generator.
 fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
     if let Some(path) = args.input.as_deref() {
         return Ok(WorkloadSpec::File {
@@ -199,9 +182,20 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
         // would be editing the user's file from the command line.
         return load_spec(path);
     }
-    let dist = match args.workload.as_str() {
-        "uniform" => Distribution::Uniform,
-        "zipf" => Distribution::Zipf { s: args.zipf_s },
+    // `--cardinality` names the key space either way: for uniform it is the
+    // exclusive upper bound of `[0, n)`, and for zipf the population its ranks
+    // `1..=n` are drawn over.
+    let distribution = match args.workload.as_str() {
+        "uniform" => DataDistribution::Uniform(UniformParameter {
+            lower_bound: 0.0,
+            upper_bound: args.cardinality as f64,
+            seed: args.seed,
+        }),
+        "zipf" => DataDistribution::Zipf(ZipfParameter {
+            skewness: args.zipf_s,
+            population_size: args.cardinality,
+            seed: args.seed,
+        }),
         other => bail!("unknown workload shape: {other} (expected uniform|zipf, or use --spec)"),
     };
     // Only the rows that ingest text read this. Left `None` at the defaults
@@ -218,22 +212,28 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
     if args.alphabet.is_empty() {
         bail!("--alphabet cannot be empty");
     }
-    Ok(WorkloadSpec::Generated(GenSpec {
-        shape: Shape::Keys {
-            cardinality: args.cardinality,
-            dist,
+    // `Inline`, not `Generated`: these flags name a distribution and a size but
+    // no type, so the row's item type is what fills `data_type` in. The
+    // placeholder below is never the one that generates.
+    Ok(WorkloadSpec::Inline(TableDescription::single(
+        "key",
+        ColumnSpec {
+            distribution,
+            shift: None,
+            cardinality: None,
+            special_rule: RULE_NONE,
+            data_type: "i64".into(),
+            string: {
+                let opts = StringOpts {
+                    alphabet: args.alphabet.clone(),
+                    min_len,
+                    max_len,
+                };
+                (opts != StringOpts::default()).then_some(opts)
+            },
         },
-        size: args.size,
-        seed: args.seed,
-        string: {
-            let opts = StringOpts {
-                alphabet: args.alphabet.clone(),
-                min_len,
-                max_len,
-            };
-            (opts != StringOpts::default()).then_some(opts)
-        },
-    }))
+        args.size as u64,
+    )))
 }
 
 /// Seconds of CPU burn before the first measured loop, so the cpufreq governor

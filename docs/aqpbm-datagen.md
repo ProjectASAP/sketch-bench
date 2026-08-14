@@ -112,7 +112,6 @@ To make sure each column has the same length, helper function to check is requir
 - **Determinism:** The same description always produces the same column.
 - **Generation never runs inside a timed region:**
   - By default the whole column exists before timing starts.
-  - In stream mode the caller sets a chunk size, and generation alternates with consumption.
 - **Stays in Memory:** Generated data stays in memory and will be consumed through transfer of ownership
 
 ## Open questions

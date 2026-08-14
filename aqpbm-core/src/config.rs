@@ -12,7 +12,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use aqpbm_datagen::SketchError;
+use aqpbm_datagen::DataGenError;
 
 /// Is `algorithm` the family `family`, or one of its variants?
 ///
@@ -86,16 +86,16 @@ impl ParamSet {
     /// Recover the typed value. Fails if this set belongs to another family, or
     /// if the JSON does not match `P` — which is how a misspelled `--config` key
     /// is reported, with serde naming it and listing the valid ones.
-    pub fn parse<P: SketchParams>(&self) -> Result<P, SketchError> {
+    pub fn parse<P: SketchParams>(&self) -> Result<P, DataGenError> {
         if !P::owns(&self.algorithm) {
-            return Err(SketchError::BadParam(format!(
+            return Err(DataGenError::BadParam(format!(
                 "params are for algorithm '{}', which is not in the '{}' family",
                 self.algorithm,
                 P::FAMILY
             )));
         }
         serde_json::from_value(self.params.clone())
-            .map_err(|e| SketchError::BadParam(format!("{} params: {e}", self.algorithm)))
+            .map_err(|e| DataGenError::BadParam(format!("{} params: {e}", self.algorithm)))
     }
 
     pub fn algorithm(&self) -> &str {
@@ -119,12 +119,12 @@ impl ParamSet {
     /// Parse one `--config` point: `'k1=v1 k2=v2'`, one value per key — a comma
     /// list is an error, since one invocation measures one cell. Syntax only:
     /// no algorithm is named here, so membership is the caller's check.
-    pub fn single(algorithm: &str, spec: &str) -> Result<ParamSet, SketchError> {
+    pub fn single(algorithm: &str, spec: &str) -> Result<ParamSet, DataGenError> {
         let axes = parse_axes(spec)?;
         let mut params = serde_json::Map::new();
         for (key, values) in axes {
             if values.len() > 1 {
-                return Err(SketchError::BadParam(format!(
+                return Err(DataGenError::BadParam(format!(
                     "config key '{key}' lists {} values; --config takes one value \
                      per key (a single cell). Invoke once per point to measure a series.",
                     values.len()
@@ -173,22 +173,22 @@ fn typed(raw: &str) -> serde_json::Value {
 
 /// Split `'k=v1,v2 k2=v3'` into its axes, keeping their order so the
 /// expansion is deterministic.
-fn parse_axes(spec: &str) -> Result<Vec<(String, Vec<String>)>, SketchError> {
+fn parse_axes(spec: &str) -> Result<Vec<(String, Vec<String>)>, DataGenError> {
     let mut out = Vec::new();
     for tok in spec.split_whitespace() {
         let (key, vals) = tok
             .split_once('=')
-            .ok_or_else(|| SketchError::BadParam(format!("config token missing '=': {tok}")))?;
+            .ok_or_else(|| DataGenError::BadParam(format!("config token missing '=': {tok}")))?;
         let vals: Vec<String> = vals.split(',').map(|s| s.trim().to_string()).collect();
         if vals.is_empty() || vals.iter().any(|v| v.is_empty()) {
-            return Err(SketchError::BadParam(format!(
+            return Err(DataGenError::BadParam(format!(
                 "config key '{key}' has an empty value list"
             )));
         }
         out.push((key.trim().to_string(), vals));
     }
     if out.is_empty() {
-        return Err(SketchError::BadParam("config spec was empty".into()));
+        return Err(DataGenError::BadParam("config spec was empty".into()));
     }
     Ok(out)
 }

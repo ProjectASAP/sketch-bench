@@ -2,9 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A human-facing summary of a generated column, in the `.meta.json` sidecar and
-/// printed by `workload describe`. `min`/`max`/`first`/`last` are `f64`, so
-/// beyond `2^53` they are approximate — the `.bin` stream holds exact values.
+use crate::value::{ColumnData, GenValue};
+
+/// A human-facing summary of a generated column. `min`/`max`/`first`/`last` are
+/// `f64`, so beyond `2^53` they are approximate — the column itself holds exact
+/// values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BasicStats {
     pub count: usize,
@@ -85,6 +87,30 @@ impl StatsAcc {
             max: Some(self.max),
             first: self.first,
             last: self.last,
+        }
+    }
+}
+
+impl Default for StatsAcc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ColumnData {
+    /// Summarise this column. A string column reports only `count`: a string's
+    /// length under a field named `min` would be a lie.
+    pub fn basic_stats(&self) -> BasicStats {
+        fn over<T: GenValue>(values: &[T]) -> BasicStats {
+            let mut acc = StatsAcc::new();
+            acc.push_slice(values, |v| v.stat());
+            acc.finish()
+        }
+        match self {
+            ColumnData::Int64(v) => over(v),
+            ColumnData::Unsigned64(v) => over(v),
+            ColumnData::Float64(v) => over(v),
+            ColumnData::String(v) => over(v),
         }
     }
 }

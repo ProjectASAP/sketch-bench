@@ -107,7 +107,10 @@ fn runner_end_to_end_produces_valid_jsonl() {
     let back: aqpbm_core::Record = serde_json::from_str(&jsonl).unwrap();
     assert_eq!(back.sketch, "exact");
     assert_eq!(back.impl_name, "smoke");
-    assert_eq!(back.runs, 3);
+    // `runs: 3` was asked for, but error is deterministic given (data,
+    // parameters) and a workload is drawn once — so looping an accuracy square
+    // would report three identical answers as `stddev: 0.0`. It runs once.
+    assert_eq!(back.runs, 1);
     assert!(back.bench.as_ref().unwrap().accuracy.is_some());
 }
 

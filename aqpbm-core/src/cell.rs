@@ -10,7 +10,7 @@ use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
 };
 use anyhow::Result;
-use aqpbm_datagen::{GenSpec, GenValue};
+use aqpbm_datagen::{GenValue, TableDescription};
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
@@ -19,22 +19,53 @@ use crate::runner::{BenchConfig, BenchReport, BenchRunner};
 // ---------- where items come from, and what they materialise to ----------
 
 /// Where a benchmark's items come from: generated in-process, or loaded.
+///
+/// One [`TableDescription`] covers both the single-column stream a plain row
+/// ingests and the column list a record-ingesting row needs, so there is no
+/// variant per column count — the column count is what a row checks.
+///
+/// The two generated variants differ in *who wrote the `data_type`*. A spec file
+/// states it, and stands as written: an option that edited a field of the user's
+/// file would make the file a suggestion. The inline options state a
+/// distribution and a size and no type at all, so the row's item type is what
+/// fills it in.
 #[derive(Debug, Clone)]
 pub enum WorkloadSpec {
-    Generated(GenSpec),
-    /// A multi-column stream: `n - 1` label columns then one value column, each
-    /// an ordinary [`GenSpec`]. Only the row types whose `Item` is a record read
-    /// this; every single-column row refuses it by name.
-    Columns(Vec<GenSpec>),
+    Generated(TableDescription),
+    Inline(TableDescription),
     File { path: String },
 }
 
 impl WorkloadSpec {
     /// Materialise at the item type `T`, which the row's `Accumulator::Item`
-    /// already names. There is nothing to agree on: the caller's type is the
-    /// only thing that picks an encoding.
+    /// already names.
     pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
         T::materialise(self)
+    }
+
+    /// The description to generate from at item type `item_type`, or `None` for
+    /// a file-backed workload. See the variants above for why the two generated
+    /// cases answer differently.
+    pub fn describe(&self, item_type: &str) -> Option<TableDescription> {
+        match self {
+            WorkloadSpec::Generated(d) => Some(d.clone()),
+            WorkloadSpec::Inline(d) => {
+                let mut d = d.clone();
+                for column in &mut d.column_spec {
+                    column.data_type = item_type.to_string();
+                }
+                Some(d)
+            }
+            WorkloadSpec::File { .. } => None,
+        }
+    }
+
+    /// The path a file-backed workload reads, if this is one.
+    pub fn file_path(&self) -> Option<&str> {
+        match self {
+            WorkloadSpec::File { path } => Some(path),
+            _ => None,
+        }
     }
 }
 
@@ -94,51 +125,42 @@ impl From<anyhow::Error> for RunError {
 pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
 
-    /// Whether this item is materialised from a [`WorkloadSpec::Columns`] list
-    /// instead of a single-column spec. A `const`, so a catalog can read which
+    /// Whether this item is materialised from a multi-column description
+    /// instead of a single-column one. A `const`, so a catalog can read which
     /// kind of workload a row wants off the row's type, without building one.
     const TAKES_COLUMNS: bool = false;
+
+    /// The `data_type` a description has to state for this item — for a record,
+    /// the type of its *value* column. Also a `const`, for the same reason.
+    const DATA_TYPE: &'static str;
 
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;
 }
 
-/// A single-column row was handed a column list. Refused by name: zipping the
-/// columns down to one would run the measurement over a stream nobody asked for.
-fn reject_columns<T>(item: &str) -> Result<T> {
-    Err(anyhow::anyhow!(
-        "--spec names a column list, but this row ingests a plain `{item}` stream; \
-         give it a single-column spec, or pick a row whose item is a record"
-    ))
-}
-
 impl BenchItem for i64 {
     type Wk = I64Workload;
+    const DATA_TYPE: &'static str = "i64";
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec {
-            WorkloadSpec::Generated(g) => {
-                I64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            WorkloadSpec::Columns(_) => reject_columns("i64"),
-            WorkloadSpec::File { path } => {
-                I64Workload::load(std::path::Path::new(path)).map_err(|e| anyhow::anyhow!("{}", e))
-            }
+        match spec.describe("i64") {
+            Some(d) => I64Workload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
+            None => I64Workload::load(std::path::Path::new(spec.file_path().unwrap()))
+                .map_err(|e| anyhow::anyhow!("{}", e)),
         }
     }
 }
 
 impl BenchItem for f64 {
     type Wk = F64Workload;
+    const DATA_TYPE: &'static str = "f64";
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec {
-            WorkloadSpec::Generated(g) => {
-                F64Workload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            WorkloadSpec::Columns(_) => reject_columns("f64"),
+        match spec.describe("f64") {
+            Some(d) => F64Workload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
             // `.bin` is a raw i64 stream with no header; reading it as f64
             // would reinterpret the bytes, not convert them.
-            WorkloadSpec::File { path } => Err(anyhow::anyhow!(
-                "--input {path} is a raw i64 stream; generate the workload \
-                 instead to benchmark f64"
+            None => Err(anyhow::anyhow!(
+                "--input {} is a raw i64 stream; generate the workload \
+                 instead to benchmark f64",
+                spec.file_path().unwrap(),
             )),
         }
     }
@@ -146,14 +168,12 @@ impl BenchItem for f64 {
 
 impl BenchItem for String {
     type Wk = StringWorkload;
+    const DATA_TYPE: &'static str = "string";
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec {
-            WorkloadSpec::Generated(g) => {
-                StringWorkload::generate(g).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            WorkloadSpec::Columns(_) => reject_columns("String"),
+        match spec.describe("string") {
+            Some(d) => StringWorkload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
             // Decimal-formatted, the same rendering the i64-sourced path used.
-            WorkloadSpec::File { path } => I64Workload::load(std::path::Path::new(path))
+            None => I64Workload::load(std::path::Path::new(spec.file_path().unwrap()))
                 .map(|wk| StringWorkload::from_i64(&wk))
                 .map_err(|e| anyhow::anyhow!("{}", e)),
         }
@@ -162,6 +182,9 @@ impl BenchItem for String {
 
 impl BenchItem for Vec<u8> {
     type Wk = BytesWorkload;
+    /// Materialised through the string path, so a description states `string`
+    /// and the bytes are taken from it.
+    const DATA_TYPE: &'static str = "string";
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
         Ok(BytesWorkload::from_strings(
             &<String as BenchItem>::materialise(spec)?,
@@ -169,25 +192,22 @@ impl BenchItem for Vec<u8> {
     }
 }
 
-/// The record item: only a column list materialises one. A single-column spec
-/// is refused instead of being padded into a one-label record, because the
-/// column count is what a grouped sketch's cost is a function of.
+/// The record item: only a multi-column description materialises one. A
+/// single-column one is refused instead of being padded into a one-label
+/// record, because the column count is what a grouped sketch's cost is a
+/// function of.
 impl<V: GenValue> BenchItem for Labeled<V> {
     type Wk = LabeledWorkload<V>;
     const TAKES_COLUMNS: bool = true;
+    const DATA_TYPE: &'static str = V::NAME;
     fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec {
-            WorkloadSpec::Columns(cols) => {
-                LabeledWorkload::generate(cols).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            WorkloadSpec::Generated(_) => Err(anyhow::anyhow!(
-                "this row ingests labelled records, so it needs a column list: \
-                 pass `--spec` a JSON array of column specs, the last one being \
-                 the value column"
-            )),
-            WorkloadSpec::File { path } => Err(anyhow::anyhow!(
-                "--input {path} is a single-column stream; this row ingests \
-                 labelled records, so it needs a `--spec` column list"
+        match spec.describe(V::NAME) {
+            Some(d) => LabeledWorkload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
+            None => Err(anyhow::anyhow!(
+                "--input {} is a single-column stream; this row ingests \
+                 labelled records, so it needs a `--spec` description with a \
+                 label column before the value column",
+                spec.file_path().unwrap(),
             )),
         }
     }

@@ -6,7 +6,7 @@
 
 use crate::accumulator::Accumulator;
 use crate::config::{ParamSet, SketchParams};
-use crate::SketchError;
+use crate::DataGenError;
 
 /// Why a sketch could not be built from a given `ParamSet`: a config that did
 /// not parse, or a request an impl's fixed shape cannot satisfy. Surfaced as
@@ -22,10 +22,10 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
-impl From<SketchError> for BuildError {
+impl From<DataGenError> for BuildError {
     /// A `ParamSet` that does not parse into an impl's params type is a
     /// construction failure, reported through `config.parse::<P>()?`.
-    fn from(e: SketchError) -> Self {
+    fn from(e: DataGenError) -> Self {
         BuildError(e.to_string())
     }
 }

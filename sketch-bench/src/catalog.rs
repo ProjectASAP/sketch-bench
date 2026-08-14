@@ -75,9 +75,13 @@ pub struct Row {
     pub scores_accuracy: bool,
     /// Can this row run at [`Numeric::F64`]? Derived: only `ordered` rows can.
     pub picks_width: bool,
-    /// Does this row ingest labelled records, and so need a `--spec` column
-    /// list instead of a single-column spec? Derived off the row's item type.
+    /// Does this row ingest labelled records, and so need a multi-column
+    /// `--spec` description instead of a single-column one? Derived off the
+    /// row's item type.
     pub takes_columns: bool,
+    /// The `data_type` a description has to give this row's value column.
+    /// Derived off the row's item type, so it cannot drift from it.
+    pub value_type: &'static str,
     run: RunFn,
     /// The comparators this row admits, by name, first one the default. Every
     /// entry is checked by the compiler: a calculator the row's capabilities
@@ -395,6 +399,7 @@ where
         scores_accuracy: true,
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
+        value_type: <S::Item as BenchItem>::DATA_TYPE,
         run: run_scored::<S, G>,
         comparators: &[(G::NAME, run_scored::<S, G>)],
     }
@@ -415,6 +420,7 @@ where
         scores_accuracy: true,
         picks_width: true,
         takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
+        value_type: <Si::Item as BenchItem>::DATA_TYPE,
         run: run_ordered::<Si, Sf, G>,
         comparators: &[(
             <G as GroundTruthCalculator<Si>>::NAME,
@@ -441,6 +447,7 @@ where
         scores_accuracy: true,
         picks_width: false,
         takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
+        value_type: <S14::Item as BenchItem>::DATA_TYPE,
         run: run_lib_hll::<S12, S14, S16, G>,
         comparators: &[(
             <G as GroundTruthCalculator<S12>>::NAME,
@@ -463,6 +470,7 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
         scores_accuracy: true,
         picks_width: false,
         takes_columns: false,
+        value_type: "i64",
         run: run_fixed_matrix::<W>,
         // The fixed-matrix rows carry their comparator inside the generated
         // dispatch, so there is no calculator type here to name.
@@ -483,6 +491,7 @@ where
         scores_accuracy: false,
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
+        value_type: <S::Item as BenchItem>::DATA_TYPE,
         run: run_plain::<S>,
         // Answers no query, so nothing scores it.
         comparators: &[],
@@ -502,6 +511,7 @@ where
         scores_accuracy: false,
         picks_width: false,
         takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
+        value_type: <S::Item as BenchItem>::DATA_TYPE,
         run: run_parallel::<S>,
         comparators: &[],
     }
@@ -842,20 +852,27 @@ mod tests {
     }
 
     /// A small workload spec, enough for any row to build and ingest. The item
-    /// type is not named here — each row materialises its own
-    /// `Accumulator::Item`.
+    /// type is not named here — `Inline` lets each row materialise at its own
+    /// `Accumulator::Item`, which is what the CLI's inline flags do too.
     fn smoke_spec() -> WorkloadSpec {
-        WorkloadSpec::Generated(column(64, 256, 1))
+        WorkloadSpec::Inline(aqpbm_core::TableDescription::single(
+            "key",
+            column(64, 1, "i64"),
+            256,
+        ))
     }
 
-    fn column(cardinality: u64, size: usize, seed: u64) -> aqpbm_core::GenSpec {
-        aqpbm_core::GenSpec {
-            shape: aqpbm_core::Shape::Keys {
-                cardinality,
-                dist: aqpbm_core::Distribution::Uniform,
-            },
-            size,
-            seed,
+    fn column(cardinality: u64, seed: u64, data_type: &str) -> aqpbm_core::ColumnSpec {
+        aqpbm_core::ColumnSpec {
+            distribution: aqpbm_core::DataDistribution::Uniform(aqpbm_core::UniformParameter {
+                lower_bound: 0.0,
+                upper_bound: cardinality as f64,
+                seed,
+            }),
+            shift: None,
+            cardinality: None,
+            special_rule: aqpbm_core::RULE_NONE,
+            data_type: data_type.into(),
             string: None,
         }
     }
@@ -863,14 +880,29 @@ mod tests {
     /// The same, for the rows whose item is a record: two label columns and a
     /// value column. A row states which of the two it wants through
     /// `Row::takes_columns`, so neither is guessed here.
-    fn smoke_columns_spec() -> WorkloadSpec {
-        WorkloadSpec::Columns(vec![column(8, 256, 1), column(4, 256, 2), column(32, 256, 3)])
+    ///
+    /// `Generated`, not `Inline`: a record needs its label columns rendered as
+    /// text and its value column as the row's item type, and only a written
+    /// description can say so per column. Which is why one file cannot serve
+    /// both the `i64` and the `f64` record rows.
+    fn smoke_columns_spec(value_type: &str) -> WorkloadSpec {
+        WorkloadSpec::Generated(aqpbm_core::TableDescription {
+            column_num: 3,
+            column_label: vec!["key1".into(), "key2".into(), "value".into()],
+            column_spec: vec![
+                column(8, 1, "string"),
+                column(4, 2, "string"),
+                column(32, 3, value_type),
+            ],
+            column_connected: Vec::new(),
+            row_num: 256,
+        })
     }
 
     /// The spec shape `row` can actually ingest.
     fn spec_for(row: &Row) -> WorkloadSpec {
         if row.takes_columns {
-            smoke_columns_spec()
+            smoke_columns_spec(row.value_type)
         } else {
             smoke_spec()
         }
