@@ -2,13 +2,19 @@
 //! `.bin` workloads. Generation writes a raw little-endian value stream plus a
 //! `foo.bin.meta.json` provenance sidecar: the stream feeds `sketchbench
 //! --input`, while the sidecar is ignored there and read back by `describe`.
+//!
+//! The file format lives in `aqpbm_core::binfile`, beside the readers.
+//! `aqpbm-datagen` generates values in memory and writes nothing.
 
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-use aqpbm_datagen::{self as datagen, Distribution, GenSpec, Shape, TimeUnit};
+use aqpbm_core::binfile::{self, BinMeta};
+use aqpbm_datagen::{
+    ColumnSpec, DataDistribution, TableDescription, UniformParameter, ZipfParameter, RULE_NONE,
+};
 
 #[derive(Parser, Debug)]
 pub struct WorkloadArgs {
@@ -29,8 +35,7 @@ enum WorkloadCmd {
 
 #[derive(Parser, Debug)]
 pub struct GenerateArgs {
-    /// Distribution: uniform | zipf | monotonic-timestamp |
-    /// skewed-categorical. Ignored when `--spec` is set.
+    /// Distribution: uniform | zipf | normal. Ignored when `--spec` is set.
     #[arg(long, default_value = "uniform")]
     shape: String,
     /// Number of values to generate.
@@ -53,36 +58,48 @@ pub struct GenerateArgs {
     /// Zipf `s` exponent (only used when `--shape zipf`).
     #[arg(long, default_value_t = 1.1)]
     zipf_s: f64,
-    /// Monotonic-timestamp: starting value (first emitted value).
-    #[arg(long, default_value_t = 0)]
-    start: i64,
-    /// Monotonic-timestamp: unit label: nanos | millis | secs.
-    #[arg(long, default_value = "nanos")]
-    unit: String,
-    /// Monotonic-timestamp: inter-arrival gap as `kind:param`
-    /// (const:1000 | geometric:0.01 | exp:0.5 | poisson:5). Required for
-    /// `--shape monotonic-timestamp`.
+    /// Normal: mean (only used when `--shape normal`).
+    #[arg(long, default_value_t = 0.0)]
+    mean: f64,
+    /// Normal: standard deviation (only used when `--shape normal`).
+    #[arg(long, default_value_t = 1.0)]
+    stddev: f64,
+    /// Added to every generated value, for a column that should not start where
+    /// its distribution naturally does.
     #[arg(long)]
-    gap: Option<String>,
-    /// Monotonic-timestamp: minimum gap (1 gives strictly increasing,
-    /// 0 allows duplicates).
-    #[arg(long, default_value_t = 1)]
-    min_gap: u64,
-    /// Skewed-categorical: size of the id domain (ids `0..n`). Required
-    /// for `--shape skewed-categorical` (use `--spec` for explicit ids).
-    #[arg(long)]
-    categories: Option<usize>,
-    /// Skewed-categorical: weight scheme: `uniform` | `zipf:s`.
-    #[arg(long, default_value = "zipf:1.1")]
-    weights: String,
-    /// Read the full spec from a `.yaml`/`.yml`/`.json` file. Overrides
-    /// `--shape` and its per-shape flags (`--size`/`--seed` still apply
-    /// only when NOT set here; the spec file is authoritative).
+    shift: Option<f64>,
+    /// Read the full description from a `.yaml`/`.yml`/`.json` file. Overrides
+    /// `--shape` and its per-shape flags (`--size`/`--seed` still apply only
+    /// when NOT set here; the description file is authoritative).
     #[arg(long)]
     spec: Option<String>,
     /// Skip writing the `.meta.json` sidecar.
     #[arg(long)]
     no_meta: bool,
+
+    // ---- retired ----
+    // These named the `monotonic-timestamp` and `skewed-categorical` shapes,
+    // which the table-oriented description does not carry. Kept as arguments so
+    // an invocation that used them fails by name instead of being read as a
+    // different workload than it asked for.
+    /// Retired: monotonic-timestamp start value.
+    #[arg(long, hide = true)]
+    start: Option<i64>,
+    /// Retired: monotonic-timestamp unit label.
+    #[arg(long, hide = true)]
+    unit: Option<String>,
+    /// Retired: monotonic-timestamp inter-arrival gap.
+    #[arg(long, hide = true)]
+    gap: Option<String>,
+    /// Retired: monotonic-timestamp minimum gap.
+    #[arg(long, hide = true)]
+    min_gap: Option<u64>,
+    /// Retired: skewed-categorical domain size.
+    #[arg(long, hide = true)]
+    categories: Option<usize>,
+    /// Retired: skewed-categorical weight scheme.
+    #[arg(long, hide = true)]
+    weights: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -100,9 +117,7 @@ pub fn run(args: WorkloadArgs) -> Result<()> {
     }
 }
 
-/// Normalise the `--dtype` string. `generate` is the one command with no
-/// sketch to read an item type off, so it keeps a string here and turns it
-/// into a type parameter at the single `match` in [`generate`].
+/// Normalise the `--dtype` string.
 fn parse_dtype(s: &str) -> Result<String> {
     match s.to_ascii_lowercase().as_str() {
         "i64" => Ok("i64".to_string()),
@@ -113,115 +128,87 @@ fn parse_dtype(s: &str) -> Result<String> {
     }
 }
 
-fn parse_unit(s: &str) -> Result<TimeUnit> {
-    match s.to_ascii_lowercase().as_str() {
-        "nanos" | "ns" => Ok(TimeUnit::Nanos),
-        "millis" | "ms" => Ok(TimeUnit::Millis),
-        "secs" | "s" => Ok(TimeUnit::Secs),
-        other => bail!("unknown unit: {other} (expected nanos|millis|secs)"),
+/// Fail an invocation that used a flag whose shape the description no longer
+/// carries. Named one by one rather than ignored: silently generating a uniform
+/// column for a request that asked for timestamps would look to a driver like a
+/// run that succeeded.
+fn reject_retired(a: &GenerateArgs) -> Result<()> {
+    let retired: [(&str, bool); 8] = [
+        ("--start", a.start.is_some()),
+        ("--unit", a.unit.is_some()),
+        ("--gap", a.gap.is_some()),
+        ("--min-gap", a.min_gap.is_some()),
+        ("--categories", a.categories.is_some()),
+        ("--weights", a.weights.is_some()),
+        (
+            "--shape monotonic-timestamp",
+            matches!(a.shape.as_str(), "monotonic-timestamp" | "timestamp"),
+        ),
+        (
+            "--shape skewed-categorical",
+            matches!(a.shape.as_str(), "skewed-categorical" | "categorical"),
+        ),
+    ];
+    let named: Vec<&str> = retired
+        .iter()
+        .filter(|(_, used)| *used)
+        .map(|(name, _)| *name)
+        .collect();
+    if !named.is_empty() {
+        bail!(
+            "{} names a generator shape this build does not have. The description \
+             carries uniform, zipf and normal, plus the `special_rule` mask for a \
+             monotonic series; the categorical and timestamp shapes have no form \
+             in it yet.",
+            named.join(", "),
+        );
     }
+    Ok(())
 }
 
-/// Parse a `kind:param` gap distribution, e.g. `geometric:0.01`,
-/// `const:1000`.
-fn parse_gap(s: &str) -> Result<Distribution> {
-    let (kind, param) = s
-        .split_once(':')
-        .ok_or_else(|| anyhow!("--gap must be `kind:param`, e.g. geometric:0.01"))?;
-    let num = || -> Result<f64> {
-        param
-            .parse::<f64>()
-            .map_err(|_| anyhow!("invalid gap param '{param}' for '{kind}'"))
-    };
-    match kind.to_ascii_lowercase().as_str() {
-        "const" | "constant" => Ok(Distribution::Constant {
-            value: param
-                .parse::<u64>()
-                .map_err(|_| anyhow!("invalid const step '{param}'"))?,
-        }),
-        "geometric" | "geo" => Ok(Distribution::Geometric { p: num()? }),
-        "exp" | "exponential" => Ok(Distribution::Exponential { lambda: num()? }),
-        "poisson" => Ok(Distribution::Poisson { lambda: num()? }),
-        other => bail!("unknown gap kind: {other} (expected const|geometric|exp|poisson)"),
-    }
-}
-
-/// Parse a categorical weight scheme: `uniform` or `zipf:s`. Explicit
-/// weights are only available via `--spec`.
-fn parse_weights(s: &str) -> Result<Distribution> {
-    if s.eq_ignore_ascii_case("uniform") {
-        return Ok(Distribution::Uniform);
-    }
-    if let Some(param) = s.strip_prefix("zipf:") {
-        return Ok(Distribution::Zipf {
-            s: param
-                .parse::<f64>()
-                .map_err(|_| anyhow!("invalid zipf weight exponent '{param}'"))?,
-        });
-    }
-    bail!("unknown weights: {s} (expected uniform|zipf:s, or use --spec for explicit)")
-}
-
-/// Build a [`GenSpec`] from CLI flags, or load it from `--spec`.
-fn resolve_spec(a: &GenerateArgs) -> Result<GenSpec> {
+/// Build a [`TableDescription`] from CLI flags, or load it from `--spec`.
+fn resolve_spec(a: &GenerateArgs) -> Result<TableDescription> {
     if let Some(path) = a.spec.as_deref() {
-        return GenSpec::from_path(Path::new(path))
+        return TableDescription::from_path(Path::new(path))
             .with_context(|| format!("loading spec from {path}"));
     }
-    let shape = match a.shape.as_str() {
-        "uniform" => Shape::Keys {
-            cardinality: a.cardinality,
-            dist: Distribution::Uniform,
-        },
-        "zipf" => Shape::Keys {
-            cardinality: a.cardinality,
-            dist: Distribution::Zipf { s: a.zipf_s },
-        },
-        "monotonic-timestamp" | "timestamp" => {
-            let gap = a
-                .gap
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow!("--gap is required for monotonic-timestamp (e.g. --gap geometric:0.01)")
-                })
-                .and_then(parse_gap)?;
-            Shape::Monotonic {
-                start: a.start,
-                unit: parse_unit(&a.unit)?,
-                gap,
-                min_gap: a.min_gap,
-            }
-        }
-        "skewed-categorical" | "categorical" => {
-            let n = a
-                .categories
-                .ok_or_else(|| anyhow!("--categories <n> is required for skewed-categorical"))?;
-            if n == 0 {
-                bail!("--categories must be > 0");
-            }
-            Shape::Categorical {
-                categories: (0..n as i64).collect(),
-                dist: parse_weights(&a.weights)?,
-            }
-        }
-        other => bail!(
-            "unknown shape: {other} \
-             (expected uniform|zipf|monotonic-timestamp|skewed-categorical)"
-        ),
+    reject_retired(a)?;
+    let distribution = match a.shape.as_str() {
+        "uniform" => DataDistribution::Uniform(UniformParameter {
+            lower_bound: 0.0,
+            upper_bound: a.cardinality as f64,
+            seed: a.seed,
+        }),
+        "zipf" => DataDistribution::Zipf(ZipfParameter {
+            skewness: a.zipf_s,
+            population_size: a.cardinality,
+            seed: a.seed,
+        }),
+        "normal" => DataDistribution::Normal(aqpbm_datagen::NormalParameter {
+            mean: a.mean,
+            standard_deviation: a.stddev,
+            seed: a.seed,
+        }),
+        other => bail!("unknown shape: {other} (expected uniform|zipf|normal)"),
     };
-    Ok(GenSpec {
-        shape,
-        size: a.size,
-        seed: a.seed,
-        // No flags for the string options: the only sink is `.bin`, which
-        // cannot hold strings, so `--alphabet` would configure a path that
-        // always errors. `--spec` already sets them for library callers.
-        string: None,
-    })
+    Ok(TableDescription::single(
+        "value",
+        ColumnSpec {
+            distribution,
+            shift: a.shift,
+            cardinality: None,
+            special_rule: RULE_NONE,
+            data_type: parse_dtype(&a.dtype)?,
+            // No flags for the string options: the only destination here is a
+            // `.bin`, which cannot hold strings, so they would configure a path
+            // that always errors. `--spec` already sets them for library callers.
+            string: None,
+        },
+        a.size as u64,
+    ))
 }
 
 fn generate(a: GenerateArgs) -> Result<()> {
-    let dtype = parse_dtype(&a.dtype)?;
     let spec = resolve_spec(&a)?;
     let out = Path::new(&a.out);
     if let Some(parent) = out.parent() {
@@ -231,46 +218,32 @@ fn generate(a: GenerateArgs) -> Result<()> {
         }
     }
 
-    // The one place a string still becomes a type parameter: everywhere else the
-    // item type is read off a catalog row's `Accumulator::Item`, but `generate`
-    // has no row, so it matches on the flag and stays monomorphic below.
-    fn stream<T: datagen::GenValue + datagen::FixedWidth>(
-        spec: &datagen::GenSpec,
-        out: &Path,
-    ) -> Result<datagen::GenMeta> {
-        // Stream through a BinSink: peak memory is one chunk, not the whole
-        // dataset, so `--size` is bounded by disk rather than RAM.
-        let mut sink = datagen::BinSink::<T>::create(out)
-            .with_context(|| format!("creating {}", out.display()))?;
-        spec.generate_into(&mut sink, datagen::DEFAULT_CHUNK)
-            .with_context(|| format!("generating into {}", out.display()))
+    if spec.column_spec.len() != 1 {
+        bail!(
+            "a `.bin` holds one column, but the description has {}; \
+             `sketchbench --spec` reads a multi-column description in-process",
+            spec.column_spec.len()
+        );
     }
-    let meta = match dtype.as_str() {
-        "i64" => stream::<i64>(&spec, out)?,
-        "u64" => stream::<u64>(&spec, out)?,
-        "f64" => stream::<f64>(&spec, out)?,
-        // Not an oversight: `String` is not `FixedWidth`, so `stream::<String>`
-        // would not compile — `.bin` is equal-width values with nowhere to record
-        // a length. Strings generate fine in-process; the sink is what is missing.
-        "string" => bail!(
-            "dtype string cannot be written to a .bin file: the format has no length field. \
-             Strings are generated in-process today; a CSV sink is what would give them a file"
-        ),
-        other => bail!("unknown dtype: {other}"),
-    };
+    let shape = spec.column_spec[0].distribution.tag();
+    let column = spec
+        .generate()
+        .with_context(|| format!("generating into {}", out.display()))?
+        .into_column(0)
+        .map_err(|e| anyhow!("{e}"))?;
+
+    binfile::write_bin(out, &column).with_context(|| format!("writing {}", out.display()))?;
+    let meta = BinMeta::new(&spec, &column);
 
     let sidecar = if a.no_meta {
         None
     } else {
-        Some(datagen::io::write_meta(out, &meta).context("writing sidecar")?)
+        Some(binfile::write_meta(out, &meta).context("writing sidecar")?)
     };
 
     eprintln!(
         "approxbench: generated shape={} dtype={} count={} -> {}",
-        spec.shape.report_label(),
-        meta.dtype.as_str(),
-        meta.count,
-        a.out,
+        shape, meta.dtype, meta.count, a.out,
     );
     if let Some(p) = sidecar {
         eprintln!("approxbench: sidecar -> {}", p.display());
@@ -280,16 +253,27 @@ fn generate(a: GenerateArgs) -> Result<()> {
 
 fn describe(a: DescribeArgs) -> Result<()> {
     let path = Path::new(&a.path);
-    match datagen::io::read_meta(path)? {
+    match binfile::read_meta(path)? {
         Some(meta) => {
+            let lead = meta.description.column_spec.first();
             println!("path:              {}", a.path);
             println!("schema_version:    {}", meta.schema_version);
             println!("generator_version: {}", meta.generator_version);
-            println!("shape:             {}", meta.shape.report_label());
-            println!("shape_params:      {}", serde_json::to_string(&meta.shape)?);
-            println!("dtype:             {}", meta.dtype.as_str());
+            println!(
+                "shape:             {}",
+                lead.map(|c| c.distribution.tag()).unwrap_or("-")
+            );
+            println!(
+                "shape_params:      {}",
+                serde_json::to_string(&meta.description)?
+            );
+            println!("dtype:             {}", meta.dtype);
             println!("count:             {}", meta.count);
-            println!("seed:              {}", meta.seed);
+            println!(
+                "seed:              {}",
+                lead.map(|c| c.distribution.seed().to_string())
+                    .unwrap_or_else(|| "-".into())
+            );
             print_stats(&meta.stats);
         }
         None => {
@@ -312,7 +296,7 @@ fn describe(a: DescribeArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_stats(s: &datagen::BasicStats) {
+fn print_stats(s: &aqpbm_core::binfile::BasicStats) {
     let fmt = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_else(|| "-".into());
     println!("min:               {}", fmt(s.min));
     println!("max:               {}", fmt(s.max));

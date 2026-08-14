@@ -365,33 +365,21 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         // `prepare` shares this loop to reach its finalize clock, and must not
         // pay the probe boundary on every insert to get there.
         let per_update = (cell.operation, cell.metric) == (Operation::Insert, Metric::Latency);
-        // Resampling is an accuracy concern: error is deterministic given
-        // (data, parameters), so repeats over one draw would fabricate spread.
-        // A timing over the same draw is a real repeat.
         let accuracy_pass = cell.metric == Metric::Accuracy;
 
-        // A repetition is only worth running if it draws its own sample: error
-        // is deterministic given (data, parameters), so repeats over one fixed
-        // workload fabricate spread. Non-resamplable → one run, `n = 1`.
-        let measured_runs = if accuracy_pass && !self.workload.can_resample() {
-            1
-        } else {
-            pass_cfg.runs
-        };
+        // Error is deterministic given (data, parameters), so looping an
+        // accuracy square over one fixed workload would fabricate spread: ten
+        // identical answers averaged to `stddev: 0.0`. A workload draws once and
+        // is not redrawn, so an accuracy square reports `n = 1` and a timing
+        // square — where repeating the same draw *is* a real repeat — does not.
+        let measured_runs = if accuracy_pass { 1 } else { pass_cfg.runs };
         let mut per_run: Vec<RunMetrics> = Vec::with_capacity(measured_runs);
         let total_runs = measured_runs + pass_cfg.warmup_runs;
 
         for run_idx in 0..total_runs {
-            // Warm-ups reuse the base workload (their results are discarded,
-            // so generating a fresh one would be pure cost); measured run 0
-            // uses it too, and each later measured run draws its own.
-            let measured_idx = run_idx.checked_sub(pass_cfg.warmup_runs);
-            let resampled: Option<W> = match measured_idx {
-                Some(j) if accuracy_pass && j > 0 => self.workload.resample(j),
-                _ => None,
-            };
-            let workload: &W = resampled.as_ref().unwrap_or(self.workload);
-            let items = workload.items();
+            // Every run replays the one materialised workload, warm-ups
+            // included: generation never happens inside a timed region.
+            let items = self.workload.items();
 
             let (metrics, final_sketch) = if per_update {
                 // This square deliberately does NOT use `insert`: its

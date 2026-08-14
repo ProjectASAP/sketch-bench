@@ -1,165 +1,161 @@
-//! The distribution axis. A [`Distribution`] says *how* values are spread, not
-//! what they mean; the structure that consumes it ([`super::shape::Shape`])
-//! decides that and picks the realization its domain affords — direct sampling,
-//! an explicit weight table, or integer gaps. Because the engine is the
-//! structure's concern, each distribution is declared exactly once, here.
+//! The distribution axis: *how* a column's values are spread, and the seed that
+//! makes the spread reproducible. Three distributions, each carrying its own
+//! parameters and its own seed — so two columns are independent unless they were
+//! deliberately given the same seed.
+//!
+//! Every distribution draws an `f64`. Zipf's draws happen to be integral ranks,
+//! but the raw stream is one type so the rule / shift / render pipeline in
+//! [`crate::column`] is written once instead of three times.
 
-use rand_distr::{Distribution as _, Exp, Geometric, Poisson, Uniform, Zipf};
+use rand_distr::{Distribution as _, Normal, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SketchError;
+use crate::error::DataGenError;
 
-fn bad(msg: String) -> SketchError {
-    SketchError::BadParam(msg)
+fn bad(msg: String) -> DataGenError {
+    DataGenError::BadParam(msg)
 }
 
-/// A statistical shape, independent of the domain it is drawn over.
-/// Extend by adding a variant plus the arm(s) in whichever realization
-/// method(s) it supports.
+/// Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks
+/// `1..=population_size`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZipfParameter {
+    pub skewness: f64,
+    pub population_size: u64,
+    pub seed: u64,
+}
+
+/// Flat over `[lower_bound, upper_bound)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UniformParameter {
+    pub lower_bound: f64,
+    pub upper_bound: f64,
+    pub seed: u64,
+}
+
+/// Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NormalParameter {
+    pub mean: f64,
+    pub standard_deviation: f64,
+    pub seed: u64,
+}
+
+/// A column's distribution. Serialises internally tagged, so a spec file reads
+/// `distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Distribution {
-    /// Flat: every outcome equally likely.
-    Uniform,
-    /// Zipfian: outcome `r` has probability `∝ r^-s`.
-    Zipf { s: f64 },
-    /// Geometric number of ticks with success probability `p`.
-    Geometric { p: f64 },
-    /// Exponential inter-arrival time with rate `lambda`, rounded to the
-    /// nearest tick.
-    Exponential { lambda: f64 },
-    /// Poisson-distributed ticks with mean `lambda`.
-    Poisson { lambda: f64 },
-    /// A single fixed value (a degenerate distribution).
-    Constant { value: u64 },
-    /// Explicit per-outcome weights; only meaningful over a finite
-    /// domain whose size equals `weights.len()`.
-    Explicit { weights: Vec<f64> },
+pub enum DataDistribution {
+    Zipf(ZipfParameter),
+    Uniform(UniformParameter),
+    Normal(NormalParameter),
 }
 
-impl Distribution {
+/// The half-open span a bounded distribution draws over: the lowest value it can
+/// produce, and how many distinct integer positions the span holds. Both halves
+/// are needed — the lower bound turns a draw into a 0-based rank for string
+/// rendering, and the size is what a `cardinality` claim is checked against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Domain {
+    pub lower: f64,
+    pub size: u64,
+}
+
+impl DataDistribution {
     /// A short tag for reports and error messages.
     pub fn tag(&self) -> &'static str {
         match self {
-            Distribution::Uniform => "uniform",
-            Distribution::Zipf { .. } => "zipf",
-            Distribution::Geometric { .. } => "geometric",
-            Distribution::Exponential { .. } => "exponential",
-            Distribution::Poisson { .. } => "poisson",
-            Distribution::Constant { .. } => "constant",
-            Distribution::Explicit { .. } => "explicit",
+            DataDistribution::Zipf(_) => "zipf",
+            DataDistribution::Uniform(_) => "uniform",
+            DataDistribution::Normal(_) => "normal",
         }
     }
 
-    /// Realization for the **keys** structure: sample directly over a
-    /// large `[0, cardinality)` domain, with no per-value table. Only
-    /// the range-valued distributions apply here.
-    pub fn key_sampler(&self, cardinality: u64) -> Result<KeySampler, SketchError> {
+    /// The seed this column draws from.
+    pub fn seed(&self) -> u64 {
         match self {
-            Distribution::Uniform => Ok(KeySampler::Uniform(Uniform::new(0u64, cardinality))),
-            Distribution::Zipf { s } => Ok(KeySampler::Zipf(
-                Zipf::new(cardinality, *s).map_err(|e| bad(format!("zipf: {e}")))?,
-            )),
-            Distribution::Constant { value } => Ok(KeySampler::Constant(*value)),
-            other => Err(bad(format!(
-                "{} is not a key distribution (use uniform, zipf, or constant)",
-                other.tag()
-            ))),
+            DataDistribution::Zipf(p) => p.seed,
+            DataDistribution::Uniform(p) => p.seed,
+            DataDistribution::Normal(p) => p.seed,
         }
     }
 
-    /// Realization for the **categorical** structure: resolve to exactly
-    /// `k` positive, finite weights over a small finite domain. Only the
-    /// finitely-supported distributions apply here.
-    pub fn weights(&self, k: usize) -> Result<Vec<f64>, SketchError> {
-        let weights = match self {
-            Distribution::Uniform => vec![1.0; k],
-            // Zipf pmf evaluated analytically at k points — bounded to
-            // the domain, unlike the sampler used by `key_sampler`.
-            Distribution::Zipf { s } => (0..k).map(|i| 1.0 / ((i as f64) + 1.0).powf(*s)).collect(),
-            Distribution::Explicit { weights } => {
-                if weights.len() != k {
+    /// The bounded span, or `None` for Normal — which is unbounded, so a
+    /// `cardinality` over it would be a claim this crate cannot keep.
+    pub fn domain(&self) -> Option<Domain> {
+        match self {
+            DataDistribution::Zipf(p) => Some(Domain {
+                // Ranks run `1..=population_size`, so rank 1 is the 0th position.
+                lower: 1.0,
+                size: p.population_size,
+            }),
+            DataDistribution::Uniform(p) => Some(Domain {
+                lower: p.lower_bound,
+                size: (p.upper_bound - p.lower_bound) as u64,
+            }),
+            DataDistribution::Normal(_) => None,
+        }
+    }
+
+    /// Build the sampler, validating parameters eagerly so a bad description
+    /// fails before any allocation.
+    pub fn sampler(&self) -> Result<Sampler, DataGenError> {
+        match self {
+            DataDistribution::Zipf(p) => {
+                if p.population_size == 0 {
+                    return Err(bad("zipf: population_size must be > 0".into()));
+                }
+                Ok(Sampler::Zipf(
+                    Zipf::new(p.population_size, p.skewness)
+                        .map_err(|e| bad(format!("zipf: {e}")))?,
+                ))
+            }
+            DataDistribution::Uniform(p) => {
+                // `is_finite` first, so a NaN bound is named rather than
+                // slipping through a comparison that is false either way.
+                if !p.lower_bound.is_finite()
+                    || !p.upper_bound.is_finite()
+                    || p.lower_bound >= p.upper_bound
+                {
                     return Err(bad(format!(
-                        "explicit weights: expected {k}, got {}",
-                        weights.len()
+                        "uniform: lower_bound {} must be finite and below upper_bound {}",
+                        p.lower_bound, p.upper_bound
                     )));
                 }
-                weights.clone()
+                Ok(Sampler::Uniform(Uniform::new(p.lower_bound, p.upper_bound)))
             }
-            other => {
-                return Err(bad(format!(
-                    "{} is not a categorical distribution (use uniform, zipf, or explicit)",
-                    other.tag()
-                )))
+            DataDistribution::Normal(p) => {
+                if !p.standard_deviation.is_finite() || p.standard_deviation <= 0.0 {
+                    return Err(bad(format!(
+                        "normal: standard_deviation must be finite and > 0, got {}",
+                        p.standard_deviation
+                    )));
+                }
+                Ok(Sampler::Normal(
+                    Normal::new(p.mean, p.standard_deviation)
+                        .map_err(|e| bad(format!("normal: {e}")))?,
+                ))
             }
-        };
-        if weights.iter().any(|w| !w.is_finite() || *w <= 0.0) {
-            return Err(bad("weights must all be finite and > 0".into()));
         }
-        Ok(weights)
-    }
-
-    /// Realization for the **monotonic** structure: a non-negative
-    /// integer gap sampler. Only the count/interval distributions apply.
-    pub fn gap_sampler(&self) -> Result<GapSampler, SketchError> {
-        Ok(match *self {
-            Distribution::Constant { value } => GapSampler::Constant(value),
-            Distribution::Geometric { p } => GapSampler::Geometric(
-                Geometric::new(p).map_err(|e| bad(format!("geometric gap: {e}")))?,
-            ),
-            Distribution::Exponential { lambda } => GapSampler::Exponential(
-                Exp::new(lambda).map_err(|e| bad(format!("exponential gap: {e}")))?,
-            ),
-            Distribution::Poisson { lambda } => GapSampler::Poisson(
-                Poisson::new(lambda).map_err(|e| bad(format!("poisson gap: {e}")))?,
-            ),
-            ref other => {
-                return Err(bad(format!(
-                    "{} is not a gap distribution (use constant, geometric, exp, or poisson)",
-                    other.tag()
-                )))
-            }
-        })
     }
 }
 
-/// A prepared key sampler over `[0, cardinality)` (or a constant).
-/// Built once via [`Distribution::key_sampler`], then sampled per value.
-pub enum KeySampler {
-    Uniform(Uniform<u64>),
+/// A prepared sampler. Built once via [`DataDistribution::sampler`], then drawn
+/// from per value.
+pub enum Sampler {
     Zipf(Zipf<f64>),
-    Constant(u64),
+    Uniform(Uniform<f64>),
+    Normal(Normal<f64>),
 }
 
-impl KeySampler {
-    pub fn sample(&self, rng: &mut Xoshiro256PlusPlus) -> u64 {
+impl Sampler {
+    #[inline]
+    pub fn sample(&self, rng: &mut Xoshiro256PlusPlus) -> f64 {
         match self {
-            KeySampler::Uniform(d) => d.sample(rng),
-            KeySampler::Zipf(d) => d.sample(rng) as u64,
-            KeySampler::Constant(v) => *v,
-        }
-    }
-}
-
-/// A prepared gap sampler. Built once via [`Distribution::gap_sampler`],
-/// then sampled per element.
-pub enum GapSampler {
-    Constant(u64),
-    Geometric(Geometric),
-    Exponential(Exp<f64>),
-    Poisson(Poisson<f64>),
-}
-
-impl GapSampler {
-    /// Draw a non-negative integer gap in ticks. Continuous
-    /// distributions are rounded to the nearest tick and floored at 0.
-    pub fn sample_ticks(&self, rng: &mut Xoshiro256PlusPlus) -> u64 {
-        match self {
-            GapSampler::Constant(step) => *step,
-            GapSampler::Geometric(d) => d.sample(rng),
-            GapSampler::Exponential(d) => d.sample(rng).round().max(0.0) as u64,
-            GapSampler::Poisson(d) => d.sample(rng).round().max(0.0) as u64,
+            Sampler::Zipf(d) => d.sample(rng),
+            Sampler::Uniform(d) => d.sample(rng),
+            Sampler::Normal(d) => d.sample(rng),
         }
     }
 }

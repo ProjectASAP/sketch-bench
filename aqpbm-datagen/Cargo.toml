@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Synthetic workload generator for the AQPBM benchmarks: distributions, shapes, typed columns, and the on-disk `.bin` + sidecar format. Depends on nothing in the workspace and knows nothing about sketches -- the sketch benchmark is its first consumer, not its owner."
+description = "Synthetic data generator for the AQPBM benchmarks: a table description in, typed in-memory columns out. Distribution, special rule, rendering and cross-column relation are separable axes. Depends on nothing in the workspace and knows nothing about sketches -- the sketch benchmark is its first consumer, not its owner."
 
 [dependencies]
 serde.workspace = true

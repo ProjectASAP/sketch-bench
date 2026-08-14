@@ -7,6 +7,7 @@
 pub mod accumulator;
 pub mod accuracy;
 pub mod aggregation;
+pub mod binfile;
 pub mod cell;
 pub mod config;
 pub mod hot_loop;
@@ -22,15 +23,18 @@ pub mod workload;
 // Only the open axis. The concrete per-algorithm params structs live with the
 // implementations that consume them, in `sketch-bench::params`.
 pub use config::{ParamSet, SketchParams};
-// The generator is its own crate: independent product surface, its own on-disk
-// format contract, no knowledge of sketches. Re-exported so callers find it here.
+// The generator is its own crate: independent product surface, no knowledge of
+// sketches, and no file format — it hands back in-memory columns and this crate
+// owns what reaches disk (`binfile`). Re-exported so callers find it here.
 pub use accuracy::{
     CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, SubpopFrequencyOps, TopKOps,
 };
 pub use aqpbm_datagen::{
-    BasicStats, Distribution, FixedWidth, GenMeta, GenSpec, GenValue, Generator, Shape,
-    SketchError, TimeUnit, GEN_META_SCHEMA_VERSION,
+    ColumnData, ColumnSpec, DataDistribution, DataGenError, ColumnItem, GeneratedTable,
+    NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
+    RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
+pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use cell::{run_cell, BenchItem, RunError, WorkloadSpec};
