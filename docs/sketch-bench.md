@@ -1,6 +1,49 @@
 # `sketch-bench` Design
 
-`sketch-bench` is the domain bundle: the crate that ships rows and the catalog naming them.
+`sketch-bench` provides a group of wrappers over sketch instance being tested.
+
+This crate has two major functionalities:
+
+- a `registry` that let user (through `aqpbm-cli`) knows what sketches are included, and what benchmarks are related to that sketch
+- a thin wrapper that ships the sketch instance to the benchmark runtime
+
+## Major Components
+
+### Registry
+
+The `registry` is basically a list registere sketch.
+
+Consider "CountMin Sketch" as an example.
+There are multiple library that implements "CountMin Sketch".
+For each of those implementations, there can be slightly difference in terms of API and configuration.
+Also, it's possible that some implementation provides some "distinct" functionalities.
+In short, to use the same sketch from different library, user needs a specific way to use it (instead a common way to use all implementations).
+
+The above exmple introduce the need of a `registry`.
+`registry` contains the information of where the sketch is from:
+
+- the algorithm name
+- which library it is from
+- what instance the sketch is
+  - in `asap_sketchlib`, "CountMin Sketch" can depends on different data structure; it's easier to register them differently
+- what "capability" this sketch is supposed to have
+  - take "CountMin Sketch" as an example, common usage includes "frequency estimation" and "heavy hitters"
+- what operations and metrics can be supported
+
+#### Two notes for the registry:
+
+- benchmark should add minimal overhead to benchmark targets, thus compiled-time fixed setup is more favorable then runtime choice
+  - it's okay to register many targets that are never tested
+  - run-time dynamic dispatch (`dyn` Trait) should be avoided
+- for simplicity, if a sketch instance has more than one capability to compare against, the sketch will be registered multiple time
+
+### Wrapper
+
+Wrapper is the major component of `sketch-bench` crate.
+Wrapper serves the functionalities about how a sketch can be used.
+
+For example, sketch query function may take different arguments from different implementations.
+This is the wrapper's job to provide how a sketch is used.
 
 ## 1. Purpose
 
