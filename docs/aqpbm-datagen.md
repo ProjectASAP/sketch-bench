@@ -34,6 +34,7 @@ pub struct ColumnSpec {
     pub cardinality: Option<u64>, // if the data needs a range, the cardinality talks about it
     pub special_rule: u32, // bit mask about special_rule; 0 means no special rules
     pub data_type: String, // defines which case of enum ColumnData should be chosen from
+    pub string: Option<StringOpts>, // if this column is about string data, description about how string looks like
 }
 
 enum DataDistribution {
