@@ -49,7 +49,7 @@ This is the wrapper's job to provide how a sketch is used.
 
 To achieve the functionality that a wrapper can pass a sketch around, a closure can be a good choice.
 Inside the closure, how sketch is used is accomodated.
-`aqpbm-cli` can pass this closure around to `aqpbm-core` alongside the data generated for benchmark result.
+`aqpbm-cli` can pass this closure around to `aqpbm-core` alongside the data received from `aqpbm-datagen` for benchmark result.
 
 #### Wrapper shoud not be a trait
 
@@ -76,7 +76,7 @@ The requirement is passed as a string contains the following:
   - for example, `prepare_for_query` as an operation exists for KLL but missing for most sketches
 
 The requirement is passed as `enum` in `aqpbm-core`.
-The `registry` will register different `enum` for sketch instance.
+The `registry` will register different `enum` instance for sketch instance to describe available metrics, operations and capabilities.
 
 ## Output
 
