@@ -296,7 +296,7 @@ fn describe(a: DescribeArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_stats(s: &aqpbm_datagen::BasicStats) {
+fn print_stats(s: &aqpbm_core::binfile::BasicStats) {
     let fmt = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_else(|| "-".into());
     println!("min:               {}", fmt(s.min));
     println!("max:               {}", fmt(s.max));

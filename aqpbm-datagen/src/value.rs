@@ -1,10 +1,9 @@
-//! The rendering axis: how one processed draw becomes a value of the type a
-//! column's `data_type` names, and the [`ColumnData`] a rendered column peels
-//! into.
+//! The rendering axis: the [`ColumnData`] a generated column comes back as, how
+//! a caller peels one, and how a drawn rank becomes a string.
 //!
-//! `data_type` is read once per column, at the top of generation, and the loop
-//! underneath it is monomorphic in `T` — so the run-time tag costs one match per
-//! column rather than one per value.
+//! Rendering itself is not here — it is four match arms in
+//! [`ColumnSpec::render`](crate::ColumnSpec::render), where `data_type` is read
+//! once per column and the casts are visible at the point they happen.
 
 use serde::{Deserialize, Serialize};
 
@@ -50,93 +49,86 @@ impl ColumnData {
 /// Peel by ownership, one method per variant. A mismatch is an error naming both
 /// types: it means the description's `data_type` and the consumer's item type
 /// disagree, and coercing would run the measurement over values nobody asked for.
-macro_rules! peel {
-    ($method:ident, $variant:ident, $ty:ty, $name:literal) => {
-        impl ColumnData {
-            pub fn $method(self) -> Result<Vec<$ty>, DataGenError> {
-                match self {
-                    ColumnData::$variant(v) => Ok(v),
-                    other => Err(DataGenError::TypeMismatch {
-                        held: other.kind(),
-                        wanted: $name,
-                    }),
-                }
-            }
+impl ColumnData {
+    pub fn into_i64(self) -> Result<Vec<i64>, DataGenError> {
+        match self {
+            ColumnData::Int64(v) => Ok(v),
+            other => Err(other.mismatch("i64")),
         }
-    };
+    }
+
+    pub fn into_u64(self) -> Result<Vec<u64>, DataGenError> {
+        match self {
+            ColumnData::Unsigned64(v) => Ok(v),
+            other => Err(other.mismatch("u64")),
+        }
+    }
+
+    pub fn into_f64(self) -> Result<Vec<f64>, DataGenError> {
+        match self {
+            ColumnData::Float64(v) => Ok(v),
+            other => Err(other.mismatch("f64")),
+        }
+    }
+
+    pub fn into_string(self) -> Result<Vec<String>, DataGenError> {
+        match self {
+            ColumnData::String(v) => Ok(v),
+            other => Err(other.mismatch("string")),
+        }
+    }
+
+    fn mismatch(&self, wanted: &'static str) -> DataGenError {
+        DataGenError::TypeMismatch {
+            held: self.kind(),
+            wanted,
+        }
+    }
 }
 
-peel!(into_i64, Int64, i64, "i64");
-peel!(into_f64, Float64, f64, "f64");
-peel!(into_u64, Unsigned64, u64, "u64");
-peel!(into_string, String, String, "string");
-
-/// A type a column can be rendered as. Adding one is an impl here plus an arm in
-/// [`crate::column::generate_column`], and nothing else.
-pub trait GenValue: Clone + std::fmt::Debug + PartialEq + 'static {
-    /// Per-type rendering configuration, built once per column. `()` for the
-    /// numerics, where rendering is a cast; a string needs an alphabet, a length
-    /// rule and the domain its ranks are drawn over.
-    type Cfg: Clone;
-
+/// The item type a caller reads a column at.
+///
+/// This is a *consumer's* trait, not the generator's: rendering lives in
+/// [`ColumnSpec::render`](crate::ColumnSpec::render), where the four cases are
+/// four visible match arms. What a downstream crate cannot write for itself is
+/// the pair below — a workload generic over its item type needs to know which
+/// `data_type` names it, and how to get its own `Vec<T>` back out.
+pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     /// The `data_type` spelling that selects this type.
     const NAME: &'static str;
 
-    /// Build the configuration from the column's description, validating it
-    /// eagerly so a bad `string:` block fails before any value is drawn.
-    fn cfg(spec: &ColumnSpec) -> Result<Self::Cfg, DataGenError>;
-
-    /// Render one processed draw. Numeric renders use `as`, which truncates
-    /// toward zero and saturates at the type's bounds.
-    fn render(v: f64, cfg: &Self::Cfg) -> Self;
-
-    /// Value as `f64` for the column summary, or `None` where it does not apply
-    /// — a string's *length* under a field named `min` would be a lie.
-    fn stat(&self) -> Option<f64>;
-
-    /// Wrap a rendered column in its [`ColumnData`] variant.
-    fn into_column(values: Vec<Self>) -> ColumnData;
-
-    /// Peel a column back out at this type. The inverse of [`Self::into_column`],
-    /// and the one place a consumer's item type meets a description's
-    /// `data_type`: a mismatch is an error naming both.
+    /// Peel a column at this type. The one place a consumer's item type meets a
+    /// description's `data_type`: a mismatch is an error naming both.
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError>;
 }
 
-macro_rules! numeric_value {
-    ($ty:ty, $name:literal, $variant:ident, $peel:ident) => {
-        impl GenValue for $ty {
-            type Cfg = ();
-            const NAME: &'static str = $name;
-
-            fn cfg(_spec: &ColumnSpec) -> Result<(), DataGenError> {
-                Ok(())
-            }
-
-            #[inline(always)]
-            fn render(v: f64, _cfg: &()) -> Self {
-                v as $ty
-            }
-
-            #[inline(always)]
-            fn stat(&self) -> Option<f64> {
-                Some(*self as f64)
-            }
-
-            fn into_column(values: Vec<Self>) -> ColumnData {
-                ColumnData::$variant(values)
-            }
-
-            fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
-                column.$peel()
-            }
-        }
-    };
+impl ColumnItem for i64 {
+    const NAME: &'static str = "i64";
+    fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
+        column.into_i64()
+    }
 }
 
-numeric_value!(i64, "i64", Int64, into_i64);
-numeric_value!(u64, "u64", Unsigned64, into_u64);
-numeric_value!(f64, "f64", Float64, into_f64);
+impl ColumnItem for u64 {
+    const NAME: &'static str = "u64";
+    fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
+        column.into_u64()
+    }
+}
+
+impl ColumnItem for f64 {
+    const NAME: &'static str = "f64";
+    fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
+        column.into_f64()
+    }
+}
+
+impl ColumnItem for String {
+    const NAME: &'static str = "string";
+    fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
+        column.into_string()
+    }
+}
 
 /// How a drawn rank becomes a string.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -190,8 +182,7 @@ pub struct StrCfg {
 }
 
 impl StrCfg {
-    pub(crate) fn build(
-        opts: &StringOpts,
+    fn build(        opts: &StringOpts,
         cardinality: u64,
         lower: f64,
     ) -> Result<Self, DataGenError> {
@@ -257,6 +248,29 @@ impl StrCfg {
         x ^ (x >> 31)
     }
 
+    /// Build the rendering config for a column, validating it eagerly so a bad
+    /// `string:` block fails before any value is drawn.
+    pub(crate) fn for_column(spec: &ColumnSpec) -> Result<Self, DataGenError> {
+        let domain = spec.distribution.domain().ok_or_else(|| {
+            DataGenError::BadParam(format!(
+                "string: needs a bounded domain, and {} has none, so its values \
+                 cannot be rendered injectively",
+                spec.distribution.tag(),
+            ))
+        })?;
+        Self::build(
+            spec.string.as_ref().unwrap_or(&StringOpts::default()),
+            domain.size,
+            domain.lower,
+        )
+    }
+
+    /// Render one draw, by its 0-based rank in the column's domain.
+    #[inline]
+    pub(crate) fn render_draw(&self, v: f64) -> String {
+        self.render((v - self.lower) as u64)
+    }
+
     fn render(&self, rank: u64) -> String {
         let base = self.alphabet.len() as u64;
         let h = Self::mix(rank);
@@ -280,42 +294,5 @@ impl StrCfg {
             out.push(self.alphabet[(f % base) as usize]);
         }
         out
-    }
-}
-
-impl GenValue for String {
-    type Cfg = StrCfg;
-    const NAME: &'static str = "string";
-
-    fn cfg(spec: &ColumnSpec) -> Result<StrCfg, DataGenError> {
-        let domain = spec.distribution.domain().ok_or_else(|| {
-            DataGenError::BadParam(format!(
-                "string: needs a bounded domain, and {} has none, so its values \
-                 cannot be rendered injectively",
-                spec.distribution.tag(),
-            ))
-        })?;
-        StrCfg::build(
-            spec.string.as_ref().unwrap_or(&StringOpts::default()),
-            domain.size,
-            domain.lower,
-        )
-    }
-
-    #[inline]
-    fn render(v: f64, cfg: &StrCfg) -> Self {
-        cfg.render((v - cfg.lower) as u64)
-    }
-
-    fn stat(&self) -> Option<f64> {
-        None
-    }
-
-    fn into_column(values: Vec<Self>) -> ColumnData {
-        ColumnData::String(values)
-    }
-
-    fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
-        column.into_string()
     }
 }

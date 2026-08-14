@@ -10,7 +10,7 @@ use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
 };
 use anyhow::Result;
-use aqpbm_datagen::{GenValue, TableDescription};
+use aqpbm_datagen::{ColumnItem, TableDescription};
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
@@ -196,7 +196,7 @@ impl BenchItem for Vec<u8> {
 /// single-column one is refused instead of being padded into a one-label
 /// record, because the column count is what a grouped sketch's cost is a
 /// function of.
-impl<V: GenValue> BenchItem for Labeled<V> {
+impl<V: ColumnItem> BenchItem for Labeled<V> {
     type Wk = LabeledWorkload<V>;
     const TAKES_COLUMNS: bool = true;
     const DATA_TYPE: &'static str = V::NAME;

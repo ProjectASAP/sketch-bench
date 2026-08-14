@@ -13,6 +13,28 @@ use crate::column::ColumnSpec;
 use crate::error::DataGenError;
 use crate::value::ColumnData;
 
+/// Scramble a latent rank before dividing it among connected columns. This
+/// SplitMix64 finalizer spreads nearby ranks across the word while keeping the
+/// mapping deterministic.
+#[inline]
+fn mix_connected_bits(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+/// Take one equal-width chunk from a mixed 64-bit draw. Member zero receives
+/// the least-significant chunk; any high remainder bits are unused.
+#[inline]
+fn connected_chunk(bits: u64, member: usize, group_size: usize) -> u64 {
+    debug_assert!((2..=u64::BITS as usize).contains(&group_size));
+    debug_assert!(member < group_size);
+    let width = u64::BITS as usize / group_size;
+    let mask = (1u64 << width) - 1;
+    (bits >> (member * width)) & mask
+}
+
 /// A complete generation request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDescription {
@@ -103,6 +125,13 @@ impl TableDescription {
                     group.len()
                 )));
             }
+            if group.len() > u64::BITS as usize {
+                return Err(DataGenError::BadParam(format!(
+                    "column_connected group {g} names {} columns; a 64-bit draw can supply at \
+                     most 64 non-empty chunks",
+                    group.len()
+                )));
+            }
             let mut members = Vec::with_capacity(group.len());
             for label in group {
                 let Some(&i) = index.get(label.as_str()) else {
@@ -119,8 +148,8 @@ impl TableDescription {
                 claimed.insert(label.as_str(), g);
                 members.push((label, i));
             }
-            // The requirement the doc states: related columns are one draw seen
-            // several ways, which only holds if they draw the same way.
+            // A connected group is one latent draw mapped to a tuple, so every
+            // member must agree on the distribution of that latent value.
             let (head_label, head) = members[0];
             for (label, i) in &members[1..] {
                 if self.column_spec[*i].distribution != self.column_spec[head].distribution {
@@ -129,6 +158,21 @@ impl TableDescription {
                          but draw differently; related columns need an identical distribution \
                          and identical parameters, seed included"
                     )));
+                }
+            }
+            match self.column_spec[head].distribution.domain() {
+                Some(domain) if domain.size > 0 => {}
+                Some(_) => {
+                    return Err(DataGenError::BadParam(format!(
+                        "column_connected group {g}: the shared distribution needs a positive \
+                         integer domain for chunk mapping"
+                    )))
+                }
+                None => {
+                    return Err(DataGenError::BadParam(format!(
+                        "column_connected group {g}: the shared distribution must have a \
+                         bounded integer domain for chunk mapping"
+                    )))
                 }
             }
         }
@@ -146,29 +190,53 @@ impl TableDescription {
         // Which group each column belongs to, if any. Built from the labels once
         // so the generation loop below indexes rather than searches.
         let index = self.label_index()?;
-        let mut group_of: Vec<Option<usize>> = vec![None; self.column_spec.len()];
+        let mut group_of: Vec<Option<(usize, usize)>> = vec![None; self.column_spec.len()];
         for (g, group) in self.column_connected.iter().enumerate() {
-            for label in group {
-                group_of[index[label.as_str()]] = Some(g);
+            for (member, label) in group.iter().enumerate() {
+                group_of[index[label.as_str()]] = Some((g, member));
             }
         }
 
-        // A group is drawn once and every member renders from that one stream —
-        // which is what makes the columns co-vary rather than merely share a
-        // distribution.
-        let mut group_draw: HashMap<usize, Vec<f64>> = HashMap::new();
+        // Each latent value is drawn and mixed once. The generation loop below
+        // gives every member a different bit chunk from that shared value, so a
+        // repeated latent value always produces the same connected tuple.
+        let mut group_bits: HashMap<usize, Vec<u64>> = HashMap::new();
         for (g, group) in self.column_connected.iter().enumerate() {
             let head = index[group[0].as_str()];
-            group_draw.insert(g, self.column_spec[head].draw(row_num)?);
+            let domain = self.column_spec[head]
+                .distribution
+                .domain()
+                .expect("connected domains were validated above");
+            let bits = self.column_spec[head]
+                .draw(row_num)?
+                .into_iter()
+                .map(|draw| mix_connected_bits((draw - domain.lower) as u64))
+                .collect();
+            group_bits.insert(g, bits);
         }
 
         let mut data = Vec::with_capacity(self.column_spec.len());
         for (i, spec) in self.column_spec.iter().enumerate() {
-            // Declared here and assigned only on the unconnected path, so an
-            // unconnected column's draw lives exactly as long as its render.
+            // Only one of these buffers is initialized. Either one lives just
+            // long enough for this column's render pass.
             let own_draw;
+            let connected_draw;
             let raw: &[f64] = match group_of[i] {
-                Some(g) => &group_draw[&g],
+                Some((g, member)) => {
+                    let domain = spec
+                        .distribution
+                        .domain()
+                        .expect("connected domains were validated above");
+                    let group_size = self.column_connected[g].len();
+                    connected_draw = group_bits[&g]
+                        .iter()
+                        .map(|&bits| {
+                            domain.lower
+                                + (connected_chunk(bits, member, group_size) % domain.size) as f64
+                        })
+                        .collect::<Vec<_>>();
+                    &connected_draw
+                }
                 None => {
                     own_draw = spec.draw(row_num)?;
                     &own_draw

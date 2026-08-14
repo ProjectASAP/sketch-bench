@@ -17,7 +17,6 @@ pub mod column;
 pub mod dist;
 pub mod error;
 pub mod rule;
-pub mod stats;
 pub mod table;
 pub mod value;
 
@@ -27,9 +26,8 @@ pub use dist::{
 };
 pub use error::DataGenError;
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
-pub use stats::{BasicStats, StatsAcc};
 pub use table::{GeneratedTable, TableDescription};
-pub use value::{ColumnData, GenValue, StrCfg, StringOpts};
+pub use value::{ColumnData, ColumnItem, StrCfg, StringOpts};
 
 #[cfg(test)]
 mod tests {
@@ -312,17 +310,75 @@ mod tests {
         }
     }
 
-    /// Related columns are one draw seen twice: the ranks co-vary exactly, and
-    /// what separates the two columns is their own `shift`.
+    /// Each repeated latent rank maps to one stable tuple rather than being
+    /// copied into both columns.
     #[test]
-    fn connected_columns_share_one_draw_stream() {
-        let t = flow_table(42, Some(20_000.0)).generate().unwrap();
+    fn connected_columns_derive_a_stable_tuple() {
+        let d = flow_table(42, Some(20_000.0));
+        let latent = d.column_spec[0].draw(d.row_num as usize).unwrap();
+        let t = d.generate().unwrap();
         let mut cols = t.into_columns();
         let dst = cols.pop().unwrap().into_i64().unwrap();
         let src = cols.pop().unwrap().into_i64().unwrap();
         assert_eq!(src.len(), 1000);
-        for (s, d) in src.iter().zip(&dst) {
-            assert_eq!(d - s, 10_000, "the pair drifted apart");
+
+        let mut tuple_of = std::collections::HashMap::new();
+        let mut repeated = 0;
+        for ((draw, s), d) in latent.iter().zip(&src).zip(&dst) {
+            let tuple = (*s, *d);
+            let latent_rank = (*draw - 1.0) as u64;
+            if let Some(previous) = tuple_of.insert(latent_rank, tuple) {
+                repeated += 1;
+                assert_eq!(tuple, previous, "one latent rank mapped to two tuples");
+            }
+        }
+        assert!(repeated > 0, "the test needs repeated latent ranks");
+        assert!(src.iter().zip(&dst).any(|(s, d)| d - s != 10_000));
+    }
+
+    fn mixed_bits_for_test(mut x: u64) -> u64 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^ (x >> 31)
+    }
+
+    #[test]
+    fn three_connected_columns_receive_low_to_high_chunks() {
+        let distribution = zipf(2_000_000, 1.1, 42);
+        let mut specs = vec![
+            column(distribution.clone(), "u64"),
+            column(distribution.clone(), "u64"),
+            column(distribution, "u64"),
+        ];
+        specs[1].shift = Some(2_000_000.0);
+        specs[2].shift = Some(4_000_000.0);
+        let d = TableDescription {
+            column_num: 3,
+            column_label: vec!["a".into(), "b".into(), "c".into()],
+            column_spec: specs,
+            column_connected: vec![vec!["a".into(), "b".into(), "c".into()]],
+            row_num: 64,
+        };
+        let latent = d.column_spec[0].draw(d.row_num as usize).unwrap();
+        let columns = d
+            .generate()
+            .unwrap()
+            .into_columns()
+            .into_iter()
+            .map(|column| column.into_u64().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(mixed_bits_for_test(0), 0xe220_a839_7b1d_cdaf);
+        let width = 64 / 3;
+        let mask = (1u64 << width) - 1;
+        for (row, draw) in latent.iter().enumerate() {
+            let bits = mixed_bits_for_test((*draw - 1.0) as u64);
+            for (member, column) in columns.iter().enumerate() {
+                let rank = ((bits >> (member * width)) & mask) % 2_000_000;
+                let expected = 1 + rank + member as u64 * 2_000_000;
+                assert_eq!(column[row], expected);
+            }
         }
     }
 
@@ -357,6 +413,49 @@ mod tests {
         d.column_connected = vec![vec!["src_ip".into()]];
         let err = d.generate().unwrap_err().to_string();
         assert!(err.contains("at least 2"), "{err}");
+    }
+
+    #[test]
+    fn a_group_larger_than_the_source_word_is_refused() {
+        let labels = (0..65).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        let spec = column(zipf(64, 1.0, 9), "i64");
+        let d = TableDescription {
+            column_num: 65,
+            column_label: labels.clone(),
+            column_spec: vec![spec; 65],
+            column_connected: vec![labels],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("at most 64"), "{err}");
+    }
+
+    #[test]
+    fn a_connected_unbounded_distribution_is_refused() {
+        let spec = column(normal(0.0, 1.0, 9), "f64");
+        let d = TableDescription {
+            column_num: 2,
+            column_label: vec!["a".into(), "b".into()],
+            column_spec: vec![spec.clone(), spec],
+            column_connected: vec![vec!["a".into(), "b".into()]],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("bounded integer domain"), "{err}");
+    }
+
+    #[test]
+    fn a_connected_zero_sized_domain_is_refused() {
+        let spec = column(uniform(0.0, 0.5, 9), "f64");
+        let d = TableDescription {
+            column_num: 2,
+            column_label: vec!["a".into(), "b".into()],
+            column_spec: vec![spec.clone(), spec],
+            column_connected: vec![vec!["a".into(), "b".into()]],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("positive integer domain"), "{err}");
     }
 
     #[test]
@@ -401,12 +500,10 @@ column_spec:
     }
 
     #[test]
-    fn a_string_column_summary_omits_numbers_it_does_not_have() {
+    fn a_string_column_comes_back_the_length_it_claims() {
         let t = one(column(zipf(64, 1.0, 9), "string"), 50)
             .generate()
             .unwrap();
-        let s = t.data[0].basic_stats();
-        assert_eq!(s.count, 50);
-        assert!(s.min.is_none() && s.max.is_none());
+        assert_eq!(t.data[0].len(), 50);
     }
 }

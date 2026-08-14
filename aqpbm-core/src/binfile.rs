@@ -12,12 +12,68 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use aqpbm_datagen::{BasicStats, ColumnData, DataGenError, TableDescription};
+use aqpbm_datagen::{ColumnData, DataGenError, TableDescription};
 
 /// Schema version of the `.meta.json` sidecar. Version 3 carries a
 /// [`TableDescription`]; versions 1 and 2 carried the retired `Shape` axis and
 /// do not deserialize.
 pub const BIN_META_SCHEMA_VERSION: u32 = 3;
+
+/// A human-facing summary of a stored column, for `workload describe` to print.
+/// Sidecar provenance, not a generator concern: the values themselves are what
+/// `aqpbm-datagen` hands back, and describing a file is this crate's job.
+///
+/// `min`/`max`/`first`/`last` are `f64`, so beyond `2^53` they are approximate —
+/// the `.bin` stream holds exact values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BasicStats {
+    pub count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last: Option<f64>,
+}
+
+impl BasicStats {
+    /// Summarise one column. A string column reports only `count`: a string's
+    /// length under a field named `min` would be a lie, and a `.bin` cannot hold
+    /// one anyway.
+    pub fn of(column: &ColumnData) -> Self {
+        fn over<T>(values: &[T], to_f64: impl Fn(&T) -> f64) -> BasicStats {
+            let mut stats = BasicStats {
+                count: values.len(),
+                min: None,
+                max: None,
+                first: None,
+                last: None,
+            };
+            for v in values {
+                let x = to_f64(v);
+                stats.min = Some(stats.min.map_or(x, |m: f64| m.min(x)));
+                stats.max = Some(stats.max.map_or(x, |m: f64| m.max(x)));
+                stats.first.get_or_insert(x);
+                stats.last = Some(x);
+            }
+            stats
+        }
+        match column {
+            ColumnData::Int64(v) => over(v, |x| *x as f64),
+            ColumnData::Unsigned64(v) => over(v, |x| *x as f64),
+            ColumnData::Float64(v) => over(v, |x| *x),
+            ColumnData::String(v) => BasicStats {
+                count: v.len(),
+                min: None,
+                max: None,
+                first: None,
+                last: None,
+            },
+        }
+    }
+}
 
 /// Provenance written beside a `.bin`. Carries the full description, so a stored
 /// column is reproducible from the file alone.
@@ -39,7 +95,7 @@ impl BinMeta {
             dtype: column.kind().to_string(),
             count: column.len(),
             description: description.clone(),
-            stats: column.basic_stats(),
+            stats: BasicStats::of(column),
         }
     }
 }
@@ -107,4 +163,33 @@ pub fn read_meta(bin_path: &Path) -> Result<Option<BinMeta>, DataGenError> {
     let meta = serde_json::from_str(&text)
         .map_err(|e| DataGenError::BadParam(format!("meta parse: {e}")))?;
     Ok(Some(meta))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_numeric_summary_reports_extremes_and_ends() {
+        let s = BasicStats::of(&ColumnData::Int64(vec![3, 1, 4, 1, 5]));
+        assert_eq!(s.count, 5);
+        assert_eq!((s.min, s.max), (Some(1.0), Some(5.0)));
+        assert_eq!((s.first, s.last), (Some(3.0), Some(5.0)));
+    }
+
+    /// A string's length is not its value, so the fields that would describe a
+    /// value stay absent rather than describing something else.
+    #[test]
+    fn a_string_summary_reports_only_its_count() {
+        let s = BasicStats::of(&ColumnData::String(vec!["ab".into(), "cde".into()]));
+        assert_eq!(s.count, 2);
+        assert!(s.min.is_none() && s.max.is_none() && s.first.is_none() && s.last.is_none());
+    }
+
+    #[test]
+    fn an_empty_column_has_no_extremes() {
+        let s = BasicStats::of(&ColumnData::Float64(vec![]));
+        assert_eq!(s.count, 0);
+        assert!(s.min.is_none() && s.max.is_none());
+    }
 }

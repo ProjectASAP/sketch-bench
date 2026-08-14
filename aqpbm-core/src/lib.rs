@@ -30,11 +30,11 @@ pub use accuracy::{
     CardinalityOps, Comparison, FrequencyOps, GroundTruth, QuantileOps, SubpopFrequencyOps, TopKOps,
 };
 pub use aqpbm_datagen::{
-    BasicStats, ColumnData, ColumnSpec, DataDistribution, DataGenError, GenValue, GeneratedTable,
+    ColumnData, ColumnSpec, DataDistribution, DataGenError, ColumnItem, GeneratedTable,
     NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
-pub use binfile::{BinMeta, BIN_META_SCHEMA_VERSION};
+pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use cell::{run_cell, BenchItem, RunError, WorkloadSpec};

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use aqpbm_datagen::{
-    ColumnSpec, DataDistribution, DataGenError, GenValue, TableDescription, UniformParameter,
+    ColumnSpec, DataDistribution, DataGenError, ColumnItem, TableDescription, UniformParameter,
     ZipfParameter,
 };
 
@@ -127,7 +127,7 @@ pub type I64Workload = NumericWorkload<i64>;
 /// libraries are `f64`-native.
 pub type F64Workload = NumericWorkload<f64>;
 
-impl<T: GenValue> NumericWorkload<T> {
+impl<T: ColumnItem> NumericWorkload<T> {
     /// Wrap an already-materialised item stream with its provenance.
     /// `description.size` is forced to `items.len()`: a description disagreeing
     /// with its data would corrupt every throughput denominator downstream.
@@ -244,7 +244,7 @@ impl NumericWorkload<i64> {
     }
 }
 
-impl<T: GenValue> Workload for NumericWorkload<T> {
+impl<T: ColumnItem> Workload for NumericWorkload<T> {
     type Item = T;
     fn description(&self) -> WorkloadDescription {
         self.description.clone()
@@ -441,7 +441,7 @@ pub struct LabeledWorkload<V> {
     description: WorkloadDescription,
 }
 
-impl<V: GenValue> LabeledWorkload<V> {
+impl<V: ColumnItem> LabeledWorkload<V> {
     /// Zip a description's columns into records: all but the last are label
     /// columns and must be `data_type: string`, the last is the value column and
     /// must be this row's item type.
@@ -502,7 +502,7 @@ impl<V: GenValue> LabeledWorkload<V> {
     }
 }
 
-impl<V: GenValue> Workload for LabeledWorkload<V> {
+impl<V: ColumnItem> Workload for LabeledWorkload<V> {
     type Item = Labeled<V>;
 
     fn description(&self) -> WorkloadDescription {
@@ -515,7 +515,7 @@ impl<V: GenValue> Workload for LabeledWorkload<V> {
 }
 
 /// Same, but `Vec<u8>` for impls that want `&[u8]`. Not a [`NumericWorkload`]:
-/// `Vec<u8>` is not a `GenValue`, so these rows take the bytes of whichever
+/// `Vec<u8>` is not a `ColumnItem`, so these rows take the bytes of whichever
 /// string workload is in play.
 #[derive(Debug, Clone)]
 pub struct BytesWorkload {

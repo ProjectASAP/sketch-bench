@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::dist::DataDistribution;
 use crate::error::DataGenError;
 use crate::rule::{self, MonotonicAcc, RULE_MONOTONIC_INCREASE, RULE_NONE};
-use crate::value::{ColumnData, GenValue, StringOpts};
+use crate::value::{ColumnData, StrCfg, StringOpts};
 
 /// The `data_type` spellings this build renders.
 pub const DATA_TYPES: [&str; 4] = ["i64", "u64", "f64", "string"];
@@ -107,37 +107,62 @@ impl ColumnSpec {
         Ok((0..row_num).map(|_| sampler.sample(&mut rng)).collect())
     }
 
+    /// The processed series: this column's rule and shift applied to the raw
+    /// draws, one pass and no intermediate buffer. Fallible per value, because
+    /// the monotonic accumulator can run past the range it counts in.
+    fn processed<'a>(
+        &self,
+        raw: &'a [f64],
+    ) -> impl Iterator<Item = Result<f64, DataGenError>> + 'a {
+        let shift = self.shift.unwrap_or(0.0);
+        let monotonic = self.special_rule & RULE_MONOTONIC_INCREASE != 0;
+        // The draws are gaps under the monotonic rule, and `shift` is where the
+        // series begins. The accumulator is captured, so it carries across the
+        // whole column rather than restarting.
+        let mut acc = MonotonicAcc::new(shift);
+        raw.iter().map(move |draw| {
+            if monotonic {
+                acc.push(*draw)
+            } else {
+                Ok(draw + shift)
+            }
+        })
+    }
+
     /// Apply this column's rule, shift and `data_type` to a raw draw stream.
+    ///
+    /// The one place `data_type` is read: the tag costs one match per column and
+    /// none per value, and each arm is its own monomorphic loop. The numeric
+    /// arms use `as`, which truncates toward zero and saturates at the type's
+    /// bounds.
     pub(crate) fn render(&self, raw: &[f64]) -> Result<ColumnData, DataGenError> {
-        // The one place `data_type` is read. Each arm below is a monomorphic
-        // loop, so the tag costs one match per column and none per value.
         match self.data_type.as_str() {
-            "i64" => self.render_as::<i64>(raw),
-            "u64" => self.render_as::<u64>(raw),
-            "f64" => self.render_as::<f64>(raw),
-            "string" => self.render_as::<String>(raw),
+            "i64" => Ok(ColumnData::Int64(
+                self.processed(raw)
+                    .map(|v| v.map(|v| v as i64))
+                    .collect::<Result<_, _>>()?,
+            )),
+            "u64" => Ok(ColumnData::Unsigned64(
+                self.processed(raw)
+                    .map(|v| v.map(|v| v as u64))
+                    .collect::<Result<_, _>>()?,
+            )),
+            "f64" => Ok(ColumnData::Float64(
+                self.processed(raw).collect::<Result<_, _>>()?,
+            )),
+            "string" => {
+                // Built once, before the loop: it validates the `string:` block
+                // and sizes the injective prefix from the column's domain.
+                let cfg = StrCfg::for_column(self)?;
+                Ok(ColumnData::String(
+                    self.processed(raw)
+                        .map(|v| v.map(|v| cfg.render_draw(v)))
+                        .collect::<Result<_, _>>()?,
+                ))
+            }
             other => Err(DataGenError::BadParam(format!(
                 "data_type: unknown type '{other}'"
             ))),
         }
-    }
-
-    fn render_as<T: GenValue>(&self, raw: &[f64]) -> Result<ColumnData, DataGenError> {
-        let cfg = T::cfg(self)?;
-        let shift = self.shift.unwrap_or(0.0);
-        let mut out: Vec<T> = Vec::with_capacity(raw.len());
-
-        if self.special_rule & RULE_MONOTONIC_INCREASE != 0 {
-            // The draws are gaps, and `shift` is where the series begins.
-            let mut acc = MonotonicAcc::new(shift);
-            for draw in raw {
-                out.push(T::render(acc.push(*draw)?, &cfg));
-            }
-        } else {
-            for draw in raw {
-                out.push(T::render(draw + shift, &cfg));
-            }
-        }
-        Ok(T::into_column(out))
     }
 }
