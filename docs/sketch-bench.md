@@ -42,8 +42,23 @@ The above exmple introduce the need of a `registry`.
 Wrapper is the major component of `sketch-bench` crate.
 Wrapper serves the functionalities about how a sketch can be used.
 
-For example, sketch query function may take different arguments from different implementations.
+For example, sketch query function may take different arguments from different implementations, even for the same algorithm.
 This is the wrapper's job to provide how a sketch is used.
+
+#### Wrapper can be a closure
+
+To achieve the functionality that a wrapper can pass a sketch around, a closure can be a good choice.
+
+#### Wrapper shoud not be a trait
+
+**Reasoning**:
+
+A trait restricts the input of a function to be the same across different implementation.
+However, it's natural that different sketch functions have different input.
+It can be inferred that the function needs certain operations to process the common input to a format that the sketch can take.
+The process of common input is an overhead that cannot be avoided.
+In time-related benchmark, this is bad.
+Thus, a wrapper should not be a trait.
 
 ## 1. Purpose
 
