@@ -29,18 +29,13 @@
 //! `hydra-kll`. All three come from `sketch_framework::Hydra`, so all three
 //! have one impl, `lib`.
 
-use asap_sketchlib::input::{HydraCounter, HydraQuery};
-use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
+use aqpbm_core::init::BuildError;
+use crate::params::*;
+use asap_sketchlib::input::HydraCounter;
 
+pub mod polars;
+pub mod sketchlib;
 
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::workload::Labeled;
-
-use crate::params::{HydraCmsParams, HydraHllParams, HydraKllParams};
-
-/// Refuse a zero grid dimension by name. Shared by all three rows, because the
 /// outer grid is the one shape they have in common.
 fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), BuildError> {
     for (name, v) in [("rows", rows), ("cols", cols)] {
@@ -62,123 +57,23 @@ fn grid_overhead_bytes(rows: usize, cols: usize) -> usize {
     (rows * cols + 1) * std::mem::size_of::<HydraCounter>()
 }
 
-// ---------- hydra-cms: subpopulation frequency ----------
-
-/// Hydra over Count-Min cells.
-pub struct HydraCms {
-    inner: Hydra,
-    params: HydraCmsParams,
-}
-
-impl InitSketch for HydraCms {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraCmsParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-cms")?;
-        for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
-            if v == 0 {
-                return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
-            }
-        }
-        let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
-            p.cell_rows,
-            p.cell_cols,
-        ));
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p,
-        })
-    }
-}
-
-
-impl HydraCms {
-
-    #[inline]
-    pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
-        self.inner
-            .query_frequency(labels.to_vec(), &DataInput::I64(*value))
-    }
-}
-
-impl MemoryFootprint for HydraCms {
-    /// The grid holds `rows * cols` cells and every cell is a full Count-Min of
-    /// `i32` counters, so the counter term is the product of both shapes.
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
-            + grid_overhead_bytes(p.rows, p.cols)
-    }
-}
-
-impl BenchImpl for HydraCms {
-    type Params = HydraCmsParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
-
-// ---------- hydra-hll: subpopulation cardinality ----------
-
 /// Registers in one `HyperLogLog<ErtlMLE>` cell. The library fixes the cell at
 /// `HyperLogLogP14`, so this is `2^14` and not a parameter. Named here because
 /// the footprint depends on it and nothing in the params struct states it.
 const HLL_CELL_REGISTERS: usize = 1 << 14;
 
-/// Hydra over HyperLogLog cells.
-pub struct HydraHll {
-    inner: Hydra,
-    params: HydraHllParams,
-}
-
-impl InitSketch for HydraHll {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraHllParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-hll")?;
-        // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
-        // alias over the variant, so `new()` is ambiguous between the
-        // estimators the alias can carry. The enum fixes this one.
-        let cell = HydraCounter::HLL(HyperLogLog::<asap_sketchlib::ErtlMLE>::new());
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p,
-        })
-    }
-}
-
-
-impl HydraHll {
-    #[inline]
-    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Cardinality)
-    }
-}
-
-impl MemoryFootprint for HydraHll {
-    /// One byte per register per cell. The cell is fixed-shape, so unlike the
-    /// Count-Min row there is no cell parameter in this product.
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
-    }
-}
-
-impl BenchImpl for HydraHll {
-    type Params = HydraHllParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
-
-// ---------- hydra-kll: subpopulation quantile ----------
-
 // Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
 // in the library, reproduced here because a cell's footprint is a function of
 // them and the library exposes no accessor for its own capacity.
 const KLL_MAX_LEVELS: usize = 61;
+
 const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
+
 /// The `m` the library's `init_kll` passes, its minimum level capacity, and the
 /// floor it silently raises a smaller `k` to. Same cell as the `kll` rows, so
 /// the bound is theirs: see [`crate::wrappers::kll::LIB_K_MIN`].
 const KLL_MIN_LEVEL: usize = crate::wrappers::kll::LIB_K_MIN as usize;
+
 /// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
 const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
 
@@ -211,71 +106,16 @@ fn kll_cell_slots(k: u32) -> usize {
     total
 }
 
-/// Hydra over KLL cells.
-pub struct HydraKll {
-    inner: Hydra,
-    params: HydraKllParams,
-}
-
-impl InitSketch for HydraKll {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraKllParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-kll")?;
-        // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and
-        // it clamps `k` to its own range without saying so. Refuse here for the
-        // same reason those rows do: outside the range the grid would be built
-        // at a `cell_k` the record does not name. Below the floor every value
-        // gave one sketch at `cell_k = 8`; above the ceiling every value gave
-        // one sketch at 26602, while the footprint column kept climbing.
-        if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k)
-        {
-            return Err(BuildError(format!(
-                "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
-                p.cell_k,
-                crate::wrappers::kll::LIB_K_MIN,
-                crate::wrappers::kll::LIB_K_MAX
-            )));
-        }
-        let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p,
-        })
-    }
-}
 
 
-impl HydraKll {
-    /// `HydraQuery::Quantile` and not `Cdf`: the comparator asks for the value
-    /// at a rank, which is what rank error is defined over. The `Cdf` variant
-    /// answers the inverse question.
-    #[inline]
-    pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Quantile(phi))
-    }
-}
-
-impl MemoryFootprint for HydraKll {
-    /// Retained slots per cell times the grid area, plus the level index every
-    /// cell carries. Analytic because the cell allocates once, see
-    /// [`kll_cell_slots`].
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
-            + (KLL_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
-        p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
-    }
-}
-
-impl BenchImpl for HydraKll {
-    type Params = HydraKllParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 #[cfg(test)]
 mod tests {
+    use aqpbm_core::init::InitSketch;
+    use aqpbm_core::memory_footprint::MemoryFootprint;
+    use aqpbm_core::config::ParamSet;
+    use aqpbm_core::workload::Labeled;
+    use super::sketchlib::*;
     use super::*;
     use aqpbm_core::config::SketchParams;
 
@@ -284,16 +124,14 @@ mod tests {
             rows: 3,
             cols: 64,
             cell_rows: 3,
-            cell_cols: 256,
-        }))
+            cell_cols: 256}))
         .expect("canonical dimensions build")
     }
 
     fn record(key: &str, value: i64) -> Labeled<i64> {
         Labeled {
             key: key.to_string(),
-            value,
-        }
+            value}
     }
 
     /// The statistic is the frequency of a value *within* a subpopulation, and
@@ -349,8 +187,7 @@ mod tests {
             rows: 3,
             cols: 0,
             cell_rows: 3,
-            cell_cols: 256,
-        });
+            cell_cols: 256});
         let Err(err) = HydraCms::init(&bad) else {
             panic!("a zero dimension must be refused, not built");
         };
@@ -443,16 +280,14 @@ mod tests {
         HydraKll::init(&ParamSet::of(&HydraKllParams {
             rows: 3,
             cols: 64,
-            cell_k: 200,
-        }))
+            cell_k: 200}))
         .expect("canonical dimensions build")
     }
 
     fn frecord(key: &str, value: f64) -> Labeled<f64> {
         Labeled {
             key: key.to_string(),
-            value,
-        }
+            value}
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one
@@ -515,8 +350,7 @@ mod tests {
         let bad = ParamSet::of(&HydraKllParams {
             rows: 3,
             cols: 64,
-            cell_k: 0,
-        });
+            cell_k: 0});
         let Err(err) = HydraKll::init(&bad) else {
             panic!("a zero cell_k must be refused, not built");
         };
@@ -527,122 +361,3 @@ mod tests {
     }
 }
 
-// ---------- how this sketch is driven ----------
-//
-// One function per operation, per sketch. These used to be an
-// `impl Accumulator for X` block, which fixed one signature for every
-// implementation in the repo. As free functions each states its own
-// terms, and `catalog` names them in the row's `SketchOps`.
-    #[inline(always)]
-pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>)
-{
-        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
-}
-
-pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-}
-    #[inline(always)]
-pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>)
-{
-        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
-}
-
-pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-}
-    #[inline(always)]
-pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>)
-{
-        sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
-}
-
-pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-}
-
-// ---------- the rows this file provides ----------
-//
-// Three rows, three *different probe shapes*: a label plus a value, a label
-// alone, a label plus a fraction. Under the capability traits each needed its
-// own trait to be expressible; here each row simply states its own.
-
-use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
-};
-use aqpbm_core::cell::{RunError, WorkloadData};
-use aqpbm_core::ops::SketchOps;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
-
-pub const CMS_OPS: SketchOps<HydraCms, Labeled<i64>, (String, i64), f64> = SketchOps {
-    merge: Some(merge_hydra_cms),
-    prepare: None,
-    ask: ask_hydra_cms,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
-    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
-}
-pub fn run_cms(
-    cfg: &BenchConfig,
-    data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg, data, params, width, insert_hydra_cms,
-        &CMS_OPS,
-    )
-}
-
-pub const HLL_OPS: SketchOps<HydraHll, Labeled<i64>, String, f64> = SketchOps {
-    merge: Some(merge_hydra_hll),
-    prepare: None,
-    ask: ask_hydra_hll,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
-    sketch.estimate_subpop_cardinality(&[probe.as_str()])
-}
-pub fn run_hll(
-    cfg: &BenchConfig,
-    data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg, data, params, width, insert_hydra_hll,
-        &HLL_OPS,
-    )
-}
-
-pub const KLL_OPS: SketchOps<HydraKll, Labeled<f64>, (String, f64), f64> = SketchOps {
-    merge: Some(merge_hydra_kll),
-    prepare: None,
-    ask: ask_hydra_kll,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
-    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
-}
-pub fn run_kll(
-    cfg: &BenchConfig,
-    data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg, data, params, width, insert_hydra_kll,
-        &KLL_OPS,
-    )
-}

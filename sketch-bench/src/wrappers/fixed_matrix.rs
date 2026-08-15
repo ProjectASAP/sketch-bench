@@ -27,9 +27,11 @@
 //! builds, and `cargo test` runs each test on a 2 MiB thread. Wide-and-deep is the
 //! corner that trips it, so `cols = 65536` stops at 5 rows.
 
-use asap_sketchlib::{impl_fixed_matrix, DefaultXxHasher, FastPathHasher, MatrixStorage};
+use asap_sketchlib::{
+    impl_fixed_matrix, DefaultXxHasher,
+    FastPathHasher, MatrixStorage,
+};
 
-/// Receives the storage type a `(rows, cols)` pair selects.
 ///
 /// A trait and not a closure because the shape is a **type**: the visitor is the
 /// only way to hand a monomorphisation back to a caller that picked it with a
@@ -270,3 +272,4 @@ mod tests {
         assert!(msg.contains("not a shape the row rejects"), "{msg}");
     }
 }
+

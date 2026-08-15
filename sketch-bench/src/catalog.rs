@@ -30,7 +30,7 @@ use asap_sketchlib::{
 
 
 use crate::params::{HllParams, ParamSet};
-use crate::wrappers::{cms, countsketch, fixed_matrix, hll, hydra, kll, parallel, polars};
+use crate::wrappers::{cms, cs, fixed_matrix, hll, hydra, kll};
 
 // ---------- what a row is ----------
 
@@ -622,148 +622,148 @@ pub const ROWS: &[Row] = &[
     // two rows to agree on any of it; the table only records what exists.
 
     // -------- HLL (cardinality) --------
-    scored::<hll::HllOxide, i64, CardinalityGT>(
+    scored::<hll::oxide::HllOxide, i64, CardinalityGT>(
         "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
-        hll::run_oxide,
+        hll::oxide::run_oxide,
     ),
-    scored::<hll::HllDatasketches, i64, CardinalityGT>(
+    scored::<hll::datasketches::HllDatasketches, i64, CardinalityGT>(
         "datasketches::hll::HllSketch (Hll8)",
-        hll::run_datasketches,
+        hll::datasketches::run_datasketches,
     ),
     lib_hll::<
-        hll::HllLib<HllBucketListP12>,
-        hll::HllLib<HllBucketListP14>,
-        hll::HllLib<HllBucketListP16>,
+        hll::sketchlib::HllLib<HllBucketListP12>,
+        hll::sketchlib::HllLib<HllBucketListP14>,
+        hll::sketchlib::HllLib<HllBucketListP16>,
         CardinalityGT,
     >(
         "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
-        hll::run_lib,
+        hll::sketchlib::run_lib,
     ),
-    scored::<polars::PolarsCardinality, i64, CardinalityGT>(
+    scored::<hll::polars::PolarsCardinality, i64, CardinalityGT>(
         "polars exact: DataFrame.n_unique()",
-        polars::run_cardinality,
+        hll::polars::run_cardinality,
     ),
     // -------- HLL, HIP estimator --------
     // Its own algorithm: the estimate is maintained on the insert path instead
     // of scanned at query time. It also supplies no `merge`, which its
     // `SketchOps` states as `None`.
     lib_hll::<
-        hll::HllLibHip<HllBucketListP12>,
-        hll::HllLibHip<HllBucketListP14>,
-        hll::HllLibHip<HllBucketListP16>,
+        hll::sketchlib::HllLibHip<HllBucketListP12>,
+        hll::sketchlib::HllLibHip<HllBucketListP14>,
+        hll::sketchlib::HllLibHip<HllBucketListP16>,
         CardinalityGT,
     >(
         "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
-        hll::run_lib_hip,
+        hll::sketchlib::run_lib_hip,
     ),
     // -------- HLL, parallel insert --------
-    parallel_row::<parallel::ParallelHllFastPath, i64>(
+    parallel_row::<hll::sketchlib::ParallelHllFastPath, i64>(
         "asap HLL ErtlMLE, FastPath, parallel insert",
-        parallel::run_hll,
+        hll::sketchlib::run_hll,
     ),
     // -------- KLL (quantile, rank error) --------
     // Two query paths x two libraries. The `cdf` rows supply a `prepare` and the
     // per-call rows do not — that difference is the whole point of the split,
     // and it is now visible in the ops rather than hidden in a trait default.
-    ordered::<kll::KllOxidePerCall<i64>, kll::KllOxidePerCall<f64>, RankErrorGT>(
+    ordered::<kll::oxide::KllOxidePerCall<i64>, kll::oxide::KllOxidePerCall<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: quantile() per call",
-        kll::run_oxide_percall,
+        kll::oxide::run_oxide_percall,
     ),
-    ordered::<kll::KllLibPerCall<i64>, kll::KllLibPerCall<f64>, RankErrorGT>(
+    ordered::<kll::sketchlib::KllLibPerCall<i64>, kll::sketchlib::KllLibPerCall<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
-        kll::run_lib_percall,
+        kll::sketchlib::run_lib_percall,
     ),
-    ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
+    ordered::<kll::oxide::KllOxideCdf<i64>, kll::oxide::KllOxideCdf<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: cdf() built in prepare",
-        kll::run_oxide_cdf,
+        kll::oxide::run_oxide_cdf,
     ),
-    ordered::<kll::KllLibCdf<i64>, kll::KllLibCdf<f64>, RankErrorGT>(
+    ordered::<kll::sketchlib::KllLibCdf<i64>, kll::sketchlib::KllLibCdf<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
-        kll::run_lib_cdf,
+        kll::sketchlib::run_lib_cdf,
     ),
-    scored::<polars::PolarsQuantileKll, i64, RankErrorGT>(
+    scored::<kll::polars::PolarsQuantileKll, i64, RankErrorGT>(
         "polars exact: 101-point quantile grid",
-        polars::run_quantile_kll,
+        kll::polars::run_quantile_kll,
     ),
     // -------- CMS (frequency) --------
-    scored::<cms::CmsOxide, i64, FrequencyGT>(
+    scored::<cms::oxide::CmsOxide, i64, FrequencyGT>(
         "sketch_oxide::frequency::CountMinSketch",
-        cms::run_oxide,
+        cms::oxide::run_oxide,
     ),
-    scored::<cms::CmsDatasketches, i64, FrequencyGT>(
+    scored::<cms::datasketches::CmsDatasketches, i64, FrequencyGT>(
         "datasketches::countmin::CountMinSketch",
-        cms::run_datasketches,
+        cms::datasketches::run_datasketches,
     ),
-    scored::<polars::PolarsFrequencyCms, i64, FrequencyGT>(
+    scored::<cms::polars::PolarsFrequencyCms, i64, FrequencyGT>(
         "polars exact: group_by(v).agg(len)",
-        polars::run_frequency_cms,
+        cms::polars::run_frequency_cms,
     ),
     // The one row whose ops cannot be a `const`: its sketch type is a GAT, so
     // they come from `FixedMatrixRow::ops::<M>()` instead.
-    fixed_matrix_row::<cms::CmsFixedMatrixRow, crate::params::CmsParams>(
+    fixed_matrix_row::<cms::sketchlib::CmsFixedMatrixRow, crate::params::CmsParams>(
         "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<cms::CmsLibVector2dFast, i64, FrequencyGT>(
+    scored::<cms::sketchlib::CmsLibVector2dFast, i64, FrequencyGT>(
         "asap CMS, Vector2D, FastPath",
-        cms::run_vector2d_fast,
+        cms::sketchlib::run_vector2d_fast,
     ),
-    scored::<cms::CmsLibVector2dRegular, i64, FrequencyGT>(
+    scored::<cms::sketchlib::CmsLibVector2dRegular, i64, FrequencyGT>(
         "asap CMS, Vector2D, RegularPath",
-        cms::run_vector2d_regular,
+        cms::sketchlib::run_vector2d_regular,
     ),
-    parallel_row::<parallel::ParallelCmsFastPath, i64>(
+    parallel_row::<cms::sketchlib::ParallelCmsFastPath, i64>(
         "asap CMS, FastPath, parallel insert on M5x32K",
-        parallel::run_cms,
+        cms::sketchlib::run_cms,
     ),
     // -------- CountSketch (frequency) --------
-    scored::<countsketch::CsOxide, i64, FrequencyGT>(
+    scored::<cs::oxide::CsOxide, i64, FrequencyGT>(
         "sketch_oxide::frequency::CountSketch",
-        countsketch::run_oxide,
+        cs::oxide::run_oxide,
     ),
-    scored::<polars::PolarsFrequencyCs, i64, FrequencyGT>(
+    scored::<cs::polars::PolarsFrequencyCs, i64, FrequencyGT>(
         "polars exact: group_by(v).agg(len)",
-        polars::run_frequency_cs,
+        cs::polars::run_frequency_cs,
     ),
-    fixed_matrix_row::<countsketch::CsFixedMatrixRow, crate::params::CountSketchParams>(
+    fixed_matrix_row::<cs::sketchlib::CsFixedMatrixRow, crate::params::CountSketchParams>(
         "asap Count, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<countsketch::CsLibVector2dFast, i64, FrequencyGT>(
+    scored::<cs::sketchlib::CsLibVector2dFast, i64, FrequencyGT>(
         "asap Count, Vector2D, FastPath",
-        countsketch::run_vector2d_fast,
+        cs::sketchlib::run_vector2d_fast,
     ),
-    scored::<countsketch::CsLibVector2dRegular, i64, FrequencyGT>(
+    scored::<cs::sketchlib::CsLibVector2dRegular, i64, FrequencyGT>(
         "asap Count, Vector2D, RegularPath",
-        countsketch::run_vector2d_regular,
+        cs::sketchlib::run_vector2d_regular,
     ),
-    parallel_row::<parallel::ParallelCsFastPath, i64>(
+    parallel_row::<cs::sketchlib::ParallelCsFastPath, i64>(
         "asap Count, FastPath, parallel insert on M5x32K",
-        parallel::run_cs,
+        cs::sketchlib::run_cs,
     ),
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
     // Three rows, three different probe shapes. See `wrappers/hydra.rs`.
-    scored::<hydra::HydraCms, Labeled<i64>, SubpopFrequencyGT>(
+    scored::<hydra::sketchlib::HydraCms, Labeled<i64>, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
-        hydra::run_cms,
+        hydra::sketchlib::run_cms,
     ),
-    scored::<polars::PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT>(
+    scored::<hydra::polars::PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT>(
         "polars exact: group_by(subset, v).agg(len) over every label subset",
-        polars::run_subpop_frequency,
+        hydra::polars::run_subpop_frequency,
     ),
-    scored::<hydra::HydraHll, Labeled<i64>, SubpopCardinalityGT>(
+    scored::<hydra::sketchlib::HydraHll, Labeled<i64>, SubpopCardinalityGT>(
         "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
-        hydra::run_hll,
+        hydra::sketchlib::run_hll,
     ),
-    scored::<polars::PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT>(
+    scored::<hydra::polars::PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT>(
         "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
-        polars::run_subpop_cardinality,
+        hydra::polars::run_subpop_cardinality,
     ),
-    scored::<hydra::HydraKll, Labeled<f64>, SubpopRankErrorGT>(
+    scored::<hydra::sketchlib::HydraKll, Labeled<f64>, SubpopRankErrorGT>(
         "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
-        hydra::run_kll,
+        hydra::sketchlib::run_kll,
     ),
-    scored::<polars::PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT>(
+    scored::<hydra::polars::PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT>(
         "polars exact: sorted values per label subset, quantile by rank",
-        polars::run_subpop_quantile,
+        hydra::polars::run_subpop_quantile,
     ),
 ];
 

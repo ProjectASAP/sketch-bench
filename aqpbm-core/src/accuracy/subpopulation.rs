@@ -545,9 +545,12 @@ mod tests {
     use super::*;
 
     /// The estimator that does no work: every subpopulation frequency is zero.
+    ///
+    /// It has no `update`: the comparator computes its truth from the raw
+    /// items, and this double answers 0 whatever it was fed, so nothing needs
+    /// to go into it.
     struct NullSubpop;
     impl NullSubpop {
-        fn update(&mut self, _: &Labeled<i64>) {}
         fn estimate_subpop_frequency(&self, _: &[&str], _: &i64) -> f64 {
             0.0
         }

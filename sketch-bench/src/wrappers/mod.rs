@@ -7,18 +7,23 @@
 //!
 //! `catalog::ROWS` names one `run_*` per row and nothing else.
 
+// One directory per algorithm; inside each, one file per library. A reader
+// looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and
+// finds the type, how it is built, how it is fed, and how it is asked, all in
+// one place.
 pub mod cms;
-pub mod countsketch;
-pub mod fixed_matrix;
+pub mod cs;
 pub mod hll;
 pub mod hydra;
 pub mod kll;
-pub mod parallel;
-pub mod polars;
+
+// Shared by rows across several algorithms.
+pub mod fixed_matrix;
+pub mod parallel_shared;
+pub mod polars_shared;
 
 use aqpbm_core::init::BuildError;
 
-// ---------- refusing a config the row cannot honour ----------
 //
 // All four helpers below exist for one rule: a row that cannot build at the
 // requested parameters says so, and never builds at different ones under the

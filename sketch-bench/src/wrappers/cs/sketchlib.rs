@@ -1,79 +1,23 @@
-//! CountSketch wrappers — four types (`oxide` + 3× sketchlib), each declaring
-//! `FrequencyOps`. Same shapes and the same three routes as the Count-Min
-//! wrappers next door, including one generic row over the shared shape table.
+//! The `asap_sketchlib` implementations.
+//!
+//! Grouped under `wrappers/cs/` with the other implementations of this
+//! algorithm; how each is driven lives beside it.
 
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
-use crate::params::CountSketchParams;
-use crate::wrappers::{require_positive, require_resolved_shape, require_shape};
+use super::*;
+use crate::wrappers::parallel_shared::*;
+use aqpbm_core::accuracy::frequency::FrequencyGT;
+use aqpbm_core::cell::{RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-
+use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+use crate::wrappers::{require_positive, require_shape};
 use asap_sketchlib::{
-    Count, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
-    Vector2D,
-};
-use sketch_oxide::Mergeable as _;
-
-// sketch_oxide::frequency::CountSketch sizes its table as
-// `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
-//
-// Inverting that for a target width needs `3/ε²` to land *on* `cols`, and
-// `ε = sqrt(3/cols)` does not: the square root and the square do not round-trip
-// in `f64`, so `3/ε²` came out a hair above `cols`, `ceil` took it to `cols + 1`
-// and the power-of-two rounding doubled the table. Every request built twice the
-// counters it named. Solving against `cols - 0.5` puts the quotient half an
-// integer below the boundary, which no single ulp can cross.
-fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
-    let epsilon = (3.0 / (cols as f64 - 0.5)).sqrt();
-    let delta = (-(rows as f64 - 0.5)).exp();
-    (epsilon, delta)
-}
-
-// ---------- sketch_oxide CountSketch ----------
-// No `rows` / `cols` field, for the same reason as `CmsOxide`: `init` proves the
-// built table matches the request, so the sketch is the only place either
-// figure is read from.
-//
-// One bound this row has and the Count-Min one does not: the crate floors its
-// depth at 3, so the median is taken over enough estimates to be one. `rows < 3`
-// is therefore unreachable, and refused by name.
-pub struct CsOxide {
-    inner: sketch_oxide::frequency::CountSketch,
-}
-
-impl InitSketch for CsOxide {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: CountSketchParams = config.parse()?;
-        let (epsilon, delta) = dims_to_err(p.rows, p.cols);
-        let inner = sketch_oxide::frequency::CountSketch::new(epsilon, delta).map_err(|e| {
-            BuildError(format!(
-                "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
-            ))
-        })?;
-        require_resolved_shape(
-            "oxide CountSketch",
-            (inner.depth(), inner.width()),
-            (p.rows, p.cols),
-        )?;
-        Ok(Self { inner })
-    }
-}
-
-
-impl MemoryFootprint for CsOxide {
-    fn memory_bytes(&self) -> usize {
-        // Off the built sketch: the crate rounds the width up to a power of two
-        // and floors the depth at 3, so at `rows=2` a request-derived figure
-        // under-reports by a third. Backing store is `table: Vec<i64>`.
-        self.inner.depth() * self.inner.width() * std::mem::size_of::<i64>()
-    }
-}
-
-// ---------- asap_sketchlib: FixedMatrix + FastPath ----------
-//
-// One row over every compiled-in shape, exactly as the Count-Min side. The
-// shapes are shared: a matrix is a matrix, and both sketches read the same table
-// in `wrappers::fixed_matrix`.
+    Count, DataInput, DefaultXxHasher, FastPath,
+    FastPathHasher, MatrixStorage, RegularPath, Vector2D};
+use std::sync::Barrier;
 
 pub struct CsLibFixedmatrix<M: MatrixStorage>(pub Count<M, FastPath>);
 
@@ -88,7 +32,6 @@ where
         Ok(Self(inner))
     }
 }
-
 
 impl<M> MemoryFootprint for CsLibFixedmatrix<M>
 where
@@ -151,8 +94,7 @@ impl crate::catalog::FixedMatrixRow for CsFixedMatrixRow {
 pub struct CsLibVector2dFast {
     inner: Count<Vector2D<i32>, FastPath>,
     rows: usize,
-    cols: usize,
-}
+    cols: usize}
 
 impl InitSketch for CsLibVector2dFast {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
@@ -166,11 +108,9 @@ impl InitSketch for CsLibVector2dFast {
         Ok(Self {
             inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
-            cols: p.cols,
-        })
+            cols: p.cols})
     }
 }
-
 
 impl MemoryFootprint for CsLibVector2dFast {
     fn memory_bytes(&self) -> usize {
@@ -182,8 +122,7 @@ impl MemoryFootprint for CsLibVector2dFast {
 pub struct CsLibVector2dRegular {
     inner: Count<Vector2D<i32>, RegularPath>,
     rows: usize,
-    cols: usize,
-}
+    cols: usize}
 
 impl InitSketch for CsLibVector2dRegular {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
@@ -197,29 +136,13 @@ impl InitSketch for CsLibVector2dRegular {
         Ok(Self {
             inner: Count::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
             rows: p.rows,
-            cols: p.cols,
-        })
+            cols: p.cols})
     }
 }
-
 
 impl MemoryFootprint for CsLibVector2dRegular {
     fn memory_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>()
-    }
-}
-
-
-// ---------- statistic membership ----------
-//
-// A different algorithm from CMS (its own params) answering the same statistic.
-
-impl CsOxide {
-    pub fn estimate_frequency(&self, key: &i64) -> u64 {
-        // CountSketch is unbiased (median of sign·counter), so collision noise
-        // can push an estimate slightly negative. Clamp to 0 for CMS-style
-        // semantics — otherwise `as u64` wraps -1 into u64::MAX.
-        self.inner.estimate(key).max(0) as u64
     }
 }
 
@@ -244,12 +167,6 @@ impl CsLibVector2dRegular {
     }
 }
 
-// ---------- catalog identity ----------
-// Named on the same rule as the Count-Min rows: hash strategy and storage
-// backend name the algorithm, the library names the impl.
-
-impl BenchImpl for CsOxide { type Params = CountSketchParams; const IMPL: &'static str = "oxide"; const SUPPORTS_MERGE: bool = true; }
-
 impl<M> BenchImpl for CsLibFixedmatrix<M>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
@@ -259,12 +176,14 @@ where
     const IMPL: &'static str = "lib";
     const SUPPORTS_MERGE: bool = true;
 }
+
 impl BenchImpl for CsLibVector2dFast {
     type Params = CountSketchParams;
     const ALGORITHM: &'static str = "countsketch-fastpath-vector2d";
     const IMPL: &'static str = "lib";
     const SUPPORTS_MERGE: bool = true;
 }
+
 impl BenchImpl for CsLibVector2dRegular {
     type Params = CountSketchParams;
     const ALGORITHM: &'static str = "countsketch-regularpath-vector2d";
@@ -272,25 +191,6 @@ impl BenchImpl for CsLibVector2dRegular {
     const SUPPORTS_MERGE: bool = true;
 }
 
-// ---------- how this sketch is driven ----------
-//
-// One function per operation, per sketch. These used to be an
-// `impl Accumulator for X` block, which fixed one signature for every
-// implementation in the repo. As free functions each states its own
-// terms, and `catalog` names them in the row's `SketchOps`.
-    #[inline(always)]
-pub fn insert_cs_oxide(sketch: &mut CsOxide, v: &i64)
-{
-        sketch.inner.update(v, 1);
-}
-
-pub fn merge_cs_oxide(into: &mut CsOxide, from: &CsOxide)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so rows/cols match");
-}
-    #[inline(always)]
 pub fn insert_cs_lib_fixedmatrix<M>(sketch: &mut CsLibFixedmatrix<M>, v: &i64)
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
@@ -304,7 +204,7 @@ where
 {
         into.0.merge(&from.0);
 }
-    #[inline(always)]
+
 pub fn insert_cs_lib_vector2d_fast(sketch: &mut CsLibVector2dFast, v: &i64)
 {
         sketch.inner.insert(&DataInput::I64(*v));
@@ -314,7 +214,7 @@ pub fn merge_cs_lib_vector2d_fast(into: &mut CsLibVector2dFast, from: &CsLibVect
 {
         into.inner.merge(&from.inner);
 }
-    #[inline(always)]
+
 pub fn insert_cs_lib_vector2d_regular(sketch: &mut CsLibVector2dRegular, v: &i64)
 {
         sketch.inner.insert(&DataInput::I64(*v));
@@ -325,41 +225,108 @@ pub fn merge_cs_lib_vector2d_regular(into: &mut CsLibVector2dRegular, from: &CsL
         into.inner.merge(&from.inner);
 }
 
-// ---------- the rows this file provides ----------
-
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{RunError, WorkloadData};
-use aqpbm_core::ops::SketchOps;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
-
-pub const OXIDE_OPS: SketchOps<CsOxide, i64, i64, u64> = SketchOps {
-    merge: Some(merge_cs_oxide),
+pub const VECTOR2D_FAST_OPS: SketchOps<CsLibVector2dFast, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cs_lib_vector2d_fast),
     prepare: None,
-    ask: ask_cs_oxide,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_cs_oxide(sketch: &mut CsOxide, key: &i64) -> u64 {
+    ask: ask_cs_lib_vector2d_fast,
+        _item: std::marker::PhantomData};
+
+pub fn ask_cs_lib_vector2d_fast(sketch: &mut CsLibVector2dFast, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
-pub fn run_oxide(
+
+pub const VECTOR2D_REGULAR_OPS: SketchOps<CsLibVector2dRegular, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cs_lib_vector2d_regular),
+    prepare: None,
+    ask: ask_cs_lib_vector2d_regular,
+        _item: std::marker::PhantomData};
+
+pub fn ask_cs_lib_vector2d_regular(sketch: &mut CsLibVector2dRegular, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+
+pub const fn fixedmatrix_ops<M>() -> SketchOps<CsLibFixedmatrix<M>, i64, i64, u64>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+    SketchOps {
+        merge: Some(merge_cs_lib_fixedmatrix),
+        prepare: None,
+        ask: ask_cs_lib_fixedmatrix,
+        _item: std::marker::PhantomData}
+}
+
+pub fn ask_cs_lib_fixedmatrix<M>(sketch: &mut CsLibFixedmatrix<M>, key: &i64) -> u64
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+    sketch.estimate_frequency(key)
+}
+
+fn run_parallel_cs(items: &[i64], workers: usize) {
+    let parts = partition(items, workers);
+    let barrier = Barrier::new(parts.len());
+    std::thread::scope(|s| {
+        for part in &parts {
+            let barrier = &barrier;
+            s.spawn(move || {
+                let mut sketch = Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                barrier.wait();
+                for &v in *part {
+                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                        std::hint::black_box(&d);
+                    });
+                }
+                std::hint::black_box(&sketch);
+            });
+        }
+    });
+}
+
+pub const CS_OPS: SketchOps<ParallelCsFastPath, i64, (), ()> = SketchOps {
+    merge: None,
+    prepare: Some(prepare_parallel_cs_fast_path),
+    ask: |_, _| (),
+        _item: std::marker::PhantomData};
+
+pub fn run_cs(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CsOxide, i64, FrequencyGT, _>(cfg, data, params, width, insert_cs_oxide, &OXIDE_OPS)
+    crate::catalog::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, width, insert_parallel_cs_fast_path, &CS_OPS)
 }
 
-pub const VECTOR2D_FAST_OPS: SketchOps<CsLibVector2dFast, i64, i64, u64> = SketchOps {
-    merge: Some(merge_cs_lib_vector2d_fast),
-    prepare: None,
-    ask: ask_cs_lib_vector2d_fast,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_cs_lib_vector2d_fast(sketch: &mut CsLibVector2dFast, key: &i64) -> u64 {
-    sketch.estimate_frequency(key)
+/// CountSketch, parallel-insert FastPath.
+pub struct ParallelCsFastPath {
+    buf: Vec<i64>,
+    workers: usize}
+
+impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
+    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError> {
+        let p: CountSketchParams = config.parse()?;
+        require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
+        Ok(Self {
+            buf: Vec::new(),
+            workers: workers.max(1)})
+    }
 }
+
+impl MemoryFootprint for ParallelCsFastPath {
+    fn memory_bytes(&self) -> usize {
+        self.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
+            + self.buf.capacity() * std::mem::size_of::<i64>()
+    }
+}
+
+impl BenchImpl for ParallelCsFastPath {
+    type Params = CountSketchParams;
+    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k-parallel";
+    const IMPL: &'static str = "lib";
+    const SUPPORTS_PREPARE: bool = true;
+}
+
 pub fn run_vector2d_fast(
     cfg: &BenchConfig,
     data: WorkloadData,
@@ -372,15 +339,6 @@ pub fn run_vector2d_fast(
     )
 }
 
-pub const VECTOR2D_REGULAR_OPS: SketchOps<CsLibVector2dRegular, i64, i64, u64> = SketchOps {
-    merge: Some(merge_cs_lib_vector2d_regular),
-    prepare: None,
-    ask: ask_cs_lib_vector2d_regular,
-        _item: std::marker::PhantomData,
-};
-pub fn ask_cs_lib_vector2d_regular(sketch: &mut CsLibVector2dRegular, key: &i64) -> u64 {
-    sketch.estimate_frequency(key)
-}
 pub fn run_vector2d_regular(
     cfg: &BenchConfig,
     data: WorkloadData,
@@ -393,20 +351,12 @@ pub fn run_vector2d_regular(
     )
 }
 
-pub const fn fixedmatrix_ops<M>() -> SketchOps<CsLibFixedmatrix<M>, i64, i64, u64>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+pub fn insert_parallel_cs_fast_path(sketch: &mut ParallelCsFastPath, v: &i64)
 {
-    SketchOps {
-        merge: Some(merge_cs_lib_fixedmatrix),
-        prepare: None,
-        ask: ask_cs_lib_fixedmatrix,
-        _item: std::marker::PhantomData,
-    }
+        sketch.buf.push(*v);
 }
-pub fn ask_cs_lib_fixedmatrix<M>(sketch: &mut CsLibFixedmatrix<M>, key: &i64) -> u64
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+
+pub fn prepare_parallel_cs_fast_path(sketch: &mut ParallelCsFastPath)
 {
-    sketch.estimate_frequency(key)
+        run_parallel_cs(&sketch.buf, sketch.workers);
 }
