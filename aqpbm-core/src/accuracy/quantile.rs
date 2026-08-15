@@ -4,10 +4,8 @@
 //! tie intervals; [`RelativeErrorGT`] (DDSketch) reports `|v̂ − v| / |v|`
 //! against the Type-7 linear-interpolation quantile ([`type7_quantile`]).
 
-use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 
-use super::statistic::QuantileOps;
 use super::GroundTruth;
 
 /// Number of times the 101-percentile sweep is repeated when `record_calls`
@@ -80,10 +78,9 @@ impl QuantileValue for f64 {
 pub struct RankErrorGT {
 }
 
-impl<S> GroundTruth<S> for RankErrorGT
+impl<I> GroundTruth<I> for RankErrorGT
 where
-    S: Accumulator + QuantileOps,
-    S::Item: Clone + PartialOrd + ToF64,
+    I: Clone + PartialOrd + ToF64,
 {
     /// Every value the stream carried, sorted. Rank is over occurrences, so
     /// nothing is deduplicated.
@@ -92,7 +89,7 @@ where
     type Probe = f64;
     type Answer = f64;
 
-    fn truth(&self, items: &[S::Item]) -> Vec<f64> {
+    fn truth(&self, items: &[I]) -> Vec<f64> {
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         sorted
@@ -103,10 +100,6 @@ where
             return Vec::new();
         }
         (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
-    }
-
-    fn ask(&self, sketch: &S, probe: &f64) -> f64 {
-        sketch.estimate_quantile(*probe)
     }
 
     fn probe_as_f64(&self, probe: &f64) -> f64 {
@@ -159,16 +152,15 @@ where
 pub struct RelativeErrorGT {
 }
 
-impl<S> GroundTruth<S> for RelativeErrorGT
+impl<I> GroundTruth<I> for RelativeErrorGT
 where
-    S: Accumulator + QuantileOps,
-    S::Item: Clone + PartialOrd + ToF64,
+    I: Clone + PartialOrd + ToF64,
 {
     type Truth = Vec<f64>;
     type Probe = f64;
     type Answer = f64;
 
-    fn truth(&self, items: &[S::Item]) -> Vec<f64> {
+    fn truth(&self, items: &[I]) -> Vec<f64> {
         let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         sorted
@@ -179,10 +171,6 @@ where
             return Vec::new();
         }
         (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
-    }
-
-    fn ask(&self, sketch: &S, probe: &f64) -> f64 {
-        sketch.estimate_quantile(*probe)
     }
 
     fn probe_as_f64(&self, probe: &f64) -> f64 {

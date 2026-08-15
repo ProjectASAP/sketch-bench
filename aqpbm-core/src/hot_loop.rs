@@ -7,7 +7,6 @@
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use crate::accumulator::Accumulator;
 
 /// Ramp the CPU **once per process**, before the first measured loop of any
 /// pass — two passes timed at two different clock states is not a comparison.
@@ -44,10 +43,9 @@ fn warmup_cpu_from_env() {
 /// Nothing else is inside the timed region — no snapshot, no `prepare`. One
 /// copy only: a duplicate calling across a crate boundary costs 5.1%.
 #[inline(always)]
-pub fn insert_loop<S, Insert>(sketch: &mut S, items: &[S::Item], insert: &mut Insert) -> u64
+pub fn insert_loop<S, I, Insert>(sketch: &mut S, items: &[I], insert: &mut Insert) -> u64
 where
-    S: Accumulator,
-    Insert: FnMut(&mut S, &S::Item),
+    Insert: FnMut(&mut S, &I),
 {
     let start = Instant::now();
     for it in items {

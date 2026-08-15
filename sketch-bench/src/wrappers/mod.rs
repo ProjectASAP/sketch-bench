@@ -1,21 +1,20 @@
 //! Thin newtypes over each concrete sketch implementation in the
-//! repo, one file per algorithm. Each implements `Accumulator` (drive it)
-//! and `InitSketch` (build it from a `ParamSet`); `sketch_bench::catalog`
-//! binds the runtime `(algorithm, impl)` strings to these types.
+//! repo, one file per algorithm. Each file owns its sketches *and how they are
+//! driven*: `InitSketch` builds one from a `ParamSet`, and a `SketchOps` names
+//! the functions that insert into it, fold it, finalise it and ask it. Those
+//! functions are written here, in the sketch's own terms — nothing forces two
+//! files to agree on a signature.
+//!
+//! `catalog::ROWS` names one `run_*` per row and nothing else.
 
 pub mod cms;
 pub mod countsketch;
-pub mod dd;
-pub mod elastic;
 pub mod fixed_matrix;
 pub mod hll;
 pub mod hydra;
 pub mod kll;
-pub mod nitro;
 pub mod parallel;
 pub mod polars;
-pub mod topk;
-pub mod univmon;
 
 use aqpbm_core::init::BuildError;
 

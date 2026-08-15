@@ -1,5 +1,7 @@
-//! Count-Min Accumulator wrappers — five types, every one declaring
-//! `FrequencyOps` (`&i64` point lookup → `u64` count estimate).
+//! Count-Min wrappers — five types. Each answers a `&i64` point lookup with a
+//! `u64` count estimate, which is the shape `FrequencyGT` scores; each says so
+//! in its own `SketchOps` at the bottom of this file rather than by
+//! implementing a shared trait.
 //!
 //! All of them take `(rows, cols)` and honour it, by four different routes.
 //! `oxide` inverts the error bounds its API takes and checks the table it got
@@ -9,14 +11,13 @@
 //! in, so the shape selects a monomorphisation from the table in
 //! `wrappers::fixed_matrix` and the catalog dispatches on it.
 
-use aqpbm_core::accuracy::FrequencyOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::params::CmsParams;
 use crate::wrappers::{
     require_positive, require_range, require_resolved_shape, require_shape,
 };
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use sketch_oxide::Mergeable as _;
 
@@ -68,23 +69,6 @@ impl InitSketch for CmsOxide {
     }
 }
 
-impl Accumulator for CmsOxide {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.update(v);
-    }
-
-    /// Counter-wise addition. Count-Min is linear, so merging shards is
-    /// **exact** and the benchmark asserts equality rather than measuring
-    /// degradation — a difference means mismatched seeds or a saturated counter.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .merge(&other.inner)
-            .expect("both operands built from one ParamSet, so rows/cols match");
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for CmsOxide {
     fn memory_bytes(&self) -> usize {
@@ -153,19 +137,6 @@ impl InitSketch for CmsDatasketches {
     }
 }
 
-impl Accumulator for CmsDatasketches {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.update(*v);
-    }
-
-    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for CmsDatasketches {
     fn memory_bytes(&self) -> usize {
@@ -203,22 +174,6 @@ where
     }
 }
 
-impl<M> Accumulator for CmsLibFixedmatrix<M>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-{
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.0.insert(&DataInput::I64(*v));
-    }
-
-    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.0.merge(&other.0);
-        Ok(())
-    }
-}
 
 impl<M> MemoryFootprint for CmsLibFixedmatrix<M>
 where
@@ -236,6 +191,36 @@ where
 pub struct CmsFixedMatrixRow;
 
 impl crate::catalog::FixedMatrixRow for CmsFixedMatrixRow {
+    /// The one ask in the catalog that is not a closure at its row: `At<M>` is
+    /// a GAT, so there is no single sketch type a closure could be written
+    /// against. Generic over `M` instead, which is the same reason
+    /// `FixedMatrixVisitor` is a trait.
+    fn insert<M>(sketch: &mut Self::At<M>, v: &i64)
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    {
+        insert_cms_lib_fixedmatrix(sketch, v)
+    }
+
+    fn ops<M>() -> aqpbm_core::ops::SketchOps<Self::At<M>, i64, i64, u64>
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static,
+    {
+        fixedmatrix_ops::<M>()
+    }
+    // Both fixed-matrix rows are frequency rows at every shape, and both
+    // wrap a library structure that folds losslessly.
+    const CAPABILITY: aqpbm_core::request::Capability =
+        aqpbm_core::request::Capability::Frequency;
+    const SUPPORTS_MERGE: bool = true;
     const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix";
     type At<
         M: MatrixStorage<Counter = i32>
@@ -274,19 +259,6 @@ impl InitSketch for CmsLibVector2dFast {
     }
 }
 
-impl Accumulator for CmsLibVector2dFast {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.insert(&DataInput::I64(*v));
-    }
-
-    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for CmsLibVector2dFast {
     fn memory_bytes(&self) -> usize {
@@ -318,19 +290,6 @@ impl InitSketch for CmsLibVector2dRegular {
     }
 }
 
-impl Accumulator for CmsLibVector2dRegular {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.insert(&DataInput::I64(*v));
-    }
-
-    /// Counter-wise addition; a Count-Min Accumulator is linear, so merging is exact.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for CmsLibVector2dRegular {
     fn memory_bytes(&self) -> usize {
@@ -341,40 +300,35 @@ impl MemoryFootprint for CmsLibVector2dRegular {
 
 // ---------- statistic membership ----------
 
-impl FrequencyOps for CmsOxide {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
+impl CmsOxide {
+    pub fn estimate_frequency(&self, key: &i64) -> u64 {
         self.inner.estimate(key)
     }
 }
 
-impl FrequencyOps for CmsDatasketches {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
+impl CmsDatasketches {
+    pub fn estimate_frequency(&self, key: &i64) -> u64 {
         self.inner.estimate(*key).max(0) as u64
     }
 }
 
-impl<M> FrequencyOps for CmsLibFixedmatrix<M>
+impl<M> CmsLibFixedmatrix<M>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
+    pub fn estimate_frequency(&self, key: &i64) -> u64 {
         self.0.estimate(&DataInput::I64(*key)) as u64
     }
 }
 
-impl FrequencyOps for CmsLibVector2dFast {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
+impl CmsLibVector2dFast {
+    pub fn estimate_frequency(&self, key: &i64) -> u64 {
         self.inner.estimate(&DataInput::I64(*key)) as u64
     }
 }
 
-impl FrequencyOps for CmsLibVector2dRegular {
-    type Key = i64;
-    fn estimate_frequency(&self, key: &i64) -> u64 {
+impl CmsLibVector2dRegular {
+    pub fn estimate_frequency(&self, key: &i64) -> u64 {
         self.inner.estimate(&DataInput::I64(*key)) as u64
     }
 }
@@ -387,8 +341,8 @@ impl FrequencyOps for CmsLibVector2dRegular {
 // algorithm. `CmsParams` is the vocabulary all of them share, which is what
 // keeps them one family.
 
-impl BenchImpl for CmsOxide { type Params = CmsParams; const IMPL: &'static str = "oxide"; }
-impl BenchImpl for CmsDatasketches { type Params = CmsParams; const IMPL: &'static str = "datasketches"; }
+impl BenchImpl for CmsOxide { type Params = CmsParams; const IMPL: &'static str = "oxide"; const SUPPORTS_MERGE: bool = true; }
+impl BenchImpl for CmsDatasketches { type Params = CmsParams; const IMPL: &'static str = "datasketches"; const SUPPORTS_MERGE: bool = true; }
 
 impl<M> BenchImpl for CmsLibFixedmatrix<M>
 where
@@ -397,16 +351,19 @@ where
     type Params = CmsParams;
     const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 impl BenchImpl for CmsLibVector2dFast {
     type Params = CmsParams;
     const ALGORITHM: &'static str = "cms-fastpath-vector2d";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 impl BenchImpl for CmsLibVector2dRegular {
     type Params = CmsParams;
     const ALGORITHM: &'static str = "cms-regularpath-vector2d";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 
 #[cfg(test)]
@@ -577,4 +534,194 @@ mod tests {
         // The fixed-shape and parallel rows already refused it, via require_shape.
         assert!(CmsLibFixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>::init(&p).is_err());
     }
+}
+
+// ---------- how this sketch is driven ----------
+//
+// One function per operation, per sketch. These used to be an
+// `impl Accumulator for X` block, which fixed one signature for every
+// implementation in the repo. As free functions each states its own
+// terms, and `catalog` names them in the row's `SketchOps`.
+    #[inline(always)]
+pub fn insert_cms_oxide(sketch: &mut CmsOxide, v: &i64)
+{
+        sketch.inner.update(v);
+}
+
+pub fn merge_cms_oxide(into: &mut CmsOxide, from: &CmsOxide)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so rows/cols match");
+}
+    #[inline(always)]
+pub fn insert_cms_datasketches(sketch: &mut CmsDatasketches, v: &i64)
+{
+        sketch.inner.update(*v);
+}
+
+pub fn merge_cms_datasketches(into: &mut CmsDatasketches, from: &CmsDatasketches)
+{
+        into.inner.merge(&from.inner);
+}
+    #[inline(always)]
+pub fn insert_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, v: &i64)
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+        sketch.0.insert(&DataInput::I64(*v));
+}
+
+pub fn merge_cms_lib_fixedmatrix<M>(into: &mut CmsLibFixedmatrix<M>, from: &CmsLibFixedmatrix<M>)
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+        into.0.merge(&from.0);
+}
+    #[inline(always)]
+pub fn insert_cms_lib_vector2d_fast(sketch: &mut CmsLibVector2dFast, v: &i64)
+{
+        sketch.inner.insert(&DataInput::I64(*v));
+}
+
+pub fn merge_cms_lib_vector2d_fast(into: &mut CmsLibVector2dFast, from: &CmsLibVector2dFast)
+{
+        into.inner.merge(&from.inner);
+}
+    #[inline(always)]
+pub fn insert_cms_lib_vector2d_regular(sketch: &mut CmsLibVector2dRegular, v: &i64)
+{
+        sketch.inner.insert(&DataInput::I64(*v));
+}
+
+pub fn merge_cms_lib_vector2d_regular(into: &mut CmsLibVector2dRegular, from: &CmsLibVector2dRegular)
+{
+        into.inner.merge(&from.inner);
+}
+
+// ---------- the rows this file provides ----------
+//
+// One `SketchOps` per row: build is `InitSketch::init`, the rest are the
+// functions above. `catalog::ROWS` names `run_*` and nothing else — there is no
+// macro, and nothing here has to agree with any other wrapper.
+
+use aqpbm_core::cell::WorkloadData;
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+use aqpbm_core::cell::RunError;
+use aqpbm_core::accuracy::frequency::FrequencyGT;
+
+/// `cms/oxide`. Probe is a key, answer is a count — the shape `FrequencyGT` asks in.
+pub const OXIDE_OPS: SketchOps<CmsOxide, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cms_oxide),
+    prepare: None,
+    ask: ask_cms_oxide,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_cms_oxide(sketch: &mut CmsOxide, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+pub fn run_oxide(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<CmsOxide, i64, FrequencyGT, _>(cfg, data, params, width, insert_cms_oxide, &OXIDE_OPS)
+}
+
+pub const DATASKETCHES_OPS: SketchOps<CmsDatasketches, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cms_datasketches),
+    prepare: None,
+    ask: ask_cms_datasketches,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_cms_datasketches(sketch: &mut CmsDatasketches, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+pub fn run_datasketches(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<CmsDatasketches, i64, FrequencyGT, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_cms_datasketches,
+        &DATASKETCHES_OPS,
+    )
+}
+
+pub const VECTOR2D_FAST_OPS: SketchOps<CmsLibVector2dFast, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cms_lib_vector2d_fast),
+    prepare: None,
+    ask: ask_cms_lib_vector2d_fast,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_cms_lib_vector2d_fast(sketch: &mut CmsLibVector2dFast, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+pub fn run_vector2d_fast(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<CmsLibVector2dFast, i64, FrequencyGT, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_cms_lib_vector2d_fast,
+        &VECTOR2D_FAST_OPS,
+    )
+}
+
+pub const VECTOR2D_REGULAR_OPS: SketchOps<CmsLibVector2dRegular, i64, i64, u64> = SketchOps {
+    merge: Some(merge_cms_lib_vector2d_regular),
+    prepare: None,
+    ask: ask_cms_lib_vector2d_regular,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_cms_lib_vector2d_regular(sketch: &mut CmsLibVector2dRegular, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+pub fn run_vector2d_regular(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<CmsLibVector2dRegular, i64, FrequencyGT, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_cms_lib_vector2d_regular,
+        &VECTOR2D_REGULAR_OPS,
+    )
+}
+
+/// The fixed-matrix row's ops, generic over the storage the shape selected.
+/// A `const fn` rather than a `const`, because there is one per `M`.
+pub const fn fixedmatrix_ops<M>() -> SketchOps<CmsLibFixedmatrix<M>, i64, i64, u64>
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+    SketchOps {
+        merge: Some(merge_cms_lib_fixedmatrix),
+        prepare: None,
+        ask: ask_cms_lib_fixedmatrix,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, key: &i64) -> u64
+where
+    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+{
+    sketch.estimate_frequency(key)
 }

@@ -13,7 +13,8 @@ pub use config::BenchConfig;
 // Warm-up and the timed insert loop are generic over `Accumulator` and carry no
 // sketch-domain knowledge. `insert_loop` stays `#[inline(always)]`, so thin LTO
 // folds the wrapper's `update` in across the crate boundary. See `hot_loop`.
-use crate::accumulator::Accumulator;
+use crate::ops::SketchOps;
+use crate::probe::MetricsSink;
 use crate::cell::RunError;
 use crate::accuracy::{run_probes, GroundTruth};
 use crate::aggregation as fold;
@@ -142,18 +143,19 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// `ground_truth` is what a square needing a comparator gets. Passing
     /// `None` runs the squares that need none and skips the rest, which is
     /// what the timed half of a cell does.
-    pub fn run<S, F, G, Insert>(
+    pub fn run<S, F, G, Ins>(
         &self,
         mut factory: F,
-        mut insert: Insert,
+        mut insert: Ins,
         ground_truth: Option<&G>,
+        ops: &SketchOps<S, W::Item, G::Probe, G::Answer>,
     ) -> Result<Vec<BenchReport>, RunError>
     where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
+        S: MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-        G: GroundTruth<S>,
+        G: GroundTruth<W::Item>,
+        Ins: FnMut(&mut S, &W::Item),
     {
         use Metric::{Accuracy, Latency, Throughput};
         use Operation::{Insert as Ins, Merge, Prepare, Query};
@@ -171,25 +173,25 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // compile until the new squares say what they measure.
             let report = match (cell.operation, cell.metric) {
                 (Ins, Throughput) | (Ins, Latency) => {
-                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, ops, pass_cfg))
                 }
                 (Ins, Accuracy) => return Err(unmeasured(cell)),
                 // Issuing the queries is the measurement, so this square
                 // needs the comparator as much as accuracy does.
                 (Query, Throughput) => ground_truth
-                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
                 // Same loop as query throughput, with the clock inside it.
                 (Query, Latency) => ground_truth
-                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
                 (Query, Accuracy) => ground_truth
-                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), pass_cfg)),
+                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
                 (Merge, Throughput) => {
                     if pass_cfg.merge_shards < 2 {
                         return Err(RunError::NothingToFold {
                             shards: pass_cfg.merge_shards,
                         });
                     }
-                    Some(self.run_merge_pass::<S, _, _>(cell, &mut factory, &mut insert, pass_cfg))
+                    Some(self.run_merge_pass::<S, _, _, _, _>(cell, &mut factory, &mut insert, ops, pass_cfg))
                 }
                 (Merge, Latency) => {
                     if pass_cfg.merge_shards < 2 {
@@ -197,7 +199,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                             shards: pass_cfg.merge_shards,
                         });
                     }
-                    Some(self.run_merge_pass::<S, _, _>(cell, &mut factory, &mut insert, pass_cfg))
+                    Some(self.run_merge_pass::<S, _, _, _, _>(cell, &mut factory, &mut insert, ops, pass_cfg))
                 }
                 // Scoring a folded sketch means querying it, which is the
                 // query operation wearing merge's name. Merge itself produces
@@ -207,7 +209,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // `prepare` runs at the end of the same insert loop, so this
                 // square is that loop read for a different number.
                 (Prepare, Latency) => {
-                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, pass_cfg))
+                    Some(self.run_pass::<S, _, G, _>(cell, &mut factory, &mut insert, None, ops, pass_cfg))
                 }
                 (Prepare, Accuracy) => return Err(unmeasured(cell)),
             };
@@ -221,18 +223,19 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
     /// Build `merge_shards` sketches over contiguous slices, fold them into one,
     /// and compare against the whole stream. Only the fold is timed. Linear
     /// sketches merge losslessly, so a gap is a defect; KLL's gap is the point.
-    fn run_merge_pass<S, F, Insert>(
+    fn run_merge_pass<S, F, P, A, Ins>(
         &self,
         cell: Cell,
         factory: &mut F,
-        insert: &mut Insert,
+        insert: &mut Ins,
+        ops: &SketchOps<S, W::Item, P, A>,
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
+        S: MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
+        Ins: FnMut(&mut S, &W::Item),
     {
         let items = self.workload.items();
         // No clamp: the guard above refused anything below two, so this is the
@@ -268,12 +271,15 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 break;
             }
             let mut acc = sketches.remove(0);
+            // A row with no merge says so by supplying none — the record then
+            // carries `merge_supported: false` instead of a fabricated zero.
+            let Some(merge) = ops.merge else {
+                supported = false;
+                break;
+            };
             let start = Instant::now();
             for other in &sketches {
-                if acc.merge(other).is_err() {
-                    supported = false;
-                    break;
-                }
+                merge(&mut acc, other);
             }
             let ns = start.elapsed().as_nanos() as u64;
             if !supported {
@@ -281,7 +287,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             }
             folded_shards = actual_shards;
             std::hint::black_box(&acc);
-            acc.prepare();
+            ops.run_prepare(&mut acc);
 
             if run_idx >= pass_cfg.warmup_runs {
                 merge_ns.push(ns);
@@ -338,20 +344,21 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         }
     }
 
-    fn run_pass<S, F, G, Insert>(
+    fn run_pass<S, F, G, Ins>(
         &self,
         cell: Cell,
         factory: &mut F,
-        insert: &mut Insert,
+        insert: &mut Ins,
         ground_truth: Option<&G>,
+        ops: &SketchOps<S, W::Item, G::Probe, G::Answer>,
         pass_cfg: BenchConfig,
     ) -> BenchReport
     where
-        S: Accumulator<Item = W::Item> + MemoryFootprint,
+        S: MemoryFootprint,
         W::Item: Clone,
         F: FnMut() -> S,
-        Insert: FnMut(&mut S, &W::Item),
-        G: GroundTruth<S>,
+        G: GroundTruth<W::Item>,
+        Ins: FnMut(&mut S, &W::Item),
     {
         // Measuring the query operation means issuing queries, and the
         // comparator is what issues them. Wider than measuring accuracy.
@@ -381,20 +388,20 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // included: generation never happens inside a timed region.
             let items = self.workload.items();
 
-            let (metrics, final_sketch) = if per_update {
+            let (metrics, mut final_sketch) = if per_update {
                 // This square deliberately does NOT use `insert`: its
                 // instrument *is* the per-update `Probe` boundary.
                 let sink = FullSink::new(pass_cfg.metrics);
-                run_once(factory, sink, items)
+                run_once(factory, sink, items, insert, ops)
             } else {
-                run_once_clean(factory, insert, items, &pass_cfg)
+                run_once_clean(factory, items, &pass_cfg, insert, ops)
             };
 
             // The comparator owns the query phase, so it runs on warm-up
             // iterations too — otherwise `--warmup-runs` protects only the
             // insert side and the first measured query is a cold one.
             let comparison = if queries {
-                ground_truth.map(|gt| run_probes(gt, &final_sketch, items, per_call))
+                ground_truth.map(|gt| run_probes(gt, &ops.ask, &mut final_sketch, items, per_call))
             } else {
                 None
             };
@@ -437,11 +444,18 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
 /// One measured run through `Probe<S, FullSink>`: time the insert phase, return
 /// metrics plus sketch. Under `heap-track` the `before` snapshot lands after
 /// `items` but before `factory()`, so constructor allocations are attributed.
-fn run_once<S, F>(factory: &mut F, mut sink: FullSink, items: &[S::Item]) -> (RunMetrics, S)
+fn run_once<S, I, P, A, F, Ins>(
+    factory: &mut F,
+    mut sink: FullSink,
+    items: &[I],
+    insert: &mut Ins,
+    ops: &SketchOps<S, I, P, A>,
+) -> (RunMetrics, S)
 where
-    S: Accumulator + MemoryFootprint,
-    S::Item: Clone,
+    S: MemoryFootprint,
+    I: Clone,
     F: FnMut() -> S,
+    Ins: FnMut(&mut S, &I),
 {
     sink.on_run_start();
 
@@ -455,20 +469,23 @@ where
 
     // Insert phase.
     sink.begin_insert_phase();
+    // The probe boundary wraps the *insert function*, not the sketch. It used
+    // to be a `Probe<S, Sink>` newtype re-implementing `Accumulator`, which only
+    // worked because every sketch inserted through one trait method.
     let mut sketch = {
-        use crate::probe::Probe;
-        let mut probe: Probe<S, &mut FullSink> = Probe::new(factory_sketch, &mut sink);
+        let mut s = factory_sketch;
         for it in items {
-            probe.update(it);
+            sink.on_update_start();
+            insert(&mut s, it);
+            sink.on_update_end();
         }
-        let (s, _sink) = probe.into_parts();
         s
     };
     // Run any deferred build before the query phase, so query throughput
     // measures a ready-to-answer sketch. Timed on its own clock — folding it
     // into insert would change what `insert_wall_time_ns` means on this path.
     let finalize_wall = WallClock::start();
-    sketch.prepare();
+    ops.run_prepare(&mut sketch);
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
     sink.end_insert_phase();
 
@@ -492,17 +509,18 @@ where
 /// the sketch's `update` is alone in the loop. Every square but insert latency
 /// takes this path. Phase-boundary metrics still attach via direct primitives.
 #[inline(always)]
-fn run_once_clean<S, F, Insert>(
+fn run_once_clean<S, I, P, A, F, Ins>(
     factory: &mut F,
-    insert: &mut Insert,
-    items: &[S::Item],
+    items: &[I],
     config: &BenchConfig,
+    insert: &mut Ins,
+    ops: &SketchOps<S, I, P, A>,
 ) -> (RunMetrics, S)
 where
-    S: Accumulator + MemoryFootprint,
-    S::Item: Clone,
+    S: MemoryFootprint,
+    I: Clone,
     F: FnMut() -> S,
-    Insert: FnMut(&mut S, &S::Item),
+    Ins: FnMut(&mut S, &I),
 {
     let wall = WallClock::start();
     let mut cpu = if config.metrics.contains(MetricsMask::CPU) {
@@ -524,7 +542,7 @@ where
     // about what an insert costs.
     let insert_wall_time_ns = insert_loop(&mut sketch, items, insert);
     let finalize_wall = WallClock::start();
-    sketch.prepare();
+    ops.run_prepare(&mut sketch);
     std::hint::black_box(&sketch);
     let finalize_wall_time_ns = finalize_wall.elapsed_ns();
 
@@ -610,16 +628,15 @@ impl BenchReport {
 /// Placeholder `GroundTruth` for rows that run without a comparator. It knows
 /// no truth and asks nothing, so a square needing one measures nothing.
 pub struct NoGT;
-impl<S: Accumulator> GroundTruth<S> for NoGT {
+impl<I> GroundTruth<I> for NoGT {
     type Truth = ();
     type Probe = ();
     type Answer = ();
 
-    fn truth(&self, _: &[S::Item]) {}
+    fn truth(&self, _: &[I]) {}
     fn probes(&self, _: &()) -> Vec<()> {
         Vec::new()
     }
-    fn ask(&self, _: &S, _: &()) {}
     fn score(&self, _: &(), _: &[()], _: &[()]) -> std::collections::BTreeMap<String, f64> {
         std::collections::BTreeMap::new()
     }

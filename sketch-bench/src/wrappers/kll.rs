@@ -24,15 +24,15 @@
 //! which library. Each algorithm then holds `oxide` against `lib` directly.
 //!
 //! `sketch_oxide`'s `quantile` and `cdf` both take `&mut self` (it sorts
-//! lazily), so its inner sketch sits in a `RefCell`: `QuantileOps::estimate_quantile`
-//! is `&self`, for everyone else's pure reads.
-
-use std::cell::RefCell;
+//! lazily). That used to force a `RefCell` around the inner sketch, because the
+//! `QuantileOps` trait declared `estimate_quantile(&self)` on everyone's behalf
+//! — so these rows paid a runtime borrow check per query for a signature they
+//! did not need. The ask is a closure now and takes `&mut`, so the cell is gone
+//! and the library is called directly.
 
 use crate::params::KllParams;
-use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+
 use aqpbm_core::accuracy::quantile::QuantileValue;
-use aqpbm_core::accuracy::QuantileOps;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -109,7 +109,7 @@ fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
 /// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
 /// monomorphises `to_f64` away while `T = i64` keeps the cast — the measurement.
 pub struct KllOxidePerCall<T = i64> {
-    inner: RefCell<sketch_oxide::quantiles::KllSketch>,
+    inner: sketch_oxide::quantiles::KllSketch,
     k: u32,
     _item: std::marker::PhantomData<T>,
 }
@@ -118,31 +118,13 @@ impl<T: QuantileValue> InitSketch for KllOxidePerCall<T> {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: KllParams = config.parse()?;
         Ok(Self {
-            inner: RefCell::new(oxide_kll(p.k)?),
+            inner: oxide_kll(p.k)?,
             k: p.k,
             _item: std::marker::PhantomData,
         })
     }
 }
 
-impl<T: QuantileValue> Accumulator for KllOxidePerCall<T> {
-    type Item = T;
-    #[inline(always)]
-    fn update(&mut self, v: &T) {
-        self.inner.get_mut().update(v.to_f64());
-    }
-
-    /// Unlike HLL, KLL's merge is **lossy**: combining compactors adds error and
-    /// the result depends on fold order, which is why the merge benchmark
-    /// measures accuracy afterwards instead of asserting it.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .borrow_mut()
-            .merge(&other.inner.borrow())
-            .expect("both operands built from one ParamSet, so k matches");
-        Ok(())
-    }
-}
 
 impl<T: QuantileValue> MemoryFootprint for KllOxidePerCall<T> {
     fn memory_bytes(&self) -> usize {
@@ -150,20 +132,21 @@ impl<T: QuantileValue> MemoryFootprint for KllOxidePerCall<T> {
     }
 }
 
-impl<T: QuantileValue> QuantileOps for KllOxidePerCall<T> {
-    fn estimate_quantile(&self, phi: f64) -> f64 {
-        self.inner.borrow_mut().quantile(phi).unwrap_or(f64::NAN)
+impl<T: QuantileValue> KllOxidePerCall<T> {
+    /// `&mut` because that is what the library wants. No wrapper, no cell.
+    pub fn estimate_quantile(&mut self, phi: f64) -> f64 {
+        self.inner.quantile(phi).unwrap_or(f64::NAN)
     }
 }
 
 // ---------- sketch_oxide KLL, CDF built once ----------
 
 pub struct KllOxideCdf<T = i64> {
-    inner: RefCell<sketch_oxide::quantiles::KllSketch>,
+    inner: sketch_oxide::quantiles::KllSketch,
     k: u32,
     /// `(value, cumulative_rank)` pairs, built in `prepare`.
-    cdf: RefCell<Option<Vec<(f64, f64)>>>,
-    ends: RefCell<(f64, f64)>,
+    cdf: Option<Vec<(f64, f64)>>,
+    ends: (f64, f64),
     _item: std::marker::PhantomData<T>,
 }
 
@@ -171,42 +154,15 @@ impl<T: QuantileValue> InitSketch for KllOxideCdf<T> {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: KllParams = config.parse()?;
         Ok(Self {
-            inner: RefCell::new(oxide_kll(p.k)?),
+            inner: oxide_kll(p.k)?,
             k: p.k,
-            cdf: RefCell::new(None),
-            ends: RefCell::new((f64::NAN, f64::NAN)),
+            cdf: None,
+            ends: (f64::NAN, f64::NAN),
             _item: std::marker::PhantomData,
         })
     }
 }
 
-impl<T: QuantileValue> Accumulator for KllOxideCdf<T> {
-    type Item = T;
-    #[inline(always)]
-    fn update(&mut self, v: &T) {
-        self.inner.get_mut().update(v.to_f64());
-    }
-
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .borrow_mut()
-            .merge(&other.inner.borrow())
-            .expect("both operands built from one ParamSet, so k matches");
-        // A merged sketch invalidates any table cached from the pre-merge state.
-        *self.cdf.borrow_mut() = None;
-        Ok(())
-    }
-
-    /// The whole point of this row: arrange the retained items once, on the
-    /// finalize clock, so the query path is a lookup.
-    fn prepare(&mut self) {
-        let sketch = self.inner.get_mut();
-        let table = sketch.cdf();
-        let ends = (sketch.min(), sketch.max());
-        *self.cdf.borrow_mut() = Some(table);
-        *self.ends.borrow_mut() = ends;
-    }
-}
 
 impl<T: QuantileValue> MemoryFootprint for KllOxideCdf<T> {
     fn memory_bytes(&self) -> usize {
@@ -214,16 +170,16 @@ impl<T: QuantileValue> MemoryFootprint for KllOxideCdf<T> {
     }
 }
 
-impl<T: QuantileValue> QuantileOps for KllOxideCdf<T> {
-    fn estimate_quantile(&self, phi: f64) -> f64 {
-        if let Some(table) = self.cdf.borrow().as_ref() {
-            let (min, max) = *self.ends.borrow();
+impl<T: QuantileValue> KllOxideCdf<T> {
+    pub fn estimate_quantile(&mut self, phi: f64) -> f64 {
+        if let Some(table) = self.cdf.as_ref() {
+            let (min, max) = self.ends;
             return query_cdf(table, phi, min, max);
         }
         // `prepare` always runs before the query phase, so this is unreachable
         // through the runner. Falling back to the per-call path keeps a direct
         // caller correct instead of handing it a NaN.
-        self.inner.borrow_mut().quantile(phi).unwrap_or(f64::NAN)
+        self.inner.quantile(phi).unwrap_or(f64::NAN)
     }
 }
 
@@ -250,21 +206,6 @@ where
     }
 }
 
-impl<T> Accumulator for KllLibPerCall<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    type Item = T;
-    #[inline(always)]
-    fn update(&mut self, v: &T) {
-        self.inner.update(v);
-    }
-
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
-    }
-}
 
 impl<T> MemoryFootprint for KllLibPerCall<T>
 where
@@ -275,13 +216,13 @@ where
     }
 }
 
-impl<T> QuantileOps for KllLibPerCall<T>
+impl<T> KllLibPerCall<T>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     /// `KLL::quantile` rebuilds the full CDF per call. That is the cost this
     /// row exists to show, so nothing here caches it.
-    fn estimate_quantile(&self, phi: f64) -> f64 {
+    pub fn estimate_quantile(&self, phi: f64) -> f64 {
         self.inner.quantile(phi)
     }
 }
@@ -291,7 +232,7 @@ where
 pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
     k: u32,
-    cdf: RefCell<Option<asap_sketchlib::sketches::kll::Cdf>>,
+    cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
 impl<T> InitSketch for KllLibCdf<T>
@@ -303,35 +244,11 @@ where
         Ok(Self {
             inner: lib_kll::<T>(p.k)?,
             k: p.k,
-            cdf: RefCell::new(None),
+            cdf: None,
         })
     }
 }
 
-impl<T> Accumulator for KllLibCdf<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    type Item = T;
-    #[inline(always)]
-    fn update(&mut self, v: &T) {
-        self.inner.update(v);
-    }
-
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        // A merged sketch invalidates any CDF cached from the pre-merge state.
-        *self.cdf.borrow_mut() = None;
-        Ok(())
-    }
-
-    /// `KLL::cdf()` is the library's own build-once API, not something this
-    /// wrapper synthesises. `update` does not invalidate the cache: the runner
-    /// never re-inserts after `prepare`.
-    fn prepare(&mut self) {
-        *self.cdf.borrow_mut() = Some(self.inner.cdf());
-    }
-}
 
 impl<T> MemoryFootprint for KllLibCdf<T>
 where
@@ -342,12 +259,12 @@ where
     }
 }
 
-impl<T> QuantileOps for KllLibCdf<T>
+impl<T> KllLibCdf<T>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    fn estimate_quantile(&self, phi: f64) -> f64 {
-        if let Some(cdf) = self.cdf.borrow().as_ref() {
+    pub fn estimate_quantile(&self, phi: f64) -> f64 {
+        if let Some(cdf) = self.cdf.as_ref() {
             return cdf.query(phi);
         }
         self.inner.quantile(phi)
@@ -365,11 +282,14 @@ impl<T: QuantileValue> BenchImpl for KllOxidePerCall<T> {
     type Params = KllParams;
     const ALGORITHM: &'static str = "kll-percall";
     const IMPL: &'static str = "oxide";
+    const SUPPORTS_MERGE: bool = true;
 }
 impl<T: QuantileValue> BenchImpl for KllOxideCdf<T> {
     type Params = KllParams;
     const ALGORITHM: &'static str = "kll-cdf";
     const IMPL: &'static str = "oxide";
+    const SUPPORTS_MERGE: bool = true;
+    const SUPPORTS_PREPARE: bool = true;
 }
 impl<T> BenchImpl for KllLibPerCall<T>
 where
@@ -378,6 +298,7 @@ where
     type Params = KllParams;
     const ALGORITHM: &'static str = "kll-percall";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 impl<T> BenchImpl for KllLibCdf<T>
 where
@@ -386,6 +307,8 @@ where
     type Params = KllParams;
     const ALGORITHM: &'static str = "kll-cdf";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
+    const SUPPORTS_PREPARE: bool = true;
 }
 
 #[cfg(test)]
@@ -397,15 +320,17 @@ mod tests {
         ParamSet::of(&KllParams { k })
     }
 
-    fn fed<S>(k: u32, items: &[i64]) -> S
-    where
-        S: InitSketch + Accumulator<Item = i64>,
-    {
+    fn fed<S: InitSketch>(
+        k: u32,
+        items: &[i64],
+        insert: fn(&mut S, &i64),
+        ops: aqpbm_core::ops::SketchOps<S, i64, f64, f64>,
+    ) -> S {
         let mut s = S::init(&params(k)).expect("a valid k builds");
         for v in items {
-            s.update(v);
+            insert(&mut s, v);
         }
-        s.prepare();
+        ops.run_prepare(&mut s);
         s
     }
 
@@ -419,8 +344,8 @@ mod tests {
     #[test]
     fn oxide_honours_k() {
         let items = stream();
-        let small: KllOxidePerCall<i64> = fed(50, &items);
-        let large: KllOxidePerCall<i64> = fed(800, &items);
+        let mut small: KllOxidePerCall<i64> = fed(50, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
+        let mut large: KllOxidePerCall<i64> = fed(800, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
         let (mut differs, mut checked) = (false, 0);
         for p in 1..100 {
             let phi = p as f64 / 100.0;
@@ -469,8 +394,8 @@ mod tests {
     #[test]
     fn lib_honours_k() {
         let items = stream();
-        let small: KllLibPerCall<i64> = fed(8, &items);
-        let large: KllLibPerCall<i64> = fed(800, &items);
+        let small: KllLibPerCall<i64> = fed(8, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let large: KllLibPerCall<i64> = fed(800, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
         let differs = (1..100).any(|p| {
             let phi = p as f64 / 100.0;
             small.estimate_quantile(phi) != large.estimate_quantile(phi)
@@ -502,8 +427,8 @@ mod tests {
     fn the_oxide_query_paths_agree_on_the_answer() {
         let items = stream();
         for k in [100, 400] {
-            let per_call: KllOxidePerCall<i64> = fed(k, &items);
-            let cdf: KllOxideCdf<i64> = fed(k, &items);
+            let mut per_call: KllOxidePerCall<i64> = fed(k, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
+            let mut cdf: KllOxideCdf<i64> = fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
             for p in 0..=100 {
                 let phi = p as f64 / 100.0;
                 assert_eq!(
@@ -534,8 +459,8 @@ mod tests {
         let items = stream();
         let gt = RankErrorGT {
         };
-        let per_call: KllLibPerCall<i64> = fed(200, &items);
-        let cdf: KllLibCdf<i64> = fed(200, &items);
+        let per_call: KllLibPerCall<i64> = fed(200, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let cdf: KllLibCdf<i64> = fed(200, &items, insert_kll_lib_cdf, lib_cdf_ops::<i64>());
 
         let differs = (0..=100).any(|p| {
             let phi = p as f64 / 100.0;
@@ -548,8 +473,23 @@ mod tests {
         );
 
         let err = |c: aqpbm_core::accuracy::Comparison| c.metrics["mean_rank_err"];
-        let per_call_err = err(aqpbm_core::accuracy::run_probes(&gt, &per_call, &items, false));
-        let cdf_err = err(aqpbm_core::accuracy::run_probes(&gt, &cdf, &items, false));
+        // Each row's own ask, exactly as the catalog writes it.
+        let mut per_call = per_call;
+        let mut cdf = cdf;
+        let per_call_err = err(aqpbm_core::accuracy::run_probes(
+            &gt,
+            &|s: &mut KllLibPerCall<i64>, phi: &f64| s.estimate_quantile(*phi),
+            &mut per_call,
+            &items,
+            false,
+        ));
+        let cdf_err = err(aqpbm_core::accuracy::run_probes(
+            &gt,
+            &|s: &mut KllLibCdf<i64>, phi: &f64| s.estimate_quantile(*phi),
+            &mut cdf,
+            &items,
+            false,
+        ));
         assert!(
             cdf_err < per_call_err * 3.0,
             "the CDF path's rank error ({cdf_err}) is far past the per-call \
@@ -564,11 +504,227 @@ mod tests {
     fn all_four_rows_size_themselves_by_one_rule() {
         let k = KllParams::canonical().k;
         let items = stream();
-        let oxide_a: KllOxidePerCall<i64> = fed(k, &items);
-        let oxide_b: KllOxideCdf<i64> = fed(k, &items);
+        let oxide_a: KllOxidePerCall<i64> = fed(k, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
+        let oxide_b: KllOxideCdf<i64> = fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
         assert_eq!(oxide_a.memory_bytes(), oxide_b.memory_bytes());
-        let lib_a: KllLibPerCall<i64> = fed(k, &items);
-        let lib_b: KllLibCdf<i64> = fed(k, &items);
+        let lib_a: KllLibPerCall<i64> = fed(k, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let lib_b: KllLibCdf<i64> = fed(k, &items, insert_kll_lib_cdf, lib_cdf_ops::<i64>());
         assert_eq!(lib_a.memory_bytes(), lib_b.memory_bytes());
     }
+}
+
+// ---------- how this sketch is driven ----------
+//
+// One function per operation, per sketch. These used to be an
+// `impl Accumulator for X` block, which fixed one signature for every
+// implementation in the repo. As free functions each states its own
+// terms, and `catalog` names them in the row's `SketchOps`.
+    #[inline(always)]
+pub fn insert_kll_oxide_per_call<T: QuantileValue>(sketch: &mut KllOxidePerCall<T>, v: &T)
+{
+        sketch.inner.update(v.to_f64());
+}
+
+pub fn merge_kll_oxide_per_call<T: QuantileValue>(into: &mut KllOxidePerCall<T>, from: &KllOxidePerCall<T>)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so k matches");
+}
+    #[inline(always)]
+pub fn insert_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>, v: &T)
+{
+        sketch.inner.update(v.to_f64());
+}
+
+pub fn merge_kll_oxide_cdf<T: QuantileValue>(into: &mut KllOxideCdf<T>, from: &KllOxideCdf<T>)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so k matches");
+        // A merged sketch invalidates any table cached from the pre-merge state.
+        into.cdf = None;
+}
+
+pub fn prepare_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>)
+{
+        sketch.cdf = Some(sketch.inner.cdf());
+        sketch.ends = (sketch.inner.min(), sketch.inner.max());
+}
+    #[inline(always)]
+pub fn insert_kll_lib_per_call<T>(sketch: &mut KllLibPerCall<T>, v: &T)
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+        sketch.inner.update(v);
+}
+
+pub fn merge_kll_lib_per_call<T>(into: &mut KllLibPerCall<T>, from: &KllLibPerCall<T>)
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+        into.inner.merge(&from.inner);
+}
+    #[inline(always)]
+pub fn insert_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>, v: &T)
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+        sketch.inner.update(v);
+}
+
+pub fn merge_kll_lib_cdf<T>(into: &mut KllLibCdf<T>, from: &KllLibCdf<T>)
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+        into.inner.merge(&from.inner);
+        // A merged sketch invalidates any CDF cached from the pre-merge state.
+        into.cdf = None;
+}
+
+pub fn prepare_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>)
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+        sketch.cdf = Some(sketch.inner.cdf());
+}
+
+// ---------- the rows this file provides ----------
+//
+// One generic ops body per row, instantiated at both widths. The ask takes
+// `&mut` — which is why the `RefCell` these wrappers used to carry is gone.
+
+use aqpbm_core::accuracy::quantile::RankErrorGT;
+use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
+pub const fn oxide_percall_ops<T: QuantileValue>() -> SketchOps<KllOxidePerCall<T>, T, f64, f64> {
+    SketchOps {
+        merge: Some(merge_kll_oxide_per_call),
+        prepare: None,
+        ask: ask_kll_oxide_per_call,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi: &f64) -> f64 {
+    s.estimate_quantile(*phi)
+}
+
+pub const fn oxide_cdf_ops<T: QuantileValue>() -> SketchOps<KllOxideCdf<T>, T, f64, f64> {
+    SketchOps {
+        merge: Some(merge_kll_oxide_cdf),
+        prepare: Some(prepare_kll_oxide_cdf),
+        ask: ask_kll_oxide_cdf,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) -> f64 {
+    s.estimate_quantile(*phi)
+}
+
+pub const fn lib_percall_ops<T>() -> SketchOps<KllLibPerCall<T>, T, f64, f64>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    SketchOps {
+        merge: Some(merge_kll_lib_per_call),
+        prepare: None,
+        ask: ask_kll_lib_per_call,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    s.estimate_quantile(*phi)
+}
+
+pub const fn lib_cdf_ops<T>() -> SketchOps<KllLibCdf<T>, T, f64, f64>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    SketchOps {
+        merge: Some(merge_kll_lib_cdf),
+        prepare: Some(prepare_kll_lib_cdf),
+        ask: ask_kll_lib_cdf,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    s.estimate_quantile(*phi)
+}
+
+pub fn run_oxide_percall(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_ordered::<KllOxidePerCall<i64>, KllOxidePerCall<f64>, RankErrorGT, _, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_kll_oxide_per_call,
+        &oxide_percall_ops::<i64>(),
+        insert_kll_oxide_per_call,
+        &oxide_percall_ops::<f64>(),
+    )
+}
+pub fn run_lib_percall(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_ordered::<KllLibPerCall<i64>, KllLibPerCall<f64>, RankErrorGT, _, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_kll_lib_per_call,
+        &lib_percall_ops::<i64>(),
+        insert_kll_lib_per_call,
+        &lib_percall_ops::<f64>(),
+    )
+}
+pub fn run_oxide_cdf(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_ordered::<KllOxideCdf<i64>, KllOxideCdf<f64>, RankErrorGT, _, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_kll_oxide_cdf,
+        &oxide_cdf_ops::<i64>(),
+        insert_kll_oxide_cdf,
+        &oxide_cdf_ops::<f64>(),
+    )
+}
+pub fn run_lib_cdf(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_ordered::<KllLibCdf<i64>, KllLibCdf<f64>, RankErrorGT, _, _>(
+        cfg,
+        data,
+        params,
+        width,
+        insert_kll_lib_cdf,
+        &lib_cdf_ops::<i64>(),
+        insert_kll_lib_cdf,
+        &lib_cdf_ops::<f64>(),
+    )
 }

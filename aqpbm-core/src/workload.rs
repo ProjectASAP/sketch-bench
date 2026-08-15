@@ -9,8 +9,7 @@ use std::path::Path;
 
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, DataGenError, ColumnItem, TableDescription, UniformParameter,
-    ZipfParameter,
-};
+    ZipfParameter, GeneratedTable,};
 
 use crate::binfile;
 
@@ -149,6 +148,21 @@ impl<T: ColumnItem> NumericWorkload<T> {
     /// the tool. A single-column description is what a row ingesting a plain
     /// stream wants; a column list belongs to [`LabeledWorkload`].
     pub fn generate(spec: &TableDescription) -> Result<Self, DataGenError> {
+        let table = spec.generate()?;
+        Self::from_table(spec, table)
+    }
+
+    /// Build from a table someone else already generated.
+    ///
+    /// The split exists because *who* generates matters: a frontend asks the
+    /// registry what item type a row wants, generates once at that type, and
+    /// hands the columns over. `spec` still rides along because the record
+    /// names the description the data came from, which the columns alone do
+    /// not carry.
+    pub fn from_table(
+        spec: &TableDescription,
+        table: GeneratedTable,
+    ) -> Result<Self, DataGenError> {
         if spec.column_spec.len() != 1 {
             return Err(DataGenError::BadParam(format!(
                 "this row ingests a plain `{}` stream, so it needs a one-column \
@@ -158,7 +172,7 @@ impl<T: ColumnItem> NumericWorkload<T> {
             )));
         }
         let description = WorkloadDescription::from_spec(spec);
-        let column = spec.generate()?.into_column(0)?;
+        let column = table.into_column(0)?;
         Ok(Self::new(T::from_column(column)?, description))
     }
 
@@ -446,6 +460,16 @@ impl<V: ColumnItem> LabeledWorkload<V> {
     /// columns and must be `data_type: string`, the last is the value column and
     /// must be this row's item type.
     pub fn generate(spec: &TableDescription) -> Result<Self, DataGenError> {
+        let table = spec.generate()?;
+        Self::from_table(spec, table)
+    }
+
+    /// Build from an already-generated table. See
+    /// [`NumericWorkload::from_table`] for why the split exists.
+    pub fn from_table(
+        spec: &TableDescription,
+        table: GeneratedTable,
+    ) -> Result<Self, DataGenError> {
         if spec.column_spec.len() < 2 {
             return Err(DataGenError::BadParam(format!(
                 "this row ingests labelled records, so it needs at least one label \
@@ -454,7 +478,6 @@ impl<V: ColumnItem> LabeledWorkload<V> {
             )));
         }
         let description = WorkloadDescription::from_spec(spec);
-        let table = spec.generate()?;
         let labels_end = table.data.len() - 1;
         let titles = table.column_title.clone();
         let mut columns = table.into_columns();

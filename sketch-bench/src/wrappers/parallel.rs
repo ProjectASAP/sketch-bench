@@ -8,7 +8,6 @@ use std::sync::Barrier;
 
 use crate::params::{CmsParams, CountSketchParams, HllParams};
 use crate::wrappers::require_shape;
-use aqpbm_core::accumulator::Accumulator;
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -47,19 +46,6 @@ impl aqpbm_core::cell::ParallelInit for ParallelCmsFastPath {
     }
 }
 
-impl Accumulator for ParallelCmsFastPath {
-    type Item = i64;
-
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.buf.push(*v);
-    }
-
-    fn prepare(&mut self) {
-        run_parallel_cms(&self.buf, self.workers);
-    }
-
-}
 
 impl MemoryFootprint for ParallelCmsFastPath {
     fn memory_bytes(&self) -> usize {
@@ -85,19 +71,6 @@ impl aqpbm_core::cell::ParallelInit for ParallelCsFastPath {
     }
 }
 
-impl Accumulator for ParallelCsFastPath {
-    type Item = i64;
-
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.buf.push(*v);
-    }
-
-    fn prepare(&mut self) {
-        run_parallel_cs(&self.buf, self.workers);
-    }
-
-}
 
 impl MemoryFootprint for ParallelCsFastPath {
     fn memory_bytes(&self) -> usize {
@@ -130,19 +103,6 @@ impl aqpbm_core::cell::ParallelInit for ParallelHllFastPath {
     }
 }
 
-impl Accumulator for ParallelHllFastPath {
-    type Item = i64;
-
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.buf.push(*v);
-    }
-
-    fn prepare(&mut self) {
-        run_parallel_hll(&self.buf, self.workers);
-    }
-
-}
 
 impl MemoryFootprint for ParallelHllFastPath {
     fn memory_bytes(&self) -> usize {
@@ -239,14 +199,109 @@ impl BenchImpl for ParallelCmsFastPath {
     type Params = CmsParams;
     const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-32k-parallel";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_PREPARE: bool = true;
 }
 impl BenchImpl for ParallelCsFastPath {
     type Params = CountSketchParams;
     const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k-parallel";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_PREPARE: bool = true;
 }
 impl BenchImpl for ParallelHllFastPath {
     type Params = HllParams;
     const ALGORITHM: &'static str = "hll-fastpath-parallel";
     const IMPL: &'static str = "lib";
+    const SUPPORTS_PREPARE: bool = true;
+}
+
+// ---------- how this sketch is driven ----------
+//
+// One function per operation, per sketch. These used to be an
+// `impl Accumulator for X` block, which fixed one signature for every
+// implementation in the repo. As free functions each states its own
+// terms, and `catalog` names them in the row's `SketchOps`.
+    #[inline(always)]
+pub fn insert_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath, v: &i64)
+{
+        sketch.buf.push(*v);
+}
+
+pub fn prepare_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath)
+{
+        run_parallel_cms(&sketch.buf, sketch.workers);
+}
+    #[inline(always)]
+pub fn insert_parallel_cs_fast_path(sketch: &mut ParallelCsFastPath, v: &i64)
+{
+        sketch.buf.push(*v);
+}
+
+pub fn prepare_parallel_cs_fast_path(sketch: &mut ParallelCsFastPath)
+{
+        run_parallel_cs(&sketch.buf, sketch.workers);
+}
+    #[inline(always)]
+pub fn insert_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath, v: &i64)
+{
+        sketch.buf.push(*v);
+}
+
+pub fn prepare_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath)
+{
+        run_parallel_hll(&sketch.buf, sketch.workers);
+}
+
+// ---------- the rows this file provides ----------
+//
+// Nothing scores a parallel row, so its `ask` is never called: `run_parallel`
+// passes no ground truth. It is still stated, because the type says every row
+// has one — and stating a no-op is more honest than a special case.
+
+use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
+pub const CMS_OPS: SketchOps<ParallelCmsFastPath, i64, (), ()> = SketchOps {
+    merge: None,
+    prepare: Some(prepare_parallel_cms_fast_path),
+    ask: |_, _| (),
+        _item: std::marker::PhantomData,
+};
+pub const CS_OPS: SketchOps<ParallelCsFastPath, i64, (), ()> = SketchOps {
+    merge: None,
+    prepare: Some(prepare_parallel_cs_fast_path),
+    ask: |_, _| (),
+        _item: std::marker::PhantomData,
+};
+pub const HLL_OPS: SketchOps<ParallelHllFastPath, i64, (), ()> = SketchOps {
+    merge: None,
+    prepare: Some(prepare_parallel_hll_fast_path),
+    ask: |_, _| (),
+        _item: std::marker::PhantomData,
+};
+
+pub fn run_cms(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_parallel::<ParallelCmsFastPath, i64, _>(cfg, data, params, width, insert_parallel_cms_fast_path, &CMS_OPS)
+}
+pub fn run_cs(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, width, insert_parallel_cs_fast_path, &CS_OPS)
+}
+pub fn run_hll(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_parallel::<ParallelHllFastPath, i64, _>(cfg, data, params, width, insert_parallel_hll_fast_path, &HLL_OPS)
 }

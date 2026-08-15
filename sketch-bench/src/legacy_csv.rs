@@ -180,7 +180,7 @@ fn per_call_query_header(family: &str) -> String {
     // of `call_index` to match the legacy header order.
     let tail = match family {
         "hll" => "call_index,nanoseconds,estimate",
-        "kll" | "dd" => "repeat,percentile,call_index,nanoseconds,estimate",
+        "kll" => "repeat,percentile,call_index,nanoseconds,estimate",
         _ => "call_index,nanoseconds,estimate",
     };
     let params_segment = if params.is_empty() {
@@ -219,7 +219,7 @@ fn format_per_call_row(
             // cast back.
             sample.estimate,
         ),
-        "kll" | "dd" => format!(
+        "kll" => format!(
             "{},{},{},{},{}",
             sample.repeat,
             // Legacy KLL writes percentile as integer 0..100; emit the same so
@@ -263,14 +263,6 @@ impl ParamCols {
                         let bits: u32 = v.parse().unwrap_or(0);
                         found.push(("lg_k", v));
                         found.push(("registers", (1usize << bits).to_string()));
-                    }
-                }
-                // Nitro's legacy CSV carries rows/cols, but the params only own
-                // `rate` — the matrix shape is baked into each impl, so those
-                // two fall through to the sentinel below.
-                "nitro" => {
-                    for (_, v) in params.fields() {
-                        found.push(("rate", legacy_float_format(&v)));
                     }
                 }
                 _ => {
@@ -383,20 +375,12 @@ fn legacy_float_format(v: &str) -> String {
 
 /// The CSV header, verbatim. A per-family table on purpose: it encodes an
 /// **external file format**, not an abstraction over families — `registers` is
-/// derived and nitro's `rows`/`cols` are sentinels, so deriving it would break.
+/// derived, so deriving the rest would break.
 fn param_header(family: &str) -> &'static str {
     match family {
         "hll" => "lg_k,registers",
         "kll" => "k",
         "cms" | "countsketch" => "rows,cols",
-        // Same matrix shape as cms/countsketch plus the tracked-key count; `k`
-        // is the axis a topk sweep varies, so omitting it pooled every k into
-        // one group.
-        "topk" => "rows,cols,k",
-        "dd" => "alpha",
-        "nitro" => "rows,cols,rate",
-        "elastic" => "buckets,depth",
-        "univmon" => "layers,max_stream",
         // Must stay in step with `legacy_param_columns`; the width assertion in
         // `every_row_has_one_value_per_header_column` is what holds the two lists
         // together.
@@ -415,11 +399,6 @@ fn legacy_param_columns(family: &str) -> &'static [&'static str] {
         "hll" => &["lg_k", "registers"],
         "kll" => &["k"],
         "cms" | "countsketch" => &["rows", "cols"],
-        "topk" => &["rows", "cols", "k"],
-        "dd" => &["alpha"],
-        "nitro" => &["rows", "cols", "rate"],
-        "elastic" => &["buckets", "depth"],
-        "univmon" => &["layers", "max_stream"],
         // Both shapes, because Hydra's cost is their product: a row carrying
         // only the grid would read as a far smaller sketch than it is. The HLL
         // cell is fixed-shape, so that row genuinely has only the grid.
@@ -499,10 +478,6 @@ mod tests {
             "rust_datasketches_hll"
         );
         assert_eq!(legacy_impl_name("hll", "hll", "lib"), "rust_sketchlib_hll");
-        assert_eq!(
-            legacy_impl_name("nitro", "nitro", "lib"),
-            "rust_sketchlib_nitro"
-        );
     }
 
     /// A variant appends its own name. This column is the only thing telling
@@ -570,16 +545,6 @@ mod tests {
         );
     }
 
-    /// topk keeps the `run` label but carries three param columns; a missing
-    /// `k` made runs at different k byte-identical apart from timing noise.
-    #[test]
-    fn topk_header_carries_its_param_columns() {
-        assert_eq!(
-            insert_header("topk"),
-            "implementation,language,run,rows,cols,k,total_items,total_nanoseconds,throughput_items_per_sec,finalize_nanoseconds"
-        );
-    }
-
     #[test]
     fn kll_query_header_aggregate_shape() {
         assert_eq!(
@@ -592,7 +557,7 @@ mod tests {
 #[cfg(test)]
 mod param_column_order_tests {
     use super::*;
-    use crate::params::{CmsParams, ElasticParams, HllParams, TopkParams, UnivMonParams};
+    use crate::params::{CmsParams, HllParams};
 
     /// Values must line up with the header, which is *not* alphabetical: driving
     /// the loop from the key-ordered params object writes cms as `2048,5` under
@@ -615,33 +580,6 @@ mod param_column_order_tests {
                     cols: 4096,
                 }),
                 vec!["3", "4096"],
-            ),
-            (
-                // Alphabetical `fields()` order here is `cols,k,rows` — the
-                // widest gap yet between key order and header order.
-                "topk",
-                ParamSet::of(&TopkParams {
-                    rows: 5,
-                    cols: 2048,
-                    k: 100,
-                }),
-                vec!["5", "2048", "100"],
-            ),
-            (
-                "elastic",
-                ParamSet::of(&ElasticParams {
-                    buckets: 1024,
-                    depth: 3,
-                }),
-                vec!["1024", "3"],
-            ),
-            (
-                "univmon",
-                ParamSet::of(&UnivMonParams {
-                    layers: 8,
-                    max_stream: 256,
-                }),
-                vec!["8", "256"],
             ),
         ];
         for (family, params, expected) in cases {
@@ -672,11 +610,6 @@ mod param_column_order_tests {
             "kll",
             "cms",
             "countsketch",
-            "topk",
-            "dd",
-            "nitro",
-            "elastic",
-            "univmon",
             "hydra-cms",
             "hydra-hll",
             "hydra-kll",

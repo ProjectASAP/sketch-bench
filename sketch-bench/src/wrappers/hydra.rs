@@ -32,8 +32,7 @@
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
 
-use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
-use aqpbm_core::accuracy::{SubpopCardinalityOps, SubpopFrequencyOps, SubpopQuantileOps};
+
 use aqpbm_core::config::ParamSet;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
@@ -91,33 +90,11 @@ impl InitSketch for HydraCms {
     }
 }
 
-impl Accumulator for HydraCms {
-    type Item = Labeled<i64>;
 
-    /// The key arrives already `;`-joined, which is the format the library
-    /// splits on. Nothing is formatted here: the fan-out over label subsets
-    /// happens inside `Hydra::update`, and is the cost this row exists to price.
-    #[inline(always)]
-    fn update(&mut self, r: &Labeled<i64>) {
-        self.inner.update(&r.key, &DataInput::I64(r.value), None);
-    }
-
-    /// Cell-wise, and every cell is a Count-Min, so the fold is exact. The
-    /// library's error cases are a dimension or counter-type mismatch, neither
-    /// of which two sketches built from one `ParamSet` can hit.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .merge(&other.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-        Ok(())
-    }
-}
-
-impl SubpopFrequencyOps for HydraCms {
-    type Value = i64;
+impl HydraCms {
 
     #[inline]
-    fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
+    pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
         self.inner
             .query_frequency(labels.to_vec(), &DataInput::I64(*value))
     }
@@ -136,6 +113,7 @@ impl MemoryFootprint for HydraCms {
 impl BenchImpl for HydraCms {
     type Params = HydraCmsParams;
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 
 // ---------- hydra-hll: subpopulation cardinality ----------
@@ -166,30 +144,10 @@ impl InitSketch for HydraHll {
     }
 }
 
-impl Accumulator for HydraHll {
-    type Item = Labeled<i64>;
 
-    /// Same fan-out as the Count-Min row, and the same cost per record. What
-    /// changes is what a cell does with the value: a HyperLogLog folds it into
-    /// registers, so repeats after the first are free in state and not in time.
-    #[inline(always)]
-    fn update(&mut self, r: &Labeled<i64>) {
-        self.inner.update(&r.key, &DataInput::I64(r.value), None);
-    }
-
-    /// Register-wise maximum, so the fold is exact for the same reason the
-    /// Count-Min one is: a HyperLogLog is mergeable without loss.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .merge(&other.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-        Ok(())
-    }
-}
-
-impl SubpopCardinalityOps for HydraHll {
+impl HydraHll {
     #[inline]
-    fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
         self.inner
             .query_key(labels.to_vec(), &HydraQuery::Cardinality)
     }
@@ -207,6 +165,7 @@ impl MemoryFootprint for HydraHll {
 impl BenchImpl for HydraHll {
     type Params = HydraHllParams;
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 
 // ---------- hydra-kll: subpopulation quantile ----------
@@ -285,34 +244,13 @@ impl InitSketch for HydraKll {
     }
 }
 
-impl Accumulator for HydraKll {
-    /// `f64`, because the ordered statistic is over a numeric value column and
-    /// the library's cell is a `KLL<f64>`. `Labeled<V>` is already generic, so
-    /// this needs nothing from the core.
-    type Item = Labeled<f64>;
 
-    #[inline(always)]
-    fn update(&mut self, r: &Labeled<f64>) {
-        self.inner.update(&r.key, &DataInput::F64(r.value), None);
-    }
-
-    /// KLL merges by concatenating levels and recompacting, so unlike the other
-    /// two rows this fold is lossy. That is the measurement, not a defect: the
-    /// merge pass exists to price it.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .merge(&other.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
-        Ok(())
-    }
-}
-
-impl SubpopQuantileOps for HydraKll {
+impl HydraKll {
     /// `HydraQuery::Quantile` and not `Cdf`: the comparator asks for the value
     /// at a rank, which is what rank error is defined over. The `Cdf` variant
     /// answers the inverse question.
     #[inline]
-    fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
+    pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
         self.inner
             .query_key(labels.to_vec(), &HydraQuery::Quantile(phi))
     }
@@ -333,6 +271,7 @@ impl MemoryFootprint for HydraKll {
 impl BenchImpl for HydraKll {
     type Params = HydraKllParams;
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 
 #[cfg(test)]
@@ -369,7 +308,7 @@ mod tests {
             record("a;x", 20),
             record("b;x", 30),
         ] {
-            h.update(&r);
+            insert_hydra_cms(&mut h, &r);
         }
         // (a, 10) occurs twice, under two different second labels.
         assert_eq!(h.estimate_subpop_frequency(&["a"], &10), 2.0);
@@ -385,7 +324,7 @@ mod tests {
     #[test]
     fn an_absent_group_estimates_zero() {
         let mut h = built();
-        h.update(&record("a;x", 10));
+        insert_hydra_cms(&mut h, &record("a;x", 10));
         assert_eq!(h.estimate_subpop_frequency(&["zzz"], &10), 0.0);
     }
 
@@ -395,12 +334,12 @@ mod tests {
     fn merging_shards_is_exact() {
         let (mut left, mut right) = (built(), built());
         for _ in 0..3 {
-            left.update(&record("a;x", 10));
+            insert_hydra_cms(&mut left, &record("a;x", 10));
         }
         for _ in 0..4 {
-            right.update(&record("a;x", 10));
+            insert_hydra_cms(&mut right, &record("a;x", 10));
         }
-        left.merge(&right).expect("same ParamSet merges");
+        merge_hydra_cms(&mut left, &right);
         assert_eq!(left.estimate_subpop_frequency(&["a"], &10), 7.0);
     }
 
@@ -452,9 +391,9 @@ mod tests {
     fn hll_counts_distinct_values_not_occurrences() {
         let mut h = built_hll();
         for _ in 0..3 {
-            h.update(&record("a;x", 10));
+            insert_hydra_hll(&mut h, &record("a;x", 10));
         }
-        h.update(&record("a;y", 20));
+        insert_hydra_hll(&mut h, &record("a;y", 20));
         // Two distinct values under label `a`, seen four times.
         let est = h.estimate_subpop_cardinality(&["a"]);
         assert!(
@@ -466,7 +405,7 @@ mod tests {
     #[test]
     fn hll_absent_group_estimates_zero() {
         let mut h = built_hll();
-        h.update(&record("a;x", 10));
+        insert_hydra_hll(&mut h, &record("a;x", 10));
         assert_eq!(h.estimate_subpop_cardinality(&["zzz"]), 0.0);
     }
 
@@ -475,11 +414,11 @@ mod tests {
     #[test]
     fn hll_merging_shards_does_not_double_count() {
         let (mut left, mut right) = (built_hll(), built_hll());
-        left.update(&record("a;x", 10));
-        left.update(&record("a;x", 20));
-        right.update(&record("a;x", 20));
-        right.update(&record("a;x", 30));
-        left.merge(&right).expect("same ParamSet merges");
+        insert_hydra_hll(&mut left, &record("a;x", 10));
+        insert_hydra_hll(&mut left, &record("a;x", 20));
+        insert_hydra_hll(&mut right, &record("a;x", 20));
+        insert_hydra_hll(&mut right, &record("a;x", 30));
+        merge_hydra_hll(&mut left, &right);
         let est = left.estimate_subpop_cardinality(&["a"]);
         assert!(
             (est - 3.0).abs() < 0.5,
@@ -522,10 +461,10 @@ mod tests {
     fn kll_quantiles_are_taken_inside_the_group() {
         let mut h = built_kll();
         for v in 1..=101 {
-            h.update(&frecord("a;x", v as f64));
+            insert_hydra_kll(&mut h, &frecord("a;x", v as f64));
         }
         for _ in 0..500 {
-            h.update(&frecord("b;x", 10_000.0));
+            insert_hydra_kll(&mut h, &frecord("b;x", 10_000.0));
         }
         let median = h.estimate_subpop_quantile(&["a"], 0.5);
         assert!(
@@ -541,7 +480,7 @@ mod tests {
     fn kll_is_exact_below_k() {
         let mut h = built_kll();
         for v in 1..=101 {
-            h.update(&frecord("a;x", v as f64));
+            insert_hydra_kll(&mut h, &frecord("a;x", v as f64));
         }
         assert_eq!(h.estimate_subpop_quantile(&["a"], 0.0), 1.0);
         assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);
@@ -586,4 +525,124 @@ mod tests {
             "error should name the field: {err}"
         );
     }
+}
+
+// ---------- how this sketch is driven ----------
+//
+// One function per operation, per sketch. These used to be an
+// `impl Accumulator for X` block, which fixed one signature for every
+// implementation in the repo. As free functions each states its own
+// terms, and `catalog` names them in the row's `SketchOps`.
+    #[inline(always)]
+pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>)
+{
+        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+}
+
+pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+}
+    #[inline(always)]
+pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>)
+{
+        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+}
+
+pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+}
+    #[inline(always)]
+pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>)
+{
+        sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
+}
+
+pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+}
+
+// ---------- the rows this file provides ----------
+//
+// Three rows, three *different probe shapes*: a label plus a value, a label
+// alone, a label plus a fraction. Under the capability traits each needed its
+// own trait to be expressible; here each row simply states its own.
+
+use aqpbm_core::accuracy::subpopulation::{
+    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
+};
+use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
+pub const CMS_OPS: SketchOps<HydraCms, Labeled<i64>, (String, i64), f64> = SketchOps {
+    merge: Some(merge_hydra_cms),
+    prepare: None,
+    ask: ask_hydra_cms,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
+    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
+}
+pub fn run_cms(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
+        cfg, data, params, width, insert_hydra_cms,
+        &CMS_OPS,
+    )
+}
+
+pub const HLL_OPS: SketchOps<HydraHll, Labeled<i64>, String, f64> = SketchOps {
+    merge: Some(merge_hydra_hll),
+    prepare: None,
+    ask: ask_hydra_hll,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
+    sketch.estimate_subpop_cardinality(&[probe.as_str()])
+}
+pub fn run_hll(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
+        cfg, data, params, width, insert_hydra_hll,
+        &HLL_OPS,
+    )
+}
+
+pub const KLL_OPS: SketchOps<HydraKll, Labeled<f64>, (String, f64), f64> = SketchOps {
+    merge: Some(merge_hydra_kll),
+    prepare: None,
+    ask: ask_hydra_kll,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
+    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
+}
+pub fn run_kll(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
+        cfg, data, params, width, insert_hydra_kll,
+        &KLL_OPS,
+    )
 }

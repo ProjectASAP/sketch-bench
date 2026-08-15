@@ -2,15 +2,16 @@
 //! counting sketch. Proves: sketch construction → N-run +
 //! warmup loop → metrics aggregation → v1 JSONL record.
 
-use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+use aqpbm_core::ops::SketchOps;
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::workload::I64Workload;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
-use aqpbm_core::accuracy::CardinalityOps;
 use aqpbm_core::runner::{BenchConfig, BenchRunner, NoGT};
 use aqpbm_core::metrics::OperationMask;
 use aqpbm_core::metrics::MetricsMask;
 
+/// A row nothing scores is never asked anything, but the type still needs a
+/// closure. This is it: never called, because `ground_truth` is `None`.
 /// Trivial exact-counting "sketch" — not a real sketch, but
 /// exercises the full trait + runner machinery against a known
 /// ground truth.
@@ -18,17 +19,27 @@ struct ExactCounter {
     seen: std::collections::HashSet<i64>,
 }
 
-impl Accumulator for ExactCounter {
-    type Item = i64;
-    fn update(&mut self, v: &i64) {
-        self.seen.insert(*v);
-    }
-    /// Set union, exact, so a fold can be checked to cost no accuracy.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.seen.extend(other.seen.iter().copied());
-        Ok(())
-    }
+fn insert_exact(s: &mut ExactCounter, v: &i64) {
+    s.seen.insert(*v);
 }
+/// Set union, exact, so a fold can be checked to cost no accuracy.
+fn merge_exact(into: &mut ExactCounter, from: &ExactCounter) {
+    into.seen.extend(from.seen.iter().copied());
+}
+/// The toy sketch's ops, stated the way a real row states them.
+const EXACT_OPS: SketchOps<ExactCounter, i64, (), f64> = SketchOps {
+    merge: Some(merge_exact),
+    prepare: None,
+    ask: ask_distinct,
+    _item: std::marker::PhantomData,
+};
+/// The same sketch where nothing scores it — `NoGT`'s probe and answer.
+const EXACT_OPS_NOGT: SketchOps<ExactCounter, i64, (), ()> = SketchOps {
+    merge: Some(merge_exact),
+    prepare: None,
+    ask: |_, _| (),
+    _item: std::marker::PhantomData,
+};
 
 impl MemoryFootprint for ExactCounter {
     fn memory_bytes(&self) -> usize {
@@ -36,12 +47,17 @@ impl MemoryFootprint for ExactCounter {
     }
 }
 
-/// Declares the toy sketch a cardinality estimator, which is what makes it
-/// eligible for `CardinalityGT` below.
-impl CardinalityOps for ExactCounter {
+impl ExactCounter {
     fn estimate_distinct(&self) -> f64 {
         self.seen.len() as f64
     }
+}
+
+/// How the toy sketch is asked. A free function, not a trait impl: nothing
+/// declares "this is a cardinality estimator" any more, so what makes it
+/// eligible for `CardinalityGT` is that this closure's shape matches.
+fn ask_distinct(s: &mut ExactCounter, _: &()) -> f64 {
+    s.estimate_distinct()
 }
 
 #[test]
@@ -62,8 +78,9 @@ fn runner_end_to_end_produces_valid_jsonl() {
             || ExactCounter {
                 seen: Default::default(),
             },
-            |s, it| s.update(it),
-            Some(&CardinalityGT::default()),
+            insert_exact,
+            Some(&CardinalityGT),
+            &EXACT_OPS,
         )
         .expect("every square asked for is measured");
 
@@ -93,8 +110,9 @@ fn runner_end_to_end_produces_valid_jsonl() {
             || ExactCounter {
                 seen: Default::default(),
             },
-            |s, it| s.update(it),
-            Some(&CardinalityGT::default()),
+            insert_exact,
+            Some(&CardinalityGT),
+            &EXACT_OPS,
         )
         .expect("query accuracy is measured");
     let accuracy = scored
@@ -123,8 +141,7 @@ struct DeferredBuilder {
     finalized: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl Accumulator for DeferredBuilder {
-    type Item = i64;
+impl DeferredBuilder {
     fn update(&mut self, v: &i64) {
         self.buf.push(*v);
     }
@@ -138,6 +155,14 @@ impl Accumulator for DeferredBuilder {
         std::hint::black_box(&set);
     }
 }
+
+/// The deferred row's ops: the work is in `prepare`, so it supplies one.
+const DEFERRED_OPS: SketchOps<DeferredBuilder, i64, (), ()> = SketchOps {
+    merge: None,
+    prepare: Some(|s| s.prepare()),
+    ask: |_, _| (),
+    _item: std::marker::PhantomData,
+};
 
 impl MemoryFootprint for DeferredBuilder {
     fn memory_bytes(&self) -> usize {
@@ -162,14 +187,15 @@ fn the_slim_throughput_path_still_builds_the_sketch() {
     };
     let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let f = finalized.clone();
-    let reports = BenchRunner::new(cfg, &workload, "deferred", "slim").run::<_, _, NoGT, _>(
+    let reports = BenchRunner::new(cfg, &workload, "deferred", "slim").run(
         move || DeferredBuilder {
             buf: Vec::new(),
             distinct: 0,
             finalized: f.clone(),
         },
-        |s, it| s.update(it),
-        None,
+            |s: &mut DeferredBuilder, v: &i64| s.update(v),
+            None::<&NoGT>,
+            &DEFERRED_OPS,
     )
     .expect("every square asked for is measured");
 
@@ -217,14 +243,15 @@ fn finalize_only(workload: &I64Workload) -> aqpbm_core::BenchSection {
     };
     let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let reports = BenchRunner::new(cfg, workload, "deferred", "prepare")
-        .run::<_, _, NoGT, _>(
+        .run(
             move || DeferredBuilder {
                 buf: Vec::new(),
                 distinct: 0,
                 finalized: finalized.clone(),
             },
-            |s, it| s.update(it),
-            None,
+            |s: &mut DeferredBuilder, v: &i64| s.update(v),
+            None::<&NoGT>,
+            &DEFERRED_OPS,
         )
         .expect("every square asked for is measured");
     reports[0].bench.clone()
@@ -251,14 +278,15 @@ fn every_path_bills_the_deferred_build_to_the_same_field() {
         };
         let finalized = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let f = finalized.clone();
-        let reports = BenchRunner::new(cfg, &workload, "deferred", "paths").run::<_, _, NoGT, _>(
+        let reports = BenchRunner::new(cfg, &workload, "deferred", "paths").run(
             move || DeferredBuilder {
                 buf: Vec::new(),
                 distinct: 0,
                 finalized: f.clone(),
             },
-            |s, it| s.update(it),
-            None,
+            |s: &mut DeferredBuilder, v: &i64| s.update(v),
+            None::<&NoGT>,
+            &DEFERRED_OPS,
         )
         .expect("every square asked for is measured");
         let bench = &reports[0].bench;
@@ -279,12 +307,13 @@ fn runner_respects_mask_noop_when_empty() {
         metrics: MetricsMask::empty(),
         ..Default::default()
     };
-    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run::<_, _, NoGT, _>(
+    let reports = BenchRunner::new(cfg, &workload, "exact", "empty").run(
         || ExactCounter {
             seen: Default::default(),
         },
-        |s, it| s.update(it),
-        None,
+            insert_exact,
+            None::<&NoGT>,
+            &EXACT_OPS_NOGT,
     )
     .expect("an empty request selects no square, so it cannot reach an empty one");
     // Empty mask ⇒ no squares ⇒ no reports.
@@ -310,8 +339,9 @@ fn merge_has_no_accuracy() {
             || ExactCounter {
                 seen: Default::default(),
             },
-            |s, it| s.update(it),
+            insert_exact,
             Some(&CardinalityGT),
+            &EXACT_OPS,
         )
         .expect_err("merge accuracy is an empty square");
     assert!(
@@ -340,12 +370,13 @@ fn a_square_places_only_its_own_metric() {
         ..Default::default()
     };
     let reports = BenchRunner::new(cfg, &workload, "exact", "squares")
-        .run::<_, _, NoGT, _>(
+        .run(
             || ExactCounter {
                 seen: Default::default(),
             },
-            |s, it| s.update(it),
-            None,
+            insert_exact,
+            None::<&NoGT>,
+            &EXACT_OPS_NOGT,
         )
         .expect("both squares are measured");
 
@@ -366,4 +397,58 @@ fn a_square_places_only_its_own_metric() {
     // they must not appear on the latency one either.
     assert!(latency.bench.build_throughput_items_per_sec.is_none());
     assert!(latency.bench.finalize_time_ms.is_none());
+}
+
+/// `metrics::is_measurable` claims to mirror the grid inside `BenchRunner::run`,
+/// and a frontend refuses squares by name on the strength of that claim. Nothing
+/// in the type system holds the two matches together, so this walks all twelve
+/// squares and asserts they agree: whatever `is_measurable` says of a square,
+/// running it either produces a report or comes back `NotMeasured`.
+///
+/// Without this, the two could drift and the frontend would refuse a square the
+/// runner measures — or generate a whole workload for one it does not.
+#[test]
+fn is_measurable_agrees_with_the_runner_on_every_square() {
+    use aqpbm_core::cell::RunError;
+    use aqpbm_core::metrics::{cells, is_measurable};
+
+    let workload = I64Workload::uniform(200, 50, 7);
+    for cell in cells(OperationMask::all(), MetricsMask::all()) {
+        let cfg = BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            metrics: cell.mask(),
+            operations: match cell.operation {
+                aqpbm_core::metrics::Operation::Insert => OperationMask::INSERT,
+                aqpbm_core::metrics::Operation::Query => OperationMask::QUERY,
+                aqpbm_core::metrics::Operation::Merge => OperationMask::MERGE,
+                aqpbm_core::metrics::Operation::Prepare => OperationMask::PREPARE,
+            },
+            // Merge needs something to fold, or it fails for a reason that has
+            // nothing to do with whether the square is measurable.
+            merge_shards: 2,
+            ..Default::default()
+        };
+        let runner = BenchRunner::new(cfg, &workload, "exact", "smoke");
+        let got = runner.run(
+            || ExactCounter {
+                seen: std::collections::HashSet::new(),
+            },
+            insert_exact,
+            Some(&CardinalityGT),
+            &EXACT_OPS,
+        );
+        let square = (cell.operation.name(), cell.metric.name());
+        match got {
+            Err(RunError::NotMeasured { .. }) => assert!(
+                !is_measurable(cell),
+                "{square:?}: runner says nothing measures it, is_measurable disagrees"
+            ),
+            Ok(_) => assert!(
+                is_measurable(cell),
+                "{square:?}: runner measured it, is_measurable says it is empty"
+            ),
+            Err(e) => panic!("{square:?}: failed for an unrelated reason: {e}"),
+        }
+    }
 }

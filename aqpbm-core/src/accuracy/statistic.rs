@@ -1,88 +1,23 @@
-//! One capability trait per statistic this crate measures, each with whatever
-//! query shape that statistic actually wants. `impl CardinalityOps for X` is
-//! where "X is a cardinality sketch" is stated — compiler-checked, and nominal
-//! on purpose: a structural bound also matches sketches that answer a stub.
-
-// ---------- cardinality ----------
-
-/// Answers "how many distinct items have you seen".
-/// Scored by [`CardinalityGT`](super::cardinality::CardinalityGT).
-pub trait CardinalityOps {
-    fn estimate_distinct(&self) -> f64;
-}
-
-// ---------- frequency ----------
-
-/// Answers "how many times did this key occur", scored by
-/// [`FrequencyGT`](super::frequency::FrequencyGT). Takes the key by reference:
-/// the probe loop is timed, so no wrapper is charged for a needless clone.
-pub trait FrequencyOps {
-    type Key;
-    fn estimate_frequency(&self, key: &Self::Key) -> u64;
-}
-
-// ---------- subpopulation frequency ----------
-
-/// Answers "within the records carrying these labels, how many times did this
-/// value occur", scored by
-/// [`SubpopFrequencyGT`](super::subpopulation::SubpopFrequencyGT).
-///
-/// Note what the population is: a **(subpopulation, value) pair**, not a
-/// subpopulation. A counter array under a grouped sketch counts values inside a
-/// group; the size of the group itself is a different statistic, and a sketch
-/// answering that declares a different capability.
-pub trait SubpopFrequencyOps {
-    type Value;
-    /// `labels` in column order. The query carries values only, never column
-    /// positions, because that is all a grouped sketch's key is.
-    fn estimate_subpop_frequency(&self, labels: &[&str], value: &Self::Value) -> f64;
-}
-
-// ---------- subpopulation cardinality ----------
-
-/// Answers "within the records carrying these labels, how many *distinct*
-/// values were there", scored by
-/// [`SubpopCardinalityGT`](super::subpopulation::SubpopCardinalityGT).
-///
-/// This is the statistic [`SubpopFrequencyOps`] structurally cannot answer. A
-/// counter array under a grouped sketch counts occurrences of a value inside a
-/// group and has no way to report the size of the group itself. The population
-/// here is the **subpopulation**, not a (subpopulation, value) pair, so the
-/// query takes no value.
-pub trait SubpopCardinalityOps {
-    /// `labels` in column order, same key vocabulary as [`SubpopFrequencyOps`].
-    fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64;
-}
-
-// ---------- subpopulation quantile ----------
-
-/// Answers "within the records carrying these labels, what value sits at this
-/// quantile", scored by
-/// [`SubpopRankErrorGT`](super::subpopulation::SubpopRankErrorGT).
-///
-/// The population is the subpopulation and the answer is ordered, so this is
-/// the grouped form of [`QuantileOps`] and is scored in the same rank-error
-/// units.
-pub trait SubpopQuantileOps {
-    /// `labels` in column order; `phi` is a fraction in `0.0..=1.0`.
-    fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64;
-}
-
-// ---------- quantile ----------
-
-/// Answers "what value sits at this quantile". Two rulers score it — rank
-/// error and relative error — and since they share this interface, the catalog
-/// row picks between them, not the type system.
-pub trait QuantileOps {
-    /// `phi` is a fraction in `0.0..=1.0`.
-    fn estimate_quantile(&self, phi: f64) -> f64;
-}
-
-// ---------- top-k ----------
-
-/// Answers "which k keys are heaviest, and how heavy".
-/// Scored by [`TopkGT`](super::topk::TopkGT).
-pub trait TopKOps {
-    type Key;
-    fn estimate_topk(&self, k: usize) -> Vec<(Self::Key, u64)>;
-}
+//! Once: one capability trait per statistic — `CardinalityOps`, `FrequencyOps`,
+//! `QuantileOps`, `TopKOps` and the three subpopulation variants — each fixing
+//! the signature every implementation had to answer through.
+//!
+//! They are gone. A sketch now states how it is queried by supplying a closure
+//! at its row in `sketch_bench::catalog::ROWS`, and `GroundTruth` no longer
+//! touches a sketch at all.
+//!
+//! What the traits cost, concretely, and why the closure replaces them:
+//!
+//! - **They fixed `&self`.** `sketch_oxide`'s `KllSketch::quantile` needs
+//!   `&mut self`, so the wrapper carried a `RefCell` and paid a borrow check on
+//!   every query — for a signature detail, not for anything the sketch does.
+//! - **They fixed the probe and answer types**, so a statistic none of the
+//!   seven named could not be scored at all. That is what blocked scoring a
+//!   heavy-hitter set or a moment estimate (`docs/sketch-bench.md`, first open
+//!   question).
+//!
+//! What is lost with them: the nominal check. `impl FrequencyOps for X` used to
+//! be a compiler-checked claim that X answers frequency, and a row naming a
+//! comparator its sketch could not satisfy would not build. A closure is
+//! checked only for shape, so `sketch-bench`'s catalog tests carry that weight
+//! now — see `every_row_answers_its_capability`.

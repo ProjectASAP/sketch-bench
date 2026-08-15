@@ -8,9 +8,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use crate::accumulator::Accumulator;
 
-use super::statistic::FrequencyOps;
 use super::GroundTruth;
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -31,10 +29,9 @@ pub struct FrequencyTruth<K> {
     all: Vec<K>,
 }
 
-impl<S, K> GroundTruth<S> for FrequencyGT
+impl<K> GroundTruth<K> for FrequencyGT
 where
     K: Eq + Hash + Ord + Clone,
-    S: Accumulator<Item = K> + FrequencyOps<Key = K>,
 {
     type Truth = FrequencyTruth<K>;
     type Probe = K;
@@ -70,10 +67,6 @@ where
             }
         }
         out
-    }
-
-    fn ask(&self, sketch: &S, probe: &K) -> u64 {
-        sketch.estimate_frequency(probe)
     }
 
     fn answer_as_f64(&self, answer: &u64) -> f64 {
@@ -185,18 +178,12 @@ mod tests {
 
     /// The estimator that does no work: every frequency is zero.
     struct NullFreq;
-    impl Accumulator for NullFreq {
-        type Item = i64;
-        fn update(&mut self, _: &i64) {}
-    }
 
-    // The null estimator has to declare itself a frequency estimator like any
-    // other; being shaped like one is not enough.
-    impl FrequencyOps for NullFreq {
-        type Key = i64;
-        fn estimate_frequency(&self, _: &i64) -> u64 {
-            0
-        }
+    /// How it is asked. A plain closure now — there is no trait left to
+    /// declare membership through, which is exactly what the catalog test
+    /// `every_row_answers_its_capability` exists to compensate for.
+    fn ask_null(_: &mut NullFreq, _: &i64) -> u64 {
+        0
     }
 
     /// The property that makes the top-k curve worth reporting: a null
@@ -206,7 +193,7 @@ mod tests {
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();
         let gt = FrequencyGT;
-        let cmp = crate::accuracy::run_probes(&gt, &NullFreq, &items, false);
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullFreq, &items, false);
         for key in ["are_all", "are_top1", "are_top10"] {
             let v = cmp.metrics[key];
             assert!(
@@ -227,7 +214,7 @@ mod tests {
         items.extend(std::iter::repeat(2).take(50));
         items.extend(3..=200);
         let gt = FrequencyGT;
-        let cmp = crate::accuracy::run_probes(&gt, &NullFreq, &items, false);
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullFreq, &items, false);
         // top1 is key 1, so AAE over it is exactly its true count.
         assert_eq!(cmp.metrics["aae_top1"], 100.0);
         assert_eq!(cmp.metrics["probes_top1"], 1.0);

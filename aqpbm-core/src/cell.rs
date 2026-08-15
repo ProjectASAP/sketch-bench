@@ -3,14 +3,14 @@
 //! [`run_cell`] runs one square of the grid, monomorphised so the wrapper's
 //! `update` inlines. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
 
-use crate::accumulator::Accumulator;
+use crate::ops::SketchOps;
 use crate::config::ParamSet;
 use crate::memory_footprint::MemoryFootprint;
 use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
 };
 use anyhow::Result;
-use aqpbm_datagen::{ColumnItem, TableDescription};
+use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
 use crate::accuracy::GroundTruth;
 use crate::init::{BenchImpl, BuildError, InitSketch};
@@ -36,11 +36,53 @@ pub enum WorkloadSpec {
     File { path: String },
 }
 
+/// A workload that has already been produced, on its way to a row.
+///
+/// The distinction from [`WorkloadSpec`] is who has acted: a spec *describes*
+/// data, this *is* data. A frontend asks the registry what item type a row
+/// wants, generates once at that type, and hands this over — so generation
+/// happens before the row is entered rather than inside it.
+#[derive(Debug, Clone)]
+pub enum WorkloadData {
+    /// Columns from `aqpbm-datagen`. The description rides along because the
+    /// record names what the data was generated from, which columns alone do
+    /// not carry.
+    Generated {
+        description: TableDescription,
+        table: GeneratedTable,
+    },
+    /// A file to read. Still deferred to the row, because how the bytes are
+    /// decoded depends on the item type — a `.bin` is a raw `i64` stream and
+    /// only some rows can take it.
+    File { path: String },
+}
+
 impl WorkloadSpec {
+    /// Produce the data this spec describes, at `value_type` — the item type
+    /// the row named. Called by the frontend, once, before the row is entered.
+    ///
+    /// This is why resolution comes first: `value_type` is an *answer* from
+    /// the registry, so a caller cannot generate until it has asked.
+    pub fn generate_at(&self, value_type: &str) -> Result<WorkloadData> {
+        match self.describe(value_type) {
+            Some(description) => {
+                let table = description.generate()?;
+                Ok(WorkloadData::Generated { description, table })
+            }
+            None => Ok(WorkloadData::File {
+                path: self
+                    .file_path()
+                    .expect("describe() returns None only for the file variant")
+                    .to_string(),
+            }),
+        }
+    }
+
     /// Materialise at the item type `T`, which the row's `Accumulator::Item`
-    /// already names.
+    /// already names. Generates and converts in one step; the split form is
+    /// [`Self::generate_at`] followed by `T::materialise`.
     pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
-        T::materialise(self)
+        T::materialise(self.generate_at(T::DATA_TYPE)?)
     }
 
     /// The description to generate from at item type `item_type`, or `None` for
@@ -134,16 +176,20 @@ pub trait BenchItem: Sized + Clone {
     /// the type of its *value* column. Also a `const`, for the same reason.
     const DATA_TYPE: &'static str;
 
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk>;
+    /// Turn produced data into this row's workload. Takes the data by value:
+    /// a million-row column is moved into the workload, never copied.
+    fn materialise(data: WorkloadData) -> Result<Self::Wk>;
 }
 
 impl BenchItem for i64 {
     type Wk = I64Workload;
     const DATA_TYPE: &'static str = "i64";
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec.describe("i64") {
-            Some(d) => I64Workload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
-            None => I64Workload::load(std::path::Path::new(spec.file_path().unwrap()))
+    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+        match data {
+            WorkloadData::Generated { description, table } => {
+                I64Workload::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            WorkloadData::File { path } => I64Workload::load(std::path::Path::new(&path))
                 .map_err(|e| anyhow::anyhow!("{}", e)),
         }
     }
@@ -152,15 +198,16 @@ impl BenchItem for i64 {
 impl BenchItem for f64 {
     type Wk = F64Workload;
     const DATA_TYPE: &'static str = "f64";
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec.describe("f64") {
-            Some(d) => F64Workload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
+    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+        match data {
+            WorkloadData::Generated { description, table } => {
+                F64Workload::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
+            }
             // `.bin` is a raw i64 stream with no header; reading it as f64
             // would reinterpret the bytes, not convert them.
-            None => Err(anyhow::anyhow!(
-                "--input {} is a raw i64 stream; generate the workload \
-                 instead to benchmark f64",
-                spec.file_path().unwrap(),
+            WorkloadData::File { path } => Err(anyhow::anyhow!(
+                "--input {path} is a raw i64 stream; generate the workload \
+                 instead to benchmark f64"
             )),
         }
     }
@@ -169,11 +216,14 @@ impl BenchItem for f64 {
 impl BenchItem for String {
     type Wk = StringWorkload;
     const DATA_TYPE: &'static str = "string";
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec.describe("string") {
-            Some(d) => StringWorkload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
+    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+        match data {
+            WorkloadData::Generated { description, table } => {
+                StringWorkload::from_table(&description, table)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }
             // Decimal-formatted, the same rendering the i64-sourced path used.
-            None => I64Workload::load(std::path::Path::new(spec.file_path().unwrap()))
+            WorkloadData::File { path } => I64Workload::load(std::path::Path::new(&path))
                 .map(|wk| StringWorkload::from_i64(&wk))
                 .map_err(|e| anyhow::anyhow!("{}", e)),
         }
@@ -185,9 +235,9 @@ impl BenchItem for Vec<u8> {
     /// Materialised through the string path, so a description states `string`
     /// and the bytes are taken from it.
     const DATA_TYPE: &'static str = "string";
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
+    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
         Ok(BytesWorkload::from_strings(
-            &<String as BenchItem>::materialise(spec)?,
+            &<String as BenchItem>::materialise(data)?,
         ))
     }
 }
@@ -200,14 +250,16 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
     type Wk = LabeledWorkload<V>;
     const TAKES_COLUMNS: bool = true;
     const DATA_TYPE: &'static str = V::NAME;
-    fn materialise(spec: &WorkloadSpec) -> Result<Self::Wk> {
-        match spec.describe(V::NAME) {
-            Some(d) => LabeledWorkload::generate(&d).map_err(|e| anyhow::anyhow!("{}", e)),
-            None => Err(anyhow::anyhow!(
-                "--input {} is a single-column stream; this row ingests \
+    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+        match data {
+            WorkloadData::Generated { description, table } => {
+                LabeledWorkload::from_table(&description, table)
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+            }
+            WorkloadData::File { path } => Err(anyhow::anyhow!(
+                "--input {path} is a single-column stream; this row ingests \
                  labelled records, so it needs a `--spec` description with a \
-                 label column before the value column",
-                spec.file_path().unwrap(),
+                 label column before the value column"
             )),
         }
     }
@@ -215,13 +267,9 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
 
 // ---------- the hot-loop body + construction ----------
 
-/// The hot-loop body. Generic and `#[inline(always)]`, so it instantiates in
-/// whichever crate names the concrete `S`: the wrapper's `update` and this call
-/// site land in one codegen unit, and LLVM folds the update into the loop.
-#[inline(always)]
-pub fn insert_body<S: Accumulator>(s: &mut S, it: &S::Item) {
-    s.update(it);
-}
+// The hot-loop body used to live here as `insert_body`, calling
+// `Accumulator::update`. It is now the row's own `SketchOps::insert`, written in
+// the wrapper file beside the sketch it drives.
 
 /// Construct a fresh sketch. Construction is proven by the probe at the top of
 /// each cell function, so the per-run factory unwraps.
@@ -233,7 +281,7 @@ fn built<S: InitSketch>(params: &ParamSet) -> S {
 
 /// A parallel-insert wrapper: its constructor also takes the worker count (a
 /// run knob, not a sketch parameter), so it cannot be an [`InitSketch`].
-pub trait ParallelInit: Accumulator + Sized {
+pub trait ParallelInit: Sized {
     fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError>;
 }
 
@@ -241,45 +289,49 @@ pub trait ParallelInit: Accumulator + Sized {
 
 /// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
 /// ground truth — the ground-truth calculator never touches the hot path.
-pub fn run_cell<S, G>(
+pub fn run_cell<S, I, G, Ins>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     gt: Option<&G>,
+    insert: Ins,
+    ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruth<S>,
+    S: InitSketch + BenchImpl + MemoryFootprint,
+    I: BenchItem,
+    G: GroundTruth<I>,
+    Ins: FnMut(&mut S, &I),
 {
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
+    let wk = <I as BenchItem>::materialise(data)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
-    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
-        || built::<S>(params),
-        insert_body,
-        gt,
-    )
+    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
+        .run::<S, _, G, _>(|| built::<S>(params), insert, gt, ops)
 }
 
 /// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
-pub fn run_cell_parallel<S, G>(
+pub fn run_cell_parallel<S, I, G, Ins>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     gt: Option<&G>,
+    insert: Ins,
+    ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruth<S>,
+    I: BenchItem,
+    G: GroundTruth<I>,
+    Ins: FnMut(&mut S, &I),
 {
-    let wk = <S::Item as BenchItem>::materialise(spec)?;
+    let wk = <I as BenchItem>::materialise(data)?;
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
     BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
         move || S::build(params, workers).expect("construction proven by the probe above"),
-        insert_body,
+        insert,
         gt,
+        ops,
     )
 }
 

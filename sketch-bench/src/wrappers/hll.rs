@@ -2,12 +2,11 @@
 //! (a.k.a. asap_sketchlib). All of them declare `CardinalityOps`,
 //! which is what makes them cardinality rows.
 
-use aqpbm_core::accuracy::CardinalityOps;
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use crate::wrappers::require_range;
 use crate::params::HllParams;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::accumulator::{Accumulator, MergeUnsupported};
+
 use aqpbm_core::memory_footprint::MemoryFootprint;
 // sketch_oxide routes `.estimate()` through its `Accumulator` trait.
 use sketch_oxide::Sketch as OxideSketch; // NOTE: foreign trait, not ours
@@ -32,23 +31,6 @@ impl InitSketch for HllOxide {
     }
 }
 
-impl Accumulator for HllOxide {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.update(v);
-    }
-
-    /// Register-wise max. Exact for equal `lg_k`: the merged sketch is
-    /// bit-identical to one fed the whole stream, so any error the merge
-    /// benchmark reports beyond the single-pass figure is a real defect.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner
-            .merge(&other.inner)
-            .expect("both operands built from one ParamSet, so lg_k matches");
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for HllOxide {
     fn memory_bytes(&self) -> usize {
@@ -83,24 +65,6 @@ impl InitSketch for HllDatasketches {
     }
 }
 
-impl Accumulator for HllDatasketches {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.update(*v);
-    }
-
-    /// DataSketches merges HLL through a `Union` gadget, so this rebuilds `self`
-    /// from its result. **Known limitation:** a fresh `HllUnion` per fold inside
-    /// the timed region makes this row read lossy and ~2x slow — not comparable.
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        let mut union = datasketches::hll::HllUnion::new(self.lg_k);
-        union.update(&self.inner);
-        union.update(&other.inner);
-        self.inner = union.get_result(self.hll_type);
-        Ok(())
-    }
-}
 
 impl MemoryFootprint for HllDatasketches {
     fn memory_bytes(&self) -> usize {
@@ -164,18 +128,6 @@ impl<R: asap_sketchlib::HllRegisterStorage> InitSketch for HllLib<R> {
     }
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> Accumulator for HllLib<R> {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
-    }
-
-    fn merge(&mut self, other: &Self) -> Result<(), MergeUnsupported> {
-        self.inner.merge(&other.inner);
-        Ok(())
-    }
-}
 
 impl<R: asap_sketchlib::HllRegisterStorage> MemoryFootprint for HllLib<R> {
     fn memory_bytes(&self) -> usize {
@@ -207,13 +159,6 @@ impl<R: asap_sketchlib::HllRegisterStorage> InitSketch for HllLibHip<R> {
     }
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> Accumulator for HllLibHip<R> {
-    type Item = i64;
-    #[inline(always)]
-    fn update(&mut self, v: &i64) {
-        self.inner.insert(&asap_sketchlib::DataInput::I64(*v));
-    }
-}
 
 impl<R: asap_sketchlib::HllRegisterStorage> MemoryFootprint for HllLibHip<R> {
     fn memory_bytes(&self) -> usize {
@@ -226,26 +171,26 @@ impl<R: asap_sketchlib::HllRegisterStorage> MemoryFootprint for HllLibHip<R> {
 // The parallel-HLL row ingests `i64` like these but answers nothing, so it is
 // absent here — which is what keeps it out of accuracy scoring.
 
-impl CardinalityOps for HllOxide {
-    fn estimate_distinct(&self) -> f64 {
+impl HllOxide {
+    pub fn estimate_distinct(&self) -> f64 {
         self.inner.estimate()
     }
 }
 
-impl CardinalityOps for HllDatasketches {
-    fn estimate_distinct(&self) -> f64 {
+impl HllDatasketches {
+    pub fn estimate_distinct(&self) -> f64 {
         self.inner.estimate()
     }
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> CardinalityOps for HllLib<R> {
-    fn estimate_distinct(&self) -> f64 {
+impl<R: asap_sketchlib::HllRegisterStorage> HllLib<R> {
+    pub fn estimate_distinct(&self) -> f64 {
         self.inner.estimate() as f64
     }
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> CardinalityOps for HllLibHip<R> {
-    fn estimate_distinct(&self) -> f64 {
+impl<R: asap_sketchlib::HllRegisterStorage> HllLibHip<R> {
+    pub fn estimate_distinct(&self) -> f64 {
         self.inner.estimate() as f64
     }
 }
@@ -256,12 +201,13 @@ impl<R: asap_sketchlib::HllRegisterStorage> CardinalityOps for HllLibHip<R> {
 // algorithm axis; every precision of one estimator is one algorithm, because
 // `lg_k` is the knob that selects it.
 
-impl BenchImpl for HllOxide { type Params = HllParams; const IMPL: &'static str = "oxide"; }
-impl BenchImpl for HllDatasketches { type Params = HllParams; const IMPL: &'static str = "datasketches"; }
+impl BenchImpl for HllOxide { type Params = HllParams; const IMPL: &'static str = "oxide"; const SUPPORTS_MERGE: bool = true; }
+impl BenchImpl for HllDatasketches { type Params = HllParams; const IMPL: &'static str = "datasketches"; const SUPPORTS_MERGE: bool = true; }
 
 impl<R: asap_sketchlib::HllRegisterStorage> BenchImpl for HllLib<R> {
     type Params = HllParams;
     const IMPL: &'static str = "lib";
+    const SUPPORTS_MERGE: bool = true;
 }
 
 impl<R: asap_sketchlib::HllRegisterStorage> BenchImpl for HllLibHip<R> {
@@ -279,12 +225,11 @@ mod tests {
         ParamSet::of(&HllParams { lg_k })
     }
 
-    fn fed<S>(sketch: &mut S, n: i64)
-    where
-        S: Accumulator<Item = i64>,
-    {
+    /// Feed a sketch through its own insert function — the same one its row
+    /// uses, rather than a trait method every sketch had to share.
+    fn fed<S>(sketch: &mut S, insert: fn(&mut S, &i64), n: i64) {
         for v in 0..n {
-            sketch.update(&v);
+            insert(sketch, &v);
         }
     }
 
@@ -305,9 +250,9 @@ mod tests {
         );
         // Three types, so three calls: the whole point of this row is that the
         // precision is a type and not a field.
-        fed(&mut p12, 50_000);
-        fed(&mut p14, 50_000);
-        fed(&mut p16, 50_000);
+        fed(&mut p12, insert_hll_lib, 50_000);
+        fed(&mut p14, insert_hll_lib, 50_000);
+        fed(&mut p16, insert_hll_lib, 50_000);
         // A coarser register array is a worse estimate of the same stream. The
         // assertion is that the three differ at all: pinning an ordering would
         // pin the estimator's luck on one draw.
@@ -386,4 +331,189 @@ mod tests {
             );
         }
     }
+}
+
+// ---------- how this sketch is driven ----------
+//
+// One function per operation, per sketch. These used to be an
+// `impl Accumulator for X` block, which fixed one signature for every
+// implementation in the repo. As free functions each states its own
+// terms, and `catalog` names them in the row's `SketchOps`.
+    #[inline(always)]
+pub fn insert_hll_oxide(sketch: &mut HllOxide, v: &i64)
+{
+        sketch.inner.update(v);
+}
+
+pub fn merge_hll_oxide(into: &mut HllOxide, from: &HllOxide)
+{
+        into.inner
+            .merge(&from.inner)
+            .expect("both operands built from one ParamSet, so lg_k matches");
+}
+    #[inline(always)]
+pub fn insert_hll_datasketches(sketch: &mut HllDatasketches, v: &i64)
+{
+        sketch.inner.update(*v);
+}
+
+pub fn merge_hll_datasketches(into: &mut HllDatasketches, from: &HllDatasketches)
+{
+        let mut union = datasketches::hll::HllUnion::new(into.lg_k);
+        union.update(&into.inner);
+        union.update(&from.inner);
+        into.inner = union.get_result(into.hll_type);
+}
+    #[inline(always)]
+pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage>(sketch: &mut HllLib<R>, v: &i64)
+{
+        sketch.inner.insert(&asap_sketchlib::DataInput::I64(*v));
+}
+
+pub fn merge_hll_lib<R: asap_sketchlib::HllRegisterStorage>(into: &mut HllLib<R>, from: &HllLib<R>)
+{
+        into.inner.merge(&from.inner);
+}
+    #[inline(always)]
+pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(sketch: &mut HllLibHip<R>, v: &i64)
+{
+        sketch.inner.insert(&asap_sketchlib::DataInput::I64(*v));
+}
+
+// ---------- the rows this file provides ----------
+//
+// Cardinality asks nothing — the probe is `()` — so these asks ignore it. That
+// is a shape no frequency row could use, and under the old capability traits it
+// needed a trait of its own to say so.
+
+use aqpbm_core::accuracy::cardinality::CardinalityGT;
+use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::request::Numeric;
+use aqpbm_core::runner::{BenchConfig, BenchReport};
+
+pub const OXIDE_OPS: SketchOps<HllOxide, i64, (), f64> = SketchOps {
+    merge: Some(merge_hll_oxide),
+    prepare: None,
+    ask: ask_hll_oxide,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_hll_oxide(sketch: &mut HllOxide, _: &()) -> f64 {
+    sketch.estimate_distinct()
+}
+pub fn run_oxide(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<HllOxide, i64, CardinalityGT, _>(cfg, data, params, width, insert_hll_oxide, &OXIDE_OPS)
+}
+
+pub const DATASKETCHES_OPS: SketchOps<HllDatasketches, i64, (), f64> = SketchOps {
+    merge: Some(merge_hll_datasketches),
+    prepare: None,
+    ask: ask_hll_datasketches,
+        _item: std::marker::PhantomData,
+};
+pub fn ask_hll_datasketches(sketch: &mut HllDatasketches, _: &()) -> f64 {
+    sketch.estimate_distinct()
+}
+pub fn run_datasketches(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    crate::catalog::run_scored::<HllDatasketches, i64, CardinalityGT, _>(
+        cfg, data, params, width, insert_hll_datasketches,
+        &DATASKETCHES_OPS,
+    )
+}
+
+/// One body for all three precisions: the register count is in the storage
+/// type, so `lg_k` selects `R` and this instantiates at each.
+pub const fn lib_ops<R: asap_sketchlib::HllRegisterStorage>() -> SketchOps<HllLib<R>, i64, (), f64> {
+    SketchOps {
+        merge: Some(merge_hll_lib),
+        prepare: None,
+        ask: ask_hll_lib,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_hll_lib<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLib<R>, _: &()) -> f64 {
+    s.estimate_distinct()
+}
+
+/// The HIP variant maintains its estimate on the insert path, and provides no
+/// merge — the `None` below is the whole declaration.
+pub const fn lib_hip_ops<R: asap_sketchlib::HllRegisterStorage>(
+) -> SketchOps<HllLibHip<R>, i64, (), f64> {
+    SketchOps {
+        merge: None,
+        prepare: None,
+        ask: ask_hll_lib_hip,
+        _item: std::marker::PhantomData,
+    }
+}
+pub fn ask_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLibHip<R>, _: &()) -> f64 {
+    s.estimate_distinct()
+}
+
+pub fn run_lib(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    crate::catalog::run_lib_hll::<
+        HllLib<HllBucketListP12>,
+        HllLib<HllBucketListP14>,
+        HllLib<HllBucketListP16>,
+        CardinalityGT,
+        _,
+        _,
+        _,
+    >(
+        cfg,
+        data,
+        params,
+        width,
+        insert_hll_lib,
+        &lib_ops::<HllBucketListP12>(),
+        insert_hll_lib,
+        &lib_ops::<HllBucketListP14>(),
+        insert_hll_lib,
+        &lib_ops::<HllBucketListP16>(),
+    )
+}
+
+pub fn run_lib_hip(
+    cfg: &BenchConfig,
+    data: WorkloadData,
+    params: &ParamSet,
+    width: Numeric,
+) -> Result<Vec<BenchReport>, RunError> {
+    use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    crate::catalog::run_lib_hll::<
+        HllLibHip<HllBucketListP12>,
+        HllLibHip<HllBucketListP14>,
+        HllLibHip<HllBucketListP16>,
+        CardinalityGT,
+        _,
+        _,
+        _,
+    >(
+        cfg,
+        data,
+        params,
+        width,
+        insert_hll_lib_hip,
+        &lib_hip_ops::<HllBucketListP12>(),
+        insert_hll_lib_hip,
+        &lib_hip_ops::<HllBucketListP14>(),
+        insert_hll_lib_hip,
+        &lib_hip_ops::<HllBucketListP16>(),
+    )
 }

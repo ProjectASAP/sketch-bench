@@ -45,6 +45,7 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use aqpbm_core::cell::WorkloadSpec;
+use aqpbm_core::request::Requirement;
 use sketch_bench::catalog;
 
 /// What is measured. No default and no `all`: a request says which squares of
@@ -88,15 +89,6 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
         };
     }
     Ok(m)
-}
-
-/// Validate `--algorithm`/`--impl` and report whether a comparator can score it.
-fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
-    if !catalog::algorithm_exists(algorithm) {
-        bail!("unknown algorithm: {algorithm}");
-    }
-    catalog::scores_accuracy(algorithm, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))
 }
 
 /// Open the `--report` destination. `None` or `"-"` → stdout.
@@ -290,7 +282,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
     // The only item-type choice left: an `ordered` row builds at either width.
-    // Every other row's type is fixed by its Rust type, and `catalog::run`
+    // Every other row's type is fixed by its Rust type, and `catalog::resolve`
     // refuses a width it cannot honour before anything is generated.
     let width = match args.dtype.as_str() {
         "i64" => catalog::Numeric::I64,
@@ -321,7 +313,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         merge_shards: args.merge_shards,
         seed: args.seed,
     };
-    let scores_accuracy = select_impl(&algorithm, &impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
     // construction, where the impl reads them.
@@ -330,12 +321,36 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&algorithm),
     };
 
-    // Asking for a square that needs a comparator, of a row that has none.
-    if aqpbm_core::runner::needs_ground_truth(operations_mask, metrics_mask) && !scores_accuracy {
+    // Everything the registry needs, as one value. Assembled here and nowhere
+    // else, so there is a single place that says what a request is.
+    let req = Requirement {
+        algorithm: algorithm.clone(),
+        impl_name: impl_name.clone(),
+        params: params.clone(),
+        operations: operations_mask,
+        metrics: metrics_mask,
+        width,
+        comparator: args.comparator.clone(),
+    };
+
+    // Ask first, generate second. Every way this request could fail to run —
+    // an unknown row, a width it cannot take, an operation it does not have, a
+    // statistic nothing scores it under — is answered here, by name, before a
+    // single item exists. The tool ran exactly what it was asked, so it fails
+    // rather than skipping on.
+    // `resolve` hands back a closure. Everything about *how* this sketch is
+    // built, fed, folded and asked is captured inside it, stated in
+    // `sketch-bench/src/wrappers/`; the CLI knows none of it.
+    let Some(resolved) = catalog::resolve(&req)
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?
+    else {
+        // The request named no squares. Legal, and not a failure: there is
+        // simply nothing to report.
         eprintln!(
-            "approxbench: {algorithm}/{impl_name} declares no query capability, so the squares over the query operation measure nothing"
+            "approxbench: {algorithm}/{impl_name} selected no squares; nothing to measure"
         );
-    }
+        return Ok(());
+    };
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
@@ -346,26 +361,25 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         cfg.warmup_runs,
     );
 
-    // Whether this cell can run is decided at construction: a wrong dtype, a
-    // missed fixed shape, or a missing param all surface here. The tool ran
-    // exactly what it was asked, so it fails rather than skipping on.
-    let reports = catalog::run(
-        &algorithm,
-        &impl_name,
-        &cfg,
-        &spec,
-        &params,
-        width,
-        args.comparator.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+    // Generate here, not inside the row. `value_type` is the registry's answer
+    // to "what does this row ingest", which is why resolution had to come
+    // first: the frontend cannot generate a workload until it has asked.
+    let data = spec
+        .generate_at(resolved.value_type)
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} workload: {e}"))?;
 
-    // `catalog::run` returns one report per square; emit each on its own
-    // JSONL line and CSV row group. A downstream group-by on
+    // Construction is the one failure left that resolution cannot see: a
+    // fixed shape the build refuses, or a param the library rejects.
+    // Calling the closure: the CLI passes it the data it just generated, and
+    // gets records back. This is the whole hand-off `docs/sketch-bench.md`
+    // describes.
+    let reports = (resolved.run)(&cfg, data, &params)
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+
+    // The closure returns one report per square; emit each on its own JSONL
+    // line and CSV row group. A downstream group-by on
     // (sketch, impl, sketch_config, workload) merges them back.
-    // Resolved once: `catalog::run` succeeded, so the row exists and so does
-    // its family.
-    let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
+    let family = resolved.family;
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
     let mut records = Vec::with_capacity(reports.len());

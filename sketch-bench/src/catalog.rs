@@ -5,7 +5,6 @@
 //! are projected off it, so the list and the code cannot drift apart.
 
 use anyhow::Result;
-use aqpbm_core::accumulator::Accumulator;
 
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
@@ -13,12 +12,15 @@ use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
-use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{self, BenchItem, ParallelInit, RunError, WorkloadSpec};
+use aqpbm_core::cell::{self, BenchItem, ParallelInit, RunError, WorkloadData};
 use aqpbm_core::runner::{needs_ground_truth, NoGT};
 use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
+use aqpbm_core::ops::SketchOps;
+use aqpbm_core::workload::Labeled;
+use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
+use aqpbm_core::request::Requirement;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use asap_sketchlib::{
@@ -26,33 +28,21 @@ use asap_sketchlib::{
     MatrixStorage,
 };
 
-use aqpbm_core::accuracy::FrequencyOps;
 
-use crate::params::{HllParams, ParamSet, TopkParams};
-use crate::wrappers::{
-    cms, countsketch, dd, elastic, fixed_matrix, hll, hydra, kll, nitro, parallel, polars, topk,
-    univmon,
-};
+use crate::params::{HllParams, ParamSet};
+use crate::wrappers::{cms, countsketch, fixed_matrix, hll, hydra, kll, parallel, polars};
 
 // ---------- what a row is ----------
 
-/// The one item-type choice a user still makes: an `ordered` row (KLL, DDSketch)
-/// builds at either width, while every other row's item type is fixed by its Rust
-/// type — so the catalog can refuse before generating anything.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Numeric {
-    #[default]
-    I64,
-    F64,
-}
+// The item width a row is measured at now lives in `aqpbm-core`, because
+// `Requirement` carries it and core has to be able to name every field of a
+// request. Re-exported here so a frontend still finds it beside the rows it
+// selects.
+pub use aqpbm_core::request::{Capability, Numeric};
 
 /// The executable half of a row: everything the frontend can hand a cell.
 type RunFn =
-    fn(&BenchConfig, &WorkloadSpec, &ParamSet, Numeric) -> Result<Vec<BenchReport>, RunError>;
-
-/// The comparators a row can be scored by, keyed by the name `--comparator`
-/// selects them with.
-type Comparators = &'static [(&'static str, RunFn)];
+    fn(&BenchConfig, WorkloadData, &ParamSet, Numeric) -> Result<Vec<BenchReport>, RunError>;
 
 /// One catalog entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
@@ -82,12 +72,30 @@ pub struct Row {
     /// The `data_type` a description has to give this row's value column.
     /// Derived off the row's item type, so it cannot drift from it.
     pub value_type: &'static str,
+    /// The statistic this row answers, as a value. Derived from the row's
+    /// ground-truth calculator, so a row cannot claim a capability no
+    /// comparator can score it under.
+    pub capability: Capability,
+    /// The operations this row can be measured over. Insert always; query
+    /// wherever a comparator exists; merge and prepare only where the impl
+    /// declares them via `BenchImpl::SUPPORTS_*`.
+    ///
+    /// This is the row's half of the answer — the framework's half is
+    /// `aqpbm_core::metrics::is_measurable`, which rules out squares no row
+    /// could fill. A request has to clear both.
+    pub operations: OperationMask,
+    /// The metrics this row can carry. Everything but accuracy, which needs a
+    /// comparator and so follows [`Row::capability`].
+    pub metrics: MetricsMask,
     run: RunFn,
-    /// The comparators this row admits, by name, first one the default. Every
-    /// entry is checked by the compiler: a calculator the row's capabilities
-    /// cannot satisfy will not build, so the table cannot offer a comparison
-    /// the row could not answer.
-    comparators: Comparators,
+    /// The comparator this row is scored by, by the name `--comparator` selects
+    /// it with; `None` for a row nothing scores.
+    ///
+    /// One name, not a list: a row has exactly one runner, and a sketch with a
+    /// second capability is registered as a second row — `docs/sketch-bench.md`
+    /// line 38. When a statistic grows a second comparator, that is a second
+    /// row too.
+    comparator: Option<&'static str>,
 }
 
 // ---------- how a row builds its ground truth ----------
@@ -95,39 +103,46 @@ pub struct Row {
 /// A [`GroundTruth`] that constructs itself from the run's accuracy knobs and the
 /// row's params. A trait, not a `fn` argument, so the calculator is named as a
 /// *type* in [`ROWS`] and the row stays `const`.
-trait GroundTruthCalculator<S: Accumulator>: GroundTruth<S> {
+pub(crate) trait GroundTruthCalculator<I>: GroundTruth<I> {
     /// The name `--comparator` selects this one by. One capability can carry
     /// several comparators, and this is what tells them apart on the command
     /// line.
     const NAME: &'static str;
+    /// The statistic this comparator scores. Two comparators can share one —
+    /// a quantile answer scores as a rank error or as a relative error — which
+    /// is why the capability is named here and not derived from the name.
+    const CAPABILITY: Capability;
     fn build(params: &ParamSet) -> Self;
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for CardinalityGT
+impl<I> GroundTruthCalculator<I> for CardinalityGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "cardinality";
+    const CAPABILITY: Capability = Capability::Cardinality;
     fn build(_params: &ParamSet) -> Self {
         CardinalityGT
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for FrequencyGT
+impl<I> GroundTruthCalculator<I> for FrequencyGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "frequency";
+    const CAPABILITY: Capability = Capability::Frequency;
     fn build(_params: &ParamSet) -> Self {
         FrequencyGT
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopFrequencyGT
+impl<I> GroundTruthCalculator<I> for SubpopFrequencyGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "subpop-frequency";
+    const CAPABILITY: Capability = Capability::SubpopFrequency;
     /// Scores column 0. A grouped sketch stores every column subset, but each
     /// one is its own population with its own error, so a comparator names the
     /// one it scores instead of pooling them.
@@ -138,11 +153,12 @@ where
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopCardinalityGT
+impl<I> GroundTruthCalculator<I> for SubpopCardinalityGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "subpop-cardinality";
+    const CAPABILITY: Capability = Capability::SubpopCardinality;
     /// Column 0, for the same reason as [`SubpopFrequencyGT`].
     fn build(_params: &ParamSet) -> Self {
         SubpopCardinalityGT {
@@ -151,11 +167,12 @@ where
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for SubpopRankErrorGT
+impl<I> GroundTruthCalculator<I> for SubpopRankErrorGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "subpop-rank-error";
+    const CAPABILITY: Capability = Capability::SubpopQuantile;
     /// Column 0, for the same reason as [`SubpopFrequencyGT`]. The most
     /// expensive comparator in the catalog: 101 estimate calls per group.
     fn build(_params: &ParamSet) -> Self {
@@ -165,113 +182,109 @@ where
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for RankErrorGT
+impl<I> GroundTruthCalculator<I> for RankErrorGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "rank-error";
+    const CAPABILITY: Capability = Capability::Quantile;
     fn build(_params: &ParamSet) -> Self {
         RankErrorGT {
         }
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for RelativeErrorGT
+impl<I> GroundTruthCalculator<I> for RelativeErrorGT
 where
-    Self: GroundTruth<S>,
+    Self: GroundTruth<I>,
 {
     const NAME: &'static str = "relative-error";
+    const CAPABILITY: Capability = Capability::Quantile;
     fn build(_params: &ParamSet) -> Self {
         RelativeErrorGT {
         }
     }
 }
 
-impl<S: Accumulator> GroundTruthCalculator<S> for TopkGT
-where
-    Self: GroundTruth<S>,
-{
-    const NAME: &'static str = "topk";
-    /// Scores against the same `k` the sketch was built with — a different prefix
-    /// would measure the mismatch, not the sketch. Infallible because the timed
-    /// half runs first, so an unreadable `k` has already failed the build.
-    fn build(params: &ParamSet) -> Self {
-        TopkGT {
-            k: params
-                .parse::<TopkParams>()
-                .expect("the row built, so its params parse")
-                .k,
-        }
-    }
-}
+// `TopkGT` has no calculator here because no row binds the top-k capability
+// any more. Core still carries the comparator and `TopKOps`; restoring a
+// heavy-hitter row means restoring this impl, which reads `k` off the row's
+// params so the score uses the same prefix the sketch was built with.
 
 // ---------- the ways a row runs ----------
 
 /// Every square the request selects, scored against `G` where one needs it.
-fn run_scored<S, G>(
+pub(crate) fn run_scored<S, I, G, Ins>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     _width: Numeric,
+    insert: Ins,
+    ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruthCalculator<S>,
+    S: InitSketch + BenchImpl + MemoryFootprint,
+    I: BenchItem,
+    G: GroundTruthCalculator<I>,
+    Ins: FnMut(&mut S, &I),
 {
     // A comparator is built when the request reaches a square that cannot run
     // without one. Nobody has to ask for it: needing one is a property of the
     // squares selected, not a separate decision.
     let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(params));
-    Ok(cell::run_cell::<S, G>(cfg, spec, params, gt.as_ref())?)
+    Ok(cell::run_cell::<S, I, G, Ins>(cfg, data, params, gt.as_ref(), insert, ops)?)
 }
 
 /// An ordered quantile algorithm (KLL, DDSketch): the row names both widths and
 /// the caller's [`Numeric`] picks one. The only place a runtime value still
 /// selects an item type.
-fn run_ordered<Si, Sf, G>(
+#[allow(clippy::type_complexity)]
+pub(crate) fn run_ordered<Si, Sf, G, InsI, InsF>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    insert_i: InsI,
+    ops_i: &SketchOps<Si, i64, <G as GroundTruth<i64>>::Probe, <G as GroundTruth<i64>>::Answer>,
+    insert_f: InsF,
+    ops_f: &SketchOps<Sf, f64, <G as GroundTruth<f64>>::Probe, <G as GroundTruth<f64>>::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
+    Si: InitSketch + BenchImpl + MemoryFootprint,
+    Sf: InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<i64> + GroundTruthCalculator<f64>,
+    InsI: FnMut(&mut Si, &i64),
+    InsF: FnMut(&mut Sf, &f64),
 {
+    // Two op sets because the two halves are two types. The wrapper file writes
+    // one generic `ops::<T>()` and instantiates it at each width.
     match width {
-        Numeric::I64 => run_scored::<Si, G>(cfg, spec, params, width),
-        Numeric::F64 => run_scored::<Sf, G>(cfg, spec, params, width),
+        Numeric::I64 => run_scored::<Si, i64, G, _>(cfg, data, params, width, insert_i, ops_i),
+        Numeric::F64 => run_scored::<Sf, f64, G, _>(cfg, data, params, width, insert_f, ops_f),
     }
 }
 
-/// A row with no query capability: timed only, no ground truth, nothing to score.
-fn run_plain<S>(
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    _width: Numeric,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    cell::run_cell::<S, NoGT>(cfg, spec, params, None)
-}
+// A timed-only runner (`run_cell::<S, NoGT>` with no ground truth) lived here
+// for the rows that answered no query — elastic, nitro, univmon. All three are
+// out of the catalog, so the only capability-less rows left are the parallel
+// ones below, which have their own runner. Restore it with the first row that
+// is measured but not scored.
 
 /// A parallel-insert row: built with the worker count, so not an `InitSketch`.
-fn run_parallel<S>(
+pub(crate) fn run_parallel<S, I, Ins>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     _width: Numeric,
+    insert: Ins,
+    ops: &SketchOps<S, I, (), ()>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
+    I: BenchItem,
+    Ins: FnMut(&mut S, &I),
 {
-    cell::run_cell_parallel::<S, NoGT>(cfg, spec, params, None)
+    cell::run_cell_parallel::<S, I, NoGT, Ins>(cfg, data, params, None, insert, ops)
 }
 
 /// A row whose `(rows, cols)` selects a *type* rather than sizing a field.
@@ -288,14 +301,14 @@ where
 /// a form the compiler accepts, and [`FrequencyGT`] follows from it.
 fn run_fixed_matrix<W: FixedMatrixRow>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
 ) -> Result<Vec<BenchReport>, RunError> {
     let (rows, cols) = W::shape(params)?;
     let visitor = RunFixedMatrix::<W> {
         cfg,
-        spec,
+        data,
         params,
         width,
         _row: std::marker::PhantomData,
@@ -314,6 +327,13 @@ fn run_fixed_matrix<W: FixedMatrixRow>(
 /// Implemented once per sketch type, in the wrapper that owns it.
 pub trait FixedMatrixRow {
     const ALGORITHM: &'static str;
+    /// What the row answers. Every shape of a fixed-matrix row answers the same
+    /// statistic, so this belongs on the shape-independent half.
+    const CAPABILITY: Capability;
+    /// Same two facts `BenchImpl` carries, restated here because the sketch type
+    /// is a GAT — there is no one `Self::At<M>` a `const` could read them off.
+    const SUPPORTS_MERGE: bool = false;
+    const SUPPORTS_PREPARE: bool = false;
     /// The row's concrete type at storage `M`, which is what actually runs.
     type At<
         M: MatrixStorage<Counter = i32>
@@ -321,18 +341,38 @@ pub trait FixedMatrixRow {
             + Default
             + Clone
             + 'static,
-    >: Accumulator<Item = i64>
-        + InitSketch
-        + BenchImpl
-        + MemoryFootprint
-        + FrequencyOps<Key = i64>;
+    >: InitSketch + BenchImpl + MemoryFootprint;
     fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
+
+    /// How this row is driven, at whichever shape the config selected.
+    ///
+    /// Every other row states this as a `const SketchOps` in its wrapper file.
+    /// This one cannot: its sketch type is a GAT, so there is no single type a
+    /// `const` could be written against — the same reason `FixedMatrixVisitor`
+    /// is a trait and not a closure. A generic method returning the ops is the
+    /// stand-in, and the bodies still live in the wrapper file.
+    /// The hot one, generic so it monomorphises — see `SketchOps`.
+    fn insert<M>(sketch: &mut Self::At<M>, v: &i64)
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static;
+
+    fn ops<M>() -> SketchOps<Self::At<M>, i64, i64, u64>
+    where
+        M: MatrixStorage<Counter = i32>
+            + FastPathHasher<DefaultXxHasher>
+            + Default
+            + Clone
+            + 'static;
 }
 
 /// Carries the run's arguments into the monomorphisation the shape selected.
 struct RunFixedMatrix<'a, W> {
     cfg: &'a BenchConfig,
-    spec: &'a WorkloadSpec,
+    data: WorkloadData,
     params: &'a ParamSet,
     width: Numeric,
     _row: std::marker::PhantomData<W>,
@@ -349,7 +389,14 @@ impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, 
             + Clone
             + 'static,
     {
-        run_scored::<W::At<M>, FrequencyGT>(self.cfg, self.spec, self.params, self.width)
+        run_scored::<W::At<M>, i64, FrequencyGT, _>(
+            self.cfg,
+            self.data,
+            self.params,
+            self.width,
+            W::insert::<M>,
+            &W::ops::<M>(),
+        )
     }
 }
 
@@ -359,23 +406,33 @@ impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, 
 /// back into one. Same shape as [`run_ordered`], and for the same reason: an
 /// enum inside the wrapper would put a branch in `update`, on rows whose whole
 /// purpose is to price that insert.
-fn run_lib_hll<S12, S14, S16, G>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_lib_hll<S12, S14, S16, G, I12, I14, I16>(
     cfg: &BenchConfig,
-    spec: &WorkloadSpec,
+    data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    insert12: I12,
+    ops12: &SketchOps<S12, i64, G::Probe, G::Answer>,
+    insert14: I14,
+    ops14: &SketchOps<S14, i64, G::Probe, G::Answer>,
+    insert16: I16,
+    ops16: &SketchOps<S16, i64, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+    S12: InitSketch + BenchImpl + MemoryFootprint,
+    S14: InitSketch + BenchImpl + MemoryFootprint,
+    S16: InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<i64>,
+    I12: FnMut(&mut S12, &i64),
+    I14: FnMut(&mut S14, &i64),
+    I16: FnMut(&mut S16, &i64),
 {
     let p: HllParams = params.parse().map_err(BuildError::from)?;
     match p.lg_k {
-        12 => run_scored::<S12, G>(cfg, spec, params, width),
-        14 => run_scored::<S14, G>(cfg, spec, params, width),
-        16 => run_scored::<S16, G>(cfg, spec, params, width),
+        12 => run_scored::<S12, i64, G, _>(cfg, data, params, width, insert12, ops12),
+        14 => run_scored::<S14, i64, G, _>(cfg, data, params, width, insert14, ops14),
+        16 => run_scored::<S16, i64, G, _>(cfg, data, params, width, insert16, ops16),
         other => Err(RunError::Build(hll::unsupported_precision(other))),
     }
 }
@@ -385,11 +442,58 @@ where
 // `scores_accuracy`. `const fn`, so `ROWS` stays `const` and a bad row fails at
 // compile time.
 
-const fn scored<S, G>(description: &'static str) -> Row
+// ---------- deriving what a row supports ----------
+//
+// Both take the two `SUPPORTS_*` facts as plain bools rather than a type
+// parameter, because a fixed-matrix row states them on `FixedMatrixRow` (its
+// sketch type is a GAT) while every other row states them on `BenchImpl`. One
+// pair of helpers then serves both.
+
+/// The operations a *scored* row admits. Insert and query always — it has a
+/// comparator, so there is something to query — plus whichever of merge and
+/// prepare the impl declares.
+const fn scored_ops(supports_merge: bool, supports_prepare: bool) -> OperationMask {
+    let mut bits = OperationMask::INSERT.bits() | OperationMask::QUERY.bits();
+    if supports_merge {
+        bits |= OperationMask::MERGE.bits();
+    }
+    if supports_prepare {
+        bits |= OperationMask::PREPARE.bits();
+    }
+    OperationMask::from_bits_truncate(bits)
+}
+
+/// The operations an *unscored* row admits: the same, minus query. Nothing
+/// builds a ground truth for it, so the query squares have nothing to issue.
+const fn unscored_ops(supports_merge: bool, supports_prepare: bool) -> OperationMask {
+    let mut bits = OperationMask::INSERT.bits();
+    if supports_merge {
+        bits |= OperationMask::MERGE.bits();
+    }
+    if supports_prepare {
+        bits |= OperationMask::PREPARE.bits();
+    }
+    OperationMask::from_bits_truncate(bits)
+}
+
+/// Every metric a row can carry. The four timing and footprint bits hold of any
+/// row; accuracy needs a comparator, so it follows `scores`.
+const fn row_metrics(scores: bool) -> MetricsMask {
+    let mut bits = MetricsMask::THROUGHPUT.bits()
+        | MetricsMask::LATENCY.bits()
+        | MetricsMask::CPU.bits()
+        | MetricsMask::MEMORY.bits();
+    if scores {
+        bits |= MetricsMask::ACCURACY.bits();
+    }
+    MetricsMask::from_bits_truncate(bits)
+}
+
+const fn scored<S, I, G>(description: &'static str, run: RunFn) -> Row
 where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-    G: GroundTruthCalculator<S>,
+    S: InitSketch + BenchImpl + MemoryFootprint,
+    I: BenchItem,
+    G: GroundTruthCalculator<I>,
 {
     Row {
         family: S::FAMILY,
@@ -398,18 +502,21 @@ where
         description,
         scores_accuracy: true,
         picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        value_type: <S::Item as BenchItem>::DATA_TYPE,
-        run: run_scored::<S, G>,
-        comparators: &[(G::NAME, run_scored::<S, G>)],
+        takes_columns: <I as BenchItem>::TAKES_COLUMNS,
+        value_type: <I as BenchItem>::DATA_TYPE,
+        capability: G::CAPABILITY,
+        operations: scored_ops(S::SUPPORTS_MERGE, S::SUPPORTS_PREPARE),
+        metrics: row_metrics(true),
+        run,
+        comparator: Some(G::NAME),
     }
 }
 
-const fn ordered<Si, Sf, G>(description: &'static str) -> Row
+const fn ordered<Si, Sf, G>(description: &'static str, run: RunFn) -> Row
 where
-    Si: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    Sf: Accumulator<Item = f64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<Si> + GroundTruthCalculator<Sf>,
+    Si: InitSketch + BenchImpl + MemoryFootprint,
+    Sf: InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<i64> + GroundTruthCalculator<f64>,
 {
     Row {
         // Both halves are the same row; the i64 one names it.
@@ -419,25 +526,25 @@ where
         description,
         scores_accuracy: true,
         picks_width: true,
-        takes_columns: <Si::Item as BenchItem>::TAKES_COLUMNS,
-        value_type: <Si::Item as BenchItem>::DATA_TYPE,
-        run: run_ordered::<Si, Sf, G>,
-        comparators: &[(
-            <G as GroundTruthCalculator<Si>>::NAME,
-            run_ordered::<Si, Sf, G>,
-        )],
+        takes_columns: <i64 as BenchItem>::TAKES_COLUMNS,
+        value_type: <i64 as BenchItem>::DATA_TYPE,
+        capability: <G as GroundTruthCalculator<i64>>::CAPABILITY,
+        operations: scored_ops(Si::SUPPORTS_MERGE, Si::SUPPORTS_PREPARE),
+        metrics: row_metrics(true),
+        run,
+        comparator: Some(<G as GroundTruthCalculator<i64>>::NAME),
     }
 }
 
 /// The three precisions are one row: they are one algorithm at one impl, and
 /// `lg_k` is the knob that moves between them. `S14` names the row, the way the
 /// `i64` half names an [`ordered`] one.
-const fn lib_hll<S12, S14, S16, G>(description: &'static str) -> Row
+const fn lib_hll<S12, S14, S16, G>(description: &'static str, run: RunFn) -> Row
 where
-    S12: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S14: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    S16: Accumulator<Item = i64> + InitSketch + BenchImpl + MemoryFootprint,
-    G: GroundTruthCalculator<S12> + GroundTruthCalculator<S14> + GroundTruthCalculator<S16>,
+    S12: InitSketch + BenchImpl + MemoryFootprint,
+    S14: InitSketch + BenchImpl + MemoryFootprint,
+    S16: InitSketch + BenchImpl + MemoryFootprint,
+    G: GroundTruthCalculator<i64>,
 {
     Row {
         family: S14::FAMILY,
@@ -446,13 +553,13 @@ where
         description,
         scores_accuracy: true,
         picks_width: false,
-        takes_columns: <S14::Item as BenchItem>::TAKES_COLUMNS,
-        value_type: <S14::Item as BenchItem>::DATA_TYPE,
-        run: run_lib_hll::<S12, S14, S16, G>,
-        comparators: &[(
-            <G as GroundTruthCalculator<S12>>::NAME,
-            run_lib_hll::<S12, S14, S16, G>,
-        )],
+        takes_columns: <i64 as BenchItem>::TAKES_COLUMNS,
+        value_type: <i64 as BenchItem>::DATA_TYPE,
+        capability: <G as GroundTruthCalculator<i64>>::CAPABILITY,
+        operations: scored_ops(S14::SUPPORTS_MERGE, S14::SUPPORTS_PREPARE),
+        metrics: row_metrics(true),
+        run,
+        comparator: Some(<G as GroundTruthCalculator<i64>>::NAME),
     }
 }
 
@@ -462,6 +569,7 @@ where
 const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
     description: &'static str,
 ) -> Row {
+    let run: RunFn = run_fixed_matrix::<W>;
     Row {
         family: P::FAMILY,
         algorithm: W::ALGORITHM,
@@ -471,37 +579,19 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
         picks_width: false,
         takes_columns: false,
         value_type: "i64",
-        run: run_fixed_matrix::<W>,
-        // The fixed-matrix rows carry their comparator inside the generated
-        // dispatch, so there is no calculator type here to name.
-        comparators: &[],
+        capability: W::CAPABILITY,
+        operations: scored_ops(W::SUPPORTS_MERGE, W::SUPPORTS_PREPARE),
+        metrics: row_metrics(true),
+        run,
+        // Its comparator is fixed inside the shape dispatch.
+        comparator: Some("frequency"),
     }
 }
 
-const fn plain<S>(description: &'static str) -> Row
-where
-    S: Accumulator + InitSketch + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
-{
-    Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
-        description,
-        scores_accuracy: false,
-        picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        value_type: <S::Item as BenchItem>::DATA_TYPE,
-        run: run_plain::<S>,
-        // Answers no query, so nothing scores it.
-        comparators: &[],
-    }
-}
-
-const fn parallel_row<S>(description: &'static str) -> Row
+const fn parallel_row<S, I>(description: &'static str, run: RunFn) -> Row
 where
     S: ParallelInit + BenchImpl + MemoryFootprint,
-    S::Item: BenchItem,
+    I: BenchItem,
 {
     Row {
         family: S::FAMILY,
@@ -510,121 +600,174 @@ where
         description,
         scores_accuracy: false,
         picks_width: false,
-        takes_columns: <S::Item as BenchItem>::TAKES_COLUMNS,
-        value_type: <S::Item as BenchItem>::DATA_TYPE,
-        run: run_parallel::<S>,
-        comparators: &[],
+        takes_columns: <I as BenchItem>::TAKES_COLUMNS,
+        value_type: <I as BenchItem>::DATA_TYPE,
+        capability: Capability::None,
+        operations: unscored_ops(S::SUPPORTS_MERGE, S::SUPPORTS_PREPARE),
+        metrics: row_metrics(false),
+        run,
+        comparator: None,
     }
 }
+
 
 // ---------- the catalog ----------
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
 /// the wrapper it names; nothing else in this file changes.
 pub const ROWS: &[Row] = &[
+    // Each row names a `run_*` function in the wrapper file that owns the
+    // sketch. That function states the sketch's `SketchOps` — how it is built,
+    // fed, folded, finalised and asked — in its own terms. Nothing here forces
+    // two rows to agree on any of it; the table only records what exists.
+
     // -------- HLL (cardinality) --------
-    scored::<hll::HllOxide, CardinalityGT>("sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)"),
-    scored::<hll::HllDatasketches, CardinalityGT>("datasketches::hll::HllSketch (Hll8)"),
+    scored::<hll::HllOxide, i64, CardinalityGT>(
+        "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
+        hll::run_oxide,
+    ),
+    scored::<hll::HllDatasketches, i64, CardinalityGT>(
+        "datasketches::hll::HllSketch (Hll8)",
+        hll::run_datasketches,
+    ),
     lib_hll::<
         hll::HllLib<HllBucketListP12>,
         hll::HllLib<HllBucketListP14>,
         hll::HllLib<HllBucketListP16>,
         CardinalityGT,
-    >("asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}"),
-    scored::<polars::PolarsCardinality, CardinalityGT>("polars exact: DataFrame.n_unique()"),
+    >(
+        "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
+        hll::run_lib,
+    ),
+    scored::<polars::PolarsCardinality, i64, CardinalityGT>(
+        "polars exact: DataFrame.n_unique()",
+        polars::run_cardinality,
+    ),
     // -------- HLL, HIP estimator --------
     // Its own algorithm: the estimate is maintained on the insert path instead
-    // of scanned at query time, so it is different arithmetic and a different
-    // number, not a different implementation of one number.
+    // of scanned at query time. It also supplies no `merge`, which its
+    // `SketchOps` states as `None`.
     lib_hll::<
         hll::HllLibHip<HllBucketListP12>,
         hll::HllLibHip<HllBucketListP14>,
         hll::HllLibHip<HllBucketListP16>,
         CardinalityGT,
-    >("asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}"),
+    >(
+        "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
+        hll::run_lib_hip,
+    ),
     // -------- HLL, parallel insert --------
-    parallel_row::<parallel::ParallelHllFastPath>("asap HLL ErtlMLE, FastPath, parallel insert"),
+    parallel_row::<parallel::ParallelHllFastPath, i64>(
+        "asap HLL ErtlMLE, FastPath, parallel insert",
+        parallel::run_hll,
+    ),
     // -------- KLL (quantile, rank error) --------
-    // Two query paths × two libraries. The paths answer differently, so the path
-    // names the algorithm and each algorithm holds the two libraries against
-    // each other. One row per library would have compared libraries and query
-    // strategies in the same column.
+    // Two query paths x two libraries. The `cdf` rows supply a `prepare` and the
+    // per-call rows do not — that difference is the whole point of the split,
+    // and it is now visible in the ops rather than hidden in a trait default.
     ordered::<kll::KllOxidePerCall<i64>, kll::KllOxidePerCall<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: quantile() per call",
+        kll::run_oxide_percall,
     ),
     ordered::<kll::KllLibPerCall<i64>, kll::KllLibPerCall<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
+        kll::run_lib_percall,
     ),
     ordered::<kll::KllOxideCdf<i64>, kll::KllOxideCdf<f64>, RankErrorGT>(
         "sketch_oxide KllSketch: cdf() built in prepare",
+        kll::run_oxide_cdf,
     ),
     ordered::<kll::KllLibCdf<i64>, kll::KllLibCdf<f64>, RankErrorGT>(
         "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
+        kll::run_lib_cdf,
     ),
-    scored::<polars::PolarsQuantileKll, RankErrorGT>("polars exact: 101-point quantile grid"),
+    scored::<polars::PolarsQuantileKll, i64, RankErrorGT>(
+        "polars exact: 101-point quantile grid",
+        polars::run_quantile_kll,
+    ),
     // -------- CMS (frequency) --------
-    scored::<cms::CmsOxide, FrequencyGT>("sketch_oxide::frequency::CountMinSketch"),
-    scored::<cms::CmsDatasketches, FrequencyGT>("datasketches::countmin::CountMinSketch"),
-    scored::<polars::PolarsFrequencyCms, FrequencyGT>("polars exact: group_by(v).agg(len)"),
+    scored::<cms::CmsOxide, i64, FrequencyGT>(
+        "sketch_oxide::frequency::CountMinSketch",
+        cms::run_oxide,
+    ),
+    scored::<cms::CmsDatasketches, i64, FrequencyGT>(
+        "datasketches::countmin::CountMinSketch",
+        cms::run_datasketches,
+    ),
+    scored::<polars::PolarsFrequencyCms, i64, FrequencyGT>(
+        "polars exact: group_by(v).agg(len)",
+        polars::run_frequency_cms,
+    ),
+    // The one row whose ops cannot be a `const`: its sketch type is a GAT, so
+    // they come from `FixedMatrixRow::ops::<M>()` instead.
     fixed_matrix_row::<cms::CmsFixedMatrixRow, crate::params::CmsParams>(
         "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<cms::CmsLibVector2dFast, FrequencyGT>("asap CMS, Vector2D, FastPath"),
-    scored::<cms::CmsLibVector2dRegular, FrequencyGT>("asap CMS, Vector2D, RegularPath"),
-    parallel_row::<parallel::ParallelCmsFastPath>("asap CMS, FastPath, parallel insert on M5x32K"),
+    scored::<cms::CmsLibVector2dFast, i64, FrequencyGT>(
+        "asap CMS, Vector2D, FastPath",
+        cms::run_vector2d_fast,
+    ),
+    scored::<cms::CmsLibVector2dRegular, i64, FrequencyGT>(
+        "asap CMS, Vector2D, RegularPath",
+        cms::run_vector2d_regular,
+    ),
+    parallel_row::<parallel::ParallelCmsFastPath, i64>(
+        "asap CMS, FastPath, parallel insert on M5x32K",
+        parallel::run_cms,
+    ),
     // -------- CountSketch (frequency) --------
-    scored::<countsketch::CsOxide, FrequencyGT>("sketch_oxide::frequency::CountSketch"),
-    scored::<polars::PolarsFrequencyCs, FrequencyGT>("polars exact: group_by(v).agg(len)"),
+    scored::<countsketch::CsOxide, i64, FrequencyGT>(
+        "sketch_oxide::frequency::CountSketch",
+        countsketch::run_oxide,
+    ),
+    scored::<polars::PolarsFrequencyCs, i64, FrequencyGT>(
+        "polars exact: group_by(v).agg(len)",
+        polars::run_frequency_cs,
+    ),
     fixed_matrix_row::<countsketch::CsFixedMatrixRow, crate::params::CountSketchParams>(
         "asap Count, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<countsketch::CsLibVector2dFast, FrequencyGT>("asap Count, Vector2D, FastPath"),
-    scored::<countsketch::CsLibVector2dRegular, FrequencyGT>("asap Count, Vector2D, RegularPath"),
-    parallel_row::<parallel::ParallelCsFastPath>("asap Count, FastPath, parallel insert on M5x32K"),
-    // -------- DDSketch (quantile, relative error) --------
-    ordered::<dd::DdLib<i64>, dd::DdLib<f64>, RelativeErrorGT>(
-        "asap_sketchlib::DDSketch (relative-error quantile)",
+    scored::<countsketch::CsLibVector2dFast, i64, FrequencyGT>(
+        "asap Count, Vector2D, FastPath",
+        countsketch::run_vector2d_fast,
     ),
-    scored::<polars::PolarsQuantileDd, RelativeErrorGT>("polars exact: 101-point quantile grid"),
-    // -------- Top-k (counter array + size-k candidate tracker) --------
-    scored::<topk::TopKHeap<cms::CmsOxide>, TopkGT>(
-        "sketch_oxide CMS + size-k heap (top-k on the insert path)",
+    scored::<countsketch::CsLibVector2dRegular, i64, FrequencyGT>(
+        "asap Count, Vector2D, RegularPath",
+        countsketch::run_vector2d_regular,
     ),
-    scored::<topk::TopKHeap<countsketch::CsOxide>, TopkGT>(
-        "sketch_oxide CountSketch + size-k heap",
+    parallel_row::<parallel::ParallelCsFastPath, i64>(
+        "asap Count, FastPath, parallel insert on M5x32K",
+        parallel::run_cs,
     ),
-    scored::<polars::PolarsTopK, TopkGT>("polars exact: group_by(v).agg(len) sorted, top k"),
-    // -------- Elastic (heavy-hitter; no query capability, throughput-only) --------
-    plain::<elastic::ElasticLib>("asap_sketchlib::Elastic<DefaultXxHasher>"),
-    plain::<elastic::ElasticOxide>("sketch_oxide::frequency::ElasticSketch"),
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
-    // One algorithm per cell type, because the cell decides which statistic the
-    // grid answers and each is scored by a different comparator. See the module
-    // header in `wrappers/hydra.rs`.
-    scored::<hydra::HydraCms, SubpopFrequencyGT>(
+    // Three rows, three different probe shapes. See `wrappers/hydra.rs`.
+    scored::<hydra::HydraCms, Labeled<i64>, SubpopFrequencyGT>(
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+        hydra::run_cms,
     ),
-    scored::<polars::PolarsSubpopFrequency, SubpopFrequencyGT>(
+    scored::<polars::PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT>(
         "polars exact: group_by(subset, v).agg(len) over every label subset",
+        polars::run_subpop_frequency,
     ),
-    scored::<hydra::HydraHll, SubpopCardinalityGT>(
+    scored::<hydra::HydraHll, Labeled<i64>, SubpopCardinalityGT>(
         "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
+        hydra::run_hll,
     ),
-    scored::<polars::PolarsSubpopCardinality, SubpopCardinalityGT>(
+    scored::<polars::PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT>(
         "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
+        polars::run_subpop_cardinality,
     ),
-    scored::<hydra::HydraKll, SubpopRankErrorGT>(
+    scored::<hydra::HydraKll, Labeled<f64>, SubpopRankErrorGT>(
         "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+        hydra::run_kll,
     ),
-    scored::<polars::PolarsSubpopQuantile, SubpopRankErrorGT>(
+    scored::<polars::PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT>(
         "polars exact: sorted values per label subset, quantile by rank",
+        polars::run_subpop_quantile,
     ),
-    // -------- Nitro / UnivMon (no query capability; throughput-only) --------
-    plain::<nitro::NitroLib>("asap_sketchlib::NitroBatch<Vector2D<u32>>"),
-    plain::<nitro::NitroOxide>("sketch_oxide::frequency::NitroSketch<CountMinSketch>"),
-    plain::<univmon::UnivMonLib>("asap_sketchlib::UnivMon"),
-    plain::<univmon::UnivMonOxide>("sketch_oxide::universal::UnivMon"),
 ];
+
+
 
 // ---------- what the frontend asks ----------
 
@@ -693,70 +836,287 @@ pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet> {
     ParamSet::single(algorithm, spec).map_err(Into::into)
 }
 
-/// Resolve `(algorithm, impl)` to a concrete measurement and run it. The timed
-/// half is always run; the accuracy half only when `acc.enabled`.
-pub fn run(
-    algorithm: &str,
-    impl_name: &str,
-    cfg: &BenchConfig,
-    spec: &WorkloadSpec,
-    params: &ParamSet,
-    width: Numeric,
-    comparator: Option<&str>,
-) -> Result<Vec<BenchReport>> {
-    let row = find(algorithm, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))?;
-    // Asked for a width this row's type cannot be built at — answerable from
-    // the catalog, before a single item is generated.
-    if width == Numeric::F64 && !row.picks_width {
-        anyhow::bail!("{algorithm}/{impl_name} runs over i64 only; drop --dtype f64");
-    }
-    // A named comparator has to be one this row admits. Refused from the
-    // catalog, by name, before anything is generated — the same rule the rest
-    // of the selectors follow.
-    let run = match comparator {
-        None => row.run,
-        Some(name) => row
-            .comparators
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, f)| *f)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{algorithm}/{impl_name} has no comparator '{name}'; it admits {}",
-                    comparators_of(row)
+/// Why a request cannot run. Every variant names the row and what about the
+/// request it could not honour, because the whole value of answering here is
+/// that the answer arrives before a workload is generated.
+#[derive(Debug)]
+pub enum ResolveError {
+    UnknownAlgorithm(String),
+    UnknownImpl { algorithm: String, impl_name: String },
+    /// A width the row's item type cannot be built at.
+    WidthUnsupported { algorithm: String, impl_name: String },
+    /// An operation this row does not have — no merge, or no prepare.
+    OperationUnsupported {
+        algorithm: String,
+        impl_name: String,
+        operation: &'static str,
+        admits: String,
+    },
+    /// A metric this row cannot carry — accuracy on a row nothing scores.
+    MetricUnsupported {
+        algorithm: String,
+        impl_name: String,
+        metric: &'static str,
+        capability: &'static str,
+    },
+    /// A square that no row could fill, because the framework measures nothing
+    /// there. Distinct from the two above: this is not about the row.
+    NothingMeasuresIt {
+        operation: &'static str,
+        metric: &'static str,
+    },
+    UnknownComparator {
+        algorithm: String,
+        impl_name: String,
+        name: String,
+        admits: String,
+    },
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::UnknownAlgorithm(a) => write!(f, "unknown sketch algorithm: {a}"),
+            ResolveError::UnknownImpl { algorithm, impl_name } => {
+                write!(f, "no impl '{impl_name}' for algorithm '{algorithm}'")
+            }
+            ResolveError::WidthUnsupported { algorithm, impl_name } => {
+                write!(f, "{algorithm}/{impl_name} runs over i64 only; drop --dtype f64")
+            }
+            ResolveError::OperationUnsupported { algorithm, impl_name, operation, admits } => {
+                write!(
+                    f,
+                    "{algorithm}/{impl_name} has no {operation}; it can be measured over {admits}"
                 )
-            })?,
-    };
-    Ok(run(cfg, spec, params, width)?)
+            }
+            ResolveError::MetricUnsupported { algorithm, impl_name, metric, capability } => {
+                write!(
+                    f,
+                    "{algorithm}/{impl_name} answers no statistic (capability {capability}), \
+                     so nothing can score its {metric}"
+                )
+            }
+            ResolveError::NothingMeasuresIt { operation, metric } => {
+                write!(f, "nothing measures the {metric} of {operation}, for any sketch")
+            }
+            ResolveError::UnknownComparator { algorithm, impl_name, name, admits } => {
+                write!(
+                    f,
+                    "{algorithm}/{impl_name} has no comparator '{name}'; it admits {admits}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
+/// A resolved request: the one thing left to do is run it.
+///
+/// Deliberately *not* called a closure. It is a `fn` pointer plus the few facts
+/// a caller needs before it can generate a workload — a `fn` pointer captures
+/// nothing, so calling this a closure would claim something untrue. The
+/// closures in this design are the per-row `ask` bodies written in [`ROWS`];
+/// this is the handle that selects one.
+///
+/// A `fn` and not a `Box<dyn FnOnce>` because it is called **once** per
+/// process, so boxing buys nothing, and staying a `fn` keeps the table
+/// `const`-constructible. Everything the pointer reaches is monomorphised: the
+/// erasure happens here, at the crate boundary, outside anything timed.
+///
+/// `Debug` prints the row it resolved to, not the pointer — a `fn` address says
+/// nothing to a reader, and this is what shows up when a test unwraps the wrong
+/// way round.
+pub struct ResolvedRow<F> {
+    /// The closure that runs this request. Built by [`resolve`], which captures
+    /// the row's monomorphic runner and the width the request resolved at, so a
+    /// caller supplies only what it owns: the config, the data it generated,
+    /// and the params.
+    ///
+    /// `impl Fn`, not `Box<dyn Fn>` — the type is known statically, so there is
+    /// no allocation and no dynamic dispatch anywhere in the chain.
+    pub run: F,
+    /// The `data_type` the caller has to generate this row's value column at.
+    /// The reason resolution comes first: only the row knows its item type, so
+    /// a caller cannot generate a workload until it has asked.
+    pub value_type: &'static str,
+    /// Whether this row ingests labelled records, and so needs a multi-column
+    /// description rather than a single-column one.
+    pub takes_columns: bool,
+    /// The family this row belongs to, for the record's `family` field.
+    pub family: &'static str,
+}
+
+impl<F> std::fmt::Debug for ResolvedRow<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedRow")
+            .field("family", &self.family)
+            .field("value_type", &self.value_type)
+            .field("takes_columns", &self.takes_columns)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Can this request run, and if so how?
+///
+/// `Ok(Some(closure))` — it can; call it. `Ok(None)` — the request selected no
+/// squares at all (an empty mask on either axis), which is legal and produces
+/// no records. `Err` — it cannot, and the error says what about the request the
+/// registry could not honour.
+///
+/// Every check here is answerable from the request and the catalog alone, which
+/// is the point: a refusal costs nothing, because it lands before a single item
+/// is generated.
+#[allow(clippy::type_complexity)]
+pub fn resolve(
+    req: &Requirement,
+) -> Result<
+    Option<
+        ResolvedRow<
+            impl Fn(&BenchConfig, WorkloadData, &ParamSet) -> Result<Vec<BenchReport>, RunError>,
+        >,
+    >,
+    ResolveError,
+> {
+    let row = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
+        if algorithm_exists(&req.algorithm) {
+            ResolveError::UnknownImpl {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+            }
+        } else {
+            ResolveError::UnknownAlgorithm(req.algorithm.clone())
+        }
+    })?;
+
+    // A width this row's type cannot be built at.
+    if req.width == Numeric::F64 && !row.picks_width {
+        return Err(ResolveError::WidthUnsupported {
+            algorithm: req.algorithm.clone(),
+            impl_name: req.impl_name.clone(),
+        });
+    }
+
+    // Every square the request selects has to clear two independent bars: the
+    // framework has to measure it at all, and this row has to have it.
+    let squares = cells(req.operations, req.metrics);
+    for cell in &squares {
+        if !is_measurable(*cell) {
+            return Err(ResolveError::NothingMeasuresIt {
+                operation: cell.operation.name(),
+                metric: cell.metric.name(),
+            });
+        }
+    }
+    // Metrics before operations, deliberately. A row nothing scores lacks
+    // accuracy *and* query, so checking operations first would always answer
+    // "no query" and never name the capability that is the actual reason.
+    for (bit, metric) in [
+        (MetricsMask::ACCURACY, "accuracy"),
+        (MetricsMask::THROUGHPUT, "throughput"),
+        (MetricsMask::LATENCY, "latency"),
+    ] {
+        if req.metrics.contains(bit) && !row.metrics.contains(bit) {
+            return Err(ResolveError::MetricUnsupported {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                metric,
+                capability: row.capability.name(),
+            });
+        }
+    }
+    for (bit, operation) in [
+        (OperationMask::INSERT, "insert"),
+        (OperationMask::QUERY, "query"),
+        (OperationMask::MERGE, "merge"),
+        (OperationMask::PREPARE, "prepare"),
+    ] {
+        if req.operations.contains(bit) && !row.operations.contains(bit) {
+            return Err(ResolveError::OperationUnsupported {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                operation,
+                admits: operations_of(row),
+            });
+        }
+    }
+
+    // A named comparator has to be one this row admits.
+    if let Some(name) = req.comparator.as_deref() {
+        if row.comparator != Some(name) {
+            return Err(ResolveError::UnknownComparator {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                name: name.to_string(),
+                admits: comparators_of(row),
+            });
+        }
+    }
+    let run = row.run;
+
+    // Nothing was asked for. Legal, and not an error — the caller gets no
+    // records because it selected no squares, not because anything failed.
+    if squares.is_empty() {
+        return Ok(None);
+    }
+
+    // The closure. It captures `run` — the row's monomorphic runner — and the
+    // width this request resolved at, so the caller supplies only what it
+    // actually owns: the config, the data it generated, and the params.
+    let width = req.width;
+    Ok(Some(ResolvedRow {
+        run: move |cfg: &BenchConfig, data: WorkloadData, params: &ParamSet| {
+            run(cfg, data, params, width)
+        },
+        // At the *requested* width, not the row's default. An `ordered` row is
+        // named by its i64 half, so `row.value_type` is "i64" even when the
+        // request is for f64 — generating from that would hand an i64 column to
+        // an f64 workload. Only a row that states both widths can move here;
+        // every other row was refused above if it was asked for f64.
+        value_type: if row.picks_width {
+            req.width.name()
+        } else {
+            row.value_type
+        },
+        takes_columns: row.takes_columns,
+        family: row.family,
+    }))
+}
+
+/// The operations a row admits, for an error message.
+fn operations_of(row: &Row) -> String {
+    let names: Vec<&str> = [
+        (OperationMask::INSERT, "insert"),
+        (OperationMask::QUERY, "query"),
+        (OperationMask::MERGE, "merge"),
+        (OperationMask::PREPARE, "prepare"),
+    ]
+    .into_iter()
+    .filter(|(b, _)| row.operations.contains(*b))
+    .map(|(_, n)| n)
+    .collect();
+    names.join(", ")
 }
 
 /// The comparator names a row admits, for an error message.
 fn comparators_of(row: &Row) -> String {
-    if row.comparators.is_empty() {
-        return "none".to_string();
-    }
-    row.comparators
-        .iter()
-        .map(|(n, _)| *n)
-        .collect::<Vec<_>>()
-        .join(", ")
+    row.comparator.unwrap_or("none").to_string()
 }
 
 /// Which comparators a row admits. `None` for an unknown row, so a frontend
 /// can tell "no such row" from "that row is scored by nothing".
 pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
-    find(algorithm, impl_name).map(|row| row.comparators.iter().map(|(n, _)| *n).collect())
+    find(algorithm, impl_name).map(|row| row.comparator.into_iter().collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aqpbm_core::cell::WorkloadSpec;
     use aqpbm_core::metrics::{MetricsMask, OperationMask};
     use crate::params::{
-        CmsParams, CountSketchParams, DdParams, ElasticParams, HllParams, HydraCmsParams,
-        HydraHllParams, HydraKllParams, KllParams, NitroParams, SketchParams, TopkParams,
-        UnivMonParams,
+        CmsParams, CountSketchParams, HllParams, HydraCmsParams, HydraHllParams, HydraKllParams,
+        KllParams, SketchParams,
     };
     use std::collections::BTreeSet;
 
@@ -764,21 +1124,16 @@ mod tests {
     /// `canonical()`, tagged with the row's own algorithm. The `panic!` arm is
     /// what makes a newly added family show up here rather than silently
     /// skipping the tests below.
-    fn canonical_params(row: &Row) -> ParamSet {
+    pub(super) fn canonical_params(row: &Row) -> ParamSet {
         let a = row.algorithm;
         match row.family {
             "hll" => ParamSet::of_algorithm(a, &HllParams::canonical()),
             "kll" => ParamSet::of_algorithm(a, &KllParams::canonical()),
             "cms" => ParamSet::of_algorithm(a, &CmsParams::canonical()),
             "countsketch" => ParamSet::of_algorithm(a, &CountSketchParams::canonical()),
-            "dd" => ParamSet::of_algorithm(a, &DdParams::canonical()),
-            "elastic" => ParamSet::of_algorithm(a, &ElasticParams::canonical()),
-            "nitro" => ParamSet::of_algorithm(a, &NitroParams::canonical()),
             "hydra-cms" => ParamSet::of_algorithm(a, &HydraCmsParams::canonical()),
             "hydra-hll" => ParamSet::of_algorithm(a, &HydraHllParams::canonical()),
             "hydra-kll" => ParamSet::of_algorithm(a, &HydraKllParams::canonical()),
-            "topk" => ParamSet::of_algorithm(a, &TopkParams::canonical()),
-            "univmon" => ParamSet::of_algorithm(a, &UnivMonParams::canonical()),
             other => panic!("no canonical params known for family '{other}'"),
         }
     }
@@ -854,7 +1209,7 @@ mod tests {
     /// A small workload spec, enough for any row to build and ingest. The item
     /// type is not named here — `Inline` lets each row materialise at its own
     /// `Accumulator::Item`, which is what the CLI's inline flags do too.
-    fn smoke_spec() -> WorkloadSpec {
+    pub(super) fn smoke_spec() -> WorkloadSpec {
         WorkloadSpec::Inline(aqpbm_core::TableDescription::single(
             "key",
             column(64, 1, "i64"),
@@ -900,7 +1255,7 @@ mod tests {
     }
 
     /// The spec shape `row` can actually ingest.
-    fn spec_for(row: &Row) -> WorkloadSpec {
+    pub(super) fn spec_for(row: &Row) -> WorkloadSpec {
         if row.takes_columns {
             smoke_columns_spec(row.value_type)
         } else {
@@ -908,7 +1263,7 @@ mod tests {
         }
     }
 
-    fn smoke_cfg() -> BenchConfig {
+    pub(super) fn smoke_cfg() -> BenchConfig {
         BenchConfig {
             runs: 1,
             warmup_runs: 0,
@@ -932,15 +1287,31 @@ mod tests {
             // fields, so `empty` builds nothing at all now that the exact
             // baselines parse their config too.
             let params = canonical_params(r);
-            let got = run(
-                r.algorithm,
-                r.impl_name,
-                &cfg,
-                &spec_for(r),
-                &params,
-                Numeric::I64,
-                None,
+            let req = Requirement {
+                algorithm: r.algorithm.to_string(),
+                impl_name: r.impl_name.to_string(),
+                params: params.clone(),
+                operations: cfg.operations,
+                metrics: cfg.metrics,
+                width: Numeric::I64,
+                comparator: None,
+            };
+            // Resolution is separate from execution now, so a row that cannot
+            // be *selected* is a different failure from one that cannot run.
+            let closure = resolve(&req)
+                .unwrap_or_else(|e| panic!("{}/{} will not resolve: {e}", r.algorithm, r.impl_name))
+                .expect("the smoke request selects one square");
+            assert_eq!(
+                closure.family, r.family,
+                "{}/{} resolves to the wrong family",
+                r.algorithm, r.impl_name
             );
+            // Generation now happens here, at the type the row named — the
+            // same order the frontend follows.
+            let data = spec_for(r)
+                .generate_at(closure.value_type)
+                .unwrap_or_else(|e| panic!("{}/{}: {e}", r.algorithm, r.impl_name));
+            let got = (closure.run)(&cfg, data, &params);
             // Fixed-matrix rows refuse an off-shape config (a `RunError::Build`
             // surfaced as an error); every other row runs.
             if let Ok(reports) = &got {
@@ -959,37 +1330,459 @@ mod tests {
         }
     }
 
-    /// An algorithm's rows are only comparable if asked the same question, so they
-    /// must agree on which configs are answerable — one row silently accepting a
-    /// config its peers reject scores a different experiment.
+    // An algorithm's rows are only comparable if asked the same question, so
+    // they must agree on which configs are answerable — one row silently
+    // accepting a config its peers reject scores a different experiment. The
+    // test that pinned this swept the `topk` family and went with it; restore
+    // it against whichever family next has a config knob its rows could
+    // disagree on.
+}
+
+#[cfg(test)]
+mod declared_support_tests {
+    use super::*;
+
+    /// What a row declares has to be what it can actually do, and the failure is
+    /// silent in both directions: under-declaring hides a measurable square from
+    /// the frontend, over-declaring makes it generate a whole workload for one
+    /// that comes back empty. Spot-check the rows whose answers differ.
     #[test]
-    fn topk_rows_accept_and_reject_the_same_configs() {
-        let spec = smoke_spec();
-        let cfg = smoke_cfg();
-        for (cfg_spec, buildable) in [
-            ("rows=5 cols=2048 k=5", true),
-            ("rows=5 cols=2048 kk=5", false), // misspelled `k`
-            ("rows=5 cols=2048 k=0", false),  // a top-k of nothing
-            ("rows=5 cols=2048", false),      // no `k` at all
+    fn rows_declare_the_operations_their_impls_have() {
+        let ops = |a: &str, i: &str| find(a, i).map(|r| r.operations);
+        let has = |a: &str, i: &str, o: OperationMask| ops(a, i).unwrap().contains(o);
+
+        // Every row inserts.
+        for r in ROWS {
+            assert!(
+                r.operations.contains(OperationMask::INSERT),
+                "{}/{} declares no insert",
+                r.algorithm,
+                r.impl_name
+            );
+        }
+
+        // `prepare` is the doc's example of an operation one algorithm has and
+        // most do not: KLL's cdf rows build their lookup there, the per-call
+        // rows have nothing to do.
+        assert!(has("kll-cdf", "oxide", OperationMask::PREPARE));
+        assert!(has("kll-cdf", "lib", OperationMask::PREPARE));
+        assert!(!has("kll-percall", "oxide", OperationMask::PREPARE));
+        assert!(!has("kll-percall", "lib", OperationMask::PREPARE));
+        assert!(!has("cms", "oxide", OperationMask::PREPARE));
+
+        // Merge divides the same family: the oxide and datasketches HLLs fold,
+        // the sketchlib HIP variant does not.
+        assert!(has("cms", "oxide", OperationMask::MERGE));
+        assert!(has("hll", "oxide", OperationMask::MERGE));
+        assert!(has("hll", "lib", OperationMask::MERGE));
+        assert!(!has("hll-hip", "lib", OperationMask::MERGE));
+
+        // A parallel row has no comparator, so nothing issues its queries.
+        assert!(!has("cms-fastpath-fixedmatrix-32k-parallel", "lib", OperationMask::QUERY));
+        assert!(has("cms-fastpath-fixedmatrix-32k-parallel", "lib", OperationMask::PREPARE));
+    }
+
+    /// Accuracy is the one metric that needs a comparator, so it has to track
+    /// the capability rather than being declared beside it.
+    #[test]
+    fn accuracy_is_declared_exactly_where_a_comparator_can_score_it() {
+        for r in ROWS {
+            assert_eq!(
+                r.metrics.contains(MetricsMask::ACCURACY),
+                r.capability.scores(),
+                "{}/{} declares accuracy={} but capability {}",
+                r.algorithm,
+                r.impl_name,
+                r.metrics.contains(MetricsMask::ACCURACY),
+                r.capability.name()
+            );
+            // The two ways of saying the same thing must not disagree.
+            assert_eq!(
+                r.scores_accuracy,
+                r.capability.scores(),
+                "{}/{}: scores_accuracy and capability disagree",
+                r.algorithm,
+                r.impl_name
+            );
+        }
+    }
+
+    /// The capability is what a listing prints and what a comparator binds, so
+    /// each family must land on the statistic it actually answers.
+    #[test]
+    fn every_row_lands_on_the_statistic_its_family_answers() {
+        for (algorithm, want) in [
+            ("hll", Capability::Cardinality),
+            ("hll-hip", Capability::Cardinality),
+            ("kll-cdf", Capability::Quantile),
+            ("kll-percall", Capability::Quantile),
+            ("cms", Capability::Frequency),
+            ("cms-fastpath-fixedmatrix", Capability::Frequency),
+            ("countsketch", Capability::Frequency),
+            ("hydra-cms", Capability::SubpopFrequency),
+            ("hydra-hll", Capability::SubpopCardinality),
+            ("hydra-kll", Capability::SubpopQuantile),
         ] {
-            for r in ROWS.iter().filter(|r| r.family == "topk") {
-                let params = config_point(r.algorithm, cfg_spec).unwrap();
-                let got = run(
+            for r in ROWS.iter().filter(|r| r.algorithm == algorithm) {
+                assert_eq!(
+                    r.capability, want,
+                    "{}/{} answers {}, expected {}",
                     r.algorithm,
                     r.impl_name,
-                    &cfg,
-                    &spec,
-                    &params,
-                    Numeric::I64,
-                    None,
-                );
-                assert_eq!(
-                    got.is_ok(),
-                    buildable,
-                    "topk/{} disagrees with the algorithm on `{cfg_spec}`: {got:?}",
-                    r.impl_name
+                    r.capability.name(),
+                    want.name()
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn req(algorithm: &str, impl_name: &str, ops: OperationMask, metrics: MetricsMask) -> Requirement {
+        Requirement {
+            algorithm: algorithm.to_string(),
+            impl_name: impl_name.to_string(),
+            params: ParamSet::empty(algorithm),
+            operations: ops,
+            metrics,
+            width: Numeric::I64,
+            comparator: None,
+        }
+    }
+
+    /// The doc's own example: `prepare` exists for KLL and is missing from most
+    /// sketches. Asking a row for one it does not have is answered from the
+    /// catalog, by name — no workload is generated to find out.
+    #[test]
+    fn an_operation_a_row_does_not_have_is_refused_by_name() {
+        let bad = resolve(&req(
+            "cms",
+            "oxide",
+            OperationMask::PREPARE,
+            MetricsMask::LATENCY,
+        ))
+        .expect_err("cms/oxide has no prepare");
+        let msg = bad.to_string();
+        assert!(msg.contains("cms/oxide"), "{msg}");
+        assert!(msg.contains("prepare"), "{msg}");
+        // And it says what the row *can* be measured over, so the message is a
+        // recipe rather than a rejection.
+        assert!(msg.contains("insert"), "{msg}");
+
+        // The same request against the row that does have one resolves.
+        assert!(resolve(&req(
+            "kll-cdf",
+            "oxide",
+            OperationMask::PREPARE,
+            MetricsMask::LATENCY,
+        ))
+        .unwrap()
+        .is_some());
+    }
+
+    /// Merge divides one family: the sketchlib HLL folds, its HIP variant does
+    /// not. Both are `hll`-shaped, so only the declaration tells them apart.
+    #[test]
+    fn merge_is_refused_on_the_row_that_cannot_fold() {
+        assert!(resolve(&req(
+            "hll",
+            "lib",
+            OperationMask::MERGE,
+            MetricsMask::THROUGHPUT
+        ))
+        .unwrap()
+        .is_some());
+        let bad = resolve(&req(
+            "hll-hip",
+            "lib",
+            OperationMask::MERGE,
+            MetricsMask::THROUGHPUT,
+        ))
+        .expect_err("hll-hip provides no merge");
+        assert!(bad.to_string().contains("merge"), "{bad}");
+    }
+
+    /// Accuracy needs a comparator. A row nothing scores is refused for it,
+    /// naming the capability that made it so.
+    #[test]
+    fn accuracy_is_refused_on_a_row_no_comparator_scores() {
+        // Accuracy only ever pairs with query — every other square carrying it
+        // is one of the four the framework leaves empty — so this is the only
+        // request that reaches the row-level check at all.
+        let bad = resolve(&req(
+            "cms-fastpath-fixedmatrix-32k-parallel",
+            "lib",
+            OperationMask::QUERY,
+            MetricsMask::ACCURACY,
+        ))
+        .expect_err("a parallel row answers no statistic");
+        let msg = bad.to_string();
+        assert!(msg.contains("none"), "should name the capability: {msg}");
+        assert!(msg.contains("accuracy"), "{msg}");
+
+        // Asked for a *timed* query instead, the refusal is about the missing
+        // operation rather than the missing statistic.
+        let bad = resolve(&req(
+            "cms-fastpath-fixedmatrix-32k-parallel",
+            "lib",
+            OperationMask::QUERY,
+            MetricsMask::THROUGHPUT,
+        ))
+        .expect_err("a parallel row issues no queries");
+        assert!(bad.to_string().contains("query"), "{bad}");
+    }
+
+    /// A square nothing measures for *any* row is a different refusal from one
+    /// a particular row lacks, and says so.
+    #[test]
+    fn a_square_nothing_measures_is_refused_before_the_row_is_consulted() {
+        let bad = resolve(&req(
+            "cms",
+            "oxide",
+            OperationMask::PREPARE,
+            MetricsMask::THROUGHPUT,
+        ))
+        .expect_err("prepare has a latency but no throughput of its own");
+        let msg = bad.to_string();
+        assert!(msg.contains("for any sketch"), "{msg}");
+    }
+
+    /// Unknown names are told apart: a bad algorithm is not a bad impl.
+    #[test]
+    fn unknown_names_are_refused_distinctly() {
+        let ops = OperationMask::INSERT;
+        let m = MetricsMask::THROUGHPUT;
+        assert!(matches!(
+            resolve(&req("nosuch", "oxide", ops, m)),
+            Err(ResolveError::UnknownAlgorithm(_))
+        ));
+        assert!(matches!(
+            resolve(&req("cms", "nosuch", ops, m)),
+            Err(ResolveError::UnknownImpl { .. })
+        ));
+        assert!(matches!(
+            resolve(&req("cms", "oxide", ops, m)).map(|c| c.is_some()),
+            Ok(true)
+        ));
+    }
+
+    /// f64 on a row whose item type is fixed — the check that already ran early,
+    /// now living beside the rest.
+    #[test]
+    fn a_width_the_row_cannot_be_built_at_is_refused() {
+        let mut r = req("cms", "oxide", OperationMask::INSERT, MetricsMask::THROUGHPUT);
+        r.width = Numeric::F64;
+        assert!(matches!(
+            resolve(&r),
+            Err(ResolveError::WidthUnsupported { .. })
+        ));
+        // KLL states both widths, so the same request resolves there.
+        let mut ok = req("kll-percall", "oxide", OperationMask::INSERT, MetricsMask::THROUGHPUT);
+        ok.width = Numeric::F64;
+        assert!(resolve(&ok).unwrap().is_some());
+    }
+
+    /// Selecting nothing is legal and is not an error: `Ok(None)` says the
+    /// request named no squares, which is a different answer from "cannot run".
+    #[test]
+    fn an_empty_request_resolves_to_no_closure_rather_than_an_error() {
+        assert!(resolve(&req("cms", "oxide", OperationMask::empty(), MetricsMask::all()))
+            .unwrap()
+            .is_none());
+        assert!(resolve(&req("cms", "oxide", OperationMask::INSERT, MetricsMask::empty()))
+            .unwrap()
+            .is_none());
+    }
+
+    /// The reason resolution comes before generation: only the row knows what
+    /// item type its workload has to be built at.
+    #[test]
+    fn a_resolved_closure_names_the_type_its_workload_must_be_generated_at() {
+        let c = resolve(&req("cms", "oxide", OperationMask::INSERT, MetricsMask::THROUGHPUT))
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.value_type, "i64");
+        assert!(!c.takes_columns);
+
+        // Hydra ingests labelled records, so it needs a multi-column description.
+        let h = resolve(&req("hydra-cms", "lib", OperationMask::INSERT, MetricsMask::THROUGHPUT))
+            .unwrap()
+            .unwrap();
+        assert!(h.takes_columns);
+    }
+
+    /// A comparator the row does not admit is refused by name, listing what it
+    /// does admit.
+    #[test]
+    fn an_unadmitted_comparator_is_refused_by_name() {
+        let mut r = req("cms", "oxide", OperationMask::INSERT, MetricsMask::THROUGHPUT);
+        r.comparator = Some("cardinality".to_string());
+        let bad = resolve(&r).expect_err("cms is scored by frequency, not cardinality");
+        let msg = bad.to_string();
+        assert!(msg.contains("cardinality"), "{msg}");
+        assert!(msg.contains("frequency"), "should list what it admits: {msg}");
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    /// An `ordered` row is named by its i64 half, so the row's own `value_type`
+    /// says "i64" at every width. The closure has to answer for the width that
+    /// was actually asked for — a frontend generates from this, and an i64
+    /// column handed to an f64 workload is refused at materialise time.
+    #[test]
+    fn a_closure_names_the_value_type_of_the_width_it_resolved_at() {
+        let req = |w| Requirement {
+            algorithm: "kll-percall".to_string(),
+            impl_name: "oxide".to_string(),
+            params: ParamSet::empty("kll-percall"),
+            operations: OperationMask::INSERT,
+            metrics: MetricsMask::THROUGHPUT,
+            width: w,
+            comparator: None,
+        };
+        assert_eq!(
+            resolve(&req(Numeric::I64)).unwrap().unwrap().value_type,
+            "i64"
+        );
+        assert_eq!(
+            resolve(&req(Numeric::F64)).unwrap().unwrap().value_type,
+            "f64"
+        );
+
+        // A row whose item type is not numeric keeps its own answer: the width
+        // never reaches it, because f64 was refused before this point.
+        let hydra = Requirement {
+            algorithm: "hydra-cms".to_string(),
+            impl_name: "lib".to_string(),
+            params: ParamSet::empty("hydra-cms"),
+            operations: OperationMask::INSERT,
+            metrics: MetricsMask::THROUGHPUT,
+            width: Numeric::I64,
+            comparator: None,
+        };
+        let c = resolve(&hydra).unwrap().unwrap();
+        assert_eq!(c.value_type, "i64");
+        assert!(c.takes_columns);
+    }
+
+    /// The end the bug actually showed up at: resolve, generate at what the
+    /// closure named, run. This is the frontend's whole sequence, and it has to
+    /// work at both widths.
+    #[test]
+    fn an_ordered_row_runs_at_both_widths_end_to_end() {
+        for width in [Numeric::I64, Numeric::F64] {
+            use crate::params::SketchParams;
+            let params =
+                ParamSet::of_algorithm("kll-percall", &crate::params::KllParams::canonical());
+            let req = Requirement {
+                algorithm: "kll-percall".to_string(),
+                impl_name: "oxide".to_string(),
+                params: params.clone(),
+                operations: OperationMask::INSERT,
+                metrics: MetricsMask::THROUGHPUT,
+                width,
+                comparator: None,
+            };
+            let closure = resolve(&req).unwrap().unwrap();
+            let data = tests::smoke_spec()
+                .generate_at(closure.value_type)
+                .unwrap_or_else(|e| panic!("{width:?}: generate: {e}"));
+            let cfg = tests::smoke_cfg();
+            (closure.run)(&cfg, data, &params)
+                .unwrap_or_else(|e| panic!("{width:?}: run: {e}"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    /// The check the capability traits used to make for free.
+    ///
+    /// `impl FrequencyOps for X` was a compiler-checked claim that X answers
+    /// frequency, and `statistic.rs` said so explicitly: nominal on purpose,
+    /// because a structural bound "also matches sketches that answer a stub".
+    /// An ask closure is checked only for *shape* — `|_, _| 0` type-checks
+    /// perfectly — so that guarantee left with the traits.
+    ///
+    /// This is what replaces it, and it is a stronger claim than the traits
+    /// made: not "the row declares a capability" but "the row's ask actually
+    /// answers it". Every comparator is built so the do-nothing estimator
+    /// scores exactly 1.0 on its relative-error metric, so a stub is caught by
+    /// scoring no better than doing nothing.
+    #[test]
+    fn every_scored_row_answers_better_than_a_stub() {
+        let cfg = BenchConfig {
+            runs: 1,
+            warmup_runs: 0,
+            metrics: MetricsMask::ACCURACY,
+            operations: OperationMask::QUERY,
+            ..Default::default()
+        };
+        let mut checked = 0;
+        for row in ROWS.iter().filter(|r| r.capability.scores()) {
+            let params = tests::canonical_params(row);
+            let req = Requirement {
+                algorithm: row.algorithm.to_string(),
+                impl_name: row.impl_name.to_string(),
+                params: params.clone(),
+                operations: cfg.operations,
+                metrics: cfg.metrics,
+                width: Numeric::I64,
+                comparator: None,
+            };
+            let closure = resolve(&req).unwrap().unwrap();
+            let data = tests::spec_for(row).generate_at(closure.value_type).unwrap();
+            let reports = match (closure.run)(&cfg, data, &params) {
+                Ok(r) => r,
+                // A fixed-matrix row refuses an off-shape config; that is a
+                // build refusal, not a stubbed answer.
+                Err(_) => continue,
+            };
+            let acc = reports
+                .iter()
+                .find_map(|r| r.bench.accuracy.clone())
+                .unwrap_or_else(|| panic!("{}/{} scored nothing", row.algorithm, row.impl_name));
+            let acc = acc.as_object().expect("accuracy is an object");
+            let get = |k: &str| acc.get(k).and_then(|v| v.as_f64());
+
+            // One metric per capability, each one a relative error the null
+            // estimator scores 1.0 on.
+            let (key, err) = match row.capability {
+                Capability::Cardinality => ("relative_error", get("relative_error")),
+                Capability::Frequency | Capability::SubpopFrequency
+                | Capability::SubpopCardinality => ("are_all", get("are_all")),
+                Capability::Quantile | Capability::SubpopQuantile => {
+                    ("max_rank_err", get("max_rank_err"))
+                }
+                Capability::TopK => ("recall_at_k", get("recall_at_k").map(|v| 1.0 - v)),
+                Capability::None => unreachable!("filtered to scoring rows"),
+            };
+            let err = err.unwrap_or_else(|| {
+                panic!(
+                    "{}/{} reports no `{key}`; keys were {:?}",
+                    row.algorithm,
+                    row.impl_name,
+                    acc.keys().collect::<Vec<_>>()
+                )
+            });
+            assert!(
+                err.is_finite() && err < 1.0,
+                "{}/{} answers no better than a stub: {key} = {err}",
+                row.algorithm,
+                row.impl_name
+            );
+            checked += 1;
+        }
+        // Guard the guard: a filter that silently matched nothing would make
+        // this test pass while checking not one row.
+        assert!(checked >= 15, "only {checked} rows were actually scored");
     }
 }

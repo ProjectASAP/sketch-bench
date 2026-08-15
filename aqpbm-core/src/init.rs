@@ -4,7 +4,6 @@
 //! init config and you are a benchmarkable row. There is no separate "which
 //! configs does this impl accept" table — the answer is whatever `init` does.
 
-use crate::accumulator::Accumulator;
 use crate::config::{ParamSet, SketchParams};
 use crate::DataGenError;
 
@@ -32,7 +31,7 @@ impl From<DataGenError> for BuildError {
 
 /// Build `Self` from the shared init config, or explain why not. `Self:
 /// Accumulator` because the only thing worth building is one the runner drives.
-pub trait InitSketch: Accumulator + Sized {
+pub trait InitSketch: Sized {
     fn init(config: &ParamSet) -> Result<Self, BuildError>;
 }
 
@@ -50,7 +49,7 @@ pub trait InitSketch: Accumulator + Sized {
 /// Variants of one structure share a parameter vocabulary, so they share a
 /// [`Self::Params`], and `Params::FAMILY` is what groups them back together for
 /// a cross-library comparison.
-pub trait BenchImpl: Accumulator {
+pub trait BenchImpl {
     /// The parameters this impl is built from. `Params::FAMILY` is the row's
     /// family.
     type Params: SketchParams;
@@ -70,4 +69,23 @@ pub trait BenchImpl: Accumulator {
     /// The family, derived — never written by hand. Rows sharing it answer the
     /// same question from the same knobs, which is what makes them comparable.
     const FAMILY: &'static str = <Self::Params as SketchParams>::FAMILY;
+
+    // ---------- which operations this impl actually has ----------
+    //
+    // A row supplies `merge` and `prepare` as `Option<fn>` in its `SketchOps`,
+    // so absence is honest at run time. But an `Option` inside a thunk is not
+    // readable in `const` context, so a registry could not refuse
+    // `--operations prepare` before generating a workload for it.
+    //
+    // These two say it out loud. Both default to `false`, matching the two
+    // trait defaults, so an impl that overrides neither writes nothing and an
+    // impl that overrides one says so on the line beside its `IMPL`.
+
+    /// Does this row's [`SketchOps`](crate::ops::SketchOps) supply a `merge`?
+    /// Must agree with it — `catalog`'s `declared_support_tests` pins that.
+    const SUPPORTS_MERGE: bool = false;
+
+    /// Does it supply a `prepare`? The doc's `prepare_for_query` axis: KLL's
+    /// `cdf` rows build their lookup there, most sketches have nothing to do.
+    const SUPPORTS_PREPARE: bool = false;
 }
