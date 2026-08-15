@@ -5,9 +5,9 @@
 
 use super::*;
 use aqpbm_core::accuracy::quantile::{ RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -38,12 +38,6 @@ impl PolarsQuantileKll {
     }
 }
 
-impl BenchImpl for PolarsQuantileKll {
-    type Params = KllParams;
-    const ALGORITHM: &'static str = "kll-cdf";
-    const IMPL: &'static str = "polars";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_polars_quantile_kll(sketch: &mut PolarsQuantileKll, v: &i64)
 {
@@ -66,9 +60,10 @@ pub fn run_quantile_kll(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<PolarsQuantileKll, i64, RankErrorGT, _>(
-        cfg, data, params, width, insert_polars_quantile_kll,
+        cfg, data, params, label, width, insert_polars_quantile_kll,
         &QUANTILE_KLL_OPS,
     )
 }

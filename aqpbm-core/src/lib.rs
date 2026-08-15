@@ -39,8 +39,8 @@ pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use ops::SketchOps;
-pub use cell::{run_cell, BenchItem, RunError, WorkloadData, WorkloadSpec};
-pub use init::{BenchImpl, BuildError, InitSketch};
+pub use cell::{run_cell, BenchItem, RowLabel, RunError, WorkloadData, WorkloadSpec};
+pub use init::{BuildError, InitSketch};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use memory_footprint::MemoryFootprint;
 pub use metrics::{FullSink, MetricsMask, RunMetrics};

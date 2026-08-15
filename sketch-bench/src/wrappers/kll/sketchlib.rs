@@ -5,9 +5,9 @@
 
 use super::*;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -106,26 +106,7 @@ where
     }
 }
 
-impl<T> BenchImpl for KllLibPerCall<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    type Params = KllParams;
-    const ALGORITHM: &'static str = "kll-percall";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl<T> BenchImpl for KllLibCdf<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    type Params = KllParams;
-    const ALGORITHM: &'static str = "kll-cdf";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_kll_lib_per_call<T>(sketch: &mut KllLibPerCall<T>, v: &T)
 where
@@ -205,11 +186,13 @@ pub fn run_lib_percall(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_ordered::<KllLibPerCall<i64>, KllLibPerCall<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_kll_lib_per_call,
         &lib_percall_ops::<i64>(),
@@ -223,11 +206,13 @@ pub fn run_lib_cdf(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_ordered::<KllLibCdf<i64>, KllLibCdf<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_kll_lib_cdf,
         &lib_cdf_ops::<i64>(),

@@ -5,9 +5,9 @@
 
 use super::*;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -59,7 +59,6 @@ impl HllDatasketches {
     }
 }
 
-impl BenchImpl for HllDatasketches { type Params = HllParams; const IMPL: &'static str = "datasketches"; const SUPPORTS_MERGE: bool = true; }
 
 pub fn insert_hll_datasketches(sketch: &mut HllDatasketches, v: &i64)
 {
@@ -89,9 +88,10 @@ pub fn run_datasketches(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<HllDatasketches, i64, CardinalityGT, _>(
-        cfg, data, params, width, insert_hll_datasketches,
+        cfg, data, params, label, width, insert_hll_datasketches,
         &DATASKETCHES_OPS,
     )
 }

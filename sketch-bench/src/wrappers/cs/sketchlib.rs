@@ -6,9 +6,9 @@
 use super::*;
 use crate::wrappers::parallel_shared::*;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -167,29 +167,8 @@ impl CsLibVector2dRegular {
     }
 }
 
-impl<M> BenchImpl for CsLibFixedmatrix<M>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-{
-    type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl BenchImpl for CsLibVector2dFast {
-    type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-fastpath-vector2d";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl BenchImpl for CsLibVector2dRegular {
-    type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-regularpath-vector2d";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 pub fn insert_cs_lib_fixedmatrix<M>(sketch: &mut CsLibFixedmatrix<M>, v: &i64)
 where
@@ -294,8 +273,9 @@ pub fn run_cs(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, width, insert_parallel_cs_fast_path, &CS_OPS)
+    crate::catalog::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cs_fast_path, &CS_OPS)
 }
 
 /// CountSketch, parallel-insert FastPath.
@@ -320,21 +300,16 @@ impl MemoryFootprint for ParallelCsFastPath {
     }
 }
 
-impl BenchImpl for ParallelCsFastPath {
-    type Params = CountSketchParams;
-    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix-32k-parallel";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn run_vector2d_fast(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<CsLibVector2dFast, i64, FrequencyGT, _>(
-        cfg, data, params, width, insert_cs_lib_vector2d_fast,
+        cfg, data, params, label, width, insert_cs_lib_vector2d_fast,
         &VECTOR2D_FAST_OPS,
     )
 }
@@ -344,9 +319,10 @@ pub fn run_vector2d_regular(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<CsLibVector2dRegular, i64, FrequencyGT, _>(
-        cfg, data, params, width, insert_cs_lib_vector2d_regular,
+        cfg, data, params, label, width, insert_cs_lib_vector2d_regular,
         &VECTOR2D_REGULAR_OPS,
     )
 }

@@ -6,9 +6,9 @@
 use super::*;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -60,11 +60,6 @@ impl MemoryFootprint for HydraCms {
     }
 }
 
-impl BenchImpl for HydraCms {
-    type Params = HydraCmsParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 /// Hydra over HyperLogLog cells.
 pub struct HydraHll {
@@ -102,11 +97,6 @@ impl MemoryFootprint for HydraHll {
     }
 }
 
-impl BenchImpl for HydraHll {
-    type Params = HydraHllParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 /// Hydra over KLL cells.
 pub struct HydraKll {
@@ -162,11 +152,6 @@ impl MemoryFootprint for HydraKll {
     }
 }
 
-impl BenchImpl for HydraKll {
-    type Params = HydraKllParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>)
 {
@@ -239,9 +224,10 @@ pub fn run_cms(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg, data, params, width, insert_hydra_cms,
+        cfg, data, params, label, width, insert_hydra_cms,
         &CMS_OPS,
     )
 }
@@ -251,9 +237,10 @@ pub fn run_hll(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg, data, params, width, insert_hydra_hll,
+        cfg, data, params, label, width, insert_hydra_hll,
         &HLL_OPS,
     )
 }
@@ -263,9 +250,10 @@ pub fn run_kll(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg, data, params, width, insert_hydra_kll,
+        cfg, data, params, label, width, insert_hydra_kll,
         &KLL_OPS,
     )
 }

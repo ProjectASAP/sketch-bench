@@ -13,7 +13,7 @@ use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
 use crate::accuracy::GroundTruth;
-use crate::init::{BenchImpl, BuildError, InitSketch};
+use crate::init::{BuildError, InitSketch};
 use crate::runner::{BenchConfig, BenchReport, BenchRunner};
 
 // ---------- where items come from, and what they materialise to ----------
@@ -159,6 +159,16 @@ impl From<anyhow::Error> for RunError {
     }
 }
 
+/// What a record is labelled with: which algorithm, from which library.
+///
+/// Two strings, passed in. Core does not know the set of algorithms and has no
+/// business deriving these — the registry that owns the row states them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowLabel {
+    pub algorithm: &'static str,
+    pub impl_name: &'static str,
+}
+
 // ---------- the item axis ----------
 
 /// An item type a benchmark can be run over: it names the workload that carries
@@ -293,19 +303,20 @@ pub fn run_cell<S, I, G, Ins>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     gt: Option<&G>,
     insert: Ins,
     ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: InitSketch + BenchImpl + MemoryFootprint,
+    S: InitSketch + MemoryFootprint,
     I: BenchItem,
     G: GroundTruth<I>,
     Ins: FnMut(&mut S, &I),
 {
     let wk = <I as BenchItem>::materialise(data)?;
     S::init(params)?; // probe: the cell fails here if it cannot build
-    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL)
+    BenchRunner::new(cfg.clone(), &wk, label.algorithm, label.impl_name)
         .run::<S, _, G, _>(|| built::<S>(params), insert, gt, ops)
 }
 
@@ -314,12 +325,13 @@ pub fn run_cell_parallel<S, I, G, Ins>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     gt: Option<&G>,
     insert: Ins,
     ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
+    S: ParallelInit + MemoryFootprint,
     I: BenchItem,
     G: GroundTruth<I>,
     Ins: FnMut(&mut S, &I),
@@ -327,7 +339,7 @@ where
     let wk = <I as BenchItem>::materialise(data)?;
     let workers = cfg.threads;
     S::build(params, workers)?; // probe
-    BenchRunner::new(cfg.clone(), &wk, S::ALGORITHM, S::IMPL).run::<S, _, G, _>(
+    BenchRunner::new(cfg.clone(), &wk, label.algorithm, label.impl_name).run::<S, _, G, _>(
         move || S::build(params, workers).expect("construction proven by the probe above"),
         insert,
         gt,

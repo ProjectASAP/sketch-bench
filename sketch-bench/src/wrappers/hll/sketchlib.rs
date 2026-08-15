@@ -7,9 +7,9 @@ use super::*;
 use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
 use crate::wrappers::parallel_shared::*;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -87,17 +87,7 @@ impl<R: asap_sketchlib::HllRegisterStorage> HllLibHip<R> {
     }
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> BenchImpl for HllLib<R> {
-    type Params = HllParams;
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl<R: asap_sketchlib::HllRegisterStorage> BenchImpl for HllLibHip<R> {
-    type Params = HllParams;
-    const ALGORITHM: &'static str = "hll-hip";
-    const IMPL: &'static str = "lib";
-}
 
 pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage>(sketch: &mut HllLib<R>, v: &i64)
 {
@@ -148,6 +138,7 @@ pub fn run_lib(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     crate::catalog::run_lib_hll::<
@@ -162,6 +153,7 @@ pub fn run_lib(
         cfg,
         data,
         params,
+        label,
         width,
         insert_hll_lib,
         &lib_ops::<HllBucketListP12>(),
@@ -177,6 +169,7 @@ pub fn run_lib_hip(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_lib_hll::<
         HllLibHip<HllBucketListP12>,
@@ -190,6 +183,7 @@ pub fn run_lib_hip(
         cfg,
         data,
         params,
+        label,
         width,
         insert_hll_lib_hip,
         &lib_hip_ops::<HllBucketListP12>(),
@@ -252,12 +246,6 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
     });
 }
 
-impl BenchImpl for ParallelHllFastPath {
-    type Params = HllParams;
-    const ALGORITHM: &'static str = "hll-fastpath-parallel";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath, v: &i64)
 {
@@ -280,8 +268,9 @@ pub fn run_hll(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelHllFastPath, i64, _>(cfg, data, params, width, insert_parallel_hll_fast_path, &HLL_OPS)
+    crate::catalog::run_parallel::<ParallelHllFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_hll_fast_path, &HLL_OPS)
 }
 
 

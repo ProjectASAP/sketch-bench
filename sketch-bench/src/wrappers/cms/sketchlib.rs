@@ -6,9 +6,9 @@
 use super::*;
 use crate::wrappers::parallel_shared::*;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -172,29 +172,8 @@ impl CmsLibVector2dRegular {
     }
 }
 
-impl<M> BenchImpl for CmsLibFixedmatrix<M>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-{
-    type Params = CmsParams;
-    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl BenchImpl for CmsLibVector2dFast {
-    type Params = CmsParams;
-    const ALGORITHM: &'static str = "cms-fastpath-vector2d";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl BenchImpl for CmsLibVector2dRegular {
-    type Params = CmsParams;
-    const ALGORITHM: &'static str = "cms-regularpath-vector2d";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_MERGE: bool = true;
-}
 
 pub fn insert_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, v: &i64)
 where
@@ -319,12 +298,6 @@ fn run_parallel_cms(items: &[i64], workers: usize) {
     });
 }
 
-impl BenchImpl for ParallelCmsFastPath {
-    type Params = CmsParams;
-    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix-32k-parallel";
-    const IMPL: &'static str = "lib";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath, v: &i64)
 {
@@ -347,8 +320,9 @@ pub fn run_cms(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelCmsFastPath, i64, _>(cfg, data, params, width, insert_parallel_cms_fast_path, &CMS_OPS)
+    crate::catalog::run_parallel::<ParallelCmsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cms_fast_path, &CMS_OPS)
 }
 
 pub fn run_vector2d_fast(
@@ -356,11 +330,13 @@ pub fn run_vector2d_fast(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<CmsLibVector2dFast, i64, FrequencyGT, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_cms_lib_vector2d_fast,
         &VECTOR2D_FAST_OPS,
@@ -372,11 +348,13 @@ pub fn run_vector2d_regular(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<CmsLibVector2dRegular, i64, FrequencyGT, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_cms_lib_vector2d_regular,
         &VECTOR2D_REGULAR_OPS,

@@ -5,9 +5,9 @@
 
 use super::*;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -91,20 +91,7 @@ impl<T: QuantileValue> KllOxideCdf<T> {
     }
 }
 
-impl<T: QuantileValue> BenchImpl for KllOxidePerCall<T> {
-    type Params = KllParams;
-    const ALGORITHM: &'static str = "kll-percall";
-    const IMPL: &'static str = "oxide";
-    const SUPPORTS_MERGE: bool = true;
-}
 
-impl<T: QuantileValue> BenchImpl for KllOxideCdf<T> {
-    type Params = KllParams;
-    const ALGORITHM: &'static str = "kll-cdf";
-    const IMPL: &'static str = "oxide";
-    const SUPPORTS_MERGE: bool = true;
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_kll_oxide_per_call<T: QuantileValue>(sketch: &mut KllOxidePerCall<T>, v: &T)
 {
@@ -167,11 +154,13 @@ pub fn run_oxide_percall(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_ordered::<KllOxidePerCall<i64>, KllOxidePerCall<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_kll_oxide_per_call,
         &oxide_percall_ops::<i64>(),
@@ -185,11 +174,13 @@ pub fn run_oxide_cdf(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_ordered::<KllOxideCdf<i64>, KllOxideCdf<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
+        label,
         width,
         insert_kll_oxide_cdf,
         &oxide_cdf_ops::<i64>(),

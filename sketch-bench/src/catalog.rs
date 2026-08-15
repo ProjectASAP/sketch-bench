@@ -13,9 +13,9 @@ use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{self, BenchItem, ParallelInit, RunError, WorkloadData};
+use aqpbm_core::cell::{self, BenchItem, ParallelInit, RowLabel, RunError, WorkloadData};
 use aqpbm_core::runner::{needs_ground_truth, NoGT};
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::workload::Labeled;
@@ -24,7 +24,7 @@ use aqpbm_core::request::Requirement;
 use aqpbm_core::runner::{BenchConfig, BenchReport};
 
 use asap_sketchlib::{
-    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
+    DefaultXxHasher, FastPathHasher,
     MatrixStorage,
 };
 
@@ -40,9 +40,25 @@ use crate::wrappers::{cms, cs, fixed_matrix, hll, hydra, kll};
 // selects.
 pub use aqpbm_core::request::{Capability, Numeric};
 
+/// Who a row is, as data. Was read off the row's type through a `BenchImpl`
+/// trait whose only content was these strings; it is stated here instead,
+/// because the registry is what owns them.
+#[derive(Clone, Copy)]
+pub struct RowIdentity {
+    pub family: &'static str,
+    pub algorithm: &'static str,
+    pub impl_name: &'static str,
+    /// Does this row's `SketchOps` supply a `merge`? Stated here because the
+    /// `Option` inside the thunk is not readable in `const` context.
+    pub supports_merge: bool,
+    /// Likewise for `prepare` — the doc's `prepare_for_query` axis.
+    pub supports_prepare: bool,
+}
+
+
 /// The executable half of a row: everything the frontend can hand a cell.
 type RunFn =
-    fn(&BenchConfig, WorkloadData, &ParamSet, Numeric) -> Result<Vec<BenchReport>, RunError>;
+    fn(&BenchConfig, WorkloadData, &ParamSet, Numeric, RowLabel) -> Result<Vec<BenchReport>, RunError>;
 
 /// One catalog entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
@@ -218,12 +234,13 @@ pub(crate) fn run_scored<S, I, G, Ins>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     _width: Numeric,
     insert: Ins,
     ops: &SketchOps<S, I, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: InitSketch + BenchImpl + MemoryFootprint,
+    S: InitSketch + MemoryFootprint,
     I: BenchItem,
     G: GroundTruthCalculator<I>,
     Ins: FnMut(&mut S, &I),
@@ -232,7 +249,7 @@ where
     // without one. Nobody has to ask for it: needing one is a property of the
     // squares selected, not a separate decision.
     let gt = needs_ground_truth(cfg.operations, cfg.metrics).then(|| G::build(params));
-    Ok(cell::run_cell::<S, I, G, Ins>(cfg, data, params, gt.as_ref(), insert, ops)?)
+    Ok(cell::run_cell::<S, I, G, Ins>(cfg, data, params, label, gt.as_ref(), insert, ops)?)
 }
 
 /// An ordered quantile algorithm (KLL, DDSketch): the row names both widths and
@@ -243,6 +260,7 @@ pub(crate) fn run_ordered<Si, Sf, G, InsI, InsF>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     width: Numeric,
     insert_i: InsI,
     ops_i: &SketchOps<Si, i64, <G as GroundTruth<i64>>::Probe, <G as GroundTruth<i64>>::Answer>,
@@ -250,8 +268,8 @@ pub(crate) fn run_ordered<Si, Sf, G, InsI, InsF>(
     ops_f: &SketchOps<Sf, f64, <G as GroundTruth<f64>>::Probe, <G as GroundTruth<f64>>::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    Si: InitSketch + BenchImpl + MemoryFootprint,
-    Sf: InitSketch + BenchImpl + MemoryFootprint,
+    Si: InitSketch + MemoryFootprint,
+    Sf: InitSketch + MemoryFootprint,
     G: GroundTruthCalculator<i64> + GroundTruthCalculator<f64>,
     InsI: FnMut(&mut Si, &i64),
     InsF: FnMut(&mut Sf, &f64),
@@ -259,8 +277,8 @@ where
     // Two op sets because the two halves are two types. The wrapper file writes
     // one generic `ops::<T>()` and instantiates it at each width.
     match width {
-        Numeric::I64 => run_scored::<Si, i64, G, _>(cfg, data, params, width, insert_i, ops_i),
-        Numeric::F64 => run_scored::<Sf, f64, G, _>(cfg, data, params, width, insert_f, ops_f),
+        Numeric::I64 => run_scored::<Si, i64, G, _>(cfg, data, params, label, width, insert_i, ops_i),
+        Numeric::F64 => run_scored::<Sf, f64, G, _>(cfg, data, params, label, width, insert_f, ops_f),
     }
 }
 
@@ -275,16 +293,17 @@ pub(crate) fn run_parallel<S, I, Ins>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     _width: Numeric,
     insert: Ins,
     ops: &SketchOps<S, I, (), ()>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
+    S: ParallelInit + MemoryFootprint,
     I: BenchItem,
     Ins: FnMut(&mut S, &I),
 {
-    cell::run_cell_parallel::<S, I, NoGT, Ins>(cfg, data, params, None, insert, ops)
+    cell::run_cell_parallel::<S, I, NoGT, Ins>(cfg, data, params, label, None, insert, ops)
 }
 
 /// A row whose `(rows, cols)` selects a *type* rather than sizing a field.
@@ -304,10 +323,12 @@ fn run_fixed_matrix<W: FixedMatrixRow>(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     let (rows, cols) = W::shape(params)?;
     let visitor = RunFixedMatrix::<W> {
         cfg,
+        label,
         data,
         params,
         width,
@@ -341,7 +362,7 @@ pub trait FixedMatrixRow {
             + Default
             + Clone
             + 'static,
-    >: InitSketch + BenchImpl + MemoryFootprint;
+    >: InitSketch + MemoryFootprint;
     fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
 
     /// How this row is driven, at whichever shape the config selected.
@@ -372,6 +393,7 @@ pub trait FixedMatrixRow {
 /// Carries the run's arguments into the monomorphisation the shape selected.
 struct RunFixedMatrix<'a, W> {
     cfg: &'a BenchConfig,
+    label: RowLabel,
     data: WorkloadData,
     params: &'a ParamSet,
     width: Numeric,
@@ -393,6 +415,7 @@ impl<W: FixedMatrixRow> fixed_matrix::FixedMatrixVisitor for RunFixedMatrix<'_, 
             self.cfg,
             self.data,
             self.params,
+            self.label,
             self.width,
             W::insert::<M>,
             &W::ops::<M>(),
@@ -411,6 +434,7 @@ pub(crate) fn run_lib_hll<S12, S14, S16, G, I12, I14, I16>(
     cfg: &BenchConfig,
     data: WorkloadData,
     params: &ParamSet,
+    label: RowLabel,
     width: Numeric,
     insert12: I12,
     ops12: &SketchOps<S12, i64, G::Probe, G::Answer>,
@@ -420,9 +444,9 @@ pub(crate) fn run_lib_hll<S12, S14, S16, G, I12, I14, I16>(
     ops16: &SketchOps<S16, i64, G::Probe, G::Answer>,
 ) -> Result<Vec<BenchReport>, RunError>
 where
-    S12: InitSketch + BenchImpl + MemoryFootprint,
-    S14: InitSketch + BenchImpl + MemoryFootprint,
-    S16: InitSketch + BenchImpl + MemoryFootprint,
+    S12: InitSketch + MemoryFootprint,
+    S14: InitSketch + MemoryFootprint,
+    S16: InitSketch + MemoryFootprint,
     G: GroundTruthCalculator<i64>,
     I12: FnMut(&mut S12, &i64),
     I14: FnMut(&mut S14, &i64),
@@ -430,9 +454,9 @@ where
 {
     let p: HllParams = params.parse().map_err(BuildError::from)?;
     match p.lg_k {
-        12 => run_scored::<S12, i64, G, _>(cfg, data, params, width, insert12, ops12),
-        14 => run_scored::<S14, i64, G, _>(cfg, data, params, width, insert14, ops14),
-        16 => run_scored::<S16, i64, G, _>(cfg, data, params, width, insert16, ops16),
+        12 => run_scored::<S12, i64, G, _>(cfg, data, params, label, width, insert12, ops12),
+        14 => run_scored::<S14, i64, G, _>(cfg, data, params, label, width, insert14, ops14),
+        16 => run_scored::<S16, i64, G, _>(cfg, data, params, label, width, insert16, ops16),
         other => Err(RunError::Build(hll::unsupported_precision(other))),
     }
 }
@@ -489,47 +513,43 @@ const fn row_metrics(scores: bool) -> MetricsMask {
     MetricsMask::from_bits_truncate(bits)
 }
 
-const fn scored<S, I, G>(description: &'static str, run: RunFn) -> Row
+const fn scored<I, G>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
 where
-    S: InitSketch + BenchImpl + MemoryFootprint,
     I: BenchItem,
     G: GroundTruthCalculator<I>,
 {
     Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
+        family: id.family,
+        algorithm: id.algorithm,
+        impl_name: id.impl_name,
         description,
         scores_accuracy: true,
         picks_width: false,
         takes_columns: <I as BenchItem>::TAKES_COLUMNS,
         value_type: <I as BenchItem>::DATA_TYPE,
         capability: G::CAPABILITY,
-        operations: scored_ops(S::SUPPORTS_MERGE, S::SUPPORTS_PREPARE),
+        operations: scored_ops(id.supports_merge, id.supports_prepare),
         metrics: row_metrics(true),
         run,
         comparator: Some(G::NAME),
     }
 }
 
-const fn ordered<Si, Sf, G>(description: &'static str, run: RunFn) -> Row
+const fn ordered<G>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
 where
-    Si: InitSketch + BenchImpl + MemoryFootprint,
-    Sf: InitSketch + BenchImpl + MemoryFootprint,
     G: GroundTruthCalculator<i64> + GroundTruthCalculator<f64>,
 {
     Row {
-        // Both halves are the same row; the i64 one names it.
-        family: Si::FAMILY,
-        algorithm: Si::ALGORITHM,
-        impl_name: Si::IMPL,
+        family: id.family,
+        algorithm: id.algorithm,
+        impl_name: id.impl_name,
         description,
         scores_accuracy: true,
         picks_width: true,
         takes_columns: <i64 as BenchItem>::TAKES_COLUMNS,
         value_type: <i64 as BenchItem>::DATA_TYPE,
         capability: <G as GroundTruthCalculator<i64>>::CAPABILITY,
-        operations: scored_ops(Si::SUPPORTS_MERGE, Si::SUPPORTS_PREPARE),
+        operations: scored_ops(id.supports_merge, id.supports_prepare),
         metrics: row_metrics(true),
         run,
         comparator: Some(<G as GroundTruthCalculator<i64>>::NAME),
@@ -539,24 +559,21 @@ where
 /// The three precisions are one row: they are one algorithm at one impl, and
 /// `lg_k` is the knob that moves between them. `S14` names the row, the way the
 /// `i64` half names an [`ordered`] one.
-const fn lib_hll<S12, S14, S16, G>(description: &'static str, run: RunFn) -> Row
+const fn lib_hll<G>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
 where
-    S12: InitSketch + BenchImpl + MemoryFootprint,
-    S14: InitSketch + BenchImpl + MemoryFootprint,
-    S16: InitSketch + BenchImpl + MemoryFootprint,
     G: GroundTruthCalculator<i64>,
 {
     Row {
-        family: S14::FAMILY,
-        algorithm: S14::ALGORITHM,
-        impl_name: S14::IMPL,
+        family: id.family,
+        algorithm: id.algorithm,
+        impl_name: id.impl_name,
         description,
         scores_accuracy: true,
         picks_width: false,
         takes_columns: <i64 as BenchItem>::TAKES_COLUMNS,
         value_type: <i64 as BenchItem>::DATA_TYPE,
         capability: <G as GroundTruthCalculator<i64>>::CAPABILITY,
-        operations: scored_ops(S14::SUPPORTS_MERGE, S14::SUPPORTS_PREPARE),
+        operations: scored_ops(id.supports_merge, id.supports_prepare),
         metrics: row_metrics(true),
         run,
         comparator: Some(<G as GroundTruthCalculator<i64>>::NAME),
@@ -566,21 +583,19 @@ where
 /// The shape-dispatching counterpart of [`scored`]: identity comes off the
 /// row's `FixedMatrixRow` impl and its params type, because no one storage type
 /// names a row that exists at every shape.
-const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
-    description: &'static str,
-) -> Row {
+const fn fixed_matrix_row<W: FixedMatrixRow>(id: RowIdentity, description: &'static str) -> Row {
     let run: RunFn = run_fixed_matrix::<W>;
     Row {
-        family: P::FAMILY,
-        algorithm: W::ALGORITHM,
-        impl_name: "lib",
+        family: id.family,
+        algorithm: id.algorithm,
+        impl_name: id.impl_name,
         description,
         scores_accuracy: true,
         picks_width: false,
         takes_columns: false,
         value_type: "i64",
         capability: W::CAPABILITY,
-        operations: scored_ops(W::SUPPORTS_MERGE, W::SUPPORTS_PREPARE),
+        operations: scored_ops(id.supports_merge, id.supports_prepare),
         metrics: row_metrics(true),
         run,
         // Its comparator is fixed inside the shape dispatch.
@@ -588,22 +603,21 @@ const fn fixed_matrix_row<W: FixedMatrixRow, P: crate::params::SketchParams>(
     }
 }
 
-const fn parallel_row<S, I>(description: &'static str, run: RunFn) -> Row
+const fn parallel_row<I>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
 where
-    S: ParallelInit + BenchImpl + MemoryFootprint,
     I: BenchItem,
 {
     Row {
-        family: S::FAMILY,
-        algorithm: S::ALGORITHM,
-        impl_name: S::IMPL,
+        family: id.family,
+        algorithm: id.algorithm,
+        impl_name: id.impl_name,
         description,
         scores_accuracy: false,
         picks_width: false,
         takes_columns: <I as BenchItem>::TAKES_COLUMNS,
         value_type: <I as BenchItem>::DATA_TYPE,
         capability: Capability::None,
-        operations: unscored_ops(S::SUPPORTS_MERGE, S::SUPPORTS_PREPARE),
+        operations: unscored_ops(id.supports_merge, id.supports_prepare),
         metrics: row_metrics(false),
         run,
         comparator: None,
@@ -622,24 +636,47 @@ pub const ROWS: &[Row] = &[
     // two rows to agree on any of it; the table only records what exists.
 
     // -------- HLL (cardinality) --------
-    scored::<hll::oxide::HllOxide, i64, CardinalityGT>(
+    scored::<i64, CardinalityGT>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll",
+            impl_name: "oxide",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
         hll::oxide::run_oxide,
     ),
-    scored::<hll::datasketches::HllDatasketches, i64, CardinalityGT>(
+    scored::<i64, CardinalityGT>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll",
+            impl_name: "datasketches",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "datasketches::hll::HllSketch (Hll8)",
         hll::datasketches::run_datasketches,
     ),
-    lib_hll::<
-        hll::sketchlib::HllLib<HllBucketListP12>,
-        hll::sketchlib::HllLib<HllBucketListP14>,
-        hll::sketchlib::HllLib<HllBucketListP16>,
-        CardinalityGT,
-    >(
+    lib_hll::<CardinalityGT>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
         hll::sketchlib::run_lib,
     ),
-    scored::<hll::polars::PolarsCardinality, i64, CardinalityGT>(
+    scored::<i64, CardinalityGT>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: DataFrame.n_unique()",
         hll::polars::run_cardinality,
     ),
@@ -647,17 +684,26 @@ pub const ROWS: &[Row] = &[
     // Its own algorithm: the estimate is maintained on the insert path instead
     // of scanned at query time. It also supplies no `merge`, which its
     // `SketchOps` states as `None`.
-    lib_hll::<
-        hll::sketchlib::HllLibHip<HllBucketListP12>,
-        hll::sketchlib::HllLibHip<HllBucketListP14>,
-        hll::sketchlib::HllLibHip<HllBucketListP16>,
-        CardinalityGT,
-    >(
+    lib_hll::<CardinalityGT>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll-hip",
+            impl_name: "lib",
+            supports_merge: false,
+            supports_prepare: false,
+        },
         "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
         hll::sketchlib::run_lib_hip,
     ),
     // -------- HLL, parallel insert --------
-    parallel_row::<hll::sketchlib::ParallelHllFastPath, i64>(
+    parallel_row::<i64>(
+        RowIdentity {
+            family: "hll",
+            algorithm: "hll-fastpath-parallel",
+            impl_name: "lib",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "asap HLL ErtlMLE, FastPath, parallel insert",
         hll::sketchlib::run_hll,
     ),
@@ -665,103 +711,271 @@ pub const ROWS: &[Row] = &[
     // Two query paths x two libraries. The `cdf` rows supply a `prepare` and the
     // per-call rows do not — that difference is the whole point of the split,
     // and it is now visible in the ops rather than hidden in a trait default.
-    ordered::<kll::oxide::KllOxidePerCall<i64>, kll::oxide::KllOxidePerCall<f64>, RankErrorGT>(
+    ordered::<RankErrorGT>(
+        RowIdentity {
+            family: "kll",
+            algorithm: "kll-percall",
+            impl_name: "oxide",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "sketch_oxide KllSketch: quantile() per call",
         kll::oxide::run_oxide_percall,
     ),
-    ordered::<kll::sketchlib::KllLibPerCall<i64>, kll::sketchlib::KllLibPerCall<f64>, RankErrorGT>(
+    ordered::<RankErrorGT>(
+        RowIdentity {
+            family: "kll",
+            algorithm: "kll-percall",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
         kll::sketchlib::run_lib_percall,
     ),
-    ordered::<kll::oxide::KllOxideCdf<i64>, kll::oxide::KllOxideCdf<f64>, RankErrorGT>(
+    ordered::<RankErrorGT>(
+        RowIdentity {
+            family: "kll",
+            algorithm: "kll-cdf",
+            impl_name: "oxide",
+            supports_merge: true,
+            supports_prepare: true,
+        },
         "sketch_oxide KllSketch: cdf() built in prepare",
         kll::oxide::run_oxide_cdf,
     ),
-    ordered::<kll::sketchlib::KllLibCdf<i64>, kll::sketchlib::KllLibCdf<f64>, RankErrorGT>(
+    ordered::<RankErrorGT>(
+        RowIdentity {
+            family: "kll",
+            algorithm: "kll-cdf",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: true,
+        },
         "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
         kll::sketchlib::run_lib_cdf,
     ),
-    scored::<kll::polars::PolarsQuantileKll, i64, RankErrorGT>(
+    scored::<i64, RankErrorGT>(
+        RowIdentity {
+            family: "kll",
+            algorithm: "kll-cdf",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: 101-point quantile grid",
         kll::polars::run_quantile_kll,
     ),
     // -------- CMS (frequency) --------
-    scored::<cms::oxide::CmsOxide, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms",
+            impl_name: "oxide",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "sketch_oxide::frequency::CountMinSketch",
         cms::oxide::run_oxide,
     ),
-    scored::<cms::datasketches::CmsDatasketches, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms",
+            impl_name: "datasketches",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "datasketches::countmin::CountMinSketch",
         cms::datasketches::run_datasketches,
     ),
-    scored::<cms::polars::PolarsFrequencyCms, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: group_by(v).agg(len)",
         cms::polars::run_frequency_cms,
     ),
     // The one row whose ops cannot be a `const`: its sketch type is a GAT, so
     // they come from `FixedMatrixRow::ops::<M>()` instead.
-    fixed_matrix_row::<cms::sketchlib::CmsFixedMatrixRow, crate::params::CmsParams>(
+    fixed_matrix_row::<cms::sketchlib::CmsFixedMatrixRow>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms-fastpath-fixedmatrix",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<cms::sketchlib::CmsLibVector2dFast, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms-fastpath-vector2d",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap CMS, Vector2D, FastPath",
         cms::sketchlib::run_vector2d_fast,
     ),
-    scored::<cms::sketchlib::CmsLibVector2dRegular, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms-regularpath-vector2d",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap CMS, Vector2D, RegularPath",
         cms::sketchlib::run_vector2d_regular,
     ),
-    parallel_row::<cms::sketchlib::ParallelCmsFastPath, i64>(
+    parallel_row::<i64>(
+        RowIdentity {
+            family: "cms",
+            algorithm: "cms-fastpath-fixedmatrix-32k-parallel",
+            impl_name: "lib",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "asap CMS, FastPath, parallel insert on M5x32K",
         cms::sketchlib::run_cms,
     ),
     // -------- CountSketch (frequency) --------
-    scored::<cs::oxide::CsOxide, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch",
+            impl_name: "oxide",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "sketch_oxide::frequency::CountSketch",
         cs::oxide::run_oxide,
     ),
-    scored::<cs::polars::PolarsFrequencyCs, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: group_by(v).agg(len)",
         cs::polars::run_frequency_cs,
     ),
-    fixed_matrix_row::<cs::sketchlib::CsFixedMatrixRow, crate::params::CountSketchParams>(
+    fixed_matrix_row::<cs::sketchlib::CsFixedMatrixRow>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch-fastpath-fixedmatrix",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap Count, FixedMatrix (shape baked at compile time), FastPath",
     ),
-    scored::<cs::sketchlib::CsLibVector2dFast, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch-fastpath-vector2d",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap Count, Vector2D, FastPath",
         cs::sketchlib::run_vector2d_fast,
     ),
-    scored::<cs::sketchlib::CsLibVector2dRegular, i64, FrequencyGT>(
+    scored::<i64, FrequencyGT>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch-regularpath-vector2d",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap Count, Vector2D, RegularPath",
         cs::sketchlib::run_vector2d_regular,
     ),
-    parallel_row::<cs::sketchlib::ParallelCsFastPath, i64>(
+    parallel_row::<i64>(
+        RowIdentity {
+            family: "countsketch",
+            algorithm: "countsketch-fastpath-fixedmatrix-32k-parallel",
+            impl_name: "lib",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "asap Count, FastPath, parallel insert on M5x32K",
         cs::sketchlib::run_cs,
     ),
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
     // Three rows, three different probe shapes. See `wrappers/hydra.rs`.
-    scored::<hydra::sketchlib::HydraCms, Labeled<i64>, SubpopFrequencyGT>(
+    scored::<Labeled<i64>, SubpopFrequencyGT>(
+        RowIdentity {
+            family: "hydra-cms",
+            algorithm: "hydra-cms",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
         hydra::sketchlib::run_cms,
     ),
-    scored::<hydra::polars::PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT>(
+    scored::<Labeled<i64>, SubpopFrequencyGT>(
+        RowIdentity {
+            family: "hydra-cms",
+            algorithm: "hydra-cms",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: group_by(subset, v).agg(len) over every label subset",
         hydra::polars::run_subpop_frequency,
     ),
-    scored::<hydra::sketchlib::HydraHll, Labeled<i64>, SubpopCardinalityGT>(
+    scored::<Labeled<i64>, SubpopCardinalityGT>(
+        RowIdentity {
+            family: "hydra-hll",
+            algorithm: "hydra-hll",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
         hydra::sketchlib::run_hll,
     ),
-    scored::<hydra::polars::PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT>(
+    scored::<Labeled<i64>, SubpopCardinalityGT>(
+        RowIdentity {
+            family: "hydra-hll",
+            algorithm: "hydra-hll",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
         hydra::polars::run_subpop_cardinality,
     ),
-    scored::<hydra::sketchlib::HydraKll, Labeled<f64>, SubpopRankErrorGT>(
+    scored::<Labeled<f64>, SubpopRankErrorGT>(
+        RowIdentity {
+            family: "hydra-kll",
+            algorithm: "hydra-kll",
+            impl_name: "lib",
+            supports_merge: true,
+            supports_prepare: false,
+        },
         "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
         hydra::sketchlib::run_kll,
     ),
-    scored::<hydra::polars::PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT>(
+    scored::<Labeled<f64>, SubpopRankErrorGT>(
+        RowIdentity {
+            family: "hydra-kll",
+            algorithm: "hydra-kll",
+            impl_name: "polars",
+            supports_merge: false,
+            supports_prepare: true,
+        },
         "polars exact: sorted values per label subset, quantile by rank",
         hydra::polars::run_subpop_quantile,
     ),
@@ -1064,9 +1278,13 @@ pub fn resolve(
     // width this request resolved at, so the caller supplies only what it
     // actually owns: the config, the data it generated, and the params.
     let width = req.width;
+    let label = RowLabel {
+        algorithm: row.algorithm,
+        impl_name: row.impl_name,
+    };
     Ok(Some(ResolvedRow {
         run: move |cfg: &BenchConfig, data: WorkloadData, params: &ParamSet| {
-            run(cfg, data, params, width)
+            run(cfg, data, params, width, label)
         },
         // At the *requested* width, not the row's default. An `ordered` row is
         // named by its i64 half, so `row.value_type` is "i64" even when the

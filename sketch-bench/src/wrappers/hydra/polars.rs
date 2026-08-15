@@ -7,9 +7,9 @@ use super::*;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
-use aqpbm_core::cell::{RunError, WorkloadData};
+use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BenchImpl, BuildError, InitSketch};
+use aqpbm_core::init::{BuildError, InitSketch};
 use aqpbm_core::memory_footprint::MemoryFootprint;
 use aqpbm_core::ops::SketchOps;
 use aqpbm_core::request::Numeric;
@@ -52,11 +52,6 @@ impl MemoryFootprint for PolarsSubpopFrequency {
     }
 }
 
-impl BenchImpl for PolarsSubpopFrequency {
-    type Params = HydraCmsParams;
-    const IMPL: &'static str = "polars";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 /// `hydra-hll/polars` — exact subpopulation cardinality.
 #[derive(Default)]
@@ -89,11 +84,6 @@ impl MemoryFootprint for PolarsSubpopCardinality {
     }
 }
 
-impl BenchImpl for PolarsSubpopCardinality {
-    type Params = HydraHllParams;
-    const IMPL: &'static str = "polars";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 /// `hydra-kll/polars` — exact subpopulation quantile.
 #[derive(Default)]
@@ -140,11 +130,6 @@ impl MemoryFootprint for PolarsSubpopQuantile {
     }
 }
 
-impl BenchImpl for PolarsSubpopQuantile {
-    type Params = HydraKllParams;
-    const IMPL: &'static str = "polars";
-    const SUPPORTS_PREPARE: bool = true;
-}
 
 pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &Labeled<i64>)
 {
@@ -301,9 +286,10 @@ pub fn run_subpop_frequency(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg, data, params, width, insert_polars_subpop_frequency,
+        cfg, data, params, label, width, insert_polars_subpop_frequency,
         &SUBPOP_FREQUENCY_OPS,
     )
 }
@@ -313,9 +299,10 @@ pub fn run_subpop_cardinality(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg, data, params, width, insert_polars_subpop_cardinality,
+        cfg, data, params, label, width, insert_polars_subpop_cardinality,
         &SUBPOP_CARDINALITY_OPS,
     )
 }
@@ -325,9 +312,10 @@ pub fn run_subpop_quantile(
     data: WorkloadData,
     params: &ParamSet,
     width: Numeric,
+    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     crate::catalog::run_scored::<PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg, data, params, width, insert_polars_subpop_quantile,
+        cfg, data, params, label, width, insert_polars_subpop_quantile,
         &SUBPOP_QUANTILE_OPS,
     )
 }
