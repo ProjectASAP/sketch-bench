@@ -75,8 +75,7 @@ impl QuantileValue for f64 {
 
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RankErrorGT {
-}
+pub struct RankErrorGT {}
 
 impl<I> GroundTruth<I> for RankErrorGT
 where
@@ -149,8 +148,7 @@ where
 
 /// Relative-error comparator for DDSketch-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RelativeErrorGT {
-}
+pub struct RelativeErrorGT {}
 
 impl<I> GroundTruth<I> for RelativeErrorGT
 where
@@ -208,7 +206,11 @@ where
             ("evaluated_points", n_rel as f64),
             (
                 "mean_relative_err",
-                if n_rel == 0 { 0.0 } else { sum_rel / n_rel as f64 },
+                if n_rel == 0 {
+                    0.0
+                } else {
+                    sum_rel / n_rel as f64
+                },
             ),
             ("max_relative_err", max_rel_err),
         ])
@@ -262,7 +264,6 @@ pub(crate) fn upper_bound(sorted: &[f64], x: f64) -> usize {
     }
     lo
 }
-
 
 /// Build the flat metric map a `Comparison` carries.
 fn metrics_from<const N: usize>(pairs: [(&str, f64); N]) -> BTreeMap<String, f64> {

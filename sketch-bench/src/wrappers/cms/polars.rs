@@ -5,14 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 
 /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
 pub fn build_polars_frequency_cms(

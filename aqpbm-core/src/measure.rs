@@ -175,7 +175,6 @@ where
     out
 }
 
-
 /// Ramp the CPU **once per process**, before the first measured region of the
 /// first measurement — two measurements timed at two different clock states are
 /// not a comparison. `Once` is what keeps the second measurement in a process

@@ -28,7 +28,7 @@ pub use config::{ParamSet, SketchParams};
 // owns what reaches disk (`binfile`). Re-exported so callers find it here.
 pub use accuracy::{Comparison, GroundTruth};
 pub use aqpbm_datagen::{
-    ColumnData, ColumnSpec, DataDistribution, DataGenError, ColumnItem, GeneratedTable,
+    ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
     NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
@@ -41,9 +41,8 @@ pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use metrics::{MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
-    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics,
-    LatencySummary, MergeMetrics, MergedRecord, Mode, PrepareMetrics, ProfileSection,
-    QueryMetrics, Record,
+    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics, LatencySummary,
+    MergeMetrics, MergedRecord, Mode, PrepareMetrics, ProfileSection, QueryMetrics, Record,
     RunStats, Source, SCHEMA_VERSION,
 };
 // What a frontend asks for. The registry that answers it lives in the bundle

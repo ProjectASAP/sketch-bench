@@ -163,7 +163,8 @@ mod tests {
         let items = tied_at_the_boundary();
         let gt = TopkGT { k: 3 };
         for _ in 0..32 {
-            let cmp = crate::accuracy::run_probes(&gt, &ask_exact, &mut exact_source(&items), &items);
+            let cmp =
+                crate::accuracy::run_probes(&gt, &ask_exact, &mut exact_source(&items), &items);
             assert_eq!(cmp.metrics["precision_at_k"], 1.0, "{:?}", cmp.metrics);
             assert_eq!(cmp.metrics["recall_at_k"], 1.0, "{:?}", cmp.metrics);
         }
@@ -180,8 +181,7 @@ mod tests {
         let first = crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items);
         for _ in 0..32 {
             assert_eq!(
-                crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items)
-                    .metrics,
+                crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items).metrics,
                 first.metrics
             );
         }

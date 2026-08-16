@@ -51,7 +51,11 @@ pub struct SketchbenchArgs {
     /// strategy gives different estimates. Matched exactly, since one
     /// invocation measures one cell. `--list-impls` prints every
     /// (algorithm, impl) pair, grouped by the family they share knobs with.
-    #[arg(long, required_unless_present = "list_impls", help_heading = "Identity")]
+    #[arg(
+        long,
+        required_unless_present = "list_impls",
+        help_heading = "Identity"
+    )]
     pub algorithm: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
     /// `polars`. `--list-impls` shows which the algorithm offers. One

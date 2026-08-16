@@ -182,10 +182,7 @@ pub struct StrCfg {
 }
 
 impl StrCfg {
-    fn build(        opts: &StringOpts,
-        cardinality: u64,
-        lower: f64,
-    ) -> Result<Self, DataGenError> {
+    fn build(opts: &StringOpts, cardinality: u64, lower: f64) -> Result<Self, DataGenError> {
         let alphabet: Vec<char> = opts.alphabet.chars().collect();
         if alphabet.len() < 2 {
             return Err(DataGenError::BadParam(

@@ -94,7 +94,8 @@ where
         probes: &[(String, V)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<&(String, V), f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+        let est: HashMap<&(String, V), f64> =
+            probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         let population = |pairs: &[(String, V)], label: &str, m: &mut BTreeMap<String, f64>| {
@@ -118,7 +119,11 @@ where
             let n = pairs.len() as f64;
             m.insert(
                 format!("are_{label}"),
-                if counted > 0 { are / counted as f64 } else { 0.0 },
+                if counted > 0 {
+                    are / counted as f64
+                } else {
+                    0.0
+                },
             );
             m.insert(format!("aae_{label}"), aae / n);
             m.insert(format!("probes_{label}"), n);
@@ -187,7 +192,6 @@ fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
     out
 }
 
-
 /// The ranked keys, shuffled. Shuffled so probe order does not hand the
 /// baseline the locality that encounter order would. Fixed seed, so the order
 /// is reproducible. No cap: a sampled population is not the truth.
@@ -254,8 +258,7 @@ where
             .map(|(group, values)| ((*group).to_string(), values.len() as u64))
             .collect();
 
-        let mut by_count: Vec<(String, u64)> =
-            exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
+        let mut by_count: Vec<(String, u64)> = exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let all = sample_ranked(&by_count);
         let ranked = by_count.into_iter().map(|(g, _)| g).collect();
@@ -276,8 +279,7 @@ where
         probes: &[String],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<&String, f64> =
-            probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+        let est: HashMap<&String, f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         let population = |groups: &[String], label: &str, m: &mut BTreeMap<String, f64>| {
@@ -539,7 +541,6 @@ fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,9 +604,7 @@ mod tests {
     /// exactly 1.0, on every population.
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
+        let gt = SubpopFrequencyGT { label_column: 0 };
         let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &records());
         for key in ["are_all", "are_top1"] {
             let v = cmp.metrics[key];
@@ -630,9 +629,7 @@ mod tests {
         for it in &items {
             exact.update(it);
         }
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
+        let gt = SubpopFrequencyGT { label_column: 0 };
         let cmp = crate::accuracy::run_probes(&gt, &ask_exact, &mut exact, &items);
         assert_eq!(cmp.metrics["are_all"], 0.0);
         assert_eq!(cmp.metrics["aae_all"], 0.0);
@@ -645,9 +642,7 @@ mod tests {
     #[test]
     fn truth_groups_by_the_named_column() {
         let items = records();
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
+        let gt = SubpopFrequencyGT { label_column: 0 };
         let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &items);
         // Distinct pairs at column 0: (a,10) (a,20) (b,30) → 3 pairs, 2 groups.
         assert_eq!(cmp.metrics["probes_all"], 3.0);
@@ -664,9 +659,7 @@ mod tests {
     fn a_different_column_is_a_different_population() {
         let items = records();
         let by_col1 = crate::accuracy::run_probes(
-            &SubpopFrequencyGT {
-                label_column: 1,
-            },
+            &SubpopFrequencyGT { label_column: 1 },
             &ask_null,
             &mut NullSubpop,
             &items,

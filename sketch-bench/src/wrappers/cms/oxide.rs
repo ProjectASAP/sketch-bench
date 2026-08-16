@@ -5,14 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::require_resolved_shape;
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 
 // No `rows` / `cols` field: `init` has already proven the built table matches
 // the request, so the sketch itself is the one place either figure is read

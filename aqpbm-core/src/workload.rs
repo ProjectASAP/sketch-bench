@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use aqpbm_datagen::{
-    ColumnSpec, DataDistribution, DataGenError, ColumnItem, TableDescription, UniformParameter,
-    ZipfParameter, GeneratedTable,};
+    ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable, TableDescription,
+    UniformParameter, ZipfParameter,
+};
 
 use crate::binfile;
 

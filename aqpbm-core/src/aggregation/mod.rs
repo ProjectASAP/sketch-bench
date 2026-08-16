@@ -109,7 +109,6 @@ pub fn latency(runs: &[RunMetrics]) -> Option<LatencySummary> {
         })
 }
 
-
 /// Fold every run's accuracy scalars into one object. Each repetition drew
 /// independently, so spread is real: each key ships as a mean plus `_stddev`,
 /// with `accuracy_runs` counting every run — the two can visibly disagree.

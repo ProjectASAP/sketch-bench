@@ -5,7 +5,6 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;

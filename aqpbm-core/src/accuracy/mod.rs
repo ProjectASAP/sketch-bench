@@ -9,7 +9,6 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-
 pub mod cardinality;
 pub mod frequency;
 pub mod quantile;

@@ -9,7 +9,6 @@ use crate::workload::{
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
-
 // ---------- where items come from, and what they materialise to ----------
 
 /// Where a benchmark's items come from: generated in-process, or loaded.
@@ -135,7 +134,6 @@ impl From<anyhow::Error> for RunError {
     }
 }
 
-
 // ---------- the item axis ----------
 
 /// An item type a benchmark can be run over: it names the workload that carries
@@ -166,8 +164,9 @@ impl BenchItem for i64 {
             WorkloadData::Generated { description, table } => {
                 I64Workload::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
             }
-            WorkloadData::File { path } => I64Workload::load(std::path::Path::new(&path))
-                .map_err(|e| anyhow::anyhow!("{}", e)),
+            WorkloadData::File { path } => {
+                I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
+            }
         }
     }
 }
@@ -248,11 +247,6 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
 // `Accumulator::update`. It is now the row's own `SketchOps::insert`, written in
 // the wrapper file beside the sketch it drives.
 
-
 // ---------- parallel-insert construction ----------
 
-
 // ---------- running one cell ----------
-
-
-

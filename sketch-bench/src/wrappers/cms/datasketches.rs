@@ -5,14 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{require_range, require_resolved_shape};
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 
 /// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
 /// the `u8` the API takes.

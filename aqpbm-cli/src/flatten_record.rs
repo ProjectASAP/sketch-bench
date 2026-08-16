@@ -52,7 +52,9 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
 /// which is stronger than a runtime check and can't drift out of date the
 /// way a hand-maintained list of field names could.
 pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
-    let base = records.first().expect("flatten_record requires at least one record");
+    let base = records
+        .first()
+        .expect("flatten_record requires at least one record");
 
     let mut out = MergedRecord {
         schema_version: base.schema_version,
@@ -132,7 +134,10 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         match operation {
             "insert" => {
                 out.insert.timestamp = Some(record.timestamp);
-                keep!(out.insert.throughput_items_per_sec, *throughput_items_per_sec);
+                keep!(
+                    out.insert.throughput_items_per_sec,
+                    *throughput_items_per_sec
+                );
                 keep!(out.insert.throughput_samples, throughput_samples.clone());
                 keep!(
                     out.insert.build_throughput_items_per_sec,

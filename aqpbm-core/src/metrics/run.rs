@@ -61,7 +61,6 @@ impl RunMetrics {
             scores: None,
         }
     }
-
 }
 
 // `FullSink` lived here: the offline recorder `BenchRunner::run_once` wrapped a

@@ -105,7 +105,6 @@ mod tests {
         }
     }
 
-
     #[derive(Default)]
     struct CountingSink {
         updates: usize,

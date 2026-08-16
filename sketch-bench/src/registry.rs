@@ -6,12 +6,6 @@
 
 use anyhow::Result;
 
-use aqpbm_core::accuracy::GroundTruth;
-use aqpbm_core::cell::{RunError, WorkloadData};
-use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
-
 use crate::params::ParamSet;
 use crate::wrappers::{cms, cs, hll, hydra, kll};
 
@@ -32,14 +26,6 @@ pub struct RowIdentity {
     pub supports_prepare: bool,
 }
 
-/// A row's runner: given the loop knobs, the request and the produced data, run
-/// every selected square and report.
-///
-/// Every arm of the dispatch this sits behind is monomorphic, so the row runs
-/// its own measurements with the sketch type known: nothing is erased, and what
-/// crosses to a frontend is records rather than closures.
-type RunFn = fn(&MeasureConfig, &Requirement, WorkloadData) -> Result<Vec<BenchReport>, RunError>;
-
 /// One registry entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
 /// row's type and its runner — never hand-written strings that could drift from
@@ -51,37 +37,209 @@ pub struct SketchId {
     pub description: &'static str,
 }
 
-// ---------- how a row builds its ground truth ----------
-
-/// A [`GroundTruth`] that constructs itself from the run's accuracy knobs and the
-/// row's params. A trait, not a `fn` argument, so the calculator is named as a
-/// *type* in [`REGISTRY`] and the row stays `const`.
-pub(crate) trait GroundTruthCalculator<I>: GroundTruth<I> {
-    /// The name `--comparator` selects this one by. One capability can carry
-    /// several comparators, and this is what tells them apart on the command
-    /// line.
-    const NAME: &'static str;
-    /// The statistic this comparator scores. Two comparators can share one —
-    /// a quantile answer scores as a rank error or as a relative error — which
-    /// is why the capability is named here and not derived from the name.
-    const CAPABILITY: Capability;
-    fn build(params: &ParamSet) -> Self;
-}
-
 // ---------- the registry ----------
 
+/// Every `(algorithm, impl)` this crate exposes. Adding one is one line here
+/// plus the wrapper it names; nothing else in this file changes.
+///
+/// Rows are grouped by family and kept contiguous, because [`list`] starts a new
+/// group the moment `family` differs from the row above: a family split across
+/// two runs prints as two groups.
 pub const REGISTRY: &[SketchId] = &[
+    // -------- CMS (frequency) --------
     SketchId {
         family: "cms",
-        algorithm: "cms-fixedmatrix-fastpath",
-        impl_name: "asap_sketchlib",
-        description: "CountMin sketch from asap_sketchlib based on Fixed Size Matrix, FastPath",
+        algorithm: "cms",
+        impl_name: "oxide",
+        description: "sketch_oxide::frequency::CountMinSketch",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms",
+        impl_name: "datasketches",
+        description: "datasketches::countmin::CountMinSketch",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms",
+        impl_name: "polars",
+        description: "polars exact: group_by(v).agg(len)",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms-fastpath-fixedmatrix",
+        impl_name: "lib",
+        description: "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms-fastpath-vector2d",
+        impl_name: "lib",
+        description: "asap CMS, Vector2D, FastPath",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms-regularpath-vector2d",
+        impl_name: "lib",
+        description: "asap CMS, Vector2D, RegularPath",
+    },
+    SketchId {
+        family: "cms",
+        algorithm: "cms-fastpath-fixedmatrix-32k-parallel",
+        impl_name: "lib",
+        description: "asap CMS, FastPath, parallel insert on M5x32K",
+    },
+    // -------- CountSketch (frequency) --------
+    // No `datasketches` row: that library ships no CountSketch.
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch",
+        impl_name: "oxide",
+        description: "sketch_oxide::frequency::CountSketch",
+    },
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch",
+        impl_name: "polars",
+        description: "polars exact: group_by(v).agg(len)",
+    },
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch-fastpath-fixedmatrix",
+        impl_name: "lib",
+        description: "asap Count, FixedMatrix (shape baked at compile time), FastPath",
+    },
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch-fastpath-vector2d",
+        impl_name: "lib",
+        description: "asap Count, Vector2D, FastPath",
+    },
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch-regularpath-vector2d",
+        impl_name: "lib",
+        description: "asap Count, Vector2D, RegularPath",
+    },
+    SketchId {
+        family: "countsketch",
+        algorithm: "countsketch-fastpath-fixedmatrix-32k-parallel",
+        impl_name: "lib",
+        description: "asap Count, FastPath, parallel insert on M5x32K",
+    },
+    // -------- HLL (cardinality) --------
+    // The three `lib` precisions are one row: one algorithm at one impl, with
+    // `lg_k` the knob that moves between them.
+    SketchId {
+        family: "hll",
+        algorithm: "hll",
+        impl_name: "oxide",
+        description: "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
     },
     SketchId {
         family: "hll",
         algorithm: "hll",
-        impl_name: "asap_sketchlib",
-        description: "HyperLogLog from asap_sketchlib",
+        impl_name: "datasketches",
+        description: "datasketches::hll::HllSketch (Hll8)",
+    },
+    SketchId {
+        family: "hll",
+        algorithm: "hll",
+        impl_name: "lib",
+        description: "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
+    },
+    SketchId {
+        family: "hll",
+        algorithm: "hll",
+        impl_name: "polars",
+        description: "polars exact: DataFrame.n_unique()",
+    },
+    // Its own algorithm, not an impl of `hll`: the estimate is maintained on the
+    // insert path instead of scanned at query time.
+    SketchId {
+        family: "hll",
+        algorithm: "hll-hip",
+        impl_name: "lib",
+        description: "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
+    },
+    SketchId {
+        family: "hll",
+        algorithm: "hll-fastpath-parallel",
+        impl_name: "lib",
+        description: "asap HLL ErtlMLE, FastPath, parallel insert",
+    },
+    // -------- KLL (quantile) --------
+    // Two query paths x two libraries. The `cdf` rows supply a `prepare` and the
+    // per-call rows do not, which is the whole point of the split.
+    SketchId {
+        family: "kll",
+        algorithm: "kll-percall",
+        impl_name: "oxide",
+        description: "sketch_oxide KllSketch: quantile() per call",
+    },
+    SketchId {
+        family: "kll",
+        algorithm: "kll-percall",
+        impl_name: "lib",
+        description: "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
+    },
+    SketchId {
+        family: "kll",
+        algorithm: "kll-cdf",
+        impl_name: "oxide",
+        description: "sketch_oxide KllSketch: cdf() built in prepare",
+    },
+    SketchId {
+        family: "kll",
+        algorithm: "kll-cdf",
+        impl_name: "lib",
+        description: "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
+    },
+    SketchId {
+        family: "kll",
+        algorithm: "kll-cdf",
+        impl_name: "polars",
+        description: "polars exact: 101-point quantile grid",
+    },
+    // -------- Hydra (per-subpopulation statistics over labelled records) --------
+    // Three families, not one: what sits in a cell decides which statistic the
+    // grid answers, so each cell type gets its own params vocabulary. See
+    // `wrappers/hydra/mod.rs`.
+    SketchId {
+        family: "hydra-cms",
+        algorithm: "hydra-cms",
+        impl_name: "lib",
+        description: "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+    },
+    SketchId {
+        family: "hydra-cms",
+        algorithm: "hydra-cms",
+        impl_name: "polars",
+        description: "polars exact: group_by(subset, v).agg(len) over every label subset",
+    },
+    SketchId {
+        family: "hydra-hll",
+        algorithm: "hydra-hll",
+        impl_name: "lib",
+        description: "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
+    },
+    SketchId {
+        family: "hydra-hll",
+        algorithm: "hydra-hll",
+        impl_name: "polars",
+        description: "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
+    },
+    SketchId {
+        family: "hydra-kll",
+        algorithm: "hydra-kll",
+        impl_name: "lib",
+        description: "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+    },
+    SketchId {
+        family: "hydra-kll",
+        algorithm: "hydra-kll",
+        impl_name: "polars",
+        description: "polars exact: sorted values per label subset, quantile by rank",
     },
 ];
 // ---------- what the frontend asks ----------

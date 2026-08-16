@@ -235,11 +235,7 @@ mod tests {
     #[test]
     fn secondary_bits_alone_select_nothing() {
         // They attach to a measurement; they are not one.
-        assert!(cells(
-            OperationMask::all(),
-            MetricsMask::CPU | MetricsMask::MEMORY
-        )
-        .is_empty());
+        assert!(cells(OperationMask::all(), MetricsMask::CPU | MetricsMask::MEMORY).is_empty());
     }
 
     #[test]

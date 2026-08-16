@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-
 use super::GroundTruth;
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -79,7 +78,8 @@ where
         probes: &[K],
         answers: &[u64],
     ) -> BTreeMap<String, f64> {
-        let estimates: HashMap<&K, u64> = probes.iter().zip(answers).map(|(k, v)| (k, *v)).collect();
+        let estimates: HashMap<&K, u64> =
+            probes.iter().zip(answers).map(|(k, v)| (k, *v)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         let population = |keys: &[K], label: &str, metrics: &mut BTreeMap<String, f64>| {
@@ -103,7 +103,11 @@ where
             let n = keys.len() as f64;
             metrics.insert(
                 format!("are_{label}"),
-                if counted > 0 { are / counted as f64 } else { 0.0 },
+                if counted > 0 {
+                    are / counted as f64
+                } else {
+                    0.0
+                },
             );
             metrics.insert(format!("aae_{label}"), aae / n);
             metrics.insert(format!("probes_{label}"), n);

@@ -30,8 +30,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
