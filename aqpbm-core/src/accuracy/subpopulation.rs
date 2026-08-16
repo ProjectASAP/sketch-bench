@@ -606,7 +606,7 @@ mod tests {
         let gt = SubpopFrequencyGT {
             label_column: 0,
         };
-        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &records(), false);
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &records());
         for key in ["are_all", "are_top1"] {
             let v = cmp.metrics[key];
             assert!(
@@ -633,7 +633,7 @@ mod tests {
         let gt = SubpopFrequencyGT {
             label_column: 0,
         };
-        let cmp = crate::accuracy::run_probes(&gt, &ask_exact, &mut exact, &items, false);
+        let cmp = crate::accuracy::run_probes(&gt, &ask_exact, &mut exact, &items);
         assert_eq!(cmp.metrics["are_all"], 0.0);
         assert_eq!(cmp.metrics["aae_all"], 0.0);
         assert_eq!(cmp.metrics["l1_err"], 0.0);
@@ -648,7 +648,7 @@ mod tests {
         let gt = SubpopFrequencyGT {
             label_column: 0,
         };
-        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &items, false);
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &items);
         // Distinct pairs at column 0: (a,10) (a,20) (b,30) → 3 pairs, 2 groups.
         assert_eq!(cmp.metrics["probes_all"], 3.0);
         assert_eq!(cmp.metrics["subpopulations"], 2.0);
@@ -670,7 +670,6 @@ mod tests {
             &ask_null,
             &mut NullSubpop,
             &items,
-            false,
         );
         // Column 1 pairs: (x,10) (y,10) (x,20) (x,30) (y,30) → 5 pairs, 2 groups.
         assert_eq!(by_col1.metrics["probes_all"], 5.0);

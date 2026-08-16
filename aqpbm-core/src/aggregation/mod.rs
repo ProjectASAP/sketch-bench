@@ -140,28 +140,6 @@ pub fn latency_from_recorder(runs: &[RunMetrics]) -> Option<LatencySummary> {
         })
 }
 
-/// The same distribution, built from per-call samples, so a query latency and
-/// an insert latency are read on one ruler.
-pub fn latency_from_calls(runs: &[RunMetrics]) -> Option<LatencySummary> {
-    let mut ns: Vec<u64> = runs
-        .iter()
-        .filter_map(|r| r.query_calls.as_ref())
-        .flat_map(|calls| calls.iter().map(|c| c.nanoseconds))
-        .collect();
-    if ns.is_empty() {
-        return None;
-    }
-    ns.sort_unstable();
-    let at = |q: f64| ns[(((ns.len() - 1) as f64) * q).round() as usize];
-    Some(LatencySummary {
-        p50: at(0.50),
-        p95: at(0.95),
-        p99: at(0.99),
-        p999: at(0.999),
-        max: *ns.last().unwrap(),
-        count: ns.len() as u64,
-    })
-}
 
 /// Fold every run's accuracy scalars into one object. Each repetition drew
 /// independently, so spread is real: each key ships as a mean plus `_stddev`,

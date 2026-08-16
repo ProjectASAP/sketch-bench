@@ -9,7 +9,6 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use crate::metrics::QueryCallSample;
 
 pub mod cardinality;
 pub mod frequency;
@@ -29,10 +28,6 @@ pub struct Comparison {
     pub metrics: BTreeMap<String, f64>,
     pub queries: u64,
     pub query_wall_ns: u64,
-    /// Optional per-call samples, populated only when the comparator carries
-    /// the `record_calls` flag (set by `approxbench sketchbench --raw-csv`). `None`
-    /// otherwise, so production runs pay nothing.
-    pub query_calls: Option<Vec<QueryCallSample>>,
 }
 
 /// The exact answer a sketch is scored against.
@@ -102,16 +97,7 @@ pub trait GroundTruth<I> {
 /// taking `&mut`, which several libraries need — without every other row having
 /// to agree on the signature.
 ///
-/// `per_call` records each question's own duration. It allocates and reads the
-/// clock inside the loop, so it is what a latency measurement asks for and
-/// what a throughput measurement must not.
-pub fn run_probes<S, I, G, A>(
-    gt: &G,
-    ask: &A,
-    sketch: &mut S,
-    items: &[I],
-    per_call: bool,
-) -> Comparison
+pub fn run_probes<S, I, G, A>(gt: &G, ask: &A, sketch: &mut S, items: &[I]) -> Comparison
 where
     G: GroundTruth<I>,
     A: Fn(&mut S, &G::Probe) -> G::Answer,
@@ -120,28 +106,13 @@ where
     let probes = gt.probes(&truth);
 
     let mut answers = Vec::with_capacity(probes.len());
-    let mut calls = per_call.then(|| Vec::with_capacity(probes.len()));
 
+    // One clock around the whole sweep. There is deliberately no per-call
+    // timing: reading the clock inside the loop is what a query *latency*
+    // measurement would need, and nothing consumes one — see `is_measurable`.
     let start = Instant::now();
-    for (i, probe) in probes.iter().enumerate() {
-        match calls.as_mut() {
-            Some(samples) => {
-                let t0 = Instant::now();
-                let answer = ask(sketch, probe);
-                let ns = t0.elapsed().as_nanos() as u64;
-                samples.push(QueryCallSample {
-                    call_index: i,
-                    nanoseconds: ns,
-                    estimate: gt.answer_as_f64(&answer),
-                    percentile: gt.probe_as_f64(probe),
-                    // The probe set is swept once, so there is no outer
-                    // repetition to number.
-                    repeat: 0,
-                });
-                answers.push(answer);
-            }
-            None => answers.push(ask(sketch, probe)),
-        }
+    for probe in probes.iter() {
+        answers.push(ask(sketch, probe));
     }
     let query_wall_ns = start.elapsed().as_nanos() as u64;
 
@@ -149,6 +120,5 @@ where
         metrics: gt.score(&truth, &probes, &answers),
         queries: probes.len() as u64,
         query_wall_ns,
-        query_calls: calls,
     }
 }

@@ -56,7 +56,8 @@ fn section(cell: Cell, runs: &[RunMetrics]) -> BenchSection {
         (Prepare, Latency) => bench.finalize_time_ms = fold::finalize_time_ms(runs),
         (Insert, Latency) => bench.latency_ns = fold::latency_from_recorder(runs),
         (Query, Throughput) => bench.query_throughput_items_per_sec = fold::query_throughput(runs),
-        (Query, Latency) => bench.latency_ns = fold::latency_from_calls(runs),
+        // Empty: see `metrics::is_measurable`. `run` refuses it before reaching here.
+        (Query, Latency) => {}
         (Query, Accuracy) => bench.accuracy = fold::accuracy(runs),
         // Both merge squares are filled by `run_merge_pass`, which is what
         // holds the clock around the fold.
@@ -180,9 +181,12 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                 // needs the comparator as much as accuracy does.
                 (Query, Throughput) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
-                // Same loop as query throughput, with the clock inside it.
-                (Query, Latency) => ground_truth
-                    .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
+                // Nothing measures it. A query latency needs the clock read
+                // around each individual estimate call, and the per-call
+                // capture that did so was removed with the CSV renderer that
+                // was its only consumer. Reinstating this square means
+                // reinstating that capture.
+                (Query, Latency) => return Err(unmeasured(cell)),
                 (Query, Accuracy) => ground_truth
                     .map(|gt| self.run_pass(cell, &mut factory, &mut insert, Some(gt), ops, pass_cfg)),
                 (Merge, Throughput) => {
@@ -363,11 +367,6 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
         // Measuring the query operation means issuing queries, and the
         // comparator is what issues them. Wider than measuring accuracy.
         let queries = cell.operation == Operation::Query;
-        // Timing each question on its own is what a latency measurement is,
-        // and what a throughput measurement must not pay for. Keyed on the
-        // whole square, not the metric alone: it is the *query* latency square
-        // that wants each answer timed separately.
-        let per_call = (cell.operation, cell.metric) == (Operation::Query, Metric::Latency);
         // Likewise the per-update probe belongs to the insert latency square.
         // `prepare` shares this loop to reach its finalize clock, and must not
         // pay the probe boundary on every insert to get there.
@@ -401,7 +400,7 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
             // iterations too — otherwise `--warmup-runs` protects only the
             // insert side and the first measured query is a cold one.
             let comparison = if queries {
-                ground_truth.map(|gt| run_probes(gt, &ops.ask, &mut final_sketch, items, per_call))
+                ground_truth.map(|gt| run_probes(gt, &ops.ask, &mut final_sketch, items))
             } else {
                 None
             };
@@ -415,7 +414,6 @@ impl<'a, W: Workload> BenchRunner<'a, W> {
                     metrics.queries_executed = cmp.queries;
                     metrics.query_wall_time_ns = cmp.query_wall_ns;
                     metrics.accuracy = Some(cmp.metrics);
-                    metrics.query_calls = cmp.query_calls;
                 }
                 metrics.memory_bytes = Some(final_sketch.memory_bytes() as u64);
                 per_run.push(metrics);
@@ -582,7 +580,6 @@ where
         heap_bytes_peak: None,
         latency_ns: None,
         accuracy: None,
-        query_calls: None,
     };
 
     #[cfg(feature = "heap-track")]

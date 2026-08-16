@@ -252,14 +252,12 @@ mod tests {
             &|s: &mut KllLibPerCall<i64>, phi: &f64| s.estimate_quantile(*phi),
             &mut per_call,
             &items,
-            false,
         ));
         let cdf_err = err(aqpbm_core::accuracy::run_probes(
             &gt,
             &|s: &mut KllLibCdf<i64>, phi: &f64| s.estimate_quantile(*phi),
             &mut cdf,
             &items,
-            false,
         ));
         assert!(
             cdf_err < per_call_err * 3.0,

@@ -191,12 +191,6 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Output directory for long-format CSVs, one row per measured run, named
-    /// `<family>_throughput[_query]_results_rust.csv` — one file per family, so
-    /// a structural variant does not fork the file a plot script reads; the
-    /// variant lands in the `implementation` column. Coexists with `--report`.
-    #[arg(long, help_heading = "Output")]
-    pub raw_csv: Option<String>,
     /// Write one line for the whole cell instead of one per square, folding
     /// the cell's records into a single flattened row: one slot per operation,
     /// one field per metric. One record per square is the default; this is the

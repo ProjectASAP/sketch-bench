@@ -6,7 +6,6 @@
 
 mod cli;
 mod flatten_record;
-mod raw_csv;
 mod repeat;
 mod workload_cmd;
 
@@ -251,12 +250,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // Parent role: spawn the repeats, merge, emit. A child (marked by the
     // env var) falls through and runs the measurement itself.
     if args.repeats > 1 && !repeat::is_child() {
-        if args.raw_csv.is_some() {
-            bail!(
-                "--raw-csv cannot be combined with --repeats: the legacy CSV shape has no \
-                 repeat column, so every repeat would append indistinguishable rows"
-            );
-        }
         if args.flat {
             bail!(
                 "--flat cannot be combined with --repeats: a flattened row holds one value \
@@ -384,18 +377,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let mut sink = ReportSink::open(args.report.as_deref())?;
     let mut records = Vec::with_capacity(reports.len());
     for report in &reports {
-        if let Some(dir) = args.raw_csv.as_deref() {
-            raw_csv::write_runs(
-                std::path::Path::new(dir),
-                family,
-                &algorithm,
-                &impl_name,
-                Some(&params),
-                cfg.seed,
-                cfg.threads,
-                report,
-            )?;
-        }
         let mut record = report.to_record();
         record.sketch_config = Some(params.to_json_value());
         // The algorithm names the structural variant, so a reader grouping by

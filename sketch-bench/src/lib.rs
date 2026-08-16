@@ -5,6 +5,5 @@
 //! traits. This crate exists for the CLI. See `docs/DESIGN.md` §5.
 
 pub mod catalog;
-pub mod legacy_csv;
 pub mod params;
 pub mod wrappers;

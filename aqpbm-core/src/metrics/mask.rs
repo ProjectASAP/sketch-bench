@@ -118,11 +118,13 @@ const METRICS: [(MetricsMask, Metric); 3] = [
 
 /// Whether the framework measures this square *at all*, for any row.
 ///
-/// Four of the twelve are permanently empty, and for reasons that hold of every
+/// Five of the twelve are permanently empty, and for reasons that hold of every
 /// implementation rather than of any one of them: an insert produces no answer
 /// to score, a fold produces no answer to score, scoring a folded sketch is the
-/// query operation wearing merge's name, and `prepare` runs at the tail of the
-/// insert loop so it has a latency but no throughput of its own.
+/// query operation wearing merge's name, `prepare` runs at the tail of the
+/// insert loop so it has a latency but no throughput of its own, and a query
+/// latency needs each estimate call timed separately — a per-call capture this
+/// build no longer has.
 ///
 /// This mirrors the grid in [`crate::runner::BenchRunner::run`], which is the
 /// authority — it is the one that actually calls something. Both are exhaustive
@@ -137,7 +139,8 @@ pub fn is_measurable(cell: Cell) -> bool {
     match (cell.operation, cell.metric) {
         (Insert, Throughput) | (Insert, Latency) => true,
         (Insert, Accuracy) => false,
-        (Query, Throughput) | (Query, Latency) | (Query, Accuracy) => true,
+        (Query, Throughput) | (Query, Accuracy) => true,
+        (Query, Latency) => false,
         (Merge, Throughput) | (Merge, Latency) => true,
         (Merge, Accuracy) => false,
         (Prepare, Throughput) => false,
@@ -246,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn four_of_the_twelve_squares_are_permanently_empty() {
+    fn five_of_the_twelve_squares_are_permanently_empty() {
         let empty: Vec<_> = cells(OperationMask::all(), MetricsMask::all())
             .into_iter()
             .filter(|c| !is_measurable(*c))
@@ -256,6 +259,7 @@ mod tests {
             empty,
             vec![
                 ("insert", "accuracy"),
+                ("query", "latency"),
                 ("merge", "accuracy"),
                 ("prepare", "throughput"),
                 ("prepare", "accuracy"),

@@ -11,22 +11,6 @@ use crate::metrics::memory::{JemallocAllocated, Rss};
 use crate::metrics::time::{CpuTimeSampler, WallClock};
 use crate::probe::MetricsSink;
 
-/// One row of per-call query telemetry: a 1-based call index, the timed estimate
-/// call's wall, the answer, and — for quantile algorithms — the percentile and
-/// repeat. Filled by the comparators in `accuracy`, which it knows nothing of.
-#[derive(Debug, Clone, Copy)]
-pub struct QueryCallSample {
-    pub call_index: usize,
-    pub nanoseconds: u64,
-    pub estimate: f64,
-    /// Percentile being queried (0..=100 fraction). NaN for
-    /// cardinality / frequency algorithms.
-    pub percentile: f64,
-    /// Outer "repeat" index — each run sweeps the percentile array
-    /// `REPEATS_PER_RUN` times to thicken the sample. 0 when it does not.
-    pub repeat: usize,
-}
-
 /// Metrics produced by a single run. One `FullSink` finalises
 /// into one of these. The `BenchRunner` aggregates `RunMetrics`
 /// across N runs via the Welford accumulator.
@@ -65,10 +49,6 @@ pub struct RunMetrics {
     /// than an opaque JSON blob so `aggregate` can fold every key across
     /// runs without knowing any algorithm's shape — see `accuracy::Comparison`.
     pub accuracy: Option<BTreeMap<String, f64>>,
-    /// Per-call query samples — `Some` only when the frontend requested
-    /// `record_calls` on a comparator that supports it. Rendered by
-    /// `sketch-bench::legacy_csv`; not surfaced in the JSONL record.
-    pub query_calls: Option<Vec<QueryCallSample>>,
 }
 
 impl RunMetrics {
@@ -91,7 +71,6 @@ impl RunMetrics {
             heap_bytes_peak: None,
             latency_ns: None,
             accuracy: None,
-            query_calls: None,
         }
     }
 
@@ -204,7 +183,6 @@ impl FullSink {
             heap_bytes_peak: None,
             latency_ns,
             accuracy: None,
-            query_calls: None,
         }
     }
 }
