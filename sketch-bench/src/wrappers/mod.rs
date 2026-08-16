@@ -19,10 +19,39 @@ pub mod kll;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;
-pub mod parallel_shared;
 pub mod polars_shared;
 
-use aqpbm_core::init::BuildError;
+use crate::build_error::BuildError;
+use asap_sketchlib::impl_fixed_matrix;
+
+//
+// What the three parallel-insert rows share. Their per-worker sketch is a
+// compile-time type, so the shape is not a knob: a request naming any other one
+// is refused rather than accepted and ignored. Each row itself lives in its
+// algorithm's `sketchlib.rs`.
+//
+// Its own type, not the `M5x32768` in `fixed_matrix`: that table is the set of
+// shapes the *sweepable* fixedmatrix rows dispatch over, and pruning it must not
+// silently move the shape these rows are named after.
+
+impl_fixed_matrix!(M5x32K, i32, 5, 32768);
+
+/// The shape every worker's matrix is baked at.
+pub const PARALLEL_ROWS: usize = 5;
+
+pub const PARALLEL_COLS: usize = 32768;
+
+/// Contiguous ranges, one per worker. `n.max(1)` because a run of no threads is
+/// not a run, and the empty-workload case still hands back one part rather than
+/// none.
+pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
+    let n = n.max(1);
+    let chunk = (items.len() + n - 1) / n;
+    if chunk == 0 {
+        return vec![items];
+    }
+    items.chunks(chunk).collect()
+}
 
 //
 // All four helpers below exist for one rule: a row that cannot build at the

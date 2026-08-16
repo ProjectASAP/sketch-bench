@@ -37,18 +37,14 @@ fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
     (epsilon, delta)
 }
 
-
-
 #[cfg(test)]
 mod tests {
-    use aqpbm_core::init::InitSketch;
-    use aqpbm_core::memory_footprint::MemoryFootprint;
-    use aqpbm_core::config::ParamSet;
     use super::datasketches::*;
     use super::oxide::*;
     use super::sketchlib::*;
-    use crate::wrappers::cs::oxide::CsOxide;
     use super::*;
+    use crate::wrappers::cs::oxide::{build_cs_oxide, memory_cs_oxide};
+    use aqpbm_core::config::ParamSet;
 
     fn shape() -> ParamSet {
         ParamSet::of(&CmsParams {
@@ -62,8 +58,8 @@ mod tests {
     /// plots divide by.
     #[test]
     fn oxide_sizes_counters_at_the_real_width() {
-        let sketch = CmsOxide::init(&shape()).expect("5x2048 is a valid oxide shape");
-        assert_eq!(sketch.memory_bytes(), 5 * 2048 * 8);
+        let sketch = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
+        assert_eq!(memory_cms_oxide(&sketch), 5 * 2048 * 8);
     }
 
     /// A `cols` the crate cannot resolve exactly is refused, naming the table it
@@ -76,10 +72,13 @@ mod tests {
     /// error bound the API takes cannot express 3000 columns.
     #[test]
     fn oxide_cms_refuses_a_cols_it_cannot_resolve_exactly() {
-        let Err(err) = CmsOxide::init(&ParamSet::of(&CmsParams {
-            rows: 5,
-            cols: 3000,
-        })) else {
+        let Err(err) = build_cms_oxide(
+            &ParamSet::of(&CmsParams {
+                rows: 5,
+                cols: 3000,
+            }),
+            1,
+        ) else {
             panic!("cols=3000 resolves to a 4096-wide table, so it must be refused");
         };
         let err = err.to_string();
@@ -91,10 +90,13 @@ mod tests {
     /// honoured and is refused instead of quietly building 3.
     #[test]
     fn oxide_countsketch_refuses_a_depth_below_its_floor() {
-        let Err(err) = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
-            rows: 2,
-            cols: 2048,
-        })) else {
+        let Err(err) = build_cs_oxide(
+            &ParamSet::of(&crate::params::CountSketchParams {
+                rows: 2,
+                cols: 2048,
+            }),
+            1,
+        ) else {
             panic!("rows=2 resolves to a 3-row table, so it must be refused");
         };
         assert!(err.to_string().contains("2048"), "{err}");
@@ -110,18 +112,21 @@ mod tests {
     /// comparing two budgets.
     #[test]
     fn the_two_oxide_rows_resolve_one_config_to_one_shape() {
-        let cms = CmsOxide::init(&shape()).expect("5x2048 is a valid oxide shape");
-        let cs = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
-            rows: 5,
-            cols: 2048,
-        }))
+        let cms = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
+        let cs = build_cs_oxide(
+            &ParamSet::of(&crate::params::CountSketchParams {
+                rows: 5,
+                cols: 2048,
+            }),
+            1,
+        )
         .expect("5x2048 is a valid oxide shape");
 
         // 8 bytes per counter on both sides: `table: Vec<u64>` and `Vec<i64>`.
         // Sizing either as 32-bit once halved a reported footprint and made one
         // algorithm look twice as space-efficient at identical measured accuracy.
-        assert_eq!(cms.memory_bytes(), 5 * 2048 * 8);
-        assert_eq!(cs.memory_bytes(), 5 * 2048 * 8);
+        assert_eq!(memory_cms_oxide(&cms), 5 * 2048 * 8);
+        assert_eq!(memory_cs_oxide(&cs), 5 * 2048 * 8);
     }
 
     /// Every power-of-two width in the range a sweep would walk resolves
@@ -133,15 +138,19 @@ mod tests {
         for lg in 3..=16u32 {
             let cols = 1usize << lg;
             for rows in 3..=8usize {
-                let cms = CmsOxide::init(&ParamSet::of(&CmsParams { rows, cols }))
+                let cms = build_cms_oxide(&ParamSet::of(&CmsParams { rows, cols }), 1)
                     .unwrap_or_else(|e| panic!("cms {rows}x{cols}: {e}"));
-                assert_eq!(cms.memory_bytes(), rows * cols * 8, "cms {rows}x{cols}");
-                let cs = CsOxide::init(&ParamSet::of(&crate::params::CountSketchParams {
-                    rows,
-                    cols,
-                }))
+                assert_eq!(memory_cms_oxide(&cms), rows * cols * 8, "cms {rows}x{cols}");
+                let cs = build_cs_oxide(
+                    &ParamSet::of(&crate::params::CountSketchParams { rows, cols }),
+                    1,
+                )
                 .unwrap_or_else(|e| panic!("countsketch {rows}x{cols}: {e}"));
-                assert_eq!(cs.memory_bytes(), rows * cols * 8, "countsketch {rows}x{cols}");
+                assert_eq!(
+                    memory_cs_oxide(&cs),
+                    rows * cols * 8,
+                    "countsketch {rows}x{cols}"
+                );
             }
         }
     }
@@ -151,15 +160,33 @@ mod tests {
     /// distinct failure before the guards existed.
     #[test]
     fn datasketches_refuses_what_its_api_cannot_take() {
-        let build = |rows: usize, cols: usize| CmsDatasketches::init(&ParamSet::of(&CmsParams { rows, cols }));
+        let build = |rows: usize, cols: usize| {
+            build_cms_datasketches(&ParamSet::of(&CmsParams { rows, cols }), 1)
+        };
         for (rows, cols, why) in [
-            (0usize, 1024usize, "aborted inside C++: num_hashes must be at least 1"),
+            (
+                0usize,
+                1024usize,
+                "aborted inside C++: num_hashes must be at least 1",
+            ),
             (256, 1024, "`as u8` made it 0, then the same abort"),
-            (257, 1024, "`as u8` made it 1: a one-row sketch labelled 257"),
+            (
+                257,
+                1024,
+                "`as u8` made it 1: a one-row sketch labelled 257",
+            ),
             (5, 2, "aborted: num_buckets must be at least 3"),
             (5, 4_294_967_296, "`as u32` made it 0, then abort"),
-            (5, 4_294_968_320, "`as u32` made it 1024: reported 160 GiB, allocated 682 KiB"),
-            (3, 1 << 30, "aborted: the table-entry cap is a product bound"),
+            (
+                5,
+                4_294_968_320,
+                "`as u32` made it 1024: reported 160 GiB, allocated 682 KiB",
+            ),
+            (
+                3,
+                1 << 30,
+                "aborted: the table-entry cap is a product bound",
+            ),
         ] {
             let err = build(rows, cols)
                 .err()
@@ -184,19 +211,27 @@ mod tests {
     fn vector2d_rows_refuse_a_degenerate_shape() {
         for (rows, cols) in [(0usize, 1024usize), (5, 0), (0, 0)] {
             let p = ParamSet::of(&CmsParams { rows, cols });
-            assert!(CmsLibVector2dFast::init(&p).is_err(), "fastpath {rows}x{cols}");
-            assert!(CmsLibVector2dRegular::init(&p).is_err(), "regularpath {rows}x{cols}");
+            assert!(
+                build_cms_lib_vector2d_fast(&p, 1).is_err(),
+                "fastpath {rows}x{cols}"
+            );
+            assert!(
+                build_cms_lib_vector2d_regular(&p, 1).is_err(),
+                "regularpath {rows}x{cols}"
+            );
             let q = ParamSet::of(&crate::params::CountSketchParams { rows, cols });
             assert!(
-                crate::wrappers::cs::sketchlib::CsLibVector2dFast::init(&q).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_fast(&q, 1).is_err(),
                 "cs fastpath {rows}x{cols}"
             );
             assert!(
-                crate::wrappers::cs::sketchlib::CsLibVector2dRegular::init(&q).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_regular(&q, 1).is_err(),
                 "cs regularpath {rows}x{cols}"
             );
         }
-        assert!(CmsLibVector2dFast::init(&ParamSet::of(&CmsParams { rows: 1, cols: 1 })).is_ok());
+        assert!(
+            build_cms_lib_vector2d_fast(&ParamSet::of(&CmsParams { rows: 1, cols: 1 }), 1).is_ok()
+        );
     }
 
     /// Every row in the family agrees on a degenerate shape. This is the
@@ -205,13 +240,23 @@ mod tests {
     /// accepted, and accepted-with-a-scored-record.
     #[test]
     fn the_frequency_rows_agree_on_a_degenerate_shape() {
-        let p = ParamSet::of(&CmsParams { rows: 0, cols: 1024 });
-        assert!(CmsOxide::init(&p).is_err(), "oxide");
-        assert!(CmsDatasketches::init(&p).is_err(), "datasketches");
-        assert!(CmsLibVector2dFast::init(&p).is_err(), "vector2d fastpath");
-        assert!(CmsLibVector2dRegular::init(&p).is_err(), "vector2d regularpath");
+        let p = ParamSet::of(&CmsParams {
+            rows: 0,
+            cols: 1024,
+        });
+        assert!(build_cms_oxide(&p, 1).is_err(), "oxide");
+        assert!(build_cms_datasketches(&p, 1).is_err(), "datasketches");
+        assert!(
+            build_cms_lib_vector2d_fast(&p, 1).is_err(),
+            "vector2d fastpath"
+        );
+        assert!(
+            build_cms_lib_vector2d_regular(&p, 1).is_err(),
+            "vector2d regularpath"
+        );
         // The fixed-shape and parallel rows already refused it, via require_shape.
-        assert!(CmsLibFixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>::init(&p).is_err());
+        assert!(
+            build_cms_lib_fixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>(&p, 1).is_err()
+        );
     }
 }
-

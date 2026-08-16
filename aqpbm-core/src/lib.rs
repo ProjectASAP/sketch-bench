@@ -11,12 +11,9 @@ pub mod aggregation;
 pub mod binfile;
 pub mod cell;
 pub mod config;
-pub mod hot_loop;
-pub mod init;
 pub mod latency;
-pub mod memory_footprint;
+pub mod measure;
 pub mod metrics;
-pub mod ops;
 pub mod probe;
 pub mod report;
 pub mod request;
@@ -38,12 +35,10 @@ pub use aqpbm_datagen::{
 pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
-pub use ops::SketchOps;
-pub use cell::{run_cell, BenchItem, RowLabel, RunError, WorkloadData, WorkloadSpec};
-pub use init::{BuildError, InitSketch};
+pub use cell::{BenchItem, RunError, WorkloadData, WorkloadSpec};
 pub use latency::{LatencyRecorder, LatencySnapshot};
-pub use memory_footprint::MemoryFootprint;
-pub use metrics::{FullSink, MetricsMask, RunMetrics};
+pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
+pub use metrics::{MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
     BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics,
@@ -54,7 +49,7 @@ pub use report::{
 // What a frontend asks for. The registry that answers it lives in the bundle
 // crate; this is only the vocabulary the question is written in.
 pub use request::{Capability, Numeric, Requirement};
-pub use runner::{BenchConfig, BenchReport, BenchRunner, NoGT};
+pub use runner::BenchReport;
 pub use workload::{
     BytesWorkload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
     WorkloadDescription,

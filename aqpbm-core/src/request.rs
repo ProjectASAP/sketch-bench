@@ -98,6 +98,14 @@ pub struct Requirement {
     pub metrics: MetricsMask,
     /// Which item width to build at.
     pub width: Numeric,
+    /// Worker threads the parallel rows use. A run knob that reaches the row,
+    /// so it travels with the request rather than in a whole-run config a row
+    /// has no business reading.
+    pub workers: usize,
+    /// How many shards a merge measurement folds. A knob on the measurement,
+    /// not a selector: it is read only when `operations` names merge, and the
+    /// record reports the value that ran.
+    pub merge_shards: usize,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
 }

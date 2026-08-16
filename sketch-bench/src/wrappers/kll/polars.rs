@@ -4,32 +4,32 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use aqpbm_core::accuracy::quantile::{ RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::ops::SketchOps;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
+use crate::build_error::BuildError;
+use crate::ops::SketchOps;
+use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
+use aqpbm_core::accuracy::quantile::RankErrorGT;
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
+use aqpbm_core::config::ParamSet;
+use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::request::Requirement;
+use aqpbm_core::runner::BenchReport;
 
-impl InitSketch for PolarsQuantileKll {
-    /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        // Exact, so no knob here does anything. The config is still parsed
-        // and discarded: this row is the baseline its sketch siblings are
-        // scored against, and a config they refuse must not quietly produce
-        // a number here.
-        let _p: KllParams = config.parse()?;
-        Ok(Self::default())
-    }
+/// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
+pub fn build_polars_quantile_kll(
+    config: &ParamSet,
+    _workers: usize,
+) -> Result<PolarsQuantileKll, BuildError> {
+    // Exact, so no knob here does anything. The config is still parsed
+    // and discarded: this row is the baseline its sketch siblings are
+    // scored against, and a config they refuse must not quietly produce
+    // a number here.
+    let _p: KllParams = config.parse()?;
+    Ok(PolarsQuantileKll::default())
 }
 
-impl MemoryFootprint for PolarsQuantileKll {
-    fn memory_bytes(&self) -> usize {
-        self.0.memory_bytes()
-    }
+pub fn memory_polars_quantile_kll(sketch: &PolarsQuantileKll) -> usize {
+    sketch.0.memory_bytes()
 }
 
 impl PolarsQuantileKll {
@@ -38,32 +38,36 @@ impl PolarsQuantileKll {
     }
 }
 
-
-pub fn insert_polars_quantile_kll(sketch: &mut PolarsQuantileKll, v: &i64)
-{
-        sketch.0.update(v);
+pub fn insert_polars_quantile_kll(sketch: &mut PolarsQuantileKll, v: &i64) {
+    sketch.0.update(v);
 }
 
-pub fn prepare_polars_quantile_kll(sketch: &mut PolarsQuantileKll)
-{
-        sketch.0.finalize();
+pub fn prepare_polars_quantile_kll(sketch: &mut PolarsQuantileKll) {
+    sketch.0.finalize();
 }
 
 pub const QUANTILE_KLL_OPS: SketchOps<PolarsQuantileKll, i64, f64, f64> = SketchOps {
+    build: build_polars_quantile_kll,
+    memory: memory_polars_quantile_kll,
     merge: None,
     prepare: Some(prepare_polars_quantile_kll),
     ask: |s, phi| s.estimate_quantile(*phi),
-        _item: std::marker::PhantomData};
+    _item: std::marker::PhantomData,
+};
 
 pub fn run_quantile_kll(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_scored::<PolarsQuantileKll, i64, RankErrorGT, _>(
-        cfg, data, params, label, width, insert_polars_quantile_kll,
+    let wk = <i64 as BenchItem>::materialise(data)?;
+    let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
+    crate::run::run_row::<PolarsQuantileKll, i64, RankErrorGT, _>(
+        cfg,
+        req,
+        &wk,
+        &gt,
+        insert_polars_quantile_kll,
         &QUANTILE_KLL_OPS,
     )
 }

@@ -27,10 +27,7 @@
 //! builds, and `cargo test` runs each test on a 2 MiB thread. Wide-and-deep is the
 //! corner that trips it, so `cols = 65536` stops at 5 rows.
 
-use asap_sketchlib::{
-    impl_fixed_matrix, DefaultXxHasher,
-    FastPathHasher, MatrixStorage,
-};
+use asap_sketchlib::{impl_fixed_matrix, DefaultXxHasher, FastPathHasher, MatrixStorage};
 
 ///
 /// A trait and not a closure because the shape is a **type**: the visitor is the
@@ -213,7 +210,11 @@ mod tests {
         for &(rows, cols) in FIXED_SHAPES {
             let got = with_fixed_matrix(rows, cols, Dims)
                 .unwrap_or_else(|| panic!("{rows}x{cols} is listed but does not dispatch"));
-            assert_eq!(got, (rows, cols), "the type baked at {rows}x{cols} disagrees");
+            assert_eq!(
+                got,
+                (rows, cols),
+                "the type baked at {rows}x{cols} disagrees"
+            );
         }
     }
 
@@ -257,14 +258,14 @@ mod tests {
     fn the_refusal_is_a_recipe_and_not_just_a_refusal() {
         let msg = unsupported_shape("cms-fastpath-fixedmatrix", 5, 3000);
         for expected in [
-            "5x3000",                                        // what was asked for
-            "M5x3000 => (5, 3000),",                         // the line to add
-            "sketch-bench/src/wrappers/fixed_matrix.rs",     // where it goes
-            "impl_fixed_matrix!",                            // what expands it
-            "MatrixStorage",                                 // what that gives you
+            "5x3000",                                    // what was asked for
+            "M5x3000 => (5, 3000),",                     // the line to add
+            "sketch-bench/src/wrappers/fixed_matrix.rs", // where it goes
+            "impl_fixed_matrix!",                        // what expands it
+            "MatrixStorage",                             // what that gives you
             "FastPathHasher",
-            "cargo build",                                   // how to pick it up
-            "vector2d",                                      // the no-rebuild route
+            "cargo build", // how to pick it up
+            "vector2d",    // the no-rebuild route
         ] {
             assert!(msg.contains(expected), "missing {expected:?} from:\n{msg}");
         }
@@ -272,4 +273,3 @@ mod tests {
         assert!(msg.contains("not a shape the row rejects"), "{msg}");
     }
 }
-

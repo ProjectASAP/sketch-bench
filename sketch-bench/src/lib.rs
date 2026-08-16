@@ -6,10 +6,16 @@
 //! of them; this crate is where the set lives, and where how-each-is-used
 //! lives with it. See `docs/sketch-bench.md`.
 
+/// Why a sketch could not be built at a requested config.
+pub mod build_error;
+/// How one sketch is built, fed, folded, finalised and asked.
+pub mod ops;
+/// The per-family construction parameter vocabularies.
+pub mod params;
 /// Which sketches are registered, what each supports, and how a request
 /// resolves to one.
 pub mod registry;
-/// The per-family construction parameter vocabularies.
-pub mod params;
+/// How one measurement is performed, once a row has been selected.
+pub mod run;
 /// One directory per algorithm, one file per library.
 pub mod wrappers;

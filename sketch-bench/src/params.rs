@@ -186,7 +186,10 @@ mod tests {
     fn records_written_before_the_open_representation_still_parse() {
         // Declaration order, as the closed enum emitted it.
         for (json, algorithm) in [
-            (r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
+            (
+                r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#,
+                "cms",
+            ),
             (r#"{"algorithm":"hll","params":{"lg_k":14}}"#, "hll"),
             (
                 r#"{"algorithm":"countsketch","params":{"rows":3,"cols":4096}}"#,

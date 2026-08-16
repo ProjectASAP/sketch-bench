@@ -79,26 +79,26 @@ fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use aqpbm_core::memory_footprint::MemoryFootprint;
-    use aqpbm_core::config::ParamSet;
-    use aqpbm_core::init::InitSketch;
-    use aqpbm_core::accuracy::quantile::RankErrorGT;
     use super::oxide::*;
     use super::sketchlib::*;
     use super::*;
+    use aqpbm_core::config::ParamSet;
+
+    use aqpbm_core::accuracy::quantile::RankErrorGT;
     use aqpbm_core::config::SketchParams;
 
     fn params(k: u32) -> ParamSet {
         ParamSet::of(&KllParams { k })
     }
 
-    fn fed<S: InitSketch>(
+    fn fed<S>(
         k: u32,
         items: &[i64],
         insert: fn(&mut S, &i64),
-        ops: aqpbm_core::ops::SketchOps<S, i64, f64, f64>,
+        ops: crate::ops::SketchOps<S, i64, f64, f64>,
     ) -> S {
-        let mut s = S::init(&params(k)).expect("a valid k builds");
+        // Through the row's own build, the same one a measurement uses.
+        let mut s = (ops.build)(&params(k), 1).expect("a valid k builds");
         for v in items {
             insert(&mut s, v);
         }
@@ -116,8 +116,18 @@ mod tests {
     #[test]
     fn oxide_honours_k() {
         let items = stream();
-        let mut small: KllOxidePerCall<i64> = fed(50, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
-        let mut large: KllOxidePerCall<i64> = fed(800, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
+        let mut small: KllOxidePerCall<i64> = fed(
+            50,
+            &items,
+            insert_kll_oxide_per_call,
+            oxide_percall_ops::<i64>(),
+        );
+        let mut large: KllOxidePerCall<i64> = fed(
+            800,
+            &items,
+            insert_kll_oxide_per_call,
+            oxide_percall_ops::<i64>(),
+        );
         let (mut differs, mut checked) = (false, 0);
         for p in 1..100 {
             let phi = p as f64 / 100.0;
@@ -144,7 +154,7 @@ mod tests {
     #[test]
     fn lib_refuses_a_k_the_library_would_clamp() {
         for k in [0, 1, 7, LIB_K_MAX + 1, 65_535] {
-            let Err(err) = KllLibPerCall::<i64>::init(&params(k)) else {
+            let Err(err) = build_kll_lib_per_call::<i64>(&params(k), 1) else {
                 panic!("k={k} is clamped by the library, so it must be refused");
             };
             let err = err.to_string();
@@ -152,11 +162,17 @@ mod tests {
                 err.contains(&k.to_string()) && err.contains("26602"),
                 "error should name the k and the bound: {err}"
             );
-            assert!(KllLibCdf::<i64>::init(&params(k)).is_err(), "cdf row at k={k}");
+            assert!(
+                build_kll_lib_cdf::<i64>(&params(k), 1).is_err(),
+                "cdf row at k={k}"
+            );
         }
         // The ends of the range are inside it.
         for k in [LIB_K_MIN, LIB_K_MAX] {
-            assert!(KllLibPerCall::<i64>::init(&params(k)).is_ok(), "k={k}");
+            assert!(
+                build_kll_lib_per_call::<i64>(&params(k), 1).is_ok(),
+                "k={k}"
+            );
         }
     }
 
@@ -166,8 +182,14 @@ mod tests {
     #[test]
     fn lib_honours_k() {
         let items = stream();
-        let small: KllLibPerCall<i64> = fed(8, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
-        let large: KllLibPerCall<i64> = fed(800, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let small: KllLibPerCall<i64> =
+            fed(8, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let large: KllLibPerCall<i64> = fed(
+            800,
+            &items,
+            insert_kll_lib_per_call,
+            lib_percall_ops::<i64>(),
+        );
         let differs = (1..100).any(|p| {
             let phi = p as f64 / 100.0;
             small.estimate_quantile(phi) != large.estimate_quantile(phi)
@@ -183,7 +205,7 @@ mod tests {
     /// a run at some other `k`.
     #[test]
     fn oxide_refuses_a_k_it_cannot_represent() {
-        let Err(err) = KllOxidePerCall::<i64>::init(&params(70_000)) else {
+        let Err(err) = build_kll_oxide_per_call::<i64>(&params(70_000), 1) else {
             panic!("a k past u16 must be refused, not truncated into a run at some other k");
         };
         let err = err.to_string();
@@ -199,8 +221,14 @@ mod tests {
     fn the_oxide_query_paths_agree_on_the_answer() {
         let items = stream();
         for k in [100, 400] {
-            let mut per_call: KllOxidePerCall<i64> = fed(k, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
-            let mut cdf: KllOxideCdf<i64> = fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
+            let mut per_call: KllOxidePerCall<i64> = fed(
+                k,
+                &items,
+                insert_kll_oxide_per_call,
+                oxide_percall_ops::<i64>(),
+            );
+            let mut cdf: KllOxideCdf<i64> =
+                fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
             for p in 0..=100 {
                 let phi = p as f64 / 100.0;
                 assert_eq!(
@@ -226,11 +254,14 @@ mod tests {
     /// becoming badly wrong, not to pin a ratio that legitimately moves.
     #[test]
     fn the_lib_query_paths_answer_differently() {
-
         let items = stream();
-        let gt = RankErrorGT {
-        };
-        let per_call: KllLibPerCall<i64> = fed(200, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let gt = RankErrorGT {};
+        let per_call: KllLibPerCall<i64> = fed(
+            200,
+            &items,
+            insert_kll_lib_per_call,
+            lib_percall_ops::<i64>(),
+        );
         let cdf: KllLibCdf<i64> = fed(200, &items, insert_kll_lib_cdf, lib_cdf_ops::<i64>());
 
         let differs = (0..=100).any(|p| {
@@ -273,12 +304,21 @@ mod tests {
     fn all_four_rows_size_themselves_by_one_rule() {
         let k = KllParams::canonical().k;
         let items = stream();
-        let oxide_a: KllOxidePerCall<i64> = fed(k, &items, insert_kll_oxide_per_call, oxide_percall_ops::<i64>());
-        let oxide_b: KllOxideCdf<i64> = fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
-        assert_eq!(oxide_a.memory_bytes(), oxide_b.memory_bytes());
-        let lib_a: KllLibPerCall<i64> = fed(k, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
+        let oxide_a: KllOxidePerCall<i64> = fed(
+            k,
+            &items,
+            insert_kll_oxide_per_call,
+            oxide_percall_ops::<i64>(),
+        );
+        let oxide_b: KllOxideCdf<i64> =
+            fed(k, &items, insert_kll_oxide_cdf, oxide_cdf_ops::<i64>());
+        assert_eq!(
+            memory_kll_oxide_per_call(&oxide_a),
+            memory_kll_oxide_cdf(&oxide_b)
+        );
+        let lib_a: KllLibPerCall<i64> =
+            fed(k, &items, insert_kll_lib_per_call, lib_percall_ops::<i64>());
         let lib_b: KllLibCdf<i64> = fed(k, &items, insert_kll_lib_cdf, lib_cdf_ops::<i64>());
-        assert_eq!(lib_a.memory_bytes(), lib_b.memory_bytes());
+        assert_eq!(memory_kll_lib_per_call(&lib_a), memory_kll_lib_cdf(&lib_b));
     }
 }
-

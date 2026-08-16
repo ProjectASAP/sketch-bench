@@ -3,18 +3,12 @@
 //! [`run_cell`] runs one square of the grid, monomorphised so the wrapper's
 //! `update` inlines. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
 
-use crate::ops::SketchOps;
-use crate::config::ParamSet;
-use crate::memory_footprint::MemoryFootprint;
 use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
 };
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
-use crate::accuracy::GroundTruth;
-use crate::init::{BuildError, InitSketch};
-use crate::runner::{BenchConfig, BenchReport, BenchRunner};
 
 // ---------- where items come from, and what they materialise to ----------
 
@@ -111,47 +105,29 @@ impl WorkloadSpec {
     }
 }
 
-/// Why a `(impl, config)` cell cannot run: a workload it cannot obtain, or a
-/// construction it cannot satisfy.
+/// Why a measurement could not be produced.
+///
+/// Only two ways left, both about the data: core no longer builds sketches, so
+/// a construction failure is the registry's to report before it hands a body
+/// over.
 #[derive(Debug)]
 pub enum RunError {
     Workload(anyhow::Error),
-    Build(BuildError),
-    /// A square of the grid nothing measures. Selection does not judge whether
-    /// a combination is meaningful, so asking for one is legal; this is where
-    /// the caller finds out there is nothing behind it.
-    NotMeasured {
-        operation: &'static str,
-        metric: &'static str,
-    },
-    /// Merge was asked for with nothing to fold. A request that cannot be
-    /// measured says so, the way an empty square does, instead of vanishing.
-    NothingToFold { shards: usize },
+    /// The body reported it could not run — a build the config cannot satisfy,
+    /// a fold with nothing to fold. The registry words it; core carries it.
+    Body(String),
 }
 
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RunError::Workload(e) => e.fmt(f),
-            RunError::Build(e) => e.fmt(f),
-            RunError::NotMeasured { operation, metric } => {
-                write!(f, "nothing measures the {metric} of {operation}")
-            }
-            RunError::NothingToFold { shards } => write!(
-                f,
-                "merge folds {shards} shards into one, so there is nothing to fold; ask for at least 2"
-            ),
+            RunError::Body(m) => f.write_str(m),
         }
     }
 }
 
 impl std::error::Error for RunError {}
-
-impl From<BuildError> for RunError {
-    fn from(e: BuildError) -> Self {
-        RunError::Build(e)
-    }
-}
 
 impl From<anyhow::Error> for RunError {
     fn from(e: anyhow::Error) -> Self {
@@ -159,15 +135,6 @@ impl From<anyhow::Error> for RunError {
     }
 }
 
-/// What a record is labelled with: which algorithm, from which library.
-///
-/// Two strings, passed in. Core does not know the set of algorithms and has no
-/// business deriving these — the registry that owns the row states them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RowLabel {
-    pub algorithm: &'static str,
-    pub impl_name: &'static str,
-}
 
 // ---------- the item axis ----------
 
@@ -281,69 +248,11 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
 // `Accumulator::update`. It is now the row's own `SketchOps::insert`, written in
 // the wrapper file beside the sketch it drives.
 
-/// Construct a fresh sketch. Construction is proven by the probe at the top of
-/// each cell function, so the per-run factory unwraps.
-fn built<S: InitSketch>(params: &ParamSet) -> S {
-    S::init(params).expect("construction proven by the probe in the cell function")
-}
 
 // ---------- parallel-insert construction ----------
 
-/// A parallel-insert wrapper: its constructor also takes the worker count (a
-/// run knob, not a sketch parameter), so it cannot be an [`InitSketch`].
-pub trait ParallelInit: Sized {
-    fn build(config: &ParamSet, workers: usize) -> Result<Self, BuildError>;
-}
 
 // ---------- running one cell ----------
 
-/// Run the **timed** half of a cell: throughput / latency / CPU / memory. No
-/// ground truth — the ground-truth calculator never touches the hot path.
-pub fn run_cell<S, I, G, Ins>(
-    cfg: &BenchConfig,
-    data: WorkloadData,
-    params: &ParamSet,
-    label: RowLabel,
-    gt: Option<&G>,
-    insert: Ins,
-    ops: &SketchOps<S, I, G::Probe, G::Answer>,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: InitSketch + MemoryFootprint,
-    I: BenchItem,
-    G: GroundTruth<I>,
-    Ins: FnMut(&mut S, &I),
-{
-    let wk = <I as BenchItem>::materialise(data)?;
-    S::init(params)?; // probe: the cell fails here if it cannot build
-    BenchRunner::new(cfg.clone(), &wk, label.algorithm, label.impl_name)
-        .run::<S, _, G, _>(|| built::<S>(params), insert, gt, ops)
-}
 
-/// Run the **timed** half of a parallel-insert cell (workers from `cfg.threads`).
-pub fn run_cell_parallel<S, I, G, Ins>(
-    cfg: &BenchConfig,
-    data: WorkloadData,
-    params: &ParamSet,
-    label: RowLabel,
-    gt: Option<&G>,
-    insert: Ins,
-    ops: &SketchOps<S, I, G::Probe, G::Answer>,
-) -> Result<Vec<BenchReport>, RunError>
-where
-    S: ParallelInit + MemoryFootprint,
-    I: BenchItem,
-    G: GroundTruth<I>,
-    Ins: FnMut(&mut S, &I),
-{
-    let wk = <I as BenchItem>::materialise(data)?;
-    let workers = cfg.threads;
-    S::build(params, workers)?; // probe
-    BenchRunner::new(cfg.clone(), &wk, label.algorithm, label.impl_name).run::<S, _, G, _>(
-        move || S::build(params, workers).expect("construction proven by the probe above"),
-        insert,
-        gt,
-        ops,
-    )
-}
 

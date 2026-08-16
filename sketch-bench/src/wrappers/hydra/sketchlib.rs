@@ -4,45 +4,45 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
+use crate::build_error::BuildError;
+use crate::ops::SketchOps;
+use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
+    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
+};
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::ops::SketchOps;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
+use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::request::Requirement;
+use aqpbm_core::runner::BenchReport;
 use aqpbm_core::workload::Labeled;
-use asap_sketchlib::{
-    CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
+use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
 
 pub struct HydraCms {
     inner: Hydra,
-    params: HydraCmsParams}
+    params: HydraCmsParams,
+}
 
-impl InitSketch for HydraCms {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraCmsParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-cms")?;
-        for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
-            if v == 0 {
-                return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
-            }
+pub fn build_hydra_cms(config: &ParamSet, _workers: usize) -> Result<HydraCms, BuildError> {
+    let p: HydraCmsParams = config.parse()?;
+    check_grid(p.rows, p.cols, "hydra-cms")?;
+    for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
+        if v == 0 {
+            return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
         }
-        let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
-            p.cell_rows,
-            p.cell_cols,
-        ));
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p})
     }
+    let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
+        p.cell_rows,
+        p.cell_cols,
+    ));
+    Ok(HydraCms {
+        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        params: p,
+    })
 }
 
 impl HydraCms {
-
     #[inline]
     pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
         self.inner
@@ -50,34 +50,31 @@ impl HydraCms {
     }
 }
 
-impl MemoryFootprint for HydraCms {
-    /// The grid holds `rows * cols` cells and every cell is a full Count-Min of
-    /// `i32` counters, so the counter term is the product of both shapes.
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
-            + grid_overhead_bytes(p.rows, p.cols)
-    }
+/// The grid holds `rows * cols` cells and every cell is a full Count-Min of
+/// `i32` counters, so the counter term is the product of both shapes.
+pub fn memory_hydra_cms(sketch: &HydraCms) -> usize {
+    let p = &sketch.params;
+    p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
+        + grid_overhead_bytes(p.rows, p.cols)
 }
-
 
 /// Hydra over HyperLogLog cells.
 pub struct HydraHll {
     inner: Hydra,
-    params: HydraHllParams}
+    params: HydraHllParams,
+}
 
-impl InitSketch for HydraHll {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraHllParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-hll")?;
-        // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
-        // alias over the variant, so `new()` is ambiguous between the
-        // estimators the alias can carry. The enum fixes this one.
-        let cell = HydraCounter::HLL(HyperLogLog::<asap_sketchlib::ErtlMLE>::new());
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p})
-    }
+pub fn build_hydra_hll(config: &ParamSet, _workers: usize) -> Result<HydraHll, BuildError> {
+    let p: HydraHllParams = config.parse()?;
+    check_grid(p.rows, p.cols, "hydra-hll")?;
+    // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
+    // alias over the variant, so `new()` is ambiguous between the
+    // estimators the alias can carry. The enum fixes this one.
+    let cell = HydraCounter::HLL(HyperLogLog::<asap_sketchlib::ErtlMLE>::new());
+    Ok(HydraHll {
+        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        params: p,
+    })
 }
 
 impl HydraHll {
@@ -88,45 +85,41 @@ impl HydraHll {
     }
 }
 
-impl MemoryFootprint for HydraHll {
-    /// One byte per register per cell. The cell is fixed-shape, so unlike the
-    /// Count-Min row there is no cell parameter in this product.
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
-    }
+/// One byte per register per cell. The cell is fixed-shape, so unlike the
+/// Count-Min row there is no cell parameter in this product.
+pub fn memory_hydra_hll(sketch: &HydraHll) -> usize {
+    let p = &sketch.params;
+    p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
 }
-
 
 /// Hydra over KLL cells.
 pub struct HydraKll {
     inner: Hydra,
-    params: HydraKllParams}
+    params: HydraKllParams,
+}
 
-impl InitSketch for HydraKll {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: HydraKllParams = config.parse()?;
-        check_grid(p.rows, p.cols, "hydra-kll")?;
-        // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and
-        // it clamps `k` to its own range without saying so. Refuse here for the
-        // same reason those rows do: outside the range the grid would be built
-        // at a `cell_k` the record does not name. Below the floor every value
-        // gave one sketch at `cell_k = 8`; above the ceiling every value gave
-        // one sketch at 26602, while the footprint column kept climbing.
-        if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k)
-        {
-            return Err(BuildError(format!(
-                "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
-                p.cell_k,
-                crate::wrappers::kll::LIB_K_MIN,
-                crate::wrappers::kll::LIB_K_MAX
-            )));
-        }
-        let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
-        Ok(Self {
-            inner: Hydra::with_dimensions(p.rows, p.cols, cell),
-            params: p})
+pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, BuildError> {
+    let p: HydraKllParams = config.parse()?;
+    check_grid(p.rows, p.cols, "hydra-kll")?;
+    // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and
+    // it clamps `k` to its own range without saying so. Refuse here for the
+    // same reason those rows do: outside the range the grid would be built
+    // at a `cell_k` the record does not name. Below the floor every value
+    // gave one sketch at `cell_k = 8`; above the ceiling every value gave
+    // one sketch at 26602, while the footprint column kept climbing.
+    if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k) {
+        return Err(BuildError(format!(
+            "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
+            p.cell_k,
+            crate::wrappers::kll::LIB_K_MIN,
+            crate::wrappers::kll::LIB_K_MAX
+        )));
     }
+    let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
+    Ok(HydraKll {
+        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        params: p,
+    })
 }
 
 impl HydraKll {
@@ -140,120 +133,132 @@ impl HydraKll {
     }
 }
 
-impl MemoryFootprint for HydraKll {
-    /// Retained slots per cell times the grid area, plus the level index every
-    /// cell carries. Analytic because the cell allocates once, see
-    /// [`kll_cell_slots`].
-    fn memory_bytes(&self) -> usize {
-        let p = &self.params;
-        let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
-            + (KLL_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
-        p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
-    }
+/// Retained slots per cell times the grid area, plus the level index every
+/// cell carries. Analytic because the cell allocates once, see
+/// [`kll_cell_slots`].
+pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
+    let p = &sketch.params;
+    let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
+        + (KLL_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
+    p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
 }
 
-
-pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>)
-{
-        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>) {
+    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
 }
 
-pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms) {
+    into.inner
+        .merge(&from.inner)
+        .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>)
-{
-        sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>) {
+    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
 }
 
-pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll) {
+    into.inner
+        .merge(&from.inner)
+        .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>)
-{
-        sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
+pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>) {
+    sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
 }
 
-pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so grid and cell shapes match");
+pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {
+    into.inner
+        .merge(&from.inner)
+        .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
 pub const CMS_OPS: SketchOps<HydraCms, Labeled<i64>, (String, i64), f64> = SketchOps {
+    build: build_hydra_cms,
+    memory: memory_hydra_cms,
     merge: Some(merge_hydra_cms),
     prepare: None,
     ask: ask_hydra_cms,
-        _item: std::marker::PhantomData};
+    _item: std::marker::PhantomData,
+};
 
 pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
     sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
 }
 
 pub const HLL_OPS: SketchOps<HydraHll, Labeled<i64>, String, f64> = SketchOps {
+    build: build_hydra_hll,
+    memory: memory_hydra_hll,
     merge: Some(merge_hydra_hll),
     prepare: None,
     ask: ask_hydra_hll,
-        _item: std::marker::PhantomData};
+    _item: std::marker::PhantomData,
+};
 
 pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
     sketch.estimate_subpop_cardinality(&[probe.as_str()])
 }
 
 pub const KLL_OPS: SketchOps<HydraKll, Labeled<f64>, (String, f64), f64> = SketchOps {
+    build: build_hydra_kll,
+    memory: memory_hydra_kll,
     merge: Some(merge_hydra_kll),
     prepare: None,
     ask: ask_hydra_kll,
-        _item: std::marker::PhantomData};
+    _item: std::marker::PhantomData,
+};
 
 pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
     sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
 }
 
 pub fn run_cms(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg, data, params, label, width, insert_hydra_cms,
+    let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
+    let gt = <SubpopFrequencyGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
+    crate::run::run_row::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
+        cfg,
+        req,
+        &wk,
+        &gt,
+        insert_hydra_cms,
         &CMS_OPS,
     )
 }
 
 pub fn run_hll(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg, data, params, label, width, insert_hydra_hll,
+    let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
+    let gt = <SubpopCardinalityGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
+    crate::run::run_row::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
+        cfg,
+        req,
+        &wk,
+        &gt,
+        insert_hydra_hll,
         &HLL_OPS,
     )
 }
 
 pub fn run_kll(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg, data, params, label, width, insert_hydra_kll,
+    let wk = <Labeled<f64> as BenchItem>::materialise(data)?;
+    let gt = <SubpopRankErrorGT as GroundTruthCalculator<Labeled<f64>>>::build(&req.params);
+    crate::run::run_row::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
+        cfg,
+        req,
+        &wk,
+        &gt,
+        insert_hydra_kll,
         &KLL_OPS,
     )
 }

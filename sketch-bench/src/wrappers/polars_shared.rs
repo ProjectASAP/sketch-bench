@@ -2,8 +2,8 @@
 //! core, and the subset fan-out every grouped baseline needs. Hoisted here
 //! when the baselines moved next to the algorithms they score.
 
-use std::collections::HashMap;
 use ::polars::prelude::*;
+use std::collections::HashMap;
 
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
@@ -54,8 +54,6 @@ impl PolarsFrequencyCore {
 /// `cms/polars` view of [`PolarsFrequencyCore`].
 
 /// `countsketch/polars` view of [`PolarsFrequencyCore`].
-
-
 
 /// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
 /// quantile grid — lives in `prepare`, which the runner times separately.
@@ -115,7 +113,6 @@ impl PolarsQuantileCore {
 
 /// `kll/polars` view of [`PolarsQuantileCore`].
 
-
 /// The `;`-joined key of one label subset, in column order. This is the format
 /// `Hydra::update` builds internally, reproduced so the baseline and the sketch
 /// answer to the same key.
@@ -142,5 +139,3 @@ pub fn fan_out<V: Copy>(key: &str, value: V, keys: &mut Vec<String>, values: &mu
         values.push(value);
     }
 }
-
-

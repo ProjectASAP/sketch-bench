@@ -4,15 +4,16 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::ops::SketchOps;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
+use crate::build_error::BuildError;
+use crate::ops::SketchOps;
+use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{require_range, require_resolved_shape};
+use aqpbm_core::accuracy::frequency::FrequencyGT;
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
+use aqpbm_core::config::ParamSet;
+use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::request::Requirement;
+use aqpbm_core::runner::BenchReport;
 
 /// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
 /// the `u8` the API takes.
@@ -27,46 +28,59 @@ const DS_CMS_MAX_ENTRIES: usize = 1 << 30;
 pub struct CmsDatasketches {
     inner: ::datasketches::countmin::CountMinSketch,
     rows: usize,
-    cols: usize}
-
-impl InitSketch for CmsDatasketches {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: CmsParams = config.parse()?;
-        require_range("datasketches CMS", "rows", p.rows, DS_CMS_ROWS.0, DS_CMS_ROWS.1)?;
-        require_range("datasketches CMS", "cols", p.cols, DS_CMS_COLS.0, DS_CMS_COLS.1)?;
-        // Checked, because the point of the bound is that the product is what
-        // overflows: `usize::MAX` rows-worth of columns must not wrap into a
-        // small number that passes.
-        let entries = p.rows.checked_mul(p.cols).unwrap_or(usize::MAX);
-        if entries >= DS_CMS_MAX_ENTRIES {
-            return Err(BuildError(format!(
-                "datasketches CMS: rows x cols = {entries} counters, and this library \
-                 caps a table at {DS_CMS_MAX_ENTRIES}"
-            )));
-        }
-        // The ranges above make the casts lossless; this proves it against the
-        // built sketch rather than against that reasoning, so a library that
-        // starts rounding its dimensions turns into a refusal here instead of a
-        // silently different table. Same guard the oxide row uses.
-        let inner = ::datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32);
-        require_resolved_shape(
-            "datasketches CMS",
-            (inner.num_hashes() as usize, inner.num_buckets() as usize),
-            (p.rows, p.cols),
-        )?;
-        Ok(Self {
-            inner,
-            rows: p.rows,
-            cols: p.cols})
-    }
+    cols: usize,
 }
 
-impl MemoryFootprint for CmsDatasketches {
-    fn memory_bytes(&self) -> usize {
-        // Backing store is `counts: Vec<i64>`; spell the real type so the two
-        // stay in step.
-        self.rows * self.cols * std::mem::size_of::<i64>()
+pub fn build_cms_datasketches(
+    config: &ParamSet,
+    _workers: usize,
+) -> Result<CmsDatasketches, BuildError> {
+    let p: CmsParams = config.parse()?;
+    require_range(
+        "datasketches CMS",
+        "rows",
+        p.rows,
+        DS_CMS_ROWS.0,
+        DS_CMS_ROWS.1,
+    )?;
+    require_range(
+        "datasketches CMS",
+        "cols",
+        p.cols,
+        DS_CMS_COLS.0,
+        DS_CMS_COLS.1,
+    )?;
+    // Checked, because the point of the bound is that the product is what
+    // overflows: `usize::MAX` rows-worth of columns must not wrap into a
+    // small number that passes.
+    let entries = p.rows.checked_mul(p.cols).unwrap_or(usize::MAX);
+    if entries >= DS_CMS_MAX_ENTRIES {
+        return Err(BuildError(format!(
+            "datasketches CMS: rows x cols = {entries} counters, and this library \
+                 caps a table at {DS_CMS_MAX_ENTRIES}"
+        )));
     }
+    // The ranges above make the casts lossless; this proves it against the
+    // built sketch rather than against that reasoning, so a library that
+    // starts rounding its dimensions turns into a refusal here instead of a
+    // silently different table. Same guard the oxide row uses.
+    let inner = ::datasketches::countmin::CountMinSketch::new(p.rows as u8, p.cols as u32);
+    require_resolved_shape(
+        "datasketches CMS",
+        (inner.num_hashes() as usize, inner.num_buckets() as usize),
+        (p.rows, p.cols),
+    )?;
+    Ok(CmsDatasketches {
+        inner,
+        rows: p.rows,
+        cols: p.cols,
+    })
+}
+
+pub fn memory_cms_datasketches(sketch: &CmsDatasketches) -> usize {
+    // Backing store is `counts: Vec<i64>`; spell the real type so the two
+    // stay in step.
+    sketch.rows * sketch.cols * std::mem::size_of::<i64>()
 }
 
 impl CmsDatasketches {
@@ -75,43 +89,40 @@ impl CmsDatasketches {
     }
 }
 
-
-pub fn insert_cms_datasketches(sketch: &mut CmsDatasketches, v: &i64)
-{
-        sketch.inner.update(*v);
+pub fn insert_cms_datasketches(sketch: &mut CmsDatasketches, v: &i64) {
+    sketch.inner.update(*v);
 }
 
-pub fn merge_cms_datasketches(into: &mut CmsDatasketches, from: &CmsDatasketches)
-{
-        into.inner.merge(&from.inner);
+pub fn merge_cms_datasketches(into: &mut CmsDatasketches, from: &CmsDatasketches) {
+    into.inner.merge(&from.inner);
 }
 
 pub const DATASKETCHES_OPS: SketchOps<CmsDatasketches, i64, i64, u64> = SketchOps {
+    build: build_cms_datasketches,
+    memory: memory_cms_datasketches,
     merge: Some(merge_cms_datasketches),
     prepare: None,
     ask: ask_cms_datasketches,
-        _item: std::marker::PhantomData};
+    _item: std::marker::PhantomData,
+};
 
 pub fn ask_cms_datasketches(sketch: &mut CmsDatasketches, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
 
 pub fn run_datasketches(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_scored::<CmsDatasketches, i64, FrequencyGT, _>(
+    let wk = <i64 as BenchItem>::materialise(data)?;
+    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
+    crate::run::run_row::<CmsDatasketches, i64, FrequencyGT, _>(
         cfg,
-        data,
-        params,
-        label,
-        width,
+        req,
+        &wk,
+        &gt,
         insert_cms_datasketches,
         &DATASKETCHES_OPS,
     )
 }
-
-

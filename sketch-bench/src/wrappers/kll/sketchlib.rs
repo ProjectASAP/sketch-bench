@@ -4,14 +4,16 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
+use crate::build_error::BuildError;
+use crate::ops::SketchOps;
+use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::ops::SketchOps;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
+use aqpbm_core::request::Requirement;
+use aqpbm_core::runner::BenchReport;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
@@ -33,27 +35,28 @@ where
 /// the library's own choice, not a wrapper's cast.
 pub struct KllLibPerCall<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
-    k: u32}
-
-impl<T> InitSketch for KllLibPerCall<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: KllParams = config.parse()?;
-        Ok(Self {
-            inner: lib_kll::<T>(p.k)?,
-            k: p.k})
-    }
+    k: u32,
 }
 
-impl<T> MemoryFootprint for KllLibPerCall<T>
+pub fn build_kll_lib_per_call<T>(
+    config: &ParamSet,
+    _workers: usize,
+) -> Result<KllLibPerCall<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    fn memory_bytes(&self) -> usize {
-        kll_footprint::<T>(self.k)
-    }
+    let p: KllParams = config.parse()?;
+    Ok(KllLibPerCall {
+        inner: lib_kll::<T>(p.k)?,
+        k: p.k,
+    })
+}
+
+pub fn memory_kll_lib_per_call<T>(sketch: &KllLibPerCall<T>) -> usize
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    kll_footprint::<T>(sketch.k)
 }
 
 impl<T> KllLibPerCall<T>
@@ -70,28 +73,26 @@ where
 pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
     k: u32,
-    cdf: Option<asap_sketchlib::sketches::kll::Cdf>}
-
-impl<T> InitSketch for KllLibCdf<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: KllParams = config.parse()?;
-        Ok(Self {
-            inner: lib_kll::<T>(p.k)?,
-            k: p.k,
-            cdf: None})
-    }
+    cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
-impl<T> MemoryFootprint for KllLibCdf<T>
+pub fn build_kll_lib_cdf<T>(config: &ParamSet, _workers: usize) -> Result<KllLibCdf<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    fn memory_bytes(&self) -> usize {
-        kll_footprint::<T>(self.k)
-    }
+    let p: KllParams = config.parse()?;
+    Ok(KllLibCdf {
+        inner: lib_kll::<T>(p.k)?,
+        k: p.k,
+        cdf: None,
+    })
+}
+
+pub fn memory_kll_lib_cdf<T>(sketch: &KllLibCdf<T>) -> usize
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+{
+    kll_footprint::<T>(sketch.k)
 }
 
 impl<T> KllLibCdf<T>
@@ -106,43 +107,41 @@ where
     }
 }
 
-
-
 pub fn insert_kll_lib_per_call<T>(sketch: &mut KllLibPerCall<T>, v: &T)
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-        sketch.inner.update(v);
+    sketch.inner.update(v);
 }
 
 pub fn merge_kll_lib_per_call<T>(into: &mut KllLibPerCall<T>, from: &KllLibPerCall<T>)
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-        into.inner.merge(&from.inner);
+    into.inner.merge(&from.inner);
 }
 
 pub fn insert_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>, v: &T)
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-        sketch.inner.update(v);
+    sketch.inner.update(v);
 }
 
 pub fn merge_kll_lib_cdf<T>(into: &mut KllLibCdf<T>, from: &KllLibCdf<T>)
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-        into.inner.merge(&from.inner);
-        // A merged sketch invalidates any CDF cached from the pre-merge state.
-        into.cdf = None;
+    into.inner.merge(&from.inner);
+    // A merged sketch invalidates any CDF cached from the pre-merge state.
+    into.cdf = None;
 }
 
 pub fn prepare_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>)
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-        sketch.cdf = Some(sketch.inner.cdf());
+    sketch.cdf = Some(sketch.inner.cdf());
 }
 
 pub const fn lib_percall_ops<T>() -> SketchOps<KllLibPerCall<T>, T, f64, f64>
@@ -150,10 +149,13 @@ where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     SketchOps {
+        build: build_kll_lib_per_call,
+        memory: memory_kll_lib_per_call,
         merge: Some(merge_kll_lib_per_call),
         prepare: None,
         ask: ask_kll_lib_per_call,
-        _item: std::marker::PhantomData}
+        _item: std::marker::PhantomData,
+    }
 }
 
 pub fn ask_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
@@ -168,10 +170,13 @@ where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     SketchOps {
+        build: build_kll_lib_cdf,
+        memory: memory_kll_lib_cdf,
         merge: Some(merge_kll_lib_cdf),
         prepare: Some(prepare_kll_lib_cdf),
         ask: ask_kll_lib_cdf,
-        _item: std::marker::PhantomData}
+        _item: std::marker::PhantomData,
+    }
 }
 
 pub fn ask_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
@@ -182,43 +187,71 @@ where
 }
 
 pub fn run_lib_percall(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_ordered::<KllLibPerCall<i64>, KllLibPerCall<f64>, RankErrorGT, _, _>(
-        cfg,
-        data,
-        params,
-        label,
-        width,
-        insert_kll_lib_per_call,
-        &lib_percall_ops::<i64>(),
-        insert_kll_lib_per_call,
-        &lib_percall_ops::<f64>(),
-    )
+    // The one place a runtime value still selects an item type. Each arm is its
+    // own monomorphisation, with its own owning closures.
+    match req.width {
+        Numeric::I64 => {
+            let wk = <i64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
+            crate::run::run_row::<KllLibPerCall<i64>, i64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_lib_per_call,
+                &lib_percall_ops::<i64>(),
+            )
+        }
+        Numeric::F64 => {
+            let wk = <f64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
+            crate::run::run_row::<KllLibPerCall<f64>, f64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_lib_per_call,
+                &lib_percall_ops::<f64>(),
+            )
+        }
+    }
 }
 
 pub fn run_lib_cdf(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_ordered::<KllLibCdf<i64>, KllLibCdf<f64>, RankErrorGT, _, _>(
-        cfg,
-        data,
-        params,
-        label,
-        width,
-        insert_kll_lib_cdf,
-        &lib_cdf_ops::<i64>(),
-        insert_kll_lib_cdf,
-        &lib_cdf_ops::<f64>(),
-    )
+    // The one place a runtime value still selects an item type. Each arm is its
+    // own monomorphisation, with its own owning closures.
+    match req.width {
+        Numeric::I64 => {
+            let wk = <i64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
+            crate::run::run_row::<KllLibCdf<i64>, i64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_lib_cdf,
+                &lib_cdf_ops::<i64>(),
+            )
+        }
+        Numeric::F64 => {
+            let wk = <f64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
+            crate::run::run_row::<KllLibCdf<f64>, f64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_lib_cdf,
+                &lib_cdf_ops::<f64>(),
+            )
+        }
+    }
 }
-
-

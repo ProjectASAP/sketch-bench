@@ -10,13 +10,16 @@ use welford::Welford;
 use crate::metrics::{ItemsPerSec, RunMetrics};
 use crate::report::{CpuTime, LatencySummary, RunStats};
 
-/// Ingest rate, `items / insert_wall`, with `prepare` excluded. `None` when no
-/// run recorded an insert.
-pub fn throughput(runs: &[RunMetrics]) -> Option<RunStats> {
+/// The rate this measurement produced: `work / elapsed`.
+///
+/// One function, not one per operation. A rate is a rate — what it is a rate
+/// *of* is the operation's business, and the operation is what picks the field
+/// this lands in.
+pub fn rate(runs: &[RunMetrics]) -> Option<RunStats> {
     let mut w = Welford::new();
     for r in runs {
-        if r.insert_wall_time_ns > 0 {
-            w.push(ItemsPerSec::compute(r.items_inserted, r.insert_wall_time_ns));
+        if r.elapsed_ns > 0 {
+            w.push(ItemsPerSec::compute(r.work, r.elapsed_ns));
         }
     }
     maybe_runstats(w)
@@ -24,57 +27,20 @@ pub fn throughput(runs: &[RunMetrics]) -> Option<RunStats> {
 
 /// The same rate, one entry per measured run, so a consumer can draw a box
 /// plot without re-running the bench.
-pub fn throughput_samples(runs: &[RunMetrics]) -> Option<Vec<f64>> {
+pub fn rate_samples(runs: &[RunMetrics]) -> Option<Vec<f64>> {
     let samples: Vec<f64> = runs
         .iter()
-        .filter(|r| r.insert_wall_time_ns > 0)
-        .map(|r| ItemsPerSec::compute(r.items_inserted, r.insert_wall_time_ns))
+        .filter(|r| r.elapsed_ns > 0)
+        .map(|r| ItemsPerSec::compute(r.work, r.elapsed_ns))
         .collect();
     (!samples.is_empty()).then_some(samples)
 }
 
-/// The rate a *ready-to-answer* sketch is produced at: `items / (insert_wall +
-/// finalize_wall)`. Guarded on the insert, not on the build, so this and
-/// [`throughput`] summarise the same runs — their ratio is the whole reason
-/// both exist.
-pub fn build_throughput(runs: &[RunMetrics]) -> Option<RunStats> {
+/// The timed region, in milliseconds.
+pub fn elapsed_ms(runs: &[RunMetrics]) -> Option<RunStats> {
     let mut w = Welford::new();
     for r in runs {
-        if r.insert_wall_time_ns > 0 {
-            w.push(ItemsPerSec::compute(r.items_inserted, r.build_wall_time_ns()));
-        }
-    }
-    maybe_runstats(w)
-}
-
-/// Wall time of the deferred build, per run.
-pub fn finalize_time_ms(runs: &[RunMetrics]) -> Option<RunStats> {
-    let mut w = Welford::new();
-    for r in runs {
-        if r.insert_wall_time_ns > 0 {
-            w.push(r.finalize_wall_time_ns as f64 / 1_000_000.0);
-        }
-    }
-    maybe_runstats(w)
-}
-
-/// Answers per second, from the counters the probe loop kept.
-pub fn query_throughput(runs: &[RunMetrics]) -> Option<RunStats> {
-    let mut w = Welford::new();
-    for r in runs {
-        if r.query_wall_time_ns > 0 {
-            w.push(ItemsPerSec::compute(r.queries_executed, r.query_wall_time_ns));
-        }
-    }
-    maybe_runstats(w)
-}
-
-/// Wall time of the whole iteration. Cheap to capture and useful as a sanity
-/// check across squares.
-pub fn wall_time_ms(runs: &[RunMetrics]) -> Option<RunStats> {
-    let mut w = Welford::new();
-    for r in runs {
-        w.push(r.wall_time_ns as f64 / 1_000_000.0);
+        w.push(r.elapsed_ns as f64 / 1_000_000.0);
     }
     maybe_runstats(w)
 }
@@ -126,10 +92,13 @@ pub fn memory_bytes(runs: &[RunMetrics]) -> Option<u64> {
 
 /// The distribution the per-update recorder built, from the last run that has
 /// one.
-pub fn latency_from_recorder(runs: &[RunMetrics]) -> Option<LatencySummary> {
+pub fn latency(runs: &[RunMetrics]) -> Option<LatencySummary> {
     runs.iter()
         .rev()
-        .find_map(|r| r.latency_ns.as_ref())
+        // An armed recorder that was never fed is not a latency of zero: a body
+        // that timed one region instead of per call has no per-call sample, and
+        // reporting `p50: 0` there would read as an instantaneous operation.
+        .find_map(|r| r.latency_ns.as_ref().filter(|l| l.count > 0))
         .map(|l| LatencySummary {
             p50: l.p50,
             p95: l.p95,
@@ -144,12 +113,12 @@ pub fn latency_from_recorder(runs: &[RunMetrics]) -> Option<LatencySummary> {
 /// Fold every run's accuracy scalars into one object. Each repetition drew
 /// independently, so spread is real: each key ships as a mean plus `_stddev`,
 /// with `accuracy_runs` counting every run — the two can visibly disagree.
-pub fn accuracy(runs: &[RunMetrics]) -> Option<serde_json::Value> {
+pub fn scores(runs: &[RunMetrics]) -> Option<serde_json::Value> {
     use std::collections::BTreeMap;
     let mut acc: BTreeMap<&str, Welford> = BTreeMap::new();
     let mut n_runs = 0usize;
     for r in runs {
-        let Some(m) = r.accuracy.as_ref() else {
+        let Some(m) = r.scores.as_ref() else {
             continue;
         };
         n_runs += 1;
@@ -206,110 +175,68 @@ fn runstats_from(w: Welford) -> RunStats {
 mod tests {
     use super::*;
 
-    /// What the insert-throughput square places, assembled the way the runner
-    /// does, so these tests read the same shape a record carries.
-    struct ThroughputView {
-        throughput_items_per_sec: Option<RunStats>,
-        build_throughput_items_per_sec: Option<RunStats>,
-        finalize_time_ms: Option<RunStats>,
-    }
-    fn throughput_view(runs: &[RunMetrics]) -> ThroughputView {
-        ThroughputView {
-            throughput_items_per_sec: throughput(runs),
-            build_throughput_items_per_sec: build_throughput(runs),
-            finalize_time_ms: finalize_time_ms(runs),
-        }
-    }
-
-    fn rm(items: u64, wall_ns: u64, insert_ns: u64) -> RunMetrics {
+    fn rm(work: u64, elapsed_ns: u64) -> RunMetrics {
         RunMetrics {
-            items_inserted: items,
-            wall_time_ns: wall_ns,
-            insert_wall_time_ns: insert_ns,
-            ..Default::default()
+            work,
+            elapsed_ns,
+            ..RunMetrics::empty()
         }
     }
 
-    fn rm_deferred(items: u64, insert_ns: u64, finalize_ns: u64) -> RunMetrics {
-        RunMetrics {
-            finalize_wall_time_ns: finalize_ns,
-            ..rm(items, insert_ns + finalize_ns, insert_ns)
-        }
-    }
-
-    /// The property that lets one column serve a mixed panel: where `prepare`
-    /// is a no-op the build rate must equal the ingest rate exactly — not
-    /// approximately, and not absent.
+    /// A rate is `work / elapsed`, and the population is the measured runs.
     #[test]
-    fn build_throughput_equals_ingest_when_finalize_is_free() {
-        let runs = vec![
-            rm(1_000_000, 100_000_000, 100_000_000),
-            rm(1_000_000, 50_000_000, 50_000_000),
-        ];
-        let out = throughput_view(&runs);
-        let tp = out.throughput_items_per_sec.expect("ingest present");
-        let bt = out.build_throughput_items_per_sec.expect("build present");
-        assert_eq!(bt.mean, tp.mean);
-        assert_eq!(bt.n, tp.n);
-        // Measured and zero, not "not measured": a no-op finalize is a fact
-        // about the implementation and the field says so.
-        assert_eq!(out.finalize_time_ms.expect("finalize present").mean, 0.0);
+    fn rate_is_the_mean_of_the_per_run_rates() {
+        let runs = vec![rm(1_000_000, 100_000_000), rm(1_000_000, 50_000_000)];
+        let r = rate(&runs).expect("two runs");
+        // 10M/s and 20M/s.
+        assert!((r.mean - 15_000_000.0).abs() < 1.0);
+        assert_eq!(r.n, 2);
     }
 
-    /// A `*/polars` row in miniature: insert is a `Vec::push` and the sketch
-    /// is built in finalize. The ingest column is allowed to say 100M/s —
-    /// that is what pushing costs — but the build column must not.
+    /// The samples are the same numbers, unaggregated, so a consumer can draw
+    /// the spread without re-running.
     #[test]
-    fn deferred_build_cost_lands_in_build_throughput() {
-        // 10ms of push + 90ms of engine work over 1M items: 100M/s ingest,
-        // 10M/s build.
-        let runs = vec![rm_deferred(1_000_000, 10_000_000, 90_000_000)];
-        let out = throughput_view(&runs);
-        let tp = out.throughput_items_per_sec.expect("ingest present");
-        let bt = out.build_throughput_items_per_sec.expect("build present");
-        assert!((tp.mean - 100_000_000.0).abs() < 1.0);
-        assert!((bt.mean - 10_000_000.0).abs() < 1.0);
-        assert!((out.finalize_time_ms.unwrap().mean - 90.0).abs() < 1e-9);
+    fn samples_cover_the_same_runs_as_the_mean() {
+        let runs = vec![rm(1_000_000, 100_000_000), rm(1_000_000, 50_000_000)];
+        let s = rate_samples(&runs).expect("two runs");
+        assert_eq!(s.len(), 2);
+        assert!((s[0] - 10_000_000.0).abs() < 1.0);
+        assert!((s[1] - 20_000_000.0).abs() < 1.0);
     }
 
-    /// Both columns must summarise the same runs, or their ratio — the whole
-    /// reason for reporting two — is taken across different denominators.
+    /// A run that timed nothing contributes no rate — dividing by zero would
+    /// otherwise report an infinite one.
     #[test]
-    fn both_throughput_columns_cover_the_same_runs() {
-        let runs = vec![
-            rm_deferred(1_000_000, 10_000_000, 90_000_000),
-            // Insert too fast for the clock: dropped from the ingest column,
-            // and so from the build column too even though its finalize is
-            // perfectly measurable.
-            rm_deferred(1_000_000, 0, 90_000_000),
-        ];
-        let out = throughput_view(&runs);
-        assert_eq!(out.throughput_items_per_sec.unwrap().n, 1);
-        assert_eq!(out.build_throughput_items_per_sec.unwrap().n, 1);
-        assert_eq!(out.finalize_time_ms.unwrap().n, 1);
+    fn a_run_that_timed_nothing_is_not_a_rate() {
+        assert!(rate(&[rm(1000, 0)]).is_none());
+        assert!(rate_samples(&[rm(1000, 0)]).is_none());
     }
 
-
-    /// No runs is not a rate of zero. A square that measured nothing must
-    /// leave the field absent, since a zero there is a measurement.
+    /// The timed region in milliseconds, over the same population.
     #[test]
-    fn no_runs_leaves_the_column_absent() {
-        let out = throughput_view(&[]);
-        assert!(out.throughput_items_per_sec.is_none());
+    fn elapsed_is_the_timed_region_not_the_whole_run() {
+        let runs = vec![rm(10, 5_000_000), rm(10, 15_000_000)];
+        let e = elapsed_ms(&runs).expect("two runs");
+        assert!((e.mean - 10.0).abs() < 1e-9);
     }
 
-    /// The fold is over per-run rates, so the reported mean is the mean of
-    /// the rates and not the rate of the totals. 10M/s and 20M/s make 15M/s.
+    /// Scores fold per key across runs, with a stddev only where there is one.
     #[test]
-    fn throughput_is_the_mean_of_the_per_run_rates() {
-        let runs = vec![
-            rm(1_000_000, 100_000_000, 100_000_000), // 10M/s
-            rm(1_000_000, 50_000_000, 50_000_000),   // 20M/s
-        ];
-        let out = throughput_view(&runs);
-        let tp = out.throughput_items_per_sec.expect("throughput present");
-        assert!((tp.mean - 15_000_000.0).abs() < 1.0);
-        assert_eq!(tp.n, 2);
+    fn scores_fold_every_key_across_runs() {
+        let mut a = RunMetrics::empty();
+        a.scores = Some([("are_all".to_string(), 0.10)].into_iter().collect());
+        let mut b = RunMetrics::empty();
+        b.scores = Some([("are_all".to_string(), 0.20)].into_iter().collect());
+        let out = scores(&[a, b]).expect("two runs carried scores");
+        let obj = out.as_object().unwrap();
+        assert!((obj["are_all"].as_f64().unwrap() - 0.15).abs() < 1e-9);
+        assert!(obj.contains_key("are_all_stddev"));
+        assert_eq!(obj["accuracy_runs"].as_u64().unwrap(), 2);
     }
 
+    /// A run with no scores is not a score of zero.
+    #[test]
+    fn no_scores_is_absent_not_zero() {
+        assert!(scores(&[RunMetrics::empty()]).is_none());
+    }
 }

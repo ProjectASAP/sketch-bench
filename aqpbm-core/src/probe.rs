@@ -5,7 +5,6 @@
 //! See `docs/DESIGN.md` §4.2.
 
 use crate::accumulator::Accumulator;
-use crate::memory_footprint::MemoryFootprint;
 
 /// A handler for benchmark/runtime metrics events. Impls: [`NoopSink`] below,
 /// [`FullSink`](crate::metrics::FullSink) for offline runs, and
@@ -92,12 +91,6 @@ impl<S: Accumulator, Sink: MetricsSink> Accumulator for Probe<S, Sink> {
     }
 }
 
-impl<S: Accumulator + MemoryFootprint, Sink: MetricsSink> MemoryFootprint for Probe<S, Sink> {
-    fn memory_bytes(&self) -> usize {
-        self.inner.memory_bytes()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,11 +105,6 @@ mod tests {
         }
     }
 
-    impl MemoryFootprint for DummySketch {
-        fn memory_bytes(&self) -> usize {
-            0
-        }
-    }
 
     #[derive(Default)]
     struct CountingSink {

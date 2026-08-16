@@ -4,14 +4,16 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
+use crate::build_error::BuildError;
+use crate::ops::SketchOps;
+use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{RunError, WorkloadData, RowLabel};
+use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::init::{BuildError, InitSketch};
-use aqpbm_core::memory_footprint::MemoryFootprint;
-use aqpbm_core::ops::SketchOps;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Numeric;
-use aqpbm_core::runner::{BenchConfig, BenchReport};
+use aqpbm_core::request::Requirement;
+use aqpbm_core::runner::BenchReport;
 
 /// uses; `sketch_oxide` takes a `u16`. Refuse out of range by name instead of
 /// truncating, which would run at a `k` other than the one requested.
@@ -27,22 +29,23 @@ fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, BuildError> {
 pub struct KllOxidePerCall<T = i64> {
     inner: sketch_oxide::quantiles::KllSketch,
     k: u32,
-    _item: std::marker::PhantomData<T>}
-
-impl<T: QuantileValue> InitSketch for KllOxidePerCall<T> {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: KllParams = config.parse()?;
-        Ok(Self {
-            inner: oxide_kll(p.k)?,
-            k: p.k,
-            _item: std::marker::PhantomData})
-    }
+    _item: std::marker::PhantomData<T>,
 }
 
-impl<T: QuantileValue> MemoryFootprint for KllOxidePerCall<T> {
-    fn memory_bytes(&self) -> usize {
-        kll_footprint::<f64>(self.k)
-    }
+pub fn build_kll_oxide_per_call<T: QuantileValue>(
+    config: &ParamSet,
+    _workers: usize,
+) -> Result<KllOxidePerCall<T>, BuildError> {
+    let p: KllParams = config.parse()?;
+    Ok(KllOxidePerCall {
+        inner: oxide_kll(p.k)?,
+        k: p.k,
+        _item: std::marker::PhantomData,
+    })
+}
+
+pub fn memory_kll_oxide_per_call<T: QuantileValue>(sketch: &KllOxidePerCall<T>) -> usize {
+    kll_footprint::<f64>(sketch.k)
 }
 
 impl<T: QuantileValue> KllOxidePerCall<T> {
@@ -58,24 +61,25 @@ pub struct KllOxideCdf<T = i64> {
     /// `(value, cumulative_rank)` pairs, built in `prepare`.
     cdf: Option<Vec<(f64, f64)>>,
     ends: (f64, f64),
-    _item: std::marker::PhantomData<T>}
-
-impl<T: QuantileValue> InitSketch for KllOxideCdf<T> {
-    fn init(config: &ParamSet) -> Result<Self, BuildError> {
-        let p: KllParams = config.parse()?;
-        Ok(Self {
-            inner: oxide_kll(p.k)?,
-            k: p.k,
-            cdf: None,
-            ends: (f64::NAN, f64::NAN),
-            _item: std::marker::PhantomData})
-    }
+    _item: std::marker::PhantomData<T>,
 }
 
-impl<T: QuantileValue> MemoryFootprint for KllOxideCdf<T> {
-    fn memory_bytes(&self) -> usize {
-        kll_footprint::<f64>(self.k)
-    }
+pub fn build_kll_oxide_cdf<T: QuantileValue>(
+    config: &ParamSet,
+    _workers: usize,
+) -> Result<KllOxideCdf<T>, BuildError> {
+    let p: KllParams = config.parse()?;
+    Ok(KllOxideCdf {
+        inner: oxide_kll(p.k)?,
+        k: p.k,
+        cdf: None,
+        ends: (f64::NAN, f64::NAN),
+        _item: std::marker::PhantomData,
+    })
+}
+
+pub fn memory_kll_oxide_cdf<T: QuantileValue>(sketch: &KllOxideCdf<T>) -> usize {
+    kll_footprint::<f64>(sketch.k)
 }
 
 impl<T: QuantileValue> KllOxideCdf<T> {
@@ -91,46 +95,45 @@ impl<T: QuantileValue> KllOxideCdf<T> {
     }
 }
 
-
-
-pub fn insert_kll_oxide_per_call<T: QuantileValue>(sketch: &mut KllOxidePerCall<T>, v: &T)
-{
-        sketch.inner.update(v.to_f64());
+pub fn insert_kll_oxide_per_call<T: QuantileValue>(sketch: &mut KllOxidePerCall<T>, v: &T) {
+    sketch.inner.update(v.to_f64());
 }
 
-pub fn merge_kll_oxide_per_call<T: QuantileValue>(into: &mut KllOxidePerCall<T>, from: &KllOxidePerCall<T>)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so k matches");
+pub fn merge_kll_oxide_per_call<T: QuantileValue>(
+    into: &mut KllOxidePerCall<T>,
+    from: &KllOxidePerCall<T>,
+) {
+    into.inner
+        .merge(&from.inner)
+        .expect("both operands built from one ParamSet, so k matches");
 }
 
-pub fn insert_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>, v: &T)
-{
-        sketch.inner.update(v.to_f64());
+pub fn insert_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>, v: &T) {
+    sketch.inner.update(v.to_f64());
 }
 
-pub fn merge_kll_oxide_cdf<T: QuantileValue>(into: &mut KllOxideCdf<T>, from: &KllOxideCdf<T>)
-{
-        into.inner
-            .merge(&from.inner)
-            .expect("both operands built from one ParamSet, so k matches");
-        // A merged sketch invalidates any table cached from the pre-merge state.
-        into.cdf = None;
+pub fn merge_kll_oxide_cdf<T: QuantileValue>(into: &mut KllOxideCdf<T>, from: &KllOxideCdf<T>) {
+    into.inner
+        .merge(&from.inner)
+        .expect("both operands built from one ParamSet, so k matches");
+    // A merged sketch invalidates any table cached from the pre-merge state.
+    into.cdf = None;
 }
 
-pub fn prepare_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>)
-{
-        sketch.cdf = Some(sketch.inner.cdf());
-        sketch.ends = (sketch.inner.min(), sketch.inner.max());
+pub fn prepare_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>) {
+    sketch.cdf = Some(sketch.inner.cdf());
+    sketch.ends = (sketch.inner.min(), sketch.inner.max());
 }
 
 pub const fn oxide_percall_ops<T: QuantileValue>() -> SketchOps<KllOxidePerCall<T>, T, f64, f64> {
     SketchOps {
+        build: build_kll_oxide_per_call,
+        memory: memory_kll_oxide_per_call,
         merge: Some(merge_kll_oxide_per_call),
         prepare: None,
         ask: ask_kll_oxide_per_call,
-        _item: std::marker::PhantomData}
+        _item: std::marker::PhantomData,
+    }
 }
 
 pub fn ask_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi: &f64) -> f64 {
@@ -139,10 +142,13 @@ pub fn ask_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi:
 
 pub const fn oxide_cdf_ops<T: QuantileValue>() -> SketchOps<KllOxideCdf<T>, T, f64, f64> {
     SketchOps {
+        build: build_kll_oxide_cdf,
+        memory: memory_kll_oxide_cdf,
         merge: Some(merge_kll_oxide_cdf),
         prepare: Some(prepare_kll_oxide_cdf),
         ask: ask_kll_oxide_cdf,
-        _item: std::marker::PhantomData}
+        _item: std::marker::PhantomData,
+    }
 }
 
 pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) -> f64 {
@@ -150,43 +156,71 @@ pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) ->
 }
 
 pub fn run_oxide_percall(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_ordered::<KllOxidePerCall<i64>, KllOxidePerCall<f64>, RankErrorGT, _, _>(
-        cfg,
-        data,
-        params,
-        label,
-        width,
-        insert_kll_oxide_per_call,
-        &oxide_percall_ops::<i64>(),
-        insert_kll_oxide_per_call,
-        &oxide_percall_ops::<f64>(),
-    )
+    // The one place a runtime value still selects an item type. Each arm is its
+    // own monomorphisation, with its own owning closures.
+    match req.width {
+        Numeric::I64 => {
+            let wk = <i64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
+            crate::run::run_row::<KllOxidePerCall<i64>, i64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_oxide_per_call,
+                &oxide_percall_ops::<i64>(),
+            )
+        }
+        Numeric::F64 => {
+            let wk = <f64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
+            crate::run::run_row::<KllOxidePerCall<f64>, f64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_oxide_per_call,
+                &oxide_percall_ops::<f64>(),
+            )
+        }
+    }
 }
 
 pub fn run_oxide_cdf(
-    cfg: &BenchConfig,
+    cfg: &MeasureConfig,
+    req: &Requirement,
     data: WorkloadData,
-    params: &ParamSet,
-    width: Numeric,
-    label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::registry::run_ordered::<KllOxideCdf<i64>, KllOxideCdf<f64>, RankErrorGT, _, _>(
-        cfg,
-        data,
-        params,
-        label,
-        width,
-        insert_kll_oxide_cdf,
-        &oxide_cdf_ops::<i64>(),
-        insert_kll_oxide_cdf,
-        &oxide_cdf_ops::<f64>(),
-    )
+    // The one place a runtime value still selects an item type. Each arm is its
+    // own monomorphisation, with its own owning closures.
+    match req.width {
+        Numeric::I64 => {
+            let wk = <i64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
+            crate::run::run_row::<KllOxideCdf<i64>, i64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_oxide_cdf,
+                &oxide_cdf_ops::<i64>(),
+            )
+        }
+        Numeric::F64 => {
+            let wk = <f64 as BenchItem>::materialise(data)?;
+            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
+            crate::run::run_row::<KllOxideCdf<f64>, f64, RankErrorGT, _>(
+                cfg,
+                req,
+                &wk,
+                &gt,
+                insert_kll_oxide_cdf,
+                &oxide_cdf_ops::<f64>(),
+            )
+        }
+    }
 }
-
-

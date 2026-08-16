@@ -5,50 +5,42 @@
 
 use std::collections::BTreeMap;
 
-use crate::latency::{LatencyRecorder, LatencySnapshot};
-use crate::metrics::mask::MetricsMask;
-use crate::metrics::memory::{JemallocAllocated, Rss};
-use crate::metrics::time::{CpuTimeSampler, WallClock};
-use crate::probe::MetricsSink;
+use crate::latency::LatencySnapshot;
 
 /// Metrics produced by a single run. One `FullSink` finalises
 /// into one of these. The `BenchRunner` aggregates `RunMetrics`
 /// across N runs via the Welford accumulator.
 #[derive(Debug, Clone, Default)]
 pub struct RunMetrics {
-    pub items_inserted: u64,
-    pub queries_executed: u64,
-    pub wall_time_ns: u64,
-    /// Wall time of the insert loop alone — the **ingest** denominator.
-    pub insert_wall_time_ns: u64,
-    /// Wall time for `Accumulator::prepare()`, billed separately so deferred
-    /// build cost shows without inflating insert or query; zero for a no-op.
-    /// `insert` is the ingest rate, `insert + finalize` the queryable rate.
-    pub finalize_wall_time_ns: u64,
-    pub query_wall_time_ns: u64,
+    /// Units of work the timed region covered — items inserted, probes asked,
+    /// shards folded. One measurement times one operation, so one count.
+    pub work: u64,
+    /// Wall time of the region the body marked. Setup is not in it.
+    pub elapsed_ns: u64,
     pub cpu_user_ns: Option<u64>,
     pub cpu_sys_ns: Option<u64>,
     pub rss_peak_kb: Option<u64>,
     /// Currently-allocated jemalloc bytes (`stats.allocated`), in kB. Needs
     /// `heap-jemalloc` compiled in AND jemalloc as the process's global
-    /// allocator. One sample at finalize, not a peak — see `heap_bytes_peak`.
+    /// allocator. One sample, not a peak — see `heap_bytes_peak`.
     pub heap_allocated_kb: Option<u64>,
+    /// The nominal footprint the body reported, read before it dropped
+    /// anything it owned.
     pub memory_bytes: Option<u64>,
-    /// Net bytes allocated to this sketch over its lifetime, per the
-    /// `heap-track` allocator — steady state at the end of insert, complementing
-    /// the param-derived `memory_bytes`. Needs `heap-track` + the bin's global.
+    /// Net bytes allocated over the body's lifetime, per the `heap-track`
+    /// allocator. A body that owns and drops its sketch nets ~0 — the peak
+    /// below is the one that means something there.
     pub heap_bytes_net: Option<u64>,
-    /// High-water mark of the tracker during construction + feed.
-    /// Captures transient peaks (resize, intermediate buffers)
-    /// that `heap_bytes_net` smooths over.
+    /// High-water mark of the tracker across the body. Captures transient
+    /// peaks (resize, intermediate buffers) that the net figure smooths over.
     pub heap_bytes_peak: Option<u64>,
-    /// Latency histogram samples (ns/op) for the insert phase.
-    /// None when `MetricsMask::LATENCY` unset.
+    /// Per-call latency distribution, when the body used `Timed::time_each`
+    /// and `MetricsMask::LATENCY` was set.
     pub latency_ns: Option<LatencySnapshot>,
-    /// Named accuracy scalars from this run's comparator. Flat rather
-    /// than an opaque JSON blob so `aggregate` can fold every key across
-    /// runs without knowing any algorithm's shape — see `accuracy::Comparison`.
-    pub accuracy: Option<BTreeMap<String, f64>>,
+    /// Named scalars the body reported — error metrics, probe counts. Flat
+    /// rather than an opaque blob so `aggregate` folds every key across runs
+    /// without knowing any algorithm's shape.
+    pub scores: Option<BTreeMap<String, f64>>,
 }
 
 impl RunMetrics {
@@ -56,12 +48,8 @@ impl RunMetrics {
     /// insert phase (the merge pass times a fold, not a loop over items).
     pub fn empty() -> Self {
         Self {
-            items_inserted: 0,
-            queries_executed: 0,
-            wall_time_ns: 0,
-            insert_wall_time_ns: 0,
-            finalize_wall_time_ns: 0,
-            query_wall_time_ns: 0,
+            work: 0,
+            elapsed_ns: 0,
             cpu_user_ns: None,
             cpu_sys_ns: None,
             rss_peak_kb: None,
@@ -70,141 +58,13 @@ impl RunMetrics {
             heap_bytes_net: None,
             heap_bytes_peak: None,
             latency_ns: None,
-            accuracy: None,
+            scores: None,
         }
     }
 
-    /// Wall time to turn this run's items into a *queryable* sketch — the
-    /// denominator of `build_throughput_items_per_sec`. Saturating, so a bad sum
-    /// across the two clocks pins the rate near zero instead of wrapping.
-    pub fn build_wall_time_ns(&self) -> u64 {
-        self.insert_wall_time_ns
-            .saturating_add(self.finalize_wall_time_ns)
-    }
 }
 
-/// Concrete sink for offline benchmark runs. Holds each recorder only when its
-/// mask bit is set, so `MetricsMask::THROUGHPUT` alone allocates no histogram.
-pub struct FullSink {
-    mask: MetricsMask,
-    wall: Option<WallClock>,
-    insert_wall: Option<WallClock>,
-    query_wall: Option<WallClock>,
-    cpu: Option<CpuTimeSampler>,
-    latency: Option<LatencyRecorder>,
-    items_inserted: u64,
-    queries_executed: u64,
-    phase: Phase,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    Insert,
-    Query,
-}
-
-impl FullSink {
-    pub fn new(mask: MetricsMask) -> Self {
-        Self {
-            mask,
-            wall: None,
-            insert_wall: None,
-            query_wall: None,
-            cpu: None,
-            latency: if mask.contains(MetricsMask::LATENCY) {
-                Some(LatencyRecorder::new())
-            } else {
-                None
-            },
-            items_inserted: 0,
-            queries_executed: 0,
-            phase: Phase::Idle,
-        }
-    }
-
-    /// Arm the run. Called by the runner once per measured iteration, before
-    /// any `update`.
-    pub fn on_run_start(&mut self) {
-        self.wall = Some(WallClock::start());
-        if self.mask.contains(MetricsMask::CPU) {
-            self.cpu = Some(CpuTimeSampler::start());
-        }
-        self.phase = Phase::Idle;
-        self.items_inserted = 0;
-        self.queries_executed = 0;
-    }
-
-    pub fn begin_insert_phase(&mut self) {
-        self.phase = Phase::Insert;
-        self.insert_wall = Some(WallClock::start());
-    }
-
-    pub fn end_insert_phase(&mut self) {
-        self.phase = Phase::Idle;
-    }
-
-    /// Finalise the sink, consuming it to produce a
-    /// `RunMetrics`.
-    pub fn finalize(mut self, memory_bytes: Option<u64>) -> RunMetrics {
-        let wall_time_ns = self.wall.take().map(|w| w.elapsed_ns()).unwrap_or(0);
-        let insert_wall_time_ns = self.insert_wall.take().map(|w| w.elapsed_ns()).unwrap_or(0);
-        let query_wall_time_ns = self.query_wall.take().map(|w| w.elapsed_ns()).unwrap_or(0);
-        let (cpu_user_ns, cpu_sys_ns) = match self.cpu.take() {
-            Some(sampler) => {
-                let s = sampler.finish();
-                (Some(s.user_ns), Some(s.sys_ns))
-            }
-            None => (None, None),
-        };
-        let (rss_peak_kb, heap_allocated_kb) = if self.mask.contains(MetricsMask::MEMORY) {
-            (Rss::peak_kb(), JemallocAllocated::read_kb())
-        } else {
-            (None, None)
-        };
-        let latency_ns = self.latency.take().map(|rec| rec.snapshot());
-
-        RunMetrics {
-            items_inserted: self.items_inserted,
-            queries_executed: self.queries_executed,
-            wall_time_ns,
-            insert_wall_time_ns,
-            // `FullSink` never sees the finalize call — it lands outside any
-            // hook this sink owns. `run_once` times it and overwrites this
-            // field, keeping the sink's job to the per-update boundary.
-            finalize_wall_time_ns: 0,
-            query_wall_time_ns,
-            cpu_user_ns,
-            cpu_sys_ns,
-            rss_peak_kb,
-            heap_allocated_kb,
-            memory_bytes,
-            heap_bytes_net: None,
-            heap_bytes_peak: None,
-            latency_ns,
-            accuracy: None,
-        }
-    }
-}
-
-impl MetricsSink for FullSink {
-    fn on_update_start(&mut self) {
-        if let Some(rec) = &mut self.latency {
-            rec.on_start();
-        }
-    }
-    fn on_update_end(&mut self) {
-        if self.phase == Phase::Insert {
-            self.items_inserted = self.items_inserted.saturating_add(1);
-        }
-        if let Some(rec) = &mut self.latency {
-            rec.on_end();
-        }
-    }
-    fn on_query_start(&mut self) {}
-    fn on_query_end(&mut self) {
-        if self.phase == Phase::Query {
-            self.queries_executed = self.queries_executed.saturating_add(1);
-        }
-    }
-}
+// `FullSink` lived here: the offline recorder `BenchRunner::run_once` wrapped a
+// sketch in. `measure` arms the recorders itself now, around whatever region a
+// body marks, so there is nothing left for a sink to hook. `MetricsSink` and
+// `Probe` stay in `probe` for `sketch-runtime`, which wraps its own sketch.

@@ -31,7 +31,7 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 use aqpbm_core::metrics::{MetricsMask, OperationMask};
-use aqpbm_core::runner::BenchConfig;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -297,14 +297,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     )?;
     // `--merge-shards` no longer selects anything: it says how many shards the
     // merge operation folds, and `--operations merge` is what asks for it.
-    let cfg = BenchConfig {
+    // The loop knobs, and only those. Which squares to run, at which config,
+    // with how many workers, is the *request* — it goes in `Requirement`, not
+    // in a whole-run config a single measurement would have to read past.
+    let cfg = MeasureConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
-        operations: operations_mask,
-        threads: args.workers.max(1),
-        merge_shards: args.merge_shards,
-        seed: args.seed,
     };
     // One cell = one (impl, config). `--config` is one point, or a
     // parameterless point when omitted; keys are type-checked at
@@ -323,6 +322,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         operations: operations_mask,
         metrics: metrics_mask,
         width,
+        workers: args.workers.max(1),
+        merge_shards: args.merge_shards,
         comparator: args.comparator.clone(),
     };
 
@@ -366,7 +367,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // Calling the closure: the CLI passes it the data it just generated, and
     // gets records back. This is the whole hand-off `docs/sketch-bench.md`
     // describes.
-    let reports = (resolved.run)(&cfg, data, &params)
+    let reports = (resolved.run)(&cfg, data)
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
     // The closure returns one report per square; emit each on its own JSONL

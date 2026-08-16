@@ -29,7 +29,7 @@
 //! `hydra-kll`. All three come from `sketch_framework::Hydra`, so all three
 //! have one impl, `lib`.
 
-use aqpbm_core::init::BuildError;
+use crate::build_error::BuildError;
 use crate::params::*;
 use asap_sketchlib::input::HydraCounter;
 
@@ -106,32 +106,33 @@ fn kll_cell_slots(k: u32) -> usize {
     total
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
-    use aqpbm_core::init::InitSketch;
-    use aqpbm_core::memory_footprint::MemoryFootprint;
-    use aqpbm_core::config::ParamSet;
-    use aqpbm_core::workload::Labeled;
     use super::sketchlib::*;
     use super::*;
+    use aqpbm_core::config::ParamSet;
+
     use aqpbm_core::config::SketchParams;
+    use aqpbm_core::workload::Labeled;
 
     fn built() -> HydraCms {
-        HydraCms::init(&ParamSet::of(&HydraCmsParams {
-            rows: 3,
-            cols: 64,
-            cell_rows: 3,
-            cell_cols: 256}))
+        build_hydra_cms(
+            &ParamSet::of(&HydraCmsParams {
+                rows: 3,
+                cols: 64,
+                cell_rows: 3,
+                cell_cols: 256,
+            }),
+            1,
+        )
         .expect("canonical dimensions build")
     }
 
     fn record(key: &str, value: i64) -> Labeled<i64> {
         Labeled {
             key: key.to_string(),
-            value}
+            value,
+        }
     }
 
     /// The statistic is the frequency of a value *within* a subpopulation, and
@@ -187,8 +188,9 @@ mod tests {
             rows: 3,
             cols: 0,
             cell_rows: 3,
-            cell_cols: 256});
-        let Err(err) = HydraCms::init(&bad) else {
+            cell_cols: 256,
+        });
+        let Err(err) = build_hydra_cms(&bad, 1) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -201,23 +203,23 @@ mod tests {
     fn footprint_is_the_product_of_both_shapes() {
         let h = built();
         let counters = 3 * 64 * 3 * 256 * 4;
-        assert_eq!(h.memory_bytes(), counters + grid_overhead_bytes(3, 64));
+        assert_eq!(memory_hydra_cms(&h), counters + grid_overhead_bytes(3, 64));
         // The counters still dominate, so the overhead term must not be what
         // the number is mostly made of.
-        assert!(h.memory_bytes() < counters * 2);
+        assert!(memory_hydra_cms(&h) < counters * 2);
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(HydraCms::init(&ParamSet::of(&HydraCmsParams::canonical())).is_ok());
-        assert!(HydraHll::init(&ParamSet::of(&HydraHllParams::canonical())).is_ok());
-        assert!(HydraKll::init(&ParamSet::of(&HydraKllParams::canonical())).is_ok());
+        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical()), 1).is_ok());
+        assert!(build_hydra_hll(&ParamSet::of(&HydraHllParams::canonical()), 1).is_ok());
+        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical()), 1).is_ok());
     }
 
     // ---------- hydra-hll ----------
 
     fn built_hll() -> HydraHll {
-        HydraHll::init(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }))
+        build_hydra_hll(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }), 1)
             .expect("canonical dimensions build")
     }
 
@@ -269,7 +271,7 @@ mod tests {
     fn hll_footprint_is_grid_area_times_a_fixed_cell() {
         let h = built_hll();
         assert_eq!(
-            h.memory_bytes(),
+            memory_hydra_hll(&h),
             3 * 64 * HLL_CELL_REGISTERS + grid_overhead_bytes(3, 64)
         );
     }
@@ -277,17 +279,22 @@ mod tests {
     // ---------- hydra-kll ----------
 
     fn built_kll() -> HydraKll {
-        HydraKll::init(&ParamSet::of(&HydraKllParams {
-            rows: 3,
-            cols: 64,
-            cell_k: 200}))
+        build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 64,
+                cell_k: 200,
+            }),
+            1,
+        )
         .expect("canonical dimensions build")
     }
 
     fn frecord(key: &str, value: f64) -> Labeled<f64> {
         Labeled {
             key: key.to_string(),
-            value}
+            value,
+        }
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one
@@ -350,8 +357,9 @@ mod tests {
         let bad = ParamSet::of(&HydraKllParams {
             rows: 3,
             cols: 64,
-            cell_k: 0});
-        let Err(err) = HydraKll::init(&bad) else {
+            cell_k: 0,
+        });
+        let Err(err) = build_hydra_kll(&bad, 1) else {
             panic!("a zero cell_k must be refused, not built");
         };
         assert!(
@@ -360,4 +368,3 @@ mod tests {
         );
     }
 }
-

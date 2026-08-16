@@ -22,8 +22,3 @@ fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
     let delta = (-(rows as f64 - 0.5)).exp();
     (epsilon, delta)
 }
-
-
-
-
-

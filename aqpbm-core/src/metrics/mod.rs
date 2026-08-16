@@ -17,6 +17,6 @@ pub mod time;
 pub use crate::latency::{LatencyRecorder, LatencySnapshot};
 pub use mask::{cells, is_measurable, Cell, Metric, MetricsMask, Operation, OperationMask};
 pub use memory::{JemallocAllocated, Rss};
-pub use run::{FullSink, RunMetrics};
+pub use run::RunMetrics;
 pub use throughput::ItemsPerSec;
 pub use time::{CpuTimeSample, CpuTimeSampler, WallClock};
