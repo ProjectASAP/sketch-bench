@@ -85,7 +85,7 @@ pub fn run_oxide(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CmsOxide, i64, FrequencyGT, _>(cfg, data, params, label, width, insert_cms_oxide, &OXIDE_OPS)
+    crate::registry::run_scored::<CmsOxide, i64, FrequencyGT, _>(cfg, data, params, label, width, insert_cms_oxide, &OXIDE_OPS)
 }
 
 

@@ -62,7 +62,7 @@ pub fn run_quantile_kll(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsQuantileKll, i64, RankErrorGT, _>(
+    crate::registry::run_scored::<PolarsQuantileKll, i64, RankErrorGT, _>(
         cfg, data, params, label, width, insert_polars_quantile_kll,
         &QUANTILE_KLL_OPS,
     )

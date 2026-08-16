@@ -188,7 +188,7 @@ pub fn run_lib_percall(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_ordered::<KllLibPerCall<i64>, KllLibPerCall<f64>, RankErrorGT, _, _>(
+    crate::registry::run_ordered::<KllLibPerCall<i64>, KllLibPerCall<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
@@ -208,7 +208,7 @@ pub fn run_lib_cdf(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_ordered::<KllLibCdf<i64>, KllLibCdf<f64>, RankErrorGT, _, _>(
+    crate::registry::run_ordered::<KllLibCdf<i64>, KllLibCdf<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,

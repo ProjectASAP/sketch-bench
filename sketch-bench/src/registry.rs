@@ -1,4 +1,4 @@
-//! The catalog: one table naming every `(algorithm, impl)` this crate exposes,
+//! The registry: one table naming every `(algorithm, impl)` this crate exposes,
 //! and the dispatch resolving one to a concrete sketch type. It lives here,
 //! not in the CLI, so a future `aqp-bench` can ship its own. A row is a
 //! *type*, not a pair of strings — algorithm, impl name and `scores_accuracy`
@@ -60,7 +60,7 @@ pub struct RowIdentity {
 type RunFn =
     fn(&BenchConfig, WorkloadData, &ParamSet, Numeric, RowLabel) -> Result<Vec<BenchReport>, RunError>;
 
-/// One catalog entry. Built only by the constructors below, so `family`,
+/// One registry entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
 /// row's type and its runner — never hand-written strings that could drift from
 /// it.
@@ -190,7 +190,7 @@ where
     const NAME: &'static str = "subpop-rank-error";
     const CAPABILITY: Capability = Capability::SubpopQuantile;
     /// Column 0, for the same reason as [`SubpopFrequencyGT`]. The most
-    /// expensive comparator in the catalog: 101 estimate calls per group.
+    /// expensive comparator in the registry: 101 estimate calls per group.
     fn build(_params: &ParamSet) -> Self {
         SubpopRankErrorGT {
             label_column: 0,
@@ -284,7 +284,7 @@ where
 
 // A timed-only runner (`run_cell::<S, NoGT>` with no ground truth) lived here
 // for the rows that answered no query — elastic, nitro, univmon. All three are
-// out of the catalog, so the only capability-less rows left are the parallel
+// out of the registry, so the only capability-less rows left are the parallel
 // ones below, which have their own runner. Restore it with the first row that
 // is measured but not scored.
 
@@ -625,7 +625,7 @@ where
 }
 
 
-// ---------- the catalog ----------
+// ---------- the registry ----------
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
 /// the wrapper it names; nothing else in this file changes.
@@ -1178,7 +1178,7 @@ impl<F> std::fmt::Debug for ResolvedRow<F> {
 /// no records. `Err` — it cannot, and the error says what about the request the
 /// registry could not honour.
 ///
-/// Every check here is answerable from the request and the catalog alone, which
+/// Every check here is answerable from the request and the registry alone, which
 /// is the point: a refusal costs nothing, because it lands before a single item
 /// is generated.
 #[allow(clippy::type_complexity)]
@@ -1498,7 +1498,7 @@ mod tests {
     /// A row *is* its runner, so there is no `_` bail to fall into and no strings
     /// for the list and the dispatch to disagree about.
     #[test]
-    fn every_catalog_entry_runs() {
+    fn every_registry_entry_runs() {
         let cfg = smoke_cfg();
         for r in ROWS {
             // Canonical, not `empty`: every family's params have required
@@ -1673,7 +1673,7 @@ mod resolve_tests {
 
     /// The doc's own example: `prepare` exists for KLL and is missing from most
     /// sketches. Asking a row for one it does not have is answered from the
-    /// catalog, by name — no workload is generated to find out.
+    /// registry, by name — no workload is generated to find out.
     #[test]
     fn an_operation_a_row_does_not_have_is_refused_by_name() {
         let bad = resolve(&req(

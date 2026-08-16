@@ -226,7 +226,7 @@ pub fn run_cms(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
+    crate::registry::run_scored::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
         cfg, data, params, label, width, insert_hydra_cms,
         &CMS_OPS,
     )
@@ -239,7 +239,7 @@ pub fn run_hll(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
+    crate::registry::run_scored::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
         cfg, data, params, label, width, insert_hydra_hll,
         &HLL_OPS,
     )
@@ -252,7 +252,7 @@ pub fn run_kll(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
+    crate::registry::run_scored::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
         cfg, data, params, label, width, insert_hydra_kll,
         &KLL_OPS,
     )

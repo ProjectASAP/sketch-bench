@@ -178,7 +178,7 @@ pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
 
     /// Whether this item is materialised from a multi-column description
-    /// instead of a single-column one. A `const`, so a catalog can read which
+    /// instead of a single-column one. A `const`, so a registry can read which
     /// kind of workload a row wants off the row's type, without building one.
     const TAKES_COLUMNS: bool = false;
 

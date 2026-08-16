@@ -40,12 +40,12 @@ use clap::Parser;
 use sketch_bench::params::ParamSet;
 
 use cli::{Cli, Cmd, SketchbenchArgs};
-// The catalog — which sketches exist, how to build them, which ground-truth calculator scores
+// The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use aqpbm_core::cell::WorkloadSpec;
 use aqpbm_core::request::Requirement;
-use sketch_bench::catalog;
+use sketch_bench::registry;
 
 /// What is measured. No default and no `all`: a request says which squares of
 /// the grid it wants, and a shorthand that sweeps the grid would sweep squares
@@ -134,13 +134,13 @@ fn main() -> Result<()> {
     }
 }
 
-/// `--list-impls` prints and exits. Enumerating a bundle's catalog hangs off
+/// `--list-impls` prints and exits. Enumerating a bundle's registry hangs off
 /// that bundle's subcommand, since a second bundle would make a free-standing
-/// `list-impls` ambiguous about whose catalog it means.
+/// `list-impls` ambiguous about whose registry it means.
 fn list_impls() -> Result<()> {
-    // The catalog owns the header too: it is the one place that knows how wide
+    // The registry owns the header too: it is the one place that knows how wide
     // the algorithm column has to be for the rows underneath it.
-    for line in catalog::list() {
+    for line in registry::list() {
         println!("{line}");
     }
     Ok(())
@@ -275,11 +275,11 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
     // The only item-type choice left: an `ordered` row builds at either width.
-    // Every other row's type is fixed by its Rust type, and `catalog::resolve`
+    // Every other row's type is fixed by its Rust type, and `registry::resolve`
     // refuses a width it cannot honour before anything is generated.
     let width = match args.dtype.as_str() {
-        "i64" => catalog::Numeric::I64,
-        "f64" => catalog::Numeric::F64,
+        "i64" => registry::Numeric::I64,
+        "f64" => registry::Numeric::F64,
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
@@ -310,7 +310,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // parameterless point when omitted; keys are type-checked at
     // construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => catalog::config_point(&algorithm, s)?,
+        Some(s) => registry::config_point(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
     };
 
@@ -334,7 +334,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // `resolve` hands back a closure. Everything about *how* this sketch is
     // built, fed, folded and asked is captured inside it, stated in
     // `sketch-bench/src/wrappers/`; the CLI knows none of it.
-    let Some(resolved) = catalog::resolve(&req)
+    let Some(resolved) = registry::resolve(&req)
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?
     else {
         // The request named no squares. Legal, and not a failure: there is

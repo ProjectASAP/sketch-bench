@@ -180,7 +180,7 @@ mod tests {
     struct NullFreq;
 
     /// How it is asked. A plain closure now — there is no trait left to
-    /// declare membership through, which is exactly what the catalog test
+    /// declare membership through, which is exactly what the registry test
     /// `every_row_answers_its_capability` exists to compensate for.
     fn ask_null(_: &mut NullFreq, _: &i64) -> u64 {
         0

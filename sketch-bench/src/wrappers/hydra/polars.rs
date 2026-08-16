@@ -288,7 +288,7 @@ pub fn run_subpop_frequency(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT, _>(
+    crate::registry::run_scored::<PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT, _>(
         cfg, data, params, label, width, insert_polars_subpop_frequency,
         &SUBPOP_FREQUENCY_OPS,
     )
@@ -301,7 +301,7 @@ pub fn run_subpop_cardinality(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT, _>(
+    crate::registry::run_scored::<PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT, _>(
         cfg, data, params, label, width, insert_polars_subpop_cardinality,
         &SUBPOP_CARDINALITY_OPS,
     )
@@ -314,7 +314,7 @@ pub fn run_subpop_quantile(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT, _>(
+    crate::registry::run_scored::<PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT, _>(
         cfg, data, params, label, width, insert_polars_subpop_quantile,
         &SUBPOP_QUANTILE_OPS,
     )

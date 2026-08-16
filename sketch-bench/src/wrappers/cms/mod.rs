@@ -9,7 +9,7 @@
 //! `CmsLibVector2dFast` / `CmsLibVector2dRegular` size at run time.
 //! `CmsLibFixedmatrix<M>` is generic over a storage type that bakes the shape
 //! in, so the shape selects a monomorphisation from the table in
-//! `wrappers::fixed_matrix` and the catalog dispatches on it.
+//! `wrappers::fixed_matrix` and the registry dispatches on it.
 
 use crate::params::*;
 use sketch_oxide::Mergeable as _;

@@ -2,7 +2,7 @@
 //! grid-of-sketches that answers per-subpopulation queries out of one shared
 //! structure.
 //!
-//! Two things separate these rows from every other one in the catalog.
+//! Two things separate these rows from every other one in the registry.
 //!
 //! Their item is a **record**, not a key: a stream of `d` label columns plus a
 //! value, so they ingest `Labeled<V>` and read their workload from a column

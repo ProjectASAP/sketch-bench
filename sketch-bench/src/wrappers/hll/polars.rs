@@ -86,7 +86,7 @@ pub fn run_cardinality(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsCardinality, i64, CardinalityGT, _>(
+    crate::registry::run_scored::<PolarsCardinality, i64, CardinalityGT, _>(
         cfg, data, params, label, width, insert_polars_cardinality,
         &CARDINALITY_OPS,
     )

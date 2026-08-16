@@ -3,7 +3,7 @@
 //! the signature every implementation had to answer through.
 //!
 //! They are gone. A sketch now states how it is queried by supplying a closure
-//! at its row in `sketch_bench::catalog::ROWS`, and `GroundTruth` no longer
+//! at its row in `sketch_bench::registry::ROWS`, and `GroundTruth` no longer
 //! touches a sketch at all.
 //!
 //! What the traits cost, concretely, and why the closure replaces them:
@@ -19,5 +19,5 @@
 //! What is lost with them: the nominal check. `impl FrequencyOps for X` used to
 //! be a compiler-checked claim that X answers frequency, and a row naming a
 //! comparator its sketch could not satisfy would not build. A closure is
-//! checked only for shape, so `sketch-bench`'s catalog tests carry that weight
+//! checked only for shape, so `sketch-bench`'s registry tests carry that weight
 //! now — see `every_row_answers_its_capability`.

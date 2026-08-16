@@ -28,7 +28,7 @@ where
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: CmsParams = config.parse()?;
         let inner = CountMin::<M, FastPath>::from_storage(M::default());
-        // The catalog selected `M` from this same pair, so this only fires for a
+        // The registry selected `M` from this same pair, so this only fires for a
         // direct caller. It fires rather than silently running at `M`'s shape.
         require_shape(p.rows, p.cols, inner.rows(), inner.cols())?;
         Ok(Self(inner))
@@ -46,12 +46,12 @@ where
 }
 
 /// The shape-independent half of the fixed-matrix Count-Min row: its name, and
-/// how to read a shape out of a config. `catalog` pairs this with the storage
+/// how to read a shape out of a config. `registry` pairs this with the storage
 /// type the requested shape selects.
 pub struct CmsFixedMatrixRow;
 
-impl crate::catalog::FixedMatrixRow for CmsFixedMatrixRow {
-    /// The one ask in the catalog that is not a closure at its row: `At<M>` is
+impl crate::registry::FixedMatrixRow for CmsFixedMatrixRow {
+    /// The one ask in the registry that is not a closure at its row: `At<M>` is
     /// a GAT, so there is no single sketch type a closure could be written
     /// against. Generic over `M` instead, which is the same reason
     /// `FixedMatrixVisitor` is a trait.
@@ -322,7 +322,7 @@ pub fn run_cms(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelCmsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cms_fast_path, &CMS_OPS)
+    crate::registry::run_parallel::<ParallelCmsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cms_fast_path, &CMS_OPS)
 }
 
 pub fn run_vector2d_fast(
@@ -332,7 +332,7 @@ pub fn run_vector2d_fast(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CmsLibVector2dFast, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<CmsLibVector2dFast, i64, FrequencyGT, _>(
         cfg,
         data,
         params,
@@ -350,7 +350,7 @@ pub fn run_vector2d_regular(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CmsLibVector2dRegular, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<CmsLibVector2dRegular, i64, FrequencyGT, _>(
         cfg,
         data,
         params,

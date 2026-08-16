@@ -103,7 +103,7 @@ pub fn run_datasketches(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CmsDatasketches, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<CmsDatasketches, i64, FrequencyGT, _>(
         cfg,
         data,
         params,

@@ -244,7 +244,7 @@ mod tests {
         );
 
         let err = |c: aqpbm_core::accuracy::Comparison| c.metrics["mean_rank_err"];
-        // Each row's own ask, exactly as the catalog writes it.
+        // Each row's own ask, exactly as the registry writes it.
         let mut per_call = per_call;
         let mut cdf = cdf;
         let per_call_err = err(aqpbm_core::accuracy::run_probes(

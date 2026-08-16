@@ -45,8 +45,8 @@ where
 /// The CountSketch counterpart of `CmsFixedMatrixRow`.
 pub struct CsFixedMatrixRow;
 
-impl crate::catalog::FixedMatrixRow for CsFixedMatrixRow {
-    /// The one ask in the catalog that is not a closure at its row: `At<M>` is
+impl crate::registry::FixedMatrixRow for CsFixedMatrixRow {
+    /// The one ask in the registry that is not a closure at its row: `At<M>` is
     /// a GAT, so there is no single sketch type a closure could be written
     /// against. Generic over `M` instead, which is the same reason
     /// `FixedMatrixVisitor` is a trait.
@@ -275,7 +275,7 @@ pub fn run_cs(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cs_fast_path, &CS_OPS)
+    crate::registry::run_parallel::<ParallelCsFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_cs_fast_path, &CS_OPS)
 }
 
 /// CountSketch, parallel-insert FastPath.
@@ -308,7 +308,7 @@ pub fn run_vector2d_fast(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CsLibVector2dFast, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<CsLibVector2dFast, i64, FrequencyGT, _>(
         cfg, data, params, label, width, insert_cs_lib_vector2d_fast,
         &VECTOR2D_FAST_OPS,
     )
@@ -321,7 +321,7 @@ pub fn run_vector2d_regular(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<CsLibVector2dRegular, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<CsLibVector2dRegular, i64, FrequencyGT, _>(
         cfg, data, params, label, width, insert_cs_lib_vector2d_regular,
         &VECTOR2D_REGULAR_OPS,
     )

@@ -90,7 +90,7 @@ pub fn run_datasketches(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HllDatasketches, i64, CardinalityGT, _>(
+    crate::registry::run_scored::<HllDatasketches, i64, CardinalityGT, _>(
         cfg, data, params, label, width, insert_hll_datasketches,
         &DATASKETCHES_OPS,
     )

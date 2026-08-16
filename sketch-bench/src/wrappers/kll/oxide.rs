@@ -156,7 +156,7 @@ pub fn run_oxide_percall(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_ordered::<KllOxidePerCall<i64>, KllOxidePerCall<f64>, RankErrorGT, _, _>(
+    crate::registry::run_ordered::<KllOxidePerCall<i64>, KllOxidePerCall<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,
@@ -176,7 +176,7 @@ pub fn run_oxide_cdf(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_ordered::<KllOxideCdf<i64>, KllOxideCdf<f64>, RankErrorGT, _, _>(
+    crate::registry::run_ordered::<KllOxideCdf<i64>, KllOxideCdf<f64>, RankErrorGT, _, _>(
         cfg,
         data,
         params,

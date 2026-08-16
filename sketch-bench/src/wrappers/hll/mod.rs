@@ -11,7 +11,7 @@ pub mod oxide;
 pub mod polars;
 pub mod sketchlib;
 
-/// so the wrapper's check and the catalog's dispatch cannot disagree about it.
+/// so the wrapper's check and the registry's dispatch cannot disagree about it.
 pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
 
 #[cfg(test)]
@@ -95,7 +95,7 @@ mod tests {
         }
     }
 
-    /// The precisions the catalog dispatches over are the ones the wrapper
+    /// The precisions the registry dispatches over are the ones the wrapper
     /// accepts. Two lists that could drift silently: a value in one and not the
     /// other is either an unreachable row or a panic-free dead branch.
     #[test]

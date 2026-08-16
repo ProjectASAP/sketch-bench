@@ -62,7 +62,7 @@ pub fn run_frequency_cms(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<PolarsFrequencyCms, i64, FrequencyGT, _>(
+    crate::registry::run_scored::<PolarsFrequencyCms, i64, FrequencyGT, _>(
         cfg, data, params, label, width, insert_polars_frequency_cms,
         &FREQUENCY_CMS_OPS,
     )

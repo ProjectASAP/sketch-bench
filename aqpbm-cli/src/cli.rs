@@ -1,6 +1,6 @@
 //! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch catalog
-//! it dispatches through lives in `sketch_bench::catalog`.
+//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch registry
+//! it dispatches through lives in `sketch_bench::registry`.
 //!
 //! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
 //! hand-authored and authoritative. `scripts/dump_cli_reference.sh` diffs the
@@ -168,7 +168,7 @@ pub struct SketchbenchArgs {
     )]
     pub metrics: Option<String>,
     /// Which comparator scores this row, by name. A row admits only the
-    /// comparators its capabilities can answer, and the catalog is what lists
+    /// comparators its capabilities can answer, and the registry is what lists
     /// them; omitted takes the row's default.
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,

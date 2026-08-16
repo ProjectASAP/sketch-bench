@@ -1,9 +1,9 @@
 //! What a frontend asks for, as one value.
 //!
-//! A request used to reach the catalog as seven separate arguments, which meant
+//! A request used to reach the registry as seven separate arguments, which meant
 //! every caller reassembled it and no caller could hold one. Here it is a single
 //! [`Requirement`], and the answer to "can this run" is a function of it alone —
-//! see `sketch_bench::catalog::resolve`. `docs/sketch-bench.md` §Input.
+//! see `sketch_bench::registry::resolve`. `docs/sketch-bench.md` §Input.
 
 use crate::config::ParamSet;
 use crate::metrics::{MetricsMask, OperationMask};
@@ -59,7 +59,7 @@ impl Capability {
 /// either width, while every other row's item type is fixed by its Rust type —
 /// so a registry can refuse before generating anything.
 ///
-/// It lives here rather than beside the catalog because [`Requirement`] carries
+/// It lives here rather than beside the registry because [`Requirement`] carries
 /// it, and core must be able to name every field of a request.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Numeric {

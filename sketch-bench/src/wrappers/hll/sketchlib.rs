@@ -29,7 +29,7 @@ pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBuc
 impl<R: asap_sketchlib::HllRegisterStorage> InitSketch for HllLib<R> {
     fn init(config: &ParamSet) -> Result<Self, BuildError> {
         let p: HllParams = config.parse()?;
-        // The catalog picked `R` off this same `lg_k`, so this only fires for a
+        // The registry picked `R` off this same `lg_k`, so this only fires for a
         // direct caller. It fires rather than silently building at `R`, because
         // building at a precision other than the one requested is the defect
         // this row is being fixed for.
@@ -141,7 +141,7 @@ pub fn run_lib(
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
     use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
-    crate::catalog::run_lib_hll::<
+    crate::registry::run_lib_hll::<
         HllLib<HllBucketListP12>,
         HllLib<HllBucketListP14>,
         HllLib<HllBucketListP16>,
@@ -171,7 +171,7 @@ pub fn run_lib_hip(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_lib_hll::<
+    crate::registry::run_lib_hll::<
         HllLibHip<HllBucketListP12>,
         HllLibHip<HllBucketListP14>,
         HllLibHip<HllBucketListP16>,
@@ -270,7 +270,7 @@ pub fn run_hll(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_parallel::<ParallelHllFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_hll_fast_path, &HLL_OPS)
+    crate::registry::run_parallel::<ParallelHllFastPath, i64, _>(cfg, data, params, label, width, insert_parallel_hll_fast_path, &HLL_OPS)
 }
 
 

@@ -75,7 +75,7 @@ pub fn run_oxide(
     width: Numeric,
     label: RowLabel,
 ) -> Result<Vec<BenchReport>, RunError> {
-    crate::catalog::run_scored::<HllOxide, i64, CardinalityGT, _>(cfg, data, params, label, width, insert_hll_oxide, &OXIDE_OPS)
+    crate::registry::run_scored::<HllOxide, i64, CardinalityGT, _>(cfg, data, params, label, width, insert_hll_oxide, &OXIDE_OPS)
 }
 
 
