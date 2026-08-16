@@ -5,21 +5,16 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
 };
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
+use aqpbm_core::cell::RunError;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
+
 use asap_sketchlib::{
     CountMin, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
     Vector2D,
 };
-use std::rc::Rc;
 use std::sync::Barrier;
 
 pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMin<M, FastPath>);
@@ -51,45 +46,6 @@ where
 /// how to read a shape out of a config. `registry` pairs this with the storage
 /// type the requested shape selects.
 pub struct CmsFixedMatrixRow;
-
-impl crate::wrappers::fixed_matrix::FixedMatrixRow for CmsFixedMatrixRow {
-    /// The one ask in the registry that is not a closure at its row: `At<M>` is
-    /// a GAT, so there is no single sketch type a closure could be written
-    /// against. Generic over `M` instead, which is the same reason
-    /// `FixedMatrixVisitor` is a trait.
-    fn insert<M>(sketch: &mut Self::At<M>, v: &i64)
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        insert_cms_lib_fixedmatrix(sketch, v)
-    }
-
-    fn ops<M>() -> crate::ops::SketchOps<Self::At<M>, i64, i64, u64>
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        fixedmatrix_ops::<M>()
-    }
-    const ALGORITHM: &'static str = "cms-fastpath-fixedmatrix";
-    type At<
-        M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-    > = CmsLibFixedmatrix<M>;
-    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError> {
-        let p: CmsParams = params
-            .parse()
-            .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
-        Ok((p.rows, p.cols))
-    }
-}
-
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CmsLibVector2dFast {
     inner: CountMin<Vector2D<i32>, FastPath>,
@@ -202,46 +158,12 @@ pub fn merge_cms_lib_vector2d_regular(
     into.inner.merge(&from.inner);
 }
 
-pub const VECTOR2D_FAST_OPS: SketchOps<CmsLibVector2dFast, i64, i64, u64> = SketchOps {
-    build: build_cms_lib_vector2d_fast,
-    memory: memory_cms_lib_vector2d_fast,
-    merge: Some(merge_cms_lib_vector2d_fast),
-    prepare: None,
-    ask: ask_cms_lib_vector2d_fast,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cms_lib_vector2d_fast(sketch: &mut CmsLibVector2dFast, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
 
-pub const VECTOR2D_REGULAR_OPS: SketchOps<CmsLibVector2dRegular, i64, i64, u64> = SketchOps {
-    build: build_cms_lib_vector2d_regular,
-    memory: memory_cms_lib_vector2d_regular,
-    merge: Some(merge_cms_lib_vector2d_regular),
-    prepare: None,
-    ask: ask_cms_lib_vector2d_regular,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cms_lib_vector2d_regular(sketch: &mut CmsLibVector2dRegular, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
-}
-
-/// The fixed-matrix row's ops, generic over the storage the shape selected.
-/// A `const fn` rather than a `const`, because there is one per `M`.
-pub const fn fixedmatrix_ops<M>() -> SketchOps<CmsLibFixedmatrix<M>, i64, i64, u64>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-{
-    SketchOps {
-        build: build_cms_lib_fixedmatrix,
-        memory: memory_cms_lib_fixedmatrix,
-        merge: Some(merge_cms_lib_fixedmatrix),
-        prepare: None,
-        ask: ask_cms_lib_fixedmatrix,
-        _item: std::marker::PhantomData,
-    }
 }
 
 pub fn ask_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, key: &i64) -> u64
@@ -307,56 +229,4 @@ pub fn insert_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath, v: &i64) 
 
 pub fn prepare_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath) {
     run_parallel_cms(&sketch.buf, sketch.workers);
-}
-
-pub const CMS_OPS: SketchOps<ParallelCmsFastPath, i64, (), ()> = SketchOps {
-    build: build_parallel_cms_fast_path,
-    memory: memory_parallel_cms_fast_path,
-    merge: None,
-    prepare: Some(prepare_parallel_cms_fast_path),
-    ask: |_, _| (),
-    _item: std::marker::PhantomData,
-};
-
-pub fn run_cms(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    crate::ops::squares_for_unscored::<_, ParallelCmsFastPath, i64, _>(
-        req,
-        Rc::new(wk),
-        insert_parallel_cms_fast_path,
-        CMS_OPS,
-    )
-}
-
-pub fn run_vector2d_fast(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CmsLibVector2dFast, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cms_lib_vector2d_fast,
-        VECTOR2D_FAST_OPS,
-    )
-}
-
-pub fn run_vector2d_regular(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CmsLibVector2dRegular, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cms_lib_vector2d_regular,
-        VECTOR2D_REGULAR_OPS,
-    )
 }

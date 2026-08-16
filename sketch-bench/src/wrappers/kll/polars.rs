@@ -5,15 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
-use aqpbm_core::accuracy::quantile::RankErrorGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
 
 /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
 pub fn build_polars_quantile_kll(
@@ -44,30 +37,6 @@ pub fn insert_polars_quantile_kll(sketch: &mut PolarsQuantileKll, v: &i64) {
 
 pub fn prepare_polars_quantile_kll(sketch: &mut PolarsQuantileKll) {
     sketch.0.finalize();
-}
-
-pub const QUANTILE_KLL_OPS: SketchOps<PolarsQuantileKll, i64, f64, f64> = SketchOps {
-    build: build_polars_quantile_kll,
-    memory: memory_polars_quantile_kll,
-    merge: None,
-    prepare: Some(prepare_polars_quantile_kll),
-    ask: |s, phi| s.estimate_quantile(*phi),
-    _item: std::marker::PhantomData,
-};
-
-pub fn run_quantile_kll(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, PolarsQuantileKll, i64, RankErrorGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_polars_quantile_kll,
-        QUANTILE_KLL_OPS,
-    )
 }
 
 #[derive(Default)]

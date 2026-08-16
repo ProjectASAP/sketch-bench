@@ -30,9 +30,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_core::metrics::{cells, MetricsMask, Operation, OperationMask};
+use aqpbm_core::metrics::{MetricsMask, OperationMask};
 use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::runner::BenchReport;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -46,7 +45,6 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // not know the set; it asks.
 use aqpbm_core::cell::WorkloadSpec;
 use aqpbm_core::request::Requirement;
-use sketch_bench::ops::MIN_MERGE_SHARDS;
 use sketch_bench::registry;
 
 /// What is measured. No default and no `all`: a request says which squares of
@@ -329,24 +327,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         comparator: args.comparator.clone(),
     };
 
-    // Ask first, generate second. Every way this request could fail to run —
-    // an unknown row, a width it cannot take, an operation it does not have, a
-    // statistic nothing scores it under — is answered here, by name, before a
-    // single item exists. The tool ran exactly what it was asked, so it fails
-    // rather than skipping on.
-    // `resolve` hands back a closure. Everything about *how* this sketch is
-    // built, fed, folded and asked is captured inside it, stated in
-    // `sketch-bench/src/wrappers/`; the CLI knows none of it.
-    let Some(resolved) = registry::resolve(&req)
-        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?
-    else {
-        // The request named no squares. Legal, and not a failure: there is
-        // simply nothing to report.
-        eprintln!(
-            "approxbench: {algorithm}/{impl_name} selected no squares; nothing to measure"
-        );
-        return Ok(());
-    };
+    // check against sketch-bench or other location
+    // to see if this is runnable
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
@@ -357,73 +339,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         cfg.warmup_runs,
     );
 
-    // Generate here, not inside the row. `value_type` is the registry's answer
-    // to "what does this row ingest", which is why resolution had to come
-    // first: the frontend cannot generate a workload until it has asked.
-    let data = spec
-        .generate_at(resolved.value_type)
-        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} workload: {e}"))?;
-
-    // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
-    // closure per square, and knows nothing about how often it will be run.
-    // Construction is the one failure left that resolution cannot see — a fixed
-    // shape the build refuses, or a param the library rejects — and it is proved
-    // here, before any of them is timed.
-    let (workload, bodies) = (resolved.build_bodies)(data)
-        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
-
-    // Then core times each one. It is handed a closure and a run count and is
-    // told nothing else — not which sketch, not which operation. This loop is
-    // the only place all three crates meet, and it is the frontend's because
-    // only the frontend knows which squares it asked for: the bodies arrive in
-    // `cells` order, and `cells` is the same pure function of the same two masks
-    // this program parsed, so the row never has to say which square is which.
-    let mut reports = Vec::with_capacity(operations_mask.bits().count_ones() as usize);
-    for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
-        let runs = aqpbm_core::measure(&cfg, body);
-        let mut report = BenchReport::fold(
-            algorithm.as_str(),
-            impl_name.as_str(),
-            workload.clone(),
-            cell.operation,
-            cell.metric,
-            runs,
-        );
-        // The count that actually folded: a request below the floor is raised,
-        // and a record states what ran rather than what was asked for.
-        if cell.operation == Operation::Merge {
-            report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
-        }
-        reports.push(report);
-    }
-
-    // One report per square; emit each on its own JSONL line and CSV row group.
-    // A downstream group-by on (sketch, impl, sketch_config, workload) merges
-    // them back.
-    let family = resolved.family;
-
-    let mut sink = ReportSink::open(args.report.as_deref())?;
-    let mut records = Vec::with_capacity(reports.len());
-    for report in &reports {
-        let mut record = report.to_record();
-        record.sketch_config = Some(params.to_json_value());
-        // The algorithm names the structural variant, so a reader grouping by
-        // it compares variants. The family is what groups the variants back
-        // together, which is the axis a cross-library comparison is taken over.
-        record.family = Some(family.to_string());
-        records.push(record);
-    }
-
-    // One invocation is one cell, so every record here shares an identity and
-    // the whole vector is exactly what `flatten_record` expects.
-    if args.flat {
-        let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
-        sink.write_line(&serde_json::to_string(&merged)?)?;
-    } else {
-        for record in &records {
-            sink.write_line(&record.to_jsonl())?;
-        }
-    }
     Ok(())
 }
 

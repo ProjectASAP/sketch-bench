@@ -5,15 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::require_resolved_shape;
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
 
 // No `rows` / `cols` field, for the same reason as `CmsOxide`: `init` proves the
 // built table matches the request, so the sketch is the only place either
@@ -68,30 +61,6 @@ pub fn merge_cs_oxide(into: &mut CsOxide, from: &CsOxide) {
         .expect("both operands built from one ParamSet, so rows/cols match");
 }
 
-pub const OXIDE_OPS: SketchOps<CsOxide, i64, i64, u64> = SketchOps {
-    build: build_cs_oxide,
-    memory: memory_cs_oxide,
-    merge: Some(merge_cs_oxide),
-    prepare: None,
-    ask: ask_cs_oxide,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cs_oxide(sketch: &mut CsOxide, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
-}
-
-pub fn run_oxide(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CsOxide, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cs_oxide,
-        OXIDE_OPS,
-    )
 }

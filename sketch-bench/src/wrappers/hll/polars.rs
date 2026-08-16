@@ -5,15 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use ::polars::prelude::*;
-use aqpbm_core::accuracy::cardinality::CardinalityGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
@@ -69,28 +62,4 @@ pub fn prepare_polars_cardinality(sketch: &mut PolarsCardinality) {
         .cast(&DataType::Float64)
         .expect("cast to f64");
     sketch.estimate = c.f64().expect("f64 chunked").get(0).unwrap_or(0.0);
-}
-
-pub const CARDINALITY_OPS: SketchOps<PolarsCardinality, i64, (), f64> = SketchOps {
-    build: build_polars_cardinality,
-    memory: memory_polars_cardinality,
-    merge: None,
-    prepare: Some(prepare_polars_cardinality),
-    ask: |s, _| s.estimate_distinct(),
-    _item: std::marker::PhantomData,
-};
-
-pub fn run_cardinality(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, PolarsCardinality, i64, CardinalityGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_polars_cardinality,
-        CARDINALITY_OPS,
-    )
 }

@@ -5,15 +5,14 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Numeric;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
+use aqpbm_core::runner::BenchReport;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
@@ -144,20 +143,6 @@ where
     sketch.cdf = Some(sketch.inner.cdf());
 }
 
-pub const fn lib_percall_ops<T>() -> SketchOps<KllLibPerCall<T>, T, f64, f64>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    SketchOps {
-        build: build_kll_lib_per_call,
-        memory: memory_kll_lib_per_call,
-        merge: Some(merge_kll_lib_per_call),
-        prepare: None,
-        ask: ask_kll_lib_per_call,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
@@ -165,87 +150,9 @@ where
     s.estimate_quantile(*phi)
 }
 
-pub const fn lib_cdf_ops<T>() -> SketchOps<KllLibCdf<T>, T, f64, f64>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    SketchOps {
-        build: build_kll_lib_cdf,
-        memory: memory_kll_lib_cdf,
-        merge: Some(merge_kll_lib_cdf),
-        prepare: Some(prepare_kll_lib_cdf),
-        ask: ask_kll_lib_cdf,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     s.estimate_quantile(*phi)
-}
-
-pub fn run_lib_percall(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // The one place a runtime value still selects an item type. Each arm is its
-    // own monomorphisation, with its own owning closures.
-    match req.width {
-        Numeric::I64 => {
-            let wk = <i64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllLibPerCall<i64>, i64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_lib_per_call,
-                lib_percall_ops::<i64>(),
-            )
-        }
-        Numeric::F64 => {
-            let wk = <f64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllLibPerCall<f64>, f64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_lib_per_call,
-                lib_percall_ops::<f64>(),
-            )
-        }
-    }
-}
-
-pub fn run_lib_cdf(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // The one place a runtime value still selects an item type. Each arm is its
-    // own monomorphisation, with its own owning closures.
-    match req.width {
-        Numeric::I64 => {
-            let wk = <i64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllLibCdf<i64>, i64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_lib_cdf,
-                lib_cdf_ops::<i64>(),
-            )
-        }
-        Numeric::F64 => {
-            let wk = <f64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllLibCdf<f64>, f64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_lib_cdf,
-                lib_cdf_ops::<f64>(),
-            )
-        }
-    }
 }

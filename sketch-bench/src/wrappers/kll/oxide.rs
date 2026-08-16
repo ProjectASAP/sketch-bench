@@ -5,15 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
-use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
+use aqpbm_core::accuracy::quantile::QuantileValue;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
 
 /// uses; `sketch_oxide` takes a `u16`. Refuse out of range by name instead of
 /// truncating, which would run at a `k` other than the one requested.
@@ -125,96 +118,10 @@ pub fn prepare_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>) {
     sketch.ends = (sketch.inner.min(), sketch.inner.max());
 }
 
-pub const fn oxide_percall_ops<T: QuantileValue>() -> SketchOps<KllOxidePerCall<T>, T, f64, f64> {
-    SketchOps {
-        build: build_kll_oxide_per_call,
-        memory: memory_kll_oxide_per_call,
-        merge: Some(merge_kll_oxide_per_call),
-        prepare: None,
-        ask: ask_kll_oxide_per_call,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi: &f64) -> f64 {
     s.estimate_quantile(*phi)
 }
 
-pub const fn oxide_cdf_ops<T: QuantileValue>() -> SketchOps<KllOxideCdf<T>, T, f64, f64> {
-    SketchOps {
-        build: build_kll_oxide_cdf,
-        memory: memory_kll_oxide_cdf,
-        merge: Some(merge_kll_oxide_cdf),
-        prepare: Some(prepare_kll_oxide_cdf),
-        ask: ask_kll_oxide_cdf,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) -> f64 {
     s.estimate_quantile(*phi)
-}
-
-pub fn run_oxide_percall(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // The one place a runtime value still selects an item type. Each arm is its
-    // own monomorphisation, with its own owning closures.
-    match req.width {
-        Numeric::I64 => {
-            let wk = <i64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllOxidePerCall<i64>, i64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_oxide_per_call,
-                oxide_percall_ops::<i64>(),
-            )
-        }
-        Numeric::F64 => {
-            let wk = <f64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllOxidePerCall<f64>, f64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_oxide_per_call,
-                oxide_percall_ops::<f64>(),
-            )
-        }
-    }
-}
-
-pub fn run_oxide_cdf(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // The one place a runtime value still selects an item type. Each arm is its
-    // own monomorphisation, with its own owning closures.
-    match req.width {
-        Numeric::I64 => {
-            let wk = <i64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllOxideCdf<i64>, i64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_oxide_cdf,
-                oxide_cdf_ops::<i64>(),
-            )
-        }
-        Numeric::F64 => {
-            let wk = <f64 as BenchItem>::materialise(data)?;
-            let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::ops::squares_for::<_, KllOxideCdf<f64>, f64, RankErrorGT, _>(
-                req,
-                Rc::new(wk),
-                gt,
-                insert_kll_oxide_cdf,
-                oxide_cdf_ops::<f64>(),
-            )
-        }
-    }
 }

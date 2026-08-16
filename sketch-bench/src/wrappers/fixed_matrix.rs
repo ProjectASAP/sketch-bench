@@ -1,45 +1,9 @@
-//! The compile-time matrix shapes the `*-fastpath-fixedmatrix` rows offer.
-//!
-//! `asap_sketchlib::impl_fixed_matrix!` takes its dimensions as **literals** and
-//! bakes them into a `Box<[i32; ROWS * COLS]>`, which is the whole point of the
-//! storage: the compiler folds `row * COLS + col` and the bounds check away, and
-//! pricing that against the runtime-sized `Vector2D` is what these rows exist
-//! for. A shape is therefore a monomorphisation, not a value, and one that was
-//! never compiled cannot be built at run time.
-//!
-//! So the set is written down here and dispatched over at run time, the same way
-//! `hll`'s `lg_k` selects a register-storage type. Instantiating a shape is
-//! close to free: a trial grid of 36 measured at no detectable compile time and
-//! about 26 KiB of rlib each, which is why the table below can afford 52 and
-//! still leave a caller having to try to fall outside it.
-//!
-//! # Adding a shape
-//!
-//! One line in [`fixed_matrix_shapes!`], and it needs a distinct type name.
-//! Nothing else changes: the dispatch, the shape list the error message prints,
-//! and the tests all read off this table.
-//!
-//! # Why the grid has a corner missing
-//!
-//! The widest shape is capped at 327,690 counters, which is what the row already
-//! carried before it became sweepable. Past that, `Box::new([0i32; N])`
-//! materialises the array on the stack before moving it to the heap in unoptimised
-//! builds, and `cargo test` runs each test on a 2 MiB thread. Wide-and-deep is the
-//! corner that trips it, so `cols = 65536` stops at 5 rows.
+//! fixed matrix for asap_sketchlib sketches
+//! a pre-built of some predetermined fixed-size matrix
+//! if need extra shape: add here and re-compile the benchmark
 
-use std::rc::Rc;
-
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
 use asap_sketchlib::{impl_fixed_matrix, DefaultXxHasher, FastPathHasher, MatrixStorage};
 
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
-use aqpbm_core::workload::WorkloadDescription;
-
-///
 /// A trait and not a closure because the shape is a **type**: the visitor is the
 /// only way to hand a monomorphisation back to a caller that picked it with a
 /// pair of runtime integers.
@@ -191,85 +155,6 @@ pub fn unsupported_shape(what: &str, rows: usize, cols: usize) -> String {
          If you would rather not rebuild, the `*-fastpath-vector2d` row runs the \
          same FastPath hashing over runtime-sized storage and takes any dimensions."
     )
-}
-
-// ---------- how a fixed-matrix row runs ----------
-
-/// The shape-independent half of a fixed-matrix row.
-///
-/// The one place a closure cannot be written at the row: the sketch type is a
-/// GAT, so there is no single type to write one against. A generic method is
-/// the stand-in, and the bodies still live in the wrapper file.
-/// `'static` throughout, because a body outlives the call that built it: the row
-/// hands its closures back to a frontend, and a boxed closure owns what it
-/// captured. A compiled-in shape has no borrows anyway.
-pub trait FixedMatrixRow: 'static {
-    const ALGORITHM: &'static str;
-    type At<
-        M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-    >: 'static;
-    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError>;
-    fn insert<M>(sketch: &mut Self::At<M>, v: &i64)
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static;
-    fn ops<M>() -> SketchOps<Self::At<M>, i64, i64, u64>
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static;
-}
-
-/// Turn the requested `(rows, cols)` back into the monomorphisation that bakes
-/// it in, then run every square against that.
-pub fn run_fixed_matrix<W: FixedMatrixRow>(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let (rows, cols) = W::shape(&req.params)?;
-    let wk = Rc::new(<i64 as BenchItem>::materialise(data)?);
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    let visitor = RunFixedMatrix::<W> {
-        req,
-        wk,
-        gt,
-        _row: std::marker::PhantomData,
-    };
-    with_fixed_matrix(rows, cols, visitor)
-        .unwrap_or_else(|| Err(RunError::Body(unsupported_shape(W::ALGORITHM, rows, cols))))
-}
-
-/// Carries the run's arguments into the monomorphisation the shape selected.
-struct RunFixedMatrix<'a, W> {
-    req: &'a Requirement,
-    wk: Rc<aqpbm_core::workload::NumericWorkload<i64>>,
-    gt: FrequencyGT,
-    _row: std::marker::PhantomData<W>,
-}
-
-impl<W: FixedMatrixRow> FixedMatrixVisitor for RunFixedMatrix<'_, W> {
-    type Out = Result<(WorkloadDescription, Vec<Body>), RunError>;
-    fn visit<M>(self) -> Self::Out
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        crate::ops::squares_for::<_, W::At<M>, i64, FrequencyGT, _>(
-            self.req,
-            self.wk,
-            self.gt,
-            W::insert::<M>,
-            W::ops::<M>(),
-        )
-    }
 }
 
 #[cfg(test)]

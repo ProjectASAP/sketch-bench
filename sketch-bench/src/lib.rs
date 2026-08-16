@@ -8,8 +8,6 @@
 
 /// Why a sketch could not be built at a requested config.
 pub mod build_error;
-/// How one sketch is built, fed, folded, finalised and asked.
-pub mod ops;
 /// The per-family construction parameter vocabularies.
 pub mod params;
 /// Which sketches are registered, what each supports, and how a request

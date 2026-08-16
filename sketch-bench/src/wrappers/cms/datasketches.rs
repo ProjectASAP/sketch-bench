@@ -5,15 +5,14 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{require_range, require_resolved_shape};
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
+use aqpbm_core::runner::BenchReport;
 
 /// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
 /// the `u8` the API takes.
@@ -97,30 +96,6 @@ pub fn merge_cms_datasketches(into: &mut CmsDatasketches, from: &CmsDatasketches
     into.inner.merge(&from.inner);
 }
 
-pub const DATASKETCHES_OPS: SketchOps<CmsDatasketches, i64, i64, u64> = SketchOps {
-    build: build_cms_datasketches,
-    memory: memory_cms_datasketches,
-    merge: Some(merge_cms_datasketches),
-    prepare: None,
-    ask: ask_cms_datasketches,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cms_datasketches(sketch: &mut CmsDatasketches, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
-}
-
-pub fn run_datasketches(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CmsDatasketches, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cms_datasketches,
-        DATASKETCHES_OPS,
-    )
 }

@@ -5,17 +5,9 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::partition;
-use aqpbm_core::accuracy::cardinality::CardinalityGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog};
-use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
-use std::rc::Rc;
 use std::sync::Barrier;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
@@ -106,118 +98,12 @@ pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
     sketch.inner.insert(&asap_sketchlib::DataInput::I64(*v));
 }
 
-/// One body for all three precisions: the register count is in the storage
-/// type, so `lg_k` selects `R` and this instantiates at each.
-pub const fn lib_ops<R: asap_sketchlib::HllRegisterStorage>() -> SketchOps<HllLib<R>, i64, (), f64>
-{
-    SketchOps {
-        build: build_hll_lib,
-        memory: memory_hll_lib,
-        merge: Some(merge_hll_lib),
-        prepare: None,
-        ask: ask_hll_lib,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_hll_lib<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLib<R>, _: &()) -> f64 {
     s.estimate_distinct()
 }
 
-/// The HIP variant maintains its estimate on the insert path, and provides no
-/// merge — the `None` below is the whole declaration.
-pub const fn lib_hip_ops<R: asap_sketchlib::HllRegisterStorage>(
-) -> SketchOps<HllLibHip<R>, i64, (), f64> {
-    SketchOps {
-        build: build_hll_lib_hip,
-        memory: memory_hll_lib_hip,
-        merge: None,
-        prepare: None,
-        ask: ask_hll_lib_hip,
-        _item: std::marker::PhantomData,
-    }
-}
-
 pub fn ask_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLibHip<R>, _: &()) -> f64 {
     s.estimate_distinct()
-}
-
-pub fn run_lib(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // `asap_sketchlib` puts the register count in the storage *type*, so `lg_k`
-    // picks a monomorphisation and this is what turns a runtime value back into
-    // one. Each arm owns its own closures.
-    let p: HllParams = req
-        .params
-        .parse()
-        .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
-    match p.lg_k {
-        12 => crate::ops::squares_for::<_, HllLib<HllBucketListP12>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib,
-            lib_ops::<HllBucketListP12>(),
-        ),
-        14 => crate::ops::squares_for::<_, HllLib<HllBucketListP14>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib,
-            lib_ops::<HllBucketListP14>(),
-        ),
-        16 => crate::ops::squares_for::<_, HllLib<HllBucketListP16>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib,
-            lib_ops::<HllBucketListP16>(),
-        ),
-        other => Err(RunError::Body(unsupported_precision(other).to_string())),
-    }
-}
-
-pub fn run_lib_hip(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    // `asap_sketchlib` puts the register count in the storage *type*, so `lg_k`
-    // picks a monomorphisation and this is what turns a runtime value back into
-    // one. Each arm owns its own closures.
-    let p: HllParams = req
-        .params
-        .parse()
-        .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
-    match p.lg_k {
-        12 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP12>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib_hip,
-            lib_hip_ops::<HllBucketListP12>(),
-        ),
-        14 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP14>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib_hip,
-            lib_hip_ops::<HllBucketListP14>(),
-        ),
-        16 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP16>, i64, CardinalityGT, _>(
-            req,
-            Rc::new(wk),
-            gt,
-            insert_hll_lib_hip,
-            lib_hip_ops::<HllBucketListP16>(),
-        ),
-        other => Err(RunError::Body(unsupported_precision(other).to_string())),
-    }
 }
 
 /// The `lg_k` this row is fixed at. Its per-worker sketch is a compile-time
@@ -284,26 +170,4 @@ pub fn insert_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath, v: &i64) 
 
 pub fn prepare_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath) {
     run_parallel_hll(&sketch.buf, sketch.workers);
-}
-
-pub const HLL_OPS: SketchOps<ParallelHllFastPath, i64, (), ()> = SketchOps {
-    build: build_parallel_hll_fast_path,
-    memory: memory_parallel_hll_fast_path,
-    merge: None,
-    prepare: Some(prepare_parallel_hll_fast_path),
-    ask: |_, _| (),
-    _item: std::marker::PhantomData,
-};
-
-pub fn run_hll(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    crate::ops::squares_for_unscored::<_, ParallelHllFastPath, i64, _>(
-        req,
-        Rc::new(wk),
-        insert_parallel_hll_fast_path,
-        HLL_OPS,
-    )
 }

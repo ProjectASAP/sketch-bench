@@ -5,15 +5,14 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::require_resolved_shape;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
+use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
-use std::rc::Rc;
+use aqpbm_core::runner::BenchReport;
 
 // No `rows` / `cols` field: `init` has already proven the built table matches
 // the request, so the sketch itself is the one place either figure is read
@@ -62,31 +61,6 @@ pub fn merge_cms_oxide(into: &mut CmsOxide, from: &CmsOxide) {
         .expect("both operands built from one ParamSet, so rows/cols match");
 }
 
-/// `cms/oxide`. Probe is a key, answer is a count — the shape `FrequencyGT` asks in.
-pub const OXIDE_OPS: SketchOps<CmsOxide, i64, i64, u64> = SketchOps {
-    build: build_cms_oxide,
-    memory: memory_cms_oxide,
-    merge: Some(merge_cms_oxide),
-    prepare: None,
-    ask: ask_cms_oxide,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cms_oxide(sketch: &mut CmsOxide, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
-}
-
-pub fn run_oxide(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CmsOxide, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cms_oxide,
-        OXIDE_OPS,
-    )
 }

@@ -5,21 +5,14 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
 };
-use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::{
     Count, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
     Vector2D,
 };
-use std::rc::Rc;
 use std::sync::Barrier;
 
 pub struct CsLibFixedmatrix<M: MatrixStorage>(pub Count<M, FastPath>);
@@ -46,44 +39,6 @@ where
 
 /// The CountSketch counterpart of `CmsFixedMatrixRow`.
 pub struct CsFixedMatrixRow;
-
-impl crate::wrappers::fixed_matrix::FixedMatrixRow for CsFixedMatrixRow {
-    /// The one ask in the registry that is not a closure at its row: `At<M>` is
-    /// a GAT, so there is no single sketch type a closure could be written
-    /// against. Generic over `M` instead, which is the same reason
-    /// `FixedMatrixVisitor` is a trait.
-    fn insert<M>(sketch: &mut Self::At<M>, v: &i64)
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        insert_cs_lib_fixedmatrix(sketch, v)
-    }
-
-    fn ops<M>() -> crate::ops::SketchOps<Self::At<M>, i64, i64, u64>
-    where
-        M: MatrixStorage<Counter = i32>
-            + FastPathHasher<DefaultXxHasher>
-            + Default
-            + Clone
-            + 'static,
-    {
-        fixedmatrix_ops::<M>()
-    }
-    const ALGORITHM: &'static str = "countsketch-fastpath-fixedmatrix";
-    type At<
-        M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-    > = CsLibFixedmatrix<M>;
-    fn shape(params: &ParamSet) -> Result<(usize, usize), RunError> {
-        let p: CountSketchParams = params
-            .parse()
-            .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
-        Ok((p.rows, p.cols))
-    }
-}
 
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CsLibVector2dFast {
@@ -194,44 +149,12 @@ pub fn merge_cs_lib_vector2d_regular(into: &mut CsLibVector2dRegular, from: &CsL
     into.inner.merge(&from.inner);
 }
 
-pub const VECTOR2D_FAST_OPS: SketchOps<CsLibVector2dFast, i64, i64, u64> = SketchOps {
-    build: build_cs_lib_vector2d_fast,
-    memory: memory_cs_lib_vector2d_fast,
-    merge: Some(merge_cs_lib_vector2d_fast),
-    prepare: None,
-    ask: ask_cs_lib_vector2d_fast,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cs_lib_vector2d_fast(sketch: &mut CsLibVector2dFast, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
 
-pub const VECTOR2D_REGULAR_OPS: SketchOps<CsLibVector2dRegular, i64, i64, u64> = SketchOps {
-    build: build_cs_lib_vector2d_regular,
-    memory: memory_cs_lib_vector2d_regular,
-    merge: Some(merge_cs_lib_vector2d_regular),
-    prepare: None,
-    ask: ask_cs_lib_vector2d_regular,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_cs_lib_vector2d_regular(sketch: &mut CsLibVector2dRegular, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
-}
-
-pub const fn fixedmatrix_ops<M>() -> SketchOps<CsLibFixedmatrix<M>, i64, i64, u64>
-where
-    M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
-{
-    SketchOps {
-        build: build_cs_lib_fixedmatrix,
-        memory: memory_cs_lib_fixedmatrix,
-        merge: Some(merge_cs_lib_fixedmatrix),
-        prepare: None,
-        ask: ask_cs_lib_fixedmatrix,
-        _item: std::marker::PhantomData,
-    }
 }
 
 pub fn ask_cs_lib_fixedmatrix<M>(sketch: &mut CsLibFixedmatrix<M>, key: &i64) -> u64
@@ -261,28 +184,6 @@ fn run_parallel_cs(items: &[i64], workers: usize) {
     });
 }
 
-pub const CS_OPS: SketchOps<ParallelCsFastPath, i64, (), ()> = SketchOps {
-    build: build_parallel_cs_fast_path,
-    memory: memory_parallel_cs_fast_path,
-    merge: None,
-    prepare: Some(prepare_parallel_cs_fast_path),
-    ask: |_, _| (),
-    _item: std::marker::PhantomData,
-};
-
-pub fn run_cs(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    crate::ops::squares_for_unscored::<_, ParallelCsFastPath, i64, _>(
-        req,
-        Rc::new(wk),
-        insert_parallel_cs_fast_path,
-        CS_OPS,
-    )
-}
-
 /// CountSketch, parallel-insert FastPath.
 pub struct ParallelCsFastPath {
     buf: Vec<i64>,
@@ -304,36 +205,6 @@ pub fn build_parallel_cs_fast_path(
 pub fn memory_parallel_cs_fast_path(sketch: &ParallelCsFastPath) -> usize {
     sketch.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
         + sketch.buf.capacity() * std::mem::size_of::<i64>()
-}
-
-pub fn run_vector2d_fast(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CsLibVector2dFast, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cs_lib_vector2d_fast,
-        VECTOR2D_FAST_OPS,
-    )
-}
-
-pub fn run_vector2d_regular(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <i64 as BenchItem>::materialise(data)?;
-    let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::ops::squares_for::<_, CsLibVector2dRegular, i64, FrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_cs_lib_vector2d_regular,
-        VECTOR2D_REGULAR_OPS,
-    )
 }
 
 pub fn insert_parallel_cs_fast_path(sketch: &mut ParallelCsFastPath, v: &i64) {

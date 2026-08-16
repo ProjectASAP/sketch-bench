@@ -5,19 +5,10 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::{Body, SketchOps};
-use crate::registry::GroundTruthCalculator;
-use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
-};
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::request::Requirement;
 use aqpbm_core::workload::Labeled;
-use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
-use std::rc::Rc;
 
 pub struct HydraCms {
     inner: Hydra,
@@ -173,86 +164,14 @@ pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {
         .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub const CMS_OPS: SketchOps<HydraCms, Labeled<i64>, (String, i64), f64> = SketchOps {
-    build: build_hydra_cms,
-    memory: memory_hydra_cms,
-    merge: Some(merge_hydra_cms),
-    prepare: None,
-    ask: ask_hydra_cms,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
     sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
 }
-
-pub const HLL_OPS: SketchOps<HydraHll, Labeled<i64>, String, f64> = SketchOps {
-    build: build_hydra_hll,
-    memory: memory_hydra_hll,
-    merge: Some(merge_hydra_hll),
-    prepare: None,
-    ask: ask_hydra_hll,
-    _item: std::marker::PhantomData,
-};
 
 pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
     sketch.estimate_subpop_cardinality(&[probe.as_str()])
 }
 
-pub const KLL_OPS: SketchOps<HydraKll, Labeled<f64>, (String, f64), f64> = SketchOps {
-    build: build_hydra_kll,
-    memory: memory_hydra_kll,
-    merge: Some(merge_hydra_kll),
-    prepare: None,
-    ask: ask_hydra_kll,
-    _item: std::marker::PhantomData,
-};
-
 pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
     sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
-}
-
-pub fn run_cms(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
-    let gt = <SubpopFrequencyGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::ops::squares_for::<_, HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_hydra_cms,
-        CMS_OPS,
-    )
-}
-
-pub fn run_hll(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
-    let gt = <SubpopCardinalityGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::ops::squares_for::<_, HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_hydra_hll,
-        HLL_OPS,
-    )
-}
-
-pub fn run_kll(
-    req: &Requirement,
-    data: WorkloadData,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
-    let wk = <Labeled<f64> as BenchItem>::materialise(data)?;
-    let gt = <SubpopRankErrorGT as GroundTruthCalculator<Labeled<f64>>>::build(&req.params);
-    crate::ops::squares_for::<_, HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
-        req,
-        Rc::new(wk),
-        gt,
-        insert_hydra_kll,
-        KLL_OPS,
-    )
 }
