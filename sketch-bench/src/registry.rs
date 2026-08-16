@@ -6,7 +6,8 @@
 
 use anyhow::Result;
 
-use crate::run::{run_fixed_matrix, FixedMatrixRow};
+use crate::ops::Body;
+use crate::wrappers::fixed_matrix::{run_fixed_matrix, FixedMatrixRow};
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeErrorGT};
@@ -15,11 +16,9 @@ use aqpbm_core::accuracy::subpopulation::{
 };
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
-use aqpbm_core::workload::Labeled;
+use aqpbm_core::workload::{Labeled, WorkloadDescription};
 
 use crate::params::ParamSet;
 use crate::wrappers::{cms, cs, hll, hydra, kll};
@@ -41,22 +40,20 @@ pub struct RowIdentity {
     pub supports_prepare: bool,
 }
 
-/// A row's runner: given the loop knobs, the request and the produced data, run
-/// every selected square and report. The row materialises the data at its own
-/// item type, builds one owning closure per square, and hands each to
-/// `aqpbm_core`.
+/// A row's body factory: given the request and the produced data, materialise
+/// the workload at the row's own item type and hand back one closure per
+/// selected square.
 ///
-/// Both parameters are core's, and neither is re-packed here. `MeasureConfig`
-/// is how many times to run a body; `Requirement` is everything about *what* to
-/// run — params, width, workers, shards, and the masks the squares come from. A
-/// row reads what it needs off them.
-type RunFn = fn(&MeasureConfig, &Requirement, WorkloadData) -> Result<Vec<BenchReport>, RunError>;
+/// It does not measure, and it never sees `MeasureConfig`. How many times to
+/// run a body, and what to record around it, belong to whoever holds the clock
+/// — this crate only says what one measurement *does*.
+type RunFn = fn(&Requirement, WorkloadData) -> Result<(WorkloadDescription, Vec<Body>), RunError>;
 
 /// One registry entry. Built only by the constructors below, so `family`,
 /// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
 /// row's type and its runner — never hand-written strings that could drift from
 /// it.
-pub struct Row {
+pub struct SketchId {
     /// Rows sharing this answer the same question from the same knobs, so this
     /// is what a cross-library comparison groups by. Derived from the row's
     /// params type: one parameter vocabulary is one family.
@@ -66,7 +63,7 @@ pub struct Row {
     pub algorithm: &'static str,
     /// The implementing library, and only that.
     pub impl_name: &'static str,
-    /// The one field that is genuinely new data, and so is written in [`ROWS`].
+    /// The one field that is genuinely new data, and so is written in [`REGISTRY`].
     pub description: &'static str,
     /// Can a comparator score this row? Derived: true iff it was built with a
     /// constructor that takes a ground-truth calculator.
@@ -93,7 +90,7 @@ pub struct Row {
     /// could fill. A request has to clear both.
     pub operations: OperationMask,
     /// The metrics this row can carry. Everything but accuracy, which needs a
-    /// comparator and so follows [`Row::capability`].
+    /// comparator and so follows [`SketchId::capability`].
     pub metrics: MetricsMask,
     run: RunFn,
     /// The comparator this row is scored by, by the name `--comparator` selects
@@ -110,7 +107,7 @@ pub struct Row {
 
 /// A [`GroundTruth`] that constructs itself from the run's accuracy knobs and the
 /// row's params. A trait, not a `fn` argument, so the calculator is named as a
-/// *type* in [`ROWS`] and the row stays `const`.
+/// *type* in [`REGISTRY`] and the row stays `const`.
 pub(crate) trait GroundTruthCalculator<I>: GroundTruth<I> {
     /// The name `--comparator` selects this one by. One capability can carry
     /// several comparators, and this is what tells them apart on the command
@@ -213,7 +210,7 @@ where
 
 // ---------- the row constructors ----------
 // Each reads `S::FAMILY` / `S::ALGORITHM` / `S::IMPL` off the type and fixes
-// `scores_accuracy`. `const fn`, so `ROWS` stays `const` and a bad row fails at
+// `scores_accuracy`. `const fn`, so `REGISTRY` stays `const` and a bad row fails at
 // compile time.
 
 // ---------- deriving what a row supports ----------
@@ -263,12 +260,12 @@ const fn row_metrics(scores: bool) -> MetricsMask {
     MetricsMask::from_bits_truncate(bits)
 }
 
-const fn scored<I, G>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
+const fn scored<I, G>(id: RowIdentity, description: &'static str, run: RunFn) -> SketchId
 where
     I: BenchItem,
     G: GroundTruthCalculator<I>,
 {
-    Row {
+    SketchId {
         family: id.family,
         algorithm: id.algorithm,
         impl_name: id.impl_name,
@@ -285,11 +282,11 @@ where
     }
 }
 
-const fn ordered<G>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
+const fn ordered<G>(id: RowIdentity, description: &'static str, run: RunFn) -> SketchId
 where
     G: GroundTruthCalculator<i64> + GroundTruthCalculator<f64>,
 {
-    Row {
+    SketchId {
         family: id.family,
         algorithm: id.algorithm,
         impl_name: id.impl_name,
@@ -309,9 +306,12 @@ where
 /// The shape-dispatching counterpart of [`scored`]: identity comes off the
 /// row's `FixedMatrixRow` impl and its params type, because no one storage type
 /// names a row that exists at every shape.
-const fn fixed_matrix_row<W: FixedMatrixRow>(id: RowIdentity, description: &'static str) -> Row {
+const fn fixed_matrix_row<W: FixedMatrixRow>(
+    id: RowIdentity,
+    description: &'static str,
+) -> SketchId {
     let run: RunFn = run_fixed_matrix::<W>;
-    Row {
+    SketchId {
         family: id.family,
         algorithm: id.algorithm,
         impl_name: id.impl_name,
@@ -329,11 +329,11 @@ const fn fixed_matrix_row<W: FixedMatrixRow>(id: RowIdentity, description: &'sta
     }
 }
 
-const fn parallel_row<I>(id: RowIdentity, description: &'static str, run: RunFn) -> Row
+const fn parallel_row<I>(id: RowIdentity, description: &'static str, run: RunFn) -> SketchId
 where
     I: BenchItem,
 {
-    Row {
+    SketchId {
         family: id.family,
         algorithm: id.algorithm,
         impl_name: id.impl_name,
@@ -354,7 +354,7 @@ where
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one line here plus
 /// the wrapper it names; nothing else in this file changes.
-pub const ROWS: &[Row] = &[
+pub const REGISTRY: &[SketchId] = &[
     // Each row names a `run_*` function in the wrapper file that owns the
     // sketch. That function states the sketch's `SketchOps` — how it is built,
     // fed, folded, finalised and asked — in its own terms. Nothing here forces
@@ -711,8 +711,9 @@ pub const ROWS: &[Row] = &[
 
 // ---------- what the frontend asks ----------
 
-fn find(algorithm: &str, impl_name: &str) -> Option<&'static Row> {
-    ROWS.iter()
+fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
+    REGISTRY
+        .iter()
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
@@ -724,20 +725,24 @@ fn find(algorithm: &str, impl_name: &str) -> Option<&'static Row> {
 /// longer variant widens the table instead of breaking its alignment. The first
 /// line is the header, so a caller prints exactly what this returns.
 pub fn list() -> Vec<String> {
-    let algo_w = ROWS
+    let algo_w = REGISTRY
         .iter()
         .map(|r| r.algorithm.len())
         .max()
         .unwrap_or(0)
         .max("# algorithm".len());
-    let impl_w = ROWS.iter().map(|r| r.impl_name.len()).max().unwrap_or(0);
-    let mut out = Vec::with_capacity(ROWS.len() + 8);
+    let impl_w = REGISTRY
+        .iter()
+        .map(|r| r.impl_name.len())
+        .max()
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(REGISTRY.len() + 8);
     out.push(format!(
         "{:algo_w$}  {:impl_w$}  description",
         "# algorithm", "impl"
     ));
     let mut current: Option<&str> = None;
-    for r in ROWS {
+    for r in REGISTRY {
         if current != Some(r.family) {
             out.push(String::new());
             current = Some(r.family);
@@ -751,14 +756,15 @@ pub fn list() -> Vec<String> {
 }
 
 pub fn algorithm_exists(algorithm: &str) -> bool {
-    ROWS.iter().any(|r| r.algorithm == algorithm)
+    REGISTRY.iter().any(|r| r.algorithm == algorithm)
 }
 
 /// The family an algorithm belongs to, for the record's `family` field. `None`
 /// if the algorithm is unknown, which the frontend has already ruled out by the
 /// time it asks.
 pub fn family_of(algorithm: &str) -> Option<&'static str> {
-    ROWS.iter()
+    REGISTRY
+        .iter()
         .find(|r| r.algorithm == algorithm)
         .map(|r| r.family)
 }
@@ -889,7 +895,7 @@ impl std::error::Error for ResolveError {}
 /// Deliberately *not* called a closure. It is a `fn` pointer plus the few facts
 /// a caller needs before it can generate a workload — a `fn` pointer captures
 /// nothing, so calling this a closure would claim something untrue. The
-/// closures in this design are the per-row `ask` bodies written in [`ROWS`];
+/// closures in this design are the per-row `ask` bodies written in [`REGISTRY`];
 /// this is the handle that selects one.
 ///
 /// A `fn` and not a `Box<dyn FnOnce>` because it is called **once** per
@@ -901,15 +907,18 @@ impl std::error::Error for ResolveError {}
 /// nothing to a reader, and this is what shows up when a test unwraps the wrong
 /// way round.
 pub struct ResolvedRow<F> {
-    /// The closure that runs this request. Built by [`resolve`], which captures
-    /// the row's monomorphic runner and the request itself, so a caller supplies
-    /// only what it owns: the loop knobs and the data it generated. The params,
-    /// the width, the workers and the shards are all in the request it was
-    /// resolved from, and are not passed a second time.
+    /// Builds this request's bodies — one closure per selected square. Captures
+    /// the row's monomorphic factory and the request it resolved, so a caller
+    /// supplies only the data it generated. The params, the width, the workers
+    /// and the shards are all in that request, and are not passed a second time.
+    ///
+    /// A caller then hands each body to `aqpbm_core::measure` and folds what
+    /// comes back; the square it is labelled by is on the [`crate::ops::Square`]
+    /// beside it.
     ///
     /// `impl Fn`, not `Box<dyn Fn>` — the type is known statically, so there is
     /// no allocation and no dynamic dispatch anywhere in the chain.
-    pub run: F,
+    pub build_bodies: F,
     /// The `data_type` the caller has to generate this row's value column at.
     /// The reason resolution comes first: only the row knows its item type, so
     /// a caller cannot generate a workload until it has asked.
@@ -947,7 +956,7 @@ pub fn resolve<'a>(
 ) -> Result<
     Option<
         ResolvedRow<
-            impl Fn(&MeasureConfig, WorkloadData) -> Result<Vec<BenchReport>, RunError> + 'a,
+            impl Fn(WorkloadData) -> Result<(WorkloadDescription, Vec<Body>), RunError> + 'a,
         >,
     >,
     ResolveError,
@@ -1034,11 +1043,11 @@ pub fn resolve<'a>(
         return Ok(None);
     }
 
-    // The closure. It captures `run` — the row's monomorphic runner — and the
-    // request it resolved, so the caller supplies only what it actually owns:
-    // the loop knobs and the data it generated.
+    // The closure. It captures `run` — the row's monomorphic body factory — and
+    // the request it resolved, so the caller supplies only what it actually
+    // owns: the data it generated.
     Ok(Some(ResolvedRow {
-        run: move |cfg: &MeasureConfig, data: WorkloadData| run(cfg, req, data),
+        build_bodies: move |data: WorkloadData| run(req, data),
         // At the *requested* width, not the row's default. An `ordered` row is
         // named by its i64 half, so `row.value_type` is "i64" even when the
         // request is for f64 — generating from that would hand an i64 column to
@@ -1055,7 +1064,7 @@ pub fn resolve<'a>(
 }
 
 /// The operations a row admits, for an error message.
-fn operations_of(row: &Row) -> String {
+fn operations_of(row: &SketchId) -> String {
     let names: Vec<&str> = [
         (OperationMask::INSERT, "insert"),
         (OperationMask::QUERY, "query"),
@@ -1070,7 +1079,7 @@ fn operations_of(row: &Row) -> String {
 }
 
 /// The comparator names a row admits, for an error message.
-fn comparators_of(row: &Row) -> String {
+fn comparators_of(row: &SketchId) -> String {
     row.comparator.unwrap_or("none").to_string()
 }
 
@@ -1083,20 +1092,23 @@ pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only a caller that measures needs these, which in this crate is the tests.
+    use crate::ops::MIN_MERGE_SHARDS;
     use crate::params::{
         CmsParams, CountSketchParams, HllParams, HydraCmsParams, HydraHllParams, HydraKllParams,
         KllParams, SketchParams,
     };
-    use crate::run::MIN_MERGE_SHARDS;
     use aqpbm_core::cell::WorkloadSpec;
-    use aqpbm_core::metrics::{MetricsMask, OperationMask};
+    use aqpbm_core::measure::MeasureConfig;
+    use aqpbm_core::metrics::{MetricsMask, Operation, OperationMask};
+    use aqpbm_core::runner::BenchReport;
     use std::collections::BTreeSet;
 
     /// One buildable config per family, from each params type's own
     /// `canonical()`, tagged with the row's own algorithm. The `panic!` arm is
     /// what makes a newly added family show up here rather than silently
     /// skipping the tests below.
-    pub(super) fn canonical_params(row: &Row) -> ParamSet {
+    pub(super) fn canonical_params(row: &SketchId) -> ParamSet {
         let a = row.algorithm;
         match row.family {
             "hll" => ParamSet::of_algorithm(a, &HllParams::canonical()),
@@ -1116,7 +1128,7 @@ mod tests {
     #[test]
     fn algorithm_impl_pairs_are_unique() {
         let mut seen = BTreeSet::new();
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 seen.insert((r.algorithm, r.impl_name)),
                 "duplicate row {}/{}",
@@ -1132,7 +1144,7 @@ mod tests {
     /// about a row's identity the type system does not already guarantee.
     #[test]
     fn every_algorithm_belongs_to_its_family() {
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 crate::params::in_family(r.algorithm, r.family),
                 "row {}/{} declares family '{}', which its algorithm is not in",
@@ -1150,7 +1162,7 @@ mod tests {
     #[test]
     fn impl_names_are_library_names() {
         const LIBRARIES: [&str; 4] = ["oxide", "datasketches", "lib", "polars"];
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 LIBRARIES.contains(&r.impl_name),
                 "row {}/{}: '{}' is not a library name; a structural variant \
@@ -1167,7 +1179,7 @@ mod tests {
     /// shape would be a panel with no x-axis.
     #[test]
     fn every_family_is_reachable_by_name() {
-        for r in ROWS {
+        for r in REGISTRY {
             assert_eq!(
                 family_of(r.algorithm),
                 Some(r.family),
@@ -1206,7 +1218,7 @@ mod tests {
 
     /// The same, for the rows whose item is a record: two label columns and a
     /// value column. A row states which of the two it wants through
-    /// `Row::takes_columns`, so neither is guessed here.
+    /// `SketchId::takes_columns`, so neither is guessed here.
     ///
     /// `Generated`, not `Inline`: a record needs its label columns rendered as
     /// text and its value column as the row's item type, and only a written
@@ -1227,12 +1239,42 @@ mod tests {
     }
 
     /// The spec shape `row` can actually ingest.
-    pub(super) fn spec_for(row: &Row) -> WorkloadSpec {
+    pub(super) fn spec_for(row: &SketchId) -> WorkloadSpec {
         if row.takes_columns {
             smoke_columns_spec(row.value_type)
         } else {
             smoke_spec()
         }
+    }
+
+    /// The frontend's loop, written out by a caller: take the row's bodies, hand
+    /// each to core, fold what comes back. `aqpbm-cli` does exactly this, and if
+    /// it were awkward to write here it would be awkward there.
+    pub(super) fn measure_all(
+        cfg: &MeasureConfig,
+        req: &Requirement,
+        (workload, bodies): (WorkloadDescription, Vec<Body>),
+    ) -> Vec<BenchReport> {
+        cells(req.operations, req.metrics)
+            .into_iter()
+            .zip(bodies)
+            .map(|(cell, body)| {
+                let runs = aqpbm_core::measure(cfg, body);
+                let mut report = BenchReport::fold(
+                    req.algorithm.as_str(),
+                    req.impl_name.as_str(),
+                    workload.clone(),
+                    cell.operation,
+                    cell.metric,
+                    runs,
+                );
+                if cell.operation == Operation::Merge {
+                    report.bench.merge_shards =
+                        Some(req.merge_shards.max(crate::ops::MIN_MERGE_SHARDS));
+                }
+                report
+            })
+            .collect()
     }
 
     pub(super) fn smoke_cfg() -> MeasureConfig {
@@ -1255,7 +1297,7 @@ mod tests {
     #[test]
     fn every_registry_entry_runs() {
         let cfg = smoke_cfg();
-        for r in ROWS {
+        for r in REGISTRY {
             // Canonical, not `empty`: every family's params have required
             // fields, so `empty` builds nothing at all now that the exact
             // baselines parse their config too.
@@ -1286,7 +1328,7 @@ mod tests {
             let data = spec_for(r)
                 .generate_at(closure.value_type)
                 .unwrap_or_else(|e| panic!("{}/{}: {e}", r.algorithm, r.impl_name));
-            let got = (closure.run)(&cfg, data);
+            let got = (closure.build_bodies)(data).map(|b| measure_all(&cfg, &req, b));
             // Fixed-matrix rows refuse an off-shape config (a `RunError::Build`
             // surfaced as an error); every other row runs.
             if let Ok(reports) = &got {
@@ -1327,7 +1369,7 @@ mod declared_support_tests {
         let has = |a: &str, i: &str, o: OperationMask| ops(a, i).unwrap().contains(o);
 
         // Every row inserts.
-        for r in ROWS {
+        for r in REGISTRY {
             assert!(
                 r.operations.contains(OperationMask::INSERT),
                 "{}/{} declares no insert",
@@ -1369,7 +1411,7 @@ mod declared_support_tests {
     /// the capability rather than being declared beside it.
     #[test]
     fn accuracy_is_declared_exactly_where_a_comparator_can_score_it() {
-        for r in ROWS {
+        for r in REGISTRY {
             assert_eq!(
                 r.metrics.contains(MetricsMask::ACCURACY),
                 r.capability.scores(),
@@ -1406,7 +1448,7 @@ mod declared_support_tests {
             ("hydra-hll", Capability::SubpopCardinality),
             ("hydra-kll", Capability::SubpopQuantile),
         ] {
-            for r in ROWS.iter().filter(|r| r.algorithm == algorithm) {
+            for r in REGISTRY.iter().filter(|r| r.algorithm == algorithm) {
                 assert_eq!(
                     r.capability,
                     want,
@@ -1424,7 +1466,7 @@ mod declared_support_tests {
 #[cfg(test)]
 mod resolve_tests {
     use super::*;
-    use crate::run::MIN_MERGE_SHARDS;
+    use crate::ops::MIN_MERGE_SHARDS;
 
     fn req(
         algorithm: &str,
@@ -1660,7 +1702,7 @@ mod resolve_tests {
 #[cfg(test)]
 mod width_tests {
     use super::*;
-    use crate::run::MIN_MERGE_SHARDS;
+    use crate::ops::MIN_MERGE_SHARDS;
 
     /// An `ordered` row is named by its i64 half, so the row's own `value_type`
     /// says "i64" at every width. The closure has to answer for the width that
@@ -1731,7 +1773,9 @@ mod width_tests {
                 .generate_at(closure.value_type)
                 .unwrap_or_else(|e| panic!("{width:?}: generate: {e}"));
             let cfg = tests::smoke_cfg();
-            (closure.run)(&cfg, data).unwrap_or_else(|e| panic!("{width:?}: run: {e}"));
+            let bodies =
+                (closure.build_bodies)(data).unwrap_or_else(|e| panic!("{width:?}: run: {e}"));
+            tests::measure_all(&cfg, &req, bodies);
         }
     }
 }
@@ -1739,7 +1783,8 @@ mod width_tests {
 #[cfg(test)]
 mod capability_tests {
     use super::*;
-    use crate::run::MIN_MERGE_SHARDS;
+    use crate::ops::MIN_MERGE_SHARDS;
+    use aqpbm_core::measure::MeasureConfig;
 
     /// The check the capability traits used to make for free.
     ///
@@ -1763,7 +1808,7 @@ mod capability_tests {
         };
         let (ops_mask, met_mask) = (OperationMask::QUERY, MetricsMask::ACCURACY);
         let mut checked = 0;
-        for row in ROWS.iter().filter(|r| r.capability.scores()) {
+        for row in REGISTRY.iter().filter(|r| r.capability.scores()) {
             let params = tests::canonical_params(row);
             let req = Requirement {
                 algorithm: row.algorithm.to_string(),
@@ -1780,8 +1825,8 @@ mod capability_tests {
             let data = tests::spec_for(row)
                 .generate_at(closure.value_type)
                 .unwrap();
-            let reports = match (closure.run)(&cfg, data) {
-                Ok(r) => r,
+            let reports = match (closure.build_bodies)(data) {
+                Ok(b) => tests::measure_all(&cfg, &req, b),
                 // A fixed-matrix row refuses an off-shape config; that is a
                 // build refusal, not a stubbed answer.
                 Err(_) => continue,

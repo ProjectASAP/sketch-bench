@@ -5,17 +5,17 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::partition;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog};
 use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+use std::rc::Rc;
 use std::sync::Barrier;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
@@ -143,10 +143,9 @@ pub fn ask_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLibHip<
 }
 
 pub fn run_lib(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // `asap_sketchlib` puts the register count in the storage *type*, so `lg_k`
     // picks a monomorphisation and this is what turns a runtime value back into
     // one. Each arm owns its own closures.
@@ -157,39 +156,35 @@ pub fn run_lib(
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
     match p.lg_k {
-        12 => crate::run::run_row::<HllLib<HllBucketListP12>, i64, CardinalityGT, _>(
-            cfg,
+        12 => crate::ops::squares_for::<_, HllLib<HllBucketListP12>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib,
-            &lib_ops::<HllBucketListP12>(),
+            lib_ops::<HllBucketListP12>(),
         ),
-        14 => crate::run::run_row::<HllLib<HllBucketListP14>, i64, CardinalityGT, _>(
-            cfg,
+        14 => crate::ops::squares_for::<_, HllLib<HllBucketListP14>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib,
-            &lib_ops::<HllBucketListP14>(),
+            lib_ops::<HllBucketListP14>(),
         ),
-        16 => crate::run::run_row::<HllLib<HllBucketListP16>, i64, CardinalityGT, _>(
-            cfg,
+        16 => crate::ops::squares_for::<_, HllLib<HllBucketListP16>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib,
-            &lib_ops::<HllBucketListP16>(),
+            lib_ops::<HllBucketListP16>(),
         ),
         other => Err(RunError::Body(unsupported_precision(other).to_string())),
     }
 }
 
 pub fn run_lib_hip(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // `asap_sketchlib` puts the register count in the storage *type*, so `lg_k`
     // picks a monomorphisation and this is what turns a runtime value back into
     // one. Each arm owns its own closures.
@@ -200,29 +195,26 @@ pub fn run_lib_hip(
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
     match p.lg_k {
-        12 => crate::run::run_row::<HllLibHip<HllBucketListP12>, i64, CardinalityGT, _>(
-            cfg,
+        12 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP12>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib_hip,
-            &lib_hip_ops::<HllBucketListP12>(),
+            lib_hip_ops::<HllBucketListP12>(),
         ),
-        14 => crate::run::run_row::<HllLibHip<HllBucketListP14>, i64, CardinalityGT, _>(
-            cfg,
+        14 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP14>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib_hip,
-            &lib_hip_ops::<HllBucketListP14>(),
+            lib_hip_ops::<HllBucketListP14>(),
         ),
-        16 => crate::run::run_row::<HllLibHip<HllBucketListP16>, i64, CardinalityGT, _>(
-            cfg,
+        16 => crate::ops::squares_for::<_, HllLibHip<HllBucketListP16>, i64, CardinalityGT, _>(
             req,
-            &wk,
-            &gt,
+            Rc::new(wk),
+            gt,
             insert_hll_lib_hip,
-            &lib_hip_ops::<HllBucketListP16>(),
+            lib_hip_ops::<HllBucketListP16>(),
         ),
         other => Err(RunError::Body(unsupported_precision(other).to_string())),
     }
@@ -304,16 +296,14 @@ pub const HLL_OPS: SketchOps<ParallelHllFastPath, i64, (), ()> = SketchOps {
 };
 
 pub fn run_hll(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
-    crate::run::run_row_unscored::<ParallelHllFastPath, i64, _>(
-        cfg,
+    crate::ops::squares_for_unscored::<_, ParallelHllFastPath, i64, _>(
         req,
-        &wk,
+        Rc::new(wk),
         insert_parallel_hll_fast_path,
-        &HLL_OPS,
+        HLL_OPS,
     )
 }

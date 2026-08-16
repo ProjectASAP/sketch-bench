@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
@@ -13,13 +13,13 @@ use crate::wrappers::{
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::{
     CountMin, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
     Vector2D,
 };
+use std::rc::Rc;
 use std::sync::Barrier;
 
 pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMin<M, FastPath>);
@@ -52,7 +52,7 @@ where
 /// type the requested shape selects.
 pub struct CmsFixedMatrixRow;
 
-impl crate::run::FixedMatrixRow for CmsFixedMatrixRow {
+impl crate::wrappers::fixed_matrix::FixedMatrixRow for CmsFixedMatrixRow {
     /// The one ask in the registry that is not a closure at its row: `At<M>` is
     /// a GAT, so there is no single sketch type a closure could be written
     /// against. Generic over `M` instead, which is the same reason
@@ -319,50 +319,44 @@ pub const CMS_OPS: SketchOps<ParallelCmsFastPath, i64, (), ()> = SketchOps {
 };
 
 pub fn run_cms(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
-    crate::run::run_row_unscored::<ParallelCmsFastPath, i64, _>(
-        cfg,
+    crate::ops::squares_for_unscored::<_, ParallelCmsFastPath, i64, _>(
         req,
-        &wk,
+        Rc::new(wk),
         insert_parallel_cms_fast_path,
-        &CMS_OPS,
+        CMS_OPS,
     )
 }
 
 pub fn run_vector2d_fast(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<CmsLibVector2dFast, i64, FrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, CmsLibVector2dFast, i64, FrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_cms_lib_vector2d_fast,
-        &VECTOR2D_FAST_OPS,
+        VECTOR2D_FAST_OPS,
     )
 }
 
 pub fn run_vector2d_regular(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<CmsLibVector2dRegular, i64, FrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, CmsLibVector2dRegular, i64, FrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_cms_lib_vector2d_regular,
-        &VECTOR2D_REGULAR_OPS,
+        VECTOR2D_REGULAR_OPS,
     )
 }

@@ -3,7 +3,7 @@
 //! the signature every implementation had to answer through.
 //!
 //! They are gone. A sketch now states how it is queried by supplying a closure
-//! at its row in `sketch_bench::registry::ROWS`, and `GroundTruth` no longer
+//! at its row in `sketch_bench::registry::REGISTRY`, and `GroundTruth` no longer
 //! touches a sketch at all.
 //!
 //! What the traits cost, concretely, and why the closure replaces them:

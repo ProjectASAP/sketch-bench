@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::require_resolved_shape;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 // No `rows` / `cols` field, for the same reason as `CmsOxide`: `init` proves the
 // built table matches the request, so the sketch is the only place either
@@ -82,18 +82,16 @@ pub fn ask_cs_oxide(sketch: &mut CsOxide, key: &i64) -> u64 {
 }
 
 pub fn run_oxide(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<CsOxide, i64, FrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, CsOxide, i64, FrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_cs_oxide,
-        &OXIDE_OPS,
+        OXIDE_OPS,
     )
 }

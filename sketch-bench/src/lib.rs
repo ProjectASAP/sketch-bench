@@ -15,7 +15,5 @@ pub mod params;
 /// Which sketches are registered, what each supports, and how a request
 /// resolves to one.
 pub mod registry;
-/// How one measurement is performed, once a row has been selected.
-pub mod run;
 /// One directory per algorithm, one file per library.
 pub mod wrappers;

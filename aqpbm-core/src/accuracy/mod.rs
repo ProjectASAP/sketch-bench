@@ -42,7 +42,7 @@ pub struct Comparison {
 /// **Note what is absent: putting the question to the sketch.** This trait is
 /// parameterised by the *item* type, not the sketch, and never touches a
 /// sketch at all. Asking is supplied per row as a closure — see `run_probes`'s
-/// `ask` argument and the bodies in `sketch_bench::registry::ROWS`.
+/// `ask` argument and the bodies in `sketch_bench::registry::REGISTRY`.
 ///
 /// That split is the point. When asking lived in here, the signature had to
 /// hold for every implementation at once: `&self` (so a library needing

@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 /// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
 pub fn build_polars_frequency_cms(
@@ -56,19 +56,17 @@ pub const FREQUENCY_CMS_OPS: SketchOps<PolarsFrequencyCms, i64, i64, u64> = Sket
 };
 
 pub fn run_frequency_cms(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<PolarsFrequencyCms, i64, FrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsFrequencyCms, i64, FrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_frequency_cms,
-        &FREQUENCY_CMS_OPS,
+        FREQUENCY_CMS_OPS,
     )
 }
 

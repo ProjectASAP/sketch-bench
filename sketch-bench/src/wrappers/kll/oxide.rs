@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Numeric;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 /// uses; `sketch_oxide` takes a `u16`. Refuse out of range by name instead of
 /// truncating, which would run at a `k` other than the one requested.
@@ -156,70 +156,64 @@ pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) ->
 }
 
 pub fn run_oxide_percall(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // The one place a runtime value still selects an item type. Each arm is its
     // own monomorphisation, with its own owning closures.
     match req.width {
         Numeric::I64 => {
             let wk = <i64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::run::run_row::<KllOxidePerCall<i64>, i64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllOxidePerCall<i64>, i64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_oxide_per_call,
-                &oxide_percall_ops::<i64>(),
+                oxide_percall_ops::<i64>(),
             )
         }
         Numeric::F64 => {
             let wk = <f64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::run::run_row::<KllOxidePerCall<f64>, f64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllOxidePerCall<f64>, f64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_oxide_per_call,
-                &oxide_percall_ops::<f64>(),
+                oxide_percall_ops::<f64>(),
             )
         }
     }
 }
 
 pub fn run_oxide_cdf(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // The one place a runtime value still selects an item type. Each arm is its
     // own monomorphisation, with its own owning closures.
     match req.width {
         Numeric::I64 => {
             let wk = <i64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::run::run_row::<KllOxideCdf<i64>, i64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllOxideCdf<i64>, i64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_oxide_cdf,
-                &oxide_cdf_ops::<i64>(),
+                oxide_cdf_ops::<i64>(),
             )
         }
         Numeric::F64 => {
             let wk = <f64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::run::run_row::<KllOxideCdf<f64>, f64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllOxideCdf<f64>, f64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_oxide_cdf,
-                &oxide_cdf_ops::<f64>(),
+                oxide_cdf_ops::<f64>(),
             )
         }
     }

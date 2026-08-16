@@ -5,7 +5,7 @@
 //! functions are written here, in the sketch's own terms — nothing forces two
 //! files to agree on a signature.
 //!
-//! `registry::ROWS` names one `run_*` per row and nothing else.
+//! `registry::REGISTRY` names one `run_*` per row and nothing else.
 
 // One directory per algorithm; inside each, one file per library. A reader
 // looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and

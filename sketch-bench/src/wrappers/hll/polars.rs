@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use ::polars::prelude::*;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
@@ -81,18 +81,16 @@ pub const CARDINALITY_OPS: SketchOps<PolarsCardinality, i64, (), f64> = SketchOp
 };
 
 pub fn run_cardinality(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <CardinalityGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<PolarsCardinality, i64, CardinalityGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsCardinality, i64, CardinalityGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_cardinality,
-        &CARDINALITY_OPS,
+        CARDINALITY_OPS,
     )
 }

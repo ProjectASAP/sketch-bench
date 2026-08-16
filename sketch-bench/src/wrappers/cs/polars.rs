@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 pub fn insert_polars_frequency_cs(sketch: &mut PolarsFrequencyCs, v: &i64) {
     sketch.0.update(v);
@@ -24,19 +24,17 @@ pub fn prepare_polars_frequency_cs(sketch: &mut PolarsFrequencyCs) {
 }
 
 pub fn run_frequency_cs(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <i64 as BenchItem>::materialise(data)?;
     let gt = <FrequencyGT as GroundTruthCalculator<i64>>::build(&req.params);
-    crate::run::run_row::<PolarsFrequencyCs, i64, FrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsFrequencyCs, i64, FrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_frequency_cs,
-        &FREQUENCY_CS_OPS,
+        FREQUENCY_CS_OPS,
     )
 }
 

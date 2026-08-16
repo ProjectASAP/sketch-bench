@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use crate::wrappers::polars_shared::*;
 use ::polars::prelude::*;
@@ -14,11 +14,11 @@ use aqpbm_core::accuracy::subpopulation::{
 };
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 use aqpbm_core::workload::Labeled;
+use aqpbm_core::workload::WorkloadDescription;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Default)]
 pub struct PolarsSubpopFrequency {
@@ -277,52 +277,46 @@ pub const SUBPOP_QUANTILE_OPS: SketchOps<PolarsSubpopQuantile, Labeled<f64>, (St
     };
 
 pub fn run_subpop_frequency(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
     let gt = <SubpopFrequencyGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::run::run_row::<PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsSubpopFrequency, Labeled<i64>, SubpopFrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_subpop_frequency,
-        &SUBPOP_FREQUENCY_OPS,
+        SUBPOP_FREQUENCY_OPS,
     )
 }
 
 pub fn run_subpop_cardinality(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
     let gt = <SubpopCardinalityGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::run::run_row::<PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsSubpopCardinality, Labeled<i64>, SubpopCardinalityGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_subpop_cardinality,
-        &SUBPOP_CARDINALITY_OPS,
+        SUBPOP_CARDINALITY_OPS,
     )
 }
 
 pub fn run_subpop_quantile(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<f64> as BenchItem>::materialise(data)?;
     let gt = <SubpopRankErrorGT as GroundTruthCalculator<Labeled<f64>>>::build(&req.params);
-    crate::run::run_row::<PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, PolarsSubpopQuantile, Labeled<f64>, SubpopRankErrorGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_polars_subpop_quantile,
-        &SUBPOP_QUANTILE_OPS,
+        SUBPOP_QUANTILE_OPS,
     )
 }

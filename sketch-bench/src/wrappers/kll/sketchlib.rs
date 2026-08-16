@@ -5,15 +5,15 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Numeric;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::workload::WorkloadDescription;
+use std::rc::Rc;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
@@ -187,70 +187,64 @@ where
 }
 
 pub fn run_lib_percall(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // The one place a runtime value still selects an item type. Each arm is its
     // own monomorphisation, with its own owning closures.
     match req.width {
         Numeric::I64 => {
             let wk = <i64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::run::run_row::<KllLibPerCall<i64>, i64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllLibPerCall<i64>, i64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_lib_per_call,
-                &lib_percall_ops::<i64>(),
+                lib_percall_ops::<i64>(),
             )
         }
         Numeric::F64 => {
             let wk = <f64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::run::run_row::<KllLibPerCall<f64>, f64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllLibPerCall<f64>, f64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_lib_per_call,
-                &lib_percall_ops::<f64>(),
+                lib_percall_ops::<f64>(),
             )
         }
     }
 }
 
 pub fn run_lib_cdf(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     // The one place a runtime value still selects an item type. Each arm is its
     // own monomorphisation, with its own owning closures.
     match req.width {
         Numeric::I64 => {
             let wk = <i64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<i64>>::build(&req.params);
-            crate::run::run_row::<KllLibCdf<i64>, i64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllLibCdf<i64>, i64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_lib_cdf,
-                &lib_cdf_ops::<i64>(),
+                lib_cdf_ops::<i64>(),
             )
         }
         Numeric::F64 => {
             let wk = <f64 as BenchItem>::materialise(data)?;
             let gt = <RankErrorGT as GroundTruthCalculator<f64>>::build(&req.params);
-            crate::run::run_row::<KllLibCdf<f64>, f64, RankErrorGT, _>(
-                cfg,
+            crate::ops::squares_for::<_, KllLibCdf<f64>, f64, RankErrorGT, _>(
                 req,
-                &wk,
-                &gt,
+                Rc::new(wk),
+                gt,
                 insert_kll_lib_cdf,
-                &lib_cdf_ops::<f64>(),
+                lib_cdf_ops::<f64>(),
             )
         }
     }

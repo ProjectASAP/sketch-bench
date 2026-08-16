@@ -5,19 +5,19 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use crate::ops::SketchOps;
+use crate::ops::{Body, SketchOps};
 use crate::registry::GroundTruthCalculator;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 use aqpbm_core::workload::Labeled;
+use aqpbm_core::workload::WorkloadDescription;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
+use std::rc::Rc;
 
 pub struct HydraCms {
     inner: Hydra,
@@ -213,52 +213,46 @@ pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
 }
 
 pub fn run_cms(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
     let gt = <SubpopFrequencyGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::run::run_row::<HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, HydraCms, Labeled<i64>, SubpopFrequencyGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_hydra_cms,
-        &CMS_OPS,
+        CMS_OPS,
     )
 }
 
 pub fn run_hll(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<i64> as BenchItem>::materialise(data)?;
     let gt = <SubpopCardinalityGT as GroundTruthCalculator<Labeled<i64>>>::build(&req.params);
-    crate::run::run_row::<HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, HydraHll, Labeled<i64>, SubpopCardinalityGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_hydra_hll,
-        &HLL_OPS,
+        HLL_OPS,
     )
 }
 
 pub fn run_kll(
-    cfg: &MeasureConfig,
     req: &Requirement,
     data: WorkloadData,
-) -> Result<Vec<BenchReport>, RunError> {
+) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
     let wk = <Labeled<f64> as BenchItem>::materialise(data)?;
     let gt = <SubpopRankErrorGT as GroundTruthCalculator<Labeled<f64>>>::build(&req.params);
-    crate::run::run_row::<HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
-        cfg,
+    crate::ops::squares_for::<_, HydraKll, Labeled<f64>, SubpopRankErrorGT, _>(
         req,
-        &wk,
-        &gt,
+        Rc::new(wk),
+        gt,
         insert_hydra_kll,
-        &KLL_OPS,
+        KLL_OPS,
     )
 }
