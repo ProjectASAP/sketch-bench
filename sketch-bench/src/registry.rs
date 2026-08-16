@@ -1,50 +1,70 @@
 //! The registry: one table naming every `(algorithm, impl)` this crate exposes,
-//! and the dispatch resolving one to a concrete sketch type. It lives here,
-//! not in the CLI, so a future `aqp-bench` can ship its own. A row is a
-//! *type*, not a pair of strings — algorithm, impl name and `scores_accuracy`
-//! are projected off it, so the list and the code cannot drift apart.
+//! and what each of them supports. It lives here, not in the CLI, so a future
+//! `aqp-bench` can ship its own.
+//!
+//! Every fact is written out in [`REGISTRY`], entry by entry. Nothing is
+//! derived and nothing is projected off a type: what this bundle can be asked
+//! for is what the table says, and a reader learns it by reading the table.
+//!
+//! [`check`] is what the frontend calls. It compares one
+//! [`Requirement`] against one entry and answers whether that request can run —
+//! before a single item is generated, which is the whole value of answering
+//! here.
 
-use anyhow::Result;
-
-use crate::params::ParamSet;
-use crate::wrappers::{cms, cs, hll, hydra, kll};
+use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
+use aqpbm_core::request::Requirement;
 
 pub use aqpbm_core::request::{Capability, Numeric};
 
-/// Who a row is, as data. Was read off the row's type through a `BenchImpl`
-/// trait whose only content was these strings; it is stated here instead,
-/// because the registry is what owns them.
-#[derive(Clone, Copy)]
-pub struct RowIdentity {
-    pub family: &'static str,
-    pub algorithm: &'static str,
-    pub impl_name: &'static str,
-    /// Does this row's `SketchOps` supply a `merge`? Stated here because the
-    /// `Option` inside the thunk is not readable in `const` context.
-    pub supports_merge: bool,
-    /// Likewise for `prepare` — the doc's `prepare_for_query` axis.
-    pub supports_prepare: bool,
-}
-
-/// One registry entry. Built only by the constructors below, so `family`,
-/// `algorithm`, `impl_name` and `scores_accuracy` are always projections of the
-/// row's type and its runner — never hand-written strings that could drift from
-/// it.
+/// One registry entry: who a sketch is, and what it can be asked for.
+///
+/// The four identity fields name it. The four below them are what [`check`]
+/// reads, and they are the reason a request can be refused by name rather than
+/// discovered to be impossible halfway through a run.
+///
+/// The item width is deliberately absent. `--dtype` is a construction choice
+/// like any other, so a width a wrapper cannot build at is refused where that
+/// wrapper reads it, not here.
 pub struct SketchId {
+    /// Entries sharing this answer the same question from the same knobs, so
+    /// this is what a cross-library comparison groups by. One parameter
+    /// vocabulary is one family.
     pub family: &'static str,
+    /// The algorithm, structural variant included. `--algorithm` matches this
+    /// exactly, because one invocation measures one cell.
     pub algorithm: &'static str,
+    /// The implementing library, and only that.
     pub impl_name: &'static str,
     pub description: &'static str,
+
+    /// The statistic this sketch answers. [`Capability::None`] is measured but
+    /// not scored — timed only, no query. It is a real answer, not a missing
+    /// one.
+    pub capability: Capability,
+    /// The comparator `--comparator` selects this sketch by; `None` for one
+    /// nothing scores.
+    ///
+    /// One name, not a list: a sketch with a second capability is registered a
+    /// second time, and when a statistic grows a second comparator that is a
+    /// second entry too.
+    pub comparator: Option<&'static str>,
+    /// The operations this sketch can be measured over. Insert always; query
+    /// wherever a comparator exists; merge and prepare only where the wrapper
+    /// actually supplies them.
+    pub operations: OperationMask,
+    /// The metrics this sketch can carry. Everything but accuracy, which needs
+    /// a comparator and so follows [`SketchId::capability`].
+    pub metrics: MetricsMask,
 }
 
 // ---------- the registry ----------
 
-/// Every `(algorithm, impl)` this crate exposes. Adding one is one line here
+/// Every `(algorithm, impl)` this crate exposes. Adding one is one entry here
 /// plus the wrapper it names; nothing else in this file changes.
 ///
-/// Rows are grouped by family and kept contiguous, because [`list`] starts a new
-/// group the moment `family` differs from the row above: a family split across
-/// two runs prints as two groups.
+/// Entries are grouped by family and kept contiguous, because [`list`] starts a
+/// new group the moment `family` differs from the entry above: a family split
+/// across two runs prints as two groups.
 pub const REGISTRY: &[SketchId] = &[
     // -------- CMS (frequency) --------
     SketchId {
@@ -52,196 +72,492 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms",
         impl_name: "oxide",
         description: "sketch_oxide::frequency::CountMinSketch",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "cms",
         algorithm: "cms",
         impl_name: "datasketches",
         description: "datasketches::countmin::CountMinSketch",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "cms",
         algorithm: "cms",
         impl_name: "polars",
         description: "polars exact: group_by(v).agg(len)",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "cms",
         algorithm: "cms-fastpath-fixedmatrix",
         impl_name: "lib",
         description: "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "cms",
         algorithm: "cms-fastpath-vector2d",
         impl_name: "lib",
         description: "asap CMS, Vector2D, FastPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "cms",
         algorithm: "cms-regularpath-vector2d",
         impl_name: "lib",
         description: "asap CMS, Vector2D, RegularPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
+    // Parallel insert: no `ask`, so nothing scores it and no query is offered.
     SketchId {
         family: "cms",
         algorithm: "cms-fastpath-fixedmatrix-32k-parallel",
         impl_name: "lib",
         description: "asap CMS, FastPath, parallel insert on M5x32K",
+        capability: Capability::None,
+        comparator: None,
+        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY),
     },
     // -------- CountSketch (frequency) --------
-    // No `datasketches` row: that library ships no CountSketch.
+    // No `datasketches` entry: that library ships no CountSketch.
     SketchId {
         family: "countsketch",
         algorithm: "countsketch",
         impl_name: "oxide",
         description: "sketch_oxide::frequency::CountSketch",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "countsketch",
         algorithm: "countsketch",
         impl_name: "polars",
         description: "polars exact: group_by(v).agg(len)",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "countsketch",
         algorithm: "countsketch-fastpath-fixedmatrix",
         impl_name: "lib",
         description: "asap Count, FixedMatrix (shape baked at compile time), FastPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "countsketch",
         algorithm: "countsketch-fastpath-vector2d",
         impl_name: "lib",
         description: "asap Count, Vector2D, FastPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "countsketch",
         algorithm: "countsketch-regularpath-vector2d",
         impl_name: "lib",
         description: "asap Count, Vector2D, RegularPath",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "countsketch",
         algorithm: "countsketch-fastpath-fixedmatrix-32k-parallel",
         impl_name: "lib",
         description: "asap Count, FastPath, parallel insert on M5x32K",
+        capability: Capability::None,
+        comparator: None,
+        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY),
     },
     // -------- HLL (cardinality) --------
-    // The three `lib` precisions are one row: one algorithm at one impl, with
+    // The three `lib` precisions are one entry: one algorithm at one impl, with
     // `lg_k` the knob that moves between them.
     SketchId {
         family: "hll",
         algorithm: "hll",
         impl_name: "oxide",
         description: "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hll",
         algorithm: "hll",
         impl_name: "datasketches",
         description: "datasketches::hll::HllSketch (Hll8)",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hll",
         algorithm: "hll",
         impl_name: "lib",
         description: "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hll",
         algorithm: "hll",
         impl_name: "polars",
         description: "polars exact: DataFrame.n_unique()",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     // Its own algorithm, not an impl of `hll`: the estimate is maintained on the
-    // insert path instead of scanned at query time.
+    // insert path instead of scanned at query time. It also supplies no `merge`,
+    // which is why its operations stop at query.
     SketchId {
         family: "hll",
         algorithm: "hll-hip",
         impl_name: "lib",
         description: "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT.union(OperationMask::QUERY),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hll",
         algorithm: "hll-fastpath-parallel",
         impl_name: "lib",
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
+        capability: Capability::None,
+        comparator: None,
+        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY),
     },
     // -------- KLL (quantile) --------
-    // Two query paths x two libraries. The `cdf` rows supply a `prepare` and the
-    // per-call rows do not, which is the whole point of the split.
+    // Two query paths x two libraries. The `cdf` entries supply a `prepare` and
+    // the per-call ones do not, which is the whole point of the split. These are
+    // also the only entries that build at f64 as well as i64.
     SketchId {
         family: "kll",
         algorithm: "kll-percall",
         impl_name: "oxide",
         description: "sketch_oxide KllSketch: quantile() per call",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "kll",
         algorithm: "kll-percall",
         impl_name: "lib",
         description: "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "kll",
         algorithm: "kll-cdf",
         impl_name: "oxide",
         description: "sketch_oxide KllSketch: cdf() built in prepare",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "kll",
         algorithm: "kll-cdf",
         impl_name: "lib",
         description: "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
+    // The exact baseline is i64 only, unlike the four sketch entries above it.
     SketchId {
         family: "kll",
         algorithm: "kll-cdf",
         impl_name: "polars",
         description: "polars exact: 101-point quantile grid",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
     // Three families, not one: what sits in a cell decides which statistic the
-    // grid answers, so each cell type gets its own params vocabulary. See
-    // `wrappers/hydra/mod.rs`.
+    // grid answers, so each cell type gets its own params vocabulary and its own
+    // comparator. See `wrappers/hydra/mod.rs`.
     SketchId {
         family: "hydra-cms",
         algorithm: "hydra-cms",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+        capability: Capability::SubpopFrequency,
+        comparator: Some("subpop-frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hydra-cms",
         algorithm: "hydra-cms",
         impl_name: "polars",
         description: "polars exact: group_by(subset, v).agg(len) over every label subset",
+        capability: Capability::SubpopFrequency,
+        comparator: Some("subpop-frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hydra-hll",
         algorithm: "hydra-hll",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
+        capability: Capability::SubpopCardinality,
+        comparator: Some("subpop-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hydra-hll",
         algorithm: "hydra-hll",
         impl_name: "polars",
         description: "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
+        capability: Capability::SubpopCardinality,
+        comparator: Some("subpop-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hydra-kll",
         algorithm: "hydra-kll",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+        capability: Capability::SubpopQuantile,
+        comparator: Some("subpop-rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     SketchId {
         family: "hydra-kll",
         algorithm: "hydra-kll",
         impl_name: "polars",
         description: "polars exact: sorted values per label subset, quantile by rank",
+        capability: Capability::SubpopQuantile,
+        comparator: Some("subpop-rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
 ];
+
 // ---------- what the frontend asks ----------
 
 fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
@@ -250,9 +566,9 @@ fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
-/// One line per row, grouped by family with a blank line between groups, since
-/// the family is what a reader picks from before they pick a variant. Rows keep
-/// declaration order inside a family.
+/// One line per entry, grouped by family with a blank line between groups,
+/// since the family is what a reader picks from before they pick a variant.
+/// Entries keep declaration order inside a family.
 ///
 /// The algorithm column is sized to the longest name present, so adding a
 /// longer variant widens the table instead of breaking its alignment. The first
@@ -302,15 +618,129 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
         .map(|r| r.family)
 }
 
-/// Parse the single `--config` point for an algorithm, checking the algorithm exists.
-pub fn config_point(algorithm: &str, spec: &str) -> Result<ParamSet> {
-    if !algorithm_exists(algorithm) {
-        anyhow::bail!("unknown sketch algorithm: {algorithm}");
+// ---------- can this request run? ----------
+
+/// Can this request run?
+///
+/// `Ok(())` — it can. `Err` — it cannot, and the error names what about the
+/// request the registry could not honour.
+///
+/// Every check here is answerable from the request and [`REGISTRY`] alone,
+/// which is the point: a refusal costs nothing, because it lands before a
+/// single item is generated.
+///
+/// Construction parameters are deliberately *not* checked. A `lg_k` outside
+/// what a library accepts is refused where the wrapper that owns the bound
+/// reads it, as a `BuildError`; this function touches no wrapper code and
+/// builds nothing.
+pub fn check(req: &Requirement) -> Result<(), ResolveError> {
+    let entry = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
+        // Told apart, because they send a reader to different places: a bad
+        // algorithm means look at the list, a bad impl means look at the
+        // algorithm's entry in it.
+        if algorithm_exists(&req.algorithm) {
+            ResolveError::UnknownImpl {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+            }
+        } else {
+            ResolveError::UnknownAlgorithm(req.algorithm.clone())
+        }
+    })?;
+
+    // Every square the request selects has to clear two independent bars: the
+    // framework has to measure it at all, and this entry has to have it. The
+    // framework's bar is checked first, because it holds of every sketch and so
+    // is not this entry's fault.
+    for cell in &cells(req.operations, req.metrics) {
+        if !is_measurable(*cell) {
+            return Err(ResolveError::NothingMeasuresIt {
+                operation: cell.operation.name(),
+                metric: cell.metric.name(),
+            });
+        }
     }
-    ParamSet::single(algorithm, spec).map_err(Into::into)
+
+    // Metrics before operations, deliberately. A sketch nothing scores lacks
+    // accuracy *and* query, so checking operations first would always answer
+    // "no query" and never name the capability that is the actual reason.
+    for (bit, metric) in [
+        (MetricsMask::ACCURACY, "accuracy"),
+        (MetricsMask::THROUGHPUT, "throughput"),
+        (MetricsMask::LATENCY, "latency"),
+    ] {
+        if req.metrics.contains(bit) && !entry.metrics.contains(bit) {
+            return Err(ResolveError::MetricUnsupported {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                metric,
+                capability: entry.capability.name(),
+            });
+        }
+    }
+
+    for (bit, operation) in [
+        (OperationMask::INSERT, "insert"),
+        (OperationMask::QUERY, "query"),
+        (OperationMask::MERGE, "merge"),
+        (OperationMask::PREPARE, "prepare"),
+    ] {
+        if req.operations.contains(bit) && !entry.operations.contains(bit) {
+            return Err(ResolveError::OperationUnsupported {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                operation,
+                admits: operations_of(entry),
+            });
+        }
+    }
+
+    // A named comparator has to be the one this entry is scored by. Omitted
+    // takes the entry's own, so `None` asks nothing.
+    if let Some(name) = req.comparator.as_deref() {
+        if entry.comparator != Some(name) {
+            return Err(ResolveError::UnknownComparator {
+                algorithm: req.algorithm.clone(),
+                impl_name: req.impl_name.clone(),
+                name: name.to_string(),
+                admits: comparators_of(entry),
+            });
+        }
+    }
+
+    // An empty mask on either axis selects no squares. Legal, and not this
+    // function's business: the caller gets no records because it asked for
+    // none, not because anything failed.
+    Ok(())
 }
 
-/// Why a request cannot run. Every variant names the row and what about the
+/// The operations an entry admits, for an error message.
+fn operations_of(entry: &SketchId) -> String {
+    let names: Vec<&str> = [
+        (OperationMask::INSERT, "insert"),
+        (OperationMask::QUERY, "query"),
+        (OperationMask::MERGE, "merge"),
+        (OperationMask::PREPARE, "prepare"),
+    ]
+    .into_iter()
+    .filter(|(b, _)| entry.operations.contains(*b))
+    .map(|(_, n)| n)
+    .collect();
+    names.join(", ")
+}
+
+/// The comparator names an entry admits, for an error message.
+fn comparators_of(entry: &SketchId) -> String {
+    entry.comparator.unwrap_or("none").to_string()
+}
+
+/// Which comparators an entry admits. `None` for an unknown entry, so a
+/// frontend can tell "no such sketch" from "that sketch is scored by nothing".
+pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
+    find(algorithm, impl_name).map(|entry| entry.comparator.into_iter().collect())
+}
+
+/// Why a request cannot run. Every variant names the sketch and what about the
 /// request it could not honour, because the whole value of answering here is
 /// that the answer arrives before a workload is generated.
 #[derive(Debug)]
@@ -320,27 +750,22 @@ pub enum ResolveError {
         algorithm: String,
         impl_name: String,
     },
-    /// A width the row's item type cannot be built at.
-    WidthUnsupported {
-        algorithm: String,
-        impl_name: String,
-    },
-    /// An operation this row does not have — no merge, or no prepare.
+    /// An operation this entry does not have — no merge, or no prepare.
     OperationUnsupported {
         algorithm: String,
         impl_name: String,
         operation: &'static str,
         admits: String,
     },
-    /// A metric this row cannot carry — accuracy on a row nothing scores.
+    /// A metric this entry cannot carry — accuracy on a sketch nothing scores.
     MetricUnsupported {
         algorithm: String,
         impl_name: String,
         metric: &'static str,
         capability: &'static str,
     },
-    /// A square that no row could fill, because the framework measures nothing
-    /// there. Distinct from the two above: this is not about the row.
+    /// A square that no sketch could fill, because the framework measures nothing
+    /// there. Distinct from the two above: this is not about the sketch.
     NothingMeasuresIt {
         operation: &'static str,
         metric: &'static str,
@@ -362,15 +787,6 @@ impl std::fmt::Display for ResolveError {
                 impl_name,
             } => {
                 write!(f, "no impl '{impl_name}' for algorithm '{algorithm}'")
-            }
-            ResolveError::WidthUnsupported {
-                algorithm,
-                impl_name,
-            } => {
-                write!(
-                    f,
-                    "{algorithm}/{impl_name} runs over i64 only; drop --dtype f64"
-                )
             }
             ResolveError::OperationUnsupported {
                 algorithm,
@@ -418,48 +834,85 @@ impl std::fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
-/// A resolved request: the one thing left to do is run it.
-///
-/// Deliberately *not* called a closure. It is a `fn` pointer plus the few facts
-/// a caller needs before it can generate a workload — a `fn` pointer captures
-/// nothing, so calling this a closure would claim something untrue. The
-/// closures in this design are the per-row `ask` bodies written in [`REGISTRY`];
-/// this is the handle that selects one.
-///
-/// A `fn` and not a `Box<dyn FnOnce>` because it is called **once** per
-/// process, so boxing buys nothing, and staying a `fn` keeps the table
-/// `const`-constructible. Everything the pointer reaches is monomorphised: the
-/// erasure happens here, at the crate boundary, outside anything timed.
-///
-/// `Debug` prints the row it resolved to, not the pointer — a `fn` address says
-/// nothing to a reader, and this is what shows up when a test unwraps the wrong
-/// way round.
-pub struct ResolvedRow<F> {
-    /// Runs this request. Captures the row's monomorphic runner and the request
-    /// it resolved, so a caller supplies only the loop knobs and the data it
-    /// generated. The params, the width, the workers and the shards are all in
-    /// that request, and are not passed a second time.
-    ///
-    /// `impl Fn`, not `Box<dyn Fn>` — the type is known statically, so there is
-    /// no allocation and no dynamic dispatch anywhere in the chain.
-    pub run: F,
-    /// The `data_type` the caller has to generate this row's value column at.
-    /// The reason resolution comes first: only the row knows its item type, so
-    /// a caller cannot generate a workload until it has asked.
-    pub value_type: &'static str,
-    /// Whether this row ingests labelled records, and so needs a multi-column
-    /// description rather than a single-column one.
-    pub takes_columns: bool,
-    /// The family this row belongs to, for the record's `family` field.
-    pub family: &'static str,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl<F> std::fmt::Debug for ResolvedRow<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvedRow")
-            .field("family", &self.family)
-            .field("value_type", &self.value_type)
-            .field("takes_columns", &self.takes_columns)
-            .finish_non_exhaustive()
+    /// Accuracy is declared exactly where a comparator can score it. The two
+    /// used to be derived from one another; written out by hand, this is what
+    /// keeps them in step.
+    #[test]
+    fn accuracy_is_declared_exactly_where_a_comparator_can_score_it() {
+        for e in REGISTRY {
+            assert_eq!(
+                e.metrics.contains(MetricsMask::ACCURACY),
+                e.capability.scores(),
+                "{}/{}",
+                e.algorithm,
+                e.impl_name
+            );
+        }
+    }
+
+    /// A comparator and a query go together with the capability, for the same
+    /// reason: a sketch nothing scores is asked nothing.
+    #[test]
+    fn a_comparator_and_a_query_follow_the_capability() {
+        for e in REGISTRY {
+            assert_eq!(
+                e.comparator.is_some(),
+                e.capability.scores(),
+                "{}/{} comparator",
+                e.algorithm,
+                e.impl_name
+            );
+            assert_eq!(
+                e.operations.contains(OperationMask::QUERY),
+                e.capability.scores(),
+                "{}/{} query",
+                e.algorithm,
+                e.impl_name
+            );
+        }
+    }
+
+    /// Insert holds of everything, and the timing and footprint metrics hold of
+    /// everything. Nothing in the table is measured over nothing.
+    #[test]
+    fn every_entry_is_at_least_a_timed_insert() {
+        for e in REGISTRY {
+            assert!(e.operations.contains(OperationMask::INSERT));
+            assert!(e.metrics.contains(
+                MetricsMask::THROUGHPUT
+                    .union(MetricsMask::LATENCY)
+                    .union(MetricsMask::CPU)
+                    .union(MetricsMask::MEMORY)
+            ));
+        }
+    }
+
+    /// Every declared comparator is one `aqpbm-core` actually ships, spelled the
+    /// way `--comparator` takes it.
+    #[test]
+    fn every_declared_comparator_is_one_core_ships() {
+        const KNOWN: &[&str] = &[
+            "cardinality",
+            "frequency",
+            "rank-error",
+            "relative-error",
+            "subpop-cardinality",
+            "subpop-frequency",
+            "subpop-rank-error",
+        ];
+        for e in REGISTRY {
+            if let Some(name) = e.comparator {
+                assert!(
+                    KNOWN.contains(&name),
+                    "{}/{}: {name}",
+                    e.algorithm,
+                    e.impl_name
+                );
+            }
+        }
     }
 }

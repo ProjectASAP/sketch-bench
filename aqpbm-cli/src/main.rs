@@ -274,9 +274,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    // The only item-type choice left: an `ordered` row builds at either width.
-    // Every other row's type is fixed by its Rust type, and `registry::resolve`
-    // refuses a width it cannot honour before anything is generated.
+    // The only item-type choice left: the KLL sketches build at either width.
+    // Every other item type is fixed by its wrapper, which is what refuses a
+    // width it cannot honour — a construction choice like any other, so the
+    // registry does not screen it.
     let width = match args.dtype.as_str() {
         "i64" => registry::Numeric::I64,
         "f64" => registry::Numeric::F64,
@@ -306,10 +307,11 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         metrics: metrics_mask,
     };
     // One cell = one (impl, config). `--config` is one point, or a
-    // parameterless point when omitted; keys are type-checked at
-    // construction, where the impl reads them.
+    // parameterless point when omitted. Syntax only here: whether the algorithm
+    // exists is `registry::check`'s answer below, and the keys are type-checked
+    // at construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => registry::config_point(&algorithm, s)?,
+        Some(s) => ParamSet::single(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
     };
 
@@ -327,8 +329,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         comparator: args.comparator.clone(),
     };
 
-    // check against sketch-bench or other location
-    // to see if this is runnable
+    // Can this run? The registry owns the answer, because it is the one thing
+    // that knows what each sketch supports. Asked before the workload is
+    // generated, so a request naming an operation, a metric, a width or a
+    // comparator this cell cannot honour costs nothing to refuse.
+    // Every `ResolveError` variant already names the cell it is about, so the
+    // message is passed through rather than prefixed with it a second time.
+    registry::check(&req).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
