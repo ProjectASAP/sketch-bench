@@ -1,25 +1,6 @@
 //! Ground truth for the grouped sketches: a statistic taken *within* one
 //! subpopulation, one comparator per statistic.
-//!
-//! A record stream carries `d` label columns and one value, and a grouped
-//! sketch stores every column subset. Which population is scored depends on
-//! what the cells hold, and the three comparators here differ in exactly that.
-//!
-//! - [`SubpopFrequencyGT`] scores **(label, value) pairs**: the counters live
-//!   inside a group and count values.
-//! - [`SubpopCardinalityGT`] scores **subpopulations**: how many distinct
-//!   values a group held, which a counter array structurally cannot answer.
-//! - [`SubpopRankErrorGT`] scores **subpopulations**, in rank-error units: the
-//!   ordered statistic inside a group.
-//!
-//! The first two ship error in the same vocabulary as the ungrouped frequency
-//! comparator (`are_top1`…`are_top1000`, `are_all`, `aae_*`), so a grouped
-//! row's numbers land in the columns an ungrouped row already fills. The third
-//! ships rank error, matching [`RankErrorGT`](super::quantile::RankErrorGT),
-//! because that is the ruler its statistic is defined against.
-//!
-//! All three score one label column, named in `label_column`. #54 records that
-//! this is a fraction of what the sketch is paying for.
+
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

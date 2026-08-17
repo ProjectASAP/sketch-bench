@@ -27,25 +27,6 @@ pub struct Comparison {
 }
 
 /// The exact answer a sketch is scored against.
-///
-/// Three things, kept apart:
-///
-/// 1. [`truth`](Self::truth) computes the exact answer from the raw items.
-/// 2. [`probes`](Self::probes) says what to ask, which is derived from the
-///    truth and is the one thing only this statistic knows.
-/// 3. [`score`](Self::score) turns the answers into named error metrics.
-///
-/// **Note what is absent: putting the question to the sketch.** This trait is
-/// parameterised by the *item* type, not the sketch, and never touches a
-/// sketch at all. Asking is supplied per row as a closure — see `run_probes`'s
-/// `ask` argument and the bodies in `sketch_bench::registry::REGISTRY`.
-///
-/// That split is the point. When asking lived in here, the signature had to
-/// hold for every implementation at once: `&self` (so a library needing
-/// `&mut self` had to be wrapped in a `RefCell`), and a probe/answer pair
-/// fixed by one of seven capability traits (so a statistic none of them named
-/// could not be scored at all). A closure written at the row is bound by
-/// neither.
 pub trait GroundTruth<I> {
     /// The exact answer, plus whatever [`probes`](Self::probes) and
     /// [`score`](Self::score) need to read off it.

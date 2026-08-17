@@ -14,17 +14,6 @@ use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
 // ---------- where items come from, and what they materialise to ----------
 
-/// Where a benchmark's items come from: generated in-process, or loaded.
-///
-/// One [`TableDescription`] covers both the single-column stream a plain row
-/// ingests and the column list a record-ingesting row needs, so there is no
-/// variant per column count — the column count is what a row checks.
-///
-/// The two generated variants differ in *who wrote the `data_type`*. A spec file
-/// states it, and stands as written: an option that edited a field of the user's
-/// file would make the file a suggestion. The inline options state a
-/// distribution and a size and no type at all, so the row's item type is what
-/// fills it in.
 #[derive(Debug, Clone)]
 pub enum DatasetSpec {
     Generated(TableDescription),
@@ -32,17 +21,7 @@ pub enum DatasetSpec {
     File { path: String },
 }
 
-/// Produced data, on its way to a [`BenchItem`].
-///
-/// The intermediate inside [`DatasetSpec::build`], and nothing more: it carries
-/// the result of generating across to the `materialise` that decodes it. The
-/// distinction from [`DatasetSpec`] is who has acted — a spec *describes* data,
-/// this *is* data.
-///
-/// It stays `pub` only because [`BenchItem::materialise`] takes one and that
-/// trait is a public bound on every `ops::squares_*`. Nothing outside this
-/// module constructs or matches on it; generation is not a step a caller
-/// performs.
+
 #[derive(Debug, Clone)]
 pub enum DatasetData {
     /// Columns from `aqpbm-datagen`. The description rides along because the

@@ -28,54 +28,6 @@ use crate::request::Requirement;
 use crate::run_error::RunError;
 use aqpbm_datagen::ColumnItem;
 
-// ---------- what a measurement does *to* a sketch ----------
-//
-// Every closure a measurement calls on a sketch is a parameter of
-// [`squares_for`], not a field of some bundle. Each arrives as its own generic,
-// so each is a zero-sized item the compiler inlines — which is what keeps the
-// feed loop as fast as a hand-written one.
-//
-// `insert` is why it is done this way. Routing it through a pointer field cost
-// the fixed-matrix row 17% (340M → 280M items/sec) when it was measured.
-// Everything else runs once per measurement, once per probe or once per run, so
-// a pointer would be free there — but there is no reason to spend one.
-//
-// `merge` and `prepare` are the exceptions, and are `Option<fn>`: their absence
-// is a real declaration ("this library has no merge"), and `None` on a bare `fn`
-// needs no turbofish at the call site.
-//
-// - `build(&ParamSet, workers) -> Result<S, BuildError>` — a fresh sketch. Called
-//   per run, outside the timed region: every repeat of an insert has to start
-//   from empty or it is not measuring the same thing twice. Takes the worker
-//   count because the parallel rows need it and it is a *run* knob; every other
-//   row ignores it.
-// - `memory(&S) -> usize` — the footprint the sketch claims, read before the body
-//   drops it.
-// - `insert(&mut S, &I)` — one item in. The hot one.
-// - `ask(&mut S, &P) -> A` — one question. `&mut` because several libraries need
-//   it: `sketch_oxide`'s KLL sorts lazily on the first query.
-// - `merge(&mut S, &S)` — absorb another built from the same `ParamSet`.
-// - `prepare(&mut S)` — no more items are coming. Timed on its own, so a library
-//   that defers its build is not credited with a fast insert loop.
-
-// ---------- what a row hands the frontend ----------
-//
-// One closure per square, and nothing else. A body owns everything it needs —
-// its own sketch, an `Rc` of the materialised items, its probes — so no two
-// bodies share state and none borrows from this crate's stack. That is why a
-// fresh sketch per run is free to be the rule: an insert measured ten times
-// starts from empty ten times, and a query measured ten times pays its own fill
-// each time, which matters because `sketch_oxide`'s KLL sorts lazily and a
-// re-queried sketch is already sorted.
-//
-// Nothing here measures. The body marks the region it wants timed and says what
-// it did; `aqpbm_core::measure` runs it and holds the clock. Which square a body
-// is, and how many times to run it, are the frontend's to know.
-
-/// One measurement, ready to be timed. Boxed because a body captures the sketch
-/// it built, so every row's is a different anonymous type and a frontend needs
-/// one type to hold them all. The virtual call lands once per run, outside the
-/// region the body times.
 pub type Body = Box<dyn FnMut(&mut Timed) -> RunOutcome>;
 
 /// The smallest fold that is a merge at all: two shards, one merge call. The
@@ -327,30 +279,6 @@ impl<I> GroundTruth<I> for NoScore {
 }
 
 // ---------- the statistic a row answers ----------
-//
-// One entry point per statistic, and a wrapper calls the one its sketch answers.
-//
-// This is the seam that keeps a comparator out of `sketch-bench`. A wrapper
-// states a fact about its *sketch* — "this grid answers subpopulation
-// frequency" — and never a fact about the comparator. Which `GroundTruth`
-// scores that statistic, and with which knobs, is decided below, in the crate
-// that owns every comparator it could be. When a statistic grows a second
-// comparator, only this section changes.
-//
-// The `ask` a wrapper passes is still typed in the probe and answer the
-// statistic is asked in — `(String, V) -> f64` for subpopulation frequency —
-// because `ask` has a signature and that signature is what makes the sketch an
-// answer to *this* question rather than another. But those are structural types,
-// not a comparator: a wrapper writes `(String, i64)`, not `SubpopFrequencyGT`.
-//
-// `label_column` is a comparator knob, not a sketch parameter, so it is chosen
-// here. Column 0 is the coarsest grouping: the one whose cells the most records
-// reach, and so the one a grid's shape is picked to control.
-//
-// These take a `&DatasetSpec` and materialise it themselves. The item type is
-// already pinned by the `insert` they are handed — `Labeled<V>` names its own
-// `Dataset` through `BenchItem` — so a wrapper never has to generate anything,
-// and never has to know that a dataset has a spec, a size or a distribution.
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;

@@ -117,19 +117,6 @@ const METRICS: [(MetricsMask, Metric); 3] = [
 ];
 
 /// Whether the framework measures this square *at all*, for any row.
-///
-/// Five of the twelve are permanently empty, and for reasons that hold of every
-/// implementation rather than of any one of them: an insert produces no answer
-/// to score, a fold produces no answer to score, scoring a folded sketch is the
-/// query operation wearing merge's name, `prepare` runs at the tail of the
-/// insert loop so it has a latency but no throughput of its own, and a query
-/// latency needs each estimate call timed separately — a per-call capture this
-/// build no longer has.
-///
-/// This mirrors the per-operation match in [`crate::ops::squares_for`], which is
-/// the authority — it is the one that actually builds something to run. Stated
-/// separately here so a *frontend* can refuse a square by name before
-/// generating a dataset for it, which is the whole point of refusing early.
 pub fn is_measurable(cell: Cell) -> bool {
     use Metric::{Accuracy, Latency, Throughput};
     use Operation::{Insert, Merge, Prepare, Query};
