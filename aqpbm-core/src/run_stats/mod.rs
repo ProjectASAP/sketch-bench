@@ -1,7 +1,8 @@
-//! Folding a run population into statistics. Every function here takes the
-//! measured runs and returns one summary, and none of them knows which square
-//! was measured: what a record should contain is the caller's question, and
-//! the caller already has the answer.
+//! Folding a run population into statistics: mean, stddev and 95% CI across
+//! the N post-warm-up runs of one bench cell. Not data aggregation, and not
+//! sketch union/merge — for that see [`crate::accumulator::Accumulator`].
+//! `Operation::Merge` below only selects which statistic a merge *benchmark*
+//! reports; the sketch merging itself lives in the implementations.
 
 pub mod welford;
 

@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_core::aggregation::welford::Welford;
+use aqpbm_core::run_stats::welford::Welford;
 use aqpbm_core::report::{BenchSection, CpuTime, Record, RunStats};
 
 /// Marks a child so it runs exactly one repeat and writes to stdout, whatever

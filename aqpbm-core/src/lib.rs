@@ -8,7 +8,6 @@
 
 pub mod accumulator;
 pub mod accuracy;
-pub mod aggregation;
 pub mod binfile;
 pub mod build_error;
 pub mod config;
@@ -21,6 +20,7 @@ pub mod probe;
 pub mod report;
 pub mod request;
 pub mod run_error;
+pub mod run_stats;
 pub mod runner;
 
 /// Column shapes and the generate-then-materialise step, shared by the tests of

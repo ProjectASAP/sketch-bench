@@ -5,7 +5,7 @@
 //! running itself is [`crate::measure`], which times a closure and knows
 //! nothing else.
 
-use crate::aggregation as fold;
+use crate::run_stats;
 use crate::dataset::DatasetDescription;
 use crate::metrics::{Metric, Operation, RunMetrics};
 use crate::report::{BenchSection, Mode, Record, Source};
@@ -45,32 +45,32 @@ impl BenchReport {
         // rate carries in the schema.
         match operation {
             Operation::Insert => {
-                bench.throughput_items_per_sec = fold::rate(&runs);
-                bench.throughput_samples = fold::rate_samples(&runs);
+                bench.throughput_items_per_sec = run_stats::rate(&runs);
+                bench.throughput_samples = run_stats::rate_samples(&runs);
             }
-            Operation::Query => bench.query_throughput_items_per_sec = fold::rate(&runs),
+            Operation::Query => bench.query_throughput_items_per_sec = run_stats::rate(&runs),
             Operation::Merge => {
-                bench.merge_folds_per_sec = fold::rate(&runs);
-                bench.merge_time_ms = fold::elapsed_ms(&runs);
+                bench.merge_folds_per_sec = run_stats::rate(&runs);
+                bench.merge_time_ms = run_stats::elapsed_ms(&runs);
                 bench.merge_supported = Some(true);
             }
-            Operation::Prepare => bench.finalize_time_ms = fold::elapsed_ms(&runs),
+            Operation::Prepare => bench.finalize_time_ms = run_stats::elapsed_ms(&runs),
         }
         if metric == Metric::Latency {
-            bench.latency_ns = fold::latency(&runs);
+            bench.latency_ns = run_stats::latency(&runs);
         }
         if metric == Metric::Accuracy {
-            bench.accuracy = fold::scores(&runs);
+            bench.accuracy = run_stats::scores(&runs);
         }
 
-        bench.wall_time_ms = fold::elapsed_ms(&runs);
-        bench.cpu_time_ms = fold::cpu_time_ms(&runs);
-        let mem = fold::memory_maxima(&runs);
+        bench.wall_time_ms = run_stats::elapsed_ms(&runs);
+        bench.cpu_time_ms = run_stats::cpu_time_ms(&runs);
+        let mem = run_stats::memory_maxima(&runs);
         bench.rss_peak_kb = mem.rss_peak_kb;
         bench.heap_allocated_kb = mem.heap_allocated_kb;
         bench.heap_bytes_net = mem.heap_bytes_net;
         bench.heap_bytes_peak = mem.heap_bytes_peak;
-        bench.memory_bytes = fold::memory_bytes(&runs);
+        bench.memory_bytes = run_stats::memory_bytes(&runs);
 
         Self {
             sketch: sketch.into(),

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use crate::latency::LatencySnapshot;
 
 /// Metrics produced by a single run. One `FullSink` finalises
-/// into one of these. `crate::aggregation` folds `RunMetrics`
+/// into one of these. `crate::run_stats` folds `RunMetrics`
 /// across N runs via the Welford accumulator.
 #[derive(Debug, Clone, Default)]
 pub struct RunMetrics {

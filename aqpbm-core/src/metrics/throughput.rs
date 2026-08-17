@@ -1,6 +1,6 @@
 //! `items_inserted / wall_s` — the simplest + most-cited
 //! benchmark number. Computed from `RunMetrics` at the
-//! aggregation step rather than maintained incrementally,
+//! run-statistics fold rather than maintained incrementally,
 //! because the value isn't stable until the phase closes.
 
 /// Throughput for the insert phase, computed from raw counts +
