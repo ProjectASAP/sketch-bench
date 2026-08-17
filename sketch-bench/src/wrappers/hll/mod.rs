@@ -1,6 +1,6 @@
 //! HyperLogLog wrappers: `oxide`, `datasketches`, `sketchlib`
-//! (a.k.a. asap_sketchlib). All of them declare `CardinalityOps`,
-//! which is what makes them cardinality rows.
+//! (a.k.a. asap_sketchlib). All of them are registered under
+//! `Capability::Cardinality`, which is what makes them cardinality rows.
 
 use crate::build_error::BuildError;
 use crate::params::*;
@@ -13,6 +13,15 @@ pub mod sketchlib;
 
 /// so the wrapper's check and the registry's dispatch cannot disagree about it.
 pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
+
+/// The `lg_k` values this build compiled an HLL storage for, as a refusal.
+/// `asap_sketchlib` puts the register count in the storage *type*, so anything
+/// else is refused rather than built at a neighbouring precision.
+pub fn unsupported_precision(lg_k: u8) -> BuildError {
+    BuildError(format!(
+        "asap HLL is compiled in at lg_k {LIB_PRECISIONS:?}; {lg_k} is not one of them"
+    ))
+}
 
 #[cfg(test)]
 mod tests {
@@ -36,12 +45,8 @@ mod tests {
         }
     }
 
-    /// The bug these rows had: `lg_k` was parsed and dropped, so every value
-    /// built the same P14 sketch, reported the same 16384-byte footprint and
-    /// scored the same error, under three different labels.
-    ///
-    /// Three precisions must now give three register counts and three
-    /// estimates.
+    /// Three precisions must give three register counts and three estimates —
+    /// a dropped `lg_k` would build one sketch under three different labels.
     #[test]
     fn lib_honours_lg_k() {
         let mut p12 = build_hll_lib::<HllBucketListP12>(&params(12), 1).expect("P12 builds");
@@ -147,16 +152,4 @@ mod tests {
             );
         }
     }
-}
-
-/// The `lg_k` values this build compiled an HLL storage for, as a refusal.
-///
-/// `asap_sketchlib` puts the register count in the storage *type*, so a row
-/// exists only at the precisions some build instantiated. Anything else is
-/// refused by name rather than silently built at a neighbouring precision —
-/// which would report one `lg_k` and measure another.
-pub fn unsupported_precision(lg_k: u8) -> BuildError {
-    BuildError(format!(
-        "asap HLL is compiled in at lg_k {LIB_PRECISIONS:?}; {lg_k} is not one of them"
-    ))
 }

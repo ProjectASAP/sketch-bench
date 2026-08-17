@@ -119,7 +119,7 @@ bench() {
 for ALGORITHM in $ALGORITHMS; do
     # Zipf workload — skewed, so the are_topN prefixes separate
     bench "$ALGORITHM" zipf \
-        --workload zipf \
+        --dataset zipf \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
         --zipf-s "$ZIPF_S" \
@@ -127,7 +127,7 @@ for ALGORITHM in $ALGORITHMS; do
 
     # Uniform workload — all keys have similar counts
     bench "$ALGORITHM" uniform \
-        --workload uniform \
+        --dataset uniform \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
         --seed "$SEED"

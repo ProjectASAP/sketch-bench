@@ -1,15 +1,11 @@
-//! Why a sketch could not be built from a given `ParamSet`.
-//!
-//! Lives here because the `build` closure [`crate::ops::squares_for`] takes
-//! returns one: core never constructs a sketch, but it calls the thing that
-//! does, so it has to be able to name the failure. What the message *says* is
-//! still the wrapper's — every `BuildError` in this workspace is worded in
-//! `sketch-bench/src/wrappers/`.
+//! Why a sketch could not be built from a given `ParamSet`. Core never
+//! constructs a sketch but calls the thing that does, so it has to name the
+//! failure; the message itself is worded in `sketch-bench/src/wrappers/`.
 
 use crate::DataGenError;
 
 /// A config that did not parse, or a request an implementation's fixed shape
-/// cannot satisfy. Reported by the wrapper before a workload is generated.
+/// cannot satisfy. Reported by the wrapper before a dataset is generated.
 #[derive(Debug, Clone)]
 pub struct BuildError(pub String);
 

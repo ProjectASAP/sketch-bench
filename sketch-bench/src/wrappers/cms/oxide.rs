@@ -30,12 +30,9 @@ pub fn build_cms_oxide(config: &ParamSet, _workers: usize) -> Result<CmsOxide, B
 }
 
 pub fn memory_cms_oxide(sketch: &CmsOxide) -> usize {
-    // Read off the built sketch, not off the requested `(rows, cols)`: the
-    // crate derives its width from ε and rounds it up to a power of two, so
-    // `cols = 3000` allocates 4096 and a request-derived figure under-reports
-    // by 27%. The counters are `table: Vec<u64>`, not 32-bit — sizing them
-    // as `u32` once halved every reported CMS footprint, which made CMS look
-    // twice as space-efficient as CountSketch at identical accuracy.
+    // Read off the built sketch, not the requested `(rows, cols)`: the crate
+    // rounds width up to a power of two, so `cols = 3000` allocates 4096. The
+    // counters are `table: Vec<u64>`, not 32-bit — size them as `u64`.
     sketch.inner.depth() * sketch.inner.width() * std::mem::size_of::<u64>()
 }
 

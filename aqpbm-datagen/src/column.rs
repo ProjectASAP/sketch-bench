@@ -130,11 +130,8 @@ impl ColumnSpec {
     }
 
     /// Apply this column's rule, shift and `data_type` to a raw draw stream.
-    ///
-    /// The one place `data_type` is read: the tag costs one match per column and
-    /// none per value, and each arm is its own monomorphic loop. The numeric
-    /// arms use `as`, which truncates toward zero and saturates at the type's
-    /// bounds.
+    /// The one place `data_type` is read: one match per column, none per value,
+    /// each arm its own loop. Numeric arms use `as` — truncating, saturating.
     pub(crate) fn render(&self, raw: &[f64]) -> Result<ColumnData, DataGenError> {
         match self.data_type.as_str() {
             "i64" => Ok(ColumnData::Int64(

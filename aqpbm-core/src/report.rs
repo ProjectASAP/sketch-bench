@@ -2,19 +2,19 @@
 //! shared by offline benchmarks, runtime samplers, and the
 //! visualisation layer. Current version: [`SCHEMA_VERSION`].
 //!
-//! See `docs/DESIGN.md` §4.4.
+//! See `docs/archive/SCHEMA_V1.md` for the v1 field list this grew from.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::workload::WorkloadDescription;
+use crate::dataset::DatasetDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
 pub const SCHEMA_VERSION: u32 = 3;
 
 /// A single record in the JSONL report stream. One record
-/// per benchmark / profile / runtime window.
+/// per benchmark / runtime window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub schema_version: u32,
@@ -34,16 +34,18 @@ pub struct Record {
     #[serde(default)]
     pub language: Language,
     /// Algorithm-specific construction params used for this run, populated by
-    /// `bench` from the cell's `ParamSet`.
+    /// `bench` from the run's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
-    pub workload: WorkloadDescription,
+    /// The data this run was measured over. The wire name stays `workload` while
+    /// the Rust name does not: it is the group key `scripts/merge_passes.py`
+    /// pools by, so renaming the field would be a schema break for a word.
+    #[serde(rename = "workload")]
+    pub dataset: DatasetDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bench: Option<BenchSection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileSection>,
     pub source: Source,
     pub timestamp: DateTime<Utc>,
 }
@@ -62,7 +64,6 @@ pub enum Language {
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     Bench,
-    Profile,
     Runtime,
 }
 
@@ -71,13 +72,13 @@ pub enum Mode {
 pub enum Source {
     /// Run produced by the `approxbench` CLI.
     Cli,
-    /// Run produced by an embedded `sketch-runtime::Sampler`
-    /// in one of the downstream apps.
+    /// Run produced by an embedded sampler in one of the downstream apps.
+    /// No producer in this workspace emits these; they are read, not written.
     AsapFusion,
     DataCollector,
     AsapQuery,
     /// Run produced by a `cpp-bench` binary (Google Benchmark
-    /// based C++ track). See `docs/SCHEMA_V1.md`.
+    /// based C++ track). See `docs/archive/SCHEMA_V1.md`.
     CppBench,
 }
 
@@ -96,9 +97,10 @@ pub struct BenchSection {
     /// pooling anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
-    /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
-    /// Deferred-build rows buffer in `update`, so this times their `Vec::push`
-    /// — compare [`Self::build_throughput_items_per_sec`] instead.
+    /// **Ingest rate**: `items / insert_wall`, with `prepare` excluded.
+    /// Deferred-build rows buffer on the insert path, so for those this times
+    /// the buffering and their real build cost is [`Self::finalize_time_ms`],
+    /// measured as its own measurement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
     /// Per-run ingest-rate samples (items/sec, one entry per measured run).
@@ -107,8 +109,8 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
     /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)`, the
-    /// rate a *ready-to-answer* sketch is produced at. The cross-algorithm column;
-    /// equals the ingest rate wherever `prepare` is free.
+    /// rate a *ready-to-answer* sketch is produced at. No producer here writes
+    /// it; kept because the field is in the wire schema and must still pool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
     /// Wall time of `Accumulator::prepare` per run — the deferred build cost
@@ -159,50 +161,12 @@ pub struct BenchSection {
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
-    /// `false` when the implementation provides no merge. Recorded rather
-    /// than omitted so a capability gap is visible in the output instead of
-    /// showing up as a missing row.
+    /// Present, and `true`, whenever a merge was measured. Never `false`: a row
+    /// that provides no merge is refused in `ops::squares_for` before anything
+    /// is timed, so the gap shows up as an error naming the row rather than as a
+    /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_supported: Option<bool>,
-}
-
-/// MICRO (profile) section of a record — reserved for `sketch-profile`
-/// (`docs/DESIGN.md` §2.2), which is not built yet. Declared here so readers
-/// don't need two crates to deserialise the same JSONL file.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ProfileSection {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hw_counters: Option<HwCounters>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub external: Option<ExternalReports>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HwCounters {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub l1d_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub llc_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dtlb_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub itlb_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipc: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExternalReports {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub perf_record: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cachegrind_report: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flamegraph: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub heaptrack_report: Option<String>,
 }
 
 /// Aggregate across N samples: mean / stddev / optional 95% CI.
@@ -240,8 +204,8 @@ pub struct LatencySummary {
 }
 
 /// Flattened form of the [`Record`]s that share one (sketch, impl,
-/// sketch_config, workload) identity: one row per cell, where the record
-/// stream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.
+/// sketch_config, dataset) identity: one row per invocation, where the record
+/// stream writes one per measurement. Built by `aqpbm-cli`'s `flatten_record`.
 /// Lives beside [`Record`] because it is a JSONL wire shape, not CLI logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergedRecord {
@@ -255,22 +219,23 @@ pub struct MergedRecord {
     pub source: Source,
 
     pub sketch_config: Option<serde_json::Value>,
-    pub workload: WorkloadDescription,
+    /// The data this run was measured over. The wire name stays `workload` while
+    /// the Rust name does not: it is the group key `scripts/merge_passes.py`
+    /// pools by, so renaming the field would be a schema break for a word.
+    #[serde(rename = "workload")]
+    pub dataset: DatasetDescription,
 
     pub memory_bytes: Option<u64>,
-    /// Net bytes the tracking allocator attributes to this sketch's
-    /// lifetime — **measured**, where [`Self::memory_bytes`] is a
-    /// self-reported formula. Only present when the source binary was built
-    /// with `heap-track`; kept as its own field (not merged into
-    /// `memory_bytes`) so a gap between the two stays visible instead of
-    /// being silently papered over.
+    /// Net bytes the tracking allocator attributes to this sketch's lifetime —
+    /// **measured**, where [`Self::memory_bytes`] is a self-reported formula.
+    /// Its own field, so a gap between the two stays visible. Needs `heap-track`.
     pub heap_bytes_net: Option<u64>,
     /// High-water mark of the same counter across construction and insert.
     pub heap_bytes_peak: Option<u64>,
 
     // One slot per operation, and within a slot one field per metric. A
     // measurement is named by both, so a flattened row that named only one of
-    // them had two squares landing in the same place.
+    // them had two measurements landing in the same place.
     #[serde(flatten)]
     pub insert: InsertMetrics,
     #[serde(flatten)]
@@ -368,7 +333,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        workload: WorkloadDescription,
+        dataset: DatasetDescription,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -379,11 +344,10 @@ impl Record {
             impl_name: impl_name.into(),
             language: Language::Rust,
             sketch_config: None,
-            workload,
+            dataset,
             mode,
             runs,
             bench: None,
-            profile: None,
             source: Source::Cli,
             timestamp: Utc::now(),
         }
@@ -400,7 +364,7 @@ mod tests {
 
     #[test]
     fn record_roundtrips_through_json() {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "zipf".into(),
             size: 1_000_000,
             cardinality: Some(10_000),
@@ -426,31 +390,6 @@ mod tests {
         assert_eq!(back.impl_name, "oxide");
         assert_eq!(back.mode, Mode::Bench);
         assert!(back.bench.is_some());
-    }
-
-    #[test]
-    fn profile_section_roundtrips() {
-        let wd = WorkloadDescription {
-            shape: "uniform".into(),
-            size: 1000,
-            cardinality: Some(100),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(1),
-            spec: None,
-        };
-        let mut rec = Record::new("cms", "oxide", wd, Mode::Profile, 1);
-        rec.profile = Some(ProfileSection {
-            hw_counters: Some(HwCounters {
-                ipc: Some(3.2),
-                l1d_miss_rate: Some(0.018),
-                ..Default::default()
-            }),
-            external: None,
-        });
-        let s = rec.to_jsonl();
-        let back: Record = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.profile.unwrap().hw_counters.unwrap().ipc, Some(3.2));
     }
 
     /// A gate, not a behaviour test: bumping `SCHEMA_VERSION` turns this red on
@@ -502,7 +441,7 @@ mod tests {
 
     #[test]
     fn cpp_record_roundtrips() {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "file".into(),
             size: 1_000_000,
             cardinality: None,

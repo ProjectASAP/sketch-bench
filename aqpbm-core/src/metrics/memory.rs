@@ -1,5 +1,6 @@
-//! Memory metrics: RSS peak from `/proc/self/status:VmHWM`
-//! (Linux) + optional jemalloc heap-peak (opt-in).
+//! Memory metrics: RSS peak from `/proc/self/status:VmHWM` (Linux only —
+//! `rss_peak_kb` is absent everywhere else, macOS included) plus an opt-in
+//! jemalloc reading behind the `heap-jemalloc` feature.
 
 /// RSS peak in kB, pulled from `/proc/self/status:VmHWM`.
 /// Returns `None` on non-Linux or if the file can't be read.

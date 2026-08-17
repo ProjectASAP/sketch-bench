@@ -8,13 +8,9 @@ use crate::build_error::BuildError;
 use crate::wrappers::require_resolved_shape;
 use aqpbm_core::config::ParamSet;
 
-// No `rows` / `cols` field, for the same reason as `CmsOxide`: `init` proves the
-// built table matches the request, so the sketch is the only place either
-// figure is read from.
-//
-// One bound this row has and the Count-Min one does not: the crate floors its
-// depth at 3, so the median is taken over enough estimates to be one. `rows < 3`
-// is therefore unreachable, and refused by name.
+// No `rows` / `cols` field, as in `CmsOxide`: `init` proves the built table
+// matches the request, so the sketch is the only place either is read from.
+// One extra bound — the crate floors depth at 3, so `rows < 3` is refused.
 pub struct CsOxide {
     inner: sketch_oxide::frequency::CountSketch,
 }

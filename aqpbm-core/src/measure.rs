@@ -1,13 +1,6 @@
 //! Timing a closure. That is all this module does, and all core knows how to do.
-//!
-//! A caller hands [`measure`] a body. The body builds whatever it needs, marks
-//! the region it wants timed with [`Timed::time`], and reports what it did.
-//! Core runs it `warmup_runs + runs` times, wraps the recorders around the
-//! marked region, and folds the results.
-//!
-//! Nothing here knows what a sketch is, which operations exist, or that
-//! "insert" and "query" are different words. The caller decides what to build,
-//! what to time, and what to call it — see `sketch_bench::registry`.
+//! A body builds what it needs, marks its region with [`Timed::time`], and says
+//! what it did; `measure` runs it `warmup_runs + runs` times and folds.
 
 use std::collections::BTreeMap;
 use std::sync::Once;
@@ -33,12 +26,9 @@ pub struct MeasureConfig {
     pub metrics: MetricsMask,
 }
 
-/// What one execution of a body did.
-///
-/// The body reports this because only the body can know it: core sees an opaque
-/// closure, so it cannot count items or size a structure. `memory_bytes` in
-/// particular has to be read here — a body that owns its sketch drops it on the
-/// way out, and a heap delta measured afterwards would read zero.
+/// What one execution of a body did. The body reports it because core sees an
+/// opaque closure: `memory_bytes` in particular has to be read here, since a
+/// body that owns its sketch drops it on the way out.
 #[derive(Debug, Clone, Default)]
 pub struct RunOutcome {
     /// How many units of work the timed region covered: items inserted, probes
@@ -175,14 +165,9 @@ where
     out
 }
 
-/// Ramp the CPU **once per process**, before the first measured region of the
-/// first measurement — two measurements timed at two different clock states are
-/// not a comparison. `Once` is what keeps the second measurement in a process
-/// from re-burning it.
-///
-/// Duration comes from `BENCH_WARMUP_SECS` and **defaults to 0**: a library
-/// must not burn a caller's CPU uninvited. `approxbench`'s `main` sets the
-/// measurement default, so the number a benchmark reports is a ramped one.
+/// Ramp the CPU **once per process**, before the first measured region: two
+/// measurements timed at different clock states are not a comparison. Duration
+/// from `BENCH_WARMUP_SECS`, default 0 — a library must not burn CPU uninvited.
 fn warmup_cpu_once() {
     static WARMED: Once = Once::new();
     WARMED.call_once(|| {

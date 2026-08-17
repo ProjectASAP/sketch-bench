@@ -1,85 +1,31 @@
-//! Turning "how one sketch is driven" into the closures a caller times.
+//! Turning "how one sketch is driven" into the closures a caller times. The
+//! per-sketch functions live in the wrapper that owns the sketch; what lives
+//! here is what every sketch shares — one [`Body`] per instruction.
 //!
-//! The functions themselves are written in the wrapper file that owns the
-//! sketch, in that sketch's own terms — the `datasketches` Count-Min takes an
-//! owned `i64`, the `asap_sketchlib` one takes a `&DataInput`, and each says so
-//! in its own `insert`. Nothing here forces two of them to agree on anything.
-//!
-//! What lives here is the part that is the same for every sketch: given those
-//! functions and a workload, produce one [`Body`] per square the request
-//! selected, each with its setup already done and only its own operation inside
-//! the clock. This crate still names no sketch — `S`, `I`, `P` and `A` are
-//! whatever the caller instantiated them at.
+//! A frontend opens a [`Target`] and then tells it what to do, one measurement at
+//! a time. Core does not decide which measurements to take; see
+//! `docs/aqpbm-core.md` §Input.
 
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 use crate::accuracy::cardinality::CardinalityGT;
 use crate::accuracy::frequency::FrequencyGT;
+use crate::accuracy::heavy_hitter::HeavyHitterGT;
 use crate::accuracy::quantile::RankErrorGT;
 use crate::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
+use crate::accuracy::topk::TopkGT;
 use crate::accuracy::GroundTruth;
-use crate::cell::{BenchItem, RunError, WorkloadSpec};
+use crate::build_error::BuildError;
 use crate::config::ParamSet;
+use crate::dataset::spec::{BenchItem, DatasetSpec};
+use crate::dataset::{Dataset, DatasetDescription, Labeled, LabeledDataset};
 use crate::measure::{RunOutcome, Timed};
-use crate::metrics::{cells, Metric, Operation};
+use crate::metrics::{Metric, Operation};
 use crate::request::Requirement;
-use crate::workload::{Labeled, LabeledWorkload, Workload, WorkloadDescription};
+use crate::run_error::RunError;
 use aqpbm_datagen::ColumnItem;
 
-use crate::build_error::BuildError;
-
-/// Everything a measurement does *to* a sketch.
-///
-/// - `S` the sketch, `I` what it ingests.
-/// - `P` one question, `A` one answer — both fixed by the row's comparator,
-///   because a comparison only means anything if both sides answer the same
-///   question.
-///
-/// `insert` is deliberately **not** here: it travels as a generic so it stays a
-/// zero-sized `fn` item and inlines. Routing it through a pointer field cost
-/// the fixed-matrix row 17% (340M → 280M items/sec) when it was measured.
-/// Everything below runs once per measurement, or once per probe, so a pointer
-/// is free there.
-/// Every closure a measurement calls on a sketch is a parameter, not a field of
-/// some bundle. Each arrives as its own generic, so each is a zero-sized item the
-/// compiler inlines — which is what keeps the feed loop as fast as a hand-written
-/// one. `merge` and `prepare` are the exceptions: they are `Option<fn>` because
-/// their absence is a real declaration ("this library has no merge"), and `None`
-/// on a bare `fn` needs no turbofish at the call site. Both run once per fold or
-/// once per run, so the pointer costs nothing.
-///
-/// - `build(&ParamSet, workers) -> Result<S, BuildError>` — a fresh sketch. Called
-///   per run, outside the timed region: every repeat of an insert has to start
-///   from empty or it is not measuring the same thing twice. Takes the worker
-///   count because the parallel rows need it and it is a *run* knob; every other
-///   row ignores it.
-/// - `memory(&S) -> usize` — the footprint the sketch claims, read before the body
-///   drops it.
-/// - `insert(&mut S, &I)` — one item in. The hot one.
-/// - `ask(&mut S, &P) -> A` — one question. `&mut` because several libraries need
-///   it: `sketch_oxide`'s KLL sorts lazily on the first query.
-/// - `merge(&mut S, &S)` — absorb another built from the same `ParamSet`.
-/// - `prepare(&mut S)` — no more items are coming. Timed on its own, so a library
-///   that defers its build is not credited with a fast insert loop.
-
-// ---------- what a row hands the frontend ----------
-//
-// One closure per square, and nothing else. A body owns everything it needs —
-// its own sketch, an `Rc` of the materialised items, its probes — so no two
-// bodies share state and none borrows from this crate's stack. That is why a
-// fresh sketch per run is free to be the rule: an insert measured ten times
-// starts from empty ten times, and a query measured ten times pays its own fill
-// each time, which matters because `sketch_oxide`'s KLL sorts lazily and a
-// re-queried sketch is already sorted.
-//
-// Nothing here measures. The body marks the region it wants timed and says what
-// it did; `aqpbm_core::measure` runs it and holds the clock. Which square a body
-// is, and how many times to run it, are the frontend's to know.
-
-/// One measurement, ready to be timed. Boxed because a body captures the sketch
-/// it built, so every row's is a different anonymous type and a frontend needs
-/// one type to hold them all. The virtual call lands once per run, outside the
-/// region the body times.
 pub type Body = Box<dyn FnMut(&mut Timed) -> RunOutcome>;
 
 /// The smallest fold that is a merge at all: two shards, one merge call. The
@@ -87,41 +33,66 @@ pub type Body = Box<dyn FnMut(&mut Timed) -> RunOutcome>;
 /// from measuring an empty loop.
 pub const MIN_MERGE_SHARDS: usize = 2;
 
-/// What the query squares ask, drawn once from the exact answer and shared by
-/// however many of them the request selected.
+/// An opened target: its dataset materialised, its comparator ready, waiting to be
+/// told what to do.
+///
+/// One is opened per invocation and asked for one body per measurement. The
+/// data and the exact answer are computed once here and shared by every
+/// instruction that follows, which is what lets a frontend hand the same data
+/// over as many times as it likes without regenerating it.
+pub trait Target {
+    /// What the materialised data was, for the record.
+    fn description(&self) -> DatasetDescription;
+
+    /// One instruction: perform `operation`, timed the way `metric` needs.
+    ///
+    /// Errors when the target provides no merge or no prepare — timing a `None`
+    /// would report `work = items.len()` against a zero-length region, which
+    /// reads as an infinitely fast operation rather than as a missing one.
+    /// `registry::check` catches this for a CLI request, but a caller driving
+    /// this directly does not go through it.
+    fn body(&mut self, operation: Operation, metric: Metric) -> Result<Body, RunError>;
+}
+
+/// What the query measurements ask, drawn once from the exact answer and shared
+/// by however many of them a frontend asks for.
 type Asked<G, I> = (
     Rc<<G as GroundTruth<I>>::Truth>,
     Rc<Vec<<G as GroundTruth<I>>::Probe>>,
 );
 
-/// A body for every square the request selected, over one scored row, in
-/// [`cells`] order — the caller computed the same masks, so it can label them by
-/// calling the same function rather than being told.
-///
-/// Returned alongside them is the workload's description, which is the one thing
-/// about this run a frontend cannot work out for itself: `--input data.bin` has
-/// no size or shape until the row has decoded it.
-///
-/// The workload arrives behind an `Rc` because the squares share one
-/// materialisation: four bodies over a million items is four handles, never
-/// four copies.
-///
-/// Construction is proved once, here, before any body is handed back — a cell
-/// that cannot be built fails whole, and never as a measurement of zero.
-#[allow(clippy::too_many_arguments)]
-pub fn squares_for<W, S, I, G, B, M, Ins, Ask>(
-    req: &Requirement,
-    workload: Rc<W>,
-    gt: G,
+/// The one [`Target`] implementation: everything a body needs, held until asked.
+/// The dataset rides an `Rc` because the bodies share one materialisation, and
+/// construction is proved in [`open_target_scored`] before any body ships.
+struct Opened<W, S, I, G, B, M, Ins, Ask>
+where
+    G: GroundTruth<I>,
+{
+    algorithm: String,
+    impl_name: String,
+    params: ParamSet,
+    /// A run of no threads is not a run. Floored on the way in rather than
+    /// trusted from the request, because a library caller builds its own.
+    workers: usize,
+    merge_shards: usize,
+    dataset: Rc<W>,
+    gt: Rc<G>,
+    /// The exact answer and the questions drawn from it — computed on the first
+    /// query instruction and reused by any that follow, rather than once per
+    /// measurement.
+    asked: Option<Asked<G, I>>,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+    _item: PhantomData<I>,
+}
+
+impl<W, S, I, G, B, M, Ins, Ask> Target for Opened<W, S, I, G, B, M, Ins, Ask>
 where
-    W: Workload<Item = I> + 'static,
+    W: Dataset<Item = I> + 'static,
     S: 'static,
     I: Clone + 'static,
     G: GroundTruth<I> + 'static,
@@ -133,26 +104,20 @@ where
     Ins: Fn(&mut S, &I) + Copy + 'static,
     Ask: Fn(&mut S, &G::Probe) -> G::Answer + Copy + 'static,
 {
-    let params = req.params.clone();
-    // A run of no threads is not a run. Floored here rather than trusted from
-    // the request, because a library caller builds its own `Requirement`.
-    let workers = req.workers.max(1);
-    build(&params, workers).map_err(|e| RunError::Body(e.to_string()))?;
+    fn description(&self) -> DatasetDescription {
+        self.dataset.description()
+    }
 
-    // Shared by every body: the comparator, and — for the query squares — the
-    // exact answer and the questions drawn from it, computed once rather than
-    // once per square.
-    let gt = Rc::new(gt);
-    let mut asking: Option<Asked<G, I>> = None;
+    fn body(&mut self, operation: Operation, metric: Metric) -> Result<Body, RunError> {
+        let workers = self.workers;
+        let (build, memory, insert, ask) = (self.build, self.memory, self.insert, self.ask);
 
-    let mut bodies = Vec::new();
-    for cell in cells(req.operations, req.metrics) {
-        let body: Body = match cell.operation {
+        Ok(match operation {
             Operation::Insert => {
-                let (wk, params, metric) = (workload.clone(), params.clone(), cell.metric);
+                let (wk, params) = (self.dataset.clone(), self.params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
-                    let mut s = build(&params, workers).expect("proven above");
+                    let mut s = build(&params, workers).expect("proven at open");
                     match metric {
                         Metric::Latency => t.time_each(items, |v| insert(&mut s, v)),
                         _ => t.time(|| {
@@ -171,24 +136,29 @@ where
             }
 
             Operation::Query => {
-                let (truth, asked) = asking
+                // Disjoint field borrows: the memo is filled from the
+                // comparator and the data without borrowing all of `self`.
+                let (gt, dataset) = (&self.gt, &self.dataset);
+                let (truth, asked) = self
+                    .asked
                     .get_or_insert_with(|| {
-                        let truth = gt.truth(workload.items());
+                        let truth = gt.truth(dataset.items());
                         let asked = gt.probes(&truth);
                         (Rc::new(truth), Rc::new(asked))
                     })
                     .clone();
-                let (wk, params, gt, scored) = (
-                    workload.clone(),
-                    params.clone(),
-                    gt.clone(),
-                    cell.metric == Metric::Accuracy,
+                let (wk, params, gt, prepare) = (
+                    self.dataset.clone(),
+                    self.params.clone(),
+                    self.gt.clone(),
+                    self.prepare,
                 );
+                let scored = metric == Metric::Accuracy;
                 Box::new(move |t: &mut Timed| {
                     // Setup: a fresh sketch, filled. Outside the clock, and
                     // redone every run so no run inherits another's warmed
                     // state.
-                    let mut s = build(&params, workers).expect("proven above");
+                    let mut s = build(&params, workers).expect("proven at open");
                     for v in wk.items() {
                         insert(&mut s, v);
                     }
@@ -215,18 +185,20 @@ where
             }
 
             Operation::Prepare => {
-                let (wk, params) = (workload.clone(), params.clone());
+                let Some(prepare) = self.prepare else {
+                    return Err(RunError::Body(format!(
+                        "{}/{} provides no prepare",
+                        self.algorithm, self.impl_name
+                    )));
+                };
+                let (wk, params) = (self.dataset.clone(), self.params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
-                    let mut s = build(&params, workers).expect("proven above");
+                    let mut s = build(&params, workers).expect("proven at open");
                     for v in items {
                         insert(&mut s, v);
                     }
-                    t.time(|| {
-                        if let Some(prepare) = prepare {
-                            prepare(&mut s);
-                        }
-                    });
+                    t.time(|| prepare(&mut s));
                     RunOutcome {
                         work: items.len() as u64,
                         memory_bytes: Some(memory(&s) as u64),
@@ -236,14 +208,14 @@ where
             }
 
             Operation::Merge => {
-                let Some(merge) = merge else {
+                let Some(merge) = self.merge else {
                     return Err(RunError::Body(format!(
                         "{}/{} provides no merge",
-                        req.algorithm, req.impl_name
+                        self.algorithm, self.impl_name
                     )));
                 };
-                let shards = req.merge_shards.max(MIN_MERGE_SHARDS);
-                let (wk, params) = (workload.clone(), params.clone());
+                let shards = self.merge_shards.max(MIN_MERGE_SHARDS);
+                let (wk, params) = (self.dataset.clone(), self.params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
                     let per = items.len().div_ceil(shards).max(1);
@@ -252,7 +224,7 @@ where
                     let mut parts: Vec<S> = items
                         .chunks(per)
                         .map(|chunk| {
-                            let mut s = build(&params, workers).expect("proven above");
+                            let mut s = build(&params, workers).expect("proven at open");
                             for v in chunk {
                                 insert(&mut s, v);
                             }
@@ -274,36 +246,82 @@ where
                     }
                 })
             }
-        };
-        bodies.push(body);
+        })
     }
-
-    Ok((workload.description(), bodies))
 }
 
-/// The same, for a row nothing scores: insert, prepare and merge only, no
+/// Open a target over an already-materialised dataset. Construction is proved here,
+/// once, so a bad `ParamSet` fails before any measurement is asked for.
+#[allow(clippy::too_many_arguments)]
+pub fn open_target_scored<W, S, I, G, B, M, Ins, Ask>(
+    req: &Requirement,
+    dataset: Rc<W>,
+    gt: G,
+    build: B,
+    memory: M,
+    insert: Ins,
+    ask: Ask,
+    merge: Option<fn(&mut S, &S)>,
+    prepare: Option<fn(&mut S)>,
+) -> Result<Box<dyn Target>, RunError>
+where
+    W: Dataset<Item = I> + 'static,
+    S: 'static,
+    I: Clone + 'static,
+    G: GroundTruth<I> + 'static,
+    G::Truth: 'static,
+    G::Probe: 'static,
+    G::Answer: 'static,
+    B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
+    M: Fn(&S) -> usize + Copy + 'static,
+    Ins: Fn(&mut S, &I) + Copy + 'static,
+    Ask: Fn(&mut S, &G::Probe) -> G::Answer + Copy + 'static,
+{
+    let workers = req.workers.max(1);
+    build(&req.params, workers).map_err(|e| RunError::Body(e.to_string()))?;
+
+    Ok(Box::new(Opened {
+        algorithm: req.algorithm.clone(),
+        impl_name: req.impl_name.clone(),
+        params: req.params.clone(),
+        workers,
+        merge_shards: req.merge_shards,
+        dataset,
+        gt: Rc::new(gt),
+        asked: None,
+        build,
+        memory,
+        insert,
+        ask,
+        merge,
+        prepare,
+        _item: PhantomData,
+    }))
+}
+
+/// The same, for a target nothing scores: insert, prepare and merge only, no
 /// comparator and no probes.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_for_unscored<W, S, I, B, M, Ins>(
+pub fn open_target_unscored<W, S, I, B, M, Ins>(
     req: &Requirement,
-    workload: Rc<W>,
+    dataset: Rc<W>,
     build: B,
     memory: M,
     insert: Ins,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
-    W: Workload<Item = I> + 'static,
+    W: Dataset<Item = I> + 'static,
     S: 'static,
     I: Clone + 'static,
     B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
     Ins: Fn(&mut S, &I) + Copy + 'static,
 {
-    squares_for::<W, S, I, NoScore, B, M, Ins, _>(
+    open_target_scored::<W, S, I, NoScore, B, M, Ins, _>(
         req,
-        workload,
+        dataset,
         NoScore,
         build,
         memory,
@@ -314,7 +332,7 @@ where
     )
 }
 
-/// The comparator for a row nothing scores. Computes no truth and asks nothing.
+/// The comparator for a target nothing scores. Computes no truth and asks nothing.
 pub struct NoScore;
 
 impl<I> GroundTruth<I> for NoScore {
@@ -330,48 +348,24 @@ impl<I> GroundTruth<I> for NoScore {
     }
 }
 
-// ---------- the statistic a row answers ----------
-//
-// One entry point per statistic, and a wrapper calls the one its sketch answers.
-//
-// This is the seam that keeps a comparator out of `sketch-bench`. A wrapper
-// states a fact about its *sketch* — "this grid answers subpopulation
-// frequency" — and never a fact about the comparator. Which `GroundTruth` scores
-// that statistic, and with which knobs, is decided below, in the crate that owns
-// every comparator it could be. When a statistic grows a second comparator, only
-// this file changes.
-//
-// The `ask` a wrapper passes is still typed in the probe and answer the
-// statistic is asked in — `(String, V) -> f64` for subpopulation frequency —
-// because `ask` has a signature and that signature is what makes the sketch an
-// answer to *this* question rather than another. But those are structural types,
-// not a comparator: a wrapper writes `(String, i64)`, not `SubpopFrequencyGT`.
-//
-// `label_column` is a comparator knob, not a sketch parameter, so it is chosen
-// here. Column 0 is the coarsest grouping: the one whose cells the most records
-// reach, and so the one a grid's shape is picked to control.
-//
-// These take a `&WorkloadSpec` and materialise it themselves. The item type is
-// already pinned by the `insert` they are handed — `Labeled<V>` names its own
-// `Workload` through `BenchItem` — so a wrapper never has to generate anything,
-// and never has to know that a workload has a spec, a size or a distribution.
+// ---------- the statistic a target answers ----------
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
 
-/// A row answering **subpopulation frequency**: how often a value occurs inside
+/// A target answering **subpopulation frequency**: how often a value occurs inside
 /// a group.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_subpop_frequency<S, V, B, M, Ins, Ask>(
+pub fn open_target_subpop_frequency<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     V: ColumnItem + Eq + std::hash::Hash + Ord + Clone + 'static,
@@ -380,7 +374,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &(String, V)) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopFrequencyGT, B, M, Ins, Ask>(
+    open_target_scored::<LabeledDataset<V>, S, Labeled<V>, SubpopFrequencyGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopFrequencyGT {
@@ -395,19 +389,19 @@ where
     )
 }
 
-/// A row answering **subpopulation cardinality**: how many distinct values a
+/// A target answering **subpopulation cardinality**: how many distinct values a
 /// group holds. The statistic a Count-Min cell structurally cannot reach.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_subpop_cardinality<S, V, B, M, Ins, Ask>(
+pub fn open_target_subpop_cardinality<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     V: ColumnItem + Eq + std::hash::Hash + Clone + 'static,
@@ -416,7 +410,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &String) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopCardinalityGT, B, M, Ins, Ask>(
+    open_target_scored::<LabeledDataset<V>, S, Labeled<V>, SubpopCardinalityGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopCardinalityGT {
@@ -431,19 +425,19 @@ where
     )
 }
 
-/// A row answering **subpopulation quantile**: the ordered statistic inside a
+/// A target answering **subpopulation quantile**: the ordered statistic inside a
 /// group, scored in rank error.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_subpop_quantile<S, V, B, M, Ins, Ask>(
+pub fn open_target_subpop_quantile<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     V: ColumnItem + crate::accuracy::quantile::QuantileValue + Clone + 'static,
@@ -452,7 +446,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &(String, f64)) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopRankErrorGT, B, M, Ins, Ask>(
+    open_target_scored::<LabeledDataset<V>, S, Labeled<V>, SubpopRankErrorGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopRankErrorGT {
@@ -467,18 +461,18 @@ where
     )
 }
 
-/// A row answering **frequency**: how often a key occurs in the stream.
+/// A target answering **frequency**: how often a key occurs in the stream.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_frequency<S, K, B, M, Ins, Ask>(
+pub fn open_target_frequency<S, K, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
@@ -487,7 +481,7 @@ where
     Ins: Fn(&mut S, &K) + Copy + 'static,
     Ask: Fn(&mut S, &K) -> u64 + Copy + 'static,
 {
-    squares_for::<K::Wk, S, K, FrequencyGT, B, M, Ins, Ask>(
+    open_target_scored::<K::Wk, S, K, FrequencyGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<K>()?),
         FrequencyGT,
@@ -500,21 +494,93 @@ where
     )
 }
 
-/// A row answering **cardinality**: how many distinct keys the stream carried.
-///
-/// The probe is `()` — there is one question, asked repeatedly — so `ask` ignores
-/// it and returns the estimate.
+/// A target answering **top-k**: which `k` keys are heaviest, and how heavy.
+/// `k` is the comparator's parameter, not the sketch's, so it arrives here
+/// rather than on [`Requirement`]. The target's `ask` must use the same `k`.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_cardinality<S, K, B, M, Ins, Ask>(
+pub fn open_target_topk<S, K, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
+    k: usize,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
+where
+    S: 'static,
+    K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
+    B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
+    M: Fn(&S) -> usize + Copy + 'static,
+    Ins: Fn(&mut S, &K) + Copy + 'static,
+    Ask: Fn(&mut S, &()) -> Vec<(K, u64)> + Copy + 'static,
+{
+    open_target_scored::<K::Wk, S, K, TopkGT, B, M, Ins, Ask>(
+        req,
+        Rc::new(spec.build::<K>()?),
+        TopkGT { k },
+        build,
+        memory,
+        insert,
+        ask,
+        merge,
+        prepare,
+    )
+}
+
+/// A target answering **heavy-hitter**: the heavy items and how heavy.
+/// `phi` is this comparator's bound — heavy means `count > phi * n` — and
+/// travels with the statistic. The target's `ask` must draw the same line.
+#[allow(clippy::too_many_arguments)]
+pub fn open_target_heavy_hitter<S, K, B, M, Ins, Ask>(
+    req: &Requirement,
+    spec: &DatasetSpec,
+    phi: f64,
+    build: B,
+    memory: M,
+    insert: Ins,
+    ask: Ask,
+    merge: Option<fn(&mut S, &S)>,
+    prepare: Option<fn(&mut S)>,
+) -> Result<Box<dyn Target>, RunError>
+where
+    S: 'static,
+    K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
+    B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
+    M: Fn(&S) -> usize + Copy + 'static,
+    Ins: Fn(&mut S, &K) + Copy + 'static,
+    Ask: Fn(&mut S, &()) -> Vec<(K, u64)> + Copy + 'static,
+{
+    open_target_scored::<K::Wk, S, K, HeavyHitterGT, B, M, Ins, Ask>(
+        req,
+        Rc::new(spec.build::<K>()?),
+        HeavyHitterGT { phi },
+        build,
+        memory,
+        insert,
+        ask,
+        merge,
+        prepare,
+    )
+}
+
+/// A target answering **cardinality**: how many distinct keys the stream carried.
+///
+/// The probe is `()` — there is one question, asked repeatedly — so `ask` ignores
+/// it and returns the estimate.
+#[allow(clippy::too_many_arguments)]
+pub fn open_target_cardinality<S, K, B, M, Ins, Ask>(
+    req: &Requirement,
+    spec: &DatasetSpec,
+    build: B,
+    memory: M,
+    insert: Ins,
+    ask: Ask,
+    merge: Option<fn(&mut S, &S)>,
+    prepare: Option<fn(&mut S)>,
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     K: BenchItem + Eq + std::hash::Hash + 'static,
@@ -523,7 +589,7 @@ where
     Ins: Fn(&mut S, &K) + Copy + 'static,
     Ask: Fn(&mut S, &()) -> f64 + Copy + 'static,
 {
-    squares_for::<K::Wk, S, K, CardinalityGT, B, M, Ins, Ask>(
+    open_target_scored::<K::Wk, S, K, CardinalityGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<K>()?),
         CardinalityGT,
@@ -536,19 +602,19 @@ where
     )
 }
 
-/// A row answering **quantile**, scored in rank error: the value at a fraction of
+/// A target answering **quantile**, scored in rank error: the value at a fraction of
 /// the sorted stream.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_quantile<S, I, B, M, Ins, Ask>(
+pub fn open_target_quantile<S, I, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     I: BenchItem + Clone + PartialOrd + crate::accuracy::quantile::ToF64 + 'static,
@@ -557,10 +623,10 @@ where
     Ins: Fn(&mut S, &I) + Copy + 'static,
     Ask: Fn(&mut S, &f64) -> f64 + Copy + 'static,
 {
-    squares_for::<I::Wk, S, I, RankErrorGT, B, M, Ins, Ask>(
+    open_target_scored::<I::Wk, S, I, RankErrorGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<I>()?),
-        RankErrorGT {},
+        RankErrorGT,
         build,
         memory,
         insert,
@@ -570,18 +636,18 @@ where
     )
 }
 
-/// A row that answers **nothing**: measured but not scored. The parallel-insert
+/// A target that answers **nothing**: measured but not scored. The parallel-insert
 /// rows, whose worker sketches are dropped rather than asked.
 #[allow(clippy::too_many_arguments)]
-pub fn squares_timed_only<S, I, B, M, Ins>(
+pub fn open_target_timed_only<S, I, B, M, Ins>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<Box<dyn Target>, RunError>
 where
     S: 'static,
     I: BenchItem + Clone + 'static,
@@ -589,7 +655,7 @@ where
     M: Fn(&S) -> usize + Copy + 'static,
     Ins: Fn(&mut S, &I) + Copy + 'static,
 {
-    squares_for_unscored::<I::Wk, S, I, B, M, Ins>(
+    open_target_unscored::<I::Wk, S, I, B, M, Ins>(
         req,
         Rc::new(spec.build::<I>()?),
         build,

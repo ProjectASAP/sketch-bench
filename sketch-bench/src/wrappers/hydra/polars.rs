@@ -8,7 +8,7 @@ use crate::build_error::BuildError;
 use crate::wrappers::polars_shared::*;
 use ::polars::prelude::*;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::workload::Labeled;
+use aqpbm_core::dataset::Labeled;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -153,7 +153,7 @@ pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
     let counts = counts.u64().expect("u64 counts");
 
     sketch.counts.reserve(groups.len());
-    for ((g, v), c) in groups.into_iter().zip(vals.into_iter()).zip(counts) {
+    for ((g, v), c) in groups.into_iter().zip(vals).zip(counts) {
         if let (Some(g), Some(v), Some(c)) = (g, v, c) {
             sketch.counts.insert((g.to_string(), v), c);
         }

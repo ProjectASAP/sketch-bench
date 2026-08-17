@@ -46,7 +46,7 @@ pub fn build_cms_datasketches(
     // Checked, because the point of the bound is that the product is what
     // overflows: `usize::MAX` rows-worth of columns must not wrap into a
     // small number that passes.
-    let entries = p.rows.checked_mul(p.cols).unwrap_or(usize::MAX);
+    let entries = p.rows.saturating_mul(p.cols);
     if entries >= DS_CMS_MAX_ENTRIES {
         return Err(BuildError(format!(
             "datasketches CMS: rows x cols = {entries} counters, and this library \

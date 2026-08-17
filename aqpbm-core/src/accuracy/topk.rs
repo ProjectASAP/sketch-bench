@@ -134,9 +134,9 @@ mod tests {
     /// straddles the boundary — the one place a top-k ranking's tie-break is
     /// observable at all.
     fn tied_at_the_boundary() -> Vec<i64> {
-        let mut items: Vec<i64> = std::iter::repeat(1).take(10).collect();
+        let mut items: Vec<i64> = std::iter::repeat_n(1, 10).collect();
         for key in 2..=6 {
-            items.extend(std::iter::repeat(key).take(5));
+            items.extend(std::iter::repeat_n(key, 5));
         }
         items
     }
@@ -164,25 +164,23 @@ mod tests {
         let gt = TopkGT { k: 3 };
         for _ in 0..32 {
             let cmp =
-                crate::accuracy::run_probes(&gt, &ask_exact, &mut exact_source(&items), &items);
-            assert_eq!(cmp.metrics["precision_at_k"], 1.0, "{:?}", cmp.metrics);
-            assert_eq!(cmp.metrics["recall_at_k"], 1.0, "{:?}", cmp.metrics);
+                crate::accuracy::score_with(&gt, &ask_exact, &mut exact_source(&items), &items);
+            assert_eq!(cmp["precision_at_k"], 1.0, "{:?}", cmp);
+            assert_eq!(cmp["recall_at_k"], 1.0, "{:?}", cmp);
         }
     }
 
-    /// Scoring is a pure function of `(sketch, items, k)`. It was not: the
-    /// truth set was rebuilt per call from a fresh `HashMap`, so two calls on
-    /// one sketch disagreed.
+    /// Scoring is a pure function of `(sketch, items, k)`.
     #[test]
     fn scoring_the_same_sketch_twice_gives_the_same_answer() {
         let items = tied_at_the_boundary();
         let sketch = exact_source(&items);
         let gt = TopkGT { k: 3 };
-        let first = crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items);
+        let first = crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items);
         for _ in 0..32 {
             assert_eq!(
-                crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items).metrics,
-                first.metrics
+                crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items),
+                first
             );
         }
     }

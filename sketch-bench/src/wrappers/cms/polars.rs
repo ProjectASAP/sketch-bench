@@ -8,7 +8,8 @@ use crate::build_error::BuildError;
 use crate::wrappers::polars_shared::*;
 use aqpbm_core::config::ParamSet;
 
-/// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
+/// No tunable shape: the exact baseline stores the stream itself, so it
+/// ignores the config rather than refusing it.
 pub fn build_polars_frequency_cms(
     config: &ParamSet,
     _workers: usize,

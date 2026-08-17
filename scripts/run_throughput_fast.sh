@@ -108,7 +108,7 @@ if [[ -f "${INPUT}" ]]; then
     INPUT_FLAG=(--input "${INPUT}")
 else
     echo "# input file ${INPUT} not found; using generated uniform workload size=${SIZE}" >&2
-    INPUT_FLAG=(--workload uniform --size "${SIZE}" --cardinality 100000)
+    INPUT_FLAG=(--dataset uniform --size "${SIZE}" --cardinality 100000)
 fi
 
 run_one() {

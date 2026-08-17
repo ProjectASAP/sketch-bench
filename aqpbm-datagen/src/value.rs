@@ -1,9 +1,6 @@
 //! The rendering axis: the [`ColumnData`] a generated column comes back as, how
-//! a caller peels one, and how a drawn rank becomes a string.
-//!
-//! Rendering itself is not here — it is four match arms in
-//! [`ColumnSpec::render`](crate::ColumnSpec::render), where `data_type` is read
-//! once per column and the casts are visible at the point they happen.
+//! a caller peels one, and how a drawn rank becomes a string. Rendering itself is
+//! four match arms in `ColumnSpec::render`, where `data_type` is read once.
 
 use serde::{Deserialize, Serialize};
 
@@ -86,13 +83,9 @@ impl ColumnData {
     }
 }
 
-/// The item type a caller reads a column at.
-///
-/// This is a *consumer's* trait, not the generator's: rendering lives in
-/// [`ColumnSpec::render`](crate::ColumnSpec::render), where the four cases are
-/// four visible match arms. What a downstream crate cannot write for itself is
-/// the pair below — a workload generic over its item type needs to know which
-/// `data_type` names it, and how to get its own `Vec<T>` back out.
+/// The item type a caller reads a column at. A *consumer's* trait, not the
+/// generator's: what a downstream crate cannot write for itself is the pair
+/// below — which `data_type` names it, and how to get its own `Vec<T>` back.
 pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     /// The `data_type` spelling that selects this type.
     const NAME: &'static str;

@@ -1,7 +1,6 @@
-//! Folding a run population into statistics. Every function here takes the
-//! measured runs and returns one summary, and none of them knows which square
-//! was measured: what a record should contain is the caller's question, and
-//! the caller already has the answer.
+//! Folding a run population into statistics: mean, stddev and 95% CI across the
+//! N post-warm-up runs of one measurement. Not data aggregation, and not sketch
+//! union/merge — `Operation::Merge` only picks which statistic a merge reports.
 
 pub mod welford;
 
@@ -178,7 +177,7 @@ mod tests {
         RunMetrics {
             work,
             elapsed_ns,
-            ..RunMetrics::empty()
+            ..RunMetrics::default()
         }
     }
 
@@ -222,10 +221,14 @@ mod tests {
     /// Scores fold per key across runs, with a stddev only where there is one.
     #[test]
     fn scores_fold_every_key_across_runs() {
-        let mut a = RunMetrics::empty();
-        a.scores = Some([("are_all".to_string(), 0.10)].into_iter().collect());
-        let mut b = RunMetrics::empty();
-        b.scores = Some([("are_all".to_string(), 0.20)].into_iter().collect());
+        let a = RunMetrics {
+            scores: Some([("are_all".to_string(), 0.10)].into_iter().collect()),
+            ..Default::default()
+        };
+        let b = RunMetrics {
+            scores: Some([("are_all".to_string(), 0.20)].into_iter().collect()),
+            ..Default::default()
+        };
         let out = scores(&[a, b]).expect("two runs carried scores");
         let obj = out.as_object().unwrap();
         assert!((obj["are_all"].as_f64().unwrap() - 0.15).abs() < 1e-9);
@@ -236,6 +239,6 @@ mod tests {
     /// A run with no scores is not a score of zero.
     #[test]
     fn no_scores_is_absent_not_zero() {
-        assert!(scores(&[RunMetrics::empty()]).is_none());
+        assert!(scores(&[RunMetrics::default()]).is_none());
     }
 }

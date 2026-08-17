@@ -1,11 +1,6 @@
-//! The on-disk workload format: a raw little-endian value stream (`.bin`) plus a
-//! JSON provenance sidecar.
-//!
-//! It lives here, beside the readers in [`crate::workload`], rather than in
-//! `aqpbm-datagen` — the generator produces values in memory and nothing else,
-//! so a file format is this crate's concern. The `.bin` layout is deliberately
-//! header-less, which is exactly why the sidecar has to carry the dtype: an
-//! `f64` file is byte-indistinguishable from an `i64` one.
+//! The on-disk dataset format: a raw little-endian value stream (`.bin`) plus a
+//! JSON provenance sidecar. The `.bin` layout is header-less, which is why the
+//! sidecar has to carry the dtype: an `f64` file looks exactly like an `i64` one.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,16 +10,12 @@ use serde::{Deserialize, Serialize};
 use aqpbm_datagen::{ColumnData, DataGenError, TableDescription};
 
 /// Schema version of the `.meta.json` sidecar. Version 3 carries a
-/// [`TableDescription`]; versions 1 and 2 carried the retired `Shape` axis and
-/// do not deserialize.
+/// [`TableDescription`]; versions 1 and 2 do not deserialize.
 pub const BIN_META_SCHEMA_VERSION: u32 = 3;
 
-/// A human-facing summary of a stored column, for `workload describe` to print.
-/// Sidecar provenance, not a generator concern: the values themselves are what
-/// `aqpbm-datagen` hands back, and describing a file is this crate's job.
-///
+/// A human-facing summary of a stored column, for `dataset describe` to print.
 /// `min`/`max`/`first`/`last` are `f64`, so beyond `2^53` they are approximate —
-/// the `.bin` stream holds exact values.
+/// the `.bin` stream holds the exact values.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BasicStats {
     pub count: usize,
@@ -191,5 +182,20 @@ mod tests {
         let s = BasicStats::of(&ColumnData::Float64(vec![]));
         assert_eq!(s.count, 0);
         assert!(s.min.is_none() && s.max.is_none());
+    }
+
+    /// The `.bin` payload is a bare little-endian stream with no framing, so a
+    /// variable-width item has nowhere to record where one value ends.
+    #[test]
+    fn a_string_column_cannot_be_written_to_a_bin() {
+        use crate::test_support::zipf_column;
+        use aqpbm_datagen::TableDescription;
+
+        let spec = TableDescription::single("key", zipf_column(64, 1.0, 1, "string"), 8);
+        let column = spec.generate().unwrap().into_column(0).unwrap();
+        let path = std::env::temp_dir().join("sketchlib_string_bin.bin");
+        let err = write_bin(&path, &column).unwrap_err().to_string();
+        assert!(err.contains("length field"), "{err}");
+        std::fs::remove_file(&path).ok();
     }
 }
