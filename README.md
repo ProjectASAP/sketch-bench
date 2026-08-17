@@ -16,6 +16,10 @@ At root directory of this project, just run:
 
 ### Example: HyperLogLog insertion throughput
 
+explanation of cli flag
+not just adjusting the number
+what different cli flag means and what can be done with that is more important
+
 ```sh
 % ./target/release/approxbench sketchbench \
       --algorithm hll --impl lib --config 'lg_k=14' \
@@ -59,7 +63,19 @@ Data is in field `insert_throughput_items_per_sec` and `merge_time_ms` / `merge_
 
 ## Reference
 
-[Overview](./docs/component_walk_through.md#graphic-view-of-structure)
+<!-- this is weird, remove -->
+<!-- [Overview](./docs/component_walk_through.md#graphic-view-of-structure) -->
+
+separate by functionality / logic, not by crate
+docs mimicing code structure is not necessary
+
+dev docs: help developer to achieve new things, like extend/contribute, what do they need; specific to the code; code detail, can be added after code is there;
+
+desgin doc: how something is achieved someway; why something is done this way; design principle;
+
+some concepts can go to one location
+
+separate by crates may not be necessary at this moments
 
 [Core crate](./docs/aqpbm-core.md)
 
