@@ -1,36 +1,9 @@
-//! The compile-time matrix shapes the `*-fastpath-fixedmatrix` rows offer.
-//!
-//! `asap_sketchlib::impl_fixed_matrix!` takes its dimensions as **literals** and
-//! bakes them into a `Box<[i32; ROWS * COLS]>`, which is the whole point of the
-//! storage: the compiler folds `row * COLS + col` and the bounds check away, and
-//! pricing that against the runtime-sized `Vector2D` is what these rows exist
-//! for. A shape is therefore a monomorphisation, not a value, and one that was
-//! never compiled cannot be built at run time.
-//!
-//! So the set is written down here and dispatched over at run time, the same way
-//! `hll`'s `lg_k` selects a register-storage type. Instantiating a shape is
-//! close to free: a trial grid of 36 measured at no detectable compile time and
-//! about 26 KiB of rlib each, which is why the table below can afford 52 and
-//! still leave a caller having to try to fall outside it.
-//!
-//! # Adding a shape
-//!
-//! One line in [`fixed_matrix_shapes!`], and it needs a distinct type name.
-//! Nothing else changes: the dispatch, the shape list the error message prints,
-//! and the tests all read off this table.
-//!
-//! # Why the grid has a corner missing
-//!
-//! The widest shape is capped at 327,690 counters, which is what the row already
-//! carried before it became sweepable. Past that, `Box::new([0i32; N])`
-//! materialises the array on the stack before moving it to the heap in unoptimised
-//! builds, and `cargo test` runs each test on a 2 MiB thread. Wide-and-deep is the
-//! corner that trips it, so `cols = 65536` stops at 5 rows.
+//! fixed matrix for asap_sketchlib sketches
+//! a pre-built of some predetermined fixed-size matrix
+//! if need extra shape: add here and re-compile the benchmark
 
 use asap_sketchlib::{impl_fixed_matrix, DefaultXxHasher, FastPathHasher, MatrixStorage};
 
-/// Receives the storage type a `(rows, cols)` pair selects.
-///
 /// A trait and not a closure because the shape is a **type**: the visitor is the
 /// only way to hand a monomorphisation back to a caller that picked it with a
 /// pair of runtime integers.
@@ -211,7 +184,11 @@ mod tests {
         for &(rows, cols) in FIXED_SHAPES {
             let got = with_fixed_matrix(rows, cols, Dims)
                 .unwrap_or_else(|| panic!("{rows}x{cols} is listed but does not dispatch"));
-            assert_eq!(got, (rows, cols), "the type baked at {rows}x{cols} disagrees");
+            assert_eq!(
+                got,
+                (rows, cols),
+                "the type baked at {rows}x{cols} disagrees"
+            );
         }
     }
 
@@ -255,14 +232,14 @@ mod tests {
     fn the_refusal_is_a_recipe_and_not_just_a_refusal() {
         let msg = unsupported_shape("cms-fastpath-fixedmatrix", 5, 3000);
         for expected in [
-            "5x3000",                                        // what was asked for
-            "M5x3000 => (5, 3000),",                         // the line to add
-            "sketch-bench/src/wrappers/fixed_matrix.rs",     // where it goes
-            "impl_fixed_matrix!",                            // what expands it
-            "MatrixStorage",                                 // what that gives you
+            "5x3000",                                    // what was asked for
+            "M5x3000 => (5, 3000),",                     // the line to add
+            "sketch-bench/src/wrappers/fixed_matrix.rs", // where it goes
+            "impl_fixed_matrix!",                        // what expands it
+            "MatrixStorage",                             // what that gives you
             "FastPathHasher",
-            "cargo build",                                   // how to pick it up
-            "vector2d",                                      // the no-rebuild route
+            "cargo build", // how to pick it up
+            "vector2d",    // the no-rebuild route
         ] {
             assert!(msg.contains(expected), "missing {expected:?} from:\n{msg}");
         }

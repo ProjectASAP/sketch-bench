@@ -1,22 +1,19 @@
 //! Top-k algorithm ground truth. Exact top-k from a HashMap
 //! counter; reports precision@k and recall@k.
 
-use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use super::statistic::TopKOps;
 use super::GroundTruth;
 
 pub struct TopkGT {
     pub k: usize,
 }
 
-impl<S, K> GroundTruth<S> for TopkGT
+impl<K> GroundTruth<K> for TopkGT
 where
     K: Eq + Hash + Ord + Clone,
-    S: Accumulator<Item = K> + TopKOps<Key = K>,
 {
     /// The true k heaviest keys, in the total order every top-k impl ranks by.
     type Truth = Vec<(K, u64)>;
@@ -40,10 +37,6 @@ where
 
     fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
         vec![()]
-    }
-
-    fn ask(&self, sketch: &S, _probe: &()) -> Vec<(K, u64)> {
-        sketch.estimate_topk(self.k)
     }
 
     fn score(
@@ -89,13 +82,12 @@ mod tests {
     /// An exact top-k by hand: a `HashMap` counter plus a heap. Exact by
     /// construction, so it must score 1.0 against [`TopkGT`]; anything less is
     /// the comparator being wrong. Hand-written so the check owes no library.
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct ExactTopK {
         counts: HashMap<i64, u64>,
     }
 
-    impl Accumulator for ExactTopK {
-        type Item = i64;
+    impl ExactTopK {
         fn update(&mut self, v: &i64) {
             *self.counts.entry(*v).or_insert(0) += 1;
         }
@@ -124,8 +116,7 @@ mod tests {
         }
     }
 
-    impl TopKOps for ExactTopK {
-        type Key = i64;
+    impl ExactTopK {
         fn estimate_topk(&self, k: usize) -> Vec<(i64, u64)> {
             let mut heap: BinaryHeap<Ranked> = self
                 .counts
@@ -158,6 +149,12 @@ mod tests {
         s
     }
 
+    /// How the double is asked. `k` is the comparator's, so the closure reads
+    /// it from the probe's own comparator rather than from the sketch.
+    fn ask_exact(s: &mut ExactTopK, _: &()) -> Vec<(i64, u64)> {
+        s.estimate_topk(3)
+    }
+
     /// The exact baseline is this comparator's own check: anything below 1.0
     /// means the comparator is wrong, not the sketch. Repeated because the
     /// failure it guards was a per-`HashMap`-seed coin flip.
@@ -166,7 +163,8 @@ mod tests {
         let items = tied_at_the_boundary();
         let gt = TopkGT { k: 3 };
         for _ in 0..32 {
-            let cmp = crate::accuracy::run_probes(&gt, &exact_source(&items), &items, false);
+            let cmp =
+                crate::accuracy::run_probes(&gt, &ask_exact, &mut exact_source(&items), &items);
             assert_eq!(cmp.metrics["precision_at_k"], 1.0, "{:?}", cmp.metrics);
             assert_eq!(cmp.metrics["recall_at_k"], 1.0, "{:?}", cmp.metrics);
         }
@@ -180,9 +178,12 @@ mod tests {
         let items = tied_at_the_boundary();
         let sketch = exact_source(&items);
         let gt = TopkGT { k: 3 };
-        let first = crate::accuracy::run_probes(&gt, &sketch, &items, false);
+        let first = crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items);
         for _ in 0..32 {
-            assert_eq!(crate::accuracy::run_probes(&gt, &sketch, &items, false).metrics, first.metrics);
+            assert_eq!(
+                crate::accuracy::run_probes(&gt, &ask_exact, &mut sketch.clone(), &items).metrics,
+                first.metrics
+            );
         }
     }
 }

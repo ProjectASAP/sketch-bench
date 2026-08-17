@@ -5,7 +5,6 @@
 //! See `docs/DESIGN.md` §4.2.
 
 use crate::accumulator::Accumulator;
-use crate::memory_footprint::MemoryFootprint;
 
 /// A handler for benchmark/runtime metrics events. Impls: [`NoopSink`] below,
 /// [`FullSink`](crate::metrics::FullSink) for offline runs, and
@@ -34,7 +33,7 @@ impl MetricsSink for NoopSink {
 }
 
 /// Blanket impl so callers can hand a `&mut Sink` into `Probe`
-/// without moving ownership — lets `BenchRunner` keep the sink
+/// without moving ownership — lets a caller keep the sink
 /// alive past the probe and call `finalize` on it.
 impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
     #[inline]
@@ -57,7 +56,7 @@ impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
 
 /// `Probe<S, Sink>` wraps an `Accumulator` + `MetricsSink` into an `Accumulator`
 /// recording timing hooks around the inner `update`. The identical wrapper serves
-/// the offline [`BenchRunner`](crate::runner::BenchRunner) and the embedded sampler.
+/// the offline recorder and the embedded sampler.
 pub struct Probe<S: Accumulator, Sink: MetricsSink> {
     inner: S,
     sink: Sink,
@@ -92,12 +91,6 @@ impl<S: Accumulator, Sink: MetricsSink> Accumulator for Probe<S, Sink> {
     }
 }
 
-impl<S: Accumulator + MemoryFootprint, Sink: MetricsSink> MemoryFootprint for Probe<S, Sink> {
-    fn memory_bytes(&self) -> usize {
-        self.inner.memory_bytes()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,12 +102,6 @@ mod tests {
         type Item = i64;
         fn update(&mut self, _: &i64) {
             self.updates += 1;
-        }
-    }
-
-    impl MemoryFootprint for DummySketch {
-        fn memory_bytes(&self) -> usize {
-            0
         }
     }
 

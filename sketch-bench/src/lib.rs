@@ -1,10 +1,17 @@
-//! `sketch-bench` — the sketches themselves: wrapped implementations, their
-//! per-family construction parameters, the catalog resolving
-//! `("hll-hip", "lib")` to one of them, and the CSV rendering. A bundle, not a framework: to
-//! benchmark a sketch of your own, depend on `aqpbm-core` and implement its
-//! traits. This crate exists for the CLI. See `docs/DESIGN.md` §5.
+//! `sketch-bench` — the sketches themselves: the wrapped implementations, their
+//! per-family construction parameters, and the registry that resolves
+//! `("hll-hip", "lib")` to one of them.
+//!
+//! A bundle, not a framework. `aqpbm-core` measures *a* sketch and names none
+//! of them; this crate is where the set lives, and where how-each-is-used
+//! lives with it. See `docs/sketch-bench.md`.
 
-pub mod catalog;
-pub mod legacy_csv;
+/// Why a sketch could not be built at a requested config.
+pub mod build_error;
+/// The per-family construction parameter vocabularies.
 pub mod params;
+/// Which sketches are registered, what each supports, and how a request
+/// resolves to one.
+pub mod registry;
+/// One directory per algorithm, one file per library.
 pub mod wrappers;

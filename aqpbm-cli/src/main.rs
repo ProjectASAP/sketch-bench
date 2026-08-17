@@ -6,8 +6,8 @@
 
 mod cli;
 mod flatten_record;
-mod raw_csv;
 mod repeat;
+mod runners;
 mod workload_cmd;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
@@ -31,8 +31,10 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
-use aqpbm_core::metrics::{MetricsMask, OperationMask};
-use aqpbm_core::runner::BenchConfig;
+use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::metrics::{cells, Metric, MetricsMask, Operation, OperationMask};
+use aqpbm_core::ops::MIN_MERGE_SHARDS;
+use aqpbm_core::runner::BenchReport;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -41,11 +43,12 @@ use clap::Parser;
 use sketch_bench::params::ParamSet;
 
 use cli::{Cli, Cmd, SketchbenchArgs};
-// The catalog — which sketches exist, how to build them, which ground-truth calculator scores
+// The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use aqpbm_core::cell::WorkloadSpec;
-use sketch_bench::catalog;
+use aqpbm_core::request::Requirement;
+use sketch_bench::registry;
 
 /// What is measured. No default and no `all`: a request says which squares of
 /// the grid it wants, and a shorthand that sweeps the grid would sweep squares
@@ -88,15 +91,6 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
         };
     }
     Ok(m)
-}
-
-/// Validate `--algorithm`/`--impl` and report whether a comparator can score it.
-fn select_impl(algorithm: &str, impl_name: &str) -> Result<bool> {
-    if !catalog::algorithm_exists(algorithm) {
-        bail!("unknown algorithm: {algorithm}");
-    }
-    catalog::scores_accuracy(algorithm, impl_name)
-        .ok_or_else(|| anyhow::anyhow!("no impl '{impl_name}' for algorithm '{algorithm}'"))
 }
 
 /// Open the `--report` destination. `None` or `"-"` → stdout.
@@ -143,13 +137,13 @@ fn main() -> Result<()> {
     }
 }
 
-/// `--list-impls` prints and exits. Enumerating a bundle's catalog hangs off
+/// `--list-impls` prints and exits. Enumerating a bundle's registry hangs off
 /// that bundle's subcommand, since a second bundle would make a free-standing
-/// `list-impls` ambiguous about whose catalog it means.
+/// `list-impls` ambiguous about whose registry it means.
 fn list_impls() -> Result<()> {
-    // The catalog owns the header too: it is the one place that knows how wide
+    // The registry owns the header too: it is the one place that knows how wide
     // the algorithm column has to be for the rows underneath it.
-    for line in catalog::list() {
+    for line in registry::list() {
         println!("{line}");
     }
     Ok(())
@@ -259,12 +253,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // Parent role: spawn the repeats, merge, emit. A child (marked by the
     // env var) falls through and runs the measurement itself.
     if args.repeats > 1 && !repeat::is_child() {
-        if args.raw_csv.is_some() {
-            bail!(
-                "--raw-csv cannot be combined with --repeats: the legacy CSV shape has no \
-                 repeat column, so every repeat would append indistinguishable rows"
-            );
-        }
         if args.flat {
             bail!(
                 "--flat cannot be combined with --repeats: a flattened row holds one value \
@@ -289,12 +277,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    // The only item-type choice left: an `ordered` row builds at either width.
-    // Every other row's type is fixed by its Rust type, and `catalog::run`
-    // refuses a width it cannot honour before anything is generated.
+    // The only item-type choice left: the KLL sketches build at either width.
+    // Every other item type is fixed by its wrapper, which is what refuses a
+    // width it cannot honour — a construction choice like any other, so the
+    // registry does not screen it.
     let width = match args.dtype.as_str() {
-        "i64" => catalog::Numeric::I64,
-        "f64" => catalog::Numeric::F64,
+        "i64" => registry::Numeric::I64,
+        "f64" => registry::Numeric::F64,
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = workload_spec(&args)?;
@@ -312,30 +301,44 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     )?;
     // `--merge-shards` no longer selects anything: it says how many shards the
     // merge operation folds, and `--operations merge` is what asks for it.
-    let cfg = BenchConfig {
+    // The loop knobs, and only those. Which squares to run, at which config,
+    // with how many workers, is the *request* — it goes in `Requirement`, not
+    // in a whole-run config a single measurement would have to read past.
+    let cfg = MeasureConfig {
         runs: args.runs,
         warmup_runs: args.warmup_runs,
         metrics: metrics_mask,
-        operations: operations_mask,
-        threads: args.workers.max(1),
-        merge_shards: args.merge_shards,
-        seed: args.seed,
     };
-    let scores_accuracy = select_impl(&algorithm, &impl_name)?;
     // One cell = one (impl, config). `--config` is one point, or a
-    // parameterless point when omitted; keys are type-checked at
-    // construction, where the impl reads them.
+    // parameterless point when omitted. Syntax only here: whether the algorithm
+    // exists is `registry::check`'s answer below, and the keys are type-checked
+    // at construction, where the impl reads them.
     let params = match args.config.as_deref() {
-        Some(s) => catalog::config_point(&algorithm, s)?,
+        Some(s) => ParamSet::single(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
     };
 
-    // Asking for a square that needs a comparator, of a row that has none.
-    if aqpbm_core::runner::needs_ground_truth(operations_mask, metrics_mask) && !scores_accuracy {
-        eprintln!(
-            "approxbench: {algorithm}/{impl_name} declares no query capability, so the squares over the query operation measure nothing"
-        );
-    }
+    // Everything the registry needs, as one value. Assembled here and nowhere
+    // else, so there is a single place that says what a request is.
+    let req = Requirement {
+        algorithm: algorithm.clone(),
+        impl_name: impl_name.clone(),
+        params: params.clone(),
+        operations: operations_mask,
+        metrics: metrics_mask,
+        width,
+        workers: args.workers.max(1),
+        merge_shards: args.merge_shards,
+        comparator: args.comparator.clone(),
+    };
+
+    // Can this run? The registry owns the answer, because it is the one thing
+    // that knows what each sketch supports. Asked before the workload is
+    // generated, so a request naming an operation, a metric, a width or a
+    // comparator this cell cannot honour costs nothing to refuse.
+    // Every `ResolveError` variant already names the cell it is about, so the
+    // message is passed through rather than prefixed with it a second time.
+    registry::check(&req).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
@@ -346,53 +349,87 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         cfg.warmup_runs,
     );
 
-    // Whether this cell can run is decided at construction: a wrong dtype, a
-    // missed fixed shape, or a missing param all surface here. The tool ran
-    // exactly what it was asked, so it fails rather than skipping on.
-    let reports = catalog::run(
-        &algorithm,
-        &impl_name,
-        &cfg,
-        &spec,
-        &params,
-        width,
-        args.comparator.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+    // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
+    // closure per square and knows nothing about how often it will be run. The
+    // workload is generated inside, at the row's own item type, which is the one
+    // thing about this request the frontend cannot work out for itself.
+    //
+    // Construction is the failure `check` cannot see — a fixed shape the build
+    // refuses, a `lg_k` the library rejects — and it lands here, before anything
+    // is timed, rather than as a measurement of zero.
+    // `check` proved this pair is registered; `run_direct` is whether it has been
+    // wired to its wrapper's closures yet. Only the hydra family has, so the rest
+    // say so by name instead of failing somewhere less obvious.
+    let (workload, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{algorithm}/{impl_name} is registered but not yet wired to its wrapper"
+            )
+        })?
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
-    // `catalog::run` returns one report per square; emit each on its own
-    // JSONL line and CSV row group. A downstream group-by on
-    // (sketch, impl, sketch_config, workload) merges them back.
-    // Resolved once: `catalog::run` succeeded, so the row exists and so does
-    // its family.
-    let family = catalog::family_of(&algorithm).unwrap_or(algorithm.as_str());
-
-    let mut sink = ReportSink::open(args.report.as_deref())?;
-    let mut records = Vec::with_capacity(reports.len());
-    for report in &reports {
-        if let Some(dir) = args.raw_csv.as_deref() {
-            raw_csv::write_runs(
-                std::path::Path::new(dir),
-                family,
-                &algorithm,
-                &impl_name,
-                Some(&params),
-                cfg.seed,
-                cfg.threads,
-                report,
-            )?;
-        }
-        let mut record = report.to_record();
-        record.sketch_config = Some(params.to_json_value());
-        // The algorithm names the structural variant, so a reader grouping by
-        // it compares variants. The family is what groups the variants back
-        // together, which is the axis a cross-library comparison is taken over.
-        record.family = Some(family.to_string());
-        records.push(record);
+    // An empty mask on either axis selects no squares. Legal: the caller gets no
+    // records because it asked for none.
+    if bodies.is_empty() {
+        eprintln!("approxbench: {algorithm}/{impl_name} selected no squares; nothing to measure");
+        return Ok(());
     }
 
-    // One invocation is one cell, so every record here shares an identity and
-    // the whole vector is exactly what `flatten_record` expects.
+    // Core times each one. It is handed a closure and a run count and told
+    // nothing else — not which sketch, not which operation. This loop is the only
+    // place all three crates meet, and it is the frontend's because only the
+    // frontend knows which squares it asked for: the bodies arrive in `cells`
+    // order, and `cells` is the same pure function of the same two masks this
+    // program parsed, so the row never has to say which square is which.
+    let mut reports = Vec::with_capacity(bodies.len());
+    for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
+        // Error is deterministic given (data, parameters), and a workload is
+        // drawn once and not redrawn — so looping an accuracy square would
+        // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
+        // `n: 10`. A timing square is where repeating one draw *is* a real
+        // repeat, so only that one takes `--runs`.
+        let cell_cfg = if cell.metric == Metric::Accuracy {
+            MeasureConfig { runs: 1, ..cfg.clone() }
+        } else {
+            cfg.clone()
+        };
+        let runs = aqpbm_core::measure(&cell_cfg, body);
+        let mut report = BenchReport::fold(
+            algorithm.as_str(),
+            impl_name.as_str(),
+            workload.clone(),
+            cell.operation,
+            cell.metric,
+            runs,
+        );
+        // The count that actually folded: a request below the floor is raised,
+        // and a record states what ran rather than what was asked for.
+        if cell.operation == Operation::Merge {
+            report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+        }
+        reports.push(report);
+    }
+
+    // One record per square, each on its own JSONL line. A downstream group-by on
+    // (sketch, impl, sketch_config, workload) merges them back.
+    //
+    // The algorithm names the structural variant, so a reader grouping by it
+    // compares variants; the family is what groups the variants back together,
+    // which is the axis a cross-library comparison is taken over.
+    let family = registry::family_of(&algorithm).expect("check proved the algorithm is registered");
+    let records: Vec<_> = reports
+        .iter()
+        .map(|report| {
+            let mut record = report.to_record();
+            record.sketch_config = Some(params.to_json_value());
+            record.family = Some(family.to_string());
+            record
+        })
+        .collect();
+
+    let mut sink = ReportSink::open(args.report.as_deref())?;
+    // One invocation is one cell, so every record here shares an identity and the
+    // whole vector is exactly what `flatten_record` expects.
     if args.flat {
         let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
         sink.write_line(&serde_json::to_string(&merged)?)?;

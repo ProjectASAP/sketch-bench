@@ -77,60 +77,6 @@ sketch_params!(
     }
 );
 
-/// Top-k is its own algorithm because its parameter vocabulary is: `k` sizes the
-/// candidate tracker, `rows`/`cols` the counter array under it. Sharing
-/// `CmsParams` would give every CMS row a `k` that means nothing to it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopkParams {
-    pub rows: usize,
-    pub cols: usize,
-    /// How many heaviest keys the tracker keeps. Sizes both the sketch's
-    /// candidate set and the prefix the comparator scores against.
-    pub k: usize,
-}
-sketch_params!(
-    TopkParams,
-    "topk",
-    TopkParams {
-        rows: 5,
-        cols: 2048,
-        k: 100
-    }
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ElasticParams {
-    pub buckets: usize,
-    pub depth: usize,
-}
-sketch_params!(
-    ElasticParams,
-    "elastic",
-    ElasticParams {
-        buckets: 512,
-        depth: 2
-    }
-);
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NitroParams {
-    pub rate: f64,
-}
-sketch_params!(NitroParams, "nitro", NitroParams { rate: 0.01 });
-
-/// DDSketch's single tuning knob — the relative-error guarantee
-/// `alpha ∈ (0, 1)`. Smaller `alpha` ⇒ more buckets ⇒ tighter
-/// per-quantile error at the cost of memory.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DdParams {
-    pub alpha: f64,
-}
-sketch_params!(DdParams, "dd", DdParams { alpha: 0.005 });
-
 // ---------- Hydra, one algorithm per cell type ----------
 //
 // The cell type is on the algorithm axis, not the impl axis, because each cell
@@ -209,21 +155,6 @@ sketch_params!(
     }
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UnivMonParams {
-    pub layers: usize,
-    pub max_stream: u64,
-}
-sketch_params!(
-    UnivMonParams,
-    "univmon",
-    UnivMonParams {
-        layers: 6,
-        max_stream: 128
-    }
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,7 +186,10 @@ mod tests {
     fn records_written_before_the_open_representation_still_parse() {
         // Declaration order, as the closed enum emitted it.
         for (json, algorithm) in [
-            (r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#, "cms"),
+            (
+                r#"{"algorithm":"cms","params":{"rows":5,"cols":2048}}"#,
+                "cms",
+            ),
             (r#"{"algorithm":"hll","params":{"lg_k":14}}"#, "hll"),
             (
                 r#"{"algorithm":"countsketch","params":{"rows":3,"cols":4096}}"#,
@@ -295,11 +229,9 @@ mod tests {
         check::<KllParams>();
         check::<CmsParams>();
         check::<CountSketchParams>();
-        check::<ElasticParams>();
-        check::<UnivMonParams>();
-        check::<DdParams>();
-        check::<NitroParams>();
-        check::<TopkParams>();
+        check::<HydraCmsParams>();
+        check::<HydraHllParams>();
+        check::<HydraKllParams>();
     }
 
     /// Which algorithm names each vocabulary answers to. Pinned per family
@@ -325,9 +257,6 @@ mod tests {
         assert!(KllParams::owns("kll-percall"));
         assert!(KllParams::owns("kll-cdf"));
         assert!(!KllParams::owns("hydra-kll"));
-
-        assert!(TopkParams::owns("topk-cms"));
-        assert!(!TopkParams::owns("cms"));
 
         // The three Hydra cell types take different knobs, so they are three
         // families and none of them owns another's name.

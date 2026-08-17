@@ -26,12 +26,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use crate::accumulator::Accumulator;
 use crate::workload::Labeled;
 
 use super::frequency::percentile;
 use super::quantile::{lower_bound, upper_bound, QuantileValue};
-use super::statistic::{SubpopCardinalityOps, SubpopFrequencyOps, SubpopQuantileOps};
 use super::GroundTruth;
 
 /// Prefix lengths of the true-frequency ranking at which error is reported.
@@ -52,10 +50,9 @@ pub struct SubpopFreqTruth<V> {
     all: Vec<(String, V)>,
 }
 
-impl<S, V> GroundTruth<S> for SubpopFrequencyGT
+impl<V> GroundTruth<Labeled<V>> for SubpopFrequencyGT
 where
     V: Eq + Hash + Ord + Clone,
-    S: Accumulator<Item = Labeled<V>> + SubpopFrequencyOps<Value = V>,
 {
     type Truth = SubpopFreqTruth<V>;
     type Probe = (String, V);
@@ -87,10 +84,6 @@ where
         union_of(&truth.all, &truth.ranked)
     }
 
-    fn ask(&self, sketch: &S, probe: &(String, V)) -> f64 {
-        sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
-    }
-
     fn answer_as_f64(&self, answer: &f64) -> f64 {
         *answer
     }
@@ -101,7 +94,8 @@ where
         probes: &[(String, V)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<&(String, V), f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+        let est: HashMap<&(String, V), f64> =
+            probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         let population = |pairs: &[(String, V)], label: &str, m: &mut BTreeMap<String, f64>| {
@@ -125,7 +119,11 @@ where
             let n = pairs.len() as f64;
             m.insert(
                 format!("are_{label}"),
-                if counted > 0 { are / counted as f64 } else { 0.0 },
+                if counted > 0 {
+                    are / counted as f64
+                } else {
+                    0.0
+                },
             );
             m.insert(format!("aae_{label}"), aae / n);
             m.insert(format!("probes_{label}"), n);
@@ -194,7 +192,6 @@ fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
     out
 }
 
-
 /// The ranked keys, shuffled. Shuffled so probe order does not hand the
 /// baseline the locality that encounter order would. Fixed seed, so the order
 /// is reproducible. No cap: a sampled population is not the truth.
@@ -238,10 +235,9 @@ pub struct SubpopCardTruth {
     all: Vec<String>,
 }
 
-impl<S, V> GroundTruth<S> for SubpopCardinalityGT
+impl<V> GroundTruth<Labeled<V>> for SubpopCardinalityGT
 where
     V: Eq + Hash,
-    S: Accumulator<Item = Labeled<V>> + SubpopCardinalityOps,
 {
     type Truth = SubpopCardTruth;
     type Probe = String;
@@ -262,8 +258,7 @@ where
             .map(|(group, values)| ((*group).to_string(), values.len() as u64))
             .collect();
 
-        let mut by_count: Vec<(String, u64)> =
-            exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
+        let mut by_count: Vec<(String, u64)> = exact.iter().map(|(g, c)| (g.clone(), *c)).collect();
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let all = sample_ranked(&by_count);
         let ranked = by_count.into_iter().map(|(g, _)| g).collect();
@@ -272,10 +267,6 @@ where
 
     fn probes(&self, truth: &SubpopCardTruth) -> Vec<String> {
         union_of(&truth.all, &truth.ranked)
-    }
-
-    fn ask(&self, sketch: &S, probe: &String) -> f64 {
-        sketch.estimate_subpop_cardinality(&[probe.as_str()])
     }
 
     fn answer_as_f64(&self, answer: &f64) -> f64 {
@@ -288,8 +279,7 @@ where
         probes: &[String],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<&String, f64> =
-            probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
+        let est: HashMap<&String, f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
 
         let population = |groups: &[String], label: &str, m: &mut BTreeMap<String, f64>| {
@@ -367,10 +357,9 @@ pub struct SubpopRankTruth {
     items: usize,
 }
 
-impl<S, V> GroundTruth<S> for SubpopRankErrorGT
+impl<V> GroundTruth<Labeled<V>> for SubpopRankErrorGT
 where
     V: QuantileValue,
-    S: Accumulator<Item = Labeled<V>> + SubpopQuantileOps,
 {
     type Truth = SubpopRankTruth;
     /// One (group, fraction) question.
@@ -418,10 +407,6 @@ where
             }
         }
         out
-    }
-
-    fn ask(&self, sketch: &S, probe: &(String, f64)) -> f64 {
-        sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
     }
 
     fn probe_as_f64(&self, probe: &(String, f64)) -> f64 {
@@ -556,22 +541,23 @@ fn summarise(pairs: impl Iterator<Item = (f64, f64)>) -> ErrSummary {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The estimator that does no work: every subpopulation frequency is zero.
+    ///
+    /// It has no `update`: the comparator computes its truth from the raw
+    /// items, and this double answers 0 whatever it was fed, so nothing needs
+    /// to go into it.
     struct NullSubpop;
-    impl Accumulator for NullSubpop {
-        type Item = Labeled<i64>;
-        fn update(&mut self, _: &Labeled<i64>) {}
-    }
-    impl SubpopFrequencyOps for NullSubpop {
-        type Value = i64;
+    impl NullSubpop {
         fn estimate_subpop_frequency(&self, _: &[&str], _: &i64) -> f64 {
             0.0
         }
+    }
+    fn ask_null(s: &mut NullSubpop, p: &(String, i64)) -> f64 {
+        s.estimate_subpop_frequency(&[p.0.as_str()], &p.1)
     }
 
     /// The estimator that is exactly right, built from the same pass the
@@ -580,21 +566,20 @@ mod tests {
         counts: HashMap<(String, i64), u64>,
         column: usize,
     }
-    impl Accumulator for ExactSubpop {
-        type Item = Labeled<i64>;
+    impl ExactSubpop {
         fn update(&mut self, r: &Labeled<i64>) {
             let label = r.label(self.column).unwrap_or("").to_string();
             *self.counts.entry((label, r.value)).or_insert(0) += 1;
         }
-    }
-    impl SubpopFrequencyOps for ExactSubpop {
-        type Value = i64;
         fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
             *self
                 .counts
                 .get(&(labels[0].to_string(), *value))
                 .unwrap_or(&0) as f64
         }
+    }
+    fn ask_exact(s: &mut ExactSubpop, p: &(String, i64)) -> f64 {
+        s.estimate_subpop_frequency(&[p.0.as_str()], &p.1)
     }
 
     fn records() -> Vec<Labeled<i64>> {
@@ -619,10 +604,8 @@ mod tests {
     /// exactly 1.0, on every population.
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
-        let cmp = crate::accuracy::run_probes(&gt, &NullSubpop, &records(), false);
+        let gt = SubpopFrequencyGT { label_column: 0 };
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &records());
         for key in ["are_all", "are_top1"] {
             let v = cmp.metrics[key];
             assert!(
@@ -646,10 +629,8 @@ mod tests {
         for it in &items {
             exact.update(it);
         }
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
-        let cmp = crate::accuracy::run_probes(&gt, &exact, &items, false);
+        let gt = SubpopFrequencyGT { label_column: 0 };
+        let cmp = crate::accuracy::run_probes(&gt, &ask_exact, &mut exact, &items);
         assert_eq!(cmp.metrics["are_all"], 0.0);
         assert_eq!(cmp.metrics["aae_all"], 0.0);
         assert_eq!(cmp.metrics["l1_err"], 0.0);
@@ -661,10 +642,8 @@ mod tests {
     #[test]
     fn truth_groups_by_the_named_column() {
         let items = records();
-        let gt = SubpopFrequencyGT {
-            label_column: 0,
-        };
-        let cmp = crate::accuracy::run_probes(&gt, &NullSubpop, &items, false);
+        let gt = SubpopFrequencyGT { label_column: 0 };
+        let cmp = crate::accuracy::run_probes(&gt, &ask_null, &mut NullSubpop, &items);
         // Distinct pairs at column 0: (a,10) (a,20) (b,30) → 3 pairs, 2 groups.
         assert_eq!(cmp.metrics["probes_all"], 3.0);
         assert_eq!(cmp.metrics["subpopulations"], 2.0);
@@ -680,12 +659,10 @@ mod tests {
     fn a_different_column_is_a_different_population() {
         let items = records();
         let by_col1 = crate::accuracy::run_probes(
-            &SubpopFrequencyGT {
-                label_column: 1,
-            },
-            &NullSubpop,
+            &SubpopFrequencyGT { label_column: 1 },
+            &ask_null,
+            &mut NullSubpop,
             &items,
-            false,
         );
         // Column 1 pairs: (x,10) (y,10) (x,20) (x,30) (y,30) → 5 pairs, 2 groups.
         assert_eq!(by_col1.metrics["probes_all"], 5.0);

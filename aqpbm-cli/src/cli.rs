@@ -1,6 +1,6 @@
 //! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch catalog
-//! it dispatches through lives in `sketch_bench::catalog`.
+//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch registry
+//! it dispatches through lives in `sketch_bench::registry`.
 //!
 //! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
 //! hand-authored and authoritative. `scripts/dump_cli_reference.sh` diffs the
@@ -51,7 +51,11 @@ pub struct SketchbenchArgs {
     /// strategy gives different estimates. Matched exactly, since one
     /// invocation measures one cell. `--list-impls` prints every
     /// (algorithm, impl) pair, grouped by the family they share knobs with.
-    #[arg(long, required_unless_present = "list_impls", help_heading = "Identity")]
+    #[arg(
+        long,
+        required_unless_present = "list_impls",
+        help_heading = "Identity"
+    )]
     pub algorithm: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
     /// `polars`. `--list-impls` shows which the algorithm offers. One
@@ -168,7 +172,7 @@ pub struct SketchbenchArgs {
     )]
     pub metrics: Option<String>,
     /// Which comparator scores this row, by name. A row admits only the
-    /// comparators its capabilities can answer, and the catalog is what lists
+    /// comparators its capabilities can answer, and the registry is what lists
     /// them; omitted takes the row's default.
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,
@@ -191,12 +195,6 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Output directory for long-format CSVs, one row per measured run, named
-    /// `<family>_throughput[_query]_results_rust.csv` — one file per family, so
-    /// a structural variant does not fork the file a plot script reads; the
-    /// variant lands in the `implementation` column. Coexists with `--report`.
-    #[arg(long, help_heading = "Output")]
-    pub raw_csv: Option<String>,
     /// Write one line for the whole cell instead of one per square, folding
     /// the cell's records into a single flattened row: one slot per operation,
     /// one field per metric. One record per square is the default; this is the

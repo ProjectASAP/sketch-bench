@@ -1,12 +1,10 @@
 //! Cardinality-algorithm ground truth (HLL). Exact distinct
 //! count from `items`; reports relative error.
 
-use crate::accumulator::Accumulator;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use super::statistic::CardinalityOps;
 use super::GroundTruth;
 
 /// How many times to put the one question. A cheap estimator answers in ~1 ns,
@@ -18,10 +16,9 @@ const QUERY_TIMING_REPEATS: usize = 4096;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CardinalityGT;
 
-impl<S, K> GroundTruth<S> for CardinalityGT
+impl<K> GroundTruth<K> for CardinalityGT
 where
     K: Eq + Hash,
-    S: Accumulator<Item = K> + CardinalityOps,
 {
     /// The exact distinct count.
     type Truth = f64;
@@ -36,10 +33,6 @@ where
 
     fn probes(&self, _truth: &f64) -> Vec<()> {
         vec![(); QUERY_TIMING_REPEATS]
-    }
-
-    fn ask(&self, sketch: &S, _probe: &()) -> f64 {
-        sketch.estimate_distinct()
     }
 
     fn answer_as_f64(&self, answer: &f64) -> f64 {

@@ -124,10 +124,6 @@ case "${VARIANT}" in
     run_algorithm kll
     run_algorithm cms
     run_algorithm countsketch
-    run_algorithm dd
-    run_algorithm nitro
-    run_algorithm elastic
-    run_algorithm univmon
     run_octo
     ;;
   octo)         run_octo ;;

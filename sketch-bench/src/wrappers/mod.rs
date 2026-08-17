@@ -1,25 +1,75 @@
-//! Thin newtypes over each concrete sketch implementation in the
-//! repo, one file per algorithm. Each implements `Accumulator` (drive it)
-//! and `InitSketch` (build it from a `ParamSet`); `sketch_bench::catalog`
-//! binds the runtime `(algorithm, impl)` strings to these types.
+//! Thin newtypes over each concrete sketch implementation in the repo, one
+//! directory per algorithm and one file per library. Each file owns its sketches
+//! *and how they are driven*: a `build_*` makes one from a `ParamSet`, and
+//! `insert_*` / `merge_*` / `prepare_*` / `ask_*` / `memory_*` say what can be
+//! done to it. Each is written in the sketch's own terms — nothing forces two
+//! files to agree on a signature, which is the whole reason this is not a trait
+//! (`docs/sketch-bench.md` §"Wrapper should not be a trait").
+//!
+//! Every one of them takes the sketch and its data as parameters and captures
+//! nothing, so a caller supplies both at call time. That is why no file here
+//! mentions a workload, a request or a comparator: how often a sketch is
+//! measured, over what data, and scored against what, are not facts about the
+//! sketch. A frontend hands these to `aqpbm_core::ops`, which builds the timed
+//! closures out of them.
 
+// One directory per algorithm; inside each, one file per library. A reader
+// looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and
+// finds the type, how it is built, how it is fed, and how it is asked, all in
+// one place.
 pub mod cms;
-pub mod countsketch;
-pub mod dd;
-pub mod elastic;
-pub mod fixed_matrix;
+pub mod cs;
 pub mod hll;
 pub mod hydra;
 pub mod kll;
-pub mod nitro;
-pub mod parallel;
-pub mod polars;
-pub mod topk;
-pub mod univmon;
 
-use aqpbm_core::init::BuildError;
+// Shared by rows across several algorithms.
+pub mod fixed_matrix;
+pub mod polars_shared;
 
-// ---------- refusing a config the row cannot honour ----------
+use crate::build_error::BuildError;
+use asap_sketchlib::impl_fixed_matrix;
+
+// The library types a caller has to *name* in order to select one of the
+// monomorphisations below: the three register storages the `hll` `lib` rows are
+// compiled at, and the bounds a fixed-matrix visitor states. Re-exported here so
+// picking a shape or a precision does not mean depending on `asap_sketchlib`
+// directly — this crate is where the wrapped libraries live, and this is the
+// vocabulary it wraps them in.
+pub use asap_sketchlib::{
+    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
+    MatrixStorage,
+};
+
+//
+// What the three parallel-insert rows share. Their per-worker sketch is a
+// compile-time type, so the shape is not a knob: a request naming any other one
+// is refused rather than accepted and ignored. Each row itself lives in its
+// algorithm's `sketchlib.rs`.
+//
+// Its own type, not the `M5x32768` in `fixed_matrix`: that table is the set of
+// shapes the *sweepable* fixedmatrix rows dispatch over, and pruning it must not
+// silently move the shape these rows are named after.
+
+impl_fixed_matrix!(M5x32K, i32, 5, 32768);
+
+/// The shape every worker's matrix is baked at.
+pub const PARALLEL_ROWS: usize = 5;
+
+pub const PARALLEL_COLS: usize = 32768;
+
+/// Contiguous ranges, one per worker. `n.max(1)` because a run of no threads is
+/// not a run, and the empty-workload case still hands back one part rather than
+/// none.
+pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
+    let n = n.max(1);
+    let chunk = (items.len() + n - 1) / n;
+    if chunk == 0 {
+        return vec![items];
+    }
+    items.chunks(chunk).collect()
+}
+
 //
 // All four helpers below exist for one rule: a row that cannot build at the
 // requested parameters says so, and never builds at different ones under the

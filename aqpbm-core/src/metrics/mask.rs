@@ -116,6 +116,36 @@ const METRICS: [(MetricsMask, Metric); 3] = [
     (MetricsMask::ACCURACY, Metric::Accuracy),
 ];
 
+/// Whether the framework measures this square *at all*, for any row.
+///
+/// Five of the twelve are permanently empty, and for reasons that hold of every
+/// implementation rather than of any one of them: an insert produces no answer
+/// to score, a fold produces no answer to score, scoring a folded sketch is the
+/// query operation wearing merge's name, `prepare` runs at the tail of the
+/// insert loop so it has a latency but no throughput of its own, and a query
+/// latency needs each estimate call timed separately — a per-call capture this
+/// build no longer has.
+///
+/// This mirrors the per-operation match in [`crate::ops::squares_for`], which is
+/// the authority — it is the one that actually builds something to run. Stated
+/// separately here so a *frontend* can refuse a square by name before
+/// generating a workload for it, which is the whole point of refusing early.
+pub fn is_measurable(cell: Cell) -> bool {
+    use Metric::{Accuracy, Latency, Throughput};
+    use Operation::{Insert, Merge, Prepare, Query};
+    match (cell.operation, cell.metric) {
+        (Insert, Throughput) | (Insert, Latency) => true,
+        (Insert, Accuracy) => false,
+        (Query, Throughput) | (Query, Accuracy) => true,
+        (Query, Latency) => false,
+        (Merge, Throughput) | (Merge, Latency) => true,
+        (Merge, Accuracy) => false,
+        (Prepare, Throughput) => false,
+        (Prepare, Latency) => true,
+        (Prepare, Accuracy) => false,
+    }
+}
+
 /// The cells a request selects: every (operation, metric) the two masks name
 /// between them. A cell with no implementation is still produced, and the
 /// runner is what finds nothing to run for it.
@@ -202,17 +232,32 @@ mod tests {
     #[test]
     fn secondary_bits_alone_select_nothing() {
         // They attach to a measurement; they are not one.
-        assert!(cells(
-            OperationMask::all(),
-            MetricsMask::CPU | MetricsMask::MEMORY
-        )
-        .is_empty());
+        assert!(cells(OperationMask::all(), MetricsMask::CPU | MetricsMask::MEMORY).is_empty());
     }
 
     #[test]
     fn an_empty_mask_on_either_axis_selects_nothing() {
         assert!(cells(OperationMask::empty(), MetricsMask::all()).is_empty());
         assert!(cells(OperationMask::all(), MetricsMask::empty()).is_empty());
+    }
+
+    #[test]
+    fn five_of_the_twelve_squares_are_permanently_empty() {
+        let empty: Vec<_> = cells(OperationMask::all(), MetricsMask::all())
+            .into_iter()
+            .filter(|c| !is_measurable(*c))
+            .map(|c| (c.operation.name(), c.metric.name()))
+            .collect();
+        assert_eq!(
+            empty,
+            vec![
+                ("insert", "accuracy"),
+                ("query", "latency"),
+                ("merge", "accuracy"),
+                ("prepare", "throughput"),
+                ("prepare", "accuracy"),
+            ]
+        );
     }
 
     #[test]
