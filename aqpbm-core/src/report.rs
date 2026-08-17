@@ -14,7 +14,7 @@ use crate::workload::WorkloadDescription;
 pub const SCHEMA_VERSION: u32 = 3;
 
 /// A single record in the JSONL report stream. One record
-/// per benchmark / profile / runtime window.
+/// per benchmark / runtime window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub schema_version: u32,
@@ -42,8 +42,6 @@ pub struct Record {
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bench: Option<BenchSection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileSection>,
     pub source: Source,
     pub timestamp: DateTime<Utc>,
 }
@@ -62,7 +60,6 @@ pub enum Language {
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     Bench,
-    Profile,
     Runtime,
 }
 
@@ -164,45 +161,6 @@ pub struct BenchSection {
     /// showing up as a missing row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_supported: Option<bool>,
-}
-
-/// MICRO (profile) section of a record — reserved for `sketch-profile`
-/// (`docs/DESIGN.md` §2.2), which is not built yet. Declared here so readers
-/// don't need two crates to deserialise the same JSONL file.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ProfileSection {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hw_counters: Option<HwCounters>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub external: Option<ExternalReports>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HwCounters {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub l1d_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub llc_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dtlb_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub itlb_miss_rate: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipc: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ExternalReports {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub perf_record: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cachegrind_report: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flamegraph: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub heaptrack_report: Option<String>,
 }
 
 /// Aggregate across N samples: mean / stddev / optional 95% CI.
@@ -383,7 +341,6 @@ impl Record {
             mode,
             runs,
             bench: None,
-            profile: None,
             source: Source::Cli,
             timestamp: Utc::now(),
         }
@@ -426,31 +383,6 @@ mod tests {
         assert_eq!(back.impl_name, "oxide");
         assert_eq!(back.mode, Mode::Bench);
         assert!(back.bench.is_some());
-    }
-
-    #[test]
-    fn profile_section_roundtrips() {
-        let wd = WorkloadDescription {
-            shape: "uniform".into(),
-            size: 1000,
-            cardinality: Some(100),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(1),
-            spec: None,
-        };
-        let mut rec = Record::new("cms", "oxide", wd, Mode::Profile, 1);
-        rec.profile = Some(ProfileSection {
-            hw_counters: Some(HwCounters {
-                ipc: Some(3.2),
-                l1d_miss_rate: Some(0.018),
-                ..Default::default()
-            }),
-            external: None,
-        });
-        let s = rec.to_jsonl();
-        let back: Record = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.profile.unwrap().hw_counters.unwrap().ipc, Some(3.2));
     }
 
     /// A gate, not a behaviour test: bumping `SCHEMA_VERSION` turns this red on

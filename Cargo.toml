@@ -10,9 +10,16 @@ members = [
     "aqpbm-datagen",
     "aqpbm-core",
     "sketch-bench",
-    "sketch-runtime",
     "aqpbm-cli",
 ]
+# Parked, not retired. `sketch-runtime` is the embedded sampler linked into
+# downstream apps; it is out of the workspace so it does not hold the offline
+# benchmark path's API still while that path is being cleaned up. Excluded
+# rather than merely unlisted so cargo does not treat the directory as an
+# orphan package. Note it inherits `version.workspace` / `edition.workspace`,
+# so it does not build standalone while excluded — putting it back in
+# `members` is the only step needed to revive it.
+exclude = ["sketch-runtime"]
 
 [workspace.package]
 version = "0.1.0"
@@ -64,7 +71,7 @@ aqpbm-datagen = { path = "aqpbm-datagen" }
 # forwards its own `hdrhist` feature, sketch-runtime takes it outright.
 aqpbm-core = { path = "aqpbm-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
-sketch-runtime = { path = "sketch-runtime" }
+# sketch-runtime = { path = "sketch-runtime" }  # parked; see `exclude` above.
 
 [profile.release]
 opt-level = 3

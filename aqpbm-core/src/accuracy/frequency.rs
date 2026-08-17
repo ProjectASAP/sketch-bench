@@ -68,10 +68,6 @@ where
         out
     }
 
-    fn answer_as_f64(&self, answer: &u64) -> f64 {
-        *answer as f64
-    }
-
     fn score(
         &self,
         truth: &FrequencyTruth<K>,

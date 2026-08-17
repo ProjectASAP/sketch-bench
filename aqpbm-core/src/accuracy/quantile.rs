@@ -1,8 +1,7 @@
 //! Quantile-algorithm ground truth comparators, one metric per algorithm, because
 //! each sketch's correctness bound is defined differently in its paper.
 //! [`RankErrorGT`] (KLL) reports rank error in units of `n`, range-based over
-//! tie intervals; [`RelativeErrorGT`] (DDSketch) reports `|v̂ − v| / |v|`
-//! against the Type-7 linear-interpolation quantile ([`type7_quantile`]).
+//! tie intervals.
 
 use std::collections::BTreeMap;
 
@@ -101,14 +100,6 @@ where
         (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
     }
 
-    fn probe_as_f64(&self, probe: &f64) -> f64 {
-        *probe
-    }
-
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
-    }
-
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
         if truth.is_empty() || probes.is_empty() {
             return metrics_from([("items", 0.0), ("mean_rank_err", 0.0)]);
@@ -144,98 +135,9 @@ where
     }
 }
 
-// ---------- DDSketch: relative error ----------
-
-/// Relative-error comparator for DDSketch-style sketches.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RelativeErrorGT {}
-
-impl<I> GroundTruth<I> for RelativeErrorGT
-where
-    I: Clone + PartialOrd + ToF64,
-{
-    type Truth = Vec<f64>;
-    type Probe = f64;
-    type Answer = f64;
-
-    fn truth(&self, items: &[I]) -> Vec<f64> {
-        let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        sorted
-    }
-
-    fn probes(&self, truth: &Vec<f64>) -> Vec<f64> {
-        if truth.is_empty() {
-            return Vec::new();
-        }
-        (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
-    }
-
-    fn probe_as_f64(&self, probe: &f64) -> f64 {
-        *probe
-    }
-
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
-    }
-
-    fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
-        if truth.is_empty() || probes.is_empty() {
-            return metrics_from([("items", 0.0), ("mean_relative_err", 0.0)]);
-        }
-        let mut max_rel_err = 0.0_f64;
-        let mut sum_rel = 0.0_f64;
-        let mut n_rel = 0usize;
-        for (q, est) in probes.iter().zip(answers) {
-            let t = type7_quantile(truth, *q);
-            // Skip grid points where truth is ~0 — relative error is undefined
-            // there, and DDSketch's guarantee is for non-zero quantiles anyway.
-            if t.abs() <= f64::EPSILON {
-                continue;
-            }
-            let rel = (est - t).abs() / t.abs();
-            sum_rel += rel;
-            n_rel += 1;
-            if rel > max_rel_err {
-                max_rel_err = rel;
-            }
-        }
-        metrics_from([
-            ("items", truth.len() as f64),
-            ("grid_points", NUM_PERCENTILES as f64),
-            ("evaluated_points", n_rel as f64),
-            (
-                "mean_relative_err",
-                if n_rel == 0 {
-                    0.0
-                } else {
-                    sum_rel / n_rel as f64
-                },
-            ),
-            ("max_relative_err", max_rel_err),
-        ])
-    }
-}
-
 // ---------- helpers ----------
 
 /// Count of elements strictly less than `x` in a sorted slice.
-/// Type-7 linear interpolation on a pre-sorted f64 slice — the
-/// NumPy / R / Prometheus default quantile. This is the ground
-/// truth `RelativeErrorGT` scores DDSketch against.
-fn type7_quantile(sorted: &[f64], q: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    let q = q.clamp(0.0, 1.0);
-    let n = sorted.len();
-    let rank = q * (n - 1) as f64;
-    let lower = rank.floor() as usize;
-    let upper = (lower + 1).min(n - 1);
-    let weight = rank - rank.floor();
-    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
-}
-
 pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
     let mut lo = 0usize;
     let mut hi = sorted.len();

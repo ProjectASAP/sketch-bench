@@ -35,10 +35,6 @@ where
         vec![(); QUERY_TIMING_REPEATS]
     }
 
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
-    }
-
     fn score(&self, truth: &f64, _probes: &[()], answers: &[f64]) -> BTreeMap<String, f64> {
         // Every answer is to the same question, so the first is the estimate
         // and the rest existed to make the timing readable.

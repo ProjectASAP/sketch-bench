@@ -397,25 +397,6 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
     Some(u32::from_be_bytes([ip[12], ip[13], ip[14], ip[15]]))
 }
 
-// ---------- string / bytes workloads ----------
-
-/// A `String` workload, either **generated** (varying length, configurable
-/// alphabet) or **derived** via [`Self::from_i64`] (1-7 decimal digits). They
-/// measure different things, so pooling them averages a real one with a fake.
-pub type StringWorkload = NumericWorkload<String>;
-
-impl NumericWorkload<String> {
-    /// Decimal-format an `i64` workload. Not a string workload in any meaningful
-    /// sense — hash cost and length are what one exists to vary, and here both
-    /// follow from the integer.
-    pub fn from_i64(inner: &I64Workload) -> Self {
-        Self {
-            items: inner.items().iter().map(|v| v.to_string()).collect(),
-            description: inner.description(),
-        }
-    }
-}
-
 // ---------- multi-column (labelled record) workloads ----------
 
 /// One record of a multi-column stream: the label columns joined with `;`,
@@ -534,52 +515,6 @@ impl<V: ColumnItem> Workload for LabeledWorkload<V> {
     }
 
     fn items(&self) -> &[Labeled<V>] {
-        &self.items
-    }
-}
-
-/// Same, but `Vec<u8>` for impls that want `&[u8]`. Not a [`NumericWorkload`]:
-/// `Vec<u8>` is not a `ColumnItem`, so these rows take the bytes of whichever
-/// string workload is in play.
-#[derive(Debug, Clone)]
-pub struct BytesWorkload {
-    items: Vec<Vec<u8>>,
-    description: WorkloadDescription,
-}
-
-impl BytesWorkload {
-    pub fn from_i64(inner: &I64Workload) -> Self {
-        Self {
-            items: inner
-                .items()
-                .iter()
-                .map(|v| v.to_string().into_bytes())
-                .collect(),
-            description: inner.description(),
-        }
-    }
-
-    /// Bytes of an existing string workload, generated or derived. Carries
-    /// its `description`, so a run over real strings stays distinguishable from one
-    /// over decimal-formatted integers.
-    pub fn from_strings(inner: &StringWorkload) -> Self {
-        Self {
-            items: inner
-                .items()
-                .iter()
-                .map(|s| s.clone().into_bytes())
-                .collect(),
-            description: inner.description(),
-        }
-    }
-}
-
-impl Workload for BytesWorkload {
-    type Item = Vec<u8>;
-    fn description(&self) -> WorkloadDescription {
-        self.description.clone()
-    }
-    fn items(&self) -> &[Vec<u8>] {
         &self.items
     }
 }
@@ -704,14 +639,6 @@ mod tests {
         let d = TableDescription::single("key", zipf_column(64, 1.0, 1, "f64"), 10);
         let err = I64Workload::generate(&d).unwrap_err().to_string();
         assert!(err.contains("f64") && err.contains("i64"), "{err}");
-    }
-
-    #[test]
-    fn string_workload_derived_length() {
-        let inner = I64Workload::uniform(50, 100, 1);
-        let s = StringWorkload::from_i64(&inner);
-        assert_eq!(s.items().len(), 50);
-        assert_eq!(s.description().shape, "uniform");
     }
 
     #[test]

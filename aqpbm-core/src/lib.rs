@@ -38,23 +38,19 @@ pub use aqpbm_datagen::{
 pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
+pub use build_error::BuildError;
 pub use cell::{BenchItem, RunError, WorkloadData, WorkloadSpec};
 pub use latency::{LatencyRecorder, LatencySnapshot};
-pub use build_error::BuildError;
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
-pub use ops::{squares_for, squares_for_unscored, Body, NoScore, MIN_MERGE_SHARDS};
 pub use metrics::{MetricsMask, RunMetrics};
+pub use ops::{squares_for, squares_for_unscored, Body, NoScore, MIN_MERGE_SHARDS};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
-    BenchSection, CpuTime, ExternalReports, HwCounters, InsertMetrics, LatencySummary,
-    MergeMetrics, MergedRecord, Mode, PrepareMetrics, ProfileSection, QueryMetrics, Record,
-    RunStats, Source, SCHEMA_VERSION,
+    BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord, Mode,
+    PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
 };
 // What a frontend asks for. The registry that answers it lives in the bundle
 // crate; this is only the vocabulary the question is written in.
 pub use request::{Capability, Numeric, Requirement};
 pub use runner::BenchReport;
-pub use workload::{
-    BytesWorkload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
-    WorkloadDescription,
-};
+pub use workload::{I64Workload, Labeled, LabeledWorkload, Workload, WorkloadDescription};

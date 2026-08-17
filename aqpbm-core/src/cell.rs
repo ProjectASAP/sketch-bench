@@ -8,9 +8,7 @@
 //! Running a square is [`crate::ops::squares_for`]; timing it is
 //! [`crate::measure`].
 
-use crate::workload::{
-    BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
-};
+use crate::workload::{F64Workload, I64Workload, Labeled, LabeledWorkload, Workload};
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
@@ -147,13 +145,9 @@ impl From<anyhow::Error> for RunError {
 pub trait BenchItem: Sized + Clone {
     type Wk: Workload<Item = Self>;
 
-    /// Whether this item is materialised from a multi-column description
-    /// instead of a single-column one. A `const`, so a registry can read which
-    /// kind of workload a row wants off the row's type, without building one.
-    const TAKES_COLUMNS: bool = false;
-
     /// The `data_type` a description has to state for this item — for a record,
-    /// the type of its *value* column. Also a `const`, for the same reason.
+    /// the type of its *value* column. A `const`, so a caller can read what a
+    /// row wants off the row's type, without building one.
     const DATA_TYPE: &'static str;
 
     /// Turn produced data into this row's workload. Takes the data by value:
@@ -194,42 +188,12 @@ impl BenchItem for f64 {
     }
 }
 
-impl BenchItem for String {
-    type Wk = StringWorkload;
-    const DATA_TYPE: &'static str = "string";
-    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
-        match data {
-            WorkloadData::Generated { description, table } => {
-                StringWorkload::from_table(&description, table)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            // Decimal-formatted, the same rendering the i64-sourced path used.
-            WorkloadData::File { path } => I64Workload::load(std::path::Path::new(&path))
-                .map(|wk| StringWorkload::from_i64(&wk))
-                .map_err(|e| anyhow::anyhow!("{}", e)),
-        }
-    }
-}
-
-impl BenchItem for Vec<u8> {
-    type Wk = BytesWorkload;
-    /// Materialised through the string path, so a description states `string`
-    /// and the bytes are taken from it.
-    const DATA_TYPE: &'static str = "string";
-    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
-        Ok(BytesWorkload::from_strings(
-            &<String as BenchItem>::materialise(data)?,
-        ))
-    }
-}
-
 /// The record item: only a multi-column description materialises one. A
 /// single-column one is refused instead of being padded into a one-label
 /// record, because the column count is what a grouped sketch's cost is a
 /// function of.
 impl<V: ColumnItem> BenchItem for Labeled<V> {
     type Wk = LabeledWorkload<V>;
-    const TAKES_COLUMNS: bool = true;
     const DATA_TYPE: &'static str = V::NAME;
     fn materialise(data: WorkloadData) -> Result<Self::Wk> {
         match data {

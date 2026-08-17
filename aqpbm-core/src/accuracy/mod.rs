@@ -14,7 +14,6 @@ pub mod frequency;
 pub mod quantile;
 pub mod statistic;
 pub mod subpopulation;
-pub mod topk;
 
 /// Output of a single ground-truth comparison run: named scalars plus the
 /// timing of the estimate calls issued. Only the sketch's own estimate call is
@@ -74,19 +73,6 @@ pub trait GroundTruth<I> {
         probes: &[Self::Probe],
         answers: &[Self::Answer],
     ) -> BTreeMap<String, f64>;
-
-    /// The question as a number, for the per-call CSV. `NAN` where the
-    /// question carries none: a cardinality estimate asks nothing, and a key
-    /// is not a quantity.
-    fn probe_as_f64(&self, _probe: &Self::Probe) -> f64 {
-        f64::NAN
-    }
-
-    /// The answer as a number, on the same terms. `NAN` where one answer is a
-    /// whole list.
-    fn answer_as_f64(&self, _answer: &Self::Answer) -> f64 {
-        f64::NAN
-    }
 }
 
 /// Put the whole probe set to the sketch, timing it.

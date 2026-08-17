@@ -84,10 +84,6 @@ where
         union_of(&truth.all, &truth.ranked)
     }
 
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
-    }
-
     fn score(
         &self,
         truth: &SubpopFreqTruth<V>,
@@ -269,10 +265,6 @@ where
         union_of(&truth.all, &truth.ranked)
     }
 
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
-    }
-
     fn score(
         &self,
         truth: &SubpopCardTruth,
@@ -407,14 +399,6 @@ where
             }
         }
         out
-    }
-
-    fn probe_as_f64(&self, probe: &(String, f64)) -> f64 {
-        probe.1
-    }
-
-    fn answer_as_f64(&self, answer: &f64) -> f64 {
-        *answer
     }
 
     fn score(

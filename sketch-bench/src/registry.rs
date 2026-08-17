@@ -899,7 +899,6 @@ mod tests {
             "cardinality",
             "frequency",
             "rank-error",
-            "relative-error",
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
