@@ -1,30 +1,15 @@
-//! The registry: one table naming every `(algorithm, impl)` this crate exposes,
-//! and what each of them supports. It lives here, not in the CLI, so a future
-//! `aqp-bench` can ship its own.
-//!
-//! Every fact is written out in [`REGISTRY`], entry by entry. Nothing is
-//! derived and nothing is projected off a type: what this bundle can be asked
-//! for is what the table says, and a reader learns it by reading the table.
-//!
-//! [`check`] is what the frontend calls. It compares one
-//! [`Requirement`] against one entry and answers whether that request can run —
-//! before a single item is generated, which is the whole value of answering
-//! here.
+//! The registry: one table naming every `(algorithm, impl)` this crate exposes
+//! and what each supports, written out entry by entry in
+//! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
 use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
 use aqpbm_core::request::Requirement;
 
 pub use aqpbm_core::request::{Capability, Numeric};
 
-/// One registry entry: who a sketch is, and what it can be asked for.
-///
-/// The four identity fields name it. The four below them are what [`check`]
-/// reads, and they are the reason a request can be refused by name rather than
-/// discovered to be impossible halfway through a run.
-///
-/// The item width is deliberately absent. `--dtype` is a construction choice
-/// like any other, so a width a wrapper cannot build at is refused where that
-/// wrapper reads it, not here.
+/// One registry entry: who a sketch is, and what it can be asked for. The four
+/// identity fields name it; the four below are what [`check`] reads. Item width
+/// is absent — a wrapper refuses a width it cannot build at, where it reads it.
 pub struct SketchId {
     /// Entries sharing this answer the same question from the same knobs, so
     /// this is what a cross-library comparison groups by. One parameter
@@ -42,11 +27,8 @@ pub struct SketchId {
     /// one.
     pub capability: Capability,
     /// The comparator `--comparator` selects this sketch by; `None` for one
-    /// nothing scores.
-    ///
-    /// One name, not a list: a sketch with a second capability is registered a
-    /// second time, and when a statistic grows a second comparator that is a
-    /// second entry too.
+    /// nothing scores. One name, not a list: a second capability, or a second
+    /// comparator for one statistic, is a second entry.
     pub comparator: Option<&'static str>,
     /// The operations this sketch can be measured over. Insert always; query
     /// wherever a comparator exists; merge and prepare only where the wrapper
@@ -60,11 +42,8 @@ pub struct SketchId {
 // ---------- the registry ----------
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one entry here
-/// plus the wrapper it names; nothing else in this file changes.
-///
-/// Entries are grouped by family and kept contiguous, because [`list`] starts a
-/// new group the moment `family` differs from the entry above: a family split
-/// across two runs prints as two groups.
+/// plus the wrapper it names. Entries stay grouped by family and contiguous,
+/// because [`list`] breaks a group the moment `family` differs from the row above.
 pub const REGISTRY: &[SketchId] = &[
     // -------- CMS (frequency) --------
     SketchId {
@@ -566,13 +545,9 @@ fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
-/// One line per entry, grouped by family with a blank line between groups,
-/// since the family is what a reader picks from before they pick a variant.
-/// Entries keep declaration order inside a family.
-///
-/// The algorithm column is sized to the longest name present, so adding a
-/// longer variant widens the table instead of breaking its alignment. The first
-/// line is the header, so a caller prints exactly what this returns.
+/// One line per entry, grouped by family with a blank line between groups and
+/// declaration order inside one. The algorithm column is sized to the longest
+/// name present; the first line is the header, so a caller prints what it gets.
 pub fn list() -> Vec<String> {
     let algo_w = REGISTRY
         .iter()
@@ -620,19 +595,9 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
 
 // ---------- can this request run? ----------
 
-/// Can this request run?
-///
-/// `Ok(())` — it can. `Err` — it cannot, and the error names what about the
-/// request the registry could not honour.
-///
-/// Every check here is answerable from the request and [`REGISTRY`] alone,
-/// which is the point: a refusal costs nothing, because it lands before a
-/// single item is generated.
-///
-/// Construction parameters are deliberately *not* checked. A `lg_k` outside
-/// what a library accepts is refused where the wrapper that owns the bound
-/// reads it, as a `BuildError`; this function touches no wrapper code and
-/// builds nothing.
+/// Can this request run? Every check is answerable from the request and
+/// [`REGISTRY`] alone, so a refusal lands before a single item is generated.
+/// Construction parameters are *not* checked — a wrapper owns those bounds.
 pub fn check(req: &Requirement) -> Result<(), ResolveError> {
     let entry = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
         // Told apart, because they send a reader to different places: a bad
@@ -838,9 +803,7 @@ impl std::error::Error for ResolveError {}
 mod tests {
     use super::*;
 
-    /// Accuracy is declared exactly where a comparator can score it. The two
-    /// used to be derived from one another; written out by hand, this is what
-    /// keeps them in step.
+    /// Accuracy is declared exactly where a comparator can score it.
     #[test]
     fn accuracy_is_declared_exactly_where_a_comparator_can_score_it() {
         for e in REGISTRY {

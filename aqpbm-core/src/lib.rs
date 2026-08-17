@@ -1,12 +1,7 @@
 //! `aqpbm-core` — the benchmark framework: everything needed to measure *a*
-//! sketch, nothing that knows *which* sketches exist. See `docs/DESIGN.md` §3.1.
-//!
-//! Write the handful of closures that drive your sketch — each takes the sketch
-//! and its data as parameters and captures nothing — and hand them to
-//! [`ops::squares_for`]. It returns one [`ops::Body`] per square, which
-//! [`measure`] then times.
+//! sketch, nothing that knows *which* sketches exist. See `docs/aqpbm-core.md`.
+//! Hand a sketch's closures to [`ops::squares_for`]; [`measure()`](fn@measure) times them.
 
-pub mod accumulator;
 pub mod accuracy;
 pub mod binfile;
 pub mod build_error;
@@ -16,7 +11,6 @@ pub mod latency;
 pub mod measure;
 pub mod metrics;
 pub mod ops;
-pub mod probe;
 pub mod report;
 pub mod request;
 pub mod run_error;
@@ -34,21 +28,18 @@ pub use config::{ParamSet, SketchParams};
 // The generator is its own crate: independent product surface, no knowledge of
 // sketches, and no file format — it hands back in-memory columns and this crate
 // owns what reaches disk (`binfile`). Re-exported so callers find it here.
-pub use accuracy::{Comparison, GroundTruth};
+pub use accuracy::GroundTruth;
 pub use aqpbm_datagen::{
     ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
     NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
 pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
-// The seam an implementation plugs into, and the two calls that drive it.
-pub use accumulator::{Accumulator, MergeUnsupported};
 pub use build_error::BuildError;
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use metrics::{MetricsMask, RunMetrics};
 pub use ops::{squares_for, squares_for_unscored, Body, NoScore, MIN_MERGE_SHARDS};
-pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{
     BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord, Mode,
     PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,

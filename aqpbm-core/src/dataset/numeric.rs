@@ -1,10 +1,6 @@
 //! The plain item stream: one column, materialised at the row's item type.
-//!
-//! There is no `generate` here on purpose. Production always generates through
-//! [`crate::dataset::DatasetSpec::build`], which is called inside the row once
-//! its item type is known — so [`NumericDataset::from_table`] is the only
-//! constructor a generated dataset takes. The file-backed constructor is in
-//! [`super::load`].
+//! No `generate` here on purpose — production goes through
+//! [`crate::dataset::DatasetSpec::build`]; the file-backed one is [`super::load`].
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
 
@@ -32,10 +28,6 @@ impl<T: ColumnItem> NumericDataset<T> {
     /// Wrap an already-materialised item stream with its provenance.
     /// `description.size` is forced to `items.len()`: a description disagreeing
     /// with its data would corrupt every throughput denominator downstream.
-    ///
-    /// `pub(crate)` because the two constructors that call it — here and in
-    /// [`super::load`] — are the only ways a dataset is meant to come into
-    /// being.
     pub(crate) fn new(items: Vec<T>, mut description: DatasetDescription) -> Self {
         // `load` passes 0 as a placeholder, not knowing the count until it has
         // read the file. Any other value asserts what was produced — otherwise a
@@ -50,13 +42,9 @@ impl<T: ColumnItem> NumericDataset<T> {
         Self { items, description }
     }
 
-    /// Build from a table someone else already generated.
-    ///
-    /// The caller generates, because generating needs an item type and this
-    /// type is already at one: `DatasetSpec::build` picks the type off the row's
-    /// `insert`, generates, and calls this. `spec` still rides along because the
-    /// record names the description the data came from, which the columns alone
-    /// do not carry.
+    /// Build from a table someone else already generated. The caller generates
+    /// because generating needs an item type and this type is already at one;
+    /// `spec` rides along because the record names what the data came from.
     pub fn from_table(
         spec: &TableDescription,
         table: GeneratedTable,

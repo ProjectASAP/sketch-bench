@@ -1,10 +1,6 @@
 //! `approxbench dataset generate|describe` — produce and inspect synthetic
-//! `.bin` datasets. Generation writes a raw little-endian value stream plus a
-//! `foo.bin.meta.json` provenance sidecar: the stream feeds `sketchbench
-//! --input`, while the sidecar is ignored there and read back by `describe`.
-//!
-//! The file format lives in `aqpbm_core::binfile`, beside the readers.
-//! `aqpbm-datagen` generates values in memory and writes nothing.
+//! `.bin` datasets: a raw little-endian value stream for `sketchbench --input`,
+//! plus a `foo.bin.meta.json` sidecar that only `describe` reads back.
 
 use std::path::Path;
 
@@ -78,10 +74,7 @@ pub struct GenerateArgs {
     no_meta: bool,
 
     // ---- retired ----
-    // These named the `monotonic-timestamp` and `skewed-categorical` shapes,
-    // which the table-oriented description does not carry. Kept as arguments so
-    // an invocation that used them fails by name instead of being read as a
-    // different dataset than it asked for.
+    // Kept as arguments so an invocation naming one fails by name.
     /// Retired: monotonic-timestamp start value.
     #[arg(long, hide = true)]
     start: Option<i64>,
@@ -128,10 +121,9 @@ fn parse_dtype(s: &str) -> Result<String> {
     }
 }
 
-/// Fail an invocation that used a flag whose shape the description no longer
-/// carries. Named one by one rather than ignored: silently generating a uniform
-/// column for a request that asked for timestamps would look to a driver like a
-/// run that succeeded.
+/// Fail an invocation naming a flag whose shape the description does not carry.
+/// Refused one by one rather than ignored: generating a uniform column for a
+/// request that asked for timestamps would look to a driver like a success.
 fn reject_retired(a: &GenerateArgs) -> Result<()> {
     let retired: [(&str, bool); 8] = [
         ("--start", a.start.is_some()),

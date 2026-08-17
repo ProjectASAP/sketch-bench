@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The benchmark framework: everything needed to measure a sketch, nothing that knows which sketches exist. Turns a row's build/insert/ask closures into timed bodies (ops), holds the clock (measure), scores against exact answers (accuracy), materialises workloads, and owns the JSONL report schema. Names no sketch algorithm — the wrapped implementations live in sketch-bench."
+description = "The benchmark framework: everything needed to measure a sketch, nothing that knows which sketches exist. Turns a row's build/insert/ask closures into timed bodies (ops), holds the clock (measure), scores against exact answers (accuracy), materialises datasets, and owns the JSONL report schema. Names no sketch algorithm — the wrapped implementations live in sketch-bench."
 
 [features]
 # Back the `LatencyRecorder` with a real hdrhistogram. Off → it
@@ -27,8 +27,8 @@ heap-track = []
 
 [dependencies]
 aqpbm-datagen.workspace = true
-# `cell` surfaces "cannot materialise this workload" / "cannot run this
-# cell" as an `anyhow` error.
+# `dataset` surfaces "cannot materialise this dataset" as an `anyhow` error,
+# which `RunError::Dataset` carries.
 anyhow.workspace = true
 bitflags.workspace = true
 hdrhistogram = { workspace = true, optional = true }

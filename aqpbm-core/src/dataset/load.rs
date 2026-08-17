@@ -1,10 +1,6 @@
-//! Replaying a dataset off disk.
-//!
-//! `aqpbm-datagen` writes no files and reads none, so the file end of the round
-//! trip lives in core: [`crate::binfile`] writes `.bin` and its sidecar, and
-//! this module reads. Three formats, chosen by extension, all yielding `i64` —
-//! `.bin` is the tool's own, `.pcap` and `.csv` are how an external trace gets
-//! in.
+//! Replaying a dataset off disk. [`crate::binfile`] writes `.bin` and its
+//! sidecar; this module reads. Three formats chosen by extension, all yielding
+//! `i64` — `.bin` is the tool's own, `.pcap` and `.csv` carry external traces.
 
 use std::path::Path;
 

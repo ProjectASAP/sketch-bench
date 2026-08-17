@@ -1,21 +1,17 @@
-//! Shaping one measurement into a record.
-//!
-//! What is left of a module that used to drive sketches: [`BenchReport`], and
-//! the fold from a measurement's per-run metrics into a [`BenchSection`]. The
-//! running itself is [`crate::measure`], which times a closure and knows
-//! nothing else.
+//! Shaping one measurement into a record: [`BenchReport`], and the fold from a
+//! measurement's per-run metrics into a [`BenchSection`]. The running itself is
+//! [`measure()`](fn@crate::measure), which times a closure and knows nothing else.
 
-use crate::run_stats;
 use crate::dataset::DatasetDescription;
 use crate::metrics::{Metric, Operation, RunMetrics};
 use crate::report::{BenchSection, Mode, Record, Source};
+use crate::run_stats;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
     pub dataset: DatasetDescription,
-    pub per_run: Vec<RunMetrics>,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
     pub runs: usize,
@@ -77,7 +73,6 @@ impl BenchReport {
             impl_name: impl_name.into(),
             dataset,
             runs: runs.len(),
-            per_run: runs,
             bench,
         }
     }

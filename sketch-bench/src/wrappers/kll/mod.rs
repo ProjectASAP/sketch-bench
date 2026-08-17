@@ -21,19 +21,15 @@ fn kll_footprint<T>(k: u32) -> usize {
 /// The range `asap_sketchlib::KLL::init` keeps a `k` in. Below the floor it
 /// raises `k` to `m`, above the ceiling it caps; both silently. Reproduced here
 /// so the two `lib` rows refuse instead, which is the only way the `k` in the
-/// record is the `k` that ran. See [`LIB_K_RANGE`]'s use in `hydra.rs`, which
-/// has the same cell and the same bound.
+/// record is the `k` that ran. The `hydra-kll` row bounds its `cell_k` the same
+/// way, against the same library and the same limits.
 pub const LIB_K_MIN: u32 = 8;
 
 pub const LIB_K_MAX: u32 = 26_602;
 
 /// Answer a quantile out of a prebuilt `(value, cumulative_rank)` table, the
-/// shape `sketch_oxide::KllSketch::cdf` returns: ascending by value, with the
-/// cumulative rank normalised to `[0, 1]`.
-///
-/// `min` / `max` are passed in and short-circuit the ends, because the per-call
-/// path special-cases them too and a gratuitous divergence at `phi = 0` and
-/// `phi = 1` would show up as rank error that belongs to neither path.
+/// shape `sketch_oxide::KllSketch::cdf` returns. `min` / `max` short-circuit the
+/// ends, as the per-call path does, so `phi = 0` and `1` do not diverge.
 fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
     if table.is_empty() {
         return f64::NAN;

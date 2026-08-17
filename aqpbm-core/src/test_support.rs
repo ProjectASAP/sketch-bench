@@ -1,16 +1,6 @@
-//! Column shapes and the materialisation step, for tests only.
-//!
-//! These live here rather than in one file's `mod tests` because the same two
-//! column shapes are needed by `dataset::description`, `dataset::numeric`,
-//! `dataset::load` and `binfile` — four modules that each test one half of the
-//! same round trip.
-//!
-//! [`build`] is the important one. Core deliberately has no
-//! `NumericDataset::generate`: production always goes `DatasetSpec::build` →
-//! `TableDescription::generate` → `from_table`, and a convenience constructor
-//! that skipped the middle step would let the tests pass over the path that
-//! actually runs. This helper *is* those two steps, so a test taking it is
-//! exercising the real one.
+//! Column shapes and the materialisation step, for tests only. [`build`] is the
+//! important one: it is the `generate` → `from_table` pair production takes, so
+//! a test using it exercises the real path rather than a shortcut past it.
 
 use aqpbm_datagen::{
     ColumnItem, ColumnSpec, DataDistribution, DataGenError, TableDescription, UniformParameter,

@@ -1,22 +1,14 @@
-//! What `--flat` does: fold one cell's records into one row.
-//!
-//! The row holds one slot per operation, and a metric is a field inside a
-//! slot. A square is named by both, so a slot keyed on either name alone
-//! would hold two squares at once.
-//!
-//! [`MergedRecord`] lives in `aqpbm_core` beside [`Record`], being a wire
-//! shape and not CLI logic. Grouping records by identity is the caller's job.
+//! What `--flat` does: fold one cell's records into one row. The row holds one
+//! slot per operation and a metric is a field inside a slot, because a square is
+//! named by both. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
     BenchSection, InsertMetrics, MergeMetrics, MergedRecord, PrepareMetrics, QueryMetrics, Record,
 };
 
 /// Which slot a `Record` lands in, per its own `bench.operation` field. Every
-/// name `--operations` can produce is matched explicitly; anything else — a
-/// missing `bench` section, a missing `operation` value, or one none of these
-/// arms names — is an error rather than a guess. Which of these slots get
-/// shown, and how, is the leaderboard's call, not this function's: its job is
-/// only to keep the flattened record complete.
+/// name `--operations` can produce is matched explicitly; anything else — no
+/// `bench`, no `operation`, or an unknown one — is an error rather than a guess.
 fn operation_of(record: &Record) -> Result<&'static str, String> {
     let bench = record.bench.as_ref().ok_or_else(|| {
         format!(
@@ -40,17 +32,9 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
     }
 }
 
-/// Fold the `Record`s that share one (sketch, impl, sketch_config, dataset)
-/// identity into a single [`MergedRecord`]. Callers are responsible for
-/// grouping records by identity before calling this: pass it one record per
-/// square, not a rerun's worth of duplicates.
-///
-/// Every `BenchSection` field is bound by name below (not `..`), so a
-/// field this function doesn't yet place is a **compile error**, not a
-/// silently dropped or silently absorbed value: adding a field to
-/// `BenchSection` without teaching this function about it fails the build,
-/// which is stronger than a runtime check and can't drift out of date the
-/// way a hand-maintained list of field names could.
+/// Fold the `Record`s sharing one (sketch, impl, sketch_config, dataset) identity
+/// into a single [`MergedRecord`] — one record per square, grouped by the caller.
+/// Every `BenchSection` field is bound by name, so an unplaced one fails the build.
 pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
     let base = records
         .first()
@@ -317,8 +301,8 @@ mod tests {
         assert_eq!(out.merge.merge_shards, Some(4));
     }
 
-    /// The deferred build has its own slot, so it is no longer read off the
-    /// insert record by a caller who asked only about inserting.
+    /// The deferred build has its own slot, so a caller asking only about
+    /// inserting does not read it off the insert record.
     #[test]
     fn prepare_carries_its_own_finalize_time() {
         let rows = vec![record(

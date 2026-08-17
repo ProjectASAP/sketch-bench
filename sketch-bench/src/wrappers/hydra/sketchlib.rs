@@ -92,12 +92,9 @@ pub struct HydraKll {
 pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, BuildError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
-    // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and
-    // it clamps `k` to its own range without saying so. Refuse here for the
-    // same reason those rows do: outside the range the grid would be built
-    // at a `cell_k` the record does not name. Below the floor every value
-    // gave one sketch at `cell_k = 8`; above the ceiling every value gave
-    // one sketch at 26602, while the footprint column kept climbing.
+    // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
+    // clamps `k` to its own range without saying so. Refuse for the same reason
+    // those rows do: the grid would be built at a `cell_k` the record misnames.
     if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k) {
         return Err(BuildError(format!(
             "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
@@ -125,8 +122,8 @@ impl HydraKll {
 }
 
 /// Retained slots per cell times the grid area, plus the level index every
-/// cell carries. Analytic because the cell allocates once, see
-/// [`kll_cell_slots`].
+/// cell carries. Analytic because the cell allocates once — see
+/// `kll_cell_slots` in this crate's `hydra` module for the per-cell count.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     let p = &sketch.params;
     let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
@@ -168,6 +165,10 @@ pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
     sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
 }
 
+// `&String` and not `&str`: this is an `ask` closure, so its parameter type is
+// `&<SubpopCardinalityGT as GroundTruth<_>>::Probe`, and that associated type is
+// `String`. A `&str` here does not satisfy the bound.
+#[allow(clippy::ptr_arg)]
 pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
     sketch.estimate_subpop_cardinality(&[probe.as_str()])
 }

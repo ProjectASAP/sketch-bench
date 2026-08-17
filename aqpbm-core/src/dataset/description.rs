@@ -1,11 +1,6 @@
 //! The report-facing descriptor: what a run's dataset *was*, as it appears in
-//! every JSONL record.
-//!
-//! Deliberately not a [`TableDescription`]. It has to describe datasets that
-//! have no spec at all — a file replay carries a path and nothing else — and it
-//! is a wire format with producers outside this crate, so its flat fields are
-//! frozen. [`DatasetDescription::spec`] is the escape hatch for everything the
-//! flat fields cannot hold.
+//! every JSONL record. Deliberately not a [`TableDescription`] — it is a frozen
+//! wire format, and [`DatasetDescription::spec`] is the escape hatch.
 
 use serde::{Deserialize, Serialize};
 
@@ -75,14 +70,9 @@ impl DatasetDescription {
     }
 }
 
-/// Whether the flat `cardinality` / `zipf_s` fields fully describe `spec`.
-/// True only for one plain column drawn uniform or zipf; everything else is
-/// lossy there and is the one condition under which
-/// [`DatasetDescription::spec`] is set.
-///
-/// Anything that changes the values without changing those two fields has to
-/// force the escape hatch, or two different datasets would share a group key
-/// and anything pooling by dataset would average them together.
+/// Whether the flat `cardinality` / `zipf_s` fields fully describe `spec`. True
+/// only for one plain uniform or zipf column; anything else has to force the
+/// escape hatch, or two different datasets would share a group key.
 fn fits_legacy_description(spec: &TableDescription) -> bool {
     let [column] = spec.column_spec.as_slice() else {
         return false;

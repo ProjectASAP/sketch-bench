@@ -1,30 +1,16 @@
-//! Scoring a sketch against an exact answer: the [`GroundTruth`] trait, the
-//! [`Comparison`] it returns, and the comparators.
-//!
-//! A comparator knows the *statistic* — how to compute the exact answer, what
-//! to ask, and how to score what comes back. It does not know how to ask a
-//! sketch anything; that is the row's own closure. See `docs/DESIGN.md` §5.6.
+//! Scoring a sketch against an exact answer: the [`GroundTruth`] trait and the
+//! comparators that implement it. A comparator knows the *statistic*, not how to
+//! ask a sketch anything — that is the row's own closure, driven by `ops`.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 pub mod cardinality;
+pub(crate) mod curve;
 pub mod frequency;
+pub mod heavy_hitter;
 pub mod quantile;
 pub mod subpopulation;
-
-/// Output of a single ground-truth comparison run: named scalars plus the
-/// timing of the estimate calls issued. Only the sketch's own estimate call is
-/// timed, not the exact-truth build, so it means "ops/sec the sketch answers".
-#[derive(Debug, Clone, Default)]
-pub struct Comparison {
-    /// Named scalars, not an opaque JSON blob, so they fold generically through
-    /// Welford. A key must state the population it is over (`are_top10` vs
-    /// `are_all`) — the literature publishes both under the same word.
-    pub metrics: BTreeMap<String, f64>,
-    pub queries: u64,
-    pub query_wall_ns: u64,
-}
+pub mod topk;
 
 /// The exact answer a sketch is scored against.
 pub trait GroundTruth<I> {
@@ -54,35 +40,22 @@ pub trait GroundTruth<I> {
     ) -> BTreeMap<String, f64>;
 }
 
-/// Put the whole probe set to the sketch, timing it.
-///
-/// `ask` is the row's own query body. It arrives as a closure rather than a
-/// trait method so that each row states how *its* sketch is queried — including
-/// taking `&mut`, which several libraries need — without every other row having
-/// to agree on the signature.
-///
-pub fn run_probes<S, I, G, A>(gt: &G, ask: &A, sketch: &mut S, items: &[I]) -> Comparison
+/// Drive one comparator end to end — truth, probes, ask, score — and hand back
+/// the metric map. Test-only: production runs the same sequence inside
+/// `ops::squares_for`, where it sits within the region `measure` times.
+#[cfg(test)]
+pub(crate) fn score_with<S, I, G, A>(
+    gt: &G,
+    ask: &A,
+    sketch: &mut S,
+    items: &[I],
+) -> BTreeMap<String, f64>
 where
     G: GroundTruth<I>,
     A: Fn(&mut S, &G::Probe) -> G::Answer,
 {
     let truth = gt.truth(items);
     let probes = gt.probes(&truth);
-
-    let mut answers = Vec::with_capacity(probes.len());
-
-    // One clock around the whole sweep. There is deliberately no per-call
-    // timing: reading the clock inside the loop is what a query *latency*
-    // measurement would need, and nothing consumes one — see `is_measurable`.
-    let start = Instant::now();
-    for probe in probes.iter() {
-        answers.push(ask(sketch, probe));
-    }
-    let query_wall_ns = start.elapsed().as_nanos() as u64;
-
-    Comparison {
-        metrics: gt.score(&truth, &probes, &answers),
-        queries: probes.len() as u64,
-        query_wall_ns,
-    }
+    let answers: Vec<G::Answer> = probes.iter().map(|p| ask(sketch, p)).collect();
+    gt.score(&truth, &probes, &answers)
 }

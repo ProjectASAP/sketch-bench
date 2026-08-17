@@ -1,10 +1,6 @@
-//! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `dataset_spec`); the sketch registry
-//! it dispatches through lives in `sketch_bench::registry`.
-//!
-//! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
-//! hand-authored and authoritative. `scripts/dump_cli_reference.sh` diffs the
-//! built binary against it.
+//! CLI surface: the clap argument structs; the logic consuming them is in
+//! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
+//! `scripts/dump_cli_reference.sh` diffs the built binary against.
 
 use clap::{Parser, Subcommand};
 
@@ -34,12 +30,8 @@ pub enum Cmd {
 }
 
 /// One cell of the sketch bundle: one algorithm, one impl, one construction
-/// point, one dataset. `--list-impls` is the one mode that selects no cell,
-/// which is why the identity options are optional in the type and required by
-/// clap only when it is absent.
-// The auto-generated help flag is inserted ahead of every declared arg, which
-// would put its `Options:` block above `Identity:`. Declaring it by hand at the
-// end of the struct is what puts it where the reference has it, last.
+/// point, one dataset. `--list-impls` is the one mode that selects no cell.
+// `help` is declared by hand at the end so its block lands last, as the reference has it.
 #[derive(Parser, Debug)]
 #[command(
     disable_help_flag = true,
@@ -73,12 +65,8 @@ pub struct SketchbenchArgs {
     pub list_impls: bool,
 
     /// Construction config for this cell: `'k1=v1 k2=v2'`, one value per key.
-    /// Omitted gives a parameterless point, which every row rejects by name.
     /// A comma list is an error: one invocation is one cell, never a grid.
-    ///
-    /// A row builds at exactly the values given or refuses them, naming the
-    /// bound it has. Nothing is clamped, rounded or ignored, so the
-    /// `sketch_config` in the record is always the config that ran.
+    /// Nothing is clamped or rounded, so `sketch_config` is the config that ran.
     #[arg(long, help_heading = "Construction")]
     pub config: Option<String>,
     /// Worker threads for the parallel-insert algorithms (`*-parallel`). Every
@@ -93,14 +81,8 @@ pub struct SketchbenchArgs {
     #[arg(long, help_heading = "Dataset")]
     pub input: Option<String>,
     /// Generate in-process from a `datagen` spec file (examples in
-    /// `configs/datagen/`), unlocking every generator shape without a disk
-    /// round-trip. Wins over the inline options; `--input` wins over it.
-    ///
-    /// A file holding a *list* of specs is a multi-column stream: the last
-    /// column is the value, the ones before it are labels. The rows ingesting
-    /// labelled records (the `hydra-*` algorithms) need one; every other row
-    /// refuses it. `hydra-kll` reads the value column as `f64`, the other two
-    /// as `i64`.
+    /// `configs/datagen/`). Wins over the inline options; `--input` wins over it.
+    /// A *list* of specs is a multi-column stream, which only `hydra-*` rows take.
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
     /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is

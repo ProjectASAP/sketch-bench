@@ -1,17 +1,6 @@
-//! Thin newtypes over each concrete sketch implementation in the repo, one
-//! directory per algorithm and one file per library. Each file owns its sketches
-//! *and how they are driven*: a `build_*` makes one from a `ParamSet`, and
-//! `insert_*` / `merge_*` / `prepare_*` / `ask_*` / `memory_*` say what can be
-//! done to it. Each is written in the sketch's own terms — nothing forces two
-//! files to agree on a signature, which is the whole reason this is not a trait
-//! (`docs/sketch-bench.md` §"Wrapper should not be a trait").
-//!
-//! Every one of them takes the sketch and its data as parameters and captures
-//! nothing, so a caller supplies both at call time. That is why no file here
-//! mentions a dataset, a request or a comparator: how often a sketch is
-//! measured, over what data, and scored against what, are not facts about the
-//! sketch. A frontend hands these to `aqpbm_core::ops`, which builds the timed
-//! closures out of them.
+//! Thin newtypes over each sketch, one directory per algorithm and one file per
+//! library, each owning its `build_*` / `insert_*` / `ask_*` / `memory_*`. Not a
+//! trait, so no two files must agree on a signature; they capture nothing.
 
 // One directory per algorithm; inside each, one file per library. A reader
 // looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and
@@ -30,26 +19,17 @@ pub mod polars_shared;
 use crate::build_error::BuildError;
 use asap_sketchlib::impl_fixed_matrix;
 
-// The library types a caller has to *name* in order to select one of the
-// monomorphisations below: the three register storages the `hll` `lib` rows are
-// compiled at, and the bounds a fixed-matrix visitor states. Re-exported here so
-// picking a shape or a precision does not mean depending on `asap_sketchlib`
-// directly — this crate is where the wrapped libraries live, and this is the
-// vocabulary it wraps them in.
+// The library types a caller has to *name* to select one of the monomorphisations
+// below. Re-exported so picking a shape or a precision does not mean depending on
+// `asap_sketchlib` directly — this crate is where the wrapped libraries live.
 pub use asap_sketchlib::{
     DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
     MatrixStorage,
 };
 
-//
-// What the three parallel-insert rows share. Their per-worker sketch is a
-// compile-time type, so the shape is not a knob: a request naming any other one
-// is refused rather than accepted and ignored. Each row itself lives in its
-// algorithm's `sketchlib.rs`.
-//
-// Its own type, not the `M5x32768` in `fixed_matrix`: that table is the set of
-// shapes the *sweepable* fixedmatrix rows dispatch over, and pruning it must not
-// silently move the shape these rows are named after.
+// What the three parallel-insert rows share: a per-worker sketch whose shape is
+// a compile-time type, so any other request is refused. Its own type, not the
+// `M5x32768` in `fixed_matrix`, so pruning that table cannot move this shape.
 
 impl_fixed_matrix!(M5x32K, i32, 5, 32768);
 
@@ -63,24 +43,16 @@ pub const PARALLEL_COLS: usize = 32768;
 /// none.
 pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
     let n = n.max(1);
-    let chunk = (items.len() + n - 1) / n;
+    let chunk = items.len().div_ceil(n);
     if chunk == 0 {
         return vec![items];
     }
     items.chunks(chunk).collect()
 }
 
-//
 // All four helpers below exist for one rule: a row that cannot build at the
 // requested parameters says so, and never builds at different ones under the
-// requested label. The record's `sketch_config` is then always the config that
-// ran, which is what lets a plot key on it.
-//
-// They divide by how the wrapped library states its domain. `require_shape`:
-// one shape, baked into a type. `require_range` / `require_positive`: a bound
-// the library asserts on, so it has to be checked before the call.
-// `require_resolved_shape`: no stated domain at all, only what the library
-// resolved the request to, which is readable off the built structure.
+// requested label — so `sketch_config` is always the config that ran.
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
 /// shape; any other requested config is a `BuildError` naming both shapes.
@@ -102,12 +74,8 @@ pub(crate) fn require_shape(
 }
 
 /// Refuse a parameter outside the range the wrapped library accepts, naming the
-/// value and the bound.
-///
-/// The bound arrives as an argument because it is the *library's*, not the
-/// parameter vocabulary's: `lg_k` is 4..=18 for one library and {12,14,16} for
-/// another, and each row states its own. Use this wherever the library would
-/// otherwise assert, panic or truncate.
+/// value and the bound. The bound is an argument because it is the *library's* —
+/// `lg_k` is 4..=18 for one and {12,14,16} for another, so each row states its own.
 pub(crate) fn require_range<T>(
     what: &str,
     name: &str,
@@ -126,12 +94,9 @@ where
     Ok(())
 }
 
-/// Refuse a dimension of zero, for a library that has a floor and no ceiling.
-///
+/// Refuse a dimension of zero, for a library with a floor and no ceiling.
 /// Separate from [`require_range`] because printing `usize::MAX` as the upper
-/// bound would state a limit the library does not have, and a reader chasing a
-/// refusal should not have to work out that 18446744073709551615 means "no
-/// ceiling".
+/// bound would state a limit the library does not have.
 pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(), BuildError> {
     if got == 0 {
         return Err(BuildError(format!(
@@ -141,14 +106,9 @@ pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(),
     Ok(())
 }
 
-/// Refuse a `(rows, cols)` the library did not resolve to exactly, naming what
-/// it built instead.
-///
-/// The `sketch_oxide` constructors take error bounds and derive the dimensions
-/// back out of them, so a request survives only if it round-trips. Checking the
-/// built sketch rather than replicating the library's rounding is what makes
-/// this hold across a library upgrade: a changed formula turns into a refusal
-/// here instead of a silently different table.
+/// Refuse a `(rows, cols)` the library did not resolve to exactly, naming what it
+/// built instead. Checking the built sketch rather than replicating the rounding
+/// is what holds across an upgrade: a changed formula refuses here.
 pub(crate) fn require_resolved_shape(
     what: &str,
     got: (usize, usize),

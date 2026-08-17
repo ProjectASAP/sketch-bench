@@ -1,47 +1,15 @@
-//! Which sketch a pair of strings names.
-//!
-//! `--algorithm hydra-cms --impl lib` is two runtime strings; `run_cms` is a
-//! monomorphic function. Something has to turn one into the other, and this is
-//! it: the only place in the program where a name is bound to code.
-//!
-//! It lives in the frontend rather than in `sketch-bench` on purpose. That crate
-//! wraps sketches and answers "can this run"; it does not need to know that a
-//! command line exists. What it hands back — a `Vec<Body>`, one closure per
-//! square — is already one type, so nothing here has to reconcile the fact that
-//! every row's sketch is a different type. The erasure happened *after*
-//! monomorphisation, inside `squares_for`, which is why the insert loop in each
-//! of those closures is still the concrete one.
-//!
-//! [`runner_for`] returning `None` and `registry::check` returning `Ok` cannot
-//! both be right — the test at the bottom is what keeps that from happening
-//! quietly.
+//! Which sketch a pair of strings names: the only place in the program where a
+//! name is bound to code. In the frontend, not `sketch-bench`, because that crate
+//! need not know a command line exists — it hands back one erased `Vec<Body>`.
 
 use aqpbm_core::dataset::{DatasetDescription, DatasetSpec};
 use aqpbm_core::ops::Body;
 use aqpbm_core::request::{Numeric, Requirement};
 use aqpbm_core::run_error::RunError;
 
-/// A row's body factory: given the request and the spec the dataset is
-/// described by, materialise at the row's own item type and hand back one
-/// closure per selected square.
-///
-/// It takes the *spec* and not produced data because the item type is the row's
-/// own — `hydra-cms` ingests `Labeled<i64>`, `hydra-kll` ingests `Labeled<f64>`
-/// — and only the wrapper knows it. Generating first would mean publishing that
-/// type back out of the bundle for the CLI to read.
-///
-/// It never sees `MeasureConfig`. How many times to run a body, and what to
-/// record around it, belong to whoever holds the clock.
-/// The rows this binary can run.
-///
-/// Each arm names four things and nothing else: the statistic the sketch
-/// answers, and its `build` / `insert` / `ask` closures. Materialising the
-/// dataset, choosing the comparator and building the timed bodies all happen
-/// inside the core call — so `sketch-bench` never sees a `DatasetSpec`, a
-/// `Requirement` or a ground truth, and a row is added by naming its closures
-/// here.
-///
-/// `None` means the pair has no arm yet.
+/// The rows this binary can run: one closure per selected square, materialised at
+/// the row's own item type. Each arm names only the statistic and the row's
+/// `build` / `insert` / `ask`. `None` means the pair has no arm yet.
 pub fn run_direct(
     algorithm: &str,
     impl_name: &str,
@@ -458,16 +426,9 @@ pub fn run_direct(
     })
 }
 
-/// Refuse `--dtype f64` on a row whose item type is `i64`.
-///
-/// The registry says nothing about item width — it is a construction choice, and
-/// refusing it needs to know which row was asked for. That is known here. Without
-/// this the width would be accepted and ignored: an `f64` request would build the
-/// same i64 sketch, ingest the same i64 column, and write a record whose
-/// `data_type` claimed otherwise.
-///
-/// The four `kll-*` sketch rows do not call it, because they are the only ones
-/// that genuinely build at both widths.
+/// Refuse `--dtype f64` on a row whose item type is `i64`. The registry says
+/// nothing about width, so refusing it needs to know which row was asked for —
+/// known here. The `kll-*` rows skip it: they genuinely build at both widths.
 fn i64_only(req: &Requirement) -> Result<(), RunError> {
     if req.width == Numeric::F64 {
         return Err(RunError::Body(format!(
@@ -646,13 +607,9 @@ fixed_matrix_row!(
 mod tests {
     use super::*;
 
-    /// Every registered pair can actually be run.
-    ///
-    /// `registry::check` and the match above live in different crates, so
-    /// nothing but this makes them agree. Without it the failure mode is a
-    /// request that passes every feasibility check and then finds no code —
-    /// which reads to a user as the tool being broken rather than as their
-    /// request being wrong.
+    /// Every registered pair can actually be run. `registry::check` and the match
+    /// above live in different crates, so nothing but this makes them agree —
+    /// a pair that passes the check and finds no code reads as a broken tool.
     #[test]
     fn every_registry_entry_has_an_arm() {
         // A parameterless request reaches the arm and stops at the first thing

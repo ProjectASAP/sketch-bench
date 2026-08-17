@@ -1,20 +1,14 @@
 //! The multi-column stream: `n - 1` label columns joined into a key, plus one
-//! value column.
-//!
-//! This is what the grouped (Hydra) rows ingest. As in [`super::numeric`],
-//! generation happens in [`crate::dataset::DatasetSpec::build`] and only
-//! [`LabeledDataset::from_table`] is offered here.
+//! value column — what the grouped (Hydra) rows ingest. As in [`super::numeric`],
+//! only [`LabeledDataset::from_table`] is offered here.
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
 
 use super::{Dataset, DatasetDescription};
 
-/// One record of a multi-column stream: the label columns joined with `;`,
-/// plus the measured value.
-///
-/// The join happens once at generation, so a wrapper feeding a library that
-/// takes `"a;b"` pays nothing for it on the insert path. The parts are not
-/// stored alongside it because only the untimed comparator asks for them.
+/// One record of a multi-column stream: the label columns joined with `;`, plus
+/// the measured value. The join happens once at generation, so a wrapper feeding
+/// a library that takes `"a;b"` pays nothing for it on the insert path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Labeled<V> {
     pub key: String,
@@ -36,13 +30,8 @@ impl<V> Labeled<V> {
 }
 
 /// A multi-column dataset: `n - 1` label columns followed by one value column,
-/// all from one [`TableDescription`].
-///
-/// No new generator: the description already covers a table, and this type only
-/// zips its columns into records. Which means a column's distribution, skew and
-/// seed are all independently steerable, using the vocabulary that already
-/// exists — including `column_connected`, so two label columns can be made to
-/// co-vary.
+/// all from one [`TableDescription`]. No new generator — this only zips the
+/// columns into records, so each stays independently steerable.
 #[derive(Debug, Clone)]
 pub struct LabeledDataset<V> {
     items: Vec<Labeled<V>>,

@@ -2,7 +2,7 @@
 //! shared by offline benchmarks, runtime samplers, and the
 //! visualisation layer. Current version: [`SCHEMA_VERSION`].
 //!
-//! See `docs/DESIGN.md` §4.4.
+//! See `docs/archive/SCHEMA_V1.md` for the v1 field list this grew from.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -37,12 +37,9 @@ pub struct Record {
     /// `bench` from the cell's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
-    /// The data this run was measured over.
-    ///
-    /// The wire name stays `workload` while the Rust name does not: it is the
-    /// group key `scripts/merge_passes.py` pools by, and records already exist
-    /// carrying it — including the C++-emitted line pinned in this module's
-    /// tests. Renaming the field would be a schema break for a word.
+    /// The data this run was measured over. The wire name stays `workload` while
+    /// the Rust name does not: it is the group key `scripts/merge_passes.py`
+    /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
     pub dataset: DatasetDescription,
     pub mode: Mode,
@@ -75,13 +72,13 @@ pub enum Mode {
 pub enum Source {
     /// Run produced by the `approxbench` CLI.
     Cli,
-    /// Run produced by an embedded `sketch-runtime::Sampler`
-    /// in one of the downstream apps.
+    /// Run produced by an embedded sampler in one of the downstream apps.
+    /// No producer in this workspace emits these; they are read, not written.
     AsapFusion,
     DataCollector,
     AsapQuery,
     /// Run produced by a `cpp-bench` binary (Google Benchmark
-    /// based C++ track). See `docs/SCHEMA_V1.md`.
+    /// based C++ track). See `docs/archive/SCHEMA_V1.md`.
     CppBench,
 }
 
@@ -100,9 +97,10 @@ pub struct BenchSection {
     /// pooling anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
-    /// **Ingest rate**: `items / insert_wall`, `Accumulator::prepare` excluded.
-    /// Deferred-build rows buffer in `update`, so this times their `Vec::push`
-    /// — compare [`Self::build_throughput_items_per_sec`] instead.
+    /// **Ingest rate**: `items / insert_wall`, with `prepare` excluded.
+    /// Deferred-build rows buffer on the insert path, so for those this times
+    /// the buffering and their real build cost is [`Self::finalize_time_ms`],
+    /// measured as its own square.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
     /// Per-run ingest-rate samples (items/sec, one entry per measured run).
@@ -111,8 +109,8 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
     /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)`, the
-    /// rate a *ready-to-answer* sketch is produced at. The cross-algorithm column;
-    /// equals the ingest rate wherever `prepare` is free.
+    /// rate a *ready-to-answer* sketch is produced at. No producer here writes
+    /// it; kept because the field is in the wire schema and must still pool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_throughput_items_per_sec: Option<RunStats>,
     /// Wall time of `Accumulator::prepare` per run — the deferred build cost
@@ -163,9 +161,10 @@ pub struct BenchSection {
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
-    /// `false` when the implementation provides no merge. Recorded rather
-    /// than omitted so a capability gap is visible in the output instead of
-    /// showing up as a missing row.
+    /// Present, and `true`, whenever a merge was measured. Never `false`: a row
+    /// that provides no merge is refused in `ops::squares_for` before anything
+    /// is timed, so the gap shows up as an error naming the row rather than as a
+    /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_supported: Option<bool>,
 }
@@ -220,22 +219,16 @@ pub struct MergedRecord {
     pub source: Source,
 
     pub sketch_config: Option<serde_json::Value>,
-    /// The data this run was measured over.
-    ///
-    /// The wire name stays `workload` while the Rust name does not: it is the
-    /// group key `scripts/merge_passes.py` pools by, and records already exist
-    /// carrying it — including the C++-emitted line pinned in this module's
-    /// tests. Renaming the field would be a schema break for a word.
+    /// The data this run was measured over. The wire name stays `workload` while
+    /// the Rust name does not: it is the group key `scripts/merge_passes.py`
+    /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
     pub dataset: DatasetDescription,
 
     pub memory_bytes: Option<u64>,
-    /// Net bytes the tracking allocator attributes to this sketch's
-    /// lifetime — **measured**, where [`Self::memory_bytes`] is a
-    /// self-reported formula. Only present when the source binary was built
-    /// with `heap-track`; kept as its own field (not merged into
-    /// `memory_bytes`) so a gap between the two stays visible instead of
-    /// being silently papered over.
+    /// Net bytes the tracking allocator attributes to this sketch's lifetime —
+    /// **measured**, where [`Self::memory_bytes`] is a self-reported formula.
+    /// Its own field, so a gap between the two stays visible. Needs `heap-track`.
     pub heap_bytes_net: Option<u64>,
     /// High-water mark of the same counter across construction and insert.
     pub heap_bytes_peak: Option<u64>,

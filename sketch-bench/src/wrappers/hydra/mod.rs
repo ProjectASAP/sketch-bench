@@ -1,33 +1,6 @@
-//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022), the
-//! grid-of-sketches that answers per-subpopulation queries out of one shared
-//! structure.
-//!
-//! Two things separate these rows from every other one in the registry.
-//!
-//! Their item is a **record**, not a key: a stream of `d` label columns plus a
-//! value, so they ingest `Labeled<V>` and read their dataset from a column
-//! list. And their insert **fans out**: one record is written into every
-//! non-empty subset of its labels, so `d` labels cost `2^d - 1` cell
-//! insertions. The reported throughput is records per second, which is the only
-//! denominator comparable across `d`; multiply by `2^d - 1` for cell
-//! insertions.
-//!
-//! # Why the cell type is on the algorithm axis
-//!
-//! What sits in a cell decides which statistic the grid answers, so it is a
-//! different question and not a different answer to one question.
-//!
-//! - A Count-Min cell counts occurrences of a value inside a group, which is
-//!   [`SubpopFrequencyOps`]. It cannot report the size of the group itself.
-//! - A HyperLogLog cell counts distinct values inside a group, which is
-//!   [`SubpopCardinalityOps`], the statistic the Count-Min row structurally
-//!   cannot reach.
-//! - A KLL cell answers the ordered statistic inside a group, which is
-//!   [`SubpopQuantileOps`], scored in rank error.
-//!
-//! Three comparators, so three algorithms: `hydra-cms`, `hydra-hll` and
-//! `hydra-kll`. All three come from `sketch_framework::Hydra`, so all three
-//! have one impl, `lib`.
+//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022). Their
+//! item is a **record**; insert fans out into every non-empty label subset, so
+//! `d` labels cost `2^d - 1` cells and throughput is records per second.
 
 use crate::build_error::BuildError;
 use crate::params::*;
@@ -47,12 +20,8 @@ fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), BuildErro
 }
 
 /// Bytes the grid itself costs, on top of the counters inside the cells: every
-/// cell is an enum around a sketch struct, and `Hydra` keeps one more of them
-/// as the prototype it clones into new cells.
-///
-/// Reported separately from the counter bytes so each row's footprint states
-/// the same two components. #75 records that leaving this out is a fixed
-/// under-report.
+/// cell is an enum around a sketch struct, plus the prototype `Hydra` clones
+/// from. Separate from the counter bytes, so every row states both components.
 fn grid_overhead_bytes(rows: usize, cols: usize) -> usize {
     (rows * cols + 1) * std::mem::size_of::<HydraCounter>()
 }
@@ -77,20 +46,9 @@ const KLL_MIN_LEVEL: usize = crate::wrappers::kll::LIB_K_MIN as usize;
 /// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
 const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
 
-/// Retained slots one KLL cell allocates at construction.
-///
-/// Worth knowing for #56, which assumed a KLL cell is a variable-size heap
-/// structure with no analytic footprint: in this library it is not. `KLL::init`
-/// allocates `items` as a boxed slice of this length once and never grows it,
-/// so a `hydra-kll` footprint is as analytic as a `hydra-cms` one.
-///
-/// This is a line-for-line copy of the library's private
-/// `compute_max_capacity`, which makes it a claim about `asap_sketchlib` 0.2.2
-/// and not a bound that holds by construction. Nothing in the library's public
-/// API reports the allocation, so the test beside it can only pin this
-/// reproduction and would not notice the library diverging from it. Read the
-/// number the way `kll`'s own rows ask theirs to be read: a derived figure to
-/// compare against `heap_bytes_net`, which is the measured one.
+/// Retained slots one KLL cell allocates at construction — `KLL::init` boxes a
+/// slice of this length once and never grows it. A line-for-line copy of the
+/// library's private `compute_max_capacity`, so a claim about 0.2.2, not a bound.
 fn kll_cell_slots(k: u32) -> usize {
     // `init_internal` normalises before sizing: `m` floors `k`, and `k` is
     // capped. Reproduced so an out-of-range `k` reports the footprint the
@@ -328,14 +286,9 @@ mod tests {
         assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);
     }
 
-    /// The library allocates a cell's retained slots once at construction, so
-    /// the footprint is analytic.
-    ///
-    /// This pins the reproduction, not the library: nothing public reports the
-    /// allocation, so a library change to `compute_max_capacity` would pass
-    /// here and silently move every `hydra-kll` memory number. The value below
-    /// is hand-derived from the decay series, so at least it is not this
-    /// function checking itself.
+    /// The library allocates a cell's retained slots once, so the footprint is
+    /// analytic. This pins the reproduction, not the library — the value below is
+    /// hand-derived from the decay series, not read back from the function.
     #[test]
     fn kll_cell_capacity_matches_the_library_shape() {
         // ceil(200 * (2/3)^i) for i in 0..8 is 200, 134, 89, 60, 40, 27, 18, 12

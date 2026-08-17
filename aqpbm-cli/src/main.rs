@@ -149,12 +149,9 @@ fn list_impls() -> Result<()> {
     Ok(())
 }
 
-/// Load a `--spec` file as one [`TableDescription`].
-///
-/// One reader, because one description covers both cases: a one-column table is
-/// what a plain row ingests, and a table with a label column before its value
-/// column is what the record-ingesting rows read. Which a row wants is the row's
-/// question, asked at materialisation.
+/// Load a `--spec` file as one [`TableDescription`]. One reader, because one
+/// description covers both cases: a plain row takes a one-column table, and a
+/// record-ingesting row takes label columns before the value column.
 fn load_spec(path: &str) -> Result<DatasetSpec> {
     TableDescription::from_path(std::path::Path::new(path))
         .map(DatasetSpec::Generated)
@@ -299,8 +296,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--operations is required"))?,
     )?;
-    // `--merge-shards` no longer selects anything: it says how many shards the
-    // merge operation folds, and `--operations merge` is what asks for it.
     // The loop knobs, and only those. Which squares to run, at which config,
     // with how many workers, is the *request* — it goes in `Requirement`, not
     // in a whole-run config a single measurement would have to read past.
@@ -332,12 +327,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         comparator: args.comparator.clone(),
     };
 
-    // Can this run? The registry owns the answer, because it is the one thing
-    // that knows what each sketch supports. Asked before the dataset is
-    // generated, so a request naming an operation, a metric, a width or a
-    // comparator this cell cannot honour costs nothing to refuse.
-    // Every `ResolveError` variant already names the cell it is about, so the
-    // message is passed through rather than prefixed with it a second time.
+    // Can this run? The registry owns the answer, asked before the dataset is
+    // generated, so an operation, metric, width or comparator this cell cannot
+    // honour costs nothing to refuse. Its errors already name the cell.
     registry::check(&req).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     eprintln!(
@@ -350,16 +342,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     );
 
     // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
-    // closure per square and knows nothing about how often it will be run. The
-    // dataset is generated inside, at the row's own item type, which is the one
-    // thing about this request the frontend cannot work out for itself.
-    //
-    // Construction is the failure `check` cannot see — a fixed shape the build
-    // refuses, a `lg_k` the library rejects — and it lands here, before anything
-    // is timed, rather than as a measurement of zero.
-    // `check` proved this pair is registered; `run_direct` is whether it has been
-    // wired to its wrapper's closures yet. Only the hydra family has, so the rest
-    // say so by name instead of failing somewhere less obvious.
+    // closure per square, generating the dataset inside at the row's own item
+    // type. Construction failures land here, before anything is timed.
     let (dataset, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -375,12 +359,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Core times each one. It is handed a closure and a run count and told
-    // nothing else — not which sketch, not which operation. This loop is the only
-    // place all three crates meet, and it is the frontend's because only the
-    // frontend knows which squares it asked for: the bodies arrive in `cells`
-    // order, and `cells` is the same pure function of the same two masks this
-    // program parsed, so the row never has to say which square is which.
+    // Core times each one, handed a closure and a run count and told nothing else.
+    // Labelling is the frontend's: the bodies arrive in `cells` order, and `cells`
+    // is the same pure function of the same two masks this program parsed.
     let mut reports = Vec::with_capacity(bodies.len());
     for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
         // Error is deterministic given (data, parameters), and a dataset is
@@ -413,12 +394,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         reports.push(report);
     }
 
-    // One record per square, each on its own JSONL line. A downstream group-by on
-    // (sketch, impl, sketch_config, dataset) merges them back.
-    //
-    // The algorithm names the structural variant, so a reader grouping by it
-    // compares variants; the family is what groups the variants back together,
-    // which is the axis a cross-library comparison is taken over.
+    // One record per square, each on its own JSONL line; a downstream group-by on
+    // (sketch, impl, sketch_config, dataset) merges them back. `sketch` names the
+    // variant, `family` groups the variants a cross-library comparison spans.
     let family = registry::family_of(&algorithm).expect("check proved the algorithm is registered");
     let records: Vec<_> = reports
         .iter()

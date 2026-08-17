@@ -1,22 +1,15 @@
-//! Turning "how one sketch is driven" into the closures a caller times.
-//!
-//! The functions themselves are written in the wrapper file that owns the
-//! sketch, in that sketch's own terms — the `datasketches` Count-Min takes an
-//! owned `i64`, the `asap_sketchlib` one takes a `&DataInput`, and each says so
-//! in its own `insert`. Nothing here forces two of them to agree on anything.
-//!
-//! What lives here is the part that is the same for every sketch: given those
-//! functions and a dataset, produce one [`Body`] per square the request
-//! selected, each with its setup already done and only its own operation inside
-//! the clock. This crate still names no sketch — `S`, `I`, `P` and `A` are
-//! whatever the caller instantiated them at.
+//! Turning "how one sketch is driven" into the closures a caller times. The
+//! per-sketch functions live in the wrapper that owns the sketch; what lives
+//! here is what every sketch shares — one [`Body`] per selected square.
 
 use std::rc::Rc;
 
 use crate::accuracy::cardinality::CardinalityGT;
 use crate::accuracy::frequency::FrequencyGT;
+use crate::accuracy::heavy_hitter::HeavyHitterGT;
 use crate::accuracy::quantile::RankErrorGT;
 use crate::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
+use crate::accuracy::topk::TopkGT;
 use crate::accuracy::GroundTruth;
 use crate::build_error::BuildError;
 use crate::config::ParamSet;
@@ -42,20 +35,9 @@ type Asked<G, I> = (
     Rc<Vec<<G as GroundTruth<I>>::Probe>>,
 );
 
-/// A body for every square the request selected, over one scored row, in
-/// [`cells`] order — the caller computed the same masks, so it can label them by
-/// calling the same function rather than being told.
-///
-/// Returned alongside them is the dataset's description, which is the one thing
-/// about this run a frontend cannot work out for itself: `--input data.bin` has
-/// no size or shape until the row has decoded it.
-///
-/// The dataset arrives behind an `Rc` because the squares share one
-/// materialisation: four bodies over a million items is four handles, never
-/// four copies.
-///
-/// Construction is proved once, here, before any body is handed back — a cell
-/// that cannot be built fails whole, and never as a measurement of zero.
+/// A body for every square the request selected, in [`cells`] order, plus the
+/// dataset's description. The dataset rides an `Rc` because the squares share
+/// one materialisation; construction is proved once before any body ships.
 #[allow(clippy::too_many_arguments)]
 pub fn squares_for<W, S, I, G, B, M, Ins, Ask>(
     req: &Requirement,
@@ -163,6 +145,17 @@ where
             }
 
             Operation::Prepare => {
+                // Refused here, the way merge is: timing a `None` would report
+                // `work = items.len()` against a zero-length region, which reads
+                // as an infinitely fast prepare rather than as a missing one.
+                // `registry::check` catches this for a CLI request, but a caller
+                // building a `Requirement` directly does not go through it.
+                let Some(prepare) = prepare else {
+                    return Err(RunError::Body(format!(
+                        "{}/{} provides no prepare",
+                        req.algorithm, req.impl_name
+                    )));
+                };
                 let (wk, params) = (dataset.clone(), params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
@@ -170,11 +163,7 @@ where
                     for v in items {
                         insert(&mut s, v);
                     }
-                    t.time(|| {
-                        if let Some(prepare) = prepare {
-                            prepare(&mut s);
-                        }
-                    });
+                    t.time(|| prepare(&mut s));
                     RunOutcome {
                         work: items.len() as u64,
                         memory_bytes: Some(memory(&s) as u64),
@@ -424,6 +413,78 @@ where
     )
 }
 
+/// A row answering **top-k**: which `k` keys are heaviest, and how heavy.
+/// `k` is the comparator's parameter, not the sketch's, so it arrives here
+/// rather than on [`Requirement`]. The row's `ask` must use the same `k`.
+#[allow(clippy::too_many_arguments)]
+pub fn squares_topk<S, K, B, M, Ins, Ask>(
+    req: &Requirement,
+    spec: &DatasetSpec,
+    k: usize,
+    build: B,
+    memory: M,
+    insert: Ins,
+    ask: Ask,
+    merge: Option<fn(&mut S, &S)>,
+    prepare: Option<fn(&mut S)>,
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
+where
+    S: 'static,
+    K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
+    B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
+    M: Fn(&S) -> usize + Copy + 'static,
+    Ins: Fn(&mut S, &K) + Copy + 'static,
+    Ask: Fn(&mut S, &()) -> Vec<(K, u64)> + Copy + 'static,
+{
+    squares_for::<K::Wk, S, K, TopkGT, B, M, Ins, Ask>(
+        req,
+        Rc::new(spec.build::<K>()?),
+        TopkGT { k },
+        build,
+        memory,
+        insert,
+        ask,
+        merge,
+        prepare,
+    )
+}
+
+/// A row answering **heavy-hitter**: the heavy items and how heavy.
+/// `phi` is this comparator's bound — heavy means `count > phi * n` — and
+/// travels with the statistic. The row's `ask` must draw the same line.
+#[allow(clippy::too_many_arguments)]
+pub fn squares_heavy_hitter<S, K, B, M, Ins, Ask>(
+    req: &Requirement,
+    spec: &DatasetSpec,
+    phi: f64,
+    build: B,
+    memory: M,
+    insert: Ins,
+    ask: Ask,
+    merge: Option<fn(&mut S, &S)>,
+    prepare: Option<fn(&mut S)>,
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
+where
+    S: 'static,
+    K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
+    B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
+    M: Fn(&S) -> usize + Copy + 'static,
+    Ins: Fn(&mut S, &K) + Copy + 'static,
+    Ask: Fn(&mut S, &()) -> Vec<(K, u64)> + Copy + 'static,
+{
+    squares_for::<K::Wk, S, K, HeavyHitterGT, B, M, Ins, Ask>(
+        req,
+        Rc::new(spec.build::<K>()?),
+        HeavyHitterGT { phi },
+        build,
+        memory,
+        insert,
+        ask,
+        merge,
+        prepare,
+    )
+}
+
 /// A row answering **cardinality**: how many distinct keys the stream carried.
 ///
 /// The probe is `()` — there is one question, asked repeatedly — so `ask` ignores
@@ -484,7 +545,7 @@ where
     squares_for::<I::Wk, S, I, RankErrorGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<I>()?),
-        RankErrorGT {},
+        RankErrorGT,
         build,
         memory,
         insert,

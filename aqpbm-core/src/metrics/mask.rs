@@ -1,7 +1,8 @@
-//! `MetricsMask` — which metric algorithms a sink collects. Named by both
-//! consumers of the `MetricsSink` contract, the offline
-//! [`FullSink`](crate::metrics::FullSink) and `sketch-runtime::Sampler`, which
-//! is why it sits here rather than in either. See `docs/DESIGN.md` §5.3.
+//! `MetricsMask` — which recorders a measurement arms — and `OperationMask`,
+//! what it arms them over. Neither belongs to a recorder: they select across all
+//! of them, so they sit beside the recorders rather than inside one.
+//!
+//! See `docs/aqpbm-core.md` §Metrics and §Operations.
 
 use bitflags::bitflags;
 
@@ -21,11 +22,8 @@ bitflags! {
 
 bitflags! {
     /// Which operations to measure over. A separate set from [`MetricsMask`]:
-    /// one says *what is measured*, this says *what it is measured over*, and a
-    /// request is the cross product of the two.
-    ///
-    /// Insert and query are assumed of every implementation; merge and prepare
-    /// are declared, so a caller asks for them by name.
+    /// one says *what is measured*, this says *what it is measured over*.
+    /// Insert and query are assumed; merge and prepare are asked for by name.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct OperationMask: u32 {
         const INSERT  = 1 << 0;

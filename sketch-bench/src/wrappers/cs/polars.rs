@@ -19,7 +19,8 @@ pub fn prepare_polars_frequency_cs(sketch: &mut PolarsFrequencyCs) {
 #[derive(Default)]
 pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 
-/// See [`PolarsCardinality::init`] — no tunable shape, ignores config.
+/// No tunable shape: the exact baseline stores the stream itself, so it
+/// ignores the config rather than refusing it.
 pub fn build_polars_frequency_cs(
     config: &ParamSet,
     _workers: usize,

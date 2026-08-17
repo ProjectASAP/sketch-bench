@@ -7,9 +7,10 @@ use std::collections::BTreeMap;
 
 use super::GroundTruth;
 
-/// Number of times the 101-percentile sweep is repeated when `record_calls`
-/// is on, matching the KLL / DD query binaries' `REPEATS_PER_RUN = 10`.
-const NUM_PERCENTILES: usize = 101;
+/// How many points the quantile grid has: `0.00, 0.01, … 1.00`. Shared with the
+/// grouped rank-error comparator, so a grouped rank error and an ungrouped one
+/// are read on the same ruler.
+pub(crate) const GRID_POINTS: usize = 101;
 
 /// Lossy-cast to f64, for the numeric item types quantile sketches take.
 /// Separate from `Into<f64>` because std refuses `i64 -> f64` on precision
@@ -74,7 +75,7 @@ impl QuantileValue for f64 {
 
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RankErrorGT {}
+pub struct RankErrorGT;
 
 impl<I> GroundTruth<I> for RankErrorGT
 where
@@ -97,7 +98,7 @@ where
         if truth.is_empty() {
             return Vec::new();
         }
-        (0..NUM_PERCENTILES).map(|i| i as f64 / 100.0).collect()
+        (0..GRID_POINTS).map(|i| i as f64 / 100.0).collect()
     }
 
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
@@ -108,19 +109,7 @@ where
         let mut max_rank_err = 0.0_f64;
         let mut sum_rank_err = 0.0_f64;
         for (q, est) in probes.iter().zip(answers) {
-            // The returned value occupies the rank interval `[lower, upper]`:
-            // error 0 if `q*n` falls inside, else distance to the near edge.
-            let lower = lower_bound(truth, *est);
-            let upper = upper_bound(truth, *est);
-            let target = q * nf;
-            let raw_err = if target < lower as f64 {
-                lower as f64 - target
-            } else if target > upper as f64 {
-                target - upper as f64
-            } else {
-                0.0
-            };
-            let err = raw_err / nf;
+            let err = rank_err(truth, *est, *q);
             sum_rank_err += err;
             if err > max_rank_err {
                 max_rank_err = err;
@@ -128,7 +117,7 @@ where
         }
         metrics_from([
             ("items", nf),
-            ("grid_points", NUM_PERCENTILES as f64),
+            ("grid_points", GRID_POINTS as f64),
             ("mean_rank_err", sum_rank_err / probes.len() as f64),
             ("max_rank_err", max_rank_err),
         ])
@@ -136,6 +125,27 @@ where
 }
 
 // ---------- helpers ----------
+
+/// Rank error of one answer, in units of `n`. The returned value occupies the
+/// rank interval `[lower, upper]` — every rank a tie run spans — so a target
+/// inside it is not an error, and outside it the distance to the near edge.
+pub(crate) fn rank_err(sorted: &[f64], est: f64, q: f64) -> f64 {
+    let nf = sorted.len() as f64;
+    if nf == 0.0 {
+        return 0.0;
+    }
+    let target = q * nf;
+    let lower = lower_bound(sorted, est) as f64;
+    let upper = upper_bound(sorted, est) as f64;
+    let raw = if target < lower {
+        lower - target
+    } else if target > upper {
+        target - upper
+    } else {
+        0.0
+    };
+    raw / nf
+}
 
 /// Count of elements strictly less than `x` in a sorted slice.
 pub(crate) fn lower_bound(sorted: &[f64], x: f64) -> usize {
@@ -167,7 +177,7 @@ pub(crate) fn upper_bound(sorted: &[f64], x: f64) -> usize {
     lo
 }
 
-/// Build the flat metric map a `Comparison` carries.
+/// Build the flat metric map a comparator's `score` returns.
 fn metrics_from<const N: usize>(pairs: [(&str, f64); N]) -> BTreeMap<String, f64> {
     pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }

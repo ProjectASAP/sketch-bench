@@ -9,8 +9,8 @@ use std::ffi::OsString;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_core::run_stats::welford::Welford;
 use aqpbm_core::report::{BenchSection, CpuTime, Record, RunStats};
+use aqpbm_core::run_stats::welford::Welford;
 
 /// Marks a child so it runs exactly one repeat and writes to stdout, whatever
 /// its argv says. The argv is byte-identical to the parent's — provably the same
@@ -136,7 +136,8 @@ fn merge(records: Vec<Record>) -> Record {
     }
     // Pooled on its own rather than derived from the pooled ingest rate: the
     // two columns are means of ratios, and `items / (insert + finalize)` is
-    // not recoverable from `items / insert`.
+    // not recoverable from `items / insert`. No producer writes this today, but
+    // the field is in the schema, so a record carrying one must pool it.
     if let (Some(b), _) = across(records.iter(), |b| b.build_throughput_items_per_sec) {
         bench.build_throughput_items_per_sec = Some(b);
     }
@@ -149,14 +150,17 @@ fn merge(records: Vec<Record>) -> Record {
     if let (Some(wall), _) = across(records.iter(), |b| b.wall_time_ms) {
         bench.wall_time_ms = Some(wall);
     }
-    // The fold is a timing like any other, and it varies across processes for
-    // the same reasons: arena, layout, governor. Left out, merge was the one
-    // square whose record said `runs: R` while its number came from repeat 1
-    // alone and carried no interval.
+    // The fold is a timing like any other, and varies across processes for the
+    // same reasons: arena, layout, governor.
     if let (Some(m), _) = across(records.iter(), |b| b.merge_time_ms) {
         bench.merge_time_ms = Some(m);
     }
-    // Same argument, and the same omission: CPU time is measured per process.
+    // The rate belongs with the time it is derived from, or a record says
+    // `runs: R` over a folds/sec that describes one repeat.
+    if let (Some(m), _) = across(records.iter(), |b| b.merge_folds_per_sec) {
+        bench.merge_folds_per_sec = Some(m);
+    }
+    // Same argument: CPU time is measured per process.
     if let (Some(user), Some(sys)) = (
         across(records.iter(), |b| b.cpu_time_ms.map(|c| c.user_ms)).0,
         across(records.iter(), |b| b.cpu_time_ms.map(|c| c.sys_ms)).0,
@@ -229,7 +233,7 @@ mod tests {
             heap_bytes_peak: Some(65536),
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_time_ms: Some(stats(0.4)),
-            merge_folds_per_sec: None,
+            merge_folds_per_sec: Some(stats(mean * 0.5)),
             merge_shards: Some(4),
             merge_supported: Some(true),
         });
@@ -265,14 +269,8 @@ mod tests {
     }
 
     /// The invariant `--repeats` owes its reader: after merging R processes,
-    /// **every** aggregate in the record describes those R processes. A record
-    /// saying `runs: 3` beside an `n: 5` taken inside one process is claiming a
-    /// population it does not have.
-    ///
-    /// Written as a walk over the serialised record rather than a list of
-    /// fields, so a metric added to `BenchSection` later is covered here without
-    /// anyone remembering to come back. That omission is exactly how
-    /// `merge_time_ms` and `cpu_time_ms` were left behind.
+    /// **every** aggregate in the record describes those R processes. A walk over
+    /// the serialised record, so a new `BenchSection` field is covered for free.
     #[test]
     fn every_aggregate_describes_the_repeat_population() {
         let repeats = 3;

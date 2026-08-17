@@ -1,13 +1,6 @@
-//! Accumulator-construction parameters.
-//!
-//! The algorithm axis is open: [`ParamSet`] carries the algorithm name plus its
-//! parameters as JSON, and each params type declares its own name, its own
-//! canonical config, and — through serde — its own parsing and field names.
-//!
-//! One params type is one **family**. An algorithm named `cms` and one named
-//! `cms-fastpath-vector2d` build from the same `{rows, cols}` vocabulary, so
-//! they are one family and one params type serves both. Which variants exist is
-//! the registry's business; which vocabulary they share is this type's.
+//! Accumulator-construction parameters. The algorithm axis is open: [`ParamSet`]
+//! carries the algorithm name plus its parameters as JSON, and one params type is
+//! one **family** — `cms` and `cms-fastpath-vector2d` share a vocabulary.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -15,13 +8,8 @@ use serde::{Deserialize, Serialize};
 use aqpbm_datagen::DataGenError;
 
 /// Is `algorithm` the family `family`, or one of its variants?
-///
-/// A variant is the family name, a `-`, then the variant's own name. The rule
-/// lives here so the one place an algorithm name is related to its parameter
-/// vocabulary is one function, not a prefix test repeated per params type.
-///
-/// The `-` is what keeps `countsketch` out of the `cms` family, and
-/// `topk-cms` out of it too.
+/// A variant is the family name, a `-`, then its own name — and that `-` is what
+/// keeps `countsketch` out of the `cms` family, and `topk-cms` out of it too.
 pub fn in_family(algorithm: &str, family: &str) -> bool {
     algorithm == family
         || algorithm
@@ -37,11 +25,8 @@ pub trait SketchParams: Serialize + DeserializeOwned + Clone + std::fmt::Debug {
     const FAMILY: &'static str;
 
     /// Does the algorithm named `algorithm` build from this vocabulary?
-    ///
-    /// The default accepts the family's variants as well as the family itself,
-    /// because a variant is a different way of implementing the same structure
-    /// and takes the same knobs. A params type whose name must match exactly
-    /// overrides this.
+    /// The default accepts the family's variants too, since a variant takes the
+    /// same knobs. A params type whose name must match exactly overrides this.
     fn owns(algorithm: &str) -> bool {
         in_family(algorithm, Self::FAMILY)
     }
@@ -136,24 +121,6 @@ impl ParamSet {
             algorithm: algorithm.to_string(),
             params: serde_json::Value::Object(params),
         })
-    }
-
-    /// `(key, value)` pairs of the parameters, ordered by key — lets the CSV
-    /// writer emit a header and a row for any algorithm with no per-algorithm table,
-    /// and keeps one file's header stable across runs.
-    pub fn fields(&self) -> Vec<(String, String)> {
-        let Some(obj) = self.params.as_object() else {
-            return Vec::new();
-        };
-        obj.iter()
-            .map(|(k, v)| {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                (k.clone(), s)
-            })
-            .collect()
     }
 }
 
@@ -329,7 +296,6 @@ mod tests {
     fn empty_is_a_parameterless_point() {
         let p = ParamSet::empty("fake");
         assert_eq!(p.algorithm(), "fake");
-        assert_eq!(p.fields(), Vec::<(String, String)>::new());
         // A params struct with required fields rejects it, naming a field.
         assert!(p.parse::<FakeParams>().is_err());
     }
@@ -373,20 +339,5 @@ mod tests {
         };
         let err = p.parse::<FakeParams>().unwrap_err().to_string();
         assert!(err.contains("colz"), "error should name the bad key: {err}");
-    }
-
-    #[test]
-    fn fields_are_ordered_and_stringified() {
-        let p = ParamSet::of(&FakeParams {
-            rows: 5,
-            cols: 2048,
-        });
-        assert_eq!(
-            p.fields(),
-            vec![
-                ("cols".to_string(), "2048".to_string()),
-                ("rows".to_string(), "5".to_string())
-            ]
-        );
     }
 }

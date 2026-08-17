@@ -1,7 +1,6 @@
-//! Per-update latency histogram, backed by `hdrhistogram` when the `hdrhist`
-//! feature is on (the default). With it off, `LatencyRecorder` is a no-op shim
-//! so the rest of the code stays agnostic to the optional dep. Lives here
-//! because `sketch-runtime::Sampler` records latency on its hot path too.
+//! Per-update latency histogram, backed by `hdrhistogram` under the `hdrhist`
+//! feature (the default); with it off, a counter-only shim. At the crate root
+//! because it is the one recorder wanted without the rest of the machinery.
 
 #[cfg(feature = "hdrhist")]
 use hdrhistogram::Histogram;

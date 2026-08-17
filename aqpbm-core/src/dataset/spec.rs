@@ -1,12 +1,6 @@
 //! Where a benchmark's items come from, and what item type they materialise at.
-//!
-//! [`DatasetSpec`] describes data and [`BenchItem`] is the item type a row
-//! ingests — it names the dataset that carries it and how to build one.
-//! [`DatasetSpec::build`] is the one entry point: a row hands over the spec it
-//! was given and gets back a dataset at its own item type.
-//!
-//! Running a square is [`crate::ops::squares_for`]; timing it is
-//! [`crate::measure`](mod@crate::measure).
+//! [`DatasetSpec`] describes data, [`BenchItem`] is the item type a row ingests,
+//! and [`DatasetSpec::build`] is the one entry point between them.
 
 use crate::dataset::{Dataset, F64Dataset, I64Dataset, Labeled, LabeledDataset};
 use anyhow::Result;
@@ -20,7 +14,6 @@ pub enum DatasetSpec {
     Inline(TableDescription),
     File { path: String },
 }
-
 
 #[derive(Debug, Clone)]
 pub enum DatasetData {
@@ -39,13 +32,8 @@ pub enum DatasetData {
 
 impl DatasetSpec {
     /// Materialise at the item type `T`, which the row's `insert` closure
-    /// already pinned.
-    ///
-    /// This is the whole public surface. It is called from `crate::ops`, inside
-    /// the row, *after* the frontend has bound a pair of argv strings to a
-    /// concrete set of closures — which is the only point at which `T` is known.
-    /// The frontend cannot generate ahead of this without the row publishing its
-    /// item type back out.
+    /// already pinned. Called from `crate::ops` inside the row — the only point
+    /// at which `T` is known, so the frontend cannot generate ahead of it.
     pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
         T::materialise(self.generate_at(T::DATA_TYPE)?)
     }
@@ -96,12 +84,8 @@ impl DatasetSpec {
 // ---------- the item axis ----------
 
 /// An item type a benchmark can be run over: it names the dataset that carries
-/// it, and how to build one from a [`DatasetSpec`].
-///
-/// The item type is fixed by the row's own `insert` — `insert_cms_datasketches`
-/// takes a `&i64`, `insert_hydra_cms` takes a `&Labeled<i64>` — so binding a
-/// row's closures is what selects the impl below, and nothing is generated
-/// before that has happened.
+/// it, and how to build one from a [`DatasetSpec`]. The row's own `insert` fixes
+/// it, so binding a row's closures is what selects the impl below.
 pub trait BenchItem: Sized + Clone {
     type Wk: Dataset<Item = Self>;
 

@@ -1,15 +1,6 @@
-//! Construction parameters for each sketch family. These live next to the
-//! wrappers that consume them, not in `aqpbm-core`: the core owns the *open*
-//! algorithm axis and deliberately knows no algorithm names, so concrete algorithms are
-//! declared by whoever ships the implementations. See `aqpbm_core::config`.
-//!
-//! One struct is one **family**, not one algorithm. Five algorithms measure
-//! five Count-Min structures — `cms`, `cms-fastpath-vector2d`,
-//! `cms-regularpath-vector2d`, `cms-fastpath-fixedmatrix` and
-//! `cms-fastpath-fixedmatrix-32k-parallel` — but a reader configures every one
-//! of them with the same `rows` and `cols`, so they share [`CmsParams`] and the
-//! family name it declares. A structural variant that needed a *different* knob would be a
-//! different family, which is why the three Hydra cell types have three structs.
+//! Construction parameters for each sketch family, next to the wrappers that
+//! consume them because `aqpbm-core` owns the *open* algorithm axis. One struct
+//! is one **family**: a variant needing a different knob is a different family.
 
 use serde::{Deserialize, Serialize};
 
@@ -78,24 +69,12 @@ sketch_params!(
 );
 
 // ---------- Hydra, one algorithm per cell type ----------
-//
-// The cell type is on the algorithm axis, not the impl axis, because each cell
-// answers a different statistic and is scored by a different comparator. See
-// `docs/sketch-bench.md` on what makes a panel meaningful. All three come from
-// `asap_sketchlib::sketch_framework::Hydra`, so all three have one impl, `lib`.
-//
-// Splitting them is also what lets each keep an ordinary params struct with
-// `deny_unknown_fields` on: a single `hydra` algorithm carrying every cell
-// type's knobs would have to accept `cell_k` on a Count-Min row and ignore it.
+// The cell type is on the algorithm axis because each cell answers a different
+// statistic under a different comparator, and each keeps `deny_unknown_fields`.
 
-/// Hydra over Count-Min cells: two nested shapes, so two pairs of dimensions.
-/// `rows` and `cols` size the outer grid a subpopulation key hashes into,
-/// `cell_rows` and `cell_cols` size the counter array inside every one of those
-/// cells.
-///
-/// Memory is their product, so the two pairs are not interchangeable knobs: a
-/// grid of 1024 columns holding 2048-column cells is three orders of magnitude
-/// past either one alone.
+/// Hydra over Count-Min cells: `rows` / `cols` size the outer grid a
+/// subpopulation key hashes into, `cell_rows` / `cell_cols` the counter array
+/// inside each cell. Memory is their product, so the two pairs are not alike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HydraCmsParams {
@@ -115,12 +94,9 @@ sketch_params!(
     }
 );
 
-/// Hydra over HyperLogLog cells: the grid shape and nothing else.
-///
-/// The library fixes the cell at `HyperLogLog<ErtlMLE>`, which is
-/// `HyperLogLogP14`, so a cell is 2^14 one-byte registers and there is no cell
-/// parameter to expose. A `lg_k` here would be a knob the row reads and cannot
-/// act on, which is the defect #58 records against the fixed-shape rows.
+/// Hydra over HyperLogLog cells: the grid shape and nothing else. The library
+/// fixes the cell at `HyperLogLogP14` — 2^14 one-byte registers — so a `lg_k`
+/// here would be a knob the row reads and cannot act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HydraHllParams {
@@ -161,17 +137,9 @@ mod tests {
 
     #[test]
     fn serialises_to_the_documented_bytes() {
-        // Pinned exactly, so a future representation change cannot silently
-        // alter the record shape the way the enum -> Value move altered key
-        // order. Asserting only field *values* would not have caught that.
-        //
-        // `aqpbm_core::config` has a test of this name too, and this one is
-        // not a copy of it. That one pins the bytes of a synthetic params
-        // type, which nothing outside the test reads. These are the bytes a
-        // real algorithm writes into `sketch_config`, which is a contract with
-        // whoever reads the records. The generic behaviour the two share is
-        // core's to test, and this file tests it once, here, where the bytes
-        // mean something.
+        // Pinned exactly, so a representation change cannot silently alter the
+        // record shape. Not a copy of core's same-named test: that one pins a
+        // synthetic type, these are the bytes a real algorithm writes.
         let p = ParamSet::of(&CmsParams {
             rows: 5,
             cols: 2048,

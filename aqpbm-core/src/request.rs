@@ -1,29 +1,19 @@
-//! What a frontend asks for, as one value.
-//!
-//! A request used to reach the registry as seven separate arguments, which meant
-//! every caller reassembled it and no caller could hold one. Here it is a single
-//! [`Requirement`], and the answer to "can this run" is a function of it alone —
-//! see `sketch_bench::registry::resolve`. `docs/sketch-bench.md` §Input.
+//! What a frontend asks for, as one value: a [`Requirement`], from which the
+//! answer to "can this run" follows alone. See `docs/sketch-bench.md` §Input.
 
 use crate::config::ParamSet;
 use crate::metrics::{MetricsMask, OperationMask};
 
-/// The statistic a row answers, as a *value*.
-///
-/// One variant per statistic some [`GroundTruth`](crate::accuracy::GroundTruth)
-/// knows how to score, and the two lists are meant to stay in step: a capability
-/// a row can be scored under is one a comparator in [`crate::accuracy`] can
-/// compare against. Naming it here as
-/// data is what lets a registry *print* what a row does and refuse a comparator
-/// it cannot answer, neither of which a trait bound can do.
-///
-/// [`Capability::None`] is a row that is measured but not scored — timed only,
-/// no query. It is a real answer, not a missing one.
+/// The statistic a row answers, as a *value* — one variant per statistic some
+/// [`GroundTruth`](crate::accuracy::GroundTruth) can score. Data, not a bound, so
+/// a registry can print it. [`Capability::None`] is measured but not scored.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Capability {
     Cardinality,
     Frequency,
     Quantile,
+    TopK,
+    HeavyHitter,
     SubpopCardinality,
     SubpopFrequency,
     SubpopQuantile,
@@ -38,6 +28,8 @@ impl Capability {
             Capability::Cardinality => "cardinality",
             Capability::Frequency => "frequency",
             Capability::Quantile => "quantile",
+            Capability::TopK => "topk",
+            Capability::HeavyHitter => "heavy-hitter",
             Capability::SubpopCardinality => "subpop-cardinality",
             Capability::SubpopFrequency => "subpop-frequency",
             Capability::SubpopQuantile => "subpop-quantile",
@@ -52,14 +44,9 @@ impl Capability {
     }
 }
 
-/// The item width a row is measured at.
-///
-/// The one item-type choice a user still makes: an ordered row (KLL) builds at
-/// either width, while every other row's item type is fixed by its Rust type —
-/// so a registry can refuse before generating anything.
-///
-/// It lives here rather than beside the registry because [`Requirement`] carries
-/// it, and core must be able to name every field of a request.
+/// The item width a row is measured at: the one item-type choice a user still
+/// makes, since an ordered row (KLL) builds at either width and every other
+/// row's is fixed by its Rust type. Here because [`Requirement`] carries it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Numeric {
     #[default]
