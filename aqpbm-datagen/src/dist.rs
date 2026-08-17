@@ -1,11 +1,6 @@
-//! The distribution axis: *how* a column's values are spread, and the seed that
-//! makes the spread reproducible. Three distributions, each carrying its own
-//! parameters and its own seed — so two columns are independent unless they were
-//! deliberately given the same seed.
-//!
-//! Every distribution draws an `f64`. Zipf's draws happen to be integral ranks,
-//! but the raw stream is one type so the rule / shift / render pipeline in
-//! [`crate::column`] is written once instead of three times.
+//! The distribution axis: *how* a column's values are spread, plus the seed that
+//! fixes it — so two columns are independent unless given the same one. Every
+//! distribution draws an `f64`, so [`crate::column`]'s pipeline is written once.
 
 use rand_distr::{Distribution as _, Normal, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;
