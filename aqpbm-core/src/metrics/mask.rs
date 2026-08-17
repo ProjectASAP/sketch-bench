@@ -129,7 +129,7 @@ const METRICS: [(MetricsMask, Metric); 3] = [
 /// This mirrors the per-operation match in [`crate::ops::squares_for`], which is
 /// the authority — it is the one that actually builds something to run. Stated
 /// separately here so a *frontend* can refuse a square by name before
-/// generating a workload for it, which is the whole point of refusing early.
+/// generating a dataset for it, which is the whole point of refusing early.
 pub fn is_measurable(cell: Cell) -> bool {
     use Metric::{Accuracy, Latency, Throughput};
     use Operation::{Insert, Merge, Prepare, Query};

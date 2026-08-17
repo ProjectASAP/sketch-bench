@@ -2,13 +2,13 @@
 //!
 //! `sketchbench` measures one cell of the sketch bundle, `sketchbench
 //! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs, and
-//! `workload` generates or inspects synthetic `.bin` workloads.
+//! `dataset` generates or inspects synthetic `.bin` datasets.
 
 mod cli;
+mod dataset_cmd;
 mod flatten_record;
 mod repeat;
 mod runners;
-mod workload_cmd;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
 // pair: bare jemalloc, `TrackingAllocator` wrapping jemalloc or System, or the
@@ -46,7 +46,7 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::cell::WorkloadSpec;
+use aqpbm_core::cell::DatasetSpec;
 use aqpbm_core::request::Requirement;
 use sketch_bench::registry;
 
@@ -133,7 +133,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Sketchbench(args) => run_sketchbench(args),
-        Cmd::Workload(args) => workload_cmd::run(args),
+        Cmd::Dataset(args) => dataset_cmd::run(args),
     }
 }
 
@@ -155,19 +155,19 @@ fn list_impls() -> Result<()> {
 /// what a plain row ingests, and a table with a label column before its value
 /// column is what the record-ingesting rows read. Which a row wants is the row's
 /// question, asked at materialisation.
-fn load_spec(path: &str) -> Result<WorkloadSpec> {
+fn load_spec(path: &str) -> Result<DatasetSpec> {
     TableDescription::from_path(std::path::Path::new(path))
-        .map(WorkloadSpec::Generated)
+        .map(DatasetSpec::Generated)
         .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))
 }
 
 /// Resolve where this run's items come from, in precedence order: `--input` >
-/// `--spec` > the `--workload` flags. The flag path builds the same
+/// `--spec` > the `--dataset` flags. The flag path builds the same
 /// `TableDescription` the spec path would, so it is sugar for a one-column
 /// description — one generator.
-fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
+fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
     if let Some(path) = args.input.as_deref() {
-        return Ok(WorkloadSpec::File {
+        return Ok(DatasetSpec::File {
             path: path.to_string(),
         });
     }
@@ -179,7 +179,7 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
     // `--cardinality` names the key space either way: for uniform it is the
     // exclusive upper bound of `[0, n)`, and for zipf the population its ranks
     // `1..=n` are drawn over.
-    let distribution = match args.workload.as_str() {
+    let distribution = match args.dataset.as_str() {
         "uniform" => DataDistribution::Uniform(UniformParameter {
             lower_bound: 0.0,
             upper_bound: args.cardinality as f64,
@@ -190,7 +190,7 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
             population_size: args.cardinality,
             seed: args.seed,
         }),
-        other => bail!("unknown workload shape: {other} (expected uniform|zipf, or use --spec)"),
+        other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
     };
     // Only the rows that ingest text read this. Left `None` at the defaults
     // so a run that did not ask for the axis keeps the descriptor — and so
@@ -209,7 +209,7 @@ fn workload_spec(args: &SketchbenchArgs) -> Result<WorkloadSpec> {
     // `Inline`, not `Generated`: these flags name a distribution and a size but
     // no type, so the row's item type is what fills `data_type` in. The
     // placeholder below is never the one that generates.
-    Ok(WorkloadSpec::Inline(TableDescription::single(
+    Ok(DatasetSpec::Inline(TableDescription::single(
         "key",
         ColumnSpec {
             distribution,
@@ -286,7 +286,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         "f64" => registry::Numeric::F64,
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
-    let spec = workload_spec(&args)?;
+    let spec = dataset_spec(&args)?;
     // clap makes both required whenever a cell is selected, so the `bail`s
     // are unreachable from the command line and exist for the type.
     let metrics_mask = parse_mask(
@@ -333,7 +333,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     };
 
     // Can this run? The registry owns the answer, because it is the one thing
-    // that knows what each sketch supports. Asked before the workload is
+    // that knows what each sketch supports. Asked before the dataset is
     // generated, so a request naming an operation, a metric, a width or a
     // comparator this cell cannot honour costs nothing to refuse.
     // Every `ResolveError` variant already names the cell it is about, so the
@@ -351,7 +351,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
     // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
     // closure per square and knows nothing about how often it will be run. The
-    // workload is generated inside, at the row's own item type, which is the one
+    // dataset is generated inside, at the row's own item type, which is the one
     // thing about this request the frontend cannot work out for itself.
     //
     // Construction is the failure `check` cannot see — a fixed shape the build
@@ -360,7 +360,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // `check` proved this pair is registered; `run_direct` is whether it has been
     // wired to its wrapper's closures yet. Only the hydra family has, so the rest
     // say so by name instead of failing somewhere less obvious.
-    let (workload, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
+    let (dataset, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "{algorithm}/{impl_name} is registered but not yet wired to its wrapper"
@@ -383,13 +383,16 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // program parsed, so the row never has to say which square is which.
     let mut reports = Vec::with_capacity(bodies.len());
     for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
-        // Error is deterministic given (data, parameters), and a workload is
+        // Error is deterministic given (data, parameters), and a dataset is
         // drawn once and not redrawn — so looping an accuracy square would
         // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
         // `n: 10`. A timing square is where repeating one draw *is* a real
         // repeat, so only that one takes `--runs`.
         let cell_cfg = if cell.metric == Metric::Accuracy {
-            MeasureConfig { runs: 1, ..cfg.clone() }
+            MeasureConfig {
+                runs: 1,
+                ..cfg.clone()
+            }
         } else {
             cfg.clone()
         };
@@ -397,7 +400,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         let mut report = BenchReport::fold(
             algorithm.as_str(),
             impl_name.as_str(),
-            workload.clone(),
+            dataset.clone(),
             cell.operation,
             cell.metric,
             runs,
@@ -411,7 +414,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     }
 
     // One record per square, each on its own JSONL line. A downstream group-by on
-    // (sketch, impl, sketch_config, workload) merges them back.
+    // (sketch, impl, sketch_config, dataset) merges them back.
     //
     // The algorithm names the structural variant, so a reader grouping by it
     // compares variants; the family is what groups the variants back together,
@@ -431,7 +434,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // One invocation is one cell, so every record here shares an identity and the
     // whole vector is exactly what `flatten_record` expects.
     if args.flat {
-        let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let merged =
+            flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
         sink.write_line(&serde_json::to_string(&merged)?)?;
     } else {
         for record in &records {

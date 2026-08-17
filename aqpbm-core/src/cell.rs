@@ -1,14 +1,14 @@
 //! Where a benchmark's items come from, and what they materialise to.
 //!
-//! [`WorkloadSpec`] describes data, [`WorkloadData`] is data, and [`BenchItem`]
-//! is the item type a row ingests — it names the workload that carries it and
+//! [`DatasetSpec`] describes data, [`DatasetData`] is data, and [`BenchItem`]
+//! is the item type a row ingests — it names the dataset that carries it and
 //! how to build one. Plus [`RunError`], which is what a caller sees when either
 //! step cannot be done.
 //!
 //! Running a square is [`crate::ops::squares_for`]; timing it is
 //! [`crate::measure`].
 
-use crate::workload::{F64Workload, I64Workload, Labeled, LabeledWorkload, Workload};
+use crate::dataset::{Dataset, F64Dataset, I64Dataset, Labeled, LabeledDataset};
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
@@ -26,20 +26,20 @@ use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 /// distribution and a size and no type at all, so the row's item type is what
 /// fills it in.
 #[derive(Debug, Clone)]
-pub enum WorkloadSpec {
+pub enum DatasetSpec {
     Generated(TableDescription),
     Inline(TableDescription),
     File { path: String },
 }
 
-/// A workload that has already been produced, on its way to a row.
+/// A dataset that has already been produced, on its way to a row.
 ///
-/// The distinction from [`WorkloadSpec`] is who has acted: a spec *describes*
+/// The distinction from [`DatasetSpec`] is who has acted: a spec *describes*
 /// data, this *is* data. A frontend asks the registry what item type a row
 /// wants, generates once at that type, and hands this over — so generation
 /// happens before the row is entered rather than inside it.
 #[derive(Debug, Clone)]
-pub enum WorkloadData {
+pub enum DatasetData {
     /// Columns from `aqpbm-datagen`. The description rides along because the
     /// record names what the data was generated from, which columns alone do
     /// not carry.
@@ -53,19 +53,19 @@ pub enum WorkloadData {
     File { path: String },
 }
 
-impl WorkloadSpec {
+impl DatasetSpec {
     /// Produce the data this spec describes, at `value_type` — the item type
     /// the row named. Called by the frontend, once, before the row is entered.
     ///
     /// This is why resolution comes first: `value_type` is an *answer* from
     /// the registry, so a caller cannot generate until it has asked.
-    pub fn generate_at(&self, value_type: &str) -> Result<WorkloadData> {
+    pub fn generate_at(&self, value_type: &str) -> Result<DatasetData> {
         match self.describe(value_type) {
             Some(description) => {
                 let table = description.generate()?;
-                Ok(WorkloadData::Generated { description, table })
+                Ok(DatasetData::Generated { description, table })
             }
-            None => Ok(WorkloadData::File {
+            None => Ok(DatasetData::File {
                 path: self
                     .file_path()
                     .expect("describe() returns None only for the file variant")
@@ -82,26 +82,26 @@ impl WorkloadSpec {
     }
 
     /// The description to generate from at item type `item_type`, or `None` for
-    /// a file-backed workload. See the variants above for why the two generated
+    /// a file-backed dataset. See the variants above for why the two generated
     /// cases answer differently.
     pub fn describe(&self, item_type: &str) -> Option<TableDescription> {
         match self {
-            WorkloadSpec::Generated(d) => Some(d.clone()),
-            WorkloadSpec::Inline(d) => {
+            DatasetSpec::Generated(d) => Some(d.clone()),
+            DatasetSpec::Inline(d) => {
                 let mut d = d.clone();
                 for column in &mut d.column_spec {
                     column.data_type = item_type.to_string();
                 }
                 Some(d)
             }
-            WorkloadSpec::File { .. } => None,
+            DatasetSpec::File { .. } => None,
         }
     }
 
-    /// The path a file-backed workload reads, if this is one.
+    /// The path a file-backed dataset reads, if this is one.
     pub fn file_path(&self) -> Option<&str> {
         match self {
-            WorkloadSpec::File { path } => Some(path),
+            DatasetSpec::File { path } => Some(path),
             _ => None,
         }
     }
@@ -114,7 +114,7 @@ impl WorkloadSpec {
 /// over.
 #[derive(Debug)]
 pub enum RunError {
-    Workload(anyhow::Error),
+    Dataset(anyhow::Error),
     /// The body reported it could not run — a build the config cannot satisfy,
     /// a fold with nothing to fold. The registry words it; core carries it.
     Body(String),
@@ -123,7 +123,7 @@ pub enum RunError {
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunError::Workload(e) => e.fmt(f),
+            RunError::Dataset(e) => e.fmt(f),
             RunError::Body(m) => f.write_str(m),
         }
     }
@@ -133,55 +133,55 @@ impl std::error::Error for RunError {}
 
 impl From<anyhow::Error> for RunError {
     fn from(e: anyhow::Error) -> Self {
-        RunError::Workload(e)
+        RunError::Dataset(e)
     }
 }
 
 // ---------- the item axis ----------
 
-/// An item type a benchmark can be run over: it names the workload that carries
-/// it, and how to build one from a [`WorkloadSpec`]. A row's
+/// An item type a benchmark can be run over: it names the dataset that carries
+/// it, and how to build one from a [`DatasetSpec`]. A row's
 /// `Accumulator::Item` fixes the encoding before anything is generated.
 pub trait BenchItem: Sized + Clone {
-    type Wk: Workload<Item = Self>;
+    type Wk: Dataset<Item = Self>;
 
     /// The `data_type` a description has to state for this item — for a record,
     /// the type of its *value* column. A `const`, so a caller can read what a
     /// row wants off the row's type, without building one.
     const DATA_TYPE: &'static str;
 
-    /// Turn produced data into this row's workload. Takes the data by value:
-    /// a million-row column is moved into the workload, never copied.
-    fn materialise(data: WorkloadData) -> Result<Self::Wk>;
+    /// Turn produced data into this row's dataset. Takes the data by value:
+    /// a million-row column is moved into the dataset, never copied.
+    fn materialise(data: DatasetData) -> Result<Self::Wk>;
 }
 
 impl BenchItem for i64 {
-    type Wk = I64Workload;
+    type Wk = I64Dataset;
     const DATA_TYPE: &'static str = "i64";
-    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+    fn materialise(data: DatasetData) -> Result<Self::Wk> {
         match data {
-            WorkloadData::Generated { description, table } => {
-                I64Workload::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
+            DatasetData::Generated { description, table } => {
+                I64Dataset::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
             }
-            WorkloadData::File { path } => {
-                I64Workload::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
+            DatasetData::File { path } => {
+                I64Dataset::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
             }
         }
     }
 }
 
 impl BenchItem for f64 {
-    type Wk = F64Workload;
+    type Wk = F64Dataset;
     const DATA_TYPE: &'static str = "f64";
-    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+    fn materialise(data: DatasetData) -> Result<Self::Wk> {
         match data {
-            WorkloadData::Generated { description, table } => {
-                F64Workload::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
+            DatasetData::Generated { description, table } => {
+                F64Dataset::from_table(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
             }
             // `.bin` is a raw i64 stream with no header; reading it as f64
             // would reinterpret the bytes, not convert them.
-            WorkloadData::File { path } => Err(anyhow::anyhow!(
-                "--input {path} is a raw i64 stream; generate the workload \
+            DatasetData::File { path } => Err(anyhow::anyhow!(
+                "--input {path} is a raw i64 stream; generate the dataset \
                  instead to benchmark f64"
             )),
         }
@@ -193,15 +193,15 @@ impl BenchItem for f64 {
 /// record, because the column count is what a grouped sketch's cost is a
 /// function of.
 impl<V: ColumnItem> BenchItem for Labeled<V> {
-    type Wk = LabeledWorkload<V>;
+    type Wk = LabeledDataset<V>;
     const DATA_TYPE: &'static str = V::NAME;
-    fn materialise(data: WorkloadData) -> Result<Self::Wk> {
+    fn materialise(data: DatasetData) -> Result<Self::Wk> {
         match data {
-            WorkloadData::Generated { description, table } => {
-                LabeledWorkload::from_table(&description, table)
+            DatasetData::Generated { description, table } => {
+                LabeledDataset::from_table(&description, table)
                     .map_err(|e| anyhow::anyhow!("{}", e))
             }
-            WorkloadData::File { path } => Err(anyhow::anyhow!(
+            DatasetData::File { path } => Err(anyhow::anyhow!(
                 "--input {path} is a single-column stream; this row ingests \
                  labelled records, so it needs a `--spec` description with a \
                  label column before the value column"

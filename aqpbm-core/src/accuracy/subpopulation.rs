@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use crate::workload::Labeled;
+use crate::dataset::Labeled;
 
 use super::frequency::percentile;
 use super::quantile::{lower_bound, upper_bound, QuantileValue};
@@ -212,7 +212,7 @@ fn sample_ranked<T: Clone>(ranked: &[(T, u64)]) -> Vec<T> {
 ///
 /// The population is the **subpopulation**, one entry per distinct label at the
 /// scored column. That is a different population from the one
-/// [`SubpopFrequencyGT`] scores, so at the same workload the two report the
+/// [`SubpopFrequencyGT`] scores, so at the same dataset the two report the
 /// same `subpopulations` and a different `probes`.
 ///
 /// `top1`…`top1000` rank groups by true distinct count descending, which is the
@@ -334,7 +334,7 @@ const GROUP_GRID_POINTS: usize = 101;
 /// grouped sketch answers each one out of several grid rows. It is the most
 /// expensive comparator here, and it pays in full: scoring a sample of the
 /// groups would report the error of that sample under the name of the whole.
-/// A run that is too slow wants fewer groups in the workload.
+/// A run that is too slow wants fewer groups in the dataset.
 pub struct SubpopRankErrorGT {
     /// Which label column the subpopulation is taken over.
     pub label_column: usize,

@@ -22,7 +22,7 @@ pub fn is_child() -> bool {
 }
 
 /// Identifies the measurement a record belongs to across repeats: algorithm,
-/// impl, params, workload, operation, metric.
+/// impl, params, dataset, operation, metric.
 /// The last two matter because one invocation emits several records sharing the
 /// rest, and pooling two of them averages two populations.
 /// Both are needed, since one metric over two operations is two measurements.
@@ -36,7 +36,7 @@ fn group_key(r: &Record) -> GroupKey {
             .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_default(),
-        serde_json::to_string(&r.workload).unwrap_or_default(),
+        serde_json::to_string(&r.dataset).unwrap_or_default(),
         r.bench
             .as_ref()
             .and_then(|b| b.operation.clone())
@@ -175,7 +175,7 @@ fn merge(records: Vec<Record>) -> Record {
 mod tests {
     use super::*;
     use aqpbm_core::report::{CpuTime, LatencySummary, Mode};
-    use aqpbm_core::WorkloadDescription;
+    use aqpbm_core::DatasetDescription;
 
     fn stats(mean: f64) -> RunStats {
         // `n = 5` is the *within-process* count. After merging R processes every
@@ -191,7 +191,7 @@ mod tests {
     /// A record with every measurable field populated, so the walk below has
     /// something to find in each of them.
     fn record(mean: f64) -> Record {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "uniform".into(),
             size: 1000,
             cardinality: Some(100),

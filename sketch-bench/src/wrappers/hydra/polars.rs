@@ -8,7 +8,7 @@ use crate::build_error::BuildError;
 use crate::wrappers::polars_shared::*;
 use ::polars::prelude::*;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::workload::Labeled;
+use aqpbm_core::dataset::Labeled;
 use std::collections::HashMap;
 
 #[derive(Default)]

@@ -1,5 +1,5 @@
 //! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch registry
+//! lives in `main.rs` (`run_sketchbench`, `dataset_spec`); the sketch registry
 //! it dispatches through lives in `sketch_bench::registry`.
 //!
 //! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
@@ -8,7 +8,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::workload_cmd;
+use crate::dataset_cmd;
 
 #[derive(Parser, Debug)]
 // `max_term_width` is pinned so `--help` renders identically under any
@@ -29,12 +29,12 @@ pub struct Cli {
 pub enum Cmd {
     /// Measure one cell of the sketch bundle.
     Sketchbench(SketchbenchArgs),
-    /// Generate or inspect synthetic `.bin` workloads.
-    Workload(workload_cmd::WorkloadArgs),
+    /// Generate or inspect synthetic `.bin` datasets.
+    Dataset(dataset_cmd::DatasetArgs),
 }
 
 /// One cell of the sketch bundle: one algorithm, one impl, one construction
-/// point, one workload. `--list-impls` is the one mode that selects no cell,
+/// point, one dataset. `--list-impls` is the one mode that selects no cell,
 /// which is why the identity options are optional in the type and required by
 /// clap only when it is absent.
 // The auto-generated help flag is inserted ahead of every declared arg, which
@@ -86,11 +86,11 @@ pub struct SketchbenchArgs {
     #[arg(long, default_value_t = 1, help_heading = "Construction")]
     pub workers: usize,
 
-    /// Load the workload from a file instead of generating it. Format comes
+    /// Load the dataset from a file instead of generating it. Format comes
     /// from the extension: `.bin` (little-endian i64), `.pcap` (IPv4 src addr),
     /// `.csv` (column 0 below a header). Wins over `--spec` and over the inline
     /// options.
-    #[arg(long, help_heading = "Workload")]
+    #[arg(long, help_heading = "Dataset")]
     pub input: Option<String>,
     /// Generate in-process from a `datagen` spec file (examples in
     /// `configs/datagen/`), unlocking every generator shape without a disk
@@ -101,26 +101,26 @@ pub struct SketchbenchArgs {
     /// labelled records (the `hydra-*` algorithms) need one; every other row
     /// refuses it. `hydra-kll` reads the value column as `f64`, the other two
     /// as `i64`.
-    #[arg(long, help_heading = "Workload")]
+    #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
     /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is
     /// set.
-    #[arg(long, default_value = "uniform", help_heading = "Workload")]
-    pub workload: String,
-    /// Number of items in the workload.
-    #[arg(long, default_value_t = 1_000_000, help_heading = "Workload")]
+    #[arg(long, default_value = "uniform", help_heading = "Dataset")]
+    pub dataset: String,
+    /// Number of items in the dataset.
+    #[arg(long, default_value_t = 1_000_000, help_heading = "Dataset")]
     pub size: usize,
     /// Cardinality (uniform: max key; zipf: key-space size).
-    #[arg(long, default_value_t = 100_000, help_heading = "Workload")]
+    #[arg(long, default_value_t = 100_000, help_heading = "Dataset")]
     pub cardinality: u64,
-    /// Zipf `s` exponent (only used when `--workload zipf`).
-    #[arg(long, default_value_t = 1.1, help_heading = "Workload")]
+    /// Zipf `s` exponent (only used when `--dataset zipf`).
+    #[arg(long, default_value_t = 1.1, help_heading = "Dataset")]
     pub zipf_s: f64,
     /// Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`,
     /// `dd`): `i64` or `f64`. The one item-type choice left, since every other
     /// row's is fixed by its wrapper, and `f64` elsewhere is refused by name.
     /// Encoding only.
-    #[arg(long, default_value = "i64", help_heading = "Workload")]
+    #[arg(long, default_value = "i64", help_heading = "Dataset")]
     pub dtype: String,
     /// Alphabet for generated string keys, for the rows whose wrappers take
     /// text. Character order is the digit order of the positional encoding, so
@@ -129,7 +129,7 @@ pub struct SketchbenchArgs {
     #[arg(
         long,
         default_value = "abcdefghijklmnopqrstuvwxyz0123456789",
-        help_heading = "Workload"
+        help_heading = "Dataset"
     )]
     pub alphabet: String,
     /// Inclusive length bounds for generated string keys; equal values give a
@@ -139,11 +139,11 @@ pub struct SketchbenchArgs {
         long = "key-len",
         num_args = 1..=2,
         default_values_t = [8usize, 24usize],
-        help_heading = "Workload"
+        help_heading = "Dataset"
     )]
     pub key_len: Vec<usize>,
     /// Seed for reproducibility.
-    #[arg(long, default_value_t = 42, help_heading = "Workload")]
+    #[arg(long, default_value_t = 42, help_heading = "Dataset")]
     pub seed: u64,
 
     /// Measured runs inside one process, summarised as mean / stddev /

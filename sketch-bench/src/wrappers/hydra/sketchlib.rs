@@ -6,7 +6,7 @@
 use super::*;
 use crate::build_error::BuildError;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::workload::Labeled;
+use aqpbm_core::dataset::Labeled;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
 
@@ -175,4 +175,3 @@ pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
 pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
     sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
 }
-

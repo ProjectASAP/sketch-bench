@@ -80,7 +80,7 @@ impl Numeric {
 /// One measurement request: which row, built how, measured over what.
 ///
 /// Everything a registry needs to answer "can this run, and if so how" —
-/// deliberately without the workload, because what to generate is an *answer*
+/// deliberately without the dataset, because what to generate is an *answer*
 /// (the row's item type) rather than part of the question.
 #[derive(Clone, Debug)]
 pub struct Requirement {

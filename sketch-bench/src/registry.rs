@@ -742,7 +742,7 @@ pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>
 
 /// Why a request cannot run. Every variant names the sketch and what about the
 /// request it could not honour, because the whole value of answering here is
-/// that the answer arrives before a workload is generated.
+/// that the answer arrives before a dataset is generated.
 #[derive(Debug)]
 pub enum ResolveError {
     UnknownAlgorithm(String),

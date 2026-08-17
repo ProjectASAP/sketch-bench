@@ -5,7 +5,7 @@
 //! Two things separate these rows from every other one in the registry.
 //!
 //! Their item is a **record**, not a key: a stream of `d` label columns plus a
-//! value, so they ingest `Labeled<V>` and read their workload from a column
+//! value, so they ingest `Labeled<V>` and read their dataset from a column
 //! list. And their insert **fans out**: one record is written into every
 //! non-empty subset of its labels, so `d` labels cost `2^d - 1` cell
 //! insertions. The reported throughput is records per second, which is the only
@@ -113,7 +113,7 @@ mod tests {
     use aqpbm_core::config::ParamSet;
 
     use aqpbm_core::config::SketchParams;
-    use aqpbm_core::workload::Labeled;
+    use aqpbm_core::dataset::Labeled;
 
     fn built() -> HydraCms {
         build_hydra_cms(
@@ -317,7 +317,7 @@ mod tests {
 
     /// `k` is well past the group size here, so the cell retains everything and
     /// the answer is exact. Pinned because it is what makes a rank error at a
-    /// larger workload attributable to compaction and not to the grid.
+    /// larger dataset attributable to compaction and not to the grid.
     #[test]
     fn kll_is_exact_below_k() {
         let mut h = built_kll();

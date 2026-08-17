@@ -1,5 +1,5 @@
-//! `approxbench workload generate|describe` — produce and inspect synthetic
-//! `.bin` workloads. Generation writes a raw little-endian value stream plus a
+//! `approxbench dataset generate|describe` — produce and inspect synthetic
+//! `.bin` datasets. Generation writes a raw little-endian value stream plus a
 //! `foo.bin.meta.json` provenance sidecar: the stream feeds `sketchbench
 //! --input`, while the sidecar is ignored there and read back by `describe`.
 //!
@@ -17,19 +17,19 @@ use aqpbm_datagen::{
 };
 
 #[derive(Parser, Debug)]
-pub struct WorkloadArgs {
+pub struct DatasetArgs {
     #[command(subcommand)]
-    cmd: WorkloadCmd,
+    cmd: DatasetCmd,
 }
 
 // The `Generate` variant is a large arg struct; this enum is parsed
 // once at startup, so the size asymmetry is irrelevant.
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
-enum WorkloadCmd {
-    /// Generate a synthetic `.bin` workload (+ `.meta.json` sidecar).
+enum DatasetCmd {
+    /// Generate a synthetic `.bin` dataset (+ `.meta.json` sidecar).
     Generate(GenerateArgs),
-    /// Print the provenance/stats of a generated `.bin` workload.
+    /// Print the provenance/stats of a generated `.bin` dataset.
     Describe(DescribeArgs),
 }
 
@@ -81,7 +81,7 @@ pub struct GenerateArgs {
     // These named the `monotonic-timestamp` and `skewed-categorical` shapes,
     // which the table-oriented description does not carry. Kept as arguments so
     // an invocation that used them fails by name instead of being read as a
-    // different workload than it asked for.
+    // different dataset than it asked for.
     /// Retired: monotonic-timestamp start value.
     #[arg(long, hide = true)]
     start: Option<i64>,
@@ -110,10 +110,10 @@ pub struct DescribeArgs {
     path: String,
 }
 
-pub fn run(args: WorkloadArgs) -> Result<()> {
+pub fn run(args: DatasetArgs) -> Result<()> {
     match args.cmd {
-        WorkloadCmd::Generate(a) => generate(a),
-        WorkloadCmd::Describe(a) => describe(a),
+        DatasetCmd::Generate(a) => generate(a),
+        DatasetCmd::Describe(a) => describe(a),
     }
 }
 
@@ -278,8 +278,8 @@ fn describe(a: DescribeArgs) -> Result<()> {
         }
         None => {
             // No sidecar: fall back to the raw i64 loader.
-            use aqpbm_core::workload::{I64Workload, Workload};
-            let wk = I64Workload::load(path)
+            use aqpbm_core::dataset::{Dataset, I64Dataset};
+            let wk = I64Dataset::load(path)
                 .with_context(|| format!("loading {} (no sidecar found)", a.path))?;
             let items = wk.items();
             println!("path:   {}", a.path);

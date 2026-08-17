@@ -6,15 +6,15 @@
 //! nothing else.
 
 use crate::aggregation as fold;
+use crate::dataset::DatasetDescription;
 use crate::metrics::{Metric, Operation, RunMetrics};
 use crate::report::{BenchSection, Mode, Record, Source};
-use crate::workload::WorkloadDescription;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub workload: WorkloadDescription,
+    pub dataset: DatasetDescription,
     pub per_run: Vec<RunMetrics>,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
@@ -30,7 +30,7 @@ impl BenchReport {
     pub fn fold(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        workload: WorkloadDescription,
+        dataset: DatasetDescription,
         operation: Operation,
         metric: Metric,
         runs: Vec<RunMetrics>,
@@ -75,7 +75,7 @@ impl BenchReport {
         Self {
             sketch: sketch.into(),
             impl_name: impl_name.into(),
-            workload,
+            dataset,
             runs: runs.len(),
             per_run: runs,
             bench,
@@ -87,7 +87,7 @@ impl BenchReport {
         let mut rec = Record::new(
             self.sketch.clone(),
             self.impl_name.clone(),
-            self.workload.clone(),
+            self.dataset.clone(),
             Mode::Bench,
             self.runs,
         );

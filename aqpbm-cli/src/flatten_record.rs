@@ -40,7 +40,7 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
     }
 }
 
-/// Fold the `Record`s that share one (sketch, impl, sketch_config, workload)
+/// Fold the `Record`s that share one (sketch, impl, sketch_config, dataset)
 /// identity into a single [`MergedRecord`]. Callers are responsible for
 /// grouping records by identity before calling this: pass it one record per
 /// square, not a rerun's worth of duplicates.
@@ -65,7 +65,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         runs: base.runs,
         source: base.source,
         sketch_config: base.sketch_config.clone(),
-        workload: base.workload.clone(),
+        dataset: base.dataset.clone(),
         memory_bytes: None,
         heap_bytes_net: None,
         heap_bytes_peak: None,
@@ -192,7 +192,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
 mod tests {
     use super::*;
     use aqpbm_core::report::{LatencySummary, Mode, RunStats};
-    use aqpbm_core::WorkloadDescription;
+    use aqpbm_core::DatasetDescription;
 
     fn stats(mean: f64) -> RunStats {
         RunStats {
@@ -215,7 +215,7 @@ mod tests {
     }
 
     fn record(operation: &str, metric: &str, bench: BenchSection) -> Record {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "uniform".into(),
             size: 1000,
             cardinality: Some(100),

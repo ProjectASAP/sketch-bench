@@ -16,12 +16,12 @@
 //! both be right — the test at the bottom is what keeps that from happening
 //! quietly.
 
-use aqpbm_core::cell::{RunError, WorkloadSpec};
+use aqpbm_core::cell::{DatasetSpec, RunError};
+use aqpbm_core::dataset::DatasetDescription;
 use aqpbm_core::ops::Body;
 use aqpbm_core::request::{Numeric, Requirement};
-use aqpbm_core::workload::WorkloadDescription;
 
-/// A row's body factory: given the request and the spec the workload is
+/// A row's body factory: given the request and the spec the dataset is
 /// described by, materialise at the row's own item type and hand back one
 /// closure per selected square.
 ///
@@ -36,8 +36,8 @@ use aqpbm_core::workload::WorkloadDescription;
 ///
 /// Each arm names four things and nothing else: the statistic the sketch
 /// answers, and its `build` / `insert` / `ask` closures. Materialising the
-/// workload, choosing the comparator and building the timed bodies all happen
-/// inside the core call — so `sketch-bench` never sees a `WorkloadSpec`, a
+/// dataset, choosing the comparator and building the timed bodies all happen
+/// inside the core call — so `sketch-bench` never sees a `DatasetSpec`, a
 /// `Requirement` or a ground truth, and a row is added by naming its closures
 /// here.
 ///
@@ -46,8 +46,8 @@ pub fn run_direct(
     algorithm: &str,
     impl_name: &str,
     req: &Requirement,
-    spec: &WorkloadSpec,
-) -> Option<Result<(WorkloadDescription, Vec<Body>), RunError>> {
+    spec: &DatasetSpec,
+) -> Option<Result<(DatasetDescription, Vec<Body>), RunError>> {
     use aqpbm_core::ops::{
         squares_cardinality, squares_frequency, squares_quantile, squares_subpop_cardinality,
         squares_subpop_frequency, squares_subpop_quantile, squares_timed_only,
@@ -489,11 +489,11 @@ fn i64_only(req: &Requirement) -> Result<(), RunError> {
 /// is refused by name rather than run at 14 under its own label.
 fn hll_lib(
     req: &Requirement,
-    spec: &WorkloadSpec,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
+    spec: &DatasetSpec,
+) -> Result<(DatasetDescription, Vec<Body>), RunError> {
     use aqpbm_core::ops::squares_cardinality;
-    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     use sketch_bench::wrappers::hll::sketchlib as hl;
+    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     i64_only(req)?;
     macro_rules! at {
         ($r:ty) => {
@@ -521,11 +521,11 @@ fn hll_lib(
 /// estimate on the insert path and the library supplies no fold.
 fn hll_lib_hip(
     req: &Requirement,
-    spec: &WorkloadSpec,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
+    spec: &DatasetSpec,
+) -> Result<(DatasetDescription, Vec<Body>), RunError> {
     use aqpbm_core::ops::squares_cardinality;
-    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     use sketch_bench::wrappers::hll::sketchlib as hl;
+    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     i64_only(req)?;
     macro_rules! at {
         ($r:ty) => {
@@ -573,14 +573,14 @@ macro_rules! fixed_matrix_row {
      $insert:ident, $ask:ident, $merge:ident) => {
         fn $fname(
             req: &Requirement,
-            spec: &WorkloadSpec,
-        ) -> Result<(WorkloadDescription, Vec<Body>), RunError> {
+            spec: &DatasetSpec,
+        ) -> Result<(DatasetDescription, Vec<Body>), RunError> {
             use aqpbm_core::ops::squares_frequency;
-            use sketch_bench::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
             use sketch_bench::wrappers::fixed_matrix::{
                 unsupported_shape, with_fixed_matrix, FixedMatrixVisitor,
             };
             use sketch_bench::wrappers::$module::sketchlib as w;
+            use sketch_bench::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
 
             i64_only(req)?;
             let p: $params = req
@@ -588,9 +588,9 @@ macro_rules! fixed_matrix_row {
                 .parse()
                 .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
 
-            struct V<'a>(&'a Requirement, &'a WorkloadSpec);
+            struct V<'a>(&'a Requirement, &'a DatasetSpec);
             impl FixedMatrixVisitor for V<'_> {
-                type Out = Result<(WorkloadDescription, Vec<Body>), RunError>;
+                type Out = Result<(DatasetDescription, Vec<Body>), RunError>;
                 fn visit<M>(self) -> Self::Out
                 where
                     M: MatrixStorage<Counter = i32>
@@ -646,7 +646,6 @@ fixed_matrix_row!(
 mod tests {
     use super::*;
 
-
     /// Every registered pair can actually be run.
     ///
     /// `registry::check` and the match above live in different crates, so
@@ -670,7 +669,7 @@ mod tests {
             merge_shards: 2,
             comparator: None,
         };
-        let spec = WorkloadSpec::File {
+        let spec = DatasetSpec::File {
             path: "unused: no square is selected".to_string(),
         };
         let missing: Vec<String> = sketch_bench::registry::REGISTRY

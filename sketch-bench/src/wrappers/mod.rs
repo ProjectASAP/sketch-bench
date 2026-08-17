@@ -8,7 +8,7 @@
 //!
 //! Every one of them takes the sketch and its data as parameters and captures
 //! nothing, so a caller supplies both at call time. That is why no file here
-//! mentions a workload, a request or a comparator: how often a sketch is
+//! mentions a dataset, a request or a comparator: how often a sketch is
 //! measured, over what data, and scored against what, are not facts about the
 //! sketch. A frontend hands these to `aqpbm_core::ops`, which builds the timed
 //! closures out of them.
@@ -59,7 +59,7 @@ pub const PARALLEL_ROWS: usize = 5;
 pub const PARALLEL_COLS: usize = 32768;
 
 /// Contiguous ranges, one per worker. `n.max(1)` because a run of no threads is
-/// not a run, and the empty-workload case still hands back one part rather than
+/// not a run, and the empty-dataset case still hands back one part rather than
 /// none.
 pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
     let n = n.max(1);

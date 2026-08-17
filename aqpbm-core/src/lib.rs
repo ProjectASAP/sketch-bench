@@ -13,6 +13,7 @@ pub mod binfile;
 pub mod build_error;
 pub mod cell;
 pub mod config;
+pub mod dataset;
 pub mod latency;
 pub mod measure;
 pub mod metrics;
@@ -21,7 +22,11 @@ pub mod probe;
 pub mod report;
 pub mod request;
 pub mod runner;
-pub mod workload;
+
+/// Column shapes and the generate-then-materialise step, shared by the tests of
+/// every module that touches a dataset or its file format.
+#[cfg(test)]
+pub(crate) mod test_support;
 
 // Only the open axis. The concrete per-algorithm params structs live with the
 // implementations that consume them, in `sketch-bench::params`.
@@ -39,7 +44,7 @@ pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use build_error::BuildError;
-pub use cell::{BenchItem, RunError, WorkloadData, WorkloadSpec};
+pub use cell::{BenchItem, DatasetData, DatasetSpec, RunError};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use metrics::{MetricsMask, RunMetrics};
@@ -51,6 +56,6 @@ pub use report::{
 };
 // What a frontend asks for. The registry that answers it lives in the bundle
 // crate; this is only the vocabulary the question is written in.
+pub use dataset::{Dataset, DatasetDescription, I64Dataset, Labeled, LabeledDataset};
 pub use request::{Capability, Numeric, Requirement};
 pub use runner::BenchReport;
-pub use workload::{I64Workload, Labeled, LabeledWorkload, Workload, WorkloadDescription};

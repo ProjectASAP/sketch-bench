@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::workload::WorkloadDescription;
+use crate::dataset::DatasetDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
@@ -37,7 +37,14 @@ pub struct Record {
     /// `bench` from the cell's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
-    pub workload: WorkloadDescription,
+    /// The data this run was measured over.
+    ///
+    /// The wire name stays `workload` while the Rust name does not: it is the
+    /// group key `scripts/merge_passes.py` pools by, and records already exist
+    /// carrying it — including the C++-emitted line pinned in this module's
+    /// tests. Renaming the field would be a schema break for a word.
+    #[serde(rename = "workload")]
+    pub dataset: DatasetDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,7 +205,7 @@ pub struct LatencySummary {
 }
 
 /// Flattened form of the [`Record`]s that share one (sketch, impl,
-/// sketch_config, workload) identity: one row per cell, where the record
+/// sketch_config, dataset) identity: one row per cell, where the record
 /// stream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.
 /// Lives beside [`Record`] because it is a JSONL wire shape, not CLI logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +220,14 @@ pub struct MergedRecord {
     pub source: Source,
 
     pub sketch_config: Option<serde_json::Value>,
-    pub workload: WorkloadDescription,
+    /// The data this run was measured over.
+    ///
+    /// The wire name stays `workload` while the Rust name does not: it is the
+    /// group key `scripts/merge_passes.py` pools by, and records already exist
+    /// carrying it — including the C++-emitted line pinned in this module's
+    /// tests. Renaming the field would be a schema break for a word.
+    #[serde(rename = "workload")]
+    pub dataset: DatasetDescription,
 
     pub memory_bytes: Option<u64>,
     /// Net bytes the tracking allocator attributes to this sketch's
@@ -326,7 +340,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        workload: WorkloadDescription,
+        dataset: DatasetDescription,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -337,7 +351,7 @@ impl Record {
             impl_name: impl_name.into(),
             language: Language::Rust,
             sketch_config: None,
-            workload,
+            dataset,
             mode,
             runs,
             bench: None,
@@ -357,7 +371,7 @@ mod tests {
 
     #[test]
     fn record_roundtrips_through_json() {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "zipf".into(),
             size: 1_000_000,
             cardinality: Some(10_000),
@@ -434,7 +448,7 @@ mod tests {
 
     #[test]
     fn cpp_record_roundtrips() {
-        let wd = WorkloadDescription {
+        let wd = DatasetDescription {
             shape: "file".into(),
             size: 1_000_000,
             cardinality: None,

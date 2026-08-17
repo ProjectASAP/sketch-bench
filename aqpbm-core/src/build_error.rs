@@ -9,7 +9,7 @@
 use crate::DataGenError;
 
 /// A config that did not parse, or a request an implementation's fixed shape
-/// cannot satisfy. Reported by the wrapper before a workload is generated.
+/// cannot satisfy. Reported by the wrapper before a dataset is generated.
 #[derive(Debug, Clone)]
 pub struct BuildError(pub String);
 

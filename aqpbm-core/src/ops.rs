@@ -6,7 +6,7 @@
 //! in its own `insert`. Nothing here forces two of them to agree on anything.
 //!
 //! What lives here is the part that is the same for every sketch: given those
-//! functions and a workload, produce one [`Body`] per square the request
+//! functions and a dataset, produce one [`Body`] per square the request
 //! selected, each with its setup already done and only its own operation inside
 //! the clock. This crate still names no sketch — `S`, `I`, `P` and `A` are
 //! whatever the caller instantiated them at.
@@ -18,12 +18,12 @@ use crate::accuracy::frequency::FrequencyGT;
 use crate::accuracy::quantile::RankErrorGT;
 use crate::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
 use crate::accuracy::GroundTruth;
-use crate::cell::{BenchItem, RunError, WorkloadSpec};
+use crate::cell::{BenchItem, DatasetSpec, RunError};
 use crate::config::ParamSet;
+use crate::dataset::{Dataset, DatasetDescription, Labeled, LabeledDataset};
 use crate::measure::{RunOutcome, Timed};
 use crate::metrics::{cells, Metric, Operation};
 use crate::request::Requirement;
-use crate::workload::{Labeled, LabeledWorkload, Workload, WorkloadDescription};
 use aqpbm_datagen::ColumnItem;
 
 use crate::build_error::BuildError;
@@ -98,11 +98,11 @@ type Asked<G, I> = (
 /// [`cells`] order — the caller computed the same masks, so it can label them by
 /// calling the same function rather than being told.
 ///
-/// Returned alongside them is the workload's description, which is the one thing
+/// Returned alongside them is the dataset's description, which is the one thing
 /// about this run a frontend cannot work out for itself: `--input data.bin` has
 /// no size or shape until the row has decoded it.
 ///
-/// The workload arrives behind an `Rc` because the squares share one
+/// The dataset arrives behind an `Rc` because the squares share one
 /// materialisation: four bodies over a million items is four handles, never
 /// four copies.
 ///
@@ -111,7 +111,7 @@ type Asked<G, I> = (
 #[allow(clippy::too_many_arguments)]
 pub fn squares_for<W, S, I, G, B, M, Ins, Ask>(
     req: &Requirement,
-    workload: Rc<W>,
+    dataset: Rc<W>,
     gt: G,
     build: B,
     memory: M,
@@ -119,9 +119,9 @@ pub fn squares_for<W, S, I, G, B, M, Ins, Ask>(
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
-    W: Workload<Item = I> + 'static,
+    W: Dataset<Item = I> + 'static,
     S: 'static,
     I: Clone + 'static,
     G: GroundTruth<I> + 'static,
@@ -149,7 +149,7 @@ where
     for cell in cells(req.operations, req.metrics) {
         let body: Body = match cell.operation {
             Operation::Insert => {
-                let (wk, params, metric) = (workload.clone(), params.clone(), cell.metric);
+                let (wk, params, metric) = (dataset.clone(), params.clone(), cell.metric);
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
                     let mut s = build(&params, workers).expect("proven above");
@@ -173,13 +173,13 @@ where
             Operation::Query => {
                 let (truth, asked) = asking
                     .get_or_insert_with(|| {
-                        let truth = gt.truth(workload.items());
+                        let truth = gt.truth(dataset.items());
                         let asked = gt.probes(&truth);
                         (Rc::new(truth), Rc::new(asked))
                     })
                     .clone();
                 let (wk, params, gt, scored) = (
-                    workload.clone(),
+                    dataset.clone(),
                     params.clone(),
                     gt.clone(),
                     cell.metric == Metric::Accuracy,
@@ -215,7 +215,7 @@ where
             }
 
             Operation::Prepare => {
-                let (wk, params) = (workload.clone(), params.clone());
+                let (wk, params) = (dataset.clone(), params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
                     let mut s = build(&params, workers).expect("proven above");
@@ -243,7 +243,7 @@ where
                     )));
                 };
                 let shards = req.merge_shards.max(MIN_MERGE_SHARDS);
-                let (wk, params) = (workload.clone(), params.clone());
+                let (wk, params) = (dataset.clone(), params.clone());
                 Box::new(move |t: &mut Timed| {
                     let items = wk.items();
                     let per = items.len().div_ceil(shards).max(1);
@@ -278,7 +278,7 @@ where
         bodies.push(body);
     }
 
-    Ok((workload.description(), bodies))
+    Ok((dataset.description(), bodies))
 }
 
 /// The same, for a row nothing scores: insert, prepare and merge only, no
@@ -286,15 +286,15 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_for_unscored<W, S, I, B, M, Ins>(
     req: &Requirement,
-    workload: Rc<W>,
+    dataset: Rc<W>,
     build: B,
     memory: M,
     insert: Ins,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
-    W: Workload<Item = I> + 'static,
+    W: Dataset<Item = I> + 'static,
     S: 'static,
     I: Clone + 'static,
     B: Fn(&ParamSet, usize) -> Result<S, BuildError> + Copy + 'static,
@@ -303,7 +303,7 @@ where
 {
     squares_for::<W, S, I, NoScore, B, M, Ins, _>(
         req,
-        workload,
+        dataset,
         NoScore,
         build,
         memory,
@@ -351,10 +351,10 @@ impl<I> GroundTruth<I> for NoScore {
 // here. Column 0 is the coarsest grouping: the one whose cells the most records
 // reach, and so the one a grid's shape is picked to control.
 //
-// These take a `&WorkloadSpec` and materialise it themselves. The item type is
+// These take a `&DatasetSpec` and materialise it themselves. The item type is
 // already pinned by the `insert` they are handed — `Labeled<V>` names its own
-// `Workload` through `BenchItem` — so a wrapper never has to generate anything,
-// and never has to know that a workload has a spec, a size or a distribution.
+// `Dataset` through `BenchItem` — so a wrapper never has to generate anything,
+// and never has to know that a dataset has a spec, a size or a distribution.
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
@@ -364,14 +364,14 @@ const SCORED_LABEL_COLUMN: usize = 0;
 #[allow(clippy::too_many_arguments)]
 pub fn squares_subpop_frequency<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     V: ColumnItem + Eq + std::hash::Hash + Ord + Clone + 'static,
@@ -380,7 +380,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &(String, V)) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopFrequencyGT, B, M, Ins, Ask>(
+    squares_for::<LabeledDataset<V>, S, Labeled<V>, SubpopFrequencyGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopFrequencyGT {
@@ -400,14 +400,14 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_subpop_cardinality<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     V: ColumnItem + Eq + std::hash::Hash + Clone + 'static,
@@ -416,7 +416,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &String) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopCardinalityGT, B, M, Ins, Ask>(
+    squares_for::<LabeledDataset<V>, S, Labeled<V>, SubpopCardinalityGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopCardinalityGT {
@@ -436,14 +436,14 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_subpop_quantile<S, V, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     V: ColumnItem + crate::accuracy::quantile::QuantileValue + Clone + 'static,
@@ -452,7 +452,7 @@ where
     Ins: Fn(&mut S, &Labeled<V>) + Copy + 'static,
     Ask: Fn(&mut S, &(String, f64)) -> f64 + Copy + 'static,
 {
-    squares_for::<LabeledWorkload<V>, S, Labeled<V>, SubpopRankErrorGT, B, M, Ins, Ask>(
+    squares_for::<LabeledDataset<V>, S, Labeled<V>, SubpopRankErrorGT, B, M, Ins, Ask>(
         req,
         Rc::new(spec.build::<Labeled<V>>()?),
         SubpopRankErrorGT {
@@ -471,14 +471,14 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_frequency<S, K, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     K: BenchItem + Eq + std::hash::Hash + Ord + Clone + 'static,
@@ -507,14 +507,14 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_cardinality<S, K, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     K: BenchItem + Eq + std::hash::Hash + 'static,
@@ -541,14 +541,14 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_quantile<S, I, B, M, Ins, Ask>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     ask: Ask,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     I: BenchItem + Clone + PartialOrd + crate::accuracy::quantile::ToF64 + 'static,
@@ -575,13 +575,13 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn squares_timed_only<S, I, B, M, Ins>(
     req: &Requirement,
-    spec: &WorkloadSpec,
+    spec: &DatasetSpec,
     build: B,
     memory: M,
     insert: Ins,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<(WorkloadDescription, Vec<Body>), RunError>
+) -> Result<(DatasetDescription, Vec<Body>), RunError>
 where
     S: 'static,
     I: BenchItem + Clone + 'static,
