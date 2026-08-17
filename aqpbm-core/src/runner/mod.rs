@@ -18,7 +18,7 @@ pub struct BenchReport {
 }
 
 impl BenchReport {
-    /// Fold a measurement's runs into a report, labelled by the square it was.
+    /// Fold a measurement's runs into a report, labelled by what it measured.
     ///
     /// The caller says which operation and metric this was; core does not
     /// decide, it records. Which `BenchSection` slot the rate lands in follows

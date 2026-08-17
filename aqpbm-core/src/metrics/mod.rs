@@ -13,7 +13,7 @@ pub mod time;
 // Re-exported so `LatencyRecorder` / `LatencySnapshot` stay reachable beside the
 // other recorders, though the histogram itself lives in `crate::latency`.
 pub use crate::latency::{LatencyRecorder, LatencySnapshot};
-pub use mask::{cells, is_measurable, Cell, Metric, MetricsMask, Operation, OperationMask};
+pub use mask::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
 pub use memory::{JemallocAllocated, Rss};
 pub use run::RunMetrics;
 pub use throughput::ItemsPerSec;

@@ -102,7 +102,7 @@ impl ParamSet {
     }
 
     /// Parse one `--config` point: `'k1=v1 k2=v2'`, one value per key — a comma
-    /// list is an error, since one invocation measures one cell. Syntax only:
+    /// list is an error, since one invocation measures one point. Syntax only:
     /// no algorithm is named here, so membership is the caller's check.
     pub fn single(algorithm: &str, spec: &str) -> Result<ParamSet, DataGenError> {
         let axes = parse_axes(spec)?;
@@ -111,7 +111,7 @@ impl ParamSet {
             if values.len() > 1 {
                 return Err(DataGenError::BadParam(format!(
                     "config key '{key}' lists {} values; --config takes one value \
-                     per key (a single cell). Invoke once per point to measure a series.",
+                     per key (a single point). Invoke once per point to measure a series.",
                     values.len()
                 )));
             }
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn single_rejects_a_multi_value_axis() {
         // A comma list is a series, which is the caller's job, not this
-        // parser's: one invocation, one cell.
+        // parser's: one invocation, one point.
         let err = ParamSet::single("fake", "rows=3,5 cols=1024")
             .unwrap_err()
             .to_string();

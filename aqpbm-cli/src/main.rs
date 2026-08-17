@@ -1,6 +1,6 @@
 //! `approxbench`, the approximate query processing benchmark suite.
 //!
-//! `sketchbench` measures one cell of the sketch bundle, `sketchbench
+//! `sketchbench` measures one target of the sketch bundle, `sketchbench
 //! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs, and
 //! `dataset` generates or inspects synthetic `.bin` datasets.
 
@@ -32,7 +32,7 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::metrics::{cells, Metric, MetricsMask, Operation, OperationMask};
+use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_core::ops::MIN_MERGE_SHARDS;
 use aqpbm_core::runner::BenchReport;
 use aqpbm_datagen::{
@@ -50,9 +50,9 @@ use aqpbm_core::dataset::DatasetSpec;
 use aqpbm_core::request::Requirement;
 use sketch_bench::registry;
 
-/// What is measured. No default and no `all`: a request says which squares of
-/// the grid it wants, and a shorthand that sweeps the grid would sweep squares
-/// nothing measures.
+/// What is measured. No default and no `all`: a request names the measurements
+/// it wants, and a shorthand that swept every operation against every metric
+/// would sweep pairs nothing measures.
 fn parse_mask(s: &str) -> Result<MetricsMask> {
     let mut m = MetricsMask::empty();
     for token in s.split(',').map(|t| t.trim().to_ascii_lowercase()) {
@@ -91,6 +91,27 @@ fn parse_operations(s: &str) -> Result<OperationMask> {
         };
     }
     Ok(m)
+}
+
+/// The measurements two masks name between them: every (operation, metric) pair
+/// they cross to. This is the frontend's decision, so it is made here — core is
+/// told one pair at a time and never sees a mask.
+///
+/// A pair nothing implements is still produced; `registry::check` is what
+/// refuses it, by name, before any data is generated.
+fn selected(operations: OperationMask, metrics: MetricsMask) -> Vec<(Operation, Metric)> {
+    let mut out = Vec::new();
+    for operation in Operation::ALL {
+        if !operations.contains(operation.bit()) {
+            continue;
+        }
+        for metric in Metric::ALL {
+            if metrics.contains(metric.bit()) {
+                out.push((operation, metric));
+            }
+        }
+    }
+    out
 }
 
 /// Open the `--report` destination. `None` or `"-"` → stdout.
@@ -150,8 +171,8 @@ fn list_impls() -> Result<()> {
 }
 
 /// Load a `--spec` file as one [`TableDescription`]. One reader, because one
-/// description covers both cases: a plain row takes a one-column table, and a
-/// record-ingesting row takes label columns before the value column.
+/// description covers both cases: a plain target takes a one-column table, and
+/// a record-ingesting target takes label columns before the value column.
 fn load_spec(path: &str) -> Result<DatasetSpec> {
     TableDescription::from_path(std::path::Path::new(path))
         .map(DatasetSpec::Generated)
@@ -189,7 +210,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
         }),
         other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
     };
-    // Only the rows that ingest text read this. Left `None` at the defaults
+    // Only the targets that ingest text read this. Left `None` at the defaults
     // so a run that did not ask for the axis keeps the descriptor — and so
     // the record — it had before the flags existed.
     let (min_len, max_len) = match args.key_len.as_slice() {
@@ -204,7 +225,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
         bail!("--alphabet cannot be empty");
     }
     // `Inline`, not `Generated`: these flags name a distribution and a size but
-    // no type, so the row's item type is what fills `data_type` in. The
+    // no type, so the target's item type is what fills `data_type` in. The
     // placeholder below is never the one that generates.
     Ok(DatasetSpec::Inline(TableDescription::single(
         "key",
@@ -233,7 +254,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
 const DEFAULT_WARMUP_SECS: &str = "10";
 
 fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
-    // Selects no cell and writes no record, so it runs before anything is
+    // Measures nothing and writes no record, so it runs before anything is
     // validated and ignores every other option.
     if args.list_impls {
         return list_impls();
@@ -253,7 +274,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         if args.flat {
             bail!(
                 "--flat cannot be combined with --repeats: a flattened row holds one value \
-                 per square, and folding the repeats into it would have to decide which \
+                 per measurement, and folding the repeats into it would have to decide which \
                  repeat that value came from"
             );
         }
@@ -284,7 +305,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         other => bail!("unknown --dtype: {other} (expected i64|f64)"),
     };
     let spec = dataset_spec(&args)?;
-    // clap makes both required whenever a cell is selected, so the `bail`s
+    // clap makes both required whenever a measurement is asked for, so the `bail`s
     // are unreachable from the command line and exist for the type.
     let metrics_mask = parse_mask(
         args.metrics
@@ -296,18 +317,16 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--operations is required"))?,
     )?;
-    // The loop knobs, and only those. Which squares to run, at which config,
-    // with how many workers, is the *request* — it goes in `Requirement`, not
-    // in a whole-run config a single measurement would have to read past.
-    let cfg = MeasureConfig {
-        runs: args.runs,
-        warmup_runs: args.warmup_runs,
-        metrics: metrics_mask,
-    };
-    // One cell = one (impl, config). `--config` is one point, or a
-    // parameterless point when omitted. Syntax only here: whether the algorithm
-    // exists is `registry::check`'s answer below, and the keys are type-checked
-    // at construction, where the impl reads them.
+    // What this invocation will measure, decided here and passed down one pair
+    // at a time. Cpu and memory are not measurements of their own; they ride
+    // along with each one, so they are split off rather than crossed.
+    let want = selected(operations_mask, metrics_mask);
+    let secondary = metrics_mask & MetricsMask::SECONDARY;
+    // One invocation is one target at one parameter point over one dataset.
+    // `--config` is one point, or a parameterless point when omitted. Syntax
+    // only here: whether the algorithm exists is `registry::check`'s answer
+    // below, and the keys are type-checked at construction, where the impl
+    // reads them.
     let params = match args.config.as_deref() {
         Some(s) => ParamSet::single(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
@@ -319,8 +338,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         algorithm: algorithm.clone(),
         impl_name: impl_name.clone(),
         params: params.clone(),
-        operations: operations_mask,
-        metrics: metrics_mask,
         width,
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
@@ -328,73 +345,83 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     };
 
     // Can this run? The registry owns the answer, asked before the dataset is
-    // generated, so an operation, metric, width or comparator this cell cannot
-    // honour costs nothing to refuse. Its errors already name the cell.
-    registry::check(&req).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // generated, so an operation, metric, width or comparator this target cannot
+    // honour costs nothing to refuse. The whole list is checked at once, so a
+    // request is refused as a unit rather than part-way through measuring it.
+    registry::check(&req, &want).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
         algorithm,
         impl_name,
         params_pretty(&params),
-        cfg.runs,
-        cfg.warmup_runs,
+        args.runs,
+        args.warmup_runs,
     );
 
-    // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
-    // closure per square, generating the dataset inside at the row's own item
-    // type. Construction failures land here, before anything is timed.
-    let (dataset, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
+    // The hand-off `docs/sketch-bench.md` describes: the bundle opens the
+    // target, generating the dataset inside at its own item type. Construction
+    // failures land here, before anything is timed.
+    let mut target = runners::open_target(&algorithm, &impl_name, &req, &spec)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "{algorithm}/{impl_name} is registered but not yet wired to its wrapper"
             )
         })?
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+    let dataset = target.description();
 
-    // An empty mask on either axis selects no squares. Legal: the caller gets no
-    // records because it asked for none.
-    if bodies.is_empty() {
-        eprintln!("approxbench: {algorithm}/{impl_name} selected no squares; nothing to measure");
+    // An empty mask on either axis names no measurements. Legal: the caller gets
+    // no records because it asked for none.
+    if want.is_empty() {
+        eprintln!(
+            "approxbench: {algorithm}/{impl_name} selected no measurements; nothing to measure"
+        );
         return Ok(());
     }
 
-    // Core times each one, handed a closure and a run count and told nothing else.
-    // Labelling is the frontend's: the bodies arrive in `cells` order, and `cells`
-    // is the same pure function of the same two masks this program parsed.
-    let mut reports = Vec::with_capacity(bodies.len());
-    for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
+    // One instruction at a time. Core is handed a closure and a run count and
+    // told nothing else; which operation and which metric this was is the
+    // frontend's to remember, and it is right here in the loop.
+    let mut reports = Vec::with_capacity(want.len());
+    for (operation, metric) in want {
+        let body = target
+            .body(operation, metric)
+            .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
         // Error is deterministic given (data, parameters), and a dataset is
-        // drawn once and not redrawn — so looping an accuracy square would
+        // drawn once and not redrawn — so looping an accuracy measurement would
         // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
-        // `n: 10`. A timing square is where repeating one draw *is* a real
+        // `n: 10`. A timing measurement is where repeating one draw *is* a real
         // repeat, so only that one takes `--runs`.
-        let cell_cfg = if cell.metric == Metric::Accuracy {
-            MeasureConfig {
-                runs: 1,
-                ..cfg.clone()
-            }
-        } else {
-            cfg.clone()
+        let cfg = MeasureConfig {
+            runs: if metric == Metric::Accuracy {
+                1
+            } else {
+                args.runs
+            },
+            warmup_runs: args.warmup_runs,
+            // Exactly this measurement's recorders, plus whatever rides along.
+            // Arming the rest would build a histogram nothing writes to.
+            metrics: metric.bit() | secondary,
         };
-        let runs = aqpbm_core::measure(&cell_cfg, body);
+        let runs = aqpbm_core::measure(&cfg, body);
         let mut report = BenchReport::fold(
             algorithm.as_str(),
             impl_name.as_str(),
             dataset.clone(),
-            cell.operation,
-            cell.metric,
+            operation,
+            metric,
             runs,
         );
         // The count that actually folded: a request below the floor is raised,
         // and a record states what ran rather than what was asked for.
-        if cell.operation == Operation::Merge {
+        if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
         }
         reports.push(report);
     }
 
-    // One record per square, each on its own JSONL line; a downstream group-by on
+    // One record per measurement, each on its own JSONL line; a downstream group-by on
     // (sketch, impl, sketch_config, dataset) merges them back. `sketch` names the
     // variant, `family` groups the variants a cross-library comparison spans.
     let family = registry::family_of(&algorithm).expect("check proved the algorithm is registered");
@@ -409,7 +436,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         .collect();
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
-    // One invocation is one cell, so every record here shares an identity and the
+    // One invocation is one target at one point, so every record here shares an identity and the
     // whole vector is exactly what `flatten_record` expects.
     if args.flat {
         let merged =

@@ -23,14 +23,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
-    /// Measure one cell of the sketch bundle.
+    /// Measure one target of the sketch bundle.
     Sketchbench(SketchbenchArgs),
     /// Generate or inspect synthetic `.bin` datasets.
     Dataset(dataset_cmd::DatasetArgs),
 }
 
-/// One cell of the sketch bundle: one algorithm, one impl, one construction
-/// point, one dataset. `--list-impls` is the one mode that selects no cell.
+/// One target of the sketch bundle: one algorithm, one impl, one construction
+/// point, one dataset. `--list-impls` is the one mode that measures nothing.
 // `help` is declared by hand at the end so its block lands last, as the reference has it.
 #[derive(Parser, Debug)]
 #[command(
@@ -41,7 +41,7 @@ pub struct SketchbenchArgs {
     /// Accumulator algorithm, structural variant included: `cms` and
     /// `cms-fastpath-vector2d` are two of them, because a different hash
     /// strategy gives different estimates. Matched exactly, since one
-    /// invocation measures one cell. `--list-impls` prints every
+    /// invocation measures one target. `--list-impls` prints every
     /// (algorithm, impl) pair, grouped by the family they share knobs with.
     #[arg(
         long,
@@ -51,7 +51,7 @@ pub struct SketchbenchArgs {
     pub algorithm: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
     /// `polars`. `--list-impls` shows which the algorithm offers. One
-    /// invocation measures one (impl, config) cell; to race several, invoke
+    /// invocation measures one (impl, config) point; to race several, invoke
     /// once per impl.
     #[arg(
         long = "impl",
@@ -60,17 +60,17 @@ pub struct SketchbenchArgs {
     )]
     pub impl_name: Option<String>,
     /// Print every (algorithm, impl) pair this bundle offers, then exit.
-    /// Selects no cell and writes no record, so it ignores every other option.
+    /// Measures nothing and writes no record, so it ignores every other option.
     #[arg(long, help_heading = "Identity")]
     pub list_impls: bool,
 
-    /// Construction config for this cell: `'k1=v1 k2=v2'`, one value per key.
-    /// A comma list is an error: one invocation is one cell, never a grid.
+    /// Construction config for this run: `'k1=v1 k2=v2'`, one value per key.
+    /// A comma list is an error: one invocation is one point, never a series.
     /// Nothing is clamped or rounded, so `sketch_config` is the config that ran.
     #[arg(long, help_heading = "Construction")]
     pub config: Option<String>,
     /// Worker threads for the parallel-insert algorithms (`*-parallel`). Every
-    /// other row ignores it; `1` is single-threaded.
+    /// other target ignores it; `1` is single-threaded.
     #[arg(long, default_value_t = 1, help_heading = "Construction")]
     pub workers: usize,
 
@@ -82,7 +82,7 @@ pub struct SketchbenchArgs {
     pub input: Option<String>,
     /// Generate in-process from a `datagen` spec file (examples in
     /// `configs/datagen/`). Wins over the inline options; `--input` wins over it.
-    /// A *list* of specs is a multi-column stream, which only `hydra-*` rows take.
+    /// A *list* of specs is a multi-column stream, which only `hydra-*` targets take.
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
     /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is
@@ -100,11 +100,11 @@ pub struct SketchbenchArgs {
     pub zipf_s: f64,
     /// Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`,
     /// `dd`): `i64` or `f64`. The one item-type choice left, since every other
-    /// row's is fixed by its wrapper, and `f64` elsewhere is refused by name.
+    /// target's is fixed by its wrapper, and `f64` elsewhere is refused by name.
     /// Encoding only.
     #[arg(long, default_value = "i64", help_heading = "Dataset")]
     pub dtype: String,
-    /// Alphabet for generated string keys, for the rows whose wrappers take
+    /// Alphabet for generated string keys, for the targets whose wrappers take
     /// text. Character order is the digit order of the positional encoding, so
     /// a rank always renders the same key. Overridden by `--spec`'s own
     /// `string:` block.
@@ -153,14 +153,14 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub metrics: Option<String>,
-    /// Which comparator scores this row, by name. A row admits only the
+    /// Which comparator scores this target, by name. A target admits only the
     /// comparators its capabilities can answer, and the registry is what lists
-    /// them; omitted takes the row's default.
+    /// them; omitted takes the target's default.
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
-    /// measured over. Required, like `--metrics`: a square nothing measures is
-    /// refused by name, so a request states which squares it wants rather than
+    /// measured over. Required, like `--metrics`: a pair nothing measures is
+    /// refused by name, so a request states which measurements it wants rather than
     /// inheriting a guess.
     #[arg(
         long,
@@ -177,9 +177,9 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Write one line for the whole cell instead of one per square, folding
-    /// the cell's records into a single flattened row: one slot per operation,
-    /// one field per metric. One record per square is the default; this is the
+    /// Write one line for the whole invocation instead of one per measurement,
+    /// folding its records into a single flattened row: one slot per operation,
+    /// one field per metric. One record per measurement is the default; this is the
     /// shape a leaderboard reads.
     #[arg(long, default_value_t = false, help_heading = "Output")]
     pub flat: bool,

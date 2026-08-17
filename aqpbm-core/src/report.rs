@@ -34,7 +34,7 @@ pub struct Record {
     #[serde(default)]
     pub language: Language,
     /// Algorithm-specific construction params used for this run, populated by
-    /// `bench` from the cell's `ParamSet`.
+    /// `bench` from the run's `ParamSet`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
     /// The data this run was measured over. The wire name stays `workload` while
@@ -100,7 +100,7 @@ pub struct BenchSection {
     /// **Ingest rate**: `items / insert_wall`, with `prepare` excluded.
     /// Deferred-build rows buffer on the insert path, so for those this times
     /// the buffering and their real build cost is [`Self::finalize_time_ms`],
-    /// measured as its own square.
+    /// measured as its own measurement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
     /// Per-run ingest-rate samples (items/sec, one entry per measured run).
@@ -204,8 +204,8 @@ pub struct LatencySummary {
 }
 
 /// Flattened form of the [`Record`]s that share one (sketch, impl,
-/// sketch_config, dataset) identity: one row per cell, where the record
-/// stream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.
+/// sketch_config, dataset) identity: one row per invocation, where the record
+/// stream writes one per measurement. Built by `aqpbm-cli`'s `flatten_record`.
 /// Lives beside [`Record`] because it is a JSONL wire shape, not CLI logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MergedRecord {
@@ -235,7 +235,7 @@ pub struct MergedRecord {
 
     // One slot per operation, and within a slot one field per metric. A
     // measurement is named by both, so a flattened row that named only one of
-    // them had two squares landing in the same place.
+    // them had two measurements landing in the same place.
     #[serde(flatten)]
     pub insert: InsertMetrics,
     #[serde(flatten)]

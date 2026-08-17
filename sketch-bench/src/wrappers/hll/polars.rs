@@ -18,7 +18,7 @@ pub struct PolarsCardinality {
 
 /// Polars computes the exact answer and has no `(rows, cols)` to tune, so it
 /// ignores the `ParamSet` and builds unconditionally. Its record carries
-/// whatever config the cell was given.
+/// whatever config the run was given.
 pub fn build_polars_cardinality(
     config: &ParamSet,
     _workers: usize,

@@ -39,7 +39,7 @@ pub use build_error::BuildError;
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use metrics::{MetricsMask, RunMetrics};
-pub use ops::{squares_for, squares_for_unscored, Body, NoScore, MIN_MERGE_SHARDS};
+pub use ops::{open_target_scored, open_target_unscored, Body, NoScore, Target, MIN_MERGE_SHARDS};
 pub use report::{
     BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord, Mode,
     PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,

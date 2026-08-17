@@ -295,7 +295,7 @@ mod tests {
         }
     }
 
-    /// Two squares of one metric are two measurements, so the key that pools
+    /// Two operations read for one metric are two measurements, so the key that pools
     /// repeats has to carry the operation too. Keyed on the metric alone they
     /// pooled, and one record came back wearing the other's operation.
     #[test]
@@ -309,11 +309,11 @@ mod tests {
         }
         let a = group_key(&insert);
         let b = group_key(&query);
-        assert_ne!(a, b, "one key for two squares pools two populations");
+        assert_ne!(a, b, "one key for two measurements pools two populations");
     }
 
     /// The reason the axis exists: R independent processes support an interval,
-    /// and the merge square must get one like every other square.
+    /// and the merge measurement must get one like every other.
     #[test]
     fn merge_time_gets_an_interval_across_repeats() {
         let merged = merge((0..3).map(|i| record(100.0 + i as f64)).collect());

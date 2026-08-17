@@ -1,7 +1,7 @@
 //! Why a measurement could not be produced.
 //!
 //! Sibling of [`crate::build_error`], and the same division: `BuildError` is one
-//! sketch refusing one `ParamSet`, this is a whole square that never became a
+//! sketch refusing one `ParamSet`, this is a whole measurement that never became a
 //! measurement. Both are worded elsewhere — core carries them.
 
 /// Why a measurement could not be produced.

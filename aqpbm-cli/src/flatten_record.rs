@@ -1,5 +1,6 @@
-//! What `--flat` does: fold one cell's records into one row. The row holds one
-//! slot per operation and a metric is a field inside a slot, because a square is
+//! What `--flat` does: fold one invocation's records into one row. The row holds
+//! one slot per operation and a metric is a field inside a slot, because a
+//! measurement is
 //! named by both. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
@@ -33,7 +34,7 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
 }
 
 /// Fold the `Record`s sharing one (sketch, impl, sketch_config, dataset) identity
-/// into a single [`MergedRecord`] — one record per square, grouped by the caller.
+/// into a single [`MergedRecord`] — one record per measurement, grouped by the caller.
 /// Every `BenchSection` field is bound by name, so an unplaced one fails the build.
 pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
     let base = records
@@ -91,8 +92,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             merge_supported,
         } = bench;
 
-        // A sketch has one size however many squares measured it, so the
-        // first value wins and no square is favoured. `heap_bytes_net` stays
+        // A sketch has one size however many measurements took it, so the
+        // first value wins and none is favoured. `heap_bytes_net` stays
         // separate from `memory_bytes`: see the field doc on
         // `MergedRecord::heap_bytes_net`.
         if let Some(mb) = memory_bytes {
@@ -104,7 +105,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         if let Some(hp) = heap_bytes_peak {
             out.heap_bytes_peak.get_or_insert(*hp);
         }
-        // Assigned with `get_or_insert`-style guards on the fields two squares
+        // Assigned with `get_or_insert`-style guards on the fields two measurements
         // of one operation both carry: `(insert, throughput)` and
         // `(insert, latency)` each bring their own `wall_time_ms`, and whichever
         // arrives second must not blank what the first placed.
@@ -217,7 +218,7 @@ mod tests {
         rec
     }
 
-    /// Two squares of one metric over two operations. Keyed on the metric they
+    /// Two measurements of one metric over two operations. Keyed on the metric they
     /// were the same slot, and the second silently blanked the first.
     #[test]
     fn one_metric_over_two_operations_keeps_both_numbers() {
@@ -239,7 +240,7 @@ mod tests {
                 },
             ),
         ];
-        let out = flatten_record(&rows).expect("both squares are named");
+        let out = flatten_record(&rows).expect("both measurements are named");
         assert_eq!(out.insert.throughput_items_per_sec.unwrap().mean, 900.0);
         assert_eq!(out.query.throughput_items_per_sec.unwrap().mean, 700.0);
     }
@@ -267,12 +268,12 @@ mod tests {
                 },
             ),
         ];
-        let out = flatten_record(&rows).expect("both squares are named");
+        let out = flatten_record(&rows).expect("both measurements are named");
         assert_eq!(out.insert.latency_ns.unwrap().count, 30_000);
         assert_eq!(out.query.latency_ns.unwrap().count, 2_381);
     }
 
-    /// Two squares of one operation. Both carry a `wall_time_ms`, and the one
+    /// Two measurements of one operation. Both carry a `wall_time_ms`, and the one
     /// arriving second must not blank the field the first filled.
     #[test]
     fn two_squares_of_one_operation_share_a_slot_without_erasing() {
@@ -295,7 +296,7 @@ mod tests {
                 },
             ),
         ];
-        let out = flatten_record(&rows).expect("both squares are named");
+        let out = flatten_record(&rows).expect("both measurements are named");
         assert_eq!(out.merge.merge_time_ms.unwrap().mean, 0.15);
         assert_eq!(out.merge.merge_folds_per_sec.unwrap().mean, 19_496.0);
         assert_eq!(out.merge.merge_shards, Some(4));
@@ -313,12 +314,12 @@ mod tests {
                 ..Default::default()
             },
         )];
-        let out = flatten_record(&rows).expect("the square is named");
+        let out = flatten_record(&rows).expect("the measurement is named");
         assert_eq!(out.prepare.finalize_time_ms.unwrap().mean, 0.005);
     }
 
     /// A record whose operation this function does not place is an error, not
-    /// a guess: a silently dropped square reads as a square nobody asked for.
+    /// a guess: a silently dropped measurement reads as one nobody asked for.
     #[test]
     fn an_unplaceable_operation_is_refused_by_name() {
         let rows = vec![record("teleport", "latency", BenchSection::default())];

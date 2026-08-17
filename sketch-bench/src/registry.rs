@@ -2,7 +2,7 @@
 //! and what each supports, written out entry by entry in
 //! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
-use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
+use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_core::request::Requirement;
 
 pub use aqpbm_core::request::{Capability, Numeric};
@@ -16,7 +16,7 @@ pub struct SketchId {
     /// vocabulary is one family.
     pub family: &'static str,
     /// The algorithm, structural variant included. `--algorithm` matches this
-    /// exactly, because one invocation measures one cell.
+    /// exactly, because one invocation measures one row.
     pub algorithm: &'static str,
     /// The implementing library, and only that.
     pub impl_name: &'static str,
@@ -595,10 +595,14 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
 
 // ---------- can this request run? ----------
 
-/// Can this request run? Every check is answerable from the request and
-/// [`REGISTRY`] alone, so a refusal lands before a single item is generated.
-/// Construction parameters are *not* checked — a wrapper owns those bounds.
-pub fn check(req: &Requirement) -> Result<(), ResolveError> {
+/// Can this request run? Every check is answerable from the request, the
+/// measurements it intends to take, and [`REGISTRY`] alone, so a refusal lands
+/// before a single item is generated. Construction parameters are *not*
+/// checked — a wrapper owns those bounds.
+///
+/// `want` is the caller's whole list, checked up front: a request is refused
+/// as a unit rather than part-way through measuring it.
+pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), ResolveError> {
     let entry = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
         // Told apart, because they send a reader to different places: a bad
         // algorithm means look at the list, a bad impl means look at the
@@ -613,18 +617,28 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         }
     })?;
 
-    // Every square the request selects has to clear two independent bars: the
+    // Every measurement asked for has to clear two independent bars: the
     // framework has to measure it at all, and this entry has to have it. The
     // framework's bar is checked first, because it holds of every sketch and so
     // is not this entry's fault.
-    for cell in &cells(req.operations, req.metrics) {
-        if !is_measurable(*cell) {
+    for (operation, metric) in want {
+        if !is_measurable(*operation, *metric) {
             return Err(ResolveError::NothingMeasuresIt {
-                operation: cell.operation.name(),
-                metric: cell.metric.name(),
+                operation: operation.name(),
+                metric: metric.name(),
             });
         }
     }
+
+    // The two axes the entry declares against, folded back out of the list.
+    let wants_metric = want
+        .iter()
+        .fold(MetricsMask::empty(), |m, (_, metric)| m | metric.bit());
+    let wants_operation = want
+        .iter()
+        .fold(OperationMask::empty(), |m, (operation, _)| {
+            m | operation.bit()
+        });
 
     // Metrics before operations, deliberately. A sketch nothing scores lacks
     // accuracy *and* query, so checking operations first would always answer
@@ -634,7 +648,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         (MetricsMask::THROUGHPUT, "throughput"),
         (MetricsMask::LATENCY, "latency"),
     ] {
-        if req.metrics.contains(bit) && !entry.metrics.contains(bit) {
+        if wants_metric.contains(bit) && !entry.metrics.contains(bit) {
             return Err(ResolveError::MetricUnsupported {
                 algorithm: req.algorithm.clone(),
                 impl_name: req.impl_name.clone(),
@@ -650,7 +664,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         (OperationMask::MERGE, "merge"),
         (OperationMask::PREPARE, "prepare"),
     ] {
-        if req.operations.contains(bit) && !entry.operations.contains(bit) {
+        if wants_operation.contains(bit) && !entry.operations.contains(bit) {
             return Err(ResolveError::OperationUnsupported {
                 algorithm: req.algorithm.clone(),
                 impl_name: req.impl_name.clone(),
@@ -673,7 +687,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         }
     }
 
-    // An empty mask on either axis selects no squares. Legal, and not this
+    // An empty mask on either axis names no measurements. Legal, and not this
     // function's business: the caller gets no records because it asked for
     // none, not because anything failed.
     Ok(())
@@ -729,7 +743,7 @@ pub enum ResolveError {
         metric: &'static str,
         capability: &'static str,
     },
-    /// A square that no sketch could fill, because the framework measures nothing
+    /// A measurement no sketch could supply, because the framework measures nothing
     /// there. Distinct from the two above: this is not about the sketch.
     NothingMeasuresIt {
         operation: &'static str,
