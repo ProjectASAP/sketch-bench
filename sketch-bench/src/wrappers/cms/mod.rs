@@ -1,7 +1,7 @@
 //! Count-Min wrappers — five types. Each answers a `&i64` point lookup with a
-//! `u64` count estimate, which is the shape `FrequencyGT` scores; each says so
-//! in its own `SketchOps` at the bottom of this file rather than by
-//! implementing a shared trait.
+//! `u64` count estimate, which is the shape the frequency comparator asks in;
+//! each says so in its own `ask_*` signature rather than by implementing a
+//! shared trait.
 //!
 //! All of them take `(rows, cols)` and honour it, by four different routes.
 //! `oxide` inverts the error bounds its API takes and checks the table it got

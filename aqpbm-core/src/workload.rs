@@ -99,7 +99,7 @@ fn fits_legacy_description(spec: &TableDescription) -> bool {
         )
 }
 
-/// The abstract contract for a workload a `BenchRunner` can
+/// The abstract contract for a workload a measurement can
 /// consume. An implementation produces an ordered `Vec<Item>`
 /// plus an optional query stream.
 pub trait Workload: Sized {

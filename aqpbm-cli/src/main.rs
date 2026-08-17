@@ -7,6 +7,7 @@
 mod cli;
 mod flatten_record;
 mod repeat;
+mod runners;
 mod workload_cmd;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
@@ -31,7 +32,9 @@ use std::io::Write;
 
 use anyhow::{bail, Result};
 use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::metrics::{MetricsMask, OperationMask};
+use aqpbm_core::metrics::{cells, Metric, MetricsMask, Operation, OperationMask};
+use aqpbm_core::ops::MIN_MERGE_SHARDS;
+use aqpbm_core::runner::BenchReport;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -346,6 +349,95 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         cfg.warmup_runs,
     );
 
+    // The hand-off `docs/sketch-bench.md` describes: the bundle returns one
+    // closure per square and knows nothing about how often it will be run. The
+    // workload is generated inside, at the row's own item type, which is the one
+    // thing about this request the frontend cannot work out for itself.
+    //
+    // Construction is the failure `check` cannot see — a fixed shape the build
+    // refuses, a `lg_k` the library rejects — and it lands here, before anything
+    // is timed, rather than as a measurement of zero.
+    // `check` proved this pair is registered; `run_direct` is whether it has been
+    // wired to its wrapper's closures yet. Only the hydra family has, so the rest
+    // say so by name instead of failing somewhere less obvious.
+    let (workload, bodies) = runners::run_direct(&algorithm, &impl_name, &req, &spec)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{algorithm}/{impl_name} is registered but not yet wired to its wrapper"
+            )
+        })?
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+
+    // An empty mask on either axis selects no squares. Legal: the caller gets no
+    // records because it asked for none.
+    if bodies.is_empty() {
+        eprintln!("approxbench: {algorithm}/{impl_name} selected no squares; nothing to measure");
+        return Ok(());
+    }
+
+    // Core times each one. It is handed a closure and a run count and told
+    // nothing else — not which sketch, not which operation. This loop is the only
+    // place all three crates meet, and it is the frontend's because only the
+    // frontend knows which squares it asked for: the bodies arrive in `cells`
+    // order, and `cells` is the same pure function of the same two masks this
+    // program parsed, so the row never has to say which square is which.
+    let mut reports = Vec::with_capacity(bodies.len());
+    for (cell, body) in cells(operations_mask, metrics_mask).into_iter().zip(bodies) {
+        // Error is deterministic given (data, parameters), and a workload is
+        // drawn once and not redrawn — so looping an accuracy square would
+        // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
+        // `n: 10`. A timing square is where repeating one draw *is* a real
+        // repeat, so only that one takes `--runs`.
+        let cell_cfg = if cell.metric == Metric::Accuracy {
+            MeasureConfig { runs: 1, ..cfg.clone() }
+        } else {
+            cfg.clone()
+        };
+        let runs = aqpbm_core::measure(&cell_cfg, body);
+        let mut report = BenchReport::fold(
+            algorithm.as_str(),
+            impl_name.as_str(),
+            workload.clone(),
+            cell.operation,
+            cell.metric,
+            runs,
+        );
+        // The count that actually folded: a request below the floor is raised,
+        // and a record states what ran rather than what was asked for.
+        if cell.operation == Operation::Merge {
+            report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+        }
+        reports.push(report);
+    }
+
+    // One record per square, each on its own JSONL line. A downstream group-by on
+    // (sketch, impl, sketch_config, workload) merges them back.
+    //
+    // The algorithm names the structural variant, so a reader grouping by it
+    // compares variants; the family is what groups the variants back together,
+    // which is the axis a cross-library comparison is taken over.
+    let family = registry::family_of(&algorithm).expect("check proved the algorithm is registered");
+    let records: Vec<_> = reports
+        .iter()
+        .map(|report| {
+            let mut record = report.to_record();
+            record.sketch_config = Some(params.to_json_value());
+            record.family = Some(family.to_string());
+            record
+        })
+        .collect();
+
+    let mut sink = ReportSink::open(args.report.as_deref())?;
+    // One invocation is one cell, so every record here shares an identity and the
+    // whole vector is exactly what `flatten_record` expects.
+    if args.flat {
+        let merged = flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
+        sink.write_line(&serde_json::to_string(&merged)?)?;
+    } else {
+        for record in &records {
+            sink.write_line(&record.to_jsonl())?;
+        }
+    }
     Ok(())
 }
 

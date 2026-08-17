@@ -1,11 +1,17 @@
-//! Thin newtypes over each concrete sketch implementation in the
-//! repo, one file per algorithm. Each file owns its sketches *and how they are
-//! driven*: `InitSketch` builds one from a `ParamSet`, and a `SketchOps` names
-//! the functions that insert into it, fold it, finalise it and ask it. Those
-//! functions are written here, in the sketch's own terms — nothing forces two
-//! files to agree on a signature.
+//! Thin newtypes over each concrete sketch implementation in the repo, one
+//! directory per algorithm and one file per library. Each file owns its sketches
+//! *and how they are driven*: a `build_*` makes one from a `ParamSet`, and
+//! `insert_*` / `merge_*` / `prepare_*` / `ask_*` / `memory_*` say what can be
+//! done to it. Each is written in the sketch's own terms — nothing forces two
+//! files to agree on a signature, which is the whole reason this is not a trait
+//! (`docs/sketch-bench.md` §"Wrapper should not be a trait").
 //!
-//! `registry::REGISTRY` names one `run_*` per row and nothing else.
+//! Every one of them takes the sketch and its data as parameters and captures
+//! nothing, so a caller supplies both at call time. That is why no file here
+//! mentions a workload, a request or a comparator: how often a sketch is
+//! measured, over what data, and scored against what, are not facts about the
+//! sketch. A frontend hands these to `aqpbm_core::ops`, which builds the timed
+//! closures out of them.
 
 // One directory per algorithm; inside each, one file per library. A reader
 // looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and
@@ -23,6 +29,17 @@ pub mod polars_shared;
 
 use crate::build_error::BuildError;
 use asap_sketchlib::impl_fixed_matrix;
+
+// The library types a caller has to *name* in order to select one of the
+// monomorphisations below: the three register storages the `hll` `lib` rows are
+// compiled at, and the bounds a fixed-matrix visitor states. Re-exported here so
+// picking a shape or a precision does not mean depending on `asap_sketchlib`
+// directly — this crate is where the wrapped libraries live, and this is the
+// vocabulary it wraps them in.
+pub use asap_sketchlib::{
+    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
+    MatrixStorage,
+};
 
 //
 // What the three parallel-insert rows share. Their per-worker sketch is a

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use crate::latency::LatencySnapshot;
 
 /// Metrics produced by a single run. One `FullSink` finalises
-/// into one of these. The `BenchRunner` aggregates `RunMetrics`
+/// into one of these. `crate::aggregation` folds `RunMetrics`
 /// across N runs via the Welford accumulator.
 #[derive(Debug, Clone, Default)]
 pub struct RunMetrics {
@@ -63,7 +63,7 @@ impl RunMetrics {
     }
 }
 
-// `FullSink` lived here: the offline recorder `BenchRunner::run_once` wrapped a
+// `FullSink` lived here: the offline recorder the old runner wrapped a
 // sketch in. `measure` arms the recorders itself now, around whatever region a
 // body marks, so there is nothing left for a sink to hook. `MetricsSink` and
 // `Probe` stay in `probe` for `sketch-runtime`, which wraps its own sketch.

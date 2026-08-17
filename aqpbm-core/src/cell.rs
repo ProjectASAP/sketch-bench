@@ -1,7 +1,12 @@
-//! Running **one cell** — one `(impl, config)` measured against one workload.
+//! Where a benchmark's items come from, and what they materialise to.
 //!
-//! [`run_cell`] runs one square of the grid, monomorphised so the wrapper's
-//! `update` inlines. Plus [`WorkloadSpec`], [`BenchItem`], [`RunError`].
+//! [`WorkloadSpec`] describes data, [`WorkloadData`] is data, and [`BenchItem`]
+//! is the item type a row ingests — it names the workload that carries it and
+//! how to build one. Plus [`RunError`], which is what a caller sees when either
+//! step cannot be done.
+//!
+//! Running a square is [`crate::ops::squares_for`]; timing it is
+//! [`crate::measure`].
 
 use crate::workload::{
     BytesWorkload, F64Workload, I64Workload, Labeled, LabeledWorkload, StringWorkload, Workload,
@@ -241,12 +246,8 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
     }
 }
 
-// ---------- the hot-loop body + construction ----------
-
 // The hot-loop body used to live here as `insert_body`, calling
-// `Accumulator::update`. It is now the row's own `SketchOps::insert`, written in
-// the wrapper file beside the sketch it drives.
-
-// ---------- parallel-insert construction ----------
-
-// ---------- running one cell ----------
+// `Accumulator::update`. It is now the `insert` a row hands to
+// `crate::ops::squares_for` as a generic parameter, written in the wrapper file
+// beside the sketch it drives — see that module's note on why it is not an `fn`
+// pointer.

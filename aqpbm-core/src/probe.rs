@@ -33,7 +33,7 @@ impl MetricsSink for NoopSink {
 }
 
 /// Blanket impl so callers can hand a `&mut Sink` into `Probe`
-/// without moving ownership — lets `BenchRunner` keep the sink
+/// without moving ownership — lets a caller keep the sink
 /// alive past the probe and call `finalize` on it.
 impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
     #[inline]
@@ -56,7 +56,7 @@ impl<T: MetricsSink + ?Sized> MetricsSink for &mut T {
 
 /// `Probe<S, Sink>` wraps an `Accumulator` + `MetricsSink` into an `Accumulator`
 /// recording timing hooks around the inner `update`. The identical wrapper serves
-/// the offline [`BenchRunner`](crate::runner::BenchRunner) and the embedded sampler.
+/// the offline recorder and the embedded sampler.
 pub struct Probe<S: Accumulator, Sink: MetricsSink> {
     inner: S,
     sink: Sink,

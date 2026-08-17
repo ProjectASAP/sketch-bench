@@ -175,3 +175,4 @@ pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
 pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
     sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
 }
+

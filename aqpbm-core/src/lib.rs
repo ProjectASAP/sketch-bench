@@ -1,19 +1,22 @@
 //! `aqpbm-core` — the benchmark framework: everything needed to measure *a*
 //! sketch, nothing that knows *which* sketches exist. See `docs/DESIGN.md` §3.1.
 //!
-//! Implement [`accumulator::Accumulator`], [`init::InitSketch`] and
-//! [`init::BenchImpl`], then call [`cell::run_cell`] with a comparator and a
-//! closure saying how *your* sketch is queried.
+//! Write the handful of closures that drive your sketch — each takes the sketch
+//! and its data as parameters and captures nothing — and hand them to
+//! [`ops::squares_for`]. It returns one [`ops::Body`] per square, which
+//! [`measure`] then times.
 
 pub mod accumulator;
 pub mod accuracy;
 pub mod aggregation;
 pub mod binfile;
+pub mod build_error;
 pub mod cell;
 pub mod config;
 pub mod latency;
 pub mod measure;
 pub mod metrics;
+pub mod ops;
 pub mod probe;
 pub mod report;
 pub mod request;
@@ -37,7 +40,9 @@ pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use cell::{BenchItem, RunError, WorkloadData, WorkloadSpec};
 pub use latency::{LatencyRecorder, LatencySnapshot};
+pub use build_error::BuildError;
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
+pub use ops::{squares_for, squares_for_unscored, Body, NoScore, MIN_MERGE_SHARDS};
 pub use metrics::{MetricsMask, RunMetrics};
 pub use probe::{MetricsSink, NoopSink, Probe};
 pub use report::{

@@ -126,13 +126,10 @@ const METRICS: [(MetricsMask, Metric); 3] = [
 /// latency needs each estimate call timed separately — a per-call capture this
 /// build no longer has.
 ///
-/// This mirrors the grid in [`crate::runner::BenchRunner::run`], which is the
-/// authority — it is the one that actually calls something. Both are exhaustive
-/// matches with no `_` arm, so a new operation or metric fails to compile until
-/// both say what it measures, and `runner_smoke` walks all twelve asserting the
-/// two agree. Stated separately here so a *frontend* can refuse a square by
-/// name before generating a workload for it, which is the whole point of
-/// refusing early.
+/// This mirrors the per-operation match in [`crate::ops::squares_for`], which is
+/// the authority — it is the one that actually builds something to run. Stated
+/// separately here so a *frontend* can refuse a square by name before
+/// generating a workload for it, which is the whole point of refusing early.
 pub fn is_measurable(cell: Cell) -> bool {
     use Metric::{Accuracy, Latency, Throughput};
     use Operation::{Insert, Merge, Prepare, Query};

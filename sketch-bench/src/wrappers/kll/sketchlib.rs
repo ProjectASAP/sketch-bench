@@ -5,13 +5,8 @@
 
 use super::*;
 use crate::build_error::BuildError;
-use aqpbm_core::accuracy::quantile::{QuantileValue, RankErrorGT};
-use aqpbm_core::cell::{BenchItem, RunError, WorkloadData};
+use aqpbm_core::accuracy::quantile::QuantileValue;
 use aqpbm_core::config::ParamSet;
-use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::request::Numeric;
-use aqpbm_core::request::Requirement;
-use aqpbm_core::runner::BenchReport;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.

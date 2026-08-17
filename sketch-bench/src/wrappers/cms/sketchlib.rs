@@ -8,7 +8,6 @@ use crate::build_error::BuildError;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
 };
-use aqpbm_core::cell::RunError;
 use aqpbm_core::config::ParamSet;
 
 use asap_sketchlib::{
@@ -179,7 +178,7 @@ pub struct ParallelCmsFastPath {
     workers: usize,
 }
 
-/// Not an `InitSketch`: it needs the worker count, a run knob (`--workers`)
+/// Takes the worker count, which is a run knob (`--workers`)
 /// rather than a sketch parameter. The construction config is checked
 /// against the baked shape and refused if it differs, exactly as the
 /// single-threaded fixed-matrix rows do.
