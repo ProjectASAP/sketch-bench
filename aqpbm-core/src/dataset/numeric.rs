@@ -1,10 +1,9 @@
 //! The plain item stream: one column, materialised at the row's item type.
 //!
 //! There is no `generate` here on purpose. Production always generates through
-//! [`crate::cell::DatasetSpec::generate_at`] — the frontend asks the registry
-//! what item type the row wants, generates once at that type, and hands the
-//! columns over — so [`NumericDataset::from_table`] is the only constructor a
-//! generated dataset takes. The file-backed constructor is in
+//! [`crate::dataset::DatasetSpec::build`], which is called inside the row once
+//! its item type is known — so [`NumericDataset::from_table`] is the only
+//! constructor a generated dataset takes. The file-backed constructor is in
 //! [`super::load`].
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
@@ -53,11 +52,11 @@ impl<T: ColumnItem> NumericDataset<T> {
 
     /// Build from a table someone else already generated.
     ///
-    /// The caller generates because *who* generates matters: a frontend asks
-    /// the registry what item type a row wants, generates once at that type,
-    /// and hands the columns over. `spec` still rides along because the record
-    /// names the description the data came from, which the columns alone do
-    /// not carry.
+    /// The caller generates, because generating needs an item type and this
+    /// type is already at one: `DatasetSpec::build` picks the type off the row's
+    /// `insert`, generates, and calls this. `spec` still rides along because the
+    /// record names the description the data came from, which the columns alone
+    /// do not carry.
     pub fn from_table(
         spec: &TableDescription,
         table: GeneratedTable,

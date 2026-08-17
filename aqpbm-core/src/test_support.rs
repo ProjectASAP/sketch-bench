@@ -6,11 +6,11 @@
 //! same round trip.
 //!
 //! [`build`] is the important one. Core deliberately has no
-//! `NumericDataset::generate`: production always goes
-//! `DatasetSpec::generate_at` → `TableDescription::generate` → `from_table`,
-//! and a convenience constructor that skipped the middle step would let the
-//! tests pass over the path that actually runs. This helper *is* those two
-//! steps, so a test taking it is exercising the real one.
+//! `NumericDataset::generate`: production always goes `DatasetSpec::build` →
+//! `TableDescription::generate` → `from_table`, and a convenience constructor
+//! that skipped the middle step would let the tests pass over the path that
+//! actually runs. This helper *is* those two steps, so a test taking it is
+//! exercising the real one.
 
 use aqpbm_datagen::{
     ColumnItem, ColumnSpec, DataDistribution, DataGenError, TableDescription, UniformParameter,

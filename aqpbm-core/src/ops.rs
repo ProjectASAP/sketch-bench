@@ -18,49 +18,45 @@ use crate::accuracy::frequency::FrequencyGT;
 use crate::accuracy::quantile::RankErrorGT;
 use crate::accuracy::subpopulation::{SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT};
 use crate::accuracy::GroundTruth;
-use crate::cell::{BenchItem, DatasetSpec, RunError};
+use crate::build_error::BuildError;
 use crate::config::ParamSet;
+use crate::dataset::spec::{BenchItem, DatasetSpec};
 use crate::dataset::{Dataset, DatasetDescription, Labeled, LabeledDataset};
 use crate::measure::{RunOutcome, Timed};
 use crate::metrics::{cells, Metric, Operation};
 use crate::request::Requirement;
+use crate::run_error::RunError;
 use aqpbm_datagen::ColumnItem;
 
-use crate::build_error::BuildError;
-
-/// Everything a measurement does *to* a sketch.
-///
-/// - `S` the sketch, `I` what it ingests.
-/// - `P` one question, `A` one answer — both fixed by the row's comparator,
-///   because a comparison only means anything if both sides answer the same
-///   question.
-///
-/// `insert` is deliberately **not** here: it travels as a generic so it stays a
-/// zero-sized `fn` item and inlines. Routing it through a pointer field cost
-/// the fixed-matrix row 17% (340M → 280M items/sec) when it was measured.
-/// Everything below runs once per measurement, or once per probe, so a pointer
-/// is free there.
-/// Every closure a measurement calls on a sketch is a parameter, not a field of
-/// some bundle. Each arrives as its own generic, so each is a zero-sized item the
-/// compiler inlines — which is what keeps the feed loop as fast as a hand-written
-/// one. `merge` and `prepare` are the exceptions: they are `Option<fn>` because
-/// their absence is a real declaration ("this library has no merge"), and `None`
-/// on a bare `fn` needs no turbofish at the call site. Both run once per fold or
-/// once per run, so the pointer costs nothing.
-///
-/// - `build(&ParamSet, workers) -> Result<S, BuildError>` — a fresh sketch. Called
-///   per run, outside the timed region: every repeat of an insert has to start
-///   from empty or it is not measuring the same thing twice. Takes the worker
-///   count because the parallel rows need it and it is a *run* knob; every other
-///   row ignores it.
-/// - `memory(&S) -> usize` — the footprint the sketch claims, read before the body
-///   drops it.
-/// - `insert(&mut S, &I)` — one item in. The hot one.
-/// - `ask(&mut S, &P) -> A` — one question. `&mut` because several libraries need
-///   it: `sketch_oxide`'s KLL sorts lazily on the first query.
-/// - `merge(&mut S, &S)` — absorb another built from the same `ParamSet`.
-/// - `prepare(&mut S)` — no more items are coming. Timed on its own, so a library
-///   that defers its build is not credited with a fast insert loop.
+// ---------- what a measurement does *to* a sketch ----------
+//
+// Every closure a measurement calls on a sketch is a parameter of
+// [`squares_for`], not a field of some bundle. Each arrives as its own generic,
+// so each is a zero-sized item the compiler inlines — which is what keeps the
+// feed loop as fast as a hand-written one.
+//
+// `insert` is why it is done this way. Routing it through a pointer field cost
+// the fixed-matrix row 17% (340M → 280M items/sec) when it was measured.
+// Everything else runs once per measurement, once per probe or once per run, so
+// a pointer would be free there — but there is no reason to spend one.
+//
+// `merge` and `prepare` are the exceptions, and are `Option<fn>`: their absence
+// is a real declaration ("this library has no merge"), and `None` on a bare `fn`
+// needs no turbofish at the call site.
+//
+// - `build(&ParamSet, workers) -> Result<S, BuildError>` — a fresh sketch. Called
+//   per run, outside the timed region: every repeat of an insert has to start
+//   from empty or it is not measuring the same thing twice. Takes the worker
+//   count because the parallel rows need it and it is a *run* knob; every other
+//   row ignores it.
+// - `memory(&S) -> usize` — the footprint the sketch claims, read before the body
+//   drops it.
+// - `insert(&mut S, &I)` — one item in. The hot one.
+// - `ask(&mut S, &P) -> A` — one question. `&mut` because several libraries need
+//   it: `sketch_oxide`'s KLL sorts lazily on the first query.
+// - `merge(&mut S, &S)` — absorb another built from the same `ParamSet`.
+// - `prepare(&mut S)` — no more items are coming. Timed on its own, so a library
+//   that defers its build is not credited with a fast insert loop.
 
 // ---------- what a row hands the frontend ----------
 //
@@ -336,10 +332,10 @@ impl<I> GroundTruth<I> for NoScore {
 //
 // This is the seam that keeps a comparator out of `sketch-bench`. A wrapper
 // states a fact about its *sketch* — "this grid answers subpopulation
-// frequency" — and never a fact about the comparator. Which `GroundTruth` scores
-// that statistic, and with which knobs, is decided below, in the crate that owns
-// every comparator it could be. When a statistic grows a second comparator, only
-// this file changes.
+// frequency" — and never a fact about the comparator. Which `GroundTruth`
+// scores that statistic, and with which knobs, is decided below, in the crate
+// that owns every comparator it could be. When a statistic grows a second
+// comparator, only this section changes.
 //
 // The `ask` a wrapper passes is still typed in the probe and answer the
 // statistic is asked in — `(String, V) -> f64` for subpopulation frequency —

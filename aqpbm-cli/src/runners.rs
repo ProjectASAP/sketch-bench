@@ -16,10 +16,10 @@
 //! both be right — the test at the bottom is what keeps that from happening
 //! quietly.
 
-use aqpbm_core::cell::{DatasetSpec, RunError};
-use aqpbm_core::dataset::DatasetDescription;
+use aqpbm_core::dataset::{DatasetDescription, DatasetSpec};
 use aqpbm_core::ops::Body;
 use aqpbm_core::request::{Numeric, Requirement};
+use aqpbm_core::run_error::RunError;
 
 /// A row's body factory: given the request and the spec the dataset is
 /// described by, materialise at the row's own item type and hand back one

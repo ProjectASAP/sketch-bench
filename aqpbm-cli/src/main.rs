@@ -46,7 +46,7 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::cell::DatasetSpec;
+use aqpbm_core::dataset::DatasetSpec;
 use aqpbm_core::request::Requirement;
 use sketch_bench::registry;
 

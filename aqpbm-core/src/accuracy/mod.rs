@@ -3,8 +3,7 @@
 //!
 //! A comparator knows the *statistic* — how to compute the exact answer, what
 //! to ask, and how to score what comes back. It does not know how to ask a
-//! sketch anything; that is the row's own closure. See `docs/DESIGN.md` §5.6
-//! and [`statistic`] for what used to live here.
+//! sketch anything; that is the row's own closure. See `docs/DESIGN.md` §5.6.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -12,7 +11,6 @@ use std::time::Instant;
 pub mod cardinality;
 pub mod frequency;
 pub mod quantile;
-pub mod statistic;
 pub mod subpopulation;
 
 /// Output of a single ground-truth comparison run: named scalars plus the

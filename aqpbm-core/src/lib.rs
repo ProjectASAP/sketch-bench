@@ -11,7 +11,6 @@ pub mod accuracy;
 pub mod aggregation;
 pub mod binfile;
 pub mod build_error;
-pub mod cell;
 pub mod config;
 pub mod dataset;
 pub mod latency;
@@ -21,6 +20,7 @@ pub mod ops;
 pub mod probe;
 pub mod report;
 pub mod request;
+pub mod run_error;
 pub mod runner;
 
 /// Column shapes and the generate-then-materialise step, shared by the tests of
@@ -44,7 +44,6 @@ pub use binfile::{BasicStats, BinMeta, BIN_META_SCHEMA_VERSION};
 // The seam an implementation plugs into, and the two calls that drive it.
 pub use accumulator::{Accumulator, MergeUnsupported};
 pub use build_error::BuildError;
-pub use cell::{BenchItem, DatasetData, DatasetSpec, RunError};
 pub use latency::{LatencyRecorder, LatencySnapshot};
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use metrics::{MetricsMask, RunMetrics};
@@ -54,8 +53,13 @@ pub use report::{
     BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord, Mode,
     PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
 };
+pub use run_error::RunError;
 // What a frontend asks for. The registry that answers it lives in the bundle
 // crate; this is only the vocabulary the question is written in.
-pub use dataset::{Dataset, DatasetDescription, I64Dataset, Labeled, LabeledDataset};
+// `DatasetData` is deliberately absent: it is the intermediate inside
+// `DatasetSpec::build`, not a step a caller performs. See `dataset::spec`.
+pub use dataset::{
+    BenchItem, Dataset, DatasetDescription, DatasetSpec, I64Dataset, Labeled, LabeledDataset,
+};
 pub use request::{Capability, Numeric, Requirement};
 pub use runner::BenchReport;

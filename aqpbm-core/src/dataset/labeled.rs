@@ -2,8 +2,8 @@
 //! value column.
 //!
 //! This is what the grouped (Hydra) rows ingest. As in [`super::numeric`],
-//! generation happens in the frontend and only [`LabeledDataset::from_table`]
-//! is offered here.
+//! generation happens in [`crate::dataset::DatasetSpec::build`] and only
+//! [`LabeledDataset::from_table`] is offered here.
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
 
@@ -134,8 +134,8 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// Generate and zip — the two steps `DatasetSpec::generate_at` takes
-    /// before handing a labelled row its dataset.
+    /// Generate and zip — the two steps `DatasetSpec::build` takes before
+    /// handing a labelled row its dataset.
     fn build(spec: &TableDescription) -> Result<LabeledDataset<i64>, DataGenError> {
         let table = spec.generate()?;
         LabeledDataset::from_table(spec, table)

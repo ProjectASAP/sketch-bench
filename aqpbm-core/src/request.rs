@@ -10,9 +10,10 @@ use crate::metrics::{MetricsMask, OperationMask};
 
 /// The statistic a row answers, as a *value*.
 ///
-/// One variant per capability trait in [`crate::accuracy::statistic`], and the
-/// two lists are meant to stay in step: a capability that a row can be scored
-/// under is one that some `GroundTruth` knows how to compare. Naming it here as
+/// One variant per statistic some [`GroundTruth`](crate::accuracy::GroundTruth)
+/// knows how to score, and the two lists are meant to stay in step: a capability
+/// a row can be scored under is one a comparator in [`crate::accuracy`] can
+/// compare against. Naming it here as
 /// data is what lets a registry *print* what a row does and refuse a comparator
 /// it cannot answer, neither of which a trait bound can do.
 ///

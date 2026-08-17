@@ -1,12 +1,12 @@
-//! Where a benchmark's items come from, and what they materialise to.
+//! Where a benchmark's items come from, and what item type they materialise at.
 //!
-//! [`DatasetSpec`] describes data, [`DatasetData`] is data, and [`BenchItem`]
-//! is the item type a row ingests — it names the dataset that carries it and
-//! how to build one. Plus [`RunError`], which is what a caller sees when either
-//! step cannot be done.
+//! [`DatasetSpec`] describes data and [`BenchItem`] is the item type a row
+//! ingests — it names the dataset that carries it and how to build one.
+//! [`DatasetSpec::build`] is the one entry point: a row hands over the spec it
+//! was given and gets back a dataset at its own item type.
 //!
 //! Running a square is [`crate::ops::squares_for`]; timing it is
-//! [`crate::measure`].
+//! [`crate::measure`](mod@crate::measure).
 
 use crate::dataset::{Dataset, F64Dataset, I64Dataset, Labeled, LabeledDataset};
 use anyhow::Result;
@@ -32,12 +32,17 @@ pub enum DatasetSpec {
     File { path: String },
 }
 
-/// A dataset that has already been produced, on its way to a row.
+/// Produced data, on its way to a [`BenchItem`].
 ///
-/// The distinction from [`DatasetSpec`] is who has acted: a spec *describes*
-/// data, this *is* data. A frontend asks the registry what item type a row
-/// wants, generates once at that type, and hands this over — so generation
-/// happens before the row is entered rather than inside it.
+/// The intermediate inside [`DatasetSpec::build`], and nothing more: it carries
+/// the result of generating across to the `materialise` that decodes it. The
+/// distinction from [`DatasetSpec`] is who has acted — a spec *describes* data,
+/// this *is* data.
+///
+/// It stays `pub` only because [`BenchItem::materialise`] takes one and that
+/// trait is a public bound on every `ops::squares_*`. Nothing outside this
+/// module constructs or matches on it; generation is not a step a caller
+/// performs.
 #[derive(Debug, Clone)]
 pub enum DatasetData {
     /// Columns from `aqpbm-datagen`. The description rides along because the
@@ -47,19 +52,28 @@ pub enum DatasetData {
         description: TableDescription,
         table: GeneratedTable,
     },
-    /// A file to read. Still deferred to the row, because how the bytes are
-    /// decoded depends on the item type — a `.bin` is a raw `i64` stream and
-    /// only some rows can take it.
+    /// A file to read. Still deferred to the item type, because how the bytes
+    /// are decoded depends on it — a `.bin` is a raw `i64` stream and only some
+    /// rows can take it.
     File { path: String },
 }
 
 impl DatasetSpec {
-    /// Produce the data this spec describes, at `value_type` — the item type
-    /// the row named. Called by the frontend, once, before the row is entered.
+    /// Materialise at the item type `T`, which the row's `insert` closure
+    /// already pinned.
     ///
-    /// This is why resolution comes first: `value_type` is an *answer* from
-    /// the registry, so a caller cannot generate until it has asked.
-    pub fn generate_at(&self, value_type: &str) -> Result<DatasetData> {
+    /// This is the whole public surface. It is called from `crate::ops`, inside
+    /// the row, *after* the frontend has bound a pair of argv strings to a
+    /// concrete set of closures — which is the only point at which `T` is known.
+    /// The frontend cannot generate ahead of this without the row publishing its
+    /// item type back out.
+    pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
+        T::materialise(self.generate_at(T::DATA_TYPE)?)
+    }
+
+    /// Produce the data this spec describes, at `value_type` — the item type
+    /// the row named.
+    fn generate_at(&self, value_type: &str) -> Result<DatasetData> {
         match self.describe(value_type) {
             Some(description) => {
                 let table = description.generate()?;
@@ -74,17 +88,10 @@ impl DatasetSpec {
         }
     }
 
-    /// Materialise at the item type `T`, which the row's `Accumulator::Item`
-    /// already names. Generates and converts in one step; the split form is
-    /// [`Self::generate_at`] followed by `T::materialise`.
-    pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
-        T::materialise(self.generate_at(T::DATA_TYPE)?)
-    }
-
     /// The description to generate from at item type `item_type`, or `None` for
     /// a file-backed dataset. See the variants above for why the two generated
     /// cases answer differently.
-    pub fn describe(&self, item_type: &str) -> Option<TableDescription> {
+    fn describe(&self, item_type: &str) -> Option<TableDescription> {
         match self {
             DatasetSpec::Generated(d) => Some(d.clone()),
             DatasetSpec::Inline(d) => {
@@ -99,7 +106,7 @@ impl DatasetSpec {
     }
 
     /// The path a file-backed dataset reads, if this is one.
-    pub fn file_path(&self) -> Option<&str> {
+    fn file_path(&self) -> Option<&str> {
         match self {
             DatasetSpec::File { path } => Some(path),
             _ => None,
@@ -107,41 +114,15 @@ impl DatasetSpec {
     }
 }
 
-/// Why a measurement could not be produced.
-///
-/// Only two ways left, both about the data: core no longer builds sketches, so
-/// a construction failure is the registry's to report before it hands a body
-/// over.
-#[derive(Debug)]
-pub enum RunError {
-    Dataset(anyhow::Error),
-    /// The body reported it could not run — a build the config cannot satisfy,
-    /// a fold with nothing to fold. The registry words it; core carries it.
-    Body(String),
-}
-
-impl std::fmt::Display for RunError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RunError::Dataset(e) => e.fmt(f),
-            RunError::Body(m) => f.write_str(m),
-        }
-    }
-}
-
-impl std::error::Error for RunError {}
-
-impl From<anyhow::Error> for RunError {
-    fn from(e: anyhow::Error) -> Self {
-        RunError::Dataset(e)
-    }
-}
-
 // ---------- the item axis ----------
 
 /// An item type a benchmark can be run over: it names the dataset that carries
-/// it, and how to build one from a [`DatasetSpec`]. A row's
-/// `Accumulator::Item` fixes the encoding before anything is generated.
+/// it, and how to build one from a [`DatasetSpec`].
+///
+/// The item type is fixed by the row's own `insert` — `insert_cms_datasketches`
+/// takes a `&i64`, `insert_hydra_cms` takes a `&Labeled<i64>` — so binding a
+/// row's closures is what selects the impl below, and nothing is generated
+/// before that has happened.
 pub trait BenchItem: Sized + Clone {
     type Wk: Dataset<Item = Self>;
 
@@ -209,9 +190,3 @@ impl<V: ColumnItem> BenchItem for Labeled<V> {
         }
     }
 }
-
-// The hot-loop body used to live here as `insert_body`, calling
-// `Accumulator::update`. It is now the `insert` a row hands to
-// `crate::ops::squares_for` as a generic parameter, written in the wrapper file
-// beside the sketch it drives — see that module's note on why it is not an `fn`
-// pointer.

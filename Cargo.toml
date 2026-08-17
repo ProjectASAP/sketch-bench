@@ -17,8 +17,12 @@ members = [
 # benchmark path's API still while that path is being cleaned up. Excluded
 # rather than merely unlisted so cargo does not treat the directory as an
 # orphan package. Note it inherits `version.workspace` / `edition.workspace`,
-# so it does not build standalone while excluded — putting it back in
-# `members` is the only step needed to revive it.
+# so it does not build standalone while excluded.
+#
+# Reviving it is no longer just a matter of listing it here: it still imports
+# `aqpbm_core::workload::WorkloadDescription` (sampler.rs, exporter/fanout.rs),
+# and that module is now `aqpbm_core::dataset` with the type renamed to
+# `DatasetDescription`. Fix those two imports first.
 exclude = ["sketch-runtime"]
 
 [workspace.package]
