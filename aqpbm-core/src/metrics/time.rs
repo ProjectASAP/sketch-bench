@@ -1,6 +1,6 @@
-//! Wall-clock + CPU-time primitives. Linux-only for the CPU
-//! side (via `getrusage`); wall-clock uses `std::time::Instant`
-//! and is portable.
+//! Wall-clock + CPU-time primitives. The CPU side reads `getrusage`, so it
+//! works on any unix (macOS included) and reports zeros elsewhere; wall-clock
+//! uses `std::time::Instant` and is portable.
 
 use std::time::Instant;
 
@@ -24,9 +24,8 @@ impl WallClock {
     }
 }
 
-/// CPU time (user + sys) delta for the current process,
-/// captured at `start()` and finalised by `finish()`. Linux
-/// only. On other platforms `finish()` returns zeros.
+/// CPU time (user + sys) delta for the current process, captured at `start()`
+/// and finalised by `finish()`. Unix only; elsewhere `finish()` returns zeros.
 #[derive(Debug, Clone, Copy)]
 pub struct CpuTimeSampler {
     start: RawCpuTime,

@@ -1,22 +1,15 @@
 //! The `special_rule` bit mask: post-processing applied to a column's raw draws
-//! before they are shifted and rendered.
-//!
-//! A rule is a bit rather than a variant so rules compose, and an unknown bit is
-//! an error rather than a silent no-op — a description asking for a rule this
-//! build does not have must not quietly generate the unruled column instead.
+//! before they are shifted and rendered. A bit, not a variant, so rules compose;
+//! an unknown bit is an error rather than a silently unruled column.
 
 use crate::error::DataGenError;
 
 /// No post-processing; the draws are the values.
 pub const RULE_NONE: u32 = 0;
 
-/// Monotonically increase: the column's distribution becomes a *gap*
-/// distribution. Each draw is taken as a non-negative gap and the emitted value
-/// is the running sum, starting from the column's `shift` (or zero).
-///
-/// Non-decreasing rather than strictly increasing: there is no minimum-gap
-/// field, so a zero gap repeats the previous value rather than being floored to
-/// some invented step.
+/// Monotonically increase: the distribution becomes a *gap* distribution. Each
+/// draw is a non-negative gap and the emitted value is the running sum from the
+/// column's `shift`. Non-decreasing — no minimum-gap field, so a zero repeats.
 pub const RULE_MONOTONIC_INCREASE: u32 = 0b0001;
 
 /// Every bit this build understands. Anything outside it is rejected.

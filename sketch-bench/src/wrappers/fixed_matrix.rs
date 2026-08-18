@@ -96,14 +96,9 @@ fixed_matrix_shapes!(
     M5x65538 => (5, 65538),
 );
 
-/// What to tell a caller who named a shape that was not compiled in.
-///
-/// Not "this shape is unsupported", which would read as a limit of the tool.
-/// The shape is a type, so measuring a new one means adding source and
-/// rebuilding, and the message is where that is spelled out: which file, which
-/// line, what the macro generates, and what the alternative is if the caller
-/// would rather not rebuild. A reader who has to reverse-engineer that from a
-/// one-line refusal has been handed a puzzle instead of an answer.
+/// What to tell a caller who named a shape that was not compiled in. Not "this
+/// shape is unsupported" — the shape is a type, so the message spells out which
+/// file and line to add, and the alternative if they would rather not rebuild.
 pub fn unsupported_shape(what: &str, rows: usize, cols: usize) -> String {
     let widest = FIXED_SHAPES.iter().map(|s| s.0 * s.1).max().unwrap_or(0);
     let rows_offered: Vec<String> = {

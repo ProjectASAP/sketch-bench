@@ -1,15 +1,6 @@
-//! Count-Min wrappers — five types. Each answers a `&i64` point lookup with a
-//! `u64` count estimate, which is the shape the frequency comparator asks in;
-//! each says so in its own `ask_*` signature rather than by implementing a
-//! shared trait.
-//!
-//! All of them take `(rows, cols)` and honour it, by four different routes.
-//! `oxide` inverts the error bounds its API takes and checks the table it got
-//! back. `datasketches` range-checks the `(u8, u32)` its API narrows to.
-//! `CmsLibVector2dFast` / `CmsLibVector2dRegular` size at run time.
-//! `CmsLibFixedmatrix<M>` is generic over a storage type that bakes the shape
-//! in, so the shape selects a monomorphisation from the table in
-//! `wrappers::fixed_matrix` and the registry dispatches on it.
+//! Count-Min wrappers — five types, each answering a `&i64` point lookup with a
+//! `u64` estimate in its own `query_*` rather than through a shared trait. All
+//! take `(rows, cols)` and honour it, by four different routes.
 
 use crate::params::*;
 use sketch_oxide::Mergeable as _;
@@ -19,18 +10,9 @@ pub mod oxide;
 pub mod polars;
 pub mod sketchlib;
 
-/// error bounds and derives the dimensions back out of them.
-///
-/// The inversion has to land on the library's own arithmetic, which is
-/// `width = ceil(2/ε).next_power_of_two()` and `depth = ceil(ln(1/δ))`. Solving
-/// for `ceil(2/ε) = cols` gives `ε = 2/cols`, and the half-step below keeps the
-/// quotient off the integer boundary where one float ulp would tip the `ceil`
-/// to `cols + 1` and the power-of-two rounding would then double the table.
-/// That is exactly the bug the CountSketch side of this pair had.
-///
-/// This is a claim about `sketch_oxide` 0.1.6, so nothing rests on it being
-/// right: [`require_resolved_shape`] checks the built sketch and refuses if the
-/// library resolved the request to anything else.
+/// Invert `(rows, cols)` into the error bounds `sketch_oxide`'s constructor
+/// takes, against its own `ceil(2/ε).next_power_of_two()`. The half-step keeps
+/// the quotient off the boundary one ulp would tip, doubling the table.
 fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
     let epsilon = 2.0 / (cols as f64 - 0.5);
     let delta = (-(rows as f64 - 0.5)).exp();
@@ -43,8 +25,8 @@ mod tests {
     use super::oxide::*;
     use super::sketchlib::*;
     use super::*;
+    use crate::params::ParamSet;
     use crate::wrappers::cs::oxide::{build_cs_oxide, memory_cs_oxide};
-    use aqpbm_core::config::ParamSet;
 
     fn shape() -> ParamSet {
         ParamSet::of(&CmsParams {
@@ -58,27 +40,19 @@ mod tests {
     /// plots divide by.
     #[test]
     fn oxide_sizes_counters_at_the_real_width() {
-        let sketch = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
+        let sketch = build_cms_oxide(&shape()).expect("5x2048 is a valid oxide shape");
         assert_eq!(memory_cms_oxide(&sketch), 5 * 2048 * 8);
     }
 
     /// A `cols` the crate cannot resolve exactly is refused, naming the table it
-    /// would have built.
-    ///
-    /// This used to build: `cols = 3000` and `cols = 4096` both allocated 4096
-    /// columns, scored identical error, and were recorded as two different
-    /// configs. That put one measurement at two x-positions 27% apart on every
-    /// accuracy-vs-memory plot. A refusal is the only honest answer, since the
-    /// error bound the API takes cannot express 3000 columns.
+    /// would have built: the error bound the API takes cannot express an
+    /// arbitrary column count, and a silently-rounded one misplaces every plot.
     #[test]
     fn oxide_cms_refuses_a_cols_it_cannot_resolve_exactly() {
-        let Err(err) = build_cms_oxide(
-            &ParamSet::of(&CmsParams {
-                rows: 5,
-                cols: 3000,
-            }),
-            1,
-        ) else {
+        let Err(err) = build_cms_oxide(&ParamSet::of(&CmsParams {
+            rows: 5,
+            cols: 3000,
+        })) else {
             panic!("cols=3000 resolves to a 4096-wide table, so it must be refused");
         };
         let err = err.to_string();
@@ -90,36 +64,25 @@ mod tests {
     /// honoured and is refused instead of quietly building 3.
     #[test]
     fn oxide_countsketch_refuses_a_depth_below_its_floor() {
-        let Err(err) = build_cs_oxide(
-            &ParamSet::of(&crate::params::CountSketchParams {
-                rows: 2,
-                cols: 2048,
-            }),
-            1,
-        ) else {
+        let Err(err) = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+            rows: 2,
+            cols: 2048,
+        })) else {
             panic!("rows=2 resolves to a 3-row table, so it must be refused");
         };
         assert!(err.to_string().contains("2048"), "{err}");
     }
 
-    /// One `--config`, one counter budget, across the two oxide rows.
-    ///
-    /// This is the property the ε inversions exist to hold. It did not hold
-    /// before: CountSketch asked through `ε = sqrt(3/cols)`, `3/ε²` did not
-    /// round-trip in `f64`, `ceil` took it to `cols + 1` and the power-of-two
-    /// rounding doubled it, so `cols = 2048` built 2048 columns of Count-Min and
-    /// 4096 of CountSketch. A CMS-vs-CountSketch comparison at one config was
-    /// comparing two budgets.
+    /// One `--config`, one counter budget, across the two oxide rows — the
+    /// property the ε inversions exist to hold. Without it a CMS-vs-CountSketch
+    /// comparison at one config compares two different budgets.
     #[test]
     fn the_two_oxide_rows_resolve_one_config_to_one_shape() {
-        let cms = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
-        let cs = build_cs_oxide(
-            &ParamSet::of(&crate::params::CountSketchParams {
-                rows: 5,
-                cols: 2048,
-            }),
-            1,
-        )
+        let cms = build_cms_oxide(&shape()).expect("5x2048 is a valid oxide shape");
+        let cs = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+            rows: 5,
+            cols: 2048,
+        }))
         .expect("5x2048 is a valid oxide shape");
 
         // 8 bytes per counter on both sides: `table: Vec<u64>` and `Vec<i64>`.
@@ -138,13 +101,13 @@ mod tests {
         for lg in 3..=16u32 {
             let cols = 1usize << lg;
             for rows in 3..=8usize {
-                let cms = build_cms_oxide(&ParamSet::of(&CmsParams { rows, cols }), 1)
+                let cms = build_cms_oxide(&ParamSet::of(&CmsParams { rows, cols }))
                     .unwrap_or_else(|e| panic!("cms {rows}x{cols}: {e}"));
                 assert_eq!(memory_cms_oxide(&cms), rows * cols * 8, "cms {rows}x{cols}");
-                let cs = build_cs_oxide(
-                    &ParamSet::of(&crate::params::CountSketchParams { rows, cols }),
-                    1,
-                )
+                let cs = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+                    rows,
+                    cols,
+                }))
                 .unwrap_or_else(|e| panic!("countsketch {rows}x{cols}: {e}"));
                 assert_eq!(
                     memory_cs_oxide(&cs),
@@ -161,7 +124,7 @@ mod tests {
     #[test]
     fn datasketches_refuses_what_its_api_cannot_take() {
         let build = |rows: usize, cols: usize| {
-            build_cms_datasketches(&ParamSet::of(&CmsParams { rows, cols }), 1)
+            build_cms_datasketches(&ParamSet::of(&CmsParams { rows, cols }))
         };
         for (rows, cols, why) in [
             (
@@ -203,60 +166,51 @@ mod tests {
         }
     }
 
-    /// A `Vector2D` row used to call the library straight through. `cols = 0`
-    /// aborted in `ilog2`, and `rows = 0` was worse: it built, ingested, and
-    /// wrote a *scored* record whose error was `i32::MAX` — a garbage number
-    /// that survived into the output.
     #[test]
     fn vector2d_rows_refuse_a_degenerate_shape() {
         for (rows, cols) in [(0usize, 1024usize), (5, 0), (0, 0)] {
             let p = ParamSet::of(&CmsParams { rows, cols });
             assert!(
-                build_cms_lib_vector2d_fast(&p, 1).is_err(),
+                build_cms_lib_vector2d_fast(&p).is_err(),
                 "fastpath {rows}x{cols}"
             );
             assert!(
-                build_cms_lib_vector2d_regular(&p, 1).is_err(),
+                build_cms_lib_vector2d_regular(&p).is_err(),
                 "regularpath {rows}x{cols}"
             );
             let q = ParamSet::of(&crate::params::CountSketchParams { rows, cols });
             assert!(
-                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_fast(&q, 1).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_fast(&q).is_err(),
                 "cs fastpath {rows}x{cols}"
             );
             assert!(
-                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_regular(&q, 1).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_regular(&q).is_err(),
                 "cs regularpath {rows}x{cols}"
             );
         }
         assert!(
-            build_cms_lib_vector2d_fast(&ParamSet::of(&CmsParams { rows: 1, cols: 1 }), 1).is_ok()
+            build_cms_lib_vector2d_fast(&ParamSet::of(&CmsParams { rows: 1, cols: 1 })).is_ok()
         );
     }
 
-    /// Every row in the family agrees on a degenerate shape. This is the
-    /// property the whole guard pass exists to restore: one config used to give
-    /// four different answers across seven rows — refused, aborted, silently
-    /// accepted, and accepted-with-a-scored-record.
+    /// Every row in the family agrees on a degenerate shape.
     #[test]
     fn the_frequency_rows_agree_on_a_degenerate_shape() {
         let p = ParamSet::of(&CmsParams {
             rows: 0,
             cols: 1024,
         });
-        assert!(build_cms_oxide(&p, 1).is_err(), "oxide");
-        assert!(build_cms_datasketches(&p, 1).is_err(), "datasketches");
+        assert!(build_cms_oxide(&p).is_err(), "oxide");
+        assert!(build_cms_datasketches(&p).is_err(), "datasketches");
         assert!(
-            build_cms_lib_vector2d_fast(&p, 1).is_err(),
+            build_cms_lib_vector2d_fast(&p).is_err(),
             "vector2d fastpath"
         );
         assert!(
-            build_cms_lib_vector2d_regular(&p, 1).is_err(),
+            build_cms_lib_vector2d_regular(&p).is_err(),
             "vector2d regularpath"
         );
         // The fixed-shape and parallel rows already refused it, via require_shape.
-        assert!(
-            build_cms_lib_fixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>(&p, 1).is_err()
-        );
+        assert!(build_cms_lib_fixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>(&p).is_err());
     }
 }

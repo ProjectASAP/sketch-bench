@@ -1,7 +1,12 @@
-//! `MetricsMask` — which metric algorithms a sink collects. Named by both
-//! consumers of the `MetricsSink` contract, the offline
-//! [`FullSink`](crate::metrics::FullSink) and `sketch-runtime::Sampler`, which
-//! is why it sits here rather than in either. See `docs/DESIGN.md` §5.3.
+//! `MetricsMask` — which recorders a measurement arms — and `OperationMask`,
+//! what it arms them over. Neither belongs to a recorder: they select across all
+//! of them, so they sit beside the recorders rather than inside one.
+//!
+//! Both are *vocabulary*, not requests. A registry entry declares what it admits
+//! with them, and `MeasureConfig` arms recorders with them. What a frontend asks
+//! for is one [`Operation`] and one [`Metric`] — see [`crate::measurement`].
+//!
+//! See `docs/aqpbm-core.md` §Metrics and §Operations.
 
 use bitflags::bitflags;
 
@@ -20,12 +25,9 @@ bitflags! {
 }
 
 bitflags! {
-    /// Which operations to measure over. A separate set from [`MetricsMask`]:
-    /// one says *what is measured*, this says *what it is measured over*, and a
-    /// request is the cross product of the two.
-    ///
-    /// Insert and query are assumed of every implementation; merge and prepare
-    /// are declared, so a caller asks for them by name.
+    /// Which operations a row admits. A separate set from [`MetricsMask`]:
+    /// one says *what is measured*, this says *what it is measured over*.
+    /// Insert and query are assumed; merge and prepare are asked for by name.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct OperationMask: u32 {
         const INSERT  = 1 << 0;
@@ -54,31 +56,26 @@ pub enum Metric {
     Accuracy,
 }
 
-/// One measurement: a metric taken over an operation. This is what a record
-/// names, and what the runner dispatches on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cell {
-    pub operation: Operation,
-    pub metric: Metric,
-    /// The phase-boundary bits that ride along. They contaminate nothing, so
-    /// they attach to every cell instead of forming cells of their own.
-    pub secondary: MetricsMask,
-}
-
-impl Cell {
-    /// The bits this cell records: its own metric, plus the phase-boundary
-    /// bits riding along. What the recorders and the aggregator gate on.
-    pub fn mask(self) -> MetricsMask {
-        let primary = match self.metric {
-            Metric::Throughput => MetricsMask::THROUGHPUT,
-            Metric::Latency => MetricsMask::LATENCY,
-            Metric::Accuracy => MetricsMask::ACCURACY,
-        };
-        primary | self.secondary
-    }
-}
-
 impl Operation {
+    /// Every operation, in the order a frontend enumerating them should use.
+    pub const ALL: [Operation; 4] = [
+        Operation::Insert,
+        Operation::Query,
+        Operation::Merge,
+        Operation::Prepare,
+    ];
+
+    /// The mask bit standing for this operation. The bit and the value are two
+    /// spellings of one thing, and this is the only place that says so.
+    pub fn bit(self) -> OperationMask {
+        match self {
+            Operation::Insert => OperationMask::INSERT,
+            Operation::Query => OperationMask::QUERY,
+            Operation::Merge => OperationMask::MERGE,
+            Operation::Prepare => OperationMask::PREPARE,
+        }
+    }
+
     /// The name this operation carries in a record.
     pub fn name(self) -> &'static str {
         match self {
@@ -91,6 +88,21 @@ impl Operation {
 }
 
 impl Metric {
+    /// Every metric that names a measurement of its own, in enumeration order.
+    /// Cpu and memory are absent on purpose: they are [`MetricsMask::SECONDARY`],
+    /// and ride along with a measurement rather than being one.
+    pub const ALL: [Metric; 3] = [Metric::Throughput, Metric::Latency, Metric::Accuracy];
+
+    /// The mask bit standing for this metric. Also what a caller ors with
+    /// [`MetricsMask::SECONDARY`] to arm exactly one measurement's recorders.
+    pub fn bit(self) -> MetricsMask {
+        match self {
+            Metric::Throughput => MetricsMask::THROUGHPUT,
+            Metric::Latency => MetricsMask::LATENCY,
+            Metric::Accuracy => MetricsMask::ACCURACY,
+        }
+    }
+
     /// The name this metric carries in a record's `metric` field.
     pub fn name(self) -> &'static str {
         match self {
@@ -101,39 +113,13 @@ impl Metric {
     }
 }
 
-/// Every operation the mask can hold, in the order cells are produced.
-const OPERATIONS: [(OperationMask, Operation); 4] = [
-    (OperationMask::INSERT, Operation::Insert),
-    (OperationMask::QUERY, Operation::Query),
-    (OperationMask::MERGE, Operation::Merge),
-    (OperationMask::PREPARE, Operation::Prepare),
-];
-
-/// Every metric the mask can hold, in the order cells are produced.
-const METRICS: [(MetricsMask, Metric); 3] = [
-    (MetricsMask::THROUGHPUT, Metric::Throughput),
-    (MetricsMask::LATENCY, Metric::Latency),
-    (MetricsMask::ACCURACY, Metric::Accuracy),
-];
-
-/// Whether the framework measures this square *at all*, for any row.
-///
-/// Five of the twelve are permanently empty, and for reasons that hold of every
-/// implementation rather than of any one of them: an insert produces no answer
-/// to score, a fold produces no answer to score, scoring a folded sketch is the
-/// query operation wearing merge's name, `prepare` runs at the tail of the
-/// insert loop so it has a latency but no throughput of its own, and a query
-/// latency needs each estimate call timed separately — a per-call capture this
-/// build no longer has.
-///
-/// This mirrors the per-operation match in [`crate::ops::squares_for`], which is
-/// the authority — it is the one that actually builds something to run. Stated
-/// separately here so a *frontend* can refuse a square by name before
-/// generating a workload for it, which is the whole point of refusing early.
-pub fn is_measurable(cell: Cell) -> bool {
+/// Whether the framework measures this pair *at all*, for any row. A fact about
+/// the metrics, not about a request: a caller asks before it asks a registry
+/// whether some particular entry has it.
+pub fn is_measurable(operation: Operation, metric: Metric) -> bool {
     use Metric::{Accuracy, Latency, Throughput};
     use Operation::{Insert, Merge, Prepare, Query};
-    match (cell.operation, cell.metric) {
+    match (operation, metric) {
         (Insert, Throughput) | (Insert, Latency) => true,
         (Insert, Accuracy) => false,
         (Query, Throughput) | (Query, Accuracy) => true,
@@ -146,33 +132,10 @@ pub fn is_measurable(cell: Cell) -> bool {
     }
 }
 
-/// The cells a request selects: every (operation, metric) the two masks name
-/// between them. A cell with no implementation is still produced, and the
-/// runner is what finds nothing to run for it.
-pub fn cells(operations: OperationMask, metrics: MetricsMask) -> Vec<Cell> {
-    let secondary = metrics & MetricsMask::SECONDARY;
-    let mut out = Vec::new();
-    for (op_bit, operation) in OPERATIONS {
-        if !operations.contains(op_bit) {
-            continue;
-        }
-        for (metric_bit, metric) in METRICS {
-            if metrics.contains(metric_bit) {
-                out.push(Cell {
-                    operation,
-                    metric,
-                    secondary,
-                });
-            }
-        }
-    }
-    out
-}
-
 impl MetricsMask {
     /// Bits that record at phase boundaries only (start / finish of the insert
     /// phase, not per-update). They contaminate nothing, so they ride along
-    /// with every cell instead of forming cells of their own.
+    /// with every measurement instead of naming one of their own.
     pub const SECONDARY: MetricsMask =
         MetricsMask::from_bits_truncate(Self::CPU.bits() | Self::MEMORY.bits());
 }
@@ -181,72 +144,47 @@ impl MetricsMask {
 mod tests {
     use super::*;
 
-    fn names(cells: &[Cell]) -> Vec<(&'static str, &'static str)> {
-        cells
-            .iter()
-            .map(|c| (c.operation.name(), c.metric.name()))
-            .collect()
+    #[test]
+    fn a_value_and_its_bit_are_two_spellings_of_one_thing() {
+        for op in Operation::ALL {
+            assert!(OperationMask::all().contains(op.bit()), "{}", op.name());
+        }
+        for metric in Metric::ALL {
+            assert!(
+                MetricsMask::all().contains(metric.bit()),
+                "{}",
+                metric.name()
+            );
+        }
     }
 
     #[test]
-    fn one_operation_one_metric_is_one_cell() {
-        let c = cells(OperationMask::INSERT, MetricsMask::THROUGHPUT);
-        assert_eq!(names(&c), vec![("insert", "throughput")]);
+    fn secondary_names_no_measurement_of_its_own() {
+        // Cpu and memory attach to a measurement; they are not one, so no
+        // `Metric` value maps onto either bit.
+        for metric in Metric::ALL {
+            assert!(
+                !MetricsMask::SECONDARY.contains(metric.bit()),
+                "{}",
+                metric.name()
+            );
+        }
     }
 
     #[test]
-    fn the_request_is_the_cross_product() {
-        let c = cells(
-            OperationMask::INSERT | OperationMask::MERGE,
-            MetricsMask::THROUGHPUT | MetricsMask::LATENCY,
-        );
-        assert_eq!(
-            names(&c),
-            vec![
-                ("insert", "throughput"),
-                ("insert", "latency"),
-                ("merge", "throughput"),
-                ("merge", "latency"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_cell_with_no_implementation_is_still_produced() {
-        // Selection does not judge. Nothing implements insert accuracy; the
-        // runner is what finds nothing to run for it.
-        let c = cells(OperationMask::INSERT, MetricsMask::ACCURACY);
-        assert_eq!(names(&c), vec![("insert", "accuracy")]);
-    }
-
-    #[test]
-    fn secondary_bits_ride_along_and_form_no_cell_of_their_own() {
-        let c = cells(
-            OperationMask::INSERT,
-            MetricsMask::THROUGHPUT | MetricsMask::CPU | MetricsMask::MEMORY,
-        );
-        assert_eq!(names(&c), vec![("insert", "throughput")]);
-        assert_eq!(c[0].secondary, MetricsMask::CPU | MetricsMask::MEMORY);
-    }
-
-    #[test]
-    fn secondary_bits_alone_select_nothing() {
-        // They attach to a measurement; they are not one.
-        assert!(cells(OperationMask::all(), MetricsMask::CPU | MetricsMask::MEMORY).is_empty());
-    }
-
-    #[test]
-    fn an_empty_mask_on_either_axis_selects_nothing() {
-        assert!(cells(OperationMask::empty(), MetricsMask::all()).is_empty());
-        assert!(cells(OperationMask::all(), MetricsMask::empty()).is_empty());
-    }
-
-    #[test]
-    fn five_of_the_twelve_squares_are_permanently_empty() {
-        let empty: Vec<_> = cells(OperationMask::all(), MetricsMask::all())
+    fn five_of_the_twelve_pairs_are_permanently_empty() {
+        // Four operations by three metrics is the whole of what this crate can
+        // be asked for, whatever it happens to implement.
+        let pairs: Vec<_> = Operation::ALL
             .into_iter()
-            .filter(|c| !is_measurable(*c))
-            .map(|c| (c.operation.name(), c.metric.name()))
+            .flat_map(|op| Metric::ALL.map(|m| (op, m)))
+            .collect();
+        assert_eq!(pairs.len(), 12);
+
+        let empty: Vec<_> = pairs
+            .into_iter()
+            .filter(|(op, m)| !is_measurable(*op, *m))
+            .map(|(op, m)| (op.name(), m.name()))
             .collect();
         assert_eq!(
             empty,
@@ -258,21 +196,5 @@ mod tests {
                 ("prepare", "accuracy"),
             ]
         );
-    }
-
-    #[test]
-    fn all_by_all_is_the_whole_grid() {
-        // Four operations by three metrics. The grid is the thing this crate
-        // can be asked for, whatever it happens to implement.
-        assert_eq!(cells(OperationMask::all(), MetricsMask::all()).len(), 12);
-    }
-
-    #[test]
-    fn a_cell_records_its_own_metric_plus_whatever_rides_along() {
-        let c = cells(
-            OperationMask::MERGE,
-            MetricsMask::LATENCY | MetricsMask::MEMORY,
-        );
-        assert_eq!(c[0].mask(), MetricsMask::LATENCY | MetricsMask::MEMORY);
     }
 }

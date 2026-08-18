@@ -1,56 +1,25 @@
-//! The registry: one table naming every `(algorithm, impl)` this crate exposes,
-//! and what each of them supports. It lives here, not in the CLI, so a future
-//! `aqp-bench` can ship its own.
-//!
-//! Every fact is written out in [`REGISTRY`], entry by entry. Nothing is
-//! derived and nothing is projected off a type: what this bundle can be asked
-//! for is what the table says, and a reader learns it by reading the table.
-//!
-//! [`check`] is what the frontend calls. It compares one
-//! [`Requirement`] against one entry and answers whether that request can run —
-//! before a single item is generated, which is the whole value of answering
-//! here.
+//! The registry: one table naming every `(algorithm, impl)` this crate exposes
+//! and what each supports, written out entry by entry in
+//! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
-use aqpbm_core::metrics::{cells, is_measurable, MetricsMask, OperationMask};
-use aqpbm_core::request::Requirement;
+use crate::request::Requirement;
+use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
 
-pub use aqpbm_core::request::{Capability, Numeric};
+pub use crate::request::{Capability, Dtype};
 
 /// One registry entry: who a sketch is, and what it can be asked for.
-///
-/// The four identity fields name it. The four below them are what [`check`]
-/// reads, and they are the reason a request can be refused by name rather than
-/// discovered to be impossible halfway through a run.
-///
-/// The item width is deliberately absent. `--dtype` is a construction choice
-/// like any other, so a width a wrapper cannot build at is refused where that
-/// wrapper reads it, not here.
 pub struct SketchId {
-    /// Entries sharing this answer the same question from the same knobs, so
-    /// this is what a cross-library comparison groups by. One parameter
-    /// vocabulary is one family.
+    /// Entries sharing this answer the same question from the same knobs
     pub family: &'static str,
-    /// The algorithm, structural variant included. `--algorithm` matches this
-    /// exactly, because one invocation measures one cell.
     pub algorithm: &'static str,
     /// The implementing library, and only that.
     pub impl_name: &'static str,
     pub description: &'static str,
-
-    /// The statistic this sketch answers. [`Capability::None`] is measured but
-    /// not scored — timed only, no query. It is a real answer, not a missing
-    /// one.
+    /// The statistic this sketch answers
     pub capability: Capability,
-    /// The comparator `--comparator` selects this sketch by; `None` for one
-    /// nothing scores.
-    ///
-    /// One name, not a list: a sketch with a second capability is registered a
-    /// second time, and when a statistic grows a second comparator that is a
-    /// second entry too.
+    /// The comparator `--comparator` selects this sketch by
     pub comparator: Option<&'static str>,
-    /// The operations this sketch can be measured over. Insert always; query
-    /// wherever a comparator exists; merge and prepare only where the wrapper
-    /// actually supplies them.
+    /// The operations this sketch can be measured over
     pub operations: OperationMask,
     /// The metrics this sketch can carry. Everything but accuracy, which needs
     /// a comparator and so follows [`SketchId::capability`].
@@ -60,11 +29,8 @@ pub struct SketchId {
 // ---------- the registry ----------
 
 /// Every `(algorithm, impl)` this crate exposes. Adding one is one entry here
-/// plus the wrapper it names; nothing else in this file changes.
-///
-/// Entries are grouped by family and kept contiguous, because [`list`] starts a
-/// new group the moment `family` differs from the entry above: a family split
-/// across two runs prints as two groups.
+/// plus the wrapper it names. Entries stay grouped by family and contiguous,
+/// because [`list`] breaks a group the moment `family` differs from the row above.
 pub const REGISTRY: &[SketchId] = &[
     // -------- CMS (frequency) --------
     SketchId {
@@ -171,9 +137,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap CMS, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -266,9 +231,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap Count, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -363,9 +327,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -556,23 +519,131 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-cardinality",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_card, the keys carrying a non-zero total",
+        capability: Capability::KeyedCardinality,
+        comparator: Some("keyed-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l1-norm",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_l1, the sum of the per-key totals",
+        capability: Capability::KeyedL1Norm,
+        comparator: Some("keyed-l1-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l1-norm",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_l1, summed on the insert path",
+        capability: Capability::KeyedL1Norm,
+        comparator: Some("keyed-l1-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l2-norm",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_l2, the root of the summed squared totals",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l2-norm",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_l2, a Count Sketch self product",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-entropy",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_entropy, Shannon entropy of the key shares",
+        capability: Capability::KeyedEntropy,
+        comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-entropy",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_entropy, over its sampled layers",
+        capability: Capability::KeyedEntropy,
+        comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
 ];
 
 // ---------- what the frontend asks ----------
 
-fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
+pub fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
     REGISTRY
         .iter()
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
 }
 
-/// One line per entry, grouped by family with a blank line between groups,
-/// since the family is what a reader picks from before they pick a variant.
-/// Entries keep declaration order inside a family.
-///
-/// The algorithm column is sized to the longest name present, so adding a
-/// longer variant widens the table instead of breaking its alignment. The first
-/// line is the header, so a caller prints exactly what this returns.
+/// One line per entry, grouped by family with a blank line between groups and
+/// declaration order inside one. The algorithm column is sized to the longest
+/// name present; the first line is the header, so a caller prints what it gets.
 pub fn list() -> Vec<String> {
     let algo_w = REGISTRY
         .iter()
@@ -620,20 +691,14 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
 
 // ---------- can this request run? ----------
 
-/// Can this request run?
+/// Can this request run? Every check is answerable from the request, the
+/// measurements it intends to take, and [`REGISTRY`] alone, so a refusal lands
+/// before a single item is generated. Construction parameters are *not*
+/// checked — a wrapper owns those bounds.
 ///
-/// `Ok(())` — it can. `Err` — it cannot, and the error names what about the
-/// request the registry could not honour.
-///
-/// Every check here is answerable from the request and [`REGISTRY`] alone,
-/// which is the point: a refusal costs nothing, because it lands before a
-/// single item is generated.
-///
-/// Construction parameters are deliberately *not* checked. A `lg_k` outside
-/// what a library accepts is refused where the wrapper that owns the bound
-/// reads it, as a `BuildError`; this function touches no wrapper code and
-/// builds nothing.
-pub fn check(req: &Requirement) -> Result<(), ResolveError> {
+/// `want` is the caller's whole list, checked up front: a request is refused
+/// as a unit rather than part-way through measuring it.
+pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), ResolveError> {
     let entry = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
         // Told apart, because they send a reader to different places: a bad
         // algorithm means look at the list, a bad impl means look at the
@@ -648,18 +713,28 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         }
     })?;
 
-    // Every square the request selects has to clear two independent bars: the
+    // Every measurement asked for has to clear two independent bars: the
     // framework has to measure it at all, and this entry has to have it. The
     // framework's bar is checked first, because it holds of every sketch and so
     // is not this entry's fault.
-    for cell in &cells(req.operations, req.metrics) {
-        if !is_measurable(*cell) {
+    for (operation, metric) in want {
+        if !is_measurable(*operation, *metric) {
             return Err(ResolveError::NothingMeasuresIt {
-                operation: cell.operation.name(),
-                metric: cell.metric.name(),
+                operation: operation.name(),
+                metric: metric.name(),
             });
         }
     }
+
+    // The two axes the entry declares against, folded back out of the list.
+    let wants_metric = want
+        .iter()
+        .fold(MetricsMask::empty(), |m, (_, metric)| m | metric.bit());
+    let wants_operation = want
+        .iter()
+        .fold(OperationMask::empty(), |m, (operation, _)| {
+            m | operation.bit()
+        });
 
     // Metrics before operations, deliberately. A sketch nothing scores lacks
     // accuracy *and* query, so checking operations first would always answer
@@ -669,7 +744,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         (MetricsMask::THROUGHPUT, "throughput"),
         (MetricsMask::LATENCY, "latency"),
     ] {
-        if req.metrics.contains(bit) && !entry.metrics.contains(bit) {
+        if wants_metric.contains(bit) && !entry.metrics.contains(bit) {
             return Err(ResolveError::MetricUnsupported {
                 algorithm: req.algorithm.clone(),
                 impl_name: req.impl_name.clone(),
@@ -685,7 +760,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         (OperationMask::MERGE, "merge"),
         (OperationMask::PREPARE, "prepare"),
     ] {
-        if req.operations.contains(bit) && !entry.operations.contains(bit) {
+        if wants_operation.contains(bit) && !entry.operations.contains(bit) {
             return Err(ResolveError::OperationUnsupported {
                 algorithm: req.algorithm.clone(),
                 impl_name: req.impl_name.clone(),
@@ -708,7 +783,7 @@ pub fn check(req: &Requirement) -> Result<(), ResolveError> {
         }
     }
 
-    // An empty mask on either axis selects no squares. Legal, and not this
+    // An empty mask on either axis names no measurements. Legal, and not this
     // function's business: the caller gets no records because it asked for
     // none, not because anything failed.
     Ok(())
@@ -742,7 +817,7 @@ pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>
 
 /// Why a request cannot run. Every variant names the sketch and what about the
 /// request it could not honour, because the whole value of answering here is
-/// that the answer arrives before a workload is generated.
+/// that the answer arrives before a dataset is generated.
 #[derive(Debug)]
 pub enum ResolveError {
     UnknownAlgorithm(String),
@@ -764,7 +839,7 @@ pub enum ResolveError {
         metric: &'static str,
         capability: &'static str,
     },
-    /// A square that no sketch could fill, because the framework measures nothing
+    /// A measurement no sketch could supply, because the framework measures nothing
     /// there. Distinct from the two above: this is not about the sketch.
     NothingMeasuresIt {
         operation: &'static str,
@@ -838,9 +913,7 @@ impl std::error::Error for ResolveError {}
 mod tests {
     use super::*;
 
-    /// Accuracy is declared exactly where a comparator can score it. The two
-    /// used to be derived from one another; written out by hand, this is what
-    /// keeps them in step.
+    /// Accuracy is declared exactly where a comparator can score it.
     #[test]
     fn accuracy_is_declared_exactly_where_a_comparator_can_score_it() {
         for e in REGISTRY {
@@ -876,15 +949,16 @@ mod tests {
         }
     }
 
-    /// Insert holds of everything, and the timing and footprint metrics hold of
-    /// everything. Nothing in the table is measured over nothing.
+    /// Insert holds of everything, and throughput and the footprint metrics hold
+    /// of everything. Nothing in the table is measured over nothing. Latency is
+    /// not in the floor: a row that ingests the whole stream in one call has no
+    /// per-item region to time, and says so by not claiming the metric.
     #[test]
     fn every_entry_is_at_least_a_timed_insert() {
         for e in REGISTRY {
             assert!(e.operations.contains(OperationMask::INSERT));
             assert!(e.metrics.contains(
                 MetricsMask::THROUGHPUT
-                    .union(MetricsMask::LATENCY)
                     .union(MetricsMask::CPU)
                     .union(MetricsMask::MEMORY)
             ));
@@ -899,10 +973,13 @@ mod tests {
             "cardinality",
             "frequency",
             "rank-error",
-            "relative-error",
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
+            "keyed-cardinality",
+            "keyed-l1-norm",
+            "keyed-l2-norm",
+            "keyed-entropy",
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {

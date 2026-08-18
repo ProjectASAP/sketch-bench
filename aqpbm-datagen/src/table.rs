@@ -36,6 +36,7 @@ fn connected_chunk(bits: u64, member: usize, group_size: usize) -> u64 {
 }
 
 /// A complete generation request.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDescription {
     pub column_num: u32,
@@ -312,6 +313,15 @@ impl GeneratedTable {
             }
         }
         Ok(())
+    }
+
+    pub fn column(&self, i: usize) -> Result<&ColumnData, DataGenError> {
+        self.data.get(i).ok_or_else(|| {
+            DataGenError::BadParam(format!(
+                "column {i} was asked for, but the table holds {}",
+                self.data.len()
+            ))
+        })
     }
 
     /// Take one column by index, giving up ownership of it.

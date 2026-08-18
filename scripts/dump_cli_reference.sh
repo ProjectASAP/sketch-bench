@@ -20,9 +20,6 @@ B=target/debug/approxbench
 SUBCOMMANDS=(
     "sketchbench"
     "sketchprofile"
-    "workload"
-    "workload generate"
-    "workload describe"
 )
 
 dump() {

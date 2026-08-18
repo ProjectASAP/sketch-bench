@@ -1,15 +1,12 @@
-//! The per-run metric record + the `FullSink` that composes the
-//! recorders to fill one.
-//!
-//! See `docs/DESIGN.md` §5.5.
+//! The per-run metric record: one of these per measured run, filled by the
+//! recorders `measure` arms and folded by `crate::benchmark_result::fold`.
 
 use std::collections::BTreeMap;
 
-use crate::latency::LatencySnapshot;
+use crate::metrics::latency::LatencySnapshot;
 
-/// Metrics produced by a single run. One `FullSink` finalises
-/// into one of these. `crate::aggregation` folds `RunMetrics`
-/// across N runs via the Welford accumulator.
+/// Metrics produced by a single run. `crate::measure` fills one per run;
+/// `crate::benchmark_result::fold` folds them across N runs via the Welford accumulator.
 #[derive(Debug, Clone, Default)]
 pub struct RunMetrics {
     /// Units of work the timed region covered — items inserted, probes asked,
@@ -38,32 +35,7 @@ pub struct RunMetrics {
     /// and `MetricsMask::LATENCY` was set.
     pub latency_ns: Option<LatencySnapshot>,
     /// Named scalars the body reported — error metrics, probe counts. Flat
-    /// rather than an opaque blob so `aggregate` folds every key across runs
+    /// rather than an opaque blob so the fold covers every key across runs
     /// without knowing any algorithm's shape.
     pub scores: Option<BTreeMap<String, f64>>,
 }
-
-impl RunMetrics {
-    /// All-zero metrics, for a pass that measures something other than the
-    /// insert phase (the merge pass times a fold, not a loop over items).
-    pub fn empty() -> Self {
-        Self {
-            work: 0,
-            elapsed_ns: 0,
-            cpu_user_ns: None,
-            cpu_sys_ns: None,
-            rss_peak_kb: None,
-            heap_allocated_kb: None,
-            memory_bytes: None,
-            heap_bytes_net: None,
-            heap_bytes_peak: None,
-            latency_ns: None,
-            scores: None,
-        }
-    }
-}
-
-// `FullSink` lived here: the offline recorder the old runner wrapped a
-// sketch in. `measure` arms the recorders itself now, around whatever region a
-// body marks, so there is nothing left for a sink to hook. `MetricsSink` and
-// `Probe` stay in `probe` for `sketch-runtime`, which wraps its own sketch.

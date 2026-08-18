@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The benchmark framework: the Sketch/InitSketch/BenchImpl traits an implementation plugs into, the per-statistic capability traits and their comparators, the cell runners, Probe, Workload, MetricsMask and the v1 report schema. Names no sketch algorithm — the wrapped implementations live in sketch-bench."
+description = "The benchmark framework: everything needed to measure a sketch, nothing that knows which sketches exist. Turns a row's build/insert/ask closures into timed bodies (ops), holds the clock (measure), scores against exact answers (accuracy), materialises datasets, and owns the JSONL report schema. Names no sketch algorithm — the wrapped implementations live in sketch-bench."
 
 [features]
 # Back the `LatencyRecorder` with a real hdrhistogram. Off → it
@@ -24,16 +24,16 @@ heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
 # its `#[global_allocator]` for counters to advance — see
 # `aqpbm-cli`'s allocator setup. Off → heap_bytes_* = None.
 heap-track = []
-# Derive `JsonSchema` on the report types and build the
-# `export_schema` example. Off by default so the proc-macro and its
-# dependencies stay out of the embedded build: nothing at runtime
-# needs it, only `scripts/export_schema.sh` does.
-schema = ["dep:schemars"]
+# Derive `JsonSchema` on the report types, enabling the export behind
+# `schema_export_is_current`. Off by default so the proc-macro stays out
+# of the embedded build: nothing at runtime needs it. Forwards to
+# aqpbm-datagen, whose `TableDescription` is the record's `workload`.
+schema = ["dep:schemars", "aqpbm-datagen/schema"]
 
 [dependencies]
 aqpbm-datagen.workspace = true
-# `cell` surfaces "cannot materialise this workload" / "cannot run this
-# cell" as an `anyhow` error.
+# `dataset` surfaces "cannot materialise this dataset" as an `anyhow` error,
+# which `RunError::Dataset` carries.
 anyhow.workspace = true
 bitflags.workspace = true
 hdrhistogram = { workspace = true, optional = true }

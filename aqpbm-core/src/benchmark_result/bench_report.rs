@@ -1,36 +1,32 @@
-//! Shaping one measurement into a record.
-//!
-//! What is left of a module that used to drive sketches: [`BenchReport`], and
-//! the fold from a measurement's per-run metrics into a [`BenchSection`]. The
-//! running itself is [`crate::measure`], which times a closure and knows
-//! nothing else.
+//! Shaping one measurement into a record: [`BenchReport`], and the fold from a
+//! measurement's per-run metrics into a [`BenchSection`]. The running itself is
+//! [`measure()`](fn@crate::measure), which times a closure and knows nothing else.
 
-use crate::aggregation as fold;
+use crate::benchmark_result::fold;
+use crate::benchmark_result::schema::{BenchSection, Mode, Record, Source};
 use crate::metrics::{Metric, Operation, RunMetrics};
-use crate::report::{BenchSection, Mode, Record, Source};
-use crate::workload::WorkloadDescription;
+use aqpbm_datagen::TableDescription;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub workload: WorkloadDescription,
-    pub per_run: Vec<RunMetrics>,
+    pub input_dataset: TableDescription,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
     pub runs: usize,
 }
 
 impl BenchReport {
-    /// Fold a measurement's runs into a report, labelled by the square it was.
+    /// Summarise a measurement's runs into a report, labelled by what it measured.
     ///
     /// The caller says which operation and metric this was; core does not
-    /// decide, it records. Which `BenchSection` slot the rate lands in follows
-    /// from the operation, because that is what the field names mean.
-    pub fn fold(
+    /// decide, it records. The pair picks the `BenchSection` slot: the operation
+    /// names it, and the metric is what entitles it to be written at all.
+    pub fn from_runs(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        workload: WorkloadDescription,
+        input_dataset: TableDescription,
         operation: Operation,
         metric: Metric,
         runs: Vec<RunMetrics>,
@@ -41,26 +37,29 @@ impl BenchReport {
             ..Default::default()
         };
 
-        // The rate this measurement produced, under the name that operation's
-        // rate carries in the schema.
-        match operation {
-            Operation::Insert => {
+        // Only the metric that was asked for writes a number. A rate read off a
+        // `time_each` region prices the per-call clock, not the operation.
+        match (operation, metric) {
+            (Operation::Insert, Metric::Throughput) => {
                 bench.throughput_items_per_sec = fold::rate(&runs);
                 bench.throughput_samples = fold::rate_samples(&runs);
             }
-            Operation::Query => bench.query_throughput_items_per_sec = fold::rate(&runs),
-            Operation::Merge => {
-                bench.merge_folds_per_sec = fold::rate(&runs);
-                bench.merge_time_ms = fold::elapsed_ms(&runs);
-                bench.merge_supported = Some(true);
+            (Operation::Query, Metric::Throughput) => {
+                bench.query_throughput_items_per_sec = fold::rate(&runs);
             }
-            Operation::Prepare => bench.finalize_time_ms = fold::elapsed_ms(&runs),
+            (Operation::Merge, Metric::Throughput) => {
+                bench.merge_folds_per_sec = fold::rate(&runs);
+            }
+            (_, Metric::Latency) => bench.latency_ns = fold::latency(&runs),
+            (_, Metric::Accuracy) => bench.accuracy = fold::scores(&runs),
+            _ => {}
         }
-        if metric == Metric::Latency {
-            bench.latency_ns = fold::latency(&runs);
+        if operation == Operation::Merge {
+            bench.merge_time_ms = fold::elapsed_ms(&runs);
+            bench.merge_supported = Some(true);
         }
-        if metric == Metric::Accuracy {
-            bench.accuracy = fold::scores(&runs);
+        if operation == Operation::Prepare {
+            bench.finalize_time_ms = fold::elapsed_ms(&runs);
         }
 
         bench.wall_time_ms = fold::elapsed_ms(&runs);
@@ -75,9 +74,8 @@ impl BenchReport {
         Self {
             sketch: sketch.into(),
             impl_name: impl_name.into(),
-            workload,
+            input_dataset,
             runs: runs.len(),
-            per_run: runs,
             bench,
         }
     }
@@ -87,7 +85,7 @@ impl BenchReport {
         let mut rec = Record::new(
             self.sketch.clone(),
             self.impl_name.clone(),
-            self.workload.clone(),
+            self.input_dataset.clone(),
             Mode::Bench,
             self.runs,
         );

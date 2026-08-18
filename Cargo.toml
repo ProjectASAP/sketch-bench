@@ -1,18 +1,30 @@
 # Workspace manifest for sketch-bench → sketchlib-tool.
 #
-# Phase 2 of docs/MERGE_PLAN.md: cargo workspace shared by the
-# new `sketch-*` crates. The monolithic legacy `rust/` crate and
-# the per-sketch `throughput/<family>/rust/` + `accuracy/<stat>/rust/`
-# harnesses have all been retired in favour of `approxbench sketchbench`.
+# Cargo workspace for the `aqpbm-*` crates. The monolithic legacy `rust/`
+# crate and the per-sketch `throughput/<family>/rust/` +
+# `accuracy/<stat>/rust/` harnesses have all been retired in favour of
+# `approxbench sketchbench`. See docs/component_walk_through.md for the
+# crate-by-crate split, and docs/archive/MERGE_PLAN.md for how it got here.
 [workspace]
 resolver = "2"
 members = [
     "aqpbm-datagen",
     "aqpbm-core",
     "sketch-bench",
-    "sketch-runtime",
     "aqpbm-cli",
 ]
+# Parked, not retired. `sketch-runtime` is the embedded sampler linked into
+# downstream apps; it is out of the workspace so it does not hold the offline
+# benchmark path's API still while that path is being cleaned up. Excluded
+# rather than merely unlisted so cargo does not treat the directory as an
+# orphan package. Note it inherits `version.workspace` / `edition.workspace`,
+# so it does not build standalone while excluded.
+#
+# Reviving it is no longer just a matter of listing it here: it still imports
+# `aqpbm_core::workload::WorkloadDescription` (sampler.rs, exporter/fanout.rs),
+# and that module is now `aqpbm_core::dataset` with the type renamed to
+# `DatasetDescription`. Fix those two imports first.
+exclude = ["sketch-runtime"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,7 +33,7 @@ license = "MIT"
 repository = "https://github.com/ProjectASAP/sketch-bench"
 
 [workspace.dependencies]
-# Serde + JSON for the v1 report schema (docs/DESIGN.md §4.4).
+# Serde + JSON for the report schema (`aqpbm_core::report`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -70,7 +82,7 @@ aqpbm-datagen = { path = "aqpbm-datagen" }
 # forwards its own `hdrhist` feature, sketch-runtime takes it outright.
 aqpbm-core = { path = "aqpbm-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
-sketch-runtime = { path = "sketch-runtime" }
+# sketch-runtime = { path = "sketch-runtime" }  # parked; see `exclude` above.
 
 [profile.release]
 opt-level = 3

@@ -1,11 +1,6 @@
-//! The distribution axis: *how* a column's values are spread, and the seed that
-//! makes the spread reproducible. Three distributions, each carrying its own
-//! parameters and its own seed — so two columns are independent unless they were
-//! deliberately given the same seed.
-//!
-//! Every distribution draws an `f64`. Zipf's draws happen to be integral ranks,
-//! but the raw stream is one type so the rule / shift / render pipeline in
-//! [`crate::column`] is written once instead of three times.
+//! The distribution axis: *how* a column's values are spread, plus the seed that
+//! fixes it — so two columns are independent unless given the same one. Every
+//! distribution draws an `f64`, so [`crate::column`]'s pipeline is written once.
 
 use rand_distr::{Distribution as _, Normal, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -19,6 +14,7 @@ fn bad(msg: String) -> DataGenError {
 
 /// Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks
 /// `1..=population_size`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZipfParameter {
     pub skewness: f64,
@@ -27,6 +23,7 @@ pub struct ZipfParameter {
 }
 
 /// Flat over `[lower_bound, upper_bound)`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniformParameter {
     pub lower_bound: f64,
@@ -35,6 +32,7 @@ pub struct UniformParameter {
 }
 
 /// Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalParameter {
     pub mean: f64,
@@ -44,6 +42,7 @@ pub struct NormalParameter {
 
 /// A column's distribution. Serialises internally tagged, so a spec file reads
 /// `distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DataDistribution {

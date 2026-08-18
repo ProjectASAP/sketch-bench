@@ -4,6 +4,63 @@
 //! and support multiple quantile queries from the precomputation
 //! not from KLL itself
 
+/// grounds, which rank-error analysis does not care about.
+pub trait ToF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl ToF64 for f64 {
+    fn to_f64(self) -> f64 {
+        self
+    }
+}
+impl ToF64 for f32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for i64 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for i32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for u64 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+impl ToF64 for u32 {
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
+
+/// A value an ordered (quantile) sketch can ingest. Adds a **total** order
+/// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
+/// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
+pub trait QuantileValue: ToF64 + Copy {
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
+}
+
+impl QuantileValue for i64 {
+    #[inline(always)]
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        Ord::cmp(self, other)
+    }
+}
+
+impl QuantileValue for f64 {
+    #[inline(always)]
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        f64::total_cmp(self, other)
+    }
+}
+
 use crate::params::*;
 use sketch_oxide::Mergeable as _;
 
@@ -21,19 +78,15 @@ fn kll_footprint<T>(k: u32) -> usize {
 /// The range `asap_sketchlib::KLL::init` keeps a `k` in. Below the floor it
 /// raises `k` to `m`, above the ceiling it caps; both silently. Reproduced here
 /// so the two `lib` rows refuse instead, which is the only way the `k` in the
-/// record is the `k` that ran. See [`LIB_K_RANGE`]'s use in `hydra.rs`, which
-/// has the same cell and the same bound.
+/// record is the `k` that ran. The `hydra-kll` row bounds its `cell_k` the same
+/// way, against the same library and the same limits.
 pub const LIB_K_MIN: u32 = 8;
 
 pub const LIB_K_MAX: u32 = 26_602;
 
 /// Answer a quantile out of a prebuilt `(value, cumulative_rank)` table, the
-/// shape `sketch_oxide::KllSketch::cdf` returns: ascending by value, with the
-/// cumulative rank normalised to `[0, 1]`.
-///
-/// `min` / `max` are passed in and short-circuit the ends, because the per-call
-/// path special-cases them too and a gratuitous divergence at `phi = 0` and
-/// `phi = 1` would show up as rank error that belongs to neither path.
+/// shape `sketch_oxide::KllSketch::cdf` returns. `min` / `max` short-circuit the
+/// ends, as the per-call path does, so `phi = 0` and `1` do not diverge.
 fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
     if table.is_empty() {
         return f64::NAN;

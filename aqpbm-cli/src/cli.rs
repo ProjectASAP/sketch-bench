@@ -1,14 +1,8 @@
-//! CLI surface: the clap argument structs. The logic that consumes them
-//! lives in `main.rs` (`run_sketchbench`, `workload_spec`); the sketch registry
-//! it dispatches through lives in `sketch_bench::registry`.
-//!
-//! Option help and grouping track `docs/aqpbm-cli-reference.md`, which is
-//! hand-authored and authoritative. `scripts/dump_cli_reference.sh` diffs the
-//! built binary against it.
+//! CLI surface: the clap argument structs; the logic consuming them is in
+//! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
+//! `scripts/dump_cli_reference.sh` diffs the built binary against.
 
 use clap::{Parser, Subcommand};
-
-use crate::workload_cmd;
 
 #[derive(Parser, Debug)]
 // `max_term_width` is pinned so `--help` renders identically under any
@@ -27,19 +21,13 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
-    /// Measure one cell of the sketch bundle.
+    /// Measure one target of the sketch bundle.
     Sketchbench(SketchbenchArgs),
-    /// Generate or inspect synthetic `.bin` workloads.
-    Workload(workload_cmd::WorkloadArgs),
 }
 
-/// One cell of the sketch bundle: one algorithm, one impl, one construction
-/// point, one workload. `--list-impls` is the one mode that selects no cell,
-/// which is why the identity options are optional in the type and required by
-/// clap only when it is absent.
-// The auto-generated help flag is inserted ahead of every declared arg, which
-// would put its `Options:` block above `Identity:`. Declaring it by hand at the
-// end of the struct is what puts it where the reference has it, last.
+/// One target of the sketch bundle: one algorithm, one impl, one construction
+/// point, one dataset. `--list-impls` is the one mode that measures nothing.
+// `help` is declared by hand at the end so its block lands last, as the reference has it.
 #[derive(Parser, Debug)]
 #[command(
     disable_help_flag = true,
@@ -49,7 +37,7 @@ pub struct SketchbenchArgs {
     /// Accumulator algorithm, structural variant included: `cms` and
     /// `cms-fastpath-vector2d` are two of them, because a different hash
     /// strategy gives different estimates. Matched exactly, since one
-    /// invocation measures one cell. `--list-impls` prints every
+    /// invocation measures one target. `--list-impls` prints every
     /// (algorithm, impl) pair, grouped by the family they share knobs with.
     #[arg(
         long,
@@ -59,7 +47,7 @@ pub struct SketchbenchArgs {
     pub algorithm: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
     /// `polars`. `--list-impls` shows which the algorithm offers. One
-    /// invocation measures one (impl, config) cell; to race several, invoke
+    /// invocation measures one (impl, config) point; to race several, invoke
     /// once per impl.
     #[arg(
         long = "impl",
@@ -68,68 +56,53 @@ pub struct SketchbenchArgs {
     )]
     pub impl_name: Option<String>,
     /// Print every (algorithm, impl) pair this bundle offers, then exit.
-    /// Selects no cell and writes no record, so it ignores every other option.
+    /// Measures nothing and writes no record, so it ignores every other option.
     #[arg(long, help_heading = "Identity")]
     pub list_impls: bool,
 
-    /// Construction config for this cell: `'k1=v1 k2=v2'`, one value per key.
-    /// Omitted gives a parameterless point, which every row rejects by name.
-    /// A comma list is an error: one invocation is one cell, never a grid.
-    ///
-    /// A row builds at exactly the values given or refuses them, naming the
-    /// bound it has. Nothing is clamped, rounded or ignored, so the
-    /// `sketch_config` in the record is always the config that ran.
+    /// Construction config for this run: `'k1=v1 k2=v2'`, one value per key.
+    /// A comma list is an error: one invocation is one point, never a series.
+    /// Nothing is clamped or rounded, so `sketch_config` is the config that ran.
     #[arg(long, help_heading = "Construction")]
     pub config: Option<String>,
     /// Worker threads for the parallel-insert algorithms (`*-parallel`). Every
-    /// other row ignores it; `1` is single-threaded.
+    /// other target ignores it; `1` is single-threaded.
     #[arg(long, default_value_t = 1, help_heading = "Construction")]
     pub workers: usize,
 
-    /// Load the workload from a file instead of generating it. Format comes
-    /// from the extension: `.bin` (little-endian i64), `.pcap` (IPv4 src addr),
-    /// `.csv` (column 0 below a header). Wins over `--spec` and over the inline
-    /// options.
-    #[arg(long, help_heading = "Workload")]
-    pub input: Option<String>,
     /// Generate in-process from a `datagen` spec file (examples in
-    /// `configs/datagen/`), unlocking every generator shape without a disk
-    /// round-trip. Wins over the inline options; `--input` wins over it.
-    ///
-    /// A file holding a *list* of specs is a multi-column stream: the last
-    /// column is the value, the ones before it are labels. The rows ingesting
-    /// labelled records (the `hydra-*` algorithms) need one; every other row
-    /// refuses it. `hydra-kll` reads the value column as `f64`, the other two
-    /// as `i64`.
-    #[arg(long, help_heading = "Workload")]
+    /// `configs/datagen/`). Wins over the inline options.
+    /// A *list* of specs is a multi-column stream, which only `hydra-*` targets take.
+    #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
-    /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is
+    /// Inline shape: "uniform" or "zipf". Ignored when `--spec` is
     /// set.
-    #[arg(long, default_value = "uniform", help_heading = "Workload")]
-    pub workload: String,
-    /// Number of items in the workload.
-    #[arg(long, default_value_t = 1_000_000, help_heading = "Workload")]
+    #[arg(long, default_value = "uniform", help_heading = "Dataset")]
+    pub dataset: String,
+    /// Number of items in the dataset.
+    #[arg(long, default_value_t = 1_000_000, help_heading = "Dataset")]
     pub size: usize,
     /// Cardinality (uniform: max key; zipf: key-space size).
-    #[arg(long, default_value_t = 100_000, help_heading = "Workload")]
+    #[arg(long, default_value_t = 100_000, help_heading = "Dataset")]
     pub cardinality: u64,
-    /// Zipf `s` exponent (only used when `--workload zipf`).
-    #[arg(long, default_value_t = 1.1, help_heading = "Workload")]
+    /// Zipf `s` exponent (only used when `--dataset zipf`).
+    #[arg(long, default_value_t = 1.1, help_heading = "Dataset")]
     pub zipf_s: f64,
-    /// Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`,
-    /// `dd`): `i64` or `f64`. The one item-type choice left, since every other
-    /// row's is fixed by its wrapper, and `f64` elsewhere is refused by name.
-    /// Encoding only.
-    #[arg(long, default_value = "i64", help_heading = "Workload")]
+    /// Item type the value column is generated at: `i64`, `u64`, `f64` or
+    /// `string` — every type the generator renders. The one item-type choice
+    /// left, since a row's own wrapper fixes what it can ingest and refuses the
+    /// rest by name; today the ordered rows (`kll-percall`, `kll-cdf`) take
+    /// either numeric width and every other row takes `i64`. Encoding only.
+    #[arg(long, default_value = "i64", help_heading = "Dataset")]
     pub dtype: String,
-    /// Alphabet for generated string keys, for the rows whose wrappers take
+    /// Alphabet for generated string keys, for the targets whose wrappers take
     /// text. Character order is the digit order of the positional encoding, so
     /// a rank always renders the same key. Overridden by `--spec`'s own
     /// `string:` block.
     #[arg(
         long,
         default_value = "abcdefghijklmnopqrstuvwxyz0123456789",
-        help_heading = "Workload"
+        help_heading = "Dataset"
     )]
     pub alphabet: String,
     /// Inclusive length bounds for generated string keys; equal values give a
@@ -139,11 +112,11 @@ pub struct SketchbenchArgs {
         long = "key-len",
         num_args = 1..=2,
         default_values_t = [8usize, 24usize],
-        help_heading = "Workload"
+        help_heading = "Dataset"
     )]
     pub key_len: Vec<usize>,
     /// Seed for reproducibility.
-    #[arg(long, default_value_t = 42, help_heading = "Workload")]
+    #[arg(long, default_value_t = 42, help_heading = "Dataset")]
     pub seed: u64,
 
     /// Measured runs inside one process, summarised as mean / stddev /
@@ -171,14 +144,14 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub metrics: Option<String>,
-    /// Which comparator scores this row, by name. A row admits only the
+    /// Which comparator scores this target, by name. A target admits only the
     /// comparators its capabilities can answer, and the registry is what lists
-    /// them; omitted takes the row's default.
+    /// them; omitted takes the target's default.
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
-    /// measured over. Required, like `--metrics`: a square nothing measures is
-    /// refused by name, so a request states which squares it wants rather than
+    /// measured over. Required, like `--metrics`: a pair nothing measures is
+    /// refused by name, so a request states which measurements it wants rather than
     /// inheriting a guess.
     #[arg(
         long,
@@ -195,9 +168,9 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Write one line for the whole cell instead of one per square, folding
-    /// the cell's records into a single flattened row: one slot per operation,
-    /// one field per metric. One record per square is the default; this is the
+    /// Write one line for the whole invocation instead of one per measurement,
+    /// folding its records into a single flattened row: one slot per operation,
+    /// one field per metric. One record per measurement is the default; this is the
     /// shape a leaderboard reads.
     #[arg(long, default_value_t = false, help_heading = "Output")]
     pub flat: bool,

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Macro-metric benchmark library for sketch algorithms (throughput, latency, CPU, memory, accuracy) — see docs/DESIGN.md §5."
+description = "The sketches themselves: the wrapped implementations, their per-family construction parameters, and the registry that resolves an (algorithm, impl) pair to one of them. See docs/sketch-bench.md."
 
 [features]
 default = ["hdrhist"]
@@ -25,11 +25,12 @@ heap-jemalloc = ["aqpbm-core/heap-jemalloc"]
 heap-track = ["aqpbm-core/heap-track"]
 
 [dependencies]
-# The framework: the traits the wrappers implement, and the cell runners
-# and comparators `catalog` dispatches into.
+# The framework: the measurement entry points the wrappers' closures are
+# handed to, and the comparators that score them.
 aqpbm-core.workspace = true
-# `catalog::run` surfaces "cannot run this cell" as an `anyhow` error.
-anyhow.workspace = true
+# The generator's own types: `wrappers/` speaks these and the standard library,
+# and nothing of the framework.
+aqpbm-datagen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

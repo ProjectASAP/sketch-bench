@@ -6,9 +6,16 @@ license.workspace = true
 repository.workspace = true
 description = "Synthetic data generator for the AQPBM benchmarks: a table description in, typed in-memory columns out. Distribution, special rule, rendering and cross-column relation are separable axes. Depends on nothing in the workspace and knows nothing about sketches -- the sketch benchmark is its first consumer, not its owner."
 
+[features]
+# Derive `JsonSchema` on the types a `TableDescription` reaches, so
+# `aqpbm-core` can describe the `workload` field of a report record.
+# Off by default: only the schema export needs it.
+schema = ["dep:schemars"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+schemars = { workspace = true, optional = true }
 serde_yaml.workspace = true
 rand.workspace = true
 rand_distr.workspace = true

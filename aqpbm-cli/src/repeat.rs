@@ -9,8 +9,8 @@ use std::ffi::OsString;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_core::aggregation::welford::Welford;
-use aqpbm_core::report::{BenchSection, CpuTime, Record, RunStats};
+use aqpbm_core::benchmark_result::schema::{BenchSection, CpuTime, Record, RunStats};
+use aqpbm_core::benchmark_result::welford::Welford;
 
 /// Marks a child so it runs exactly one repeat and writes to stdout, whatever
 /// its argv says. The argv is byte-identical to the parent's — provably the same
@@ -22,7 +22,7 @@ pub fn is_child() -> bool {
 }
 
 /// Identifies the measurement a record belongs to across repeats: algorithm,
-/// impl, params, workload, operation, metric.
+/// impl, params, dataset, operation, metric.
 /// The last two matter because one invocation emits several records sharing the
 /// rest, and pooling two of them averages two populations.
 /// Both are needed, since one metric over two operations is two measurements.
@@ -36,7 +36,7 @@ fn group_key(r: &Record) -> GroupKey {
             .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_default(),
-        serde_json::to_string(&r.workload).unwrap_or_default(),
+        serde_json::to_string(&r.input_dataset).unwrap_or_default(),
         r.bench
             .as_ref()
             .and_then(|b| b.operation.clone())
@@ -136,7 +136,8 @@ fn merge(records: Vec<Record>) -> Record {
     }
     // Pooled on its own rather than derived from the pooled ingest rate: the
     // two columns are means of ratios, and `items / (insert + finalize)` is
-    // not recoverable from `items / insert`.
+    // not recoverable from `items / insert`. No producer writes this today, but
+    // the field is in the schema, so a record carrying one must pool it.
     if let (Some(b), _) = across(records.iter(), |b| b.build_throughput_items_per_sec) {
         bench.build_throughput_items_per_sec = Some(b);
     }
@@ -149,14 +150,17 @@ fn merge(records: Vec<Record>) -> Record {
     if let (Some(wall), _) = across(records.iter(), |b| b.wall_time_ms) {
         bench.wall_time_ms = Some(wall);
     }
-    // The fold is a timing like any other, and it varies across processes for
-    // the same reasons: arena, layout, governor. Left out, merge was the one
-    // square whose record said `runs: R` while its number came from repeat 1
-    // alone and carried no interval.
+    // The fold is a timing like any other, and varies across processes for the
+    // same reasons: arena, layout, governor.
     if let (Some(m), _) = across(records.iter(), |b| b.merge_time_ms) {
         bench.merge_time_ms = Some(m);
     }
-    // Same argument, and the same omission: CPU time is measured per process.
+    // The rate belongs with the time it is derived from, or a record says
+    // `runs: R` over a folds/sec that describes one repeat.
+    if let (Some(m), _) = across(records.iter(), |b| b.merge_folds_per_sec) {
+        bench.merge_folds_per_sec = Some(m);
+    }
+    // Same argument: CPU time is measured per process.
     if let (Some(user), Some(sys)) = (
         across(records.iter(), |b| b.cpu_time_ms.map(|c| c.user_ms)).0,
         across(records.iter(), |b| b.cpu_time_ms.map(|c| c.sys_ms)).0,
@@ -174,8 +178,8 @@ fn merge(records: Vec<Record>) -> Record {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aqpbm_core::report::{CpuTime, LatencySummary, Mode};
-    use aqpbm_core::WorkloadDescription;
+    use aqpbm_core::benchmark_result::schema::{CpuTime, LatencySummary, Mode};
+    use aqpbm_datagen::{ColumnSpec, DataDistribution, TableDescription, UniformParameter};
 
     fn stats(mean: f64) -> RunStats {
         // `n = 5` is the *within-process* count. After merging R processes every
@@ -191,15 +195,22 @@ mod tests {
     /// A record with every measurable field populated, so the walk below has
     /// something to find in each of them.
     fn record(mean: f64) -> Record {
-        let wd = WorkloadDescription {
-            shape: "uniform".into(),
-            size: 1000,
-            cardinality: Some(100),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(1),
-            spec: None,
-        };
+        let wd = TableDescription::single(
+            "key",
+            ColumnSpec {
+                distribution: DataDistribution::Uniform(UniformParameter {
+                    lower_bound: 0.0,
+                    upper_bound: 100.0,
+                    seed: 1,
+                }),
+                shift: None,
+                cardinality: None,
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+            },
+            1000,
+        );
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 5);
         rec.bench = Some(BenchSection {
             metric: Some("latency".into()),
@@ -229,7 +240,7 @@ mod tests {
             heap_bytes_peak: Some(65536),
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_time_ms: Some(stats(0.4)),
-            merge_folds_per_sec: None,
+            merge_folds_per_sec: Some(stats(mean * 0.5)),
             merge_shards: Some(4),
             merge_supported: Some(true),
         });
@@ -265,14 +276,8 @@ mod tests {
     }
 
     /// The invariant `--repeats` owes its reader: after merging R processes,
-    /// **every** aggregate in the record describes those R processes. A record
-    /// saying `runs: 3` beside an `n: 5` taken inside one process is claiming a
-    /// population it does not have.
-    ///
-    /// Written as a walk over the serialised record rather than a list of
-    /// fields, so a metric added to `BenchSection` later is covered here without
-    /// anyone remembering to come back. That omission is exactly how
-    /// `merge_time_ms` and `cpu_time_ms` were left behind.
+    /// **every** aggregate in the record describes those R processes. A walk over
+    /// the serialised record, so a new `BenchSection` field is covered for free.
     #[test]
     fn every_aggregate_describes_the_repeat_population() {
         let repeats = 3;
@@ -297,7 +302,7 @@ mod tests {
         }
     }
 
-    /// Two squares of one metric are two measurements, so the key that pools
+    /// Two operations read for one metric are two measurements, so the key that pools
     /// repeats has to carry the operation too. Keyed on the metric alone they
     /// pooled, and one record came back wearing the other's operation.
     #[test]
@@ -311,11 +316,11 @@ mod tests {
         }
         let a = group_key(&insert);
         let b = group_key(&query);
-        assert_ne!(a, b, "one key for two squares pools two populations");
+        assert_ne!(a, b, "one key for two measurements pools two populations");
     }
 
     /// The reason the axis exists: R independent processes support an interval,
-    /// and the merge square must get one like every other square.
+    /// and the merge measurement must get one like every other.
     #[test]
     fn merge_time_gets_an_interval_across_repeats() {
         let merged = merge((0..3).map(|i| record(100.0 + i as f64)).collect());

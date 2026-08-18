@@ -14,6 +14,7 @@ use crate::value::{ColumnData, StrCfg, StringOpts};
 pub const DATA_TYPES: [&str; 4] = ["i64", "u64", "f64", "string"];
 
 /// One column of a [`crate::TableDescription`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnSpec {
     pub distribution: DataDistribution,
@@ -130,11 +131,8 @@ impl ColumnSpec {
     }
 
     /// Apply this column's rule, shift and `data_type` to a raw draw stream.
-    ///
-    /// The one place `data_type` is read: the tag costs one match per column and
-    /// none per value, and each arm is its own monomorphic loop. The numeric
-    /// arms use `as`, which truncates toward zero and saturates at the type's
-    /// bounds.
+    /// The one place `data_type` is read: one match per column, none per value,
+    /// each arm its own loop. Numeric arms use `as` — truncating, saturating.
     pub(crate) fn render(&self, raw: &[f64]) -> Result<ColumnData, DataGenError> {
         match self.data_type.as_str() {
             "i64" => Ok(ColumnData::Int64(

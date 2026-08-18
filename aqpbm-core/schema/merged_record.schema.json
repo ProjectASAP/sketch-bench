@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MergedRecord",
-  "description": "Flattened form of the [`Record`]s that share one (sketch, impl,\nsketch_config, workload) identity: one row per cell, where the record\nstream writes one per square. Built by `aqpbm-cli`'s `flatten_record`.\nLives beside [`Record`] because it is a JSONL wire shape, not CLI logic.",
+  "description": "Flattened form of the [`Record`]s that share one (sketch, impl,\nsketch_config, dataset) identity: one row per invocation, where the record\nstream writes one per measurement. Built by `aqpbm-cli`'s `flatten_record`.\nLives beside [`Record`] because it is a JSONL wire shape, not CLI logic.",
   "type": "object",
   "properties": {
     "heap_bytes_net": {
-      "description": "Net bytes the tracking allocator attributes to this sketch's\nlifetime — **measured**, where [`Self::memory_bytes`] is a\nself-reported formula. Only present when the source binary was built\nwith `heap-track`; kept as its own field (not merged into\n`memory_bytes`) so a gap between the two stays visible instead of\nbeing silently papered over.",
+      "description": "Net bytes the tracking allocator attributes to this sketch's lifetime —\n**measured**, where [`Self::memory_bytes`] is a self-reported formula.\nIts own field, so a gap between the two stays visible. Needs `heap-track`.",
       "type": [
         "integer",
         "null"
@@ -338,7 +338,8 @@
       "$ref": "#/$defs/Source"
     },
     "workload": {
-      "$ref": "#/$defs/WorkloadDescription"
+      "description": "The data this run was measured over. The wire name stays `workload` while\nthe Rust name does not: it is the group key `scripts/merge_passes.py`\npools by, so renaming the field would be a schema break for a word.",
+      "$ref": "#/$defs/TableDescription"
     }
   },
   "required": [
@@ -386,8 +387,60 @@
     "source",
     "workload"
   ],
-  "x-schema-version": 3,
+  "x-schema-version": 4,
   "$defs": {
+    "ColumnSpec": {
+      "description": "One column of a [`crate::TableDescription`].",
+      "type": "object",
+      "properties": {
+        "cardinality": {
+          "description": "A restatement of the distribution's domain size. Optional, and checked\nagainst the distribution rather than overriding it: two ways of saying\nthe same thing that disagree are a description error.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "data_type": {
+          "description": "Which [`ColumnData`] variant this column renders into.",
+          "type": "string"
+        },
+        "distribution": {
+          "$ref": "#/$defs/DataDistribution"
+        },
+        "shift": {
+          "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "special_rule": {
+          "description": "Bit mask; see [`crate::rule`]. `0` means no special rules.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "string": {
+          "description": "Rendering options for `data_type: string`. Absent means the defaults.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StringOpts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "distribution",
+        "data_type"
+      ]
+    },
     "CpuTime": {
       "description": "CPU time split into user vs sys.",
       "type": "object",
@@ -402,6 +455,50 @@
       "required": [
         "user_ms",
         "sys_ms"
+      ]
+    },
+    "DataDistribution": {
+      "description": "A column's distribution. Serialises internally tagged, so a spec file reads\n`distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "zipf"
+            }
+          },
+          "$ref": "#/$defs/ZipfParameter",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "uniform"
+            }
+          },
+          "$ref": "#/$defs/UniformParameter",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "normal"
+            }
+          },
+          "$ref": "#/$defs/NormalParameter",
+          "required": [
+            "kind"
+          ]
+        }
       ]
     },
     "Language": {
@@ -460,8 +557,31 @@
       "type": "string",
       "enum": [
         "bench",
-        "profile",
         "runtime"
+      ]
+    },
+    "NormalParameter": {
+      "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
+      "type": "object",
+      "properties": {
+        "mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "standard_deviation": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "mean",
+        "standard_deviation",
+        "seed"
       ]
     },
     "RunStats": {
@@ -517,65 +637,133 @@
           "const": "cli"
         },
         {
-          "description": "Run produced by an embedded `sketch-runtime::Sampler`\nin one of the downstream apps.",
+          "description": "Run produced by an embedded sampler in one of the downstream apps.\nNo producer in this workspace emits these; they are read, not written.",
           "type": "string",
           "const": "asap-fusion"
         },
         {
-          "description": "Run produced by a `cpp-bench` binary (Google Benchmark\nbased C++ track). See `docs/SCHEMA_V1.md`.",
+          "description": "Run produced by a `cpp-bench` binary (Google Benchmark\nbased C++ track). See `docs/archive/SCHEMA_V1.md`.",
           "type": "string",
           "const": "cpp-bench"
         }
       ]
     },
-    "WorkloadDescription": {
-      "description": "Human-friendly description of a workload — serialised into\nevery report so a JSONL record can be re-run without\nexternal metadata.",
+    "StringOpts": {
+      "description": "How a drawn rank becomes a string.",
       "type": "object",
       "properties": {
-        "cardinality": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+        "alphabet": {
+          "description": "Characters strings are built from. Order matters: it is the digit order\nof the positional encoding below.",
+          "type": "string",
+          "default": "abcdefghijklmnopqrstuvwxyz0123456789"
         },
-        "seed": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "shape": {
-          "type": "string"
-        },
-        "size": {
+        "max_len": {
           "type": "integer",
           "format": "uint",
+          "default": 24,
           "minimum": 0
         },
-        "source_path": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "min_len": {
+          "description": "Inclusive length bounds. Equal values give fixed-length keys.",
+          "type": "integer",
+          "format": "uint",
+          "default": 8,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TableDescription": {
+      "description": "A complete generation request.",
+      "type": "object",
+      "properties": {
+        "column_connected": {
+          "description": "Groups of columns that vary together, named by label. See\n[`TableDescription::validate`] for what a group must satisfy.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
-        "spec": {
-          "description": "Full `datagen` description, when the flat fields above cannot express it\n(several columns, a shift, a special rule, string options, …). Absent for\na plain single `uniform` / `zipf` column and for `file`, whose flat\nfields already round-trip."
+        "column_label": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
-        "zipf_s": {
-          "type": [
-            "number",
-            "null"
-          ],
+        "column_num": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "column_spec": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ColumnSpec"
+          }
+        },
+        "row_num": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "column_num",
+        "column_label",
+        "column_spec",
+        "row_num"
+      ]
+    },
+    "UniformParameter": {
+      "description": "Flat over `[lower_bound, upper_bound)`.",
+      "type": "object",
+      "properties": {
+        "lower_bound": {
+          "type": "number",
+          "format": "double"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "upper_bound": {
+          "type": "number",
           "format": "double"
         }
       },
       "required": [
-        "shape",
-        "size"
+        "lower_bound",
+        "upper_bound",
+        "seed"
+      ]
+    },
+    "ZipfParameter": {
+      "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
+      "type": "object",
+      "properties": {
+        "population_size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "skewness": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "skewness",
+        "population_size",
+        "seed"
       ]
     }
   }

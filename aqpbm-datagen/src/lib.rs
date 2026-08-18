@@ -1,17 +1,6 @@
-//! Synthetic data generation: a description of a table's shape in, the table's
-//! values out. See `docs/aqpbm-datagen.md`.
-//!
-//! Four axes, each separable from the others, so adding to one leaves the rest
-//! untouched:
-//!
-//! - **distribution** ([`dist`]) — how a column's values are spread, and the
-//!   seed that fixes them.
-//! - **rule** ([`rule`]) — post-processing over the raw draws, as a bit mask.
-//! - **rendering** ([`value`]) — which concrete type a processed draw becomes.
-//! - **relation** ([`table`]) — which columns vary together.
-//!
-//! Generated data stays in memory and is consumed by transfer of ownership;
-//! this crate writes no files and depends on nothing else in the workspace.
+//! Synthetic data generation — see `docs/aqpbm-datagen.md`. In-memory only: no
+//! files, no workspace deps. Four separable axes: distribution ([`dist`]), rule
+//! ([`rule`]), rendering ([`value`]), relation ([`table`]).
 
 pub mod column;
 pub mod dist;

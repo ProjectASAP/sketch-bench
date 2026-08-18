@@ -36,7 +36,7 @@ impl PolarsFrequencyCore {
             .expect("cast to u64");
         let counts = counts.u64().expect("u64 counts");
         self.counts.reserve(keys.len());
-        for (k, c) in keys.into_iter().zip(counts.into_iter()) {
+        for (k, c) in keys.into_iter().zip(counts) {
             if let (Some(k), Some(c)) = (k, c) {
                 self.counts.insert(k, c);
             }
@@ -50,10 +50,6 @@ impl PolarsFrequencyCore {
             + self.counts.capacity() * (std::mem::size_of::<i64>() + std::mem::size_of::<u64>())
     }
 }
-
-/// `cms/polars` view of [`PolarsFrequencyCore`].
-
-/// `countsketch/polars` view of [`PolarsFrequencyCore`].
 
 /// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
 /// quantile grid — lives in `prepare`, which the runner times separately.
@@ -110,8 +106,6 @@ impl PolarsQuantileCore {
         self.buf.capacity() * std::mem::size_of::<i64>()
     }
 }
-
-/// `kll/polars` view of [`PolarsQuantileCore`].
 
 /// The `;`-joined key of one label subset, in column order. This is the format
 /// `Hydra::update` builds internally, reproduced so the baseline and the sketch

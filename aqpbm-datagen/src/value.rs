@@ -1,9 +1,6 @@
 //! The rendering axis: the [`ColumnData`] a generated column comes back as, how
-//! a caller peels one, and how a drawn rank becomes a string.
-//!
-//! Rendering itself is not here — it is four match arms in
-//! [`ColumnSpec::render`](crate::ColumnSpec::render), where `data_type` is read
-//! once per column and the casts are visible at the point they happen.
+//! a caller peels one, and how a drawn rank becomes a string. Rendering itself is
+//! four match arms in `ColumnSpec::render`, where `data_type` is read once.
 
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +43,7 @@ impl ColumnData {
     }
 }
 
-/// Peel by ownership, one method per variant. A mismatch is an error naming both
+/// Peel by ownership or read by borrow, one method per variant. A mismatch is an error naming both
 /// types: it means the description's `data_type` and the consumer's item type
 /// disagree, and coercing would run the measurement over values nobody asked for.
 impl ColumnData {
@@ -78,6 +75,34 @@ impl ColumnData {
         }
     }
 
+    pub fn as_i64(&self) -> Result<&[i64], DataGenError> {
+        match self {
+            ColumnData::Int64(v) => Ok(v),
+            other => Err(other.mismatch("i64")),
+        }
+    }
+
+    pub fn as_u64(&self) -> Result<&[u64], DataGenError> {
+        match self {
+            ColumnData::Unsigned64(v) => Ok(v),
+            other => Err(other.mismatch("u64")),
+        }
+    }
+
+    pub fn as_f64(&self) -> Result<&[f64], DataGenError> {
+        match self {
+            ColumnData::Float64(v) => Ok(v),
+            other => Err(other.mismatch("f64")),
+        }
+    }
+
+    pub fn as_string(&self) -> Result<&[String], DataGenError> {
+        match self {
+            ColumnData::String(v) => Ok(v),
+            other => Err(other.mismatch("string")),
+        }
+    }
+
     fn mismatch(&self, wanted: &'static str) -> DataGenError {
         DataGenError::TypeMismatch {
             held: self.kind(),
@@ -86,13 +111,9 @@ impl ColumnData {
     }
 }
 
-/// The item type a caller reads a column at.
-///
-/// This is a *consumer's* trait, not the generator's: rendering lives in
-/// [`ColumnSpec::render`](crate::ColumnSpec::render), where the four cases are
-/// four visible match arms. What a downstream crate cannot write for itself is
-/// the pair below — a workload generic over its item type needs to know which
-/// `data_type` names it, and how to get its own `Vec<T>` back out.
+/// The item type a caller reads a column at. A *consumer's* trait, not the
+/// generator's: what a downstream crate cannot write for itself is the pair
+/// below — which `data_type` names it, and how to get its own `Vec<T>` back.
 pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     /// The `data_type` spelling that selects this type.
     const NAME: &'static str;
@@ -100,12 +121,17 @@ pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     /// Peel a column at this type. The one place a consumer's item type meets a
     /// description's `data_type`: a mismatch is an error naming both.
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError>;
+
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError>;
 }
 
 impl ColumnItem for i64 {
     const NAME: &'static str = "i64";
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_i64()
+    }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_i64()
     }
 }
 
@@ -114,12 +140,18 @@ impl ColumnItem for u64 {
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_u64()
     }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_u64()
+    }
 }
 
 impl ColumnItem for f64 {
     const NAME: &'static str = "f64";
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_f64()
+    }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_f64()
     }
 }
 
@@ -128,9 +160,13 @@ impl ColumnItem for String {
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_string()
     }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_string()
+    }
 }
 
 /// How a drawn rank becomes a string.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StringOpts {
