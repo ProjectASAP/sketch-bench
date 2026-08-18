@@ -4,6 +4,7 @@
 
 use clap::{Parser, Subcommand};
 
+use crate::atomic_costs_cmd;
 use crate::dataset_cmd;
 
 #[derive(Parser, Debug)]
@@ -27,6 +28,8 @@ pub enum Cmd {
     Sketchbench(SketchbenchArgs),
     /// Generate or inspect synthetic `.bin` datasets.
     Dataset(dataset_cmd::DatasetArgs),
+    /// Reduce a `--flat` JSONL stream to ASAPQuery's atomic-cost table.
+    AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
 }
 
 /// One target of the sketch bundle: one algorithm, one impl, one construction

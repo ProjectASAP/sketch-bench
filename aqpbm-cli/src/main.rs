@@ -4,6 +4,7 @@
 //! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs, and
 //! `dataset` generates or inspects synthetic `.bin` datasets.
 
+mod atomic_costs_cmd;
 mod cli;
 mod dataset_cmd;
 mod flatten_record;
@@ -155,6 +156,7 @@ fn main() -> Result<()> {
     match cli.command {
         Cmd::Sketchbench(args) => run_sketchbench(args),
         Cmd::Dataset(args) => dataset_cmd::run(args),
+        Cmd::AtomicCosts(args) => atomic_costs_cmd::run(args),
     }
 }
 

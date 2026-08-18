@@ -3,6 +3,7 @@
 //! Hand a sketch's closures to [`ops::squares_for`]; [`measure()`](fn@measure) times them.
 
 pub mod accuracy;
+pub mod atomic_costs;
 pub mod binfile;
 pub mod build_error;
 pub mod config;
@@ -29,6 +30,7 @@ pub use config::{ParamSet, SketchParams};
 // sketches, and no file format — it hands back in-memory columns and this crate
 // owns what reaches disk (`binfile`). Re-exported so callers find it here.
 pub use accuracy::GroundTruth;
+pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
 pub use aqpbm_datagen::{
     ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
     NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
