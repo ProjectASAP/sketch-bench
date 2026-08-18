@@ -6,6 +6,8 @@
 mod cli;
 mod flatten_record;
 mod repeat;
+mod report_sink;
+mod rows;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
 // pair: bare jemalloc, `TrackingAllocator` wrapping jemalloc or System, or the
@@ -24,9 +26,6 @@ static GLOBAL: aqpbm_core::metrics::heap_track::TrackingAllocator<tikv_jemalloca
 static GLOBAL: aqpbm_core::metrics::heap_track::TrackingAllocator<std::alloc::System> =
     aqpbm_core::metrics::heap_track::TrackingAllocator(std::alloc::System);
 
-use std::fs::OpenOptions;
-use std::io::Write;
-
 use anyhow::{bail, Result};
 use aqpbm_core::benchmark_result::bench_report::BenchReport;
 use aqpbm_core::measure::MeasureConfig;
@@ -40,12 +39,12 @@ use clap::Parser;
 use sketch_bench::params::ParamSet;
 
 use cli::{Cli, Cmd, SketchbenchArgs};
+use report_sink::ReportSink;
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use sketch_bench::registry;
 use sketch_bench::request::Requirement;
-use sketch_bench::rows;
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -111,42 +110,6 @@ fn selected(operations: OperationMask, metrics: MetricsMask) -> Vec<(Operation, 
     out
 }
 
-/// Open the `--report` destination. `None` or `"-"` → stdout.
-enum ReportSink {
-    Stdout,
-    File(std::fs::File),
-}
-
-impl ReportSink {
-    fn open(spec: Option<&str>) -> Result<Self> {
-        // A repeat child always writes to stdout: the parent captures it and
-        // owns the real `--report` destination. Otherwise each child would
-        // also append its own unmerged records to that file.
-        if repeat::is_child() {
-            return Ok(ReportSink::Stdout);
-        }
-        match spec {
-            None | Some("-") => Ok(ReportSink::Stdout),
-            Some(path) => Ok(ReportSink::File(
-                OpenOptions::new().create(true).append(true).open(path)?,
-            )),
-        }
-    }
-    fn write_line(&mut self, line: &str) -> Result<()> {
-        match self {
-            ReportSink::Stdout => {
-                println!("{line}");
-                Ok(())
-            }
-            ReportSink::File(f) => {
-                f.write_all(line.as_bytes())?;
-                f.write_all(b"\n")?;
-                Ok(())
-            }
-        }
-    }
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -154,12 +117,8 @@ fn main() -> Result<()> {
     }
 }
 
-/// `--list-impls` prints and exits. Enumerating a bundle's registry hangs off
-/// that bundle's subcommand, since a second bundle would make a free-standing
-/// `list-impls` ambiguous about whose registry it means.
+/// `--list-impls` prints and exits
 fn list_impls() -> Result<()> {
-    // The registry owns the header too: it is the one place that knows how wide
-    // the algorithm column has to be for the rows underneath it.
     for line in registry::list() {
         println!("{line}");
     }
@@ -271,18 +230,13 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
 }
 
 /// Seconds of CPU burn before the first measured loop, so the cpufreq governor
-/// is at max turbo when timing starts. The default lives here because only a
-/// measurement run wants it — linking the runner should not cost ten seconds.
+/// is at max turbo when timing starts
 const DEFAULT_WARMUP_SECS: &str = "10";
 
 fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
-    // Measures nothing and writes no record, so it runs before anything is
-    // validated and ignores every other option.
     if args.list_impls {
         return list_impls();
     }
-    // `required_unless_present = "list_impls"` on both, so clap has already
-    // rejected the invocation that reaches here without them.
     let (algorithm, impl_name) = match (args.algorithm.as_deref(), args.impl_name.as_deref()) {
         (Some(a), Some(i)) => (a.to_string(), i.to_string()),
         _ => bail!("--algorithm and --impl are both required unless --list-impls is given"),
@@ -290,8 +244,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if args.repeats == 0 {
         bail!("--repeats must be >= 1");
     }
-    // Parent role: spawn the repeats, merge, emit. A child (marked by the
-    // env var) falls through and runs the measurement itself.
     if args.repeats > 1 && !repeat::is_child() {
         if args.flat {
             bail!(
@@ -313,13 +265,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         return Ok(());
     }
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
-        // SAFETY-equivalent note: single-threaded, before any bench thread
-        // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    // Every type `aqpbm-datagen` renders is spellable; which of them a row can
-    // ingest is the row's own answer, and it refuses the rest — a construction
-    // choice like any other, so the registry does not screen it.
     let width = registry::Dtype::parse(&args.dtype).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown --dtype: {} (expected i64|u64|f64|string)",
@@ -327,8 +274,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         )
     })?;
     let spec = dataset_spec(&args)?;
-    // clap makes both required whenever a measurement is asked for, so the `bail`s
-    // are unreachable from the command line and exist for the type.
     let metrics_mask = parse_mask(
         args.metrics
             .as_deref()
@@ -339,23 +284,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--operations is required"))?,
     )?;
-    // What this invocation will measure, decided here and passed down one pair
-    // at a time. Cpu and memory are not measurements of their own; they ride
-    // along with each one, so they are split off rather than crossed.
     let want = selected(operations_mask, metrics_mask);
     let secondary = metrics_mask & MetricsMask::SECONDARY;
-    // One invocation is one row at one parameter point over one dataset.
-    // `--config` is one point, or a parameterless point when omitted. Syntax
-    // only here: whether the algorithm exists is `registry::check`'s answer
-    // below, and the keys are type-checked at construction, where the impl
-    // reads them.
     let params = match args.config.as_deref() {
         Some(s) => ParamSet::single(&algorithm, s)?,
         None => ParamSet::empty(&algorithm),
     };
 
-    // Everything the registry needs, as one value. Assembled here and nowhere
-    // else, so there is a single place that says what a request is.
     let req = Requirement {
         algorithm: algorithm.clone(),
         impl_name: impl_name.clone(),
@@ -368,15 +303,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         warmup_runs: args.warmup_runs,
     };
 
-    // Can this run? The registry owns the answer, asked before the dataset is
-    // generated, so an operation, metric, width or comparator this row cannot
-    // honour costs nothing to refuse. The whole list is checked at once, so a
-    // request is refused as a unit rather than part-way through measuring it.
+    // requirement quick check
     registry::check(&req, &want).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // An empty mask on either axis names no measurements. Legal: the caller gets
-    // no records because it asked for none — and no dataset is generated for
-    // measurements nobody asked for.
+    // An empty mask on either axis names no measurements.
     if want.is_empty() {
         eprintln!(
             "approxbench: {algorithm}/{impl_name} selected no measurements; nothing to measure"
@@ -393,13 +323,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         args.warmup_runs,
     );
 
-    // The hand-off `docs/component_walk_through.md` describes: the frontend
-    // generates the data and hands it over. `--dtype` says what to generate and
-    // nothing here second-guesses it; a row handed a stream it cannot ingest
-    // says so when it materialises one.
-    // The description that actually generated comes back with the table: the
-    // inline path stamps `--dtype` onto its columns on the way through, and the
-    // record names what generated.
     let (dataset, table) = spec.generate_at(width.name())?;
 
     // The closures, built at the row's own item type over the data just made.
@@ -412,11 +335,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // the closure that answers it.
     let mut reports = Vec::with_capacity(prepared.len());
     for ((operation, metric), body) in prepared {
-        // Error is deterministic given (data, parameters), and a dataset is
-        // drawn once and not redrawn — so looping an accuracy measurement would
-        // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
-        // `n: 10`. A timing measurement is where repeating one draw *is* a real
-        // repeat, so only that one takes `--runs`.
         let cfg = MeasureConfig {
             runs: aqpbm_core::runs_for(metric, args.runs),
             warmup_runs: args.warmup_runs,

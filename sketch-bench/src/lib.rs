@@ -9,7 +9,5 @@ pub mod params;
 pub mod registry;
 /// What a frontend asks for, as one value.
 pub mod request;
-/// Which sketch a pair of strings names, and the closures it hands back.
-pub mod rows;
 /// One directory per algorithm, one file per library.
 pub mod wrappers;

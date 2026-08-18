@@ -1,15 +1,11 @@
 //! Which sketch a pair of strings names: the only place in the program where a
-//! name is bound to code. [`registry`](crate::registry) declares what rows
+//! name is bound to code. [`registry`](sketch_bench::registry) declares what rows
 //! exist; this binds each one to its wrapper.
-//!
-//! A row is entered once. It materialises the data at its own item type, draws
-//! the exact answer and the probes once, and hands back one closure per
-//! measurement asked for — so nothing typed has to cross back to the frontend.
 
 use std::rc::Rc;
 
-use crate::request::{Dtype, Requirement};
-use crate::wrappers::{
+use sketch_bench::request::{Dtype, Requirement};
+use sketch_bench::wrappers::{
     BuildError, Folds, InsertBody, InsertStepBody, ParallelInsertBody, PrepareBody, QueryBody,
     QueryPass, StepPass,
 };
@@ -22,7 +18,7 @@ fn cannot_build(e: BuildError) -> RunError {
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::RankErrorGT;
-use aqpbm_core::accuracy::questions;
+use aqpbm_core::accuracy::{questions, GroundTruth};
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
@@ -34,11 +30,11 @@ use aqpbm_core::measure::{
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 
-use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
-use crate::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
-use crate::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
-use crate::wrappers::hydra::{polars as hp, sketchlib as hs};
-use crate::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
+use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
+use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
+use sketch_bench::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
+use sketch_bench::wrappers::hydra::{polars as hp, sketchlib as hs};
+use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
@@ -60,21 +56,71 @@ pub type RowBinding = fn(
     &[(Operation, Metric)],
 ) -> Result<Measurements, RunError>;
 
-/// Bind a row to its wrapper and hand back the closures. The registry entry
-/// carries the binding, so a registered pair always finds code.
+type Materialise<I> = fn(&TableDescription, GeneratedTable) -> Result<Rc<Vec<I>>, RunError>;
+
+/// Bind a row to its wrapper and hand back the closures. The registry declares
+/// the pair; [`binding`] is what names the code, so a pair the registry lists
+/// and this table does not is a disagreement, reported as one.
 pub fn measurements(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    let entry = crate::registry::find(&req.algorithm, &req.impl_name).ok_or_else(|| {
+    sketch_bench::registry::find(&req.algorithm, &req.impl_name).ok_or_else(|| {
         RunError::Sketch(format!(
             "{}/{} is not a registered row",
             req.algorithm, req.impl_name
         ))
     })?;
-    (entry.row)(req, description, table, want)
+    let row = binding(&req.algorithm, &req.impl_name).ok_or_else(|| {
+        RunError::Sketch(format!(
+            "{}/{} is registered, but no row here is bound to it",
+            req.algorithm, req.impl_name
+        ))
+    })?;
+    row(req, description, table, want)
+}
+
+/// The pair a registry entry names, bound to the code that runs it.
+fn binding(algorithm: &str, impl_name: &str) -> Option<RowBinding> {
+    Some(match (algorithm, impl_name) {
+        ("cms", "oxide") => row_cms_oxide,
+        ("cms", "datasketches") => row_cms_datasketches,
+        ("cms", "polars") => row_cms_polars,
+        ("cms-fastpath-fixedmatrix", "lib") => row_cms_fastpath_fixedmatrix_lib,
+        ("cms-fastpath-vector2d", "lib") => row_cms_fastpath_vector2d_lib,
+        ("cms-regularpath-vector2d", "lib") => row_cms_regularpath_vector2d_lib,
+        ("cms-fastpath-fixedmatrix-32k-parallel", "lib") => {
+            row_cms_fastpath_fixedmatrix_32k_parallel_lib
+        }
+        ("countsketch", "oxide") => row_countsketch_oxide,
+        ("countsketch", "polars") => row_countsketch_polars,
+        ("countsketch-fastpath-fixedmatrix", "lib") => row_countsketch_fastpath_fixedmatrix_lib,
+        ("countsketch-fastpath-vector2d", "lib") => row_countsketch_fastpath_vector2d_lib,
+        ("countsketch-regularpath-vector2d", "lib") => row_countsketch_regularpath_vector2d_lib,
+        ("countsketch-fastpath-fixedmatrix-32k-parallel", "lib") => {
+            row_countsketch_fastpath_fixedmatrix_32k_parallel_lib
+        }
+        ("hll", "oxide") => row_hll_oxide,
+        ("hll", "datasketches") => row_hll_datasketches,
+        ("hll", "lib") => row_hll_lib,
+        ("hll", "polars") => row_hll_polars,
+        ("hll-hip", "lib") => row_hll_hip_lib,
+        ("hll-fastpath-parallel", "lib") => row_hll_fastpath_parallel_lib,
+        ("kll-percall", "oxide") => row_kll_percall_oxide,
+        ("kll-percall", "lib") => row_kll_percall_lib,
+        ("kll-cdf", "oxide") => row_kll_cdf_oxide,
+        ("kll-cdf", "lib") => row_kll_cdf_lib,
+        ("kll-cdf", "polars") => row_kll_cdf_polars,
+        ("hydra-cms", "lib") => row_hydra_cms_lib,
+        ("hydra-cms", "polars") => row_hydra_cms_polars,
+        ("hydra-hll", "lib") => row_hydra_hll_lib,
+        ("hydra-hll", "polars") => row_hydra_hll_polars,
+        ("hydra-kll", "lib") => row_hydra_kll_lib,
+        ("hydra-kll", "polars") => row_hydra_kll_polars,
+        _ => return None,
+    })
 }
 
 // -------- CMS (frequency) --------
@@ -699,44 +745,19 @@ fn frequency_row(
     merge: Option<Folds<i64>>,
     prepare: Option<PrepareBody<i64>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         FrequencyGT::<i64>::over_column(value_column(description)),
-        &table,
-    )?;
-    let items = peel::<i64>(description, table)?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let n = passes(req, metric);
-        let body = match (operation, metric) {
-            (Operation::Insert, Metric::Latency) => {
-                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
-            }
-            (Operation::Insert, _) => timed(
-                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-            (Operation::Query, _) => answered(
-                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
-                score.clone(),
-                metric,
-            ),
-            (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-            ),
-            (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-                (shards(req) - 1) as u64,
-            ),
-            (Operation::Prepare, _) => timed(
-                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
+        peel::<i64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
 }
 
 /// A row answering **cardinality**: how many distinct keys the stream carried.
@@ -753,46 +774,21 @@ fn cardinality_row(
     merge: Option<Folds<i64>>,
     prepare: Option<PrepareBody<i64>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         CardinalityGT {
             column: value_column(description),
         },
-        &table,
-    )?;
-    let items = peel::<i64>(description, table)?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let n = passes(req, metric);
-        let body = match (operation, metric) {
-            (Operation::Insert, Metric::Latency) => {
-                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
-            }
-            (Operation::Insert, _) => timed(
-                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-            (Operation::Query, _) => answered(
-                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
-                score.clone(),
-                metric,
-            ),
-            (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-            ),
-            (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-                (shards(req) - 1) as u64,
-            ),
-            (Operation::Prepare, _) => timed(
-                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
+        peel::<i64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
 }
 
 /// A row answering **subpopulation frequency**: how often a value occurs inside
@@ -809,47 +805,22 @@ fn subpop_frequency_row(
     merge: Option<Folds<(String, i64)>>,
     prepare: Option<PrepareBody<(String, i64)>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         SubpopFrequencyGT::<i64>::over_columns(
             vec![SCORED_LABEL_COLUMN],
             value_column(description),
         ),
-        &table,
-    )?;
-    let items = peel_labeled::<i64>(description, table)?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let n = passes(req, metric);
-        let body = match (operation, metric) {
-            (Operation::Insert, Metric::Latency) => {
-                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
-            }
-            (Operation::Insert, _) => timed(
-                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-            (Operation::Query, _) => answered(
-                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
-                score.clone(),
-                metric,
-            ),
-            (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-            ),
-            (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-                (shards(req) - 1) as u64,
-            ),
-            (Operation::Prepare, _) => timed(
-                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
+        peel_labeled::<i64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
 }
 
 /// A row answering **subpopulation cardinality**: how many distinct values a
@@ -866,47 +837,22 @@ fn subpop_cardinality_row(
     merge: Option<Folds<(String, i64)>>,
     prepare: Option<PrepareBody<(String, i64)>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         SubpopCardinalityGT {
             group_columns: vec![SCORED_LABEL_COLUMN],
             value_column: value_column(description),
         },
-        &table,
-    )?;
-    let items = peel_labeled::<i64>(description, table)?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let n = passes(req, metric);
-        let body = match (operation, metric) {
-            (Operation::Insert, Metric::Latency) => {
-                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
-            }
-            (Operation::Insert, _) => timed(
-                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-            (Operation::Query, _) => answered(
-                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
-                score.clone(),
-                metric,
-            ),
-            (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-            ),
-            (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-                (shards(req) - 1) as u64,
-            ),
-            (Operation::Prepare, _) => timed(
-                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
+        peel_labeled::<i64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
 }
 
 /// A row answering **subpopulation quantile**: the ordered statistic inside a
@@ -923,47 +869,22 @@ fn subpop_quantile_row(
     merge: Option<Folds<(String, f64)>>,
     prepare: Option<PrepareBody<(String, f64)>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         SubpopRankErrorGT {
             group_columns: vec![SCORED_LABEL_COLUMN],
             value_column: value_column(description),
         },
-        &table,
-    )?;
-    let items = peel_labeled::<f64>(description, table)?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let n = passes(req, metric);
-        let body = match (operation, metric) {
-            (Operation::Insert, Metric::Latency) => {
-                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
-            }
-            (Operation::Insert, _) => timed(
-                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-            (Operation::Query, _) => answered(
-                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
-                score.clone(),
-                metric,
-            ),
-            (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-            ),
-            (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
-                    .map_err(cannot_build)?,
-                (shards(req) - 1) as u64,
-            ),
-            (Operation::Prepare, _) => timed(
-                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
-                items.len() as u64,
-            ),
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
+        peel_labeled::<f64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
 }
 
 /// A row answering **quantile**, scored in rank error: the value at a fraction
@@ -980,13 +901,45 @@ fn quantile_row<T: ColumnItem>(
     merge: Option<Folds<T>>,
     prepare: Option<PrepareBody<T>>,
 ) -> Result<Measurements, RunError> {
-    let (probes, score) = questions(
+    scored_row(
+        req,
+        description,
+        table,
+        want,
         RankErrorGT {
             column: value_column(description),
         },
-        &table,
-    )?;
-    let items = peel::<T>(description, table)?;
+        peel::<T>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scored_row<G, I>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    ground_truth: G,
+    materialise: Materialise<I>,
+    insert: InsertBody<I>,
+    insert_step: InsertStepBody<I>,
+    query: QueryBody<I, G::Probe, G::Answer>,
+    merge: Option<Folds<I>>,
+    prepare: Option<PrepareBody<I>>,
+) -> Result<Measurements, RunError>
+where
+    G: GroundTruth + 'static,
+    G::Truth: 'static,
+    G::Probe: 'static,
+    G::Answer: 'static,
+{
+    let (probes, score) = questions(ground_truth, &table)?;
+    let items = materialise(description, table)?;
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {
         let n = passes(req, metric);
@@ -1060,7 +1013,7 @@ fn timed_row(
 
 /// A pass that only does work: its unit count is the work it covers, which the
 /// row knows because it handed the stream over.
-fn timed(passes: Vec<crate::wrappers::Pass>, work: u64) -> Measurement {
+fn timed(passes: Vec<sketch_bench::wrappers::Pass>, work: u64) -> Measurement {
     passes
         .into_iter()
         .map(|pass| {
@@ -1223,8 +1176,8 @@ pub(crate) fn row_hll_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    use crate::wrappers::hll::sketchlib as hl;
-    use crate::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    use sketch_bench::wrappers::hll::sketchlib as hl;
+    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     macro_rules! at {
         ($r:ty) => {
             cardinality_row(
@@ -1256,8 +1209,8 @@ pub(crate) fn row_hll_hip_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    use crate::wrappers::hll::sketchlib as hl;
-    use crate::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    use sketch_bench::wrappers::hll::sketchlib as hl;
+    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     macro_rules! at {
         ($r:ty) => {
             cardinality_row(
@@ -1282,7 +1235,7 @@ pub(crate) fn row_hll_hip_lib(
 }
 
 fn lg_k(req: &Requirement) -> Result<u8, RunError> {
-    let p: crate::params::HllParams = req
+    let p: sketch_bench::params::HllParams = req
         .params
         .parse()
         .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;
@@ -1309,11 +1262,11 @@ macro_rules! fixed_matrix_row {
             table: GeneratedTable,
             want: &[(Operation, Metric)],
         ) -> Result<Measurements, RunError> {
-            use crate::wrappers::fixed_matrix::{
+            use sketch_bench::wrappers::fixed_matrix::{
                 unsupported_shape, with_fixed_matrix, FixedMatrixVisitor,
             };
-            use crate::wrappers::$module::sketchlib as w;
-            use crate::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
+            use sketch_bench::wrappers::$module::sketchlib as w;
+            use sketch_bench::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
 
             let p: $params = req
                 .params
@@ -1367,7 +1320,7 @@ macro_rules! fixed_matrix_row {
 
 fixed_matrix_row!(
     row_cms_fastpath_fixedmatrix_lib,
-    crate::params::CmsParams,
+    sketch_bench::params::CmsParams,
     "cms-fastpath-fixedmatrix",
     cms,
     insert_cms_lib_fixedmatrix,
@@ -1379,7 +1332,7 @@ fixed_matrix_row!(
 
 fixed_matrix_row!(
     row_countsketch_fastpath_fixedmatrix_lib,
-    crate::params::CountSketchParams,
+    sketch_bench::params::CountSketchParams,
     "countsketch-fastpath-fixedmatrix",
     cs,
     insert_cs_lib_fixedmatrix,
@@ -1388,3 +1341,21 @@ fixed_matrix_row!(
     merge_cs_lib_fixedmatrix,
     merge_step_cs_lib_fixedmatrix
 );
+
+#[cfg(test)]
+mod tests {
+    use super::binding;
+    use sketch_bench::registry::REGISTRY;
+
+    #[test]
+    fn every_registered_pair_is_bound() {
+        for e in REGISTRY {
+            assert!(
+                binding(e.algorithm, e.impl_name).is_some(),
+                "{}/{}",
+                e.algorithm,
+                e.impl_name
+            );
+        }
+    }
+}

@@ -43,9 +43,7 @@ impl Capability {
     }
 }
 
-/// The item type a row is measured at: the one item-type choice a user still
-/// makes. Every type `aqpbm-datagen` renders is spellable here; which of them a
-/// row can actually ingest is the row's own answer, and it refuses the rest.
+/// The item type a row is measured at
 /// Here because [`Requirement`] carries it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Dtype {
@@ -81,15 +79,7 @@ impl Dtype {
     }
 }
 
-/// Which row to run, and how to build it.
-///
-/// Everything a registry needs to answer "can this run, and if so how" —
-/// deliberately without the dataset, because what to generate is an *answer*
-/// (the row's item type) rather than part of the question.
-///
-/// Deliberately *not* what to measure. That is the list of `(operation, metric)`
-/// pairs handed to [`rows::measurements`](crate::rows::measurements), so it is
-/// an argument rather than a set living here.
+/// Everything a registry needs to answer "can this run, and if so how"
 #[derive(Clone, Debug)]
 pub struct Requirement {
     /// Matched against a row's algorithm exactly.
@@ -100,19 +90,13 @@ pub struct Requirement {
     pub params: ParamSet,
     /// Which item width to build at.
     pub width: Dtype,
-    /// Worker threads the parallel rows use. A run knob that reaches the row,
-    /// so it travels with the request rather than in a whole-run config it has
-    /// no business reading.
+    /// Worker threads the parallel rows use
     pub workers: usize,
-    /// How many shards a merge measurement folds. A knob on the measurement,
-    /// not a selector: it is read only by the merge body, and the record
-    /// reports the value that ran.
+    /// How many shards a merge measurement folds
     pub merge_shards: usize,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
-    /// Measured runs, and the warm-ups run and discarded before them. A row
-    /// reads them to know how many closures to prime, since each run takes a
-    /// sketch of its own.
+    /// Measured runs, and the warm-ups run and discarded before them
     pub runs: usize,
     pub warmup_runs: usize,
 }
