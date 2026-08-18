@@ -13,13 +13,12 @@ use crate::metrics::{ItemsPerSec, RunMetrics};
 /// *of* is the operation's business, and the operation is what picks the field
 /// this lands in.
 pub fn rate(runs: &[RunMetrics]) -> Option<RunStats> {
-    let mut w = Welford::new();
-    for r in runs {
-        if r.elapsed_ns > 0 {
-            w.push(ItemsPerSec::compute(r.work, r.elapsed_ns));
-        }
-    }
-    maybe_runstats(w)
+    maybe_runstats(
+        runs.iter()
+            .filter(|r| r.elapsed_ns > 0)
+            .map(|r| ItemsPerSec::compute(r.work, r.elapsed_ns))
+            .collect(),
+    )
 }
 
 /// The same rate, one entry per measured run, so a consumer can draw a box
@@ -35,28 +34,26 @@ pub fn rate_samples(runs: &[RunMetrics]) -> Option<Vec<f64>> {
 
 /// The timed region, in milliseconds.
 pub fn elapsed_ms(runs: &[RunMetrics]) -> Option<RunStats> {
-    let mut w = Welford::new();
-    for r in runs {
-        w.push(r.elapsed_ns as f64 / 1_000_000.0);
-    }
-    maybe_runstats(w)
+    maybe_runstats(
+        runs.iter()
+            .map(|r| r.elapsed_ns as f64 / 1_000_000.0)
+            .collect(),
+    )
 }
 
 /// User and system time, when the runs carried it.
 pub fn cpu_time_ms(runs: &[RunMetrics]) -> Option<CpuTime> {
-    let mut user_w = Welford::new();
-    let mut sys_w = Welford::new();
-    let mut any = false;
+    let mut user = Vec::new();
+    let mut sys = Vec::new();
     for r in runs {
         if let (Some(u), Some(s)) = (r.cpu_user_ns, r.cpu_sys_ns) {
-            user_w.push(u as f64 / 1_000_000.0);
-            sys_w.push(s as f64 / 1_000_000.0);
-            any = true;
+            user.push(u as f64 / 1_000_000.0);
+            sys.push(s as f64 / 1_000_000.0);
         }
     }
-    any.then(|| CpuTime {
-        user_ms: runstats_from(user_w),
-        sys_ms: runstats_from(sys_w),
+    (!user.is_empty()).then(|| CpuTime {
+        user_ms: runstats_from(user),
+        sys_ms: runstats_from(sys),
     })
 }
 
@@ -147,23 +144,24 @@ fn json_num(v: f64) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Null)
 }
 
-fn maybe_runstats(w: Welford) -> Option<RunStats> {
-    if w.n() == 0 {
-        None
-    } else {
-        Some(runstats_from(w))
-    }
+fn maybe_runstats(samples: Vec<f64>) -> Option<RunStats> {
+    (!samples.is_empty()).then(|| runstats_from(samples))
 }
 
 /// Summarise the post-warmup iterations of one process. `ci95` is deliberately
 /// `None` — these iterations are not independent samples, so no interval over
 /// them means what one claims. `--repeats R` fills it in. See `RunStats::ci95`.
-fn runstats_from(w: Welford) -> RunStats {
+fn runstats_from(samples: Vec<f64>) -> RunStats {
+    let mut w = Welford::new();
+    for s in &samples {
+        w.push(*s);
+    }
     RunStats {
         mean: w.mean(),
         stddev: w.stddev(),
         ci95: None,
         n: w.n(),
+        samples,
     }
 }
 

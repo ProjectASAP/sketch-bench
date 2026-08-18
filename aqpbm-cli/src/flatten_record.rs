@@ -185,6 +185,7 @@ mod tests {
             stddev: 0.0,
             ci95: None,
             n: 1,
+            samples: vec![mean],
         }
     }
 
