@@ -13,7 +13,7 @@ pub mod sketchlib;
 // `width = ceil(3/ε²).next_power_of_two()`, not `ceil(2/ε)` like CountMin.
 // Inverting it needs `3/ε²` to land *on* `cols`, which `ε = sqrt(3/cols)` does
 // not — so solve against `cols - 0.5`, half an integer no single ulp can cross.
-fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
+pub(crate) fn dims_to_err(rows: usize, cols: usize) -> (f64, f64) {
     let epsilon = (3.0 / (cols as f64 - 0.5)).sqrt();
     let delta = (-(rows as f64 - 0.5)).exp();
     (epsilon, delta)

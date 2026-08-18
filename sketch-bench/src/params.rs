@@ -463,6 +463,25 @@ sketch_params!(
     }
 );
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnivMonParams {
+    pub heap_size: usize,
+    pub sketch_row: usize,
+    pub sketch_col: usize,
+    pub layer_size: usize,
+}
+sketch_params!(
+    UnivMonParams,
+    "univmon",
+    UnivMonParams {
+        heap_size: 1000,
+        sketch_row: 5,
+        sketch_col: 2048,
+        layer_size: 8
+    }
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,6 +551,7 @@ mod tests {
         check::<HydraCmsParams>();
         check::<HydraHllParams>();
         check::<HydraKllParams>();
+        check::<UnivMonParams>();
     }
 
     /// Which algorithm names each vocabulary answers to. Pinned per family
@@ -563,5 +583,11 @@ mod tests {
         assert!(HydraCmsParams::owns("hydra-cms"));
         assert!(!HydraCmsParams::owns("hydra-hll"));
         assert!(!HydraHllParams::owns("hydra-kll"));
+
+        assert!(UnivMonParams::owns("univmon-cardinality"));
+        assert!(UnivMonParams::owns("univmon-l1-norm"));
+        assert!(UnivMonParams::owns("univmon-l2-norm"));
+        assert!(UnivMonParams::owns("univmon-entropy"));
+        assert!(!UnivMonParams::owns("cms"));
     }
 }

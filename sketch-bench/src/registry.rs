@@ -519,6 +519,118 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-cardinality",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_card, the keys carrying a non-zero total",
+        capability: Capability::KeyedCardinality,
+        comparator: Some("keyed-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l1-norm",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_l1, the sum of the per-key totals",
+        capability: Capability::KeyedL1Norm,
+        comparator: Some("keyed-l1-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l1-norm",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_l1, summed on the insert path",
+        capability: Capability::KeyedL1Norm,
+        comparator: Some("keyed-l1-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l2-norm",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_l2, the root of the summed squared totals",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-l2-norm",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_l2, a Count Sketch self product",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-entropy",
+        impl_name: "lib",
+        description: "asap_sketchlib::UnivMon: calc_entropy, Shannon entropy of the key shares",
+        capability: Capability::KeyedEntropy,
+        comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "univmon",
+        algorithm: "univmon-entropy",
+        impl_name: "oxide",
+        description: "sketch_oxide::universal::UnivMon: estimate_entropy, over its sampled layers",
+        capability: Capability::KeyedEntropy,
+        comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
 ];
 
 // ---------- what the frontend asks ----------
@@ -864,6 +976,10 @@ mod tests {
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
+            "keyed-cardinality",
+            "keyed-l1-norm",
+            "keyed-l2-norm",
+            "keyed-entropy",
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {
