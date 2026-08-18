@@ -61,6 +61,14 @@ SEED=42
 # which single-fold runs are dominated by at this operation's sub-ms scale.
 MERGE_SHARDS=16
 
+# Mirrors ASAPQuery's asap-planner-rs/src/optimizer/constants.rs grid — kept
+# under these names so a diff against that file is a direct name-for-name
+# comparison instead of a guess at which literal means what.
+CMS_DEPTHS=(3 5)
+CMS_WIDTHS=(512 1024 2048)
+HLL_PRECISIONS=(12 14)
+KLL_KS=(200 500)
+
 point() {
     local algorithm=$1 config=$2
     echo "  $algorithm ($config)" >&2
@@ -82,19 +90,19 @@ point() {
 }
 
 echo "==> cms-fastpath-vector2d (CMS_DEPTHS x CMS_WIDTHS)" >&2
-for depth in 3 5; do
-    for width in 512 1024 2048; do
+for depth in "${CMS_DEPTHS[@]}"; do
+    for width in "${CMS_WIDTHS[@]}"; do
         point cms-fastpath-vector2d "rows=$depth cols=$width"
     done
 done
 
 echo "==> hll (HLL_PRECISIONS)" >&2
-for lg_k in 12 14; do
+for lg_k in "${HLL_PRECISIONS[@]}"; do
     point hll "lg_k=$lg_k"
 done
 
 echo "==> kll-percall (KLL_KS)" >&2
-for k in 200 500; do
+for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k"
 done
 
