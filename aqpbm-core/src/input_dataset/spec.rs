@@ -2,9 +2,7 @@
 //! [`InputDataSetSpec`] describes data, [`BenchItem`] is the item type a row ingests,
 //! and [`InputDataSetSpec::build`] is the one entry point between them.
 
-use crate::input_dataset::{
-    F64InputDataSet, I64InputDataSet, InputDataSet, Labeled, LabeledInputDataSet,
-};
+use crate::input_dataset::{labeled, load, numeric, Labeled, Materialised};
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
@@ -38,7 +36,7 @@ impl InputDataSetSpec {
     /// frontend does: it asks the row what it ingests, produces that with
     /// [`generate_at`](Self::generate_at), and hands the data over for the row
     /// to [`materialise`](BenchItem::materialise).
-    pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
+    pub fn build<T: BenchItem>(&self) -> Result<Materialised<T>> {
         T::materialise(self.generate_at(T::DATA_TYPE)?)
     }
 
@@ -91,40 +89,37 @@ impl InputDataSetSpec {
 /// it, and how to build one from a [`InputDataSetSpec`]. The row's own `insert` fixes
 /// it, so binding a row's closures is what selects the impl below.
 pub trait BenchItem: Sized + Clone {
-    type Wk: InputDataSet<Item = Self>;
-
     /// The `data_type` a description has to state for this item — for a record,
     /// the type of its *value* column. A `const`, so a caller can read what a
     /// row wants off the row's type, without building one.
     const DATA_TYPE: &'static str;
 
-    /// Turn produced data into this row's dataset. Takes the data by value:
-    /// a million-row column is moved into the dataset, never copied.
-    fn materialise(data: InputDataSetData) -> Result<Self::Wk>;
+    /// Turn produced data into this row's item stream. Takes the data by value:
+    /// a million-row column is moved into the stream, never copied.
+    fn materialise(data: InputDataSetData) -> Result<Materialised<Self>>;
 }
 
 impl BenchItem for i64 {
-    type Wk = I64InputDataSet;
     const DATA_TYPE: &'static str = "i64";
-    fn materialise(data: InputDataSetData) -> Result<Self::Wk> {
+    fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
         match data {
             InputDataSetData::Generated { description, table } => {
-                I64InputDataSet::from_table(&description, table)
+                numeric::from_table::<i64>(&description, table)
                     .map_err(|e| anyhow::anyhow!("{}", e))
             }
-            InputDataSetData::File { path } => I64InputDataSet::load(std::path::Path::new(&path))
-                .map_err(|e| anyhow::anyhow!("{}", e)),
+            InputDataSetData::File { path } => {
+                load::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
+            }
         }
     }
 }
 
 impl BenchItem for f64 {
-    type Wk = F64InputDataSet;
     const DATA_TYPE: &'static str = "f64";
-    fn materialise(data: InputDataSetData) -> Result<Self::Wk> {
+    fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
         match data {
             InputDataSetData::Generated { description, table } => {
-                F64InputDataSet::from_table(&description, table)
+                numeric::from_table::<f64>(&description, table)
                     .map_err(|e| anyhow::anyhow!("{}", e))
             }
             // `.bin` is a raw i64 stream with no header; reading it as f64
@@ -142,13 +137,11 @@ impl BenchItem for f64 {
 /// record, because the column count is what a grouped sketch's cost is a
 /// function of.
 impl<V: ColumnItem> BenchItem for Labeled<V> {
-    type Wk = LabeledInputDataSet<V>;
     const DATA_TYPE: &'static str = V::NAME;
-    fn materialise(data: InputDataSetData) -> Result<Self::Wk> {
+    fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
         match data {
             InputDataSetData::Generated { description, table } => {
-                LabeledInputDataSet::from_table(&description, table)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
+                labeled::from_table::<V>(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
             }
             InputDataSetData::File { path } => Err(anyhow::anyhow!(
                 "--input {path} is a single-column stream; this row ingests \

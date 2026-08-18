@@ -6,42 +6,41 @@ use std::path::Path;
 
 use aqpbm_datagen::DataGenError;
 
-use super::{InputDataSetDescription, NumericInputDataSet};
+use super::numeric::sized;
+use super::{InputDataSetDescription, Materialised};
 
-impl NumericInputDataSet<i64> {
-    /// Load from a file, format from the extension: `.bin` (and anything else)
-    /// is a little-endian `int64` stream; `.pcap` takes each IPv4 source address
-    /// as big-endian `u32`; `.csv` parses column 0 below a header row.
-    pub fn load(path: &Path) -> Result<Self, DataGenError> {
-        let items = match path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("pcap") => load_pcap(path)?,
-            Some("csv") => load_csv(path)?,
-            _ => load_bin(path)?,
-        };
-        if items.is_empty() {
-            return Err(DataGenError::BadParam(format!(
-                "file contained zero items: {}",
-                path.display()
-            )));
-        }
-        Ok(Self::new(
-            items,
-            InputDataSetDescription {
-                shape: "file".into(),
-                size: 0, // overwritten by `new`
-                cardinality: None,
-                zipf_s: None,
-                source_path: Some(path.display().to_string()),
-                seed: None,
-                spec: None,
-            },
-        ))
+/// Load from a file, format from the extension: `.bin` (and anything else)
+/// is a little-endian `int64` stream; `.pcap` takes each IPv4 source address
+/// as big-endian `u32`; `.csv` parses column 0 below a header row.
+pub fn load(path: &Path) -> Result<Materialised<i64>, DataGenError> {
+    let items = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("pcap") => load_pcap(path)?,
+        Some("csv") => load_csv(path)?,
+        _ => load_bin(path)?,
+    };
+    if items.is_empty() {
+        return Err(DataGenError::BadParam(format!(
+            "file contained zero items: {}",
+            path.display()
+        )));
     }
+    Ok(sized(
+        items,
+        InputDataSetDescription {
+            shape: "file".into(),
+            size: 0, // overwritten by `sized`
+            cardinality: None,
+            zipf_s: None,
+            source_path: Some(path.display().to_string()),
+            seed: None,
+            spec: None,
+        },
+    ))
 }
 
 fn load_bin(path: &Path) -> Result<Vec<i64>, DataGenError> {
@@ -155,7 +154,7 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use crate::input_dataset::{I64InputDataSet, InputDataSet};
+    use super::load;
     use crate::test_support::{build, zipf_column};
     use aqpbm_datagen::{ColumnData, TableDescription};
 
@@ -169,10 +168,10 @@ mod tests {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = I64InputDataSet::load(&path).unwrap();
-        assert_eq!(w.items(), &[1, -2, 3, 4]);
-        assert_eq!(w.description().shape, "file");
-        assert_eq!(w.description().size, 4);
+        let w = load(&path).unwrap();
+        assert_eq!(w.1, &[1, -2, 3, 4]);
+        assert_eq!(w.0.shape, "file");
+        assert_eq!(w.0.size, 4);
         std::fs::remove_file(&path).ok();
     }
 
@@ -186,8 +185,8 @@ mod tests {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = I64InputDataSet::load(&path).expect("a raw .bin is read as i64");
-        assert_eq!(w.items(), &[7, 8, 9]);
+        let w = load(&path).expect("a raw .bin is read as i64");
+        assert_eq!(w.1, &[7, 8, 9]);
         std::fs::remove_file(&path).ok();
     }
 
@@ -205,9 +204,9 @@ mod tests {
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
         std::fs::write(&path, &bytes).unwrap();
 
-        let from_file = I64InputDataSet::load(&path).unwrap();
-        let from_memory: I64InputDataSet = build(&spec).unwrap();
-        assert_eq!(from_file.items(), from_memory.items());
+        let from_file = load(&path).unwrap();
+        let from_memory = build::<i64>(&spec).unwrap();
+        assert_eq!(from_file.1, from_memory.1);
         std::fs::remove_file(&path).ok();
     }
 
@@ -221,8 +220,8 @@ mod tests {
         writeln!(f).unwrap();
         writeln!(f, "-5,second").unwrap();
         drop(f);
-        let w = I64InputDataSet::load(&path).unwrap();
-        assert_eq!(w.items(), &[10, -5]);
+        let w = load(&path).unwrap();
+        assert_eq!(w.1, &[10, -5]);
         std::fs::remove_file(&path).ok();
     }
 
@@ -233,7 +232,7 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&[0u8; 32]).unwrap();
         drop(f);
-        let err = I64InputDataSet::load(&path).unwrap_err();
+        let err = load(&path).unwrap_err();
         assert!(err.to_string().contains("pcap magic"));
         std::fs::remove_file(&path).ok();
     }

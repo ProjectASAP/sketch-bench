@@ -33,8 +33,7 @@ pub use error::RunError;
 // hand-off between the two halves of `InputDataSetSpec::build`, so both ends of
 // it need to name the type. See `input_dataset::spec`.
 pub use input_dataset::{
-    BenchItem, I64InputDataSet, InputDataSet, InputDataSetData, InputDataSetDescription,
-    InputDataSetSpec, Labeled, LabeledInputDataSet,
+    BenchItem, InputDataSetData, InputDataSetDescription, InputDataSetSpec, Labeled, Materialised,
 };
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
 pub use measurement::{Measurement, MIN_MERGE_SHARDS};

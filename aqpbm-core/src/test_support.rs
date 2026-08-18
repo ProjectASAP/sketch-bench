@@ -7,7 +7,7 @@ use aqpbm_datagen::{
     ZipfParameter,
 };
 
-use crate::input_dataset::NumericInputDataSet;
+use crate::input_dataset::{numeric, Materialised};
 
 /// A zipfian column over ranks `[1, cardinality]`, rendered at `data_type`.
 pub fn zipf_column(cardinality: u64, s: f64, seed: u64, data_type: &str) -> ColumnSpec {
@@ -44,9 +44,7 @@ pub fn uniform_column(cardinality: u64, seed: u64, data_type: &str) -> ColumnSpe
 
 /// Generate `spec` and materialise it at `T` — the two steps production takes,
 /// in the order it takes them.
-pub fn build<T: ColumnItem>(
-    spec: &TableDescription,
-) -> Result<NumericInputDataSet<T>, DataGenError> {
+pub fn build<T: ColumnItem>(spec: &TableDescription) -> Result<Materialised<T>, DataGenError> {
     let table = spec.generate()?;
-    NumericInputDataSet::from_table(spec, table)
+    numeric::from_table(spec, table)
 }

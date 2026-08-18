@@ -1,79 +1,46 @@
 //! The plain item stream: one column, materialised at the row's item type.
-//! No `generate` here on purpose — production goes through
-//! [`crate::input_dataset::InputDataSetSpec::build`]; the file-backed one is [`super::load`].
+//! No `generate` here on purpose — production generates first and materialises
+//! second; the file-backed source is [`super::load`].
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
 
-use super::{InputDataSet, InputDataSetDescription};
+use super::{InputDataSetDescription, Materialised};
 
-/// A numeric dataset: the materialised item stream plus its provenance.
-/// Construct from a generated table ([`Self::from_table`]) or a file
-/// ([`NumericInputDataSet::load`](super::load)); the source shows up in
-/// `description`, not in the type.
-#[derive(Debug, Clone)]
-pub struct NumericInputDataSet<T> {
-    items: Vec<T>,
-    description: InputDataSetDescription,
+/// Pair an already-materialised item stream with its provenance.
+/// `description.size` is forced to `items.len()`: a description disagreeing
+/// with its data would corrupt every throughput denominator downstream.
+pub(crate) fn sized<T>(items: Vec<T>, mut description: InputDataSetDescription) -> Materialised<T> {
+    // `load` passes 0 as a placeholder, not knowing the count until it has
+    // read the file. Any other value asserts what was produced — otherwise a
+    // short generator is silently relabelled into a smaller dataset.
+    debug_assert!(
+        description.size == 0 || description.size == items.len(),
+        "dataset description claims {} items but carries {}",
+        description.size,
+        items.len(),
+    );
+    description.size = items.len();
+    (description, items)
 }
 
-/// The key-shaped dataset: every hash-based algorithm (cms, countsketch, hll,
-/// elastic, …) ingests these.
-pub type I64InputDataSet = NumericInputDataSet<i64>;
-
-/// The float dataset, consumed by the ordered algorithms (kll, dd) whose
-/// libraries are `f64`-native.
-pub type F64InputDataSet = NumericInputDataSet<f64>;
-
-impl<T: ColumnItem> NumericInputDataSet<T> {
-    /// Wrap an already-materialised item stream with its provenance.
-    /// `description.size` is forced to `items.len()`: a description disagreeing
-    /// with its data would corrupt every throughput denominator downstream.
-    pub(crate) fn new(items: Vec<T>, mut description: InputDataSetDescription) -> Self {
-        // `load` passes 0 as a placeholder, not knowing the count until it has
-        // read the file. Any other value asserts what was produced — otherwise a
-        // short generator is silently relabelled into a smaller dataset.
-        debug_assert!(
-            description.size == 0 || description.size == items.len(),
-            "dataset description claims {} items but carries {}",
-            description.size,
-            items.len(),
-        );
-        description.size = items.len();
-        Self { items, description }
+/// Build from a table someone else already generated. The caller generates
+/// because generating needs an item type and this type is already at one;
+/// `spec` rides along because the record names what the data came from.
+pub fn from_table<T: ColumnItem>(
+    spec: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Materialised<T>, DataGenError> {
+    if spec.column_spec.len() != 1 {
+        return Err(DataGenError::BadParam(format!(
+            "this row ingests a plain `{}` stream, so it needs a one-column \
+             description; this one has {} columns",
+            T::NAME,
+            spec.column_spec.len(),
+        )));
     }
-
-    /// Build from a table someone else already generated. The caller generates
-    /// because generating needs an item type and this type is already at one;
-    /// `spec` rides along because the record names what the data came from.
-    pub fn from_table(
-        spec: &TableDescription,
-        table: GeneratedTable,
-    ) -> Result<Self, DataGenError> {
-        if spec.column_spec.len() != 1 {
-            return Err(DataGenError::BadParam(format!(
-                "this row ingests a plain `{}` stream, so it needs a one-column \
-                 description; this one has {} columns",
-                T::NAME,
-                spec.column_spec.len(),
-            )));
-        }
-        let description = InputDataSetDescription::from_spec(spec);
-        let column = table.into_column(0)?;
-        Ok(Self::new(T::from_column(column)?, description))
-    }
-}
-
-impl<T: ColumnItem> InputDataSet for NumericInputDataSet<T> {
-    type Item = T;
-    fn description(&self) -> InputDataSetDescription {
-        self.description.clone()
-    }
-    fn items(&self) -> &[T] {
-        &self.items
-    }
-    fn into_parts(self) -> (InputDataSetDescription, Vec<T>) {
-        (self.description, self.items)
-    }
+    let description = InputDataSetDescription::from_spec(spec);
+    let column = table.into_column(0)?;
+    Ok(sized(T::from_column(column)?, description))
 }
 
 #[cfg(test)]
@@ -84,16 +51,16 @@ mod tests {
     #[test]
     fn uniform_is_reproducible_from_seed() {
         let spec = TableDescription::single("key", uniform_column(1000, 42, "i64"), 100);
-        let a: I64InputDataSet = build(&spec).unwrap();
-        let b: I64InputDataSet = build(&spec).unwrap();
-        assert_eq!(a.items(), b.items());
+        let (_, a) = build::<i64>(&spec).unwrap();
+        let (_, b) = build::<i64>(&spec).unwrap();
+        assert_eq!(a, b);
     }
 
     #[test]
     fn uniform_items_in_expected_range() {
         let spec = TableDescription::single("key", uniform_column(100, 7, "i64"), 1000);
-        let w: I64InputDataSet = build(&spec).unwrap();
-        for v in w.items() {
+        let (_, items) = build::<i64>(&spec).unwrap();
+        for v in &items {
             assert!((0..100).contains(v), "{v} outside 0..100");
         }
     }
@@ -101,8 +68,8 @@ mod tests {
     #[test]
     fn zipf_items_in_expected_range() {
         let spec = TableDescription::single("key", zipf_column(100, 1.1, 7, "i64"), 1000);
-        let w: I64InputDataSet = build(&spec).unwrap();
-        for v in w.items() {
+        let (_, items) = build::<i64>(&spec).unwrap();
+        for v in &items {
             assert!(*v >= 1 && *v <= 100);
         }
     }
@@ -138,9 +105,9 @@ mod tests {
     #[test]
     fn placeholder_description_size_is_filled_in() {
         // A description that disagrees with the data would silently skew every
-        // throughput denominator; `new` is the one place that can catch
+        // throughput denominator; `sized` is the one place that can catch
         // it, so it always wins over the caller's claim.
-        let w = I64InputDataSet::new(
+        let (description, _) = sized(
             vec![1, 2, 3],
             InputDataSetDescription {
                 shape: "custom".into(),
@@ -152,6 +119,6 @@ mod tests {
                 spec: None,
             },
         );
-        assert_eq!(w.description().size, 3);
+        assert_eq!(description.size, 3);
     }
 }

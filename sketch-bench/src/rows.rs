@@ -18,9 +18,7 @@ use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::error::RunError;
-use aqpbm_core::input_dataset::{
-    BenchItem, InputDataSet, InputDataSetData, InputDataSetDescription, Labeled,
-};
+use aqpbm_core::input_dataset::{BenchItem, InputDataSetData, InputDataSetDescription, Labeled};
 use aqpbm_core::measurement::{
     bulk, insert_measurement, merge_measurement, per_item, prepare_measurement, query_measurement,
     questions, Insert, Measurement, Questions, Sketch,
@@ -730,7 +728,7 @@ where
 fn peel<T: BenchItem>(
     data: InputDataSetData,
 ) -> Result<(InputDataSetDescription, Rc<Vec<T>>), RunError> {
-    let (description, items) = T::materialise(data)?.into_parts();
+    let (description, items) = T::materialise(data)?;
     Ok((description, Rc::new(items)))
 }
 

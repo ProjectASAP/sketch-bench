@@ -9,18 +9,11 @@ pub mod numeric;
 pub mod spec;
 
 pub use description::InputDataSetDescription;
-pub use labeled::{Labeled, LabeledInputDataSet};
-pub use numeric::{F64InputDataSet, I64InputDataSet, NumericInputDataSet};
+pub use labeled::Labeled;
 pub use spec::{BenchItem, InputDataSetData, InputDataSetSpec};
 
-/// The abstract contract for a dataset a measurement can consume: an ordered
-/// item stream, plus the provenance that names it in the record.
-/// [`items`](Self::items) hands back a slice because it is read inside the clock.
-/// [`into_parts`](Self::into_parts) is how a caller takes the stream away
-/// without copying it — a million-row column is moved, never cloned.
-pub trait InputDataSet: Sized {
-    type Item: Clone;
-    fn description(&self) -> InputDataSetDescription;
-    fn items(&self) -> &[Self::Item];
-    fn into_parts(self) -> (InputDataSetDescription, Vec<Self::Item>);
-}
+/// A materialised dataset: the ordered item stream a measurement replays, and
+/// the provenance that names it in the record. A pair rather than a type,
+/// because nothing here outlives the row that peels it — the items go straight
+/// into the closures and the description goes straight into the record.
+pub type Materialised<T> = (InputDataSetDescription, Vec<T>);
