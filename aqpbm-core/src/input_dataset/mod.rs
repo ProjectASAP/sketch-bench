@@ -4,7 +4,6 @@
 
 pub mod description;
 pub mod labeled;
-pub mod load;
 pub mod numeric;
 pub mod spec;
 

@@ -1061,9 +1061,9 @@ mod tests {
     /// that passes the check and finds no code reads as a broken tool.
     #[test]
     fn every_registry_entry_has_an_arm() {
-        // A parameterless request over an unreadable file reaches the arm and
-        // stops at the first thing it needs, which is enough to prove an arm
-        // exists: what is being checked is that the pair is not `None`, and
+        // A parameterless request over a four-row i64 column reaches the arm
+        // and stops at the first thing it needs, which is enough to prove an
+        // arm exists: what is being checked is that the pair is not `None`, and
         // `Some(Err(_))` answers that as well as `Some(Ok(_))` does.
         let req = |e: &crate::registry::SketchId| Requirement {
             algorithm: e.algorithm.to_string(),
@@ -1074,8 +1074,27 @@ mod tests {
             merge_shards: 2,
             comparator: None,
         };
-        let data = || InputDataSetData::File {
-            path: "unreadable on purpose: only the dispatch is under test".to_string(),
+        let data = || {
+            let description = aqpbm_core::TableDescription::single(
+                "key",
+                aqpbm_core::ColumnSpec {
+                    distribution: aqpbm_core::DataDistribution::Uniform(
+                        aqpbm_core::UniformParameter {
+                            lower_bound: 0.0,
+                            upper_bound: 8.0,
+                            seed: 1,
+                        },
+                    ),
+                    shift: None,
+                    cardinality: None,
+                    special_rule: aqpbm_core::RULE_NONE,
+                    data_type: "i64".into(),
+                    string: None,
+                },
+                4,
+            );
+            let table = description.generate().expect("four i64 rows generate");
+            InputDataSetData::Generated { description, table }
         };
         let missing: Vec<String> = crate::registry::REGISTRY
             .iter()

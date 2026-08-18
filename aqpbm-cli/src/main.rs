@@ -176,16 +176,11 @@ fn load_spec(path: &str) -> Result<InputDataSetSpec> {
         .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))
 }
 
-/// Resolve where this run's items come from, in precedence order: `--input` >
-/// `--spec` > the `--dataset` flags. The flag path builds the same
+/// Resolve where this run's items come from, in precedence order: `--spec` >
+/// the `--dataset` flags. The flag path builds the same
 /// `TableDescription` the spec path would, so it is sugar for a one-column
 /// description — one generator.
 fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
-    if let Some(path) = args.input.as_deref() {
-        return Ok(InputDataSetSpec::File {
-            path: path.to_string(),
-        });
-    }
     if let Some(path) = args.spec.as_deref() {
         // A spec carries its own `string:` block, so `--alphabet`/`--key-len`
         // would be editing the user's file from the command line.

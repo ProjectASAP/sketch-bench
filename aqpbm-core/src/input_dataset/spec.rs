@@ -2,7 +2,7 @@
 //! [`InputDataSetSpec`] describes data, [`BenchItem`] is the item type a row ingests,
 //! and [`InputDataSetSpec::build`] is the one entry point between them.
 
-use crate::input_dataset::{labeled, load, numeric, Labeled, Materialised};
+use crate::input_dataset::{labeled, numeric, Labeled, Materialised};
 use anyhow::Result;
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 
@@ -12,7 +12,6 @@ use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 pub enum InputDataSetSpec {
     Generated(TableDescription),
     Inline(TableDescription),
-    File { path: String },
 }
 
 #[derive(Debug, Clone)]
@@ -24,10 +23,6 @@ pub enum InputDataSetData {
         description: TableDescription,
         table: GeneratedTable,
     },
-    /// A file to read. Still deferred to the item type, because how the bytes
-    /// are decoded depends on it — a `.bin` is a raw `i64` stream and only some
-    /// rows can take it.
-    File { path: String },
 }
 
 impl InputDataSetSpec {
@@ -43,42 +38,23 @@ impl InputDataSetSpec {
     /// Produce the data this spec describes, at `value_type` — the item type
     /// the row named.
     pub fn generate_at(&self, value_type: &str) -> Result<InputDataSetData> {
-        match self.describe(value_type) {
-            Some(description) => {
-                let table = description.generate()?;
-                Ok(InputDataSetData::Generated { description, table })
-            }
-            None => Ok(InputDataSetData::File {
-                path: self
-                    .file_path()
-                    .expect("describe() returns None only for the file variant")
-                    .to_string(),
-            }),
-        }
+        let description = self.describe(value_type);
+        let table = description.generate()?;
+        Ok(InputDataSetData::Generated { description, table })
     }
 
-    /// The description to generate from at item type `item_type`, or `None` for
-    /// a file-backed dataset. See the variants above for why the two generated
-    /// cases answer differently.
-    fn describe(&self, item_type: &str) -> Option<TableDescription> {
+    /// The description to generate from at item type `item_type`. See the
+    /// variants above for why the two cases answer differently.
+    fn describe(&self, item_type: &str) -> TableDescription {
         match self {
-            InputDataSetSpec::Generated(d) => Some(d.clone()),
+            InputDataSetSpec::Generated(d) => d.clone(),
             InputDataSetSpec::Inline(d) => {
                 let mut d = d.clone();
                 for column in &mut d.column_spec {
                     column.data_type = item_type.to_string();
                 }
-                Some(d)
+                d
             }
-            InputDataSetSpec::File { .. } => None,
-        }
-    }
-
-    /// The path a file-backed dataset reads, if this is one.
-    fn file_path(&self) -> Option<&str> {
-        match self {
-            InputDataSetSpec::File { path } => Some(path),
-            _ => None,
         }
     }
 }
@@ -102,33 +78,16 @@ pub trait BenchItem: Sized + Clone {
 impl BenchItem for i64 {
     const DATA_TYPE: &'static str = "i64";
     fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
-        match data {
-            InputDataSetData::Generated { description, table } => {
-                numeric::from_table::<i64>(&description, table)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            InputDataSetData::File { path } => {
-                load::load(std::path::Path::new(&path)).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-        }
+        let InputDataSetData::Generated { description, table } = data;
+        numeric::from_table::<i64>(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
 impl BenchItem for f64 {
     const DATA_TYPE: &'static str = "f64";
     fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
-        match data {
-            InputDataSetData::Generated { description, table } => {
-                numeric::from_table::<f64>(&description, table)
-                    .map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            // `.bin` is a raw i64 stream with no header; reading it as f64
-            // would reinterpret the bytes, not convert them.
-            InputDataSetData::File { path } => Err(anyhow::anyhow!(
-                "--input {path} is a raw i64 stream; generate the dataset \
-                 instead to benchmark f64"
-            )),
-        }
+        let InputDataSetData::Generated { description, table } = data;
+        numeric::from_table::<f64>(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
@@ -139,15 +98,7 @@ impl BenchItem for f64 {
 impl<V: ColumnItem> BenchItem for Labeled<V> {
     const DATA_TYPE: &'static str = V::NAME;
     fn materialise(data: InputDataSetData) -> Result<Materialised<Self>> {
-        match data {
-            InputDataSetData::Generated { description, table } => {
-                labeled::from_table::<V>(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
-            }
-            InputDataSetData::File { path } => Err(anyhow::anyhow!(
-                "--input {path} is a single-column stream; this row ingests \
-                 labelled records, so it needs a `--spec` description with a \
-                 label column before the value column"
-            )),
-        }
+        let InputDataSetData::Generated { description, table } = data;
+        labeled::from_table::<V>(&description, table).map_err(|e| anyhow::anyhow!("{}", e))
     }
 }

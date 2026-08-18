@@ -70,18 +70,12 @@ pub struct SketchbenchArgs {
     #[arg(long, default_value_t = 1, help_heading = "Construction")]
     pub workers: usize,
 
-    /// Load the dataset from a file instead of generating it. Format comes
-    /// from the extension: `.bin` (little-endian i64), `.pcap` (IPv4 src addr),
-    /// `.csv` (column 0 below a header). Wins over `--spec` and over the inline
-    /// options.
-    #[arg(long, help_heading = "Dataset")]
-    pub input: Option<String>,
     /// Generate in-process from a `datagen` spec file (examples in
-    /// `configs/datagen/`). Wins over the inline options; `--input` wins over it.
+    /// `configs/datagen/`). Wins over the inline options.
     /// A *list* of specs is a multi-column stream, which only `hydra-*` targets take.
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
-    /// Inline shape: "uniform" or "zipf". Ignored when `--input` or `--spec` is
+    /// Inline shape: "uniform" or "zipf". Ignored when `--spec` is
     /// set.
     #[arg(long, default_value = "uniform", help_heading = "Dataset")]
     pub dataset: String,
