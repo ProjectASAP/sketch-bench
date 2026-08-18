@@ -1,5 +1,5 @@
 //! Thin newtypes over each sketch, one directory per algorithm and one file per
-//! library, each owning its `build_*` / `insert_*` / `ask_*` / `memory_*`. Not a
+//! library, each owning its `build_*` / `insert_*` / `query_*` / `memory_*`. Not a
 //! trait, so no two files must agree on a signature; they capture nothing.
 
 // One directory per algorithm; inside each, one file per library. A reader
@@ -11,13 +11,95 @@ pub mod cs;
 pub mod hll;
 pub mod hydra;
 pub mod kll;
+pub mod univmon;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;
 pub mod polars_shared;
 
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
+use aqpbm_datagen::DataGenError;
 use asap_sketchlib::impl_fixed_matrix;
+use std::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
+
+/// Why a row could not be built at the requested config. The wrappers' own
+/// error: nothing here knows what a benchmark is, so nothing here reports in
+/// the framework's vocabulary.
+#[derive(Debug)]
+pub struct BuildError(pub String);
+
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl From<DataGenError> for BuildError {
+    fn from(e: DataGenError) -> Self {
+        BuildError(e.to_string())
+    }
+}
+
+/// One primed run of an operation: a sketch is already built, and calling this
+/// does the work. It hands back the footprint of the sketch it drops on the way
+/// out, which is the one thing a caller cannot read once the sketch is gone.
+pub type Pass = Box<dyn FnOnce() -> usize>;
+
+/// The same, for an operation that answers: the answers in probe order, plus
+/// the footprint. Scoring them is the caller's business, not the sketch's.
+pub type QueryPass<A> = Box<dyn FnOnce() -> (Vec<A>, usize)>;
+
+/// The same work, one unit at a time, for a caller that times each call. The
+/// units are the row's own — items for an insert, shards for a fold — and the
+/// stream they come from stays inside the closure.
+pub struct StepPass {
+    /// How many calls make one whole pass.
+    pub steps: usize,
+    /// One unit of work; `i` counts from zero.
+    pub step: Box<dyn FnMut(usize)>,
+    /// Read once the calls are done.
+    pub footprint: Box<dyn Fn() -> usize>,
+}
+
+/// A sketch shared by the two halves of a [`StepPass`]: driven by `step`, read
+/// by `footprint`. Both hold it, so it is counted; each call borrows for the
+/// length of one unit of work.
+pub type Shared<S> = Rc<RefCell<S>>;
+
+/// Prime `passes` runs of an insert: the stream is fed to a sketch of its own
+/// each time.
+pub type InsertBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
+
+/// The same insert, driven per item.
+pub type InsertStepBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<StepPass>, BuildError>;
+
+/// The same for a row whose ingest is one call over the whole stream: it reads
+/// the worker count, which no other row does.
+pub type ParallelInsertBody =
+    fn(&ParamSet, usize, Rc<Vec<i64>>, usize) -> Result<Vec<Pass>, BuildError>;
+
+/// Prime `passes` runs of a query: each sketch is built and fed here, so the
+/// pass asks and only asks.
+pub type QueryBody<I, P, A> =
+    fn(&ParamSet, Rc<Vec<I>>, Rc<Vec<P>>, usize) -> Result<Vec<QueryPass<A>>, BuildError>;
+
+/// Prime `passes` runs of a fold over `shards` sketches, each already fed.
+pub type MergeBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<Pass>, BuildError>;
+
+/// The same fold, driven one shard at a time.
+pub type MergeStepBody<I> =
+    fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<StepPass>, BuildError>;
+
+/// Both forms of a row's fold: as one pass, and one shard at a time. A row
+/// either supplies both or has no merge at all.
+pub type Folds<I> = (MergeBody<I>, MergeStepBody<I>);
+
+/// Prime `passes` runs of the step that makes a fed sketch ready to answer.
+pub type PrepareBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
 
 // The library types a caller has to *name* to select one of the monomorphisations
 // below. Re-exported so picking a shape or a precision does not mean depending on
@@ -41,7 +123,7 @@ pub const PARALLEL_COLS: usize = 32768;
 /// Contiguous ranges, one per worker. `n.max(1)` because a run of no threads is
 /// not a run, and the empty-dataset case still hands back one part rather than
 /// none.
-pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
+pub fn partition<T>(items: &[T], n: usize) -> Vec<&[T]> {
     let n = n.max(1);
     let chunk = items.len().div_ceil(n);
     if chunk == 0 {

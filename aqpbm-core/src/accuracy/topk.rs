@@ -4,16 +4,31 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::marker::PhantomData;
+
+use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
 use super::GroundTruth;
 
-pub struct TopkGT {
+pub struct TopkGT<K> {
     pub k: usize,
+    pub column: usize,
+    key: PhantomData<K>,
 }
 
-impl<K> GroundTruth<K> for TopkGT
+impl<K> TopkGT<K> {
+    pub fn over_column(k: usize, column: usize) -> Self {
+        Self {
+            k,
+            column,
+            key: PhantomData,
+        }
+    }
+}
+
+impl<K> GroundTruth for TopkGT<K>
 where
-    K: Eq + Hash + Ord + Clone,
+    K: ColumnItem + Eq + Hash + Ord,
 {
     /// The true k heaviest keys, in the total order every top-k impl ranks by.
     type Truth = Vec<(K, u64)>;
@@ -21,7 +36,8 @@ where
     type Probe = ();
     type Answer = Vec<(K, u64)>;
 
-    fn truth(&self, items: &[K]) -> Vec<(K, u64)> {
+    fn truth(&self, table: &GeneratedTable) -> Result<Vec<(K, u64)>, DataGenError> {
+        let items = K::column_slice(table.column(self.column)?)?;
         let mut exact: HashMap<K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it.clone()).or_insert(0) += 1;
@@ -32,7 +48,7 @@ where
         // order, and an exact source scores below 1.0 against itself.
         exact_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         exact_vec.truncate(self.k);
-        exact_vec
+        Ok(exact_vec)
     }
 
     fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
@@ -77,6 +93,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accuracy::table_of;
+    use aqpbm_datagen::ColumnData;
     use std::collections::BinaryHeap;
 
     /// An exact top-k by hand: a `HashMap` counter plus a heap. Exact by
@@ -151,7 +169,7 @@ mod tests {
 
     /// How the double is asked. `k` is the comparator's, so the closure reads
     /// it from the probe's own comparator rather than from the sketch.
-    fn ask_exact(s: &mut ExactTopK, _: &()) -> Vec<(i64, u64)> {
+    fn query_exact(s: &mut ExactTopK, _: &()) -> Vec<(i64, u64)> {
         s.estimate_topk(3)
     }
 
@@ -161,10 +179,11 @@ mod tests {
     #[test]
     fn an_exact_source_scores_precision_and_recall_of_one() {
         let items = tied_at_the_boundary();
-        let gt = TopkGT { k: 3 };
+        let table = table_of(&["key"], vec![ColumnData::Int64(items.clone())]);
+        let gt = TopkGT::<i64>::over_column(3, 0);
         for _ in 0..32 {
             let cmp =
-                crate::accuracy::score_with(&gt, &ask_exact, &mut exact_source(&items), &items);
+                crate::accuracy::score_with(&gt, &query_exact, &mut exact_source(&items), &table);
             assert_eq!(cmp["precision_at_k"], 1.0, "{:?}", cmp);
             assert_eq!(cmp["recall_at_k"], 1.0, "{:?}", cmp);
         }
@@ -175,11 +194,12 @@ mod tests {
     fn scoring_the_same_sketch_twice_gives_the_same_answer() {
         let items = tied_at_the_boundary();
         let sketch = exact_source(&items);
-        let gt = TopkGT { k: 3 };
-        let first = crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items);
+        let table = table_of(&["key"], vec![ColumnData::Int64(items)]);
+        let gt = TopkGT::<i64>::over_column(3, 0);
+        let first = crate::accuracy::score_with(&gt, &query_exact, &mut sketch.clone(), &table);
         for _ in 0..32 {
             assert_eq!(
-                crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items),
+                crate::accuracy::score_with(&gt, &query_exact, &mut sketch.clone(), &table),
                 first
             );
         }

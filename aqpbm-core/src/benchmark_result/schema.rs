@@ -1,17 +1,15 @@
 //! The JSONL report schema — the single serialised record shape
 //! shared by offline benchmarks, runtime samplers, and the
 //! visualisation layer. Current version: [`SCHEMA_VERSION`].
-//!
-//! See `docs/archive/SCHEMA_V1.md` for the v1 field list this grew from.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::dataset::DatasetDescription;
+use aqpbm_datagen::TableDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// A single record in the JSONL report stream. One record
 /// per benchmark / runtime window.
@@ -34,14 +32,14 @@ pub struct Record {
     #[serde(default)]
     pub language: Language,
     /// Algorithm-specific construction params used for this run, populated by
-    /// `bench` from the run's `ParamSet`.
+    /// `bench` from the run's construction parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
     /// The data this run was measured over. The wire name stays `workload` while
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub dataset: DatasetDescription,
+    pub input_dataset: TableDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,7 +160,7 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
     /// Present, and `true`, whenever a merge was measured. Never `false`: a row
-    /// that provides no merge is refused in `ops::squares_for` before anything
+    /// that provides no merge is refused where the closures are built, before anything
     /// is timed, so the gap shows up as an error naming the row rather than as a
     /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,7 +221,7 @@ pub struct MergedRecord {
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub dataset: DatasetDescription,
+    pub input_dataset: TableDescription,
 
     pub memory_bytes: Option<u64>,
     /// Net bytes the tracking allocator attributes to this sketch's lifetime —
@@ -333,7 +331,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        dataset: DatasetDescription,
+        input_dataset: TableDescription,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -344,7 +342,7 @@ impl Record {
             impl_name: impl_name.into(),
             language: Language::Rust,
             sketch_config: None,
-            dataset,
+            input_dataset,
             mode,
             runs,
             bench: None,
@@ -362,18 +360,29 @@ impl Record {
 mod tests {
     use super::*;
 
+    /// A one-column description, the shape most records carry.
+    fn table() -> TableDescription {
+        TableDescription::single(
+            "key",
+            aqpbm_datagen::ColumnSpec {
+                distribution: aqpbm_datagen::DataDistribution::Zipf(aqpbm_datagen::ZipfParameter {
+                    skewness: 1.1,
+                    population_size: 10_000,
+                    seed: 42,
+                }),
+                shift: None,
+                cardinality: None,
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+            },
+            1_000_000,
+        )
+    }
+
     #[test]
     fn record_roundtrips_through_json() {
-        let wd = DatasetDescription {
-            shape: "zipf".into(),
-            size: 1_000_000,
-            cardinality: Some(10_000),
-            zipf_s: Some(1.1),
-            source_path: None,
-            seed: Some(42),
-            spec: None,
-        };
-        let mut rec = Record::new("hll", "oxide", wd, Mode::Bench, 10);
+        let mut rec = Record::new("hll", "oxide", table(), Mode::Bench, 10);
         rec.bench = Some(BenchSection {
             metric: None,
             throughput_items_per_sec: Some(RunStats {
@@ -397,24 +406,27 @@ mod tests {
     /// wire as `RuntimeRecord.schema_version` — so a bump is a contract change.
     #[test]
     fn schema_version_is_v3() {
-        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(SCHEMA_VERSION, 4);
     }
 
     #[test]
     fn language_defaults_to_rust_when_absent() {
         // A v2 JSONL record produced before the `language` field
         // existed must still deserialise, with language = Rust.
-        let legacy = r#"{
+        let legacy = format!(
+            r#"{{
             "schema_version": 2,
             "sketch": "hll",
             "impl": "oxide",
-            "workload": {"shape": "uniform", "size": 100, "seed": 1},
+            "workload": {},
             "mode": "bench",
             "runs": 1,
             "source": "cli",
             "timestamp": "2025-01-01T00:00:00Z"
-        }"#;
-        let rec: Record = serde_json::from_str(legacy).unwrap();
+        }}"#,
+            serde_json::to_string(&table()).unwrap()
+        );
+        let rec: Record = serde_json::from_str(&legacy).unwrap();
         assert_eq!(rec.language, Language::Rust);
     }
 
@@ -423,8 +435,10 @@ mod tests {
     /// field-name drift without compiling that side.
     #[test]
     fn cpp_bench_jsonl_parses() {
-        let cpp_emitted = r#"{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":{"shape":"file","size":1000000,"source_path":"input/benchmark_data_1m_int64.bin"},"mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;
-        let rec: Record = serde_json::from_str(cpp_emitted).unwrap();
+        let cpp_emitted = r#"{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":"#.to_string()
+            + &serde_json::to_string(&table()).unwrap()
+            + r#","mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;
+        let rec: Record = serde_json::from_str(&cpp_emitted).unwrap();
         assert_eq!(rec.sketch, "kll");
         assert_eq!(rec.impl_name, "datasketches");
         assert_eq!(rec.language, Language::Cpp);
@@ -441,16 +455,7 @@ mod tests {
 
     #[test]
     fn cpp_record_roundtrips() {
-        let wd = DatasetDescription {
-            shape: "file".into(),
-            size: 1_000_000,
-            cardinality: None,
-            zipf_s: None,
-            source_path: Some("input/benchmark_data_1m_int64.bin".into()),
-            seed: None,
-            spec: None,
-        };
-        let mut rec = Record::new("kll", "datasketches", wd, Mode::Bench, 10);
+        let mut rec = Record::new("kll", "datasketches", table(), Mode::Bench, 10);
         rec.language = Language::Cpp;
         rec.source = Source::CppBench;
         let s = rec.to_jsonl();

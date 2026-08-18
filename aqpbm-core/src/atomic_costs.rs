@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::report::{CpuTime, MergedRecord, RunStats};
+use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
 
 /// One row: measured atomic costs for one (sketch family, construction
 /// params) point, at the grid resolution ASAPQuery's `candidate_gen.rs`
@@ -137,11 +137,11 @@ pub fn reduce_all(records: &[MergedRecord]) -> (AtomicCostTable, Vec<(usize, Ski
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::DatasetDescription;
-    use crate::report::{
+    use crate::benchmark_result::{
         InsertMetrics, Language, MergeMetrics, Mode, PrepareMetrics, QueryMetrics, Source,
         SCHEMA_VERSION,
     };
+    use aqpbm_datagen::TableDescription;
 
     fn stats(mean: f64) -> RunStats {
         RunStats {
@@ -159,16 +159,25 @@ mod tests {
         }
     }
 
-    fn dataset() -> DatasetDescription {
-        DatasetDescription {
-            shape: "uniform".into(),
-            size: 1_000_000,
-            cardinality: Some(100_000),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(42),
-            spec: None,
-        }
+    fn dataset() -> TableDescription {
+        TableDescription::single(
+            "key",
+            aqpbm_datagen::ColumnSpec {
+                distribution: aqpbm_datagen::DataDistribution::Uniform(
+                    aqpbm_datagen::UniformParameter {
+                        lower_bound: 0.0,
+                        upper_bound: 100_000.0,
+                        seed: 42,
+                    },
+                ),
+                shift: None,
+                cardinality: Some(100_000),
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+            },
+            1_000_000,
+        )
     }
 
     /// A fully-populated record: 1M items inserted in 1000ms of wall time at
@@ -184,7 +193,7 @@ mod tests {
             runs: 5,
             source: Source::Cli,
             sketch_config: Some(serde_json::json!({"algorithm": "cms", "params": {"rows": 3, "cols": 1024}})),
-            dataset: dataset(),
+            input_dataset: dataset(),
             memory_bytes: Some(12_288),
             heap_bytes_net: None,
             heap_bytes_peak: None,

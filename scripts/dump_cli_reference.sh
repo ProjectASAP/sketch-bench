@@ -20,9 +20,6 @@ B=target/debug/approxbench
 SUBCOMMANDS=(
     "sketchbench"
     "sketchprofile"
-    "dataset"
-    "dataset generate"
-    "dataset describe"
 )
 
 dump() {

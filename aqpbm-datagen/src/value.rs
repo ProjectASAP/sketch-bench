@@ -43,7 +43,7 @@ impl ColumnData {
     }
 }
 
-/// Peel by ownership, one method per variant. A mismatch is an error naming both
+/// Peel by ownership or read by borrow, one method per variant. A mismatch is an error naming both
 /// types: it means the description's `data_type` and the consumer's item type
 /// disagree, and coercing would run the measurement over values nobody asked for.
 impl ColumnData {
@@ -75,6 +75,34 @@ impl ColumnData {
         }
     }
 
+    pub fn as_i64(&self) -> Result<&[i64], DataGenError> {
+        match self {
+            ColumnData::Int64(v) => Ok(v),
+            other => Err(other.mismatch("i64")),
+        }
+    }
+
+    pub fn as_u64(&self) -> Result<&[u64], DataGenError> {
+        match self {
+            ColumnData::Unsigned64(v) => Ok(v),
+            other => Err(other.mismatch("u64")),
+        }
+    }
+
+    pub fn as_f64(&self) -> Result<&[f64], DataGenError> {
+        match self {
+            ColumnData::Float64(v) => Ok(v),
+            other => Err(other.mismatch("f64")),
+        }
+    }
+
+    pub fn as_string(&self) -> Result<&[String], DataGenError> {
+        match self {
+            ColumnData::String(v) => Ok(v),
+            other => Err(other.mismatch("string")),
+        }
+    }
+
     fn mismatch(&self, wanted: &'static str) -> DataGenError {
         DataGenError::TypeMismatch {
             held: self.kind(),
@@ -93,12 +121,17 @@ pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     /// Peel a column at this type. The one place a consumer's item type meets a
     /// description's `data_type`: a mismatch is an error naming both.
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError>;
+
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError>;
 }
 
 impl ColumnItem for i64 {
     const NAME: &'static str = "i64";
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_i64()
+    }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_i64()
     }
 }
 
@@ -107,6 +140,9 @@ impl ColumnItem for u64 {
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_u64()
     }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_u64()
+    }
 }
 
 impl ColumnItem for f64 {
@@ -114,12 +150,18 @@ impl ColumnItem for f64 {
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_f64()
     }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_f64()
+    }
 }
 
 impl ColumnItem for String {
     const NAME: &'static str = "string";
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError> {
         column.into_string()
+    }
+    fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
+        column.as_string()
     }
 }
 
