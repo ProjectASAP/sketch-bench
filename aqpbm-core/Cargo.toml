@@ -24,6 +24,11 @@ heap-jemalloc = ["dep:tikv-jemalloc-ctl"]
 # its `#[global_allocator]` for counters to advance — see
 # `aqpbm-cli`'s allocator setup. Off → heap_bytes_* = None.
 heap-track = []
+# Derive `JsonSchema` on the report types and build the
+# `export_schema` example. Off by default so the proc-macro and its
+# dependencies stay out of the embedded build: nothing at runtime
+# needs it, only `scripts/export_schema.sh` does.
+schema = ["dep:schemars"]
 
 [dependencies]
 aqpbm-datagen.workspace = true
@@ -38,6 +43,7 @@ rand = { workspace = true }
 rand_xoshiro = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
+schemars = { workspace = true, optional = true }
 chrono.workspace = true
 tikv-jemalloc-ctl = { workspace = true, optional = true }
 

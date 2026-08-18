@@ -26,6 +26,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 
+# JSON Schema generation for the report types, so out-of-tree readers of the
+# JSONL stream (the leaderboard) validate against a schema derived from these
+# structs instead of a hand-copied field list. Opt-in: see aqpbm-core's
+# `schema` feature.
+schemars = { version = "1", features = ["chrono04"] }
+
 # Time / stats.
 chrono = { version = "0.4", features = ["serde"] }
 hdrhistogram = "7"

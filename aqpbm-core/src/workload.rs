@@ -17,6 +17,7 @@ use crate::binfile;
 /// Human-friendly description of a workload — serialised into
 /// every report so a JSONL record can be re-run without
 /// external metadata.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadDescription {
     pub shape: String, // "uniform" | "zipf" | "normal" | "columns" | "file"
