@@ -1,6 +1,6 @@
 //! Scoring a sketch against an exact answer: the [`GroundTruth`] trait and the
 //! comparators that implement it. A comparator knows the *statistic*, not how to
-//! ask a sketch anything — that is the row's own closure, driven by `ops`.
+//! query a sketch — that is the row's own closure, driven by `measurement`.
 
 use std::collections::BTreeMap;
 
@@ -40,13 +40,13 @@ pub trait GroundTruth<I> {
     ) -> BTreeMap<String, f64>;
 }
 
-/// Drive one comparator end to end — truth, probes, ask, score — and hand back
+/// Drive one comparator end to end — truth, probes, query, score — and hand back
 /// the metric map. Test-only: production runs the same sequence inside
-/// `target::Target::body`, where it sits within the region `measure` times.
+/// `measurement::query_measurement`, where it sits within the region `measure` times.
 #[cfg(test)]
 pub(crate) fn score_with<S, I, G, A>(
     gt: &G,
-    ask: &A,
+    query: &A,
     sketch: &mut S,
     items: &[I],
 ) -> BTreeMap<String, f64>
@@ -56,6 +56,6 @@ where
 {
     let truth = gt.truth(items);
     let probes = gt.probes(&truth);
-    let answers: Vec<G::Answer> = probes.iter().map(|p| ask(sketch, p)).collect();
+    let answers: Vec<G::Answer> = probes.iter().map(|p| query(sketch, p)).collect();
     gt.score(&truth, &probes, &answers)
 }

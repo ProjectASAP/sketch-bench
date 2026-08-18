@@ -20,7 +20,6 @@ pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBuc
 
 pub fn build_hll_lib<R: asap_sketchlib::HllRegisterStorage>(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<HllLib<R>, RunError> {
     let p: HllParams = config.parse()?;
     // The registry picked `R` off this same `lg_k`, so this only fires for a
@@ -53,7 +52,6 @@ pub struct HllLibHip<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::Hll
 
 pub fn build_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<HllLibHip<R>, RunError> {
     let p: HllParams = config.parse()?;
     if p.lg_k as usize != R::PRECISION {
@@ -98,11 +96,14 @@ pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
     sketch.inner.insert(&asap_sketchlib::DataInput::I64(*v));
 }
 
-pub fn ask_hll_lib<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLib<R>, _: &()) -> f64 {
+pub fn query_hll_lib<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLib<R>, _: &()) -> f64 {
     s.estimate_distinct()
 }
 
-pub fn ask_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(s: &mut HllLibHip<R>, _: &()) -> f64 {
+pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
+    s: &mut HllLibHip<R>,
+    _: &(),
+) -> f64 {
     s.estimate_distinct()
 }
 
@@ -113,7 +114,6 @@ const PARALLEL_HLL_LG_K: u8 = 14;
 
 /// HLL, parallel-insert ErtlMLE FastPath.
 pub struct ParallelHllFastPath {
-    buf: Vec<i64>,
     workers: usize,
 }
 
@@ -125,13 +125,12 @@ pub fn build_parallel_hll_fast_path(
     // `HyperLogLog<ErtlMLE>` is the P14 alias, so this row exists at one
     // precision. Refuse the others instead of running at 14 under their name.
     if p.lg_k != PARALLEL_HLL_LG_K {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "parallel HLL: fixed at lg_k={PARALLEL_HLL_LG_K}, requested lg_k={}",
             p.lg_k
         )));
     }
     Ok(ParallelHllFastPath {
-        buf: Vec::new(),
         workers: workers.max(1),
     })
 }
@@ -141,7 +140,6 @@ pub fn memory_parallel_hll_fast_path(sketch: &ParallelHllFastPath) -> usize {
     // `build` has already refused any lg_k other than the one baked in, so
     // this is the precision that ran and not a coarse upper bound.
     sketch.workers * (1usize << PARALLEL_HLL_LG_K)
-        + sketch.buf.capacity() * std::mem::size_of::<i64>()
 }
 
 fn run_parallel_hll(items: &[i64], workers: usize) {
@@ -164,10 +162,8 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
     });
 }
 
-pub fn insert_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath, v: &i64) {
-    sketch.buf.push(*v);
-}
-
-pub fn prepare_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath) {
-    run_parallel_hll(&sketch.buf, sketch.workers);
+/// The whole stream in one call: this row's ingest *is* the parallel fan-out,
+/// so there is no per-item step to buffer and none to time.
+pub fn insert_parallel_hll_fast_path(sketch: &mut ParallelHllFastPath, items: &[i64]) {
+    run_parallel_hll(items, sketch.workers);
 }

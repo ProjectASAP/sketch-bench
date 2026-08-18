@@ -71,6 +71,9 @@ impl<T: ColumnItem> InputDataSet for NumericInputDataSet<T> {
     fn items(&self) -> &[T] {
         &self.items
     }
+    fn into_parts(self) -> (InputDataSetDescription, Vec<T>) {
+        (self.description, self.items)
+    }
 }
 
 #[cfg(test)]

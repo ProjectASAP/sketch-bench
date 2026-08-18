@@ -17,10 +17,10 @@ pub struct HllOxide {
     lg_k: u8,
 }
 
-pub fn build_hll_oxide(config: &ParamSet, _workers: usize) -> Result<HllOxide, RunError> {
+pub fn build_hll_oxide(config: &ParamSet) -> Result<HllOxide, RunError> {
     let p: HllParams = config.parse()?;
     let inner = sketch_oxide::cardinality::HyperLogLog::new(p.lg_k)
-        .map_err(|e| RunError::Target(format!("oxide HLL rejected lg_k={}: {e:?}", p.lg_k)))?;
+        .map_err(|e| RunError::Sketch(format!("oxide HLL rejected lg_k={}: {e:?}", p.lg_k)))?;
     Ok(HllOxide {
         inner,
         lg_k: p.lg_k,
@@ -48,6 +48,6 @@ pub fn merge_hll_oxide(into: &mut HllOxide, from: &HllOxide) {
         .expect("both operands built from one ParamSet, so lg_k matches");
 }
 
-pub fn ask_hll_oxide(sketch: &mut HllOxide, _: &()) -> f64 {
+pub fn query_hll_oxide(sketch: &mut HllOxide, _: &()) -> f64 {
     sketch.estimate_distinct()
 }

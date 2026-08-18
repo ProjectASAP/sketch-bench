@@ -1,14 +1,14 @@
 //! `aqpbm-core` — the benchmark framework: everything needed to measure *a*
 //! sketch, nothing that knows *which* sketches exist. See `docs/aqpbm-core.md`.
-//! Hand a sketch's closures to [`target::Target`]; [`measure()`](fn@measure) times them.
+//! Hand a sketch's closures to [`measurement`]; [`measure()`](fn@measure) times them.
 
 pub mod accuracy;
 pub mod benchmark_result;
 pub mod error;
 pub mod input_dataset;
 pub mod measure;
+pub mod measurement;
 pub mod metrics;
-pub mod target;
 
 /// Column shapes and the generate-then-materialise step, shared by the tests of
 /// every module that touches an input dataset.
@@ -29,15 +29,13 @@ pub use benchmark_result::{
     Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
 };
 pub use error::RunError;
-// `InputDataSetData` is deliberately absent: it is the intermediate inside
-// `InputDataSetSpec::build`, not a step a caller performs. See `input_dataset::spec`.
+// `InputDataSetData` is what a frontend generates and a row materialises: the
+// hand-off between the two halves of `InputDataSetSpec::build`, so both ends of
+// it need to name the type. See `input_dataset::spec`.
 pub use input_dataset::{
-    BenchItem, I64InputDataSet, InputDataSet, InputDataSetDescription, InputDataSetSpec, Labeled,
-    LabeledInputDataSet,
+    BenchItem, I64InputDataSet, InputDataSet, InputDataSetData, InputDataSetDescription,
+    InputDataSetSpec, Labeled, LabeledInputDataSet,
 };
 pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
+pub use measurement::{Measurement, MIN_MERGE_SHARDS};
 pub use metrics::{LatencyRecorder, LatencySnapshot, MetricsMask, RunMetrics};
-pub use target::{
-    open_target_scored, open_target_unscored, Measurement, NoScore, Opening, Target,
-    MIN_MERGE_SHARDS,
-};

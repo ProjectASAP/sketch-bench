@@ -127,7 +127,7 @@ where
 // ---------- helpers ----------
 
 /// Rank error of one answer, in units of `n`. The returned value occupies the
-/// rank interval `[lower, upper]` — every rank a tie run spans — so a target
+/// rank interval `[lower, upper]` — every rank a tie run spans — so a row
 /// inside it is not an error, and outside it the distance to the near edge.
 pub(crate) fn rank_err(sorted: &[f64], est: f64, q: f64) -> f64 {
     let nf = sorted.len() as f64;

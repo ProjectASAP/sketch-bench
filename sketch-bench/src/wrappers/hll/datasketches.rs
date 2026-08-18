@@ -23,10 +23,7 @@ pub struct HllDatasketches {
 /// instead of a set of types.
 pub const DS_LG_K: (u8, u8) = (4, 21);
 
-pub fn build_hll_datasketches(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<HllDatasketches, RunError> {
+pub fn build_hll_datasketches(config: &ParamSet) -> Result<HllDatasketches, RunError> {
     let p: HllParams = config.parse()?;
     require_range("datasketches HLL", "lg_k", p.lg_k, DS_LG_K.0, DS_LG_K.1)?;
     let hll_type = ::datasketches::hll::HllType::Hll8;
@@ -65,6 +62,6 @@ pub fn merge_hll_datasketches(into: &mut HllDatasketches, from: &HllDatasketches
     into.inner = union.get_result(into.hll_type);
 }
 
-pub fn ask_hll_datasketches(sketch: &mut HllDatasketches, _: &()) -> f64 {
+pub fn query_hll_datasketches(sketch: &mut HllDatasketches, _: &()) -> f64 {
     sketch.estimate_distinct()
 }

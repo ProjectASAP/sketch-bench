@@ -15,12 +15,12 @@ pub struct HydraCms {
     params: HydraCmsParams,
 }
 
-pub fn build_hydra_cms(config: &ParamSet, _workers: usize) -> Result<HydraCms, RunError> {
+pub fn build_hydra_cms(config: &ParamSet) -> Result<HydraCms, RunError> {
     let p: HydraCmsParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-cms")?;
     for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
         if v == 0 {
-            return Err(RunError::Target(format!("hydra-cms: {name} must be > 0")));
+            return Err(RunError::Sketch(format!("hydra-cms: {name} must be > 0")));
         }
     }
     let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
@@ -55,7 +55,7 @@ pub struct HydraHll {
     params: HydraHllParams,
 }
 
-pub fn build_hydra_hll(config: &ParamSet, _workers: usize) -> Result<HydraHll, RunError> {
+pub fn build_hydra_hll(config: &ParamSet) -> Result<HydraHll, RunError> {
     let p: HydraHllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-hll")?;
     // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
@@ -89,14 +89,14 @@ pub struct HydraKll {
     params: HydraKllParams,
 }
 
-pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, RunError> {
+pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, RunError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
     // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
     // clamps `k` to its own range without saying so. Refuse for the same reason
     // those rows do: the grid would be built at a `cell_k` the record misnames.
     if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k) {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
             p.cell_k,
             crate::wrappers::kll::LIB_K_MIN,
@@ -161,7 +161,7 @@ pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {
         .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
+pub fn query_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
     sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
 }
 
@@ -169,10 +169,10 @@ pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
 // `&<SubpopCardinalityGT as GroundTruth<_>>::Probe`, and that associated type is
 // `String`. A `&str` here does not satisfy the bound.
 #[allow(clippy::ptr_arg)]
-pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
+pub fn query_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
     sketch.estimate_subpop_cardinality(&[probe.as_str()])
 }
 
-pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
+pub fn query_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
     sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
 }

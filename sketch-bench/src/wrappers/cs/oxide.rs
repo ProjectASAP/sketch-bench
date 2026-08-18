@@ -15,11 +15,11 @@ pub struct CsOxide {
     inner: sketch_oxide::frequency::CountSketch,
 }
 
-pub fn build_cs_oxide(config: &ParamSet, _workers: usize) -> Result<CsOxide, RunError> {
+pub fn build_cs_oxide(config: &ParamSet) -> Result<CsOxide, RunError> {
     let p: CountSketchParams = config.parse()?;
     let (epsilon, delta) = dims_to_err(p.rows, p.cols);
     let inner = sketch_oxide::frequency::CountSketch::new(epsilon, delta).map_err(|e| {
-        RunError::Target(format!(
+        RunError::Sketch(format!(
             "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
         ))
     })?;
@@ -57,6 +57,6 @@ pub fn merge_cs_oxide(into: &mut CsOxide, from: &CsOxide) {
         .expect("both operands built from one ParamSet, so rows/cols match");
 }
 
-pub fn ask_cs_oxide(sketch: &mut CsOxide, key: &i64) -> u64 {
+pub fn query_cs_oxide(sketch: &mut CsOxide, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }

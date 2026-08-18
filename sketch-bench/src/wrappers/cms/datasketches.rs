@@ -24,10 +24,7 @@ pub struct CmsDatasketches {
     cols: usize,
 }
 
-pub fn build_cms_datasketches(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<CmsDatasketches, RunError> {
+pub fn build_cms_datasketches(config: &ParamSet) -> Result<CmsDatasketches, RunError> {
     let p: CmsParams = config.parse()?;
     require_range(
         "datasketches CMS",
@@ -48,7 +45,7 @@ pub fn build_cms_datasketches(
     // small number that passes.
     let entries = p.rows.saturating_mul(p.cols);
     if entries >= DS_CMS_MAX_ENTRIES {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "datasketches CMS: rows x cols = {entries} counters, and this library \
                  caps a table at {DS_CMS_MAX_ENTRIES}"
         )));
@@ -90,6 +87,6 @@ pub fn merge_cms_datasketches(into: &mut CmsDatasketches, from: &CmsDatasketches
     into.inner.merge(&from.inner);
 }
 
-pub fn ask_cms_datasketches(sketch: &mut CmsDatasketches, key: &i64) -> u64 {
+pub fn query_cms_datasketches(sketch: &mut CmsDatasketches, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }

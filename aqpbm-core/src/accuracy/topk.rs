@@ -151,7 +151,7 @@ mod tests {
 
     /// How the double is asked. `k` is the comparator's, so the closure reads
     /// it from the probe's own comparator rather than from the sketch.
-    fn ask_exact(s: &mut ExactTopK, _: &()) -> Vec<(i64, u64)> {
+    fn query_exact(s: &mut ExactTopK, _: &()) -> Vec<(i64, u64)> {
         s.estimate_topk(3)
     }
 
@@ -164,7 +164,7 @@ mod tests {
         let gt = TopkGT { k: 3 };
         for _ in 0..32 {
             let cmp =
-                crate::accuracy::score_with(&gt, &ask_exact, &mut exact_source(&items), &items);
+                crate::accuracy::score_with(&gt, &query_exact, &mut exact_source(&items), &items);
             assert_eq!(cmp["precision_at_k"], 1.0, "{:?}", cmp);
             assert_eq!(cmp["recall_at_k"], 1.0, "{:?}", cmp);
         }
@@ -176,10 +176,10 @@ mod tests {
         let items = tied_at_the_boundary();
         let sketch = exact_source(&items);
         let gt = TopkGT { k: 3 };
-        let first = crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items);
+        let first = crate::accuracy::score_with(&gt, &query_exact, &mut sketch.clone(), &items);
         for _ in 0..32 {
             assert_eq!(
-                crate::accuracy::score_with(&gt, &ask_exact, &mut sketch.clone(), &items),
+                crate::accuracy::score_with(&gt, &query_exact, &mut sketch.clone(), &items),
                 first
             );
         }

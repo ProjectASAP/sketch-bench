@@ -86,7 +86,7 @@ mod tests {
     /// How it is asked. A plain closure now — there is no trait left to
     /// declare membership through, which is exactly what the registry test
     /// `every_row_answers_its_capability` exists to compensate for.
-    fn ask_null(_: &mut NullFreq, _: &i64) -> u64 {
+    fn query_null(_: &mut NullFreq, _: &i64) -> u64 {
         0
     }
 
@@ -97,7 +97,7 @@ mod tests {
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();
         let gt = FrequencyGT;
-        let cmp = crate::accuracy::score_with(&gt, &ask_null, &mut NullFreq, &items);
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &items);
         for key in ["are_all", "are_top1", "are_top10"] {
             let v = cmp[key];
             assert!(
@@ -118,7 +118,7 @@ mod tests {
         items.extend(std::iter::repeat_n(2, 50));
         items.extend(3..=200);
         let gt = FrequencyGT;
-        let cmp = crate::accuracy::score_with(&gt, &ask_null, &mut NullFreq, &items);
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &items);
         // top1 is key 1, so AAE over it is exactly its true count.
         assert_eq!(cmp["aae_top1"], 100.0);
         assert_eq!(cmp["probes_top1"], 1.0);

@@ -1,11 +1,9 @@
 //! What a frontend asks for, as one value: a [`Requirement`], from which the
 //! answer to "can this run" follows alone. See `docs/sketch-bench.md` §Input.
 
-use aqpbm_core::target::Opening;
-
 use crate::params::ParamSet;
 
-/// The statistic a target answers, as a *value* — one variant per statistic some
+/// The statistic a row answers, as a *value* — one variant per statistic some
 /// [`GroundTruth`](aqpbm_core::GroundTruth) can score. Data, not a bound, so
 /// a registry can print it. [`Capability::None`] is measured but not scored.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -38,16 +36,16 @@ impl Capability {
         }
     }
 
-    /// Whether a comparator can score a target holding this capability. False only
+    /// Whether a comparator can score a row holding this capability. False only
     /// for [`Capability::None`], so a caller asks this instead of matching.
     pub fn scores(self) -> bool {
         !matches!(self, Capability::None)
     }
 }
 
-/// The item width a target is measured at: the one item-type choice a user
-/// still makes, since an ordered target (KLL) builds at either width and every
-/// other's is fixed by its Rust type. Here because [`Requirement`] carries it.
+/// The item width a row is measured at: the one item-type choice a user still
+/// makes, since an ordered row (KLL) builds at either width and every other's
+/// is fixed by its Rust type. Here because [`Requirement`] carries it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Numeric {
     #[default]
@@ -66,47 +64,33 @@ impl Numeric {
     }
 }
 
-/// Which target to open, and how to build it.
+/// Which row to run, and how to build it.
 ///
 /// Everything a registry needs to answer "can this run, and if so how" —
 /// deliberately without the dataset, because what to generate is an *answer*
-/// (the target's item type) rather than part of the question.
+/// (the row's item type) rather than part of the question.
 ///
-/// Deliberately *not* what to measure. Which operation, read for which metric,
-/// is one instruction handed to [`Target::body`](aqpbm_core::Target::body) per call,
-/// so it is a pair of arguments rather than a pair of sets living here.
+/// Deliberately *not* what to measure. That is the list of `(operation, metric)`
+/// pairs handed to [`rows::measurements`](crate::rows::measurements), so it is
+/// an argument rather than a set living here.
 #[derive(Clone, Debug)]
 pub struct Requirement {
-    /// Matched against a target's algorithm exactly.
+    /// Matched against a row's algorithm exactly.
     pub algorithm: String,
     /// The implementing library, and only that.
     pub impl_name: String,
-    /// Construction parameters, already parsed into the target's vocabulary.
+    /// Construction parameters, already parsed into the row's vocabulary.
     pub params: ParamSet,
     /// Which item width to build at.
     pub width: Numeric,
-    /// Worker threads the parallel targets use. A run knob that reaches the
-    /// target, so it travels with the request rather than in a whole-run config it
-    /// has no business reading.
+    /// Worker threads the parallel rows use. A run knob that reaches the row,
+    /// so it travels with the request rather than in a whole-run config it has
+    /// no business reading.
     pub workers: usize,
     /// How many shards a merge measurement folds. A knob on the measurement,
     /// not a selector: it is read only by the merge body, and the record
     /// reports the value that ran.
     pub merge_shards: usize,
-    /// A named comparator, or `None` for the target's default.
+    /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
-}
-
-impl Requirement {
-    /// The five fields the framework reads, as the value it opens a target
-    /// with. What is left here is what only the registry looks at.
-    pub fn opening(&self) -> Opening<ParamSet> {
-        Opening {
-            algorithm: self.algorithm.clone(),
-            impl_name: self.impl_name.clone(),
-            params: self.params.clone(),
-            workers: self.workers,
-            merge_shards: self.merge_shards,
-        }
-    }
 }

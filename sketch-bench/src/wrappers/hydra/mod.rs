@@ -13,7 +13,7 @@ pub mod sketchlib;
 fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), RunError> {
     for (name, v) in [("rows", rows), ("cols", cols)] {
         if v == 0 {
-            return Err(RunError::Target(format!("{algorithm}: {name} must be > 0")));
+            return Err(RunError::Sketch(format!("{algorithm}: {name} must be > 0")));
         }
     }
     Ok(())
@@ -74,15 +74,12 @@ mod tests {
     use aqpbm_core::input_dataset::Labeled;
 
     fn built() -> HydraCms {
-        build_hydra_cms(
-            &ParamSet::of(&HydraCmsParams {
-                rows: 3,
-                cols: 64,
-                cell_rows: 3,
-                cell_cols: 256,
-            }),
-            1,
-        )
+        build_hydra_cms(&ParamSet::of(&HydraCmsParams {
+            rows: 3,
+            cols: 64,
+            cell_rows: 3,
+            cell_cols: 256,
+        }))
         .expect("canonical dimensions build")
     }
 
@@ -148,7 +145,7 @@ mod tests {
             cell_rows: 3,
             cell_cols: 256,
         });
-        let Err(err) = build_hydra_cms(&bad, 1) else {
+        let Err(err) = build_hydra_cms(&bad) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -169,15 +166,15 @@ mod tests {
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical()), 1).is_ok());
-        assert!(build_hydra_hll(&ParamSet::of(&HydraHllParams::canonical()), 1).is_ok());
-        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical()), 1).is_ok());
+        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical())).is_ok());
+        assert!(build_hydra_hll(&ParamSet::of(&HydraHllParams::canonical())).is_ok());
+        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical())).is_ok());
     }
 
     // ---------- hydra-hll ----------
 
     fn built_hll() -> HydraHll {
-        build_hydra_hll(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }), 1)
+        build_hydra_hll(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }))
             .expect("canonical dimensions build")
     }
 
@@ -237,14 +234,11 @@ mod tests {
     // ---------- hydra-kll ----------
 
     fn built_kll() -> HydraKll {
-        build_hydra_kll(
-            &ParamSet::of(&HydraKllParams {
-                rows: 3,
-                cols: 64,
-                cell_k: 200,
-            }),
-            1,
-        )
+        build_hydra_kll(&ParamSet::of(&HydraKllParams {
+            rows: 3,
+            cols: 64,
+            cell_k: 200,
+        }))
         .expect("canonical dimensions build")
     }
 
@@ -312,7 +306,7 @@ mod tests {
             cols: 64,
             cell_k: 0,
         });
-        let Err(err) = build_hydra_kll(&bad, 1) else {
+        let Err(err) = build_hydra_kll(&bad) else {
             panic!("a zero cell_k must be refused, not built");
         };
         assert!(

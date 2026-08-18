@@ -16,8 +16,11 @@ pub use spec::{BenchItem, InputDataSetData, InputDataSetSpec};
 /// The abstract contract for a dataset a measurement can consume: an ordered
 /// item stream, plus the provenance that names it in the record.
 /// [`items`](Self::items) hands back a slice because it is read inside the clock.
+/// [`into_parts`](Self::into_parts) is how a caller takes the stream away
+/// without copying it — a million-row column is moved, never cloned.
 pub trait InputDataSet: Sized {
     type Item: Clone;
     fn description(&self) -> InputDataSetDescription;
     fn items(&self) -> &[Self::Item];
+    fn into_parts(self) -> (InputDataSetDescription, Vec<Self::Item>);
 }

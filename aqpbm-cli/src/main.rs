@@ -1,12 +1,11 @@
 //! `approxbench`, the approximate query processing benchmark suite.
 //!
-//! `sketchbench` measures one target of the sketch bundle, and `sketchbench
+//! `sketchbench` measures one row of the sketch bundle, and `sketchbench
 //! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs.
 
 mod cli;
 mod flatten_record;
 mod repeat;
-mod runners;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
 // pair: bare jemalloc, `TrackingAllocator` wrapping jemalloc or System, or the
@@ -31,8 +30,8 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use aqpbm_core::benchmark_result::bench_report::BenchReport;
 use aqpbm_core::measure::MeasureConfig;
+use aqpbm_core::measurement::MIN_MERGE_SHARDS;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
-use aqpbm_core::target::MIN_MERGE_SHARDS;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -47,6 +46,7 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 use aqpbm_core::input_dataset::InputDataSetSpec;
 use sketch_bench::registry;
 use sketch_bench::request::Requirement;
+use sketch_bench::rows;
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -168,8 +168,8 @@ fn list_impls() -> Result<()> {
 }
 
 /// Load a `--spec` file as one [`TableDescription`]. One reader, because one
-/// description covers both cases: a plain target takes a one-column table, and
-/// a record-ingesting target takes label columns before the value column.
+/// description covers both cases: a plain row takes a one-column table, and a
+/// record-ingesting row takes label columns before the value column.
 fn load_spec(path: &str) -> Result<InputDataSetSpec> {
     TableDescription::from_path(std::path::Path::new(path))
         .map(InputDataSetSpec::Generated)
@@ -207,7 +207,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
         }),
         other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
     };
-    // Only the targets that ingest text read this. Left `None` at the defaults
+    // Only the rows that ingest text read this. Left `None` at the defaults
     // so a run that did not ask for the axis keeps the descriptor — and so
     // the record — it had before the flags existed.
     let (min_len, max_len) = match args.key_len.as_slice() {
@@ -222,7 +222,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
         bail!("--alphabet cannot be empty");
     }
     // `Inline`, not `Generated`: these flags name a distribution and a size but
-    // no type, so the target's item type is what fills `data_type` in. The
+    // no type, so the row's item type is what fills `data_type` in. The
     // placeholder below is never the one that generates.
     Ok(InputDataSetSpec::Inline(TableDescription::single(
         "key",
@@ -319,7 +319,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // along with each one, so they are split off rather than crossed.
     let want = selected(operations_mask, metrics_mask);
     let secondary = metrics_mask & MetricsMask::SECONDARY;
-    // One invocation is one target at one parameter point over one dataset.
+    // One invocation is one row at one parameter point over one dataset.
     // `--config` is one point, or a parameterless point when omitted. Syntax
     // only here: whether the algorithm exists is `registry::check`'s answer
     // below, and the keys are type-checked at construction, where the impl
@@ -342,10 +342,20 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     };
 
     // Can this run? The registry owns the answer, asked before the dataset is
-    // generated, so an operation, metric, width or comparator this target cannot
+    // generated, so an operation, metric, width or comparator this row cannot
     // honour costs nothing to refuse. The whole list is checked at once, so a
     // request is refused as a unit rather than part-way through measuring it.
     registry::check(&req, &want).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // An empty mask on either axis names no measurements. Legal: the caller gets
+    // no records because it asked for none — and no dataset is generated for
+    // measurements nobody asked for.
+    if want.is_empty() {
+        eprintln!(
+            "approxbench: {algorithm}/{impl_name} selected no measurements; nothing to measure"
+        );
+        return Ok(());
+    }
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
@@ -356,35 +366,32 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         args.warmup_runs,
     );
 
-    // The hand-off `docs/sketch-bench.md` describes: the bundle opens the
-    // target, generating the dataset inside at its own item type. Construction
-    // failures land here, before anything is timed.
-    let mut target = runners::open_target(&algorithm, &impl_name, &req, &spec)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{algorithm}/{impl_name} is registered but not yet wired to its wrapper"
-            )
-        })?
+    // The hand-off `docs/component_walk_through.md` describes: the frontend asks
+    // the bundle what the row ingests, produces exactly that, and hands the data
+    // over. The item type is the row's answer, and generating needs it, so it is
+    // asked for first.
+    let wired = |e| {
+        anyhow::anyhow!(
+            "{algorithm}/{impl_name} is registered but not yet wired to its wrapper: {e}"
+        )
+    };
+    let item_type = rows::item_type(&req)
+        .ok_or_else(|| wired(""))?
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
-    let dataset = target.description();
+    let data = spec.generate_at(item_type)?;
 
-    // An empty mask on either axis names no measurements. Legal: the caller gets
-    // no records because it asked for none.
-    if want.is_empty() {
-        eprintln!(
-            "approxbench: {algorithm}/{impl_name} selected no measurements; nothing to measure"
-        );
-        return Ok(());
-    }
+    // The closures, built at the row's own item type over the data just made.
+    // Construction failures land here, before anything is timed.
+    let prepared = rows::measurements(&req, data, &want)
+        .ok_or_else(|| wired(""))?
+        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+    let dataset = prepared.dataset;
 
     // One instruction at a time. Core is handed a closure and a run count and
-    // told nothing else; which operation and which metric this was is the
-    // frontend's to remember, and it is right here in the loop.
-    let mut reports = Vec::with_capacity(want.len());
-    for (operation, metric) in want {
-        let body = target
-            .body(operation, metric)
-            .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+    // told nothing else; which operation and which metric this was travels with
+    // the closure that answers it.
+    let mut reports = Vec::with_capacity(prepared.bodies.len());
+    for ((operation, metric), body) in prepared.bodies {
         // Error is deterministic given (data, parameters), and a dataset is
         // drawn once and not redrawn — so looping an accuracy measurement would
         // fabricate spread: ten identical answers averaged to `stddev: 0.0` over
@@ -433,7 +440,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         .collect();
 
     let mut sink = ReportSink::open(args.report.as_deref())?;
-    // One invocation is one target at one point, so every record here shares an identity and the
+    // One invocation is one row at one point, so every record here shares an identity and the
     // whole vector is exactly what `flatten_record` expects.
     if args.flat {
         let merged =

@@ -150,9 +150,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap CMS, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -245,9 +244,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap Count, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -342,9 +340,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -853,15 +850,16 @@ mod tests {
         }
     }
 
-    /// Insert holds of everything, and the timing and footprint metrics hold of
-    /// everything. Nothing in the table is measured over nothing.
+    /// Insert holds of everything, and throughput and the footprint metrics hold
+    /// of everything. Nothing in the table is measured over nothing. Latency is
+    /// not in the floor: a row that ingests the whole stream in one call has no
+    /// per-item region to time, and says so by not claiming the metric.
     #[test]
     fn every_entry_is_at_least_a_timed_insert() {
         for e in REGISTRY {
             assert!(e.operations.contains(OperationMask::INSERT));
             assert!(e.metrics.contains(
                 MetricsMask::THROUGHPUT
-                    .union(MetricsMask::LATENCY)
                     .union(MetricsMask::CPU)
                     .union(MetricsMask::MEMORY)
             ));

@@ -162,7 +162,7 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
     /// Present, and `true`, whenever a merge was measured. Never `false`: a row
-    /// that provides no merge is refused in `target::Target::body` before anything
+    /// that provides no merge is refused where the closures are built, before anything
     /// is timed, so the gap shows up as an error naming the row rather than as a
     /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]

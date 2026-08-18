@@ -15,12 +15,12 @@ pub struct CmsOxide {
     inner: sketch_oxide::frequency::CountMinSketch,
 }
 
-pub fn build_cms_oxide(config: &ParamSet, _workers: usize) -> Result<CmsOxide, RunError> {
+pub fn build_cms_oxide(config: &ParamSet) -> Result<CmsOxide, RunError> {
     let p: CmsParams = config.parse()?;
     // Native API takes an error bound, not raw dimensions — translate.
     let (epsilon, delta) = dims_to_err(p.rows, p.cols);
     let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta).map_err(|e| {
-        RunError::Target(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}"))
+        RunError::Sketch(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}"))
     })?;
     require_resolved_shape(
         "oxide CMS",
@@ -53,6 +53,6 @@ pub fn merge_cms_oxide(into: &mut CmsOxide, from: &CmsOxide) {
         .expect("both operands built from one ParamSet, so rows/cols match");
 }
 
-pub fn ask_cms_oxide(sketch: &mut CmsOxide, key: &i64) -> u64 {
+pub fn query_cms_oxide(sketch: &mut CmsOxide, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }

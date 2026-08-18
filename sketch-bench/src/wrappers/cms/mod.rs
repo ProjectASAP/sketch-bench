@@ -1,5 +1,5 @@
 //! Count-Min wrappers — five types, each answering a `&i64` point lookup with a
-//! `u64` estimate in its own `ask_*` rather than through a shared trait. All
+//! `u64` estimate in its own `query_*` rather than through a shared trait. All
 //! take `(rows, cols)` and honour it, by four different routes.
 
 use crate::params::*;
@@ -40,7 +40,7 @@ mod tests {
     /// plots divide by.
     #[test]
     fn oxide_sizes_counters_at_the_real_width() {
-        let sketch = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
+        let sketch = build_cms_oxide(&shape()).expect("5x2048 is a valid oxide shape");
         assert_eq!(memory_cms_oxide(&sketch), 5 * 2048 * 8);
     }
 
@@ -49,13 +49,10 @@ mod tests {
     /// arbitrary column count, and a silently-rounded one misplaces every plot.
     #[test]
     fn oxide_cms_refuses_a_cols_it_cannot_resolve_exactly() {
-        let Err(err) = build_cms_oxide(
-            &ParamSet::of(&CmsParams {
-                rows: 5,
-                cols: 3000,
-            }),
-            1,
-        ) else {
+        let Err(err) = build_cms_oxide(&ParamSet::of(&CmsParams {
+            rows: 5,
+            cols: 3000,
+        })) else {
             panic!("cols=3000 resolves to a 4096-wide table, so it must be refused");
         };
         let err = err.to_string();
@@ -67,13 +64,10 @@ mod tests {
     /// honoured and is refused instead of quietly building 3.
     #[test]
     fn oxide_countsketch_refuses_a_depth_below_its_floor() {
-        let Err(err) = build_cs_oxide(
-            &ParamSet::of(&crate::params::CountSketchParams {
-                rows: 2,
-                cols: 2048,
-            }),
-            1,
-        ) else {
+        let Err(err) = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+            rows: 2,
+            cols: 2048,
+        })) else {
             panic!("rows=2 resolves to a 3-row table, so it must be refused");
         };
         assert!(err.to_string().contains("2048"), "{err}");
@@ -84,14 +78,11 @@ mod tests {
     /// comparison at one config compares two different budgets.
     #[test]
     fn the_two_oxide_rows_resolve_one_config_to_one_shape() {
-        let cms = build_cms_oxide(&shape(), 1).expect("5x2048 is a valid oxide shape");
-        let cs = build_cs_oxide(
-            &ParamSet::of(&crate::params::CountSketchParams {
-                rows: 5,
-                cols: 2048,
-            }),
-            1,
-        )
+        let cms = build_cms_oxide(&shape()).expect("5x2048 is a valid oxide shape");
+        let cs = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+            rows: 5,
+            cols: 2048,
+        }))
         .expect("5x2048 is a valid oxide shape");
 
         // 8 bytes per counter on both sides: `table: Vec<u64>` and `Vec<i64>`.
@@ -110,13 +101,13 @@ mod tests {
         for lg in 3..=16u32 {
             let cols = 1usize << lg;
             for rows in 3..=8usize {
-                let cms = build_cms_oxide(&ParamSet::of(&CmsParams { rows, cols }), 1)
+                let cms = build_cms_oxide(&ParamSet::of(&CmsParams { rows, cols }))
                     .unwrap_or_else(|e| panic!("cms {rows}x{cols}: {e}"));
                 assert_eq!(memory_cms_oxide(&cms), rows * cols * 8, "cms {rows}x{cols}");
-                let cs = build_cs_oxide(
-                    &ParamSet::of(&crate::params::CountSketchParams { rows, cols }),
-                    1,
-                )
+                let cs = build_cs_oxide(&ParamSet::of(&crate::params::CountSketchParams {
+                    rows,
+                    cols,
+                }))
                 .unwrap_or_else(|e| panic!("countsketch {rows}x{cols}: {e}"));
                 assert_eq!(
                     memory_cs_oxide(&cs),
@@ -133,7 +124,7 @@ mod tests {
     #[test]
     fn datasketches_refuses_what_its_api_cannot_take() {
         let build = |rows: usize, cols: usize| {
-            build_cms_datasketches(&ParamSet::of(&CmsParams { rows, cols }), 1)
+            build_cms_datasketches(&ParamSet::of(&CmsParams { rows, cols }))
         };
         for (rows, cols, why) in [
             (
@@ -180,25 +171,25 @@ mod tests {
         for (rows, cols) in [(0usize, 1024usize), (5, 0), (0, 0)] {
             let p = ParamSet::of(&CmsParams { rows, cols });
             assert!(
-                build_cms_lib_vector2d_fast(&p, 1).is_err(),
+                build_cms_lib_vector2d_fast(&p).is_err(),
                 "fastpath {rows}x{cols}"
             );
             assert!(
-                build_cms_lib_vector2d_regular(&p, 1).is_err(),
+                build_cms_lib_vector2d_regular(&p).is_err(),
                 "regularpath {rows}x{cols}"
             );
             let q = ParamSet::of(&crate::params::CountSketchParams { rows, cols });
             assert!(
-                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_fast(&q, 1).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_fast(&q).is_err(),
                 "cs fastpath {rows}x{cols}"
             );
             assert!(
-                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_regular(&q, 1).is_err(),
+                crate::wrappers::cs::sketchlib::build_cs_lib_vector2d_regular(&q).is_err(),
                 "cs regularpath {rows}x{cols}"
             );
         }
         assert!(
-            build_cms_lib_vector2d_fast(&ParamSet::of(&CmsParams { rows: 1, cols: 1 }), 1).is_ok()
+            build_cms_lib_vector2d_fast(&ParamSet::of(&CmsParams { rows: 1, cols: 1 })).is_ok()
         );
     }
 
@@ -209,19 +200,17 @@ mod tests {
             rows: 0,
             cols: 1024,
         });
-        assert!(build_cms_oxide(&p, 1).is_err(), "oxide");
-        assert!(build_cms_datasketches(&p, 1).is_err(), "datasketches");
+        assert!(build_cms_oxide(&p).is_err(), "oxide");
+        assert!(build_cms_datasketches(&p).is_err(), "datasketches");
         assert!(
-            build_cms_lib_vector2d_fast(&p, 1).is_err(),
+            build_cms_lib_vector2d_fast(&p).is_err(),
             "vector2d fastpath"
         );
         assert!(
-            build_cms_lib_vector2d_regular(&p, 1).is_err(),
+            build_cms_lib_vector2d_regular(&p).is_err(),
             "vector2d regularpath"
         );
         // The fixed-shape and parallel rows already refused it, via require_shape.
-        assert!(
-            build_cms_lib_fixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>(&p, 1).is_err()
-        );
+        assert!(build_cms_lib_fixedmatrix::<crate::wrappers::fixed_matrix::M5x2048>(&p).is_err());
     }
 }

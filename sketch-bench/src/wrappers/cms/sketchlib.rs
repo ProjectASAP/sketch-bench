@@ -18,10 +18,7 @@ use std::sync::Barrier;
 
 pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMin<M, FastPath>);
 
-pub fn build_cms_lib_fixedmatrix<M>(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<CmsLibFixedmatrix<M>, RunError>
+pub fn build_cms_lib_fixedmatrix<M>(config: &ParamSet) -> Result<CmsLibFixedmatrix<M>, RunError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
@@ -52,10 +49,7 @@ pub struct CmsLibVector2dFast {
     cols: usize,
 }
 
-pub fn build_cms_lib_vector2d_fast(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<CmsLibVector2dFast, RunError> {
+pub fn build_cms_lib_vector2d_fast(config: &ParamSet) -> Result<CmsLibVector2dFast, RunError> {
     let p: CmsParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
     // zero-row matrix builds happily and then answers every query out of an
@@ -83,7 +77,6 @@ pub struct CmsLibVector2dRegular {
 
 pub fn build_cms_lib_vector2d_regular(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<CmsLibVector2dRegular, RunError> {
     let p: CmsParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
@@ -157,15 +150,15 @@ pub fn merge_cms_lib_vector2d_regular(
     into.inner.merge(&from.inner);
 }
 
-pub fn ask_cms_lib_vector2d_fast(sketch: &mut CmsLibVector2dFast, key: &i64) -> u64 {
+pub fn query_cms_lib_vector2d_fast(sketch: &mut CmsLibVector2dFast, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
 
-pub fn ask_cms_lib_vector2d_regular(sketch: &mut CmsLibVector2dRegular, key: &i64) -> u64 {
+pub fn query_cms_lib_vector2d_regular(sketch: &mut CmsLibVector2dRegular, key: &i64) -> u64 {
     sketch.estimate_frequency(key)
 }
 
-pub fn ask_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, key: &i64) -> u64
+pub fn query_cms_lib_fixedmatrix<M>(sketch: &mut CmsLibFixedmatrix<M>, key: &i64) -> u64
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
@@ -174,7 +167,6 @@ where
 
 /// CMS, parallel-insert FastPath.
 pub struct ParallelCmsFastPath {
-    buf: Vec<i64>,
     workers: usize,
 }
 
@@ -189,14 +181,12 @@ pub fn build_parallel_cms_fast_path(
     let p: CmsParams = config.parse()?;
     require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
     Ok(ParallelCmsFastPath {
-        buf: Vec::new(),
         workers: workers.max(1),
     })
 }
 
 pub fn memory_parallel_cms_fast_path(sketch: &ParallelCmsFastPath) -> usize {
     sketch.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
-        + sketch.buf.capacity() * std::mem::size_of::<i64>()
 }
 
 /// The barrier is load-bearing: a worker inserting while its peers are still
@@ -222,10 +212,8 @@ fn run_parallel_cms(items: &[i64], workers: usize) {
     });
 }
 
-pub fn insert_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath, v: &i64) {
-    sketch.buf.push(*v);
-}
-
-pub fn prepare_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath) {
-    run_parallel_cms(&sketch.buf, sketch.workers);
+/// The whole stream in one call: this row's ingest *is* the parallel fan-out,
+/// so there is no per-item step to buffer and none to time.
+pub fn insert_parallel_cms_fast_path(sketch: &mut ParallelCmsFastPath, items: &[i64]) {
+    run_parallel_cms(items, sketch.workers);
 }

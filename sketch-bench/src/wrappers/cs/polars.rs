@@ -12,6 +12,10 @@ pub fn insert_polars_frequency_cs(sketch: &mut PolarsFrequencyCs, v: &i64) {
     sketch.0.update(v);
 }
 
+pub fn query_polars_frequency_cs(sketch: &mut PolarsFrequencyCs, key: &i64) -> u64 {
+    sketch.estimate_frequency(key)
+}
+
 pub fn prepare_polars_frequency_cs(sketch: &mut PolarsFrequencyCs) {
     sketch.0.finalize();
 }
@@ -21,10 +25,7 @@ pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_frequency_cs(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<PolarsFrequencyCs, RunError> {
+pub fn build_polars_frequency_cs(config: &ParamSet) -> Result<PolarsFrequencyCs, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

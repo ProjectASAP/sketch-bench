@@ -10,10 +10,7 @@ use aqpbm_core::RunError;
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_quantile_kll(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<PolarsQuantileKll, RunError> {
+pub fn build_polars_quantile_kll(config: &ParamSet) -> Result<PolarsQuantileKll, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -34,6 +31,10 @@ impl PolarsQuantileKll {
 
 pub fn insert_polars_quantile_kll(sketch: &mut PolarsQuantileKll, v: &i64) {
     sketch.0.update(v);
+}
+
+pub fn query_polars_quantile_kll(sketch: &mut PolarsQuantileKll, phi: &f64) -> f64 {
+    sketch.estimate_quantile(*phi)
 }
 
 pub fn prepare_polars_quantile_kll(sketch: &mut PolarsQuantileKll) {

@@ -17,10 +17,7 @@ pub struct PolarsSubpopFrequency {
     counts: HashMap<(String, i64), u64>,
 }
 
-pub fn build_polars_subpop_frequency(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<PolarsSubpopFrequency, RunError> {
+pub fn build_polars_subpop_frequency(config: &ParamSet) -> Result<PolarsSubpopFrequency, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -52,7 +49,6 @@ pub struct PolarsSubpopCardinality {
 
 pub fn build_polars_subpop_cardinality(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<PolarsSubpopCardinality, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
@@ -80,10 +76,7 @@ pub struct PolarsSubpopQuantile {
     sorted: HashMap<String, Vec<f64>>,
 }
 
-pub fn build_polars_subpop_quantile(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<PolarsSubpopQuantile, RunError> {
+pub fn build_polars_subpop_quantile(config: &ParamSet) -> Result<PolarsSubpopQuantile, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -119,6 +112,13 @@ pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
 
 pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &Labeled<i64>) {
     sketch.buf.push(r.clone());
+}
+
+pub fn query_polars_subpop_frequency(
+    sketch: &mut PolarsSubpopFrequency,
+    probe: &(String, i64),
+) -> f64 {
+    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
 }
 
 pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
@@ -164,6 +164,14 @@ pub fn insert_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality, r:
     sketch.buf.push(r.clone());
 }
 
+#[allow(clippy::ptr_arg)]
+pub fn query_polars_subpop_cardinality(
+    sketch: &mut PolarsSubpopCardinality,
+    probe: &String,
+) -> f64 {
+    sketch.estimate_subpop_cardinality(&[probe.as_str()])
+}
+
 pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
     let (mut keys, mut values) = (Vec::new(), Vec::new());
     for r in &sketch.buf {
@@ -203,6 +211,13 @@ pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
 
 pub fn insert_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile, r: &Labeled<f64>) {
     sketch.buf.push(r.clone());
+}
+
+pub fn query_polars_subpop_quantile(
+    sketch: &mut PolarsSubpopQuantile,
+    probe: &(String, f64),
+) -> f64 {
+    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
 }
 
 pub fn prepare_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile) {

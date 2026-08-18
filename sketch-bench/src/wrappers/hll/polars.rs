@@ -19,10 +19,7 @@ pub struct PolarsCardinality {
 /// Polars computes the exact answer and has no `(rows, cols)` to tune, so it
 /// ignores the `ParamSet` and builds unconditionally. Its record carries
 /// whatever config the run was given.
-pub fn build_polars_cardinality(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<PolarsCardinality, RunError> {
+pub fn build_polars_cardinality(config: &ParamSet) -> Result<PolarsCardinality, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -46,6 +43,10 @@ impl PolarsCardinality {
 
 pub fn insert_polars_cardinality(sketch: &mut PolarsCardinality, v: &i64) {
     sketch.buf.push(*v);
+}
+
+pub fn query_polars_cardinality(sketch: &mut PolarsCardinality, _: &()) -> f64 {
+    sketch.estimate_distinct()
 }
 
 pub fn prepare_polars_cardinality(sketch: &mut PolarsCardinality) {

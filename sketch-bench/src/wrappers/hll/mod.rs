@@ -18,7 +18,7 @@ pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
 /// `asap_sketchlib` puts the register count in the storage *type*, so anything
 /// else is refused rather than built at a neighbouring precision.
 pub fn unsupported_precision(lg_k: u8) -> RunError {
-    RunError::Target(format!(
+    RunError::Sketch(format!(
         "asap HLL is compiled in at lg_k {LIB_PRECISIONS:?}; {lg_k} is not one of them"
     ))
 }
@@ -49,9 +49,9 @@ mod tests {
     /// a dropped `lg_k` would build one sketch under three different labels.
     #[test]
     fn lib_honours_lg_k() {
-        let mut p12 = build_hll_lib::<HllBucketListP12>(&params(12), 1).expect("P12 builds");
-        let mut p14 = build_hll_lib::<HllBucketListP14>(&params(14), 1).expect("P14 builds");
-        let mut p16 = build_hll_lib::<HllBucketListP16>(&params(16), 1).expect("P16 builds");
+        let mut p12 = build_hll_lib::<HllBucketListP12>(&params(12)).expect("P12 builds");
+        let mut p14 = build_hll_lib::<HllBucketListP14>(&params(14)).expect("P14 builds");
+        let mut p16 = build_hll_lib::<HllBucketListP16>(&params(16)).expect("P16 builds");
         assert_eq!(
             (
                 memory_hll_lib(&p12),
@@ -82,8 +82,8 @@ mod tests {
     /// The HIP rows carry the same knob, and the same defect if it were dropped.
     #[test]
     fn lib_hip_honours_lg_k() {
-        let p12 = build_hll_lib_hip::<HllBucketListP12>(&params(12), 1).expect("P12 builds");
-        let p16 = build_hll_lib_hip::<HllBucketListP16>(&params(16), 1).expect("P16 builds");
+        let p12 = build_hll_lib_hip::<HllBucketListP12>(&params(12)).expect("P12 builds");
+        let p16 = build_hll_lib_hip::<HllBucketListP16>(&params(16)).expect("P16 builds");
         assert_eq!(memory_hll_lib_hip(&p12), 1 << 12);
         assert_eq!(memory_hll_lib_hip(&p16), 1 << 16);
     }
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn lib_refuses_a_precision_it_does_not_ship() {
         for lg_k in [4u8, 10, 13, 18] {
-            let Err(err) = build_hll_lib::<HllBucketListP14>(&params(lg_k), 1) else {
+            let Err(err) = build_hll_lib::<HllBucketListP14>(&params(lg_k)) else {
                 panic!("lg_k={lg_k} has no storage type, so it must be refused");
             };
             assert!(
@@ -109,9 +109,9 @@ mod tests {
     #[test]
     fn the_dispatch_set_matches_what_the_rows_accept() {
         assert_eq!(LIB_PRECISIONS, [12, 14, 16]);
-        assert!(build_hll_lib::<HllBucketListP12>(&params(LIB_PRECISIONS[0]), 1).is_ok());
-        assert!(build_hll_lib::<HllBucketListP14>(&params(LIB_PRECISIONS[1]), 1).is_ok());
-        assert!(build_hll_lib::<HllBucketListP16>(&params(LIB_PRECISIONS[2]), 1).is_ok());
+        assert!(build_hll_lib::<HllBucketListP12>(&params(LIB_PRECISIONS[0])).is_ok());
+        assert!(build_hll_lib::<HllBucketListP14>(&params(LIB_PRECISIONS[1])).is_ok());
+        assert!(build_hll_lib::<HllBucketListP16>(&params(LIB_PRECISIONS[2])).is_ok());
     }
 
     /// The datasketches row asserts inside its own constructor, so the bound is
@@ -119,14 +119,14 @@ mod tests {
     #[test]
     fn datasketches_refuses_a_precision_outside_its_range() {
         for lg_k in [0u8, 3, 22, 255] {
-            let err = build_hll_datasketches(&params(lg_k), 1)
+            let err = build_hll_datasketches(&params(lg_k))
                 .err()
                 .unwrap_or_else(|| panic!("lg_k={lg_k} is outside [4, 21] and must be refused"));
             assert!(err.to_string().contains(&lg_k.to_string()), "{err}");
         }
         for lg_k in [DS_LG_K.0, 14, DS_LG_K.1] {
             assert!(
-                build_hll_datasketches(&params(lg_k), 1).is_ok(),
+                build_hll_datasketches(&params(lg_k)).is_ok(),
                 "lg_k={lg_k} is legal"
             );
         }
@@ -138,16 +138,13 @@ mod tests {
     #[test]
     fn every_hll_row_refuses_a_precision_no_library_has() {
         for lg_k in [0u8, 3, 30] {
+            assert!(build_hll_oxide(&params(lg_k)).is_err(), "oxide lg_k={lg_k}");
             assert!(
-                build_hll_oxide(&params(lg_k), 1).is_err(),
-                "oxide lg_k={lg_k}"
-            );
-            assert!(
-                build_hll_datasketches(&params(lg_k), 1).is_err(),
+                build_hll_datasketches(&params(lg_k)).is_err(),
                 "datasketches lg_k={lg_k}"
             );
             assert!(
-                build_hll_lib::<HllBucketListP14>(&params(lg_k), 1).is_err(),
+                build_hll_lib::<HllBucketListP14>(&params(lg_k)).is_err(),
                 "lib lg_k={lg_k}"
             );
         }

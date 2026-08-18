@@ -12,9 +12,9 @@ use aqpbm_core::RunError;
 /// truncating, which would run at a `k` other than the one requested.
 fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, RunError> {
     let k16 = u16::try_from(k)
-        .map_err(|_| RunError::Target(format!("oxide KLL: k={k} exceeds the u16 its API takes")))?;
+        .map_err(|_| RunError::Sketch(format!("oxide KLL: k={k} exceeds the u16 its API takes")))?;
     sketch_oxide::quantiles::KllSketch::new(k16)
-        .map_err(|e| RunError::Target(format!("oxide KLL rejected k={k16}: {e:?}")))
+        .map_err(|e| RunError::Sketch(format!("oxide KLL rejected k={k16}: {e:?}")))
 }
 
 /// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
@@ -27,7 +27,6 @@ pub struct KllOxidePerCall<T = i64> {
 
 pub fn build_kll_oxide_per_call<T: QuantileValue>(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<KllOxidePerCall<T>, RunError> {
     let p: KllParams = config.parse()?;
     Ok(KllOxidePerCall {
@@ -59,7 +58,6 @@ pub struct KllOxideCdf<T = i64> {
 
 pub fn build_kll_oxide_cdf<T: QuantileValue>(
     config: &ParamSet,
-    _workers: usize,
 ) -> Result<KllOxideCdf<T>, RunError> {
     let p: KllParams = config.parse()?;
     Ok(KllOxideCdf {
@@ -118,10 +116,10 @@ pub fn prepare_kll_oxide_cdf<T: QuantileValue>(sketch: &mut KllOxideCdf<T>) {
     sketch.ends = (sketch.inner.min(), sketch.inner.max());
 }
 
-pub fn ask_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi: &f64) -> f64 {
+pub fn query_kll_oxide_per_call<T: QuantileValue>(s: &mut KllOxidePerCall<T>, phi: &f64) -> f64 {
     s.estimate_quantile(*phi)
 }
 
-pub fn ask_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) -> f64 {
+pub fn query_kll_oxide_cdf<T: QuantileValue>(s: &mut KllOxideCdf<T>, phi: &f64) -> f64 {
     s.estimate_quantile(*phi)
 }

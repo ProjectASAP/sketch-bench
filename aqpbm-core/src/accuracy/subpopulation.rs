@@ -311,7 +311,7 @@ mod tests {
             0.0
         }
     }
-    fn ask_null(s: &mut NullSubpop, p: &(String, i64)) -> f64 {
+    fn query_null(s: &mut NullSubpop, p: &(String, i64)) -> f64 {
         s.estimate_subpop_frequency(&[p.0.as_str()], &p.1)
     }
 
@@ -333,7 +333,7 @@ mod tests {
                 .unwrap_or(&0) as f64
         }
     }
-    fn ask_exact(s: &mut ExactSubpop, p: &(String, i64)) -> f64 {
+    fn query_exact(s: &mut ExactSubpop, p: &(String, i64)) -> f64 {
         s.estimate_subpop_frequency(&[p.0.as_str()], &p.1)
     }
 
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
         let gt = SubpopFrequencyGT { label_column: 0 };
-        let cmp = crate::accuracy::score_with(&gt, &ask_null, &mut NullSubpop, &records());
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullSubpop, &records());
         for key in ["are_all", "are_top1"] {
             let v = cmp[key];
             assert!(
@@ -385,7 +385,7 @@ mod tests {
             exact.update(it);
         }
         let gt = SubpopFrequencyGT { label_column: 0 };
-        let cmp = crate::accuracy::score_with(&gt, &ask_exact, &mut exact, &items);
+        let cmp = crate::accuracy::score_with(&gt, &query_exact, &mut exact, &items);
         assert_eq!(cmp["are_all"], 0.0);
         assert_eq!(cmp["aae_all"], 0.0);
         assert_eq!(cmp["l1_err"], 0.0);
@@ -398,7 +398,7 @@ mod tests {
     fn truth_groups_by_the_named_column() {
         let items = records();
         let gt = SubpopFrequencyGT { label_column: 0 };
-        let cmp = crate::accuracy::score_with(&gt, &ask_null, &mut NullSubpop, &items);
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullSubpop, &items);
         // Distinct pairs at column 0: (a,10) (a,20) (b,30) → 3 pairs, 2 groups.
         assert_eq!(cmp["probes_all"], 3.0);
         assert_eq!(cmp["subpopulations"], 2.0);
@@ -415,7 +415,7 @@ mod tests {
         let items = records();
         let by_col1 = crate::accuracy::score_with(
             &SubpopFrequencyGT { label_column: 1 },
-            &ask_null,
+            &query_null,
             &mut NullSubpop,
             &items,
         );

@@ -1,5 +1,5 @@
 //! Thin newtypes over each sketch, one directory per algorithm and one file per
-//! library, each owning its `build_*` / `insert_*` / `ask_*` / `memory_*`. Not a
+//! library, each owning its `build_*` / `insert_*` / `query_*` / `memory_*`. Not a
 //! trait, so no two files must agree on a signature; they capture nothing.
 
 // One directory per algorithm; inside each, one file per library. A reader
@@ -66,7 +66,7 @@ pub(crate) fn require_shape(
     want_cols: usize,
 ) -> Result<(), RunError> {
     if (rows, cols) != (want_rows, want_cols) {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "fixed at {want_rows}x{want_cols}, requested {rows}x{cols}"
         )));
     }
@@ -81,7 +81,7 @@ where
     T: PartialOrd + std::fmt::Display,
 {
     if got < lo || got > hi {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "{what}: {name}={got} outside [{lo}, {hi}], which is what this library accepts"
         )));
     }
@@ -93,7 +93,7 @@ where
 /// bound would state a limit the library does not have.
 pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(), RunError> {
     if got == 0 {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "{what}: {name} must be at least 1, got {got}"
         )));
     }
@@ -109,7 +109,7 @@ pub(crate) fn require_resolved_shape(
     want: (usize, usize),
 ) -> Result<(), RunError> {
     if got != want {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "{what} resolves rows={} cols={} to a {}x{} table; it derives its \
              dimensions from error bounds and rounds the width up to a power of \
              two, so ask for a power-of-two `cols`",

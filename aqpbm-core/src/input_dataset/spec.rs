@@ -34,15 +34,17 @@ pub enum InputDataSetData {
 
 impl InputDataSetSpec {
     /// Materialise at the item type `T`, which the row's `insert` closure
-    /// already pinned. Called from `crate::target` inside the row — the only point
-    /// at which `T` is known, so the frontend cannot generate ahead of it.
+    /// already pinned. The two halves are also callable apart, which is what a
+    /// frontend does: it asks the row what it ingests, produces that with
+    /// [`generate_at`](Self::generate_at), and hands the data over for the row
+    /// to [`materialise`](BenchItem::materialise).
     pub fn build<T: BenchItem>(&self) -> Result<T::Wk> {
         T::materialise(self.generate_at(T::DATA_TYPE)?)
     }
 
     /// Produce the data this spec describes, at `value_type` — the item type
     /// the row named.
-    fn generate_at(&self, value_type: &str) -> Result<InputDataSetData> {
+    pub fn generate_at(&self, value_type: &str) -> Result<InputDataSetData> {
         match self.describe(value_type) {
             Some(description) => {
                 let table = description.generate()?;

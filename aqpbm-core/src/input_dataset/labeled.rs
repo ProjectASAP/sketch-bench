@@ -113,6 +113,10 @@ impl<V: ColumnItem> InputDataSet for LabeledInputDataSet<V> {
     fn items(&self) -> &[Labeled<V>] {
         &self.items
     }
+
+    fn into_parts(self) -> (InputDataSetDescription, Vec<Labeled<V>>) {
+        (self.description, self.items)
+    }
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
     if !(LIB_K_MIN..=LIB_K_MAX).contains(&k) {
-        return Err(RunError::Target(format!(
+        return Err(RunError::Sketch(format!(
             "asap KLL: k={k} outside [{LIB_K_MIN}, {LIB_K_MAX}]; the library clamps \
              to that range, so any other k would run at a value this record does not name"
         )));
@@ -31,10 +31,7 @@ pub struct KllLibPerCall<T: asap_sketchlib::common::numerical::NumericalValue = 
     k: u32,
 }
 
-pub fn build_kll_lib_per_call<T>(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<KllLibPerCall<T>, RunError>
+pub fn build_kll_lib_per_call<T>(config: &ParamSet) -> Result<KllLibPerCall<T>, RunError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -69,7 +66,7 @@ pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64>
     cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
-pub fn build_kll_lib_cdf<T>(config: &ParamSet, _workers: usize) -> Result<KllLibCdf<T>, RunError>
+pub fn build_kll_lib_cdf<T>(config: &ParamSet) -> Result<KllLibCdf<T>, RunError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -137,14 +134,14 @@ where
     sketch.cdf = Some(sketch.inner.cdf());
 }
 
-pub fn ask_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
+pub fn query_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
     s.estimate_quantile(*phi)
 }
 
-pub fn ask_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
+pub fn query_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {

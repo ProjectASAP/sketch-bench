@@ -4,7 +4,7 @@
 //!
 //! Both are *vocabulary*, not requests. A registry entry declares what it admits
 //! with them, and `MeasureConfig` arms recorders with them. What a frontend asks
-//! for is one [`Operation`] and one [`Metric`] — see [`crate::target::Target::body`].
+//! for is one [`Operation`] and one [`Metric`] — see [`crate::measurement`].
 //!
 //! See `docs/aqpbm-core.md` §Metrics and §Operations.
 
@@ -25,7 +25,7 @@ bitflags! {
 }
 
 bitflags! {
-    /// Which operations a target admits. A separate set from [`MetricsMask`]:
+    /// Which operations a row admits. A separate set from [`MetricsMask`]:
     /// one says *what is measured*, this says *what it is measured over*.
     /// Insert and query are assumed; merge and prepare are asked for by name.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +113,7 @@ impl Metric {
     }
 }
 
-/// Whether the framework measures this pair *at all*, for any target. A fact about
+/// Whether the framework measures this pair *at all*, for any row. A fact about
 /// the metrics, not about a request: a caller asks before it asks a registry
 /// whether some particular entry has it.
 pub fn is_measurable(operation: Operation, metric: Metric) -> bool {
