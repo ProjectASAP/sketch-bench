@@ -6,9 +6,11 @@
 use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use ::polars::prelude::*;
-use aqpbm_core::RunError;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Default)]
 pub struct PolarsSubpopFrequency {
@@ -16,7 +18,9 @@ pub struct PolarsSubpopFrequency {
     counts: HashMap<(String, i64), u64>,
 }
 
-pub fn build_polars_subpop_frequency(config: &ParamSet) -> Result<PolarsSubpopFrequency, RunError> {
+pub fn build_polars_subpop_frequency(
+    config: &ParamSet,
+) -> Result<PolarsSubpopFrequency, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -48,7 +52,7 @@ pub struct PolarsSubpopCardinality {
 
 pub fn build_polars_subpop_cardinality(
     config: &ParamSet,
-) -> Result<PolarsSubpopCardinality, RunError> {
+) -> Result<PolarsSubpopCardinality, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -75,7 +79,7 @@ pub struct PolarsSubpopQuantile {
     sorted: HashMap<String, Vec<f64>>,
 }
 
-pub fn build_polars_subpop_quantile(config: &ParamSet) -> Result<PolarsSubpopQuantile, RunError> {
+pub fn build_polars_subpop_quantile(config: &ParamSet) -> Result<PolarsSubpopQuantile, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -109,144 +113,392 @@ pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
             .sum::<usize>()
 }
 
-pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &(String, i64)) {
-    sketch.buf.push(r.clone());
+impl PolarsSubpopFrequency {
+    /// The exact answer, over the stream as buffered. Its own step because the
+    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
+    fn finalize(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.0, r.1, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .group_by([col("g"), col("v")])
+            .agg([len().alias("count")])
+            .collect()
+            .expect("polars group_by collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let vals = result.column("v").expect("v column");
+        let vals = vals.i64().expect("i64 values");
+        let counts = result
+            .column("count")
+            .expect("count column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.counts.reserve(groups.len());
+        for ((g, v), c) in groups.into_iter().zip(vals).zip(counts) {
+            if let (Some(g), Some(v), Some(c)) = (g, v, c) {
+                self.counts.insert((g.to_string(), v), c);
+            }
+        }
+    }
+}
+
+impl PolarsSubpopCardinality {
+    /// The exact answer, over the stream as buffered. Its own step because the
+    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
+    fn finalize(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.0, r.1, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .group_by([col("g")])
+            .agg([col("v").n_unique().alias("c")])
+            .collect()
+            .expect("polars group_by collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let counts = result
+            .column("c")
+            .expect("c column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.distinct.reserve(groups.len());
+        for (g, c) in groups.into_iter().zip(counts) {
+            if let (Some(g), Some(c)) = (g, c) {
+                self.distinct.insert(g.to_string(), c);
+            }
+        }
+    }
+}
+
+impl PolarsSubpopQuantile {
+    /// The exact answer, over the stream as buffered. Its own step because the
+    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
+    fn finalize(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.0, r.1, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            Column::new("v".into(), &values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .sort(["g", "v"], Default::default())
+            .collect()
+            .expect("polars sort collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let vals = result.column("v").expect("v column");
+        let vals = vals.f64().expect("f64 values");
+
+        for (g, v) in groups.into_iter().zip(vals) {
+            if let (Some(g), Some(v)) = (g, v) {
+                // Already ascending within a group, so push keeps it sorted.
+                self.sorted.entry(g.to_string()).or_default().push(v);
+            }
+        }
+    }
+}
+
+pub fn insert_polars_subpop_frequency(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_polars_subpop_frequency(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.buf.push(v.clone());
+            }
+            memory_polars_subpop_frequency(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_step_polars_subpop_frequency(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_frequency(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.buf.push(v.clone());
+            }),
+            footprint: Box::new(move || memory_polars_subpop_frequency(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
 pub fn query_polars_subpop_frequency(
-    sketch: &mut PolarsSubpopFrequency,
-    probe: &(Vec<String>, i64),
-) -> f64 {
-    sketch.estimate_subpop_frequency(&labels(&probe.0), &probe.1)
-}
-
-pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
-    let (mut keys, mut values) = (Vec::new(), Vec::new());
-    for r in &sketch.buf {
-        fan_out(&r.0, r.1, &mut keys, &mut values);
-    }
-    if keys.is_empty() {
-        return;
-    }
-    let df = DataFrame::new(vec![
-        Column::new("g".into(), &keys),
-        Column::new("v".into(), &values),
-    ])
-    .expect("DataFrame::new");
-    let result = df
-        .lazy()
-        .group_by([col("g"), col("v")])
-        .agg([len().alias("count")])
-        .collect()
-        .expect("polars group_by collect");
-
-    let groups = result.column("g").expect("g column");
-    let groups = groups.str().expect("str groups");
-    let vals = result.column("v").expect("v column");
-    let vals = vals.i64().expect("i64 values");
-    let counts = result
-        .column("count")
-        .expect("count column")
-        .cast(&DataType::UInt64)
-        .expect("cast to u64");
-    let counts = counts.u64().expect("u64 counts");
-
-    sketch.counts.reserve(groups.len());
-    for ((g, v), c) in groups.into_iter().zip(vals).zip(counts) {
-        if let (Some(g), Some(v), Some(c)) = (g, v, c) {
-            sketch.counts.insert((g.to_string(), v), c);
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    probes: Rc<Vec<(Vec<String>, i64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_polars_subpop_frequency(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
         }
+        sketch.finalize();
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_frequency(&labels(&p.0), &p.1));
+            }
+            let footprint = memory_polars_subpop_frequency(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
     }
+    Ok(out)
 }
 
-pub fn insert_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality, r: &(String, i64)) {
-    sketch.buf.push(r.clone());
+pub fn prepare_polars_subpop_frequency(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Fed here: the closure below is the step that makes it ready to answer.
+        let mut sketch = build_polars_subpop_frequency(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
+        }
+        out.push(Box::new(move || {
+            sketch.finalize();
+            memory_polars_subpop_frequency(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-#[allow(clippy::ptr_arg)]
+pub fn insert_polars_subpop_cardinality(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_polars_subpop_cardinality(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.buf.push(v.clone());
+            }
+            memory_polars_subpop_cardinality(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_step_polars_subpop_cardinality(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_cardinality(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.buf.push(v.clone());
+            }),
+            footprint: Box::new(move || memory_polars_subpop_cardinality(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
 pub fn query_polars_subpop_cardinality(
-    sketch: &mut PolarsSubpopCardinality,
-    probe: &Vec<String>,
-) -> f64 {
-    sketch.estimate_subpop_cardinality(&labels(probe))
-}
-
-pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
-    let (mut keys, mut values) = (Vec::new(), Vec::new());
-    for r in &sketch.buf {
-        fan_out(&r.0, r.1, &mut keys, &mut values);
-    }
-    if keys.is_empty() {
-        return;
-    }
-    let df = DataFrame::new(vec![
-        Column::new("g".into(), &keys),
-        Column::new("v".into(), &values),
-    ])
-    .expect("DataFrame::new");
-    let result = df
-        .lazy()
-        .group_by([col("g")])
-        .agg([col("v").n_unique().alias("c")])
-        .collect()
-        .expect("polars group_by collect");
-
-    let groups = result.column("g").expect("g column");
-    let groups = groups.str().expect("str groups");
-    let counts = result
-        .column("c")
-        .expect("c column")
-        .cast(&DataType::UInt64)
-        .expect("cast to u64");
-    let counts = counts.u64().expect("u64 counts");
-
-    sketch.distinct.reserve(groups.len());
-    for (g, c) in groups.into_iter().zip(counts) {
-        if let (Some(g), Some(c)) = (g, c) {
-            sketch.distinct.insert(g.to_string(), c);
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_polars_subpop_cardinality(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
         }
+        sketch.finalize();
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_cardinality(&labels(p)));
+            }
+            let footprint = memory_polars_subpop_cardinality(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
     }
+    Ok(out)
 }
 
-pub fn insert_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile, r: &(String, f64)) {
-    sketch.buf.push(r.clone());
+pub fn prepare_polars_subpop_cardinality(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Fed here: the closure below is the step that makes it ready to answer.
+        let mut sketch = build_polars_subpop_cardinality(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
+        }
+        out.push(Box::new(move || {
+            sketch.finalize();
+            memory_polars_subpop_cardinality(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_polars_subpop_quantile(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_polars_subpop_quantile(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.buf.push(v.clone());
+            }
+            memory_polars_subpop_quantile(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_step_polars_subpop_quantile(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_quantile(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.buf.push(v.clone());
+            }),
+            footprint: Box::new(move || memory_polars_subpop_quantile(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
 pub fn query_polars_subpop_quantile(
-    sketch: &mut PolarsSubpopQuantile,
-    probe: &(Vec<String>, f64),
-) -> f64 {
-    sketch.estimate_subpop_quantile(&labels(&probe.0), probe.1)
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    probes: Rc<Vec<(Vec<String>, f64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_polars_subpop_quantile(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
+        }
+        sketch.finalize();
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_quantile(&labels(&p.0), p.1));
+            }
+            let footprint = memory_polars_subpop_quantile(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
 }
 
-pub fn prepare_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile) {
-    let (mut keys, mut values) = (Vec::new(), Vec::new());
-    for r in &sketch.buf {
-        fan_out(&r.0, r.1, &mut keys, &mut values);
-    }
-    if keys.is_empty() {
-        return;
-    }
-    let df = DataFrame::new(vec![
-        Column::new("g".into(), &keys),
-        Column::new("v".into(), &values),
-    ])
-    .expect("DataFrame::new");
-    let result = df
-        .lazy()
-        .sort(["g", "v"], Default::default())
-        .collect()
-        .expect("polars sort collect");
-
-    let groups = result.column("g").expect("g column");
-    let groups = groups.str().expect("str groups");
-    let vals = result.column("v").expect("v column");
-    let vals = vals.f64().expect("f64 values");
-
-    for (g, v) in groups.into_iter().zip(vals) {
-        if let (Some(g), Some(v)) = (g, v) {
-            // Already ascending within a group, so push keeps it sorted.
-            sketch.sorted.entry(g.to_string()).or_default().push(v);
+pub fn prepare_polars_subpop_quantile(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Fed here: the closure below is the step that makes it ready to answer.
+        let mut sketch = build_polars_subpop_quantile(params)?;
+        for v in items.iter() {
+            sketch.buf.push(v.clone());
         }
+        out.push(Box::new(move || {
+            sketch.finalize();
+            memory_polars_subpop_quantile(&sketch)
+        }) as Pass);
     }
+    Ok(out)
 }

@@ -30,7 +30,7 @@ use std::io::Write;
 use anyhow::{bail, Result};
 use aqpbm_core::benchmark_result::bench_report::BenchReport;
 use aqpbm_core::measure::MeasureConfig;
-use aqpbm_core::measurement::MIN_MERGE_SHARDS;
+use aqpbm_core::measure::MIN_MERGE_SHARDS;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, GeneratedTable, StringOpts, TableDescription, UniformParameter,
@@ -364,6 +364,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
         comparator: args.comparator.clone(),
+        runs: args.runs,
+        warmup_runs: args.warmup_runs,
     };
 
     // Can this run? The registry owns the answer, asked before the dataset is
@@ -395,9 +397,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // generates the data and hands it over. `--dtype` says what to generate and
     // nothing here second-guesses it; a row handed a stream it cannot ingest
     // says so when it materialises one.
-    let wired = || {
-        anyhow::anyhow!("{algorithm}/{impl_name} is registered but not yet wired to its wrapper")
-    };
     // The description that actually generated comes back with the table: the
     // inline path stamps `--dtype` onto its columns on the way through, and the
     // record names what generated.
@@ -406,7 +405,6 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
     let prepared = rows::measurements(&req, &dataset, table, &want)
-        .ok_or_else(wired)?
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
 
     // One instruction at a time. Core is handed a closure and a run count and
@@ -420,11 +418,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // `n: 10`. A timing measurement is where repeating one draw *is* a real
         // repeat, so only that one takes `--runs`.
         let cfg = MeasureConfig {
-            runs: if metric == Metric::Accuracy {
-                1
-            } else {
-                args.runs
-            },
+            runs: aqpbm_core::runs_for(metric, args.runs),
             warmup_runs: args.warmup_runs,
             // Exactly this measurement's recorders, plus whatever rides along.
             // Arming the rest would build a histogram nothing writes to.

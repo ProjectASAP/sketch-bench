@@ -14,65 +14,6 @@ use super::{f64_values, GroundTruth};
 /// are read on the same ruler.
 pub(crate) const GRID_POINTS: usize = 101;
 
-/// Lossy-cast to f64, for the numeric item types quantile sketches take.
-/// Separate from `Into<f64>` because std refuses `i64 -> f64` on precision
-/// grounds, which rank-error analysis does not care about.
-pub trait ToF64 {
-    fn to_f64(self) -> f64;
-}
-
-impl ToF64 for f64 {
-    fn to_f64(self) -> f64 {
-        self
-    }
-}
-impl ToF64 for f32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-
-/// A value an ordered (quantile) sketch can ingest. Adds a **total** order
-/// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
-/// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
-pub trait QuantileValue: ToF64 + Copy {
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
-}
-
-impl QuantileValue for i64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        Ord::cmp(self, other)
-    }
-}
-
-impl QuantileValue for f64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        f64::total_cmp(self, other)
-    }
-}
-
 // ---------- KLL: rank error ----------
 
 /// Rank-error comparator for KLL-style sketches.

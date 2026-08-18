@@ -3,7 +3,7 @@
 //! `Capability::Cardinality`, which is what makes them cardinality rows.
 
 use crate::params::*;
-use aqpbm_core::RunError;
+use crate::wrappers::BuildError;
 use sketch_oxide::Mergeable as _;
 
 pub mod datasketches;
@@ -17,8 +17,8 @@ pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
 /// The `lg_k` values this build compiled an HLL storage for, as a refusal.
 /// `asap_sketchlib` puts the register count in the storage *type*, so anything
 /// else is refused rather than built at a neighbouring precision.
-pub fn unsupported_precision(lg_k: u8) -> RunError {
-    RunError::Sketch(format!(
+pub fn unsupported_precision(lg_k: u8) -> BuildError {
+    BuildError(format!(
         "asap HLL is compiled in at lg_k {LIB_PRECISIONS:?}; {lg_k} is not one of them"
     ))
 }
@@ -37,11 +37,13 @@ mod tests {
         ParamSet::of(&HllParams { lg_k })
     }
 
-    /// Feed a sketch through its own insert function — the same one its row
-    /// uses, rather than a trait method every sketch had to share.
-    fn fed<S>(sketch: &mut S, insert: fn(&mut S, &i64), n: i64) {
+    /// Feed a sketch directly, the way its row's insert closure does.
+    fn fed<R: asap_sketchlib::HllRegisterStorage>(
+        sketch: &mut super::sketchlib::HllLib<R>,
+        n: i64,
+    ) {
         for v in 0..n {
-            insert(sketch, &v);
+            sketch.inner.insert(&asap_sketchlib::DataInput::I64(v));
         }
     }
 
@@ -62,16 +64,16 @@ mod tests {
         );
         // Three types, so three calls: the whole point of this row is that the
         // precision is a type and not a field.
-        fed(&mut p12, insert_hll_lib, 50_000);
-        fed(&mut p14, insert_hll_lib, 50_000);
-        fed(&mut p16, insert_hll_lib, 50_000);
+        fed(&mut p12, 50_000);
+        fed(&mut p14, 50_000);
+        fed(&mut p16, 50_000);
         // A coarser register array is a worse estimate of the same stream. The
         // assertion is that the three differ at all: pinning an ordering would
         // pin the estimator's luck on one draw.
         let est = [
-            p12.estimate_distinct(),
-            p14.estimate_distinct(),
-            p16.estimate_distinct(),
+            p12.inner.estimate(),
+            p14.inner.estimate(),
+            p16.inner.estimate(),
         ];
         assert!(
             est[0] != est[1] && est[1] != est[2],

@@ -6,24 +6,39 @@
 //! the exact answer and the probes once, and hands back one closure per
 //! measurement asked for — so nothing typed has to cross back to the frontend.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::params::ParamSet;
 use crate::request::{Dtype, Requirement};
+use crate::wrappers::{
+    BuildError, Folds, InsertBody, InsertStepBody, ParallelInsertBody, PrepareBody, QueryBody,
+    QueryPass, StepPass,
+};
+
+/// A row that cannot be built at the requested config says so in its own words;
+/// the framework carries them.
+fn cannot_build(e: BuildError) -> RunError {
+    RunError::Sketch(e.0)
+}
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::RankErrorGT;
+use aqpbm_core::accuracy::questions;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
+use aqpbm_core::accuracy::Score;
 use aqpbm_core::error::RunError;
-use aqpbm_core::measurement::{
-    bulk, insert_measurement, merge_measurement, per_item, prepare_measurement, query_measurement,
-    questions, Insert, Measurement, Questions, Sketch,
+use aqpbm_core::measure::{
+    record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
 };
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
+
+use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
+use crate::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
+use crate::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
+use crate::wrappers::hydra::{polars as hp, sketchlib as hs};
+use crate::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
@@ -36,565 +51,765 @@ fn value_column(description: &TableDescription) -> usize {
 /// data and already holds the description that names it.
 pub type Measurements = Vec<((Operation, Metric), Measurement)>;
 
-/// Bind a row to its wrapper and hand back the closures. Each arm names only
-/// the statistic and the row's `build` / `insert` / `query`. `None` means the
-/// pair has no arm yet.
+/// What a registry entry names to bind itself to code: one row, entered with a
+/// request and the data, handing back the closures.
+pub type RowBinding = fn(
+    &Requirement,
+    &TableDescription,
+    GeneratedTable,
+    &[(Operation, Metric)],
+) -> Result<Measurements, RunError>;
+
+/// Bind a row to its wrapper and hand back the closures. The registry entry
+/// carries the binding, so a registered pair always finds code.
 pub fn measurements(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-) -> Option<Result<Measurements, RunError>> {
-    use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
-    use crate::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
-    use crate::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
-    use crate::wrappers::hydra::{polars as hp, sketchlib as hs};
-    use crate::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
-
-    Some(match (req.algorithm.as_str(), req.impl_name.as_str()) {
-        // -------- CMS (frequency) --------
-        ("cms", "oxide") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            co::build_cms_oxide,
-            co::memory_cms_oxide,
-            co::insert_cms_oxide,
-            co::query_cms_oxide,
-            Some(co::merge_cms_oxide),
-            None,
-        ),
-        ("cms", "datasketches") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            cd::build_cms_datasketches,
-            cd::memory_cms_datasketches,
-            cd::insert_cms_datasketches,
-            cd::query_cms_datasketches,
-            Some(cd::merge_cms_datasketches),
-            None,
-        ),
-        ("cms", "polars") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            cp::build_polars_frequency_cms,
-            cp::memory_polars_frequency_cms,
-            cp::insert_polars_frequency_cms,
-            cp::query_polars_frequency_cms,
-            None,
-            Some(cp::prepare_polars_frequency_cms),
-        ),
-        ("cms-fastpath-fixedmatrix", "lib") => fixed_matrix_cms(req, description, table, want),
-        ("cms-fastpath-vector2d", "lib") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            cl::build_cms_lib_vector2d_fast,
-            cl::memory_cms_lib_vector2d_fast,
-            cl::insert_cms_lib_vector2d_fast,
-            cl::query_cms_lib_vector2d_fast,
-            Some(cl::merge_cms_lib_vector2d_fast),
-            None,
-        ),
-        ("cms-regularpath-vector2d", "lib") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            cl::build_cms_lib_vector2d_regular,
-            cl::memory_cms_lib_vector2d_regular,
-            cl::insert_cms_lib_vector2d_regular,
-            cl::query_cms_lib_vector2d_regular,
-            Some(cl::merge_cms_lib_vector2d_regular),
-            None,
-        ),
-        ("cms-fastpath-fixedmatrix-32k-parallel", "lib") => timed_row(
-            req,
-            description,
-            table,
-            want,
-            cl::build_parallel_cms_fast_path,
-            cl::memory_parallel_cms_fast_path,
-            cl::insert_parallel_cms_fast_path,
-            None,
-            None,
-        ),
-
-        // -------- CountSketch (frequency) --------
-        ("countsketch", "oxide") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            so::build_cs_oxide,
-            so::memory_cs_oxide,
-            so::insert_cs_oxide,
-            so::query_cs_oxide,
-            Some(so::merge_cs_oxide),
-            None,
-        ),
-        ("countsketch", "polars") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            sp::build_polars_frequency_cs,
-            sp::memory_polars_frequency_cs,
-            sp::insert_polars_frequency_cs,
-            sp::query_polars_frequency_cs,
-            None,
-            Some(sp::prepare_polars_frequency_cs),
-        ),
-        ("countsketch-fastpath-fixedmatrix", "lib") => {
-            fixed_matrix_cs(req, description, table, want)
-        }
-        ("countsketch-fastpath-vector2d", "lib") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            sl::build_cs_lib_vector2d_fast,
-            sl::memory_cs_lib_vector2d_fast,
-            sl::insert_cs_lib_vector2d_fast,
-            sl::query_cs_lib_vector2d_fast,
-            Some(sl::merge_cs_lib_vector2d_fast),
-            None,
-        ),
-        ("countsketch-regularpath-vector2d", "lib") => frequency_row(
-            req,
-            description,
-            table,
-            want,
-            sl::build_cs_lib_vector2d_regular,
-            sl::memory_cs_lib_vector2d_regular,
-            sl::insert_cs_lib_vector2d_regular,
-            sl::query_cs_lib_vector2d_regular,
-            Some(sl::merge_cs_lib_vector2d_regular),
-            None,
-        ),
-        ("countsketch-fastpath-fixedmatrix-32k-parallel", "lib") => timed_row(
-            req,
-            description,
-            table,
-            want,
-            sl::build_parallel_cs_fast_path,
-            sl::memory_parallel_cs_fast_path,
-            sl::insert_parallel_cs_fast_path,
-            None,
-            None,
-        ),
-
-        // -------- HLL (cardinality) --------
-        ("hll", "oxide") => cardinality_row(
-            req,
-            description,
-            table,
-            want,
-            ho::build_hll_oxide,
-            ho::memory_hll_oxide,
-            ho::insert_hll_oxide,
-            ho::query_hll_oxide,
-            Some(ho::merge_hll_oxide),
-            None,
-        ),
-        ("hll", "datasketches") => cardinality_row(
-            req,
-            description,
-            table,
-            want,
-            hd::build_hll_datasketches,
-            hd::memory_hll_datasketches,
-            hd::insert_hll_datasketches,
-            hd::query_hll_datasketches,
-            Some(hd::merge_hll_datasketches),
-            None,
-        ),
-        ("hll", "lib") => hll_lib(req, description, table, want),
-        ("hll", "polars") => cardinality_row(
-            req,
-            description,
-            table,
-            want,
-            hpo::build_polars_cardinality,
-            hpo::memory_polars_cardinality,
-            hpo::insert_polars_cardinality,
-            hpo::query_polars_cardinality,
-            None,
-            Some(hpo::prepare_polars_cardinality),
-        ),
-        ("hll-hip", "lib") => hll_lib_hip(req, description, table, want),
-        ("hll-fastpath-parallel", "lib") => timed_row(
-            req,
-            description,
-            table,
-            want,
-            hl::build_parallel_hll_fast_path,
-            hl::memory_parallel_hll_fast_path,
-            hl::insert_parallel_hll_fast_path,
-            None,
-            None,
-        ),
-
-        // -------- KLL (quantile) --------
-        // The only rows `--dtype` selects anything for: their library is generic
-        // over the value type, so a width picks a monomorphisation rather than
-        // being refused. Each arm is its own instantiation.
-        ("kll-percall", "oxide") => match req.width {
-            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                ko::build_kll_oxide_per_call::<i64>,
-                ko::memory_kll_oxide_per_call::<i64>,
-                ko::insert_kll_oxide_per_call::<i64>,
-                ko::query_kll_oxide_per_call::<i64>,
-                Some(ko::merge_kll_oxide_per_call::<i64>),
-                None,
-            ),
-            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                ko::build_kll_oxide_per_call::<f64>,
-                ko::memory_kll_oxide_per_call::<f64>,
-                ko::insert_kll_oxide_per_call::<f64>,
-                ko::query_kll_oxide_per_call::<f64>,
-                Some(ko::merge_kll_oxide_per_call::<f64>),
-                None,
-            ),
-            other => Err(no_build_at(req, other)),
-        },
-        ("kll-percall", "lib") => match req.width {
-            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                kl::build_kll_lib_per_call::<i64>,
-                kl::memory_kll_lib_per_call::<i64>,
-                kl::insert_kll_lib_per_call::<i64>,
-                kl::query_kll_lib_per_call::<i64>,
-                Some(kl::merge_kll_lib_per_call::<i64>),
-                None,
-            ),
-            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                kl::build_kll_lib_per_call::<f64>,
-                kl::memory_kll_lib_per_call::<f64>,
-                kl::insert_kll_lib_per_call::<f64>,
-                kl::query_kll_lib_per_call::<f64>,
-                Some(kl::merge_kll_lib_per_call::<f64>),
-                None,
-            ),
-            other => Err(no_build_at(req, other)),
-        },
-        ("kll-cdf", "oxide") => match req.width {
-            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                ko::build_kll_oxide_cdf::<i64>,
-                ko::memory_kll_oxide_cdf::<i64>,
-                ko::insert_kll_oxide_cdf::<i64>,
-                ko::query_kll_oxide_cdf::<i64>,
-                Some(ko::merge_kll_oxide_cdf::<i64>),
-                Some(ko::prepare_kll_oxide_cdf::<i64>),
-            ),
-            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                ko::build_kll_oxide_cdf::<f64>,
-                ko::memory_kll_oxide_cdf::<f64>,
-                ko::insert_kll_oxide_cdf::<f64>,
-                ko::query_kll_oxide_cdf::<f64>,
-                Some(ko::merge_kll_oxide_cdf::<f64>),
-                Some(ko::prepare_kll_oxide_cdf::<f64>),
-            ),
-            other => Err(no_build_at(req, other)),
-        },
-        ("kll-cdf", "lib") => match req.width {
-            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                kl::build_kll_lib_cdf::<i64>,
-                kl::memory_kll_lib_cdf::<i64>,
-                kl::insert_kll_lib_cdf::<i64>,
-                kl::query_kll_lib_cdf::<i64>,
-                Some(kl::merge_kll_lib_cdf::<i64>),
-                Some(kl::prepare_kll_lib_cdf::<i64>),
-            ),
-            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
-                req,
-                description,
-                table,
-                want,
-                kl::build_kll_lib_cdf::<f64>,
-                kl::memory_kll_lib_cdf::<f64>,
-                kl::insert_kll_lib_cdf::<f64>,
-                kl::query_kll_lib_cdf::<f64>,
-                Some(kl::merge_kll_lib_cdf::<f64>),
-                Some(kl::prepare_kll_lib_cdf::<f64>),
-            ),
-            other => Err(no_build_at(req, other)),
-        },
-        // The exact baseline is i64 only, unlike the four sketch rows above it:
-        // its grid is built from a sorted i64 column.
-        ("kll-cdf", "polars") => quantile_row::<i64, _, _, _, _, _>(
-            req,
-            description,
-            table,
-            want,
-            kp::build_polars_quantile_kll,
-            kp::memory_polars_quantile_kll,
-            kp::insert_polars_quantile_kll,
-            kp::query_polars_quantile_kll,
-            None,
-            Some(kp::prepare_polars_quantile_kll),
-        ),
-
-        // -------- Hydra (per-subpopulation statistics over labelled records) --------
-        ("hydra-cms", "lib") => subpop_frequency_row(
-            req,
-            description,
-            table,
-            want,
-            hs::build_hydra_cms,
-            hs::memory_hydra_cms,
-            hs::insert_hydra_cms,
-            hs::query_hydra_cms,
-            Some(hs::merge_hydra_cms),
-            None,
-        ),
-        ("hydra-cms", "polars") => subpop_frequency_row(
-            req,
-            description,
-            table,
-            want,
-            hp::build_polars_subpop_frequency,
-            hp::memory_polars_subpop_frequency,
-            hp::insert_polars_subpop_frequency,
-            hp::query_polars_subpop_frequency,
-            None,
-            Some(hp::prepare_polars_subpop_frequency),
-        ),
-        ("hydra-hll", "lib") => subpop_cardinality_row(
-            req,
-            description,
-            table,
-            want,
-            hs::build_hydra_hll,
-            hs::memory_hydra_hll,
-            hs::insert_hydra_hll,
-            hs::query_hydra_hll,
-            Some(hs::merge_hydra_hll),
-            None,
-        ),
-        ("hydra-hll", "polars") => subpop_cardinality_row(
-            req,
-            description,
-            table,
-            want,
-            hp::build_polars_subpop_cardinality,
-            hp::memory_polars_subpop_cardinality,
-            hp::insert_polars_subpop_cardinality,
-            hp::query_polars_subpop_cardinality,
-            None,
-            Some(hp::prepare_polars_subpop_cardinality),
-        ),
-        ("hydra-kll", "lib") => subpop_quantile_row(
-            req,
-            description,
-            table,
-            want,
-            hs::build_hydra_kll,
-            hs::memory_hydra_kll,
-            hs::insert_hydra_kll,
-            hs::query_hydra_kll,
-            Some(hs::merge_hydra_kll),
-            None,
-        ),
-        ("hydra-kll", "polars") => subpop_quantile_row(
-            req,
-            description,
-            table,
-            want,
-            hp::build_polars_subpop_quantile,
-            hp::memory_polars_subpop_quantile,
-            hp::insert_polars_subpop_quantile,
-            hp::query_polars_subpop_quantile,
-            None,
-            Some(hp::prepare_polars_subpop_quantile),
-        ),
-
-        _ => return None,
-    })
+) -> Result<Measurements, RunError> {
+    let entry = crate::registry::find(&req.algorithm, &req.impl_name).ok_or_else(|| {
+        RunError::Sketch(format!(
+            "{}/{} is not a registered row",
+            req.algorithm, req.impl_name
+        ))
+    })?;
+    (entry.row)(req, description, table, want)
 }
 
-// ---------- the statistic a row answers ----------
+// -------- CMS (frequency) --------
 
-/// A row answering **frequency**: how often a key occurs in the stream.
-#[allow(clippy::too_many_arguments)]
-fn frequency_row<S, Bf, M, Per, Q>(
+pub(crate) fn row_cms_oxide(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &i64) + Copy + 'static,
-    Q: Fn(&mut S, &i64) -> u64 + Copy + 'static,
-{
-    let questions = questions(
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        co::insert_cms_oxide,
+        co::insert_step_cms_oxide,
+        co::query_cms_oxide,
+        Some((co::merge_cms_oxide, co::merge_step_cms_oxide)),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_datasketches(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        cd::insert_cms_datasketches,
+        cd::insert_step_cms_datasketches,
+        cd::query_cms_datasketches,
+        Some((cd::merge_cms_datasketches, cd::merge_step_cms_datasketches)),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        cp::insert_polars_frequency_cms,
+        cp::insert_step_polars_frequency_cms,
+        cp::query_polars_frequency_cms,
+        None,
+        Some(cp::prepare_polars_frequency_cms),
+    )
+}
+
+pub(crate) fn row_cms_fastpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        cl::insert_cms_lib_vector2d_fast,
+        cl::insert_step_cms_lib_vector2d_fast,
+        cl::query_cms_lib_vector2d_fast,
+        Some((
+            cl::merge_cms_lib_vector2d_fast,
+            cl::merge_step_cms_lib_vector2d_fast,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_regularpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        cl::insert_cms_lib_vector2d_regular,
+        cl::insert_step_cms_lib_vector2d_regular,
+        cl::query_cms_lib_vector2d_regular,
+        Some((
+            cl::merge_cms_lib_vector2d_regular,
+            cl::merge_step_cms_lib_vector2d_regular,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_fastpath_fixedmatrix_32k_parallel_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    timed_row(
+        req,
+        description,
+        table,
+        want,
+        cl::insert_parallel_cms_fast_path,
+    )
+}
+
+// -------- CountSketch (frequency) --------
+
+pub(crate) fn row_countsketch_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        so::insert_cs_oxide,
+        so::insert_step_cs_oxide,
+        so::query_cs_oxide,
+        Some((so::merge_cs_oxide, so::merge_step_cs_oxide)),
+        None,
+    )
+}
+
+pub(crate) fn row_countsketch_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        sp::insert_polars_frequency_cs,
+        sp::insert_step_polars_frequency_cs,
+        sp::query_polars_frequency_cs,
+        None,
+        Some(sp::prepare_polars_frequency_cs),
+    )
+}
+
+pub(crate) fn row_countsketch_fastpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        sl::insert_cs_lib_vector2d_fast,
+        sl::insert_step_cs_lib_vector2d_fast,
+        sl::query_cs_lib_vector2d_fast,
+        Some((
+            sl::merge_cs_lib_vector2d_fast,
+            sl::merge_step_cs_lib_vector2d_fast,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_countsketch_regularpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        sl::insert_cs_lib_vector2d_regular,
+        sl::insert_step_cs_lib_vector2d_regular,
+        sl::query_cs_lib_vector2d_regular,
+        Some((
+            sl::merge_cs_lib_vector2d_regular,
+            sl::merge_step_cs_lib_vector2d_regular,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_countsketch_fastpath_fixedmatrix_32k_parallel_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    timed_row(
+        req,
+        description,
+        table,
+        want,
+        sl::insert_parallel_cs_fast_path,
+    )
+}
+
+// -------- HLL (cardinality) --------
+
+pub(crate) fn row_hll_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    cardinality_row(
+        req,
+        description,
+        table,
+        want,
+        ho::insert_hll_oxide,
+        ho::insert_step_hll_oxide,
+        ho::query_hll_oxide,
+        Some((ho::merge_hll_oxide, ho::merge_step_hll_oxide)),
+        None,
+    )
+}
+
+pub(crate) fn row_hll_datasketches(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    cardinality_row(
+        req,
+        description,
+        table,
+        want,
+        hd::insert_hll_datasketches,
+        hd::insert_step_hll_datasketches,
+        hd::query_hll_datasketches,
+        Some((hd::merge_hll_datasketches, hd::merge_step_hll_datasketches)),
+        None,
+    )
+}
+
+pub(crate) fn row_hll_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    cardinality_row(
+        req,
+        description,
+        table,
+        want,
+        hpo::insert_polars_cardinality,
+        hpo::insert_step_polars_cardinality,
+        hpo::query_polars_cardinality,
+        None,
+        Some(hpo::prepare_polars_cardinality),
+    )
+}
+
+pub(crate) fn row_hll_fastpath_parallel_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    timed_row(
+        req,
+        description,
+        table,
+        want,
+        hl::insert_parallel_hll_fast_path,
+    )
+}
+
+// -------- KLL (quantile) --------
+//
+// The only rows `--dtype` selects anything for: their library is generic over
+// the value type, so a width picks a monomorphisation rather than being
+// refused. Each arm is its own instantiation.
+
+pub(crate) fn row_kll_percall_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            ko::insert_kll_oxide_per_call::<i64>,
+            ko::insert_step_kll_oxide_per_call::<i64>,
+            ko::query_kll_oxide_per_call::<i64>,
+            Some((
+                ko::merge_kll_oxide_per_call::<i64>,
+                ko::merge_step_kll_oxide_per_call::<i64>,
+            )),
+            None,
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            ko::insert_kll_oxide_per_call::<f64>,
+            ko::insert_step_kll_oxide_per_call::<f64>,
+            ko::query_kll_oxide_per_call::<f64>,
+            Some((
+                ko::merge_kll_oxide_per_call::<f64>,
+                ko::merge_step_kll_oxide_per_call::<f64>,
+            )),
+            None,
+        ),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_kll_percall_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            kl::insert_kll_lib_per_call::<i64>,
+            kl::insert_step_kll_lib_per_call::<i64>,
+            kl::query_kll_lib_per_call::<i64>,
+            Some((
+                kl::merge_kll_lib_per_call::<i64>,
+                kl::merge_step_kll_lib_per_call::<i64>,
+            )),
+            None,
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            kl::insert_kll_lib_per_call::<f64>,
+            kl::insert_step_kll_lib_per_call::<f64>,
+            kl::query_kll_lib_per_call::<f64>,
+            Some((
+                kl::merge_kll_lib_per_call::<f64>,
+                kl::merge_step_kll_lib_per_call::<f64>,
+            )),
+            None,
+        ),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_kll_cdf_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            ko::insert_kll_oxide_cdf::<i64>,
+            ko::insert_step_kll_oxide_cdf::<i64>,
+            ko::query_kll_oxide_cdf::<i64>,
+            Some((
+                ko::merge_kll_oxide_cdf::<i64>,
+                ko::merge_step_kll_oxide_cdf::<i64>,
+            )),
+            Some(ko::prepare_kll_oxide_cdf::<i64>),
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            ko::insert_kll_oxide_cdf::<f64>,
+            ko::insert_step_kll_oxide_cdf::<f64>,
+            ko::query_kll_oxide_cdf::<f64>,
+            Some((
+                ko::merge_kll_oxide_cdf::<f64>,
+                ko::merge_step_kll_oxide_cdf::<f64>,
+            )),
+            Some(ko::prepare_kll_oxide_cdf::<f64>),
+        ),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_kll_cdf_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            kl::insert_kll_lib_cdf::<i64>,
+            kl::insert_step_kll_lib_cdf::<i64>,
+            kl::query_kll_lib_cdf::<i64>,
+            Some((
+                kl::merge_kll_lib_cdf::<i64>,
+                kl::merge_step_kll_lib_cdf::<i64>,
+            )),
+            Some(kl::prepare_kll_lib_cdf::<i64>),
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            kl::insert_kll_lib_cdf::<f64>,
+            kl::insert_step_kll_lib_cdf::<f64>,
+            kl::query_kll_lib_cdf::<f64>,
+            Some((
+                kl::merge_kll_lib_cdf::<f64>,
+                kl::merge_step_kll_lib_cdf::<f64>,
+            )),
+            Some(kl::prepare_kll_lib_cdf::<f64>),
+        ),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+// The exact baseline is i64 only, unlike the four sketch rows above it: its
+// grid is built from a sorted i64 column.
+pub(crate) fn row_kll_cdf_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    quantile_row::<i64>(
+        req,
+        description,
+        table,
+        want,
+        kp::insert_polars_quantile_kll,
+        kp::insert_step_polars_quantile_kll,
+        kp::query_polars_quantile_kll,
+        None,
+        Some(kp::prepare_polars_quantile_kll),
+    )
+}
+
+// -------- Hydra (per-subpopulation statistics over labelled records) --------
+
+pub(crate) fn row_hydra_cms_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_frequency_row(
+        req,
+        description,
+        table,
+        want,
+        hs::insert_hydra_cms,
+        hs::insert_step_hydra_cms,
+        hs::query_hydra_cms,
+        Some((hs::merge_hydra_cms, hs::merge_step_hydra_cms)),
+        None,
+    )
+}
+
+pub(crate) fn row_hydra_cms_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_frequency_row(
+        req,
+        description,
+        table,
+        want,
+        hp::insert_polars_subpop_frequency,
+        hp::insert_step_polars_subpop_frequency,
+        hp::query_polars_subpop_frequency,
+        None,
+        Some(hp::prepare_polars_subpop_frequency),
+    )
+}
+
+pub(crate) fn row_hydra_hll_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_cardinality_row(
+        req,
+        description,
+        table,
+        want,
+        hs::insert_hydra_hll,
+        hs::insert_step_hydra_hll,
+        hs::query_hydra_hll,
+        Some((hs::merge_hydra_hll, hs::merge_step_hydra_hll)),
+        None,
+    )
+}
+
+pub(crate) fn row_hydra_hll_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_cardinality_row(
+        req,
+        description,
+        table,
+        want,
+        hp::insert_polars_subpop_cardinality,
+        hp::insert_step_polars_subpop_cardinality,
+        hp::query_polars_subpop_cardinality,
+        None,
+        Some(hp::prepare_polars_subpop_cardinality),
+    )
+}
+
+pub(crate) fn row_hydra_kll_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_quantile_row(
+        req,
+        description,
+        table,
+        want,
+        hs::insert_hydra_kll,
+        hs::insert_step_hydra_kll,
+        hs::query_hydra_kll,
+        Some((hs::merge_hydra_kll, hs::merge_step_hydra_kll)),
+        None,
+    )
+}
+
+pub(crate) fn row_hydra_kll_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    subpop_quantile_row(
+        req,
+        description,
+        table,
+        want,
+        hp::insert_polars_subpop_quantile,
+        hp::insert_step_polars_subpop_quantile,
+        hp::query_polars_subpop_quantile,
+        None,
+        Some(hp::prepare_polars_subpop_quantile),
+    )
+}
+
+// ---------- the statistic a row answers ----------
+
+/// What an operation a row does not have would be: the registry declares the
+/// operations each row supports and the frontend checks a request against it,
+/// so reaching one here is a table disagreeing with itself.
+const SUPPORTED: &str = "the registry declares the operations this row supports";
+
+/// How many primed closures one measurement needs: its measured runs plus the
+/// warm-ups thrown away before them. The run count follows the metric, which
+/// [`runs_for`] is the one statement of.
+fn passes(req: &Requirement, metric: Metric) -> usize {
+    req.warmup_runs + runs_for(metric, req.runs)
+}
+
+/// The shard count a fold runs at, floored where a fold stops being one.
+fn shards(req: &Requirement) -> usize {
+    req.merge_shards.max(MIN_MERGE_SHARDS)
+}
+
+/// A row answering **frequency**: how often a key occurs in the stream.
+#[allow(clippy::too_many_arguments)]
+fn frequency_row(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<i64>,
+    insert_step: InsertStepBody<i64>,
+    query: QueryBody<i64, i64, u64>,
+    merge: Option<Folds<i64>>,
+    prepare: Option<PrepareBody<i64>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
         FrequencyGT::<i64>::over_column(value_column(description)),
         &table,
     )?;
     let items = peel::<i64>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
 }
 
 /// A row answering **cardinality**: how many distinct keys the stream carried.
 /// The probe is `()` — there is one question, asked repeatedly.
 #[allow(clippy::too_many_arguments)]
-fn cardinality_row<S, Bf, M, Per, Q>(
+fn cardinality_row(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &i64) + Copy + 'static,
-    Q: Fn(&mut S, &()) -> f64 + Copy + 'static,
-{
-    let questions = questions(
+    insert: InsertBody<i64>,
+    insert_step: InsertStepBody<i64>,
+    query: QueryBody<i64, (), f64>,
+    merge: Option<Folds<i64>>,
+    prepare: Option<PrepareBody<i64>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
         CardinalityGT {
             column: value_column(description),
         },
         &table,
     )?;
     let items = peel::<i64>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
-}
-
-/// A row answering **quantile**, scored in rank error: the value at a fraction
-/// of the sorted stream. The one statistic whose rows build at either width.
-#[allow(clippy::too_many_arguments)]
-fn quantile_row<T, S, Bf, M, Per, Q>(
-    req: &Requirement,
-    description: &TableDescription,
-    table: GeneratedTable,
-    want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    T: ColumnItem,
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &T) + Copy + 'static,
-    Q: Fn(&mut S, &f64) -> f64 + Copy + 'static,
-{
-    let questions = questions(
-        RankErrorGT {
-            column: value_column(description),
-        },
-        &table,
-    )?;
-    let items = peel::<T>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
 }
 
 /// A row answering **subpopulation frequency**: how often a value occurs inside
 /// a group.
 #[allow(clippy::too_many_arguments)]
-fn subpop_frequency_row<S, Bf, M, Per, Q>(
+fn subpop_frequency_row(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &(String, i64)) + Copy + 'static,
-    Q: Fn(&mut S, &(Vec<String>, i64)) -> f64 + Copy + 'static,
-{
-    let questions = questions(
+    insert: InsertBody<(String, i64)>,
+    insert_step: InsertStepBody<(String, i64)>,
+    query: QueryBody<(String, i64), (Vec<String>, i64), f64>,
+    merge: Option<Folds<(String, i64)>>,
+    prepare: Option<PrepareBody<(String, i64)>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
         SubpopFrequencyGT::<i64>::over_columns(
             vec![SCORED_LABEL_COLUMN],
             value_column(description),
@@ -602,42 +817,56 @@ where
         &table,
     )?;
     let items = peel_labeled::<i64>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
 }
 
 /// A row answering **subpopulation cardinality**: how many distinct values a
 /// group holds. The statistic a Count-Min cell structurally cannot reach.
 #[allow(clippy::too_many_arguments)]
-fn subpop_cardinality_row<S, Bf, M, Per, Q>(
+fn subpop_cardinality_row(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &(String, i64)) + Copy + 'static,
-    Q: Fn(&mut S, &Vec<String>) -> f64 + Copy + 'static,
-{
-    let questions = questions(
+    insert: InsertBody<(String, i64)>,
+    insert_step: InsertStepBody<(String, i64)>,
+    query: QueryBody<(String, i64), Vec<String>, f64>,
+    merge: Option<Folds<(String, i64)>>,
+    prepare: Option<PrepareBody<(String, i64)>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
         SubpopCardinalityGT {
             group_columns: vec![SCORED_LABEL_COLUMN],
             value_column: value_column(description),
@@ -645,42 +874,56 @@ where
         &table,
     )?;
     let items = peel_labeled::<i64>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
 }
 
 /// A row answering **subpopulation quantile**: the ordered statistic inside a
 /// group, scored in rank error.
 #[allow(clippy::too_many_arguments)]
-fn subpop_quantile_row<S, Bf, M, Per, Q>(
+fn subpop_quantile_row(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    insert: Per,
-    query: Q,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &(String, f64)) + Copy + 'static,
-    Q: Fn(&mut S, &(Vec<String>, f64)) -> f64 + Copy + 'static,
-{
-    let questions = questions(
+    insert: InsertBody<(String, f64)>,
+    insert_step: InsertStepBody<(String, f64)>,
+    query: QueryBody<(String, f64), (Vec<String>, f64), f64>,
+    merge: Option<Folds<(String, f64)>>,
+    prepare: Option<PrepareBody<(String, f64)>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
         SubpopRankErrorGT {
             group_columns: vec![SCORED_LABEL_COLUMN],
             value_column: value_column(description),
@@ -688,49 +931,196 @@ where
         &table,
     )?;
     let items = peel_labeled::<f64>(description, table)?;
-    scored(
-        req,
-        want,
-        sketch(req, build, footprint),
-        per_item(insert),
-        items,
-        merge,
-        prepare,
-        query,
-        questions,
-    )
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
+}
+
+/// A row answering **quantile**, scored in rank error: the value at a fraction
+/// of the sorted stream. The one statistic whose rows build at either width.
+#[allow(clippy::too_many_arguments)]
+fn quantile_row<T: ColumnItem>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<T>,
+    insert_step: InsertStepBody<T>,
+    query: QueryBody<T, f64, f64>,
+    merge: Option<Folds<T>>,
+    prepare: Option<PrepareBody<T>>,
+) -> Result<Measurements, RunError> {
+    let (probes, score) = questions(
+        RankErrorGT {
+            column: value_column(description),
+        },
+        &table,
+    )?;
+    let items = peel::<T>(description, table)?;
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let n = passes(req, metric);
+        let body = match (operation, metric) {
+            (Operation::Insert, Metric::Latency) => {
+                stepped(insert_step(&req.params, items.clone(), n).map_err(cannot_build)?)
+            }
+            (Operation::Insert, _) => timed(
+                insert(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+            (Operation::Query, _) => answered(
+                query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            (Operation::Merge, Metric::Latency) => stepped(
+                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+            ),
+            (Operation::Merge, _) => timed(
+                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                    .map_err(cannot_build)?,
+                (shards(req) - 1) as u64,
+            ),
+            (Operation::Prepare, _) => timed(
+                prepare.expect(SUPPORTED)(&req.params, items.clone(), n).map_err(cannot_build)?,
+                items.len() as u64,
+            ),
+        };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
 }
 
 /// A row that answers **nothing**: measured but not scored. The parallel-insert
 /// rows, whose worker sketches are dropped rather than asked, and whose ingest
 /// is one call over the whole stream rather than a loop over it.
-#[allow(clippy::too_many_arguments)]
-fn timed_row<S, Bf, M>(
+fn timed_row(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    build: Bf,
-    footprint: M,
-    ingest: fn(&mut S, &[i64]),
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    Bf: Fn(&ParamSet, usize) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-{
+    insert: ParallelInsertBody,
+) -> Result<Measurements, RunError> {
     let items = peel::<i64>(description, table)?;
-    timed(
-        req,
-        want,
-        parallel_sketch(req, build, footprint),
-        bulk(ingest),
-        items,
-        merge,
-        prepare,
-    )
+    let workers = req.workers.max(1);
+    let mut bodies = Vec::with_capacity(want.len());
+    for &(operation, metric) in want {
+        let body =
+            match operation {
+                Operation::Insert => timed(
+                    insert(&req.params, workers, items.clone(), passes(req, metric))
+                        .map_err(cannot_build)?,
+                    items.len() as u64,
+                ),
+                _ => return Err(RunError::Sketch(
+                    "answers no statistic and folds nothing, so insert is all it is measured over"
+                        .to_string(),
+                )),
+            };
+        bodies.push(((operation, metric), body));
+    }
+    Ok(bodies)
+}
+
+// ---------- the row's closures, in the framework's terms ----------
+//
+// A wrapper hands back closures over a sketch and nothing else: how many units
+// of work one pass covers, and what it answered, are read here.
+
+/// A pass that only does work: its unit count is the work it covers, which the
+/// row knows because it handed the stream over.
+fn timed(passes: Vec<crate::wrappers::Pass>, work: u64) -> Measurement {
+    passes
+        .into_iter()
+        .map(|pass| {
+            Box::new(move || {
+                let footprint = pass();
+                Box::new(move || RunOutcome {
+                    work,
+                    memory_bytes: Some(footprint as u64),
+                    ..Default::default()
+                }) as Report
+            }) as CorePass
+        })
+        .collect()
+}
+
+/// A pass driven one unit at a time, so the clock can be read per call.
+fn stepped(passes: Vec<StepPass>) -> Measurement {
+    passes
+        .into_iter()
+        .map(|pass| {
+            let StepPass {
+                steps,
+                step,
+                footprint,
+            } = pass;
+            Box::new(move || {
+                let latency_ns = Some(record_calls(steps, step));
+                Box::new(move || RunOutcome {
+                    work: steps as u64,
+                    memory_bytes: Some(footprint() as u64),
+                    latency_ns,
+                    ..Default::default()
+                }) as Report
+            }) as CorePass
+        })
+        .collect()
+}
+
+/// A pass that answers: the comparator scores what it said, here, once the
+/// clock has stopped.
+fn answered<A: 'static>(passes: Vec<QueryPass<A>>, score: Score<A>, metric: Metric) -> Measurement {
+    passes
+        .into_iter()
+        .map(|pass| {
+            let score = score.clone();
+            Box::new(move || {
+                let (answers, footprint) = pass();
+                Box::new(move || RunOutcome {
+                    work: answers.len() as u64,
+                    memory_bytes: Some(footprint as u64),
+                    scores: if metric == Metric::Accuracy {
+                        score(&answers)
+                    } else {
+                        Default::default()
+                    },
+                    ..Default::default()
+                }) as Report
+            }) as CorePass
+        })
+        .collect()
 }
 
 // ---------- what every row does with what it named ----------
@@ -806,156 +1196,6 @@ fn peel_labeled<V: ColumnItem>(
     Ok(Rc::new(items))
 }
 
-/// The row's construction vocabulary, captured. Past here nothing reads a
-/// [`ParamSet`], which is what keeps the framework out of the sketch's dialect.
-fn sketch<S, Bf, M>(
-    req: &Requirement,
-    build: Bf,
-    footprint: M,
-) -> Sketch<impl Fn() -> Result<S, RunError> + Clone + 'static, M>
-where
-    Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-{
-    let params = req.params.clone();
-    Sketch {
-        build: move || build(&params),
-        footprint,
-    }
-}
-
-/// The same, for the rows that spread their ingest over worker threads — the
-/// only ones that read the thread count, so the only ones it reaches. A run of
-/// no threads is not a run, so it is floored here rather than trusted from the
-/// request.
-fn parallel_sketch<S, Bf, M>(
-    req: &Requirement,
-    build: Bf,
-    footprint: M,
-) -> Sketch<impl Fn() -> Result<S, RunError> + Clone + 'static, M>
-where
-    Bf: Fn(&ParamSet, usize) -> Result<S, RunError> + Copy + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-{
-    let (params, workers) = (req.params.clone(), req.workers.max(1));
-    Sketch {
-        build: move || build(&params, workers),
-        footprint,
-    }
-}
-
-/// The measurements a row with a comparator answers.
-#[allow(clippy::too_many_arguments)]
-fn scored<S, P, A, I, B, M, Per, Q, Sc>(
-    req: &Requirement,
-    want: &[(Operation, Metric)],
-    sketch: Sketch<B, M>,
-    insert: Insert<Per, S, I>,
-    items: Rc<Vec<I>>,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-    query: Q,
-    questions: Questions<P, Sc>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    I: 'static,
-    P: 'static,
-    A: 'static,
-    B: Fn() -> Result<S, RunError> + Clone + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &I) + Copy + 'static,
-    Q: Fn(&mut S, &P) -> A + Copy + 'static,
-    Sc: Fn(&[A]) -> BTreeMap<String, f64> + Clone + 'static,
-{
-    // Construction is proved here, once, so a config the row cannot satisfy
-    // fails before any measurement ships — which is what lets every body treat
-    // its own build as infallible.
-    (sketch.build)()?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let body = match operation {
-            Operation::Insert => insert_measurement(metric, sketch.clone(), insert, items.clone())?,
-            Operation::Query => query_measurement(
-                metric,
-                sketch.clone(),
-                insert,
-                items.clone(),
-                prepare,
-                query,
-                questions.clone(),
-            )?,
-            Operation::Merge => merge_measurement(
-                metric,
-                sketch.clone(),
-                insert,
-                items.clone(),
-                merge.ok_or_else(no_merge)?,
-                req.merge_shards,
-            )?,
-            Operation::Prepare => prepare_measurement(
-                metric,
-                sketch.clone(),
-                insert,
-                items.clone(),
-                prepare.ok_or_else(no_prepare)?,
-            )?,
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
-}
-
-/// The same, for a row nothing scores: insert, prepare and merge only, no
-/// comparator and no probes.
-#[allow(clippy::too_many_arguments)]
-fn timed<S, I, B, M, Per>(
-    req: &Requirement,
-    want: &[(Operation, Metric)],
-    sketch: Sketch<B, M>,
-    insert: Insert<Per, S, I>,
-    items: Rc<Vec<I>>,
-    merge: Option<fn(&mut S, &S)>,
-    prepare: Option<fn(&mut S)>,
-) -> Result<Measurements, RunError>
-where
-    S: 'static,
-    I: 'static,
-    B: Fn() -> Result<S, RunError> + Clone + 'static,
-    M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &I) + Copy + 'static,
-{
-    (sketch.build)()?;
-    let mut bodies = Vec::with_capacity(want.len());
-    for &(operation, metric) in want {
-        let body = match operation {
-            Operation::Insert => insert_measurement(metric, sketch.clone(), insert, items.clone())?,
-            Operation::Query => {
-                return Err(RunError::Sketch(
-                    "answers no statistic, so there is nothing to ask it".to_string(),
-                ))
-            }
-            Operation::Merge => merge_measurement(
-                metric,
-                sketch.clone(),
-                insert,
-                items.clone(),
-                merge.ok_or_else(no_merge)?,
-                req.merge_shards,
-            )?,
-            Operation::Prepare => prepare_measurement(
-                metric,
-                sketch.clone(),
-                insert,
-                items.clone(),
-                prepare.ok_or_else(no_prepare)?,
-            )?,
-        };
-        bodies.push(((operation, metric), body));
-    }
-    Ok(bodies)
-}
-
 /// The ordered rows build at either numeric width and at neither of the other
 /// two: a KLL cell stores what it can compare. Nothing else reads `--dtype` —
 /// a row is handed the data the frontend generated, and materialising it at the
@@ -969,14 +1209,6 @@ fn no_build_at(req: &Requirement, got: Dtype) -> RunError {
     ))
 }
 
-fn no_merge() -> RunError {
-    RunError::Sketch("provides no merge".to_string())
-}
-
-fn no_prepare() -> RunError {
-    RunError::Sketch("provides no prepare".to_string())
-}
-
 // ---------- the rows whose shape or precision selects a type ----------
 //
 // Three runtime values that are really type choices. Each match below turns one
@@ -985,7 +1217,7 @@ fn no_prepare() -> RunError {
 /// `lg_k` selects a register-storage type, because `asap_sketchlib` puts the
 /// register count in the type rather than in a field. A value outside the three
 /// is refused by name rather than run at 14 under its own label.
-fn hll_lib(
+pub(crate) fn row_hll_lib(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
@@ -1000,11 +1232,10 @@ fn hll_lib(
                 description,
                 table,
                 want,
-                hl::build_hll_lib::<$r>,
-                hl::memory_hll_lib::<$r>,
                 hl::insert_hll_lib::<$r>,
+                hl::insert_step_hll_lib::<$r>,
                 hl::query_hll_lib::<$r>,
-                Some(hl::merge_hll_lib::<$r>),
+                Some((hl::merge_hll_lib::<$r>, hl::merge_step_hll_lib::<$r>)),
                 None,
             )
         };
@@ -1019,7 +1250,7 @@ fn hll_lib(
 
 /// The HIP variant: same precision dispatch, but no merge — it maintains its
 /// estimate on the insert path and the library supplies no fold.
-fn hll_lib_hip(
+pub(crate) fn row_hll_hip_lib(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
@@ -1034,9 +1265,8 @@ fn hll_lib_hip(
                 description,
                 table,
                 want,
-                hl::build_hll_lib_hip::<$r>,
-                hl::memory_hll_lib_hip::<$r>,
                 hl::insert_hll_lib_hip::<$r>,
+                hl::insert_step_hll_lib_hip::<$r>,
                 hl::query_hll_lib_hip::<$r>,
                 None,
                 None,
@@ -1068,12 +1298,12 @@ fn unsupported_precision(lg_k: u8) -> RunError {
 /// `(rows, cols)` selects a matrix storage type, because `impl_fixed_matrix!`
 /// bakes the shape in — which is the thing these rows exist to price. The visitor
 /// is the only way to hand a monomorphisation back to a caller that picked it
-/// with two runtime integers, and the batch is what it hands back: an erased
-/// list, so nothing in the return type mentions the shape it was built at.
+/// with two runtime integers, and the measurements are what it hands back: an
+/// erased list, so nothing in the return type mentions the shape it ran at.
 macro_rules! fixed_matrix_row {
-    ($fname:ident, $params:ty, $algo:literal, $module:ident, $build:ident, $memory:ident,
-     $insert:ident, $query:ident, $merge:ident) => {
-        fn $fname(
+    ($fname:ident, $params:ty, $algo:literal, $module:ident, $insert:ident, $insert_step:ident,
+     $query:ident, $merge:ident, $merge_step:ident) => {
+        pub(crate) fn $fname(
             req: &Requirement,
             description: &TableDescription,
             table: GeneratedTable,
@@ -1089,24 +1319,14 @@ macro_rules! fixed_matrix_row {
                 .params
                 .parse()
                 .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;
-            // Every shape in the table ingests i64, so the data is materialised
-            // and the exact answer drawn before the shape is resolved.
-            let questions = questions(
-                FrequencyGT::<i64>::over_column(value_column(description)),
-                &table,
-            )?;
-            let items = peel::<i64>(description, table)?;
 
-            struct V<'a, Sc> {
+            struct V<'a> {
                 req: &'a Requirement,
+                description: &'a TableDescription,
+                table: GeneratedTable,
                 want: &'a [(Operation, Metric)],
-                items: Rc<Vec<i64>>,
-                questions: Questions<i64, Sc>,
             }
-            impl<Sc> FixedMatrixVisitor for V<'_, Sc>
-            where
-                Sc: Fn(&[u64]) -> BTreeMap<String, f64> + Clone + 'static,
-            {
+            impl FixedMatrixVisitor for V<'_> {
                 type Out = Result<Measurements, RunError>;
                 fn visit<M>(self) -> Self::Out
                 where
@@ -1116,16 +1336,16 @@ macro_rules! fixed_matrix_row {
                         + Clone
                         + 'static,
                 {
-                    scored(
+                    frequency_row(
                         self.req,
+                        self.description,
+                        self.table,
                         self.want,
-                        sketch(self.req, w::$build::<M>, w::$memory::<M>),
-                        per_item(w::$insert::<M>),
-                        self.items,
-                        Some(w::$merge::<M>),
-                        None,
+                        w::$insert::<M>,
+                        w::$insert_step::<M>,
                         w::$query::<M>,
-                        self.questions,
+                        Some((w::$merge::<M>, w::$merge_step::<M>)),
+                        None,
                     )
                 }
             }
@@ -1135,9 +1355,9 @@ macro_rules! fixed_matrix_row {
                 p.cols,
                 V {
                     req,
+                    description,
+                    table,
                     want,
-                    items,
-                    questions,
                 },
             )
             .unwrap_or_else(|| Err(RunError::Sketch(unsupported_shape($algo, p.rows, p.cols))))
@@ -1146,85 +1366,25 @@ macro_rules! fixed_matrix_row {
 }
 
 fixed_matrix_row!(
-    fixed_matrix_cms,
+    row_cms_fastpath_fixedmatrix_lib,
     crate::params::CmsParams,
     "cms-fastpath-fixedmatrix",
     cms,
-    build_cms_lib_fixedmatrix,
-    memory_cms_lib_fixedmatrix,
     insert_cms_lib_fixedmatrix,
+    insert_step_cms_lib_fixedmatrix,
     query_cms_lib_fixedmatrix,
-    merge_cms_lib_fixedmatrix
+    merge_cms_lib_fixedmatrix,
+    merge_step_cms_lib_fixedmatrix
 );
 
 fixed_matrix_row!(
-    fixed_matrix_cs,
+    row_countsketch_fastpath_fixedmatrix_lib,
     crate::params::CountSketchParams,
     "countsketch-fastpath-fixedmatrix",
     cs,
-    build_cs_lib_fixedmatrix,
-    memory_cs_lib_fixedmatrix,
     insert_cs_lib_fixedmatrix,
+    insert_step_cs_lib_fixedmatrix,
     query_cs_lib_fixedmatrix,
-    merge_cs_lib_fixedmatrix
+    merge_cs_lib_fixedmatrix,
+    merge_step_cs_lib_fixedmatrix
 );
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every registered pair can actually be run. `registry::check` and the
-    /// match in [`measurements`] live in two tables that have to agree — a pair
-    /// that passes the check and finds no code reads as a broken tool.
-    #[test]
-    fn every_registry_entry_has_an_arm() {
-        // A parameterless request over a four-row i64 column reaches the arm
-        // and stops at the first thing it needs, which is enough to prove an
-        // arm exists: what is being checked is that the pair is not `None`, and
-        // `Some(Err(_))` answers that as well as `Some(Ok(_))` does.
-        let req = |e: &crate::registry::SketchId| Requirement {
-            algorithm: e.algorithm.to_string(),
-            impl_name: e.impl_name.to_string(),
-            params: ParamSet::empty(e.algorithm),
-            width: Dtype::I64,
-            workers: 1,
-            merge_shards: 2,
-            comparator: None,
-        };
-        let data = || {
-            let description = aqpbm_core::TableDescription::single(
-                "key",
-                aqpbm_core::ColumnSpec {
-                    distribution: aqpbm_core::DataDistribution::Uniform(
-                        aqpbm_core::UniformParameter {
-                            lower_bound: 0.0,
-                            upper_bound: 8.0,
-                            seed: 1,
-                        },
-                    ),
-                    shift: None,
-                    cardinality: None,
-                    special_rule: aqpbm_core::RULE_NONE,
-                    data_type: "i64".into(),
-                    string: None,
-                },
-                4,
-            );
-            let table = description.generate().expect("four i64 rows generate");
-            (description, table)
-        };
-        let missing: Vec<String> = crate::registry::REGISTRY
-            .iter()
-            .filter(|e| {
-                let (description, table) = data();
-                measurements(&req(e), &description, table, &[]).is_none()
-            })
-            .map(|e| format!("{}/{}", e.algorithm, e.impl_name))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "registered but unrunnable: {}",
-            missing.join(", ")
-        );
-    }
-}

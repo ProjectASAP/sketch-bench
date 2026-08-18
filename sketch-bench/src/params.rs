@@ -2,7 +2,7 @@
 //! vocabulary per sketch family. One struct is one **family** — a variant
 //! needing a different knob is a different family.
 
-use aqpbm_core::DataGenError;
+use aqpbm_datagen::DataGenError;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 

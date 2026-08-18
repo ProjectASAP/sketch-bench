@@ -1,12 +1,11 @@
 //! `aqpbm-core` — the benchmark framework: everything needed to measure *a*
 //! sketch, nothing that knows *which* sketches exist. See `docs/aqpbm-core.md`.
-//! Hand a sketch's closures to [`measurement`]; [`measure()`](fn@measure) times them.
+//! Hand a sketch's primed closures to [`measure()`](fn@measure); it times them.
 
 pub mod accuracy;
 pub mod benchmark_result;
 pub mod error;
 pub mod measure;
-pub mod measurement;
 pub mod metrics;
 
 // The generator is its own crate: independent product surface, no knowledge of
@@ -23,6 +22,8 @@ pub use benchmark_result::{
     Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
 };
 pub use error::RunError;
-pub use measure::{measure, MeasureConfig, RunOutcome, Timed};
-pub use measurement::{Measurement, MIN_MERGE_SHARDS};
+pub use measure::{
+    measure, record_calls, runs_for, MeasureConfig, Measurement, Pass, Report, RunOutcome,
+    MIN_MERGE_SHARDS,
+};
 pub use metrics::{LatencyRecorder, LatencySnapshot, MetricsMask, RunMetrics};

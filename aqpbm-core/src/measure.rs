@@ -1,15 +1,15 @@
 //! Timing a closure. That is all this module does, and all core knows how to do.
-//! A body builds what it needs, marks its region with [`Timed::time`], and says
-//! what it did; `measure` runs it `warmup_runs + runs` times and folds.
+//! A caller hands over one primed closure per run; `measure` calls each with the
+//! clock around it and folds what they report.
 
 use std::collections::BTreeMap;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use crate::metrics::latency::LatencyRecorder;
+use crate::metrics::latency::{LatencyRecorder, LatencySnapshot};
 use crate::metrics::memory::{JemallocAllocated, Rss};
 use crate::metrics::time::{CpuTimeSampler, WallClock};
-use crate::metrics::{MetricsMask, RunMetrics};
+use crate::metrics::{Metric, MetricsMask, RunMetrics};
 
 /// How many times to run a body, and what to record around it.
 ///
@@ -26,6 +26,52 @@ pub struct MeasureConfig {
     pub metrics: MetricsMask,
 }
 
+/// One run of a measurement, primed: whatever it needed built is already built,
+/// so calling it *is* the work being timed. `FnOnce` because a filled sketch is
+/// not a fresh one — a second run is a second closure, not a second call.
+pub type Pass = Box<dyn FnOnce() -> Report>;
+
+/// What the pass produced, read once the clock has stopped: the footprint of a
+/// sketch the pass still owns, and whatever its answers scored. Separate from
+/// [`Pass`] so neither reading nor scoring lands inside the measurement.
+pub type Report = Box<dyn FnOnce() -> RunOutcome>;
+
+/// One measurement: one primed pass per run, warm-ups included, in the order
+/// they will be run.
+pub type Measurement = Vec<Pass>;
+
+/// The smallest fold that is a merge at all: two shards, one merge call. The
+/// count itself comes from the request, and this only keeps a `--merge-shards 1`
+/// from measuring an empty loop.
+pub const MIN_MERGE_SHARDS: usize = 2;
+
+/// How many measured runs a metric takes. Error is deterministic given (data,
+/// parameters) and a dataset is drawn once, so repeating an accuracy
+/// measurement would fabricate spread: ten identical answers averaged to
+/// `stddev: 0.0` over `n: 10`. Timing is where repeating one draw *is* a
+/// repeat. One rule, read by whoever builds the passes and by whoever
+/// configures the loop.
+pub fn runs_for(metric: Metric, runs: usize) -> usize {
+    match metric {
+        Metric::Accuracy => 1,
+        _ => runs,
+    }
+}
+
+/// Drive `steps` calls, timing each on its own. Reading the clock inside the
+/// loop is what a latency distribution needs and what a throughput number must
+/// not pay for, so a caller asks for this only when the metric does.
+#[inline(always)]
+pub fn record_calls(steps: usize, mut f: impl FnMut(usize)) -> LatencySnapshot {
+    let mut rec = LatencyRecorder::new();
+    for i in 0..steps {
+        let clock = WallClock::start();
+        f(i);
+        rec.record_ns(clock.elapsed_ns());
+    }
+    rec.snapshot()
+}
+
 /// What one execution of a body did. The body reports it because core sees an
 /// opaque closure: `memory_bytes` in particular has to be read here, since a
 /// body that owns its sketch drops it on the way out.
@@ -38,73 +84,20 @@ pub struct RunOutcome {
     pub memory_bytes: Option<u64>,
     /// Named scalars — error metrics, probe counts. Empty for a pure timing.
     pub scores: BTreeMap<String, f64>,
+    /// The per-call distribution, for the passes that timed themselves per
+    /// item. `None` for a pass timed as one region.
+    pub latency_ns: Option<LatencySnapshot>,
 }
 
-/// The clock, handed to the body so it can say where the timed region is.
+/// Run each pass with the clock around it; return the measured runs' metrics.
 ///
-/// Setup happens outside it: a body rebuilds its sketch every run, and a query
-/// body refills one, but neither belongs in the number. Marking the region is
-/// the body's job because only the body knows which part is the measurement.
-pub struct Timed {
-    elapsed_ns: u64,
-    latency: Option<LatencyRecorder>,
-}
-
-impl Timed {
-    fn new(mask: MetricsMask) -> Self {
-        Self {
-            elapsed_ns: 0,
-            latency: mask
-                .contains(MetricsMask::LATENCY)
-                .then(LatencyRecorder::new),
-        }
-    }
-
-    /// Time `f` as one region. One clock read either side, nothing inside.
-    #[inline(always)]
-    pub fn time<T>(&mut self, f: impl FnOnce() -> T) -> T {
-        let clock = WallClock::start();
-        let out = f();
-        self.elapsed_ns += clock.elapsed_ns();
-        out
-    }
-
-    /// Time `f` per element, feeding each duration to the latency recorder.
-    ///
-    /// Reading the clock inside the loop is what a latency distribution needs
-    /// and what a throughput number must not pay for, so a body picks one.
-    #[inline(always)]
-    pub fn time_each<X, T>(&mut self, xs: &[X], mut f: impl FnMut(&X) -> T) {
-        let clock = WallClock::start();
-        match self.latency.as_mut() {
-            Some(rec) => {
-                for x in xs {
-                    let t0 = WallClock::start();
-                    std::hint::black_box(f(x));
-                    rec.record_ns(t0.elapsed_ns());
-                }
-            }
-            None => {
-                for x in xs {
-                    std::hint::black_box(f(x));
-                }
-            }
-        }
-        self.elapsed_ns += clock.elapsed_ns();
-    }
-}
-
-/// Run `body` `warmup_runs + runs` times; return the measured runs' metrics.
-///
-/// Warm-ups are run and discarded, so a body that rebuilds per run pays its
-/// setup on those too — which is the point of them.
-pub fn measure<F>(cfg: &MeasureConfig, mut body: F) -> Vec<RunMetrics>
-where
-    F: FnMut(&mut Timed) -> RunOutcome,
-{
+/// The first `warmup_runs` passes are run and discarded, so the setup they
+/// paid for — a sketch built, a stream fed — is paid on those too, which is
+/// the point of them.
+pub fn measure(cfg: &MeasureConfig, passes: Measurement) -> Vec<RunMetrics> {
     warmup_cpu_once();
     let mut out = Vec::with_capacity(cfg.runs);
-    for i in 0..(cfg.warmup_runs + cfg.runs) {
+    for (i, pass) in passes.into_iter().enumerate() {
         let mut cpu = cfg
             .metrics
             .contains(MetricsMask::CPU)
@@ -116,8 +109,10 @@ where
             crate::metrics::heap_track::snapshot()
         };
 
-        let mut timed = Timed::new(cfg.metrics);
-        let outcome = body(&mut timed);
+        let clock = WallClock::start();
+        let report = pass();
+        let elapsed_ns = clock.elapsed_ns();
+        let outcome = report();
 
         #[cfg(feature = "heap-track")]
         let heap_after = crate::metrics::heap_track::snapshot();
@@ -142,7 +137,7 @@ where
         #[allow(unused_mut)]
         let mut m = RunMetrics {
             work: outcome.work,
-            elapsed_ns: timed.elapsed_ns,
+            elapsed_ns,
             cpu_user_ns,
             cpu_sys_ns,
             rss_peak_kb,
@@ -150,7 +145,7 @@ where
             memory_bytes: outcome.memory_bytes,
             heap_bytes_net: None,
             heap_bytes_peak: None,
-            latency_ns: timed.latency.map(|r| r.snapshot()),
+            latency_ns: outcome.latency_ns,
             scores: (!outcome.scores.is_empty()).then_some(outcome.scores),
         };
 

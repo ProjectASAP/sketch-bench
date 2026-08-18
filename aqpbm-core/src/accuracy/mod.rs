@@ -5,8 +5,11 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use aqpbm_datagen::{ColumnData, DataGenError, GeneratedTable};
+
+use crate::error::RunError;
 
 pub mod cardinality;
 pub(crate) mod curve;
@@ -46,6 +49,38 @@ pub trait GroundTruth {
         probes: &[Self::Probe],
         answers: &[Self::Answer],
     ) -> BTreeMap<String, f64>;
+}
+
+/// How a row's answers turn into the named error metrics: the scorer
+/// [`questions`] drew, boxed so a measurement carries it without naming a
+/// comparator type.
+pub type Score<A> = Rc<dyn Fn(&[A]) -> BTreeMap<String, f64>>;
+
+/// Draw the questions: the exact answer over the generated table, the probes
+/// off it, and a scorer holding both. Run once per row, outside every clock,
+/// so no comparator type reaches a measurement.
+#[allow(clippy::type_complexity)]
+pub fn questions<G>(
+    gt: G,
+    table: &GeneratedTable,
+) -> Result<(Rc<Vec<G::Probe>>, Score<G::Answer>), RunError>
+where
+    G: GroundTruth + 'static,
+    G::Truth: 'static,
+    G::Probe: 'static,
+    G::Answer: 'static,
+{
+    let gt = Rc::new(gt);
+    let truth = Rc::new(
+        gt.truth(table)
+            .map_err(|e| RunError::InputDataSet(e.into()))?,
+    );
+    let probes = Rc::new(gt.probes(&truth));
+    let score: Score<G::Answer> = {
+        let (gt, truth, probes) = (gt.clone(), truth.clone(), probes.clone());
+        Rc::new(move |answers: &[G::Answer]| gt.score(&truth, &probes, answers))
+    };
+    Ok((probes, score))
 }
 
 pub(crate) fn f64_values(column: &ColumnData) -> Result<Vec<f64>, DataGenError> {

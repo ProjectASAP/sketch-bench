@@ -3,7 +3,7 @@
 //! `d` labels cost `2^d - 1` cells and throughput is records per second.
 
 use crate::params::*;
-use aqpbm_core::RunError;
+use crate::wrappers::BuildError;
 use asap_sketchlib::input::HydraCounter;
 
 pub mod polars;
@@ -14,10 +14,10 @@ fn labels(group: &[String]) -> Vec<&str> {
 }
 
 /// outer grid is the one shape they have in common.
-fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), RunError> {
+fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), BuildError> {
     for (name, v) in [("rows", rows), ("cols", cols)] {
         if v == 0 {
-            return Err(RunError::Sketch(format!("{algorithm}: {name} must be > 0")));
+            return Err(BuildError(format!("{algorithm}: {name} must be > 0")));
         }
     }
     Ok(())
@@ -75,7 +75,7 @@ mod tests {
     use crate::params::ParamSet;
 
     use crate::params::SketchParams;
-    
+
     fn built() -> HydraCms {
         build_hydra_cms(&ParamSet::of(&HydraCmsParams {
             rows: 3,
@@ -90,6 +90,24 @@ mod tests {
         (key.to_string(), value)
     }
 
+    fn fed(sketch: &mut HydraCms, r: &(String, i64)) {
+        sketch
+            .inner
+            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+    }
+
+    fn fed_hll(sketch: &mut HydraHll, r: &(String, i64)) {
+        sketch
+            .inner
+            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+    }
+
+    fn fed_kll(sketch: &mut HydraKll, r: &(String, f64)) {
+        sketch
+            .inner
+            .update(&r.0, &asap_sketchlib::DataInput::F64(r.1), None);
+    }
+
     /// The statistic is the frequency of a value *within* a subpopulation, and
     /// the coarse query must see every record whose first label matches, not
     /// only those whose full key does.
@@ -102,7 +120,7 @@ mod tests {
             record("a;x", 20),
             record("b;x", 30),
         ] {
-            insert_hydra_cms(&mut h, &r);
+            fed(&mut h, &r);
         }
         // (a, 10) occurs twice, under two different second labels.
         assert_eq!(h.estimate_subpop_frequency(&["a"], &10), 2.0);
@@ -118,7 +136,7 @@ mod tests {
     #[test]
     fn an_absent_group_estimates_zero() {
         let mut h = built();
-        insert_hydra_cms(&mut h, &record("a;x", 10));
+        fed(&mut h, &record("a;x", 10));
         assert_eq!(h.estimate_subpop_frequency(&["zzz"], &10), 0.0);
     }
 
@@ -128,12 +146,14 @@ mod tests {
     fn merging_shards_is_exact() {
         let (mut left, mut right) = (built(), built());
         for _ in 0..3 {
-            insert_hydra_cms(&mut left, &record("a;x", 10));
+            fed(&mut left, &record("a;x", 10));
         }
         for _ in 0..4 {
-            insert_hydra_cms(&mut right, &record("a;x", 10));
+            fed(&mut right, &record("a;x", 10));
         }
-        merge_hydra_cms(&mut left, &right);
+        left.inner
+            .merge(&right.inner)
+            .expect("both operands built from one ParamSet, so shapes match");
         assert_eq!(left.estimate_subpop_frequency(&["a"], &10), 7.0);
     }
 
@@ -185,9 +205,9 @@ mod tests {
     fn hll_counts_distinct_values_not_occurrences() {
         let mut h = built_hll();
         for _ in 0..3 {
-            insert_hydra_hll(&mut h, &record("a;x", 10));
+            fed_hll(&mut h, &record("a;x", 10));
         }
-        insert_hydra_hll(&mut h, &record("a;y", 20));
+        fed_hll(&mut h, &record("a;y", 20));
         // Two distinct values under label `a`, seen four times.
         let est = h.estimate_subpop_cardinality(&["a"]);
         assert!(
@@ -199,7 +219,7 @@ mod tests {
     #[test]
     fn hll_absent_group_estimates_zero() {
         let mut h = built_hll();
-        insert_hydra_hll(&mut h, &record("a;x", 10));
+        fed_hll(&mut h, &record("a;x", 10));
         assert_eq!(h.estimate_subpop_cardinality(&["zzz"]), 0.0);
     }
 
@@ -208,11 +228,13 @@ mod tests {
     #[test]
     fn hll_merging_shards_does_not_double_count() {
         let (mut left, mut right) = (built_hll(), built_hll());
-        insert_hydra_hll(&mut left, &record("a;x", 10));
-        insert_hydra_hll(&mut left, &record("a;x", 20));
-        insert_hydra_hll(&mut right, &record("a;x", 20));
-        insert_hydra_hll(&mut right, &record("a;x", 30));
-        merge_hydra_hll(&mut left, &right);
+        fed_hll(&mut left, &record("a;x", 10));
+        fed_hll(&mut left, &record("a;x", 20));
+        fed_hll(&mut right, &record("a;x", 20));
+        fed_hll(&mut right, &record("a;x", 30));
+        left.inner
+            .merge(&right.inner)
+            .expect("both operands built from one ParamSet, so shapes match");
         let est = left.estimate_subpop_cardinality(&["a"]);
         assert!(
             (est - 3.0).abs() < 0.5,
@@ -252,10 +274,10 @@ mod tests {
     fn kll_quantiles_are_taken_inside_the_group() {
         let mut h = built_kll();
         for v in 1..=101 {
-            insert_hydra_kll(&mut h, &frecord("a;x", v as f64));
+            fed_kll(&mut h, &frecord("a;x", v as f64));
         }
         for _ in 0..500 {
-            insert_hydra_kll(&mut h, &frecord("b;x", 10_000.0));
+            fed_kll(&mut h, &frecord("b;x", 10_000.0));
         }
         let median = h.estimate_subpop_quantile(&["a"], 0.5);
         assert!(
@@ -271,7 +293,7 @@ mod tests {
     fn kll_is_exact_below_k() {
         let mut h = built_kll();
         for v in 1..=101 {
-            insert_hydra_kll(&mut h, &frecord("a;x", v as f64));
+            fed_kll(&mut h, &frecord("a;x", v as f64));
         }
         assert_eq!(h.estimate_subpop_quantile(&["a"], 0.0), 1.0);
         assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);

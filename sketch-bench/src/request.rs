@@ -110,4 +110,9 @@ pub struct Requirement {
     pub merge_shards: usize,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
+    /// Measured runs, and the warm-ups run and discarded before them. A row
+    /// reads them to know how many closures to prime, since each run takes a
+    /// sketch of its own.
+    pub runs: usize,
+    pub warmup_runs: usize,
 }

@@ -6,11 +6,16 @@
 use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
-use aqpbm_core::RunError;
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Default)]
+pub struct PolarsFrequencyCms(PolarsFrequencyCore);
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_frequency_cms(config: &ParamSet) -> Result<PolarsFrequencyCms, RunError> {
+pub fn build_polars_frequency_cms(config: &ParamSet) -> Result<PolarsFrequencyCms, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -23,23 +28,92 @@ pub fn memory_polars_frequency_cms(sketch: &PolarsFrequencyCms) -> usize {
     sketch.0.memory_bytes()
 }
 
-impl PolarsFrequencyCms {
-    pub fn estimate_frequency(&self, key: &i64) -> u64 {
-        self.0.query(*key)
+pub fn insert_polars_frequency_cms(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_polars_frequency_cms(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.0.update(v);
+            }
+            memory_polars_frequency_cms(&sketch)
+        }) as Pass);
     }
+    Ok(out)
 }
 
-pub fn insert_polars_frequency_cms(sketch: &mut PolarsFrequencyCms, v: &i64) {
-    sketch.0.update(v);
+pub fn insert_step_polars_frequency_cms(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_frequency_cms(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.0.update(v);
+            }),
+            footprint: Box::new(move || memory_polars_frequency_cms(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn query_polars_frequency_cms(sketch: &mut PolarsFrequencyCms, key: &i64) -> u64 {
-    sketch.estimate_frequency(key)
+pub fn query_polars_frequency_cms(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    probes: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_polars_frequency_cms(params)?;
+        for v in items.iter() {
+            sketch.0.update(v);
+        }
+        sketch.0.finalize();
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.0.query(*p));
+            }
+            let footprint = memory_polars_frequency_cms(&sketch);
+            (answers, footprint)
+        }) as QueryPass<u64>);
+    }
+    Ok(out)
 }
 
-pub fn prepare_polars_frequency_cms(sketch: &mut PolarsFrequencyCms) {
-    sketch.0.finalize();
+pub fn prepare_polars_frequency_cms(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Fed here: the closure below is the step that makes it ready to answer.
+        let mut sketch = build_polars_frequency_cms(params)?;
+        for v in items.iter() {
+            sketch.0.update(v);
+        }
+        out.push(Box::new(move || {
+            sketch.0.finalize();
+            memory_polars_frequency_cms(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }
-
-#[derive(Default)]
-pub struct PolarsFrequencyCms(PolarsFrequencyCore);

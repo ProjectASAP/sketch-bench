@@ -5,8 +5,10 @@
 
 use super::*;
 use crate::params::ParamSet;
-use crate::wrappers::require_range;
-use aqpbm_core::RunError;
+use crate::wrappers::{partition, require_range};
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
@@ -23,7 +25,7 @@ pub struct HllDatasketches {
 /// instead of a set of types.
 pub const DS_LG_K: (u8, u8) = (4, 21);
 
-pub fn build_hll_datasketches(config: &ParamSet) -> Result<HllDatasketches, RunError> {
+pub fn build_hll_datasketches(config: &ParamSet) -> Result<HllDatasketches, BuildError> {
     let p: HllParams = config.parse()?;
     require_range("datasketches HLL", "lg_k", p.lg_k, DS_LG_K.0, DS_LG_K.1)?;
     let hll_type = ::datasketches::hll::HllType::Hll8;
@@ -45,23 +47,143 @@ pub fn memory_hll_datasketches(sketch: &HllDatasketches) -> usize {
     }
 }
 
-impl HllDatasketches {
-    pub fn estimate_distinct(&self) -> f64 {
-        self.inner.estimate()
+pub fn insert_hll_datasketches(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_hll_datasketches(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(*v);
+            }
+            memory_hll_datasketches(&sketch)
+        }) as Pass);
     }
+    Ok(out)
 }
 
-pub fn insert_hll_datasketches(sketch: &mut HllDatasketches, v: &i64) {
-    sketch.inner.update(*v);
+pub fn insert_step_hll_datasketches(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hll_datasketches(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(*v);
+            }),
+            footprint: Box::new(move || memory_hll_datasketches(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn merge_hll_datasketches(into: &mut HllDatasketches, from: &HllDatasketches) {
-    let mut union = ::datasketches::hll::HllUnion::new(into.lg_k);
-    union.update(&into.inner);
-    union.update(&from.inner);
-    into.inner = union.get_result(into.hll_type);
+pub fn query_hll_datasketches(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_hll_datasketches(params)?;
+        for v in items.iter() {
+            sketch.inner.update(*v);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                answers.push(sketch.inner.estimate());
+            }
+            let footprint = memory_hll_datasketches(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
 }
 
-pub fn query_hll_datasketches(sketch: &mut HllDatasketches, _: &()) -> f64 {
-    sketch.estimate_distinct()
+pub fn merge_hll_datasketches(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = hll_datasketches_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                let mut union = ::datasketches::hll::HllUnion::new(acc.lg_k);
+                union.update(&acc.inner);
+                union.update(&other.inner);
+                acc.inner = union.get_result(acc.hll_type);
+            }
+            memory_hll_datasketches(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_hll_datasketches(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = hll_datasketches_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                let mut union = ::datasketches::hll::HllUnion::new(acc.lg_k);
+                union.update(&acc.inner);
+                union.update(&other.inner);
+                acc.inner = union.get_result(acc.hll_type);
+            }),
+            footprint: Box::new(move || memory_hll_datasketches(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn hll_datasketches_shards(
+    params: &ParamSet,
+    items: &[i64],
+    shards: usize,
+) -> Result<(HllDatasketches, Vec<HllDatasketches>), BuildError> {
+    let mut parts: Vec<HllDatasketches> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_hll_datasketches(params)?;
+        for v in shard {
+            sketch.inner.update(*v);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

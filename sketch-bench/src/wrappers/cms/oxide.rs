@@ -5,8 +5,10 @@
 
 use super::*;
 use crate::params::ParamSet;
-use crate::wrappers::require_resolved_shape;
-use aqpbm_core::RunError;
+use crate::wrappers::{partition, require_resolved_shape};
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // No `rows` / `cols` field: `init` has already proven the built table matches
 // the request, so the sketch itself is the one place either figure is read
@@ -15,13 +17,12 @@ pub struct CmsOxide {
     inner: sketch_oxide::frequency::CountMinSketch,
 }
 
-pub fn build_cms_oxide(config: &ParamSet) -> Result<CmsOxide, RunError> {
+pub fn build_cms_oxide(config: &ParamSet) -> Result<CmsOxide, BuildError> {
     let p: CmsParams = config.parse()?;
     // Native API takes an error bound, not raw dimensions — translate.
     let (epsilon, delta) = dims_to_err(p.rows, p.cols);
-    let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta).map_err(|e| {
-        RunError::Sketch(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}"))
-    })?;
+    let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
+        .map_err(|e| BuildError(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}")))?;
     require_resolved_shape(
         "oxide CMS",
         (inner.depth(), inner.width()),
@@ -37,22 +38,141 @@ pub fn memory_cms_oxide(sketch: &CmsOxide) -> usize {
     sketch.inner.depth() * sketch.inner.width() * std::mem::size_of::<u64>()
 }
 
-impl CmsOxide {
-    pub fn estimate_frequency(&self, key: &i64) -> u64 {
-        self.inner.estimate(key)
+pub fn insert_cms_oxide(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_cms_oxide(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(v);
+            }
+            memory_cms_oxide(&sketch)
+        }) as Pass);
     }
+    Ok(out)
 }
 
-pub fn insert_cms_oxide(sketch: &mut CmsOxide, v: &i64) {
-    sketch.inner.update(v);
+pub fn insert_step_cms_oxide(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_cms_oxide(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(v);
+            }),
+            footprint: Box::new(move || memory_cms_oxide(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn merge_cms_oxide(into: &mut CmsOxide, from: &CmsOxide) {
-    into.inner
-        .merge(&from.inner)
-        .expect("both operands built from one ParamSet, so rows/cols match");
+pub fn query_cms_oxide(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    probes: Rc<Vec<i64>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_cms_oxide(params)?;
+        for v in items.iter() {
+            sketch.inner.update(v);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.inner.estimate(p));
+            }
+            let footprint = memory_cms_oxide(&sketch);
+            (answers, footprint)
+        }) as QueryPass<u64>);
+    }
+    Ok(out)
 }
 
-pub fn query_cms_oxide(sketch: &mut CmsOxide, key: &i64) -> u64 {
-    sketch.estimate_frequency(key)
+pub fn merge_cms_oxide(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = cms_oxide_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so rows/cols match");
+            }
+            memory_cms_oxide(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_cms_oxide(
+    params: &ParamSet,
+    items: Rc<Vec<i64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = cms_oxide_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so rows/cols match");
+            }),
+            footprint: Box::new(move || memory_cms_oxide(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn cms_oxide_shards(
+    params: &ParamSet,
+    items: &[i64],
+    shards: usize,
+) -> Result<(CmsOxide, Vec<CmsOxide>), BuildError> {
+    let mut parts: Vec<CmsOxide> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_cms_oxide(params)?;
+        for v in shard {
+            sketch.inner.update(v);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

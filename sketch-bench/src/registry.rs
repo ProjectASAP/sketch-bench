@@ -3,6 +3,7 @@
 //! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
 use crate::request::Requirement;
+use crate::rows::RowBinding;
 use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
 
 pub use crate::request::{Capability, Dtype};
@@ -21,6 +22,10 @@ pub struct SketchId {
     /// The implementing library, and only that.
     pub impl_name: &'static str,
     pub description: &'static str,
+    /// The code this entry names: entered with a request and the data, handing
+    /// back one closure per measurement. One table, so a registered pair
+    /// always finds a row.
+    pub row: RowBinding,
 
     /// The statistic this sketch answers. [`Capability::None`] is measured but
     /// not scored — timed only, no query. It is a real answer, not a missing
@@ -51,6 +56,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms",
         impl_name: "oxide",
         description: "sketch_oxide::frequency::CountMinSketch",
+        row: crate::rows::row_cms_oxide,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -67,6 +73,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms",
         impl_name: "datasketches",
         description: "datasketches::countmin::CountMinSketch",
+        row: crate::rows::row_cms_datasketches,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -83,6 +90,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms",
         impl_name: "polars",
         description: "polars exact: group_by(v).agg(len)",
+        row: crate::rows::row_cms_polars,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -99,6 +107,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-fastpath-fixedmatrix",
         impl_name: "lib",
         description: "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
+        row: crate::rows::row_cms_fastpath_fixedmatrix_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -115,6 +124,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-fastpath-vector2d",
         impl_name: "lib",
         description: "asap CMS, Vector2D, FastPath",
+        row: crate::rows::row_cms_fastpath_vector2d_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -131,6 +141,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-regularpath-vector2d",
         impl_name: "lib",
         description: "asap CMS, Vector2D, RegularPath",
+        row: crate::rows::row_cms_regularpath_vector2d_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -148,6 +159,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-fastpath-fixedmatrix-32k-parallel",
         impl_name: "lib",
         description: "asap CMS, FastPath, parallel insert on M5x32K",
+        row: crate::rows::row_cms_fastpath_fixedmatrix_32k_parallel_lib,
         capability: Capability::None,
         comparator: None,
         operations: OperationMask::INSERT,
@@ -162,6 +174,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         impl_name: "oxide",
         description: "sketch_oxide::frequency::CountSketch",
+        row: crate::rows::row_countsketch_oxide,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -178,6 +191,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         impl_name: "polars",
         description: "polars exact: group_by(v).agg(len)",
+        row: crate::rows::row_countsketch_polars,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -194,6 +208,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch-fastpath-fixedmatrix",
         impl_name: "lib",
         description: "asap Count, FixedMatrix (shape baked at compile time), FastPath",
+        row: crate::rows::row_countsketch_fastpath_fixedmatrix_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -210,6 +225,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch-fastpath-vector2d",
         impl_name: "lib",
         description: "asap Count, Vector2D, FastPath",
+        row: crate::rows::row_countsketch_fastpath_vector2d_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -226,6 +242,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch-regularpath-vector2d",
         impl_name: "lib",
         description: "asap Count, Vector2D, RegularPath",
+        row: crate::rows::row_countsketch_regularpath_vector2d_lib,
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -242,6 +259,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch-fastpath-fixedmatrix-32k-parallel",
         impl_name: "lib",
         description: "asap Count, FastPath, parallel insert on M5x32K",
+        row: crate::rows::row_countsketch_fastpath_fixedmatrix_32k_parallel_lib,
         capability: Capability::None,
         comparator: None,
         operations: OperationMask::INSERT,
@@ -257,6 +275,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         impl_name: "oxide",
         description: "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
+        row: crate::rows::row_hll_oxide,
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT
@@ -273,6 +292,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         impl_name: "datasketches",
         description: "datasketches::hll::HllSketch (Hll8)",
+        row: crate::rows::row_hll_datasketches,
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT
@@ -289,6 +309,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         impl_name: "lib",
         description: "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
+        row: crate::rows::row_hll_lib,
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT
@@ -305,6 +326,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         impl_name: "polars",
         description: "polars exact: DataFrame.n_unique()",
+        row: crate::rows::row_hll_polars,
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT
@@ -324,6 +346,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll-hip",
         impl_name: "lib",
         description: "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
+        row: crate::rows::row_hll_hip_lib,
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT.union(OperationMask::QUERY),
@@ -338,6 +361,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll-fastpath-parallel",
         impl_name: "lib",
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
+        row: crate::rows::row_hll_fastpath_parallel_lib,
         capability: Capability::None,
         comparator: None,
         operations: OperationMask::INSERT,
@@ -354,6 +378,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll-percall",
         impl_name: "oxide",
         description: "sketch_oxide KllSketch: quantile() per call",
+        row: crate::rows::row_kll_percall_oxide,
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -370,6 +395,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll-percall",
         impl_name: "lib",
         description: "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
+        row: crate::rows::row_kll_percall_lib,
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -386,6 +412,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll-cdf",
         impl_name: "oxide",
         description: "sketch_oxide KllSketch: cdf() built in prepare",
+        row: crate::rows::row_kll_cdf_oxide,
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -403,6 +430,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll-cdf",
         impl_name: "lib",
         description: "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
+        row: crate::rows::row_kll_cdf_lib,
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -421,6 +449,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll-cdf",
         impl_name: "polars",
         description: "polars exact: 101-point quantile grid",
+        row: crate::rows::row_kll_cdf_polars,
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -441,6 +470,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-cms",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
+        row: crate::rows::row_hydra_cms_lib,
         capability: Capability::SubpopFrequency,
         comparator: Some("subpop-frequency"),
         operations: OperationMask::INSERT
@@ -457,6 +487,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-cms",
         impl_name: "polars",
         description: "polars exact: group_by(subset, v).agg(len) over every label subset",
+        row: crate::rows::row_hydra_cms_polars,
         capability: Capability::SubpopFrequency,
         comparator: Some("subpop-frequency"),
         operations: OperationMask::INSERT
@@ -473,6 +504,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-hll",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
+        row: crate::rows::row_hydra_hll_lib,
         capability: Capability::SubpopCardinality,
         comparator: Some("subpop-cardinality"),
         operations: OperationMask::INSERT
@@ -489,6 +521,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-hll",
         impl_name: "polars",
         description: "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
+        row: crate::rows::row_hydra_hll_polars,
         capability: Capability::SubpopCardinality,
         comparator: Some("subpop-cardinality"),
         operations: OperationMask::INSERT
@@ -505,6 +538,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-kll",
         impl_name: "lib",
         description: "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
+        row: crate::rows::row_hydra_kll_lib,
         capability: Capability::SubpopQuantile,
         comparator: Some("subpop-rank-error"),
         operations: OperationMask::INSERT
@@ -521,6 +555,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-kll",
         impl_name: "polars",
         description: "polars exact: sorted values per label subset, quantile by rank",
+        row: crate::rows::row_hydra_kll_polars,
         capability: Capability::SubpopQuantile,
         comparator: Some("subpop-rank-error"),
         operations: OperationMask::INSERT
@@ -536,7 +571,7 @@ pub const REGISTRY: &[SketchId] = &[
 
 // ---------- what the frontend asks ----------
 
-fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
+pub(crate) fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
     REGISTRY
         .iter()
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
