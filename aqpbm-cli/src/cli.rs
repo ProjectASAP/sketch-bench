@@ -94,10 +94,11 @@ pub struct SketchbenchArgs {
     /// Zipf `s` exponent (only used when `--dataset zipf`).
     #[arg(long, default_value_t = 1.1, help_heading = "Dataset")]
     pub zipf_s: f64,
-    /// Numeric width for the ordered algorithms (`kll-percall`, `kll-cdf`,
-    /// `dd`): `i64` or `f64`. The one item-type choice left, since every other
-    /// target's is fixed by its wrapper, and `f64` elsewhere is refused by name.
-    /// Encoding only.
+    /// Item type the value column is generated at: `i64`, `u64`, `f64` or
+    /// `string` — every type the generator renders. The one item-type choice
+    /// left, since a row's own wrapper fixes what it can ingest and refuses the
+    /// rest by name; today the ordered rows (`kll-percall`, `kll-cdf`) take
+    /// either numeric width and every other row takes `i64`. Encoding only.
     #[arg(long, default_value = "i64", help_heading = "Dataset")]
     pub dtype: String,
     /// Alphabet for generated string keys, for the targets whose wrappers take

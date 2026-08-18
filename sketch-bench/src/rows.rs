@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::params::ParamSet;
-use crate::request::{Numeric, Requirement};
+use crate::request::{Dtype, Requirement};
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, ToF64};
@@ -42,15 +42,18 @@ type Bodies = Vec<((Operation, Metric), Measurement)>;
 /// question, and generating needs it — so it is asked for separately, ahead of
 /// the data. `None` means the pair has no arm, exactly as in [`measurements`].
 pub fn item_type(req: &Requirement) -> Option<Result<&'static str, RunError>> {
-    let width = || match req.width {
-        Numeric::I64 => <i64 as BenchItem>::DATA_TYPE,
-        Numeric::F64 => <f64 as BenchItem>::DATA_TYPE,
+    // The ordered rows build at either numeric width, and at neither of the
+    // other two: a KLL cell stores what it can compare.
+    let ordered = || match req.width {
+        Dtype::I64 => Ok(<i64 as BenchItem>::DATA_TYPE),
+        Dtype::F64 => Ok(<f64 as BenchItem>::DATA_TYPE),
+        other => Err(unsupported_dtype(req, other, "i64 or f64")),
     };
     Some(match (req.algorithm.as_str(), req.impl_name.as_str()) {
         // The only rows `--dtype` selects anything for: their library is generic
         // over the value type, so a width picks a monomorphisation rather than
         // being refused.
-        ("kll-percall" | "kll-cdf", "oxide" | "lib") => Ok(width()),
+        ("kll-percall" | "kll-cdf", "oxide" | "lib") => ordered(),
 
         // Labelled records. The value column carries the item type; the label
         // columns are text and are named by the `--spec` that describes them.
@@ -269,7 +272,7 @@ pub fn measurements(
         // over the value type, so a width picks a monomorphisation rather than
         // being refused. Each arm is its own instantiation.
         ("kll-percall", "oxide") => match req.width {
-            Numeric::I64 => quantile_row::<i64, _, _, _, _, _>(
+            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -280,7 +283,7 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_per_call::<i64>),
                 None,
             ),
-            Numeric::F64 => quantile_row::<f64, _, _, _, _, _>(
+            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -291,9 +294,10 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_per_call::<f64>),
                 None,
             ),
+            other => Err(unsupported_dtype(req, other, "i64 or f64")),
         },
         ("kll-percall", "lib") => match req.width {
-            Numeric::I64 => quantile_row::<i64, _, _, _, _, _>(
+            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -304,7 +308,7 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_per_call::<i64>),
                 None,
             ),
-            Numeric::F64 => quantile_row::<f64, _, _, _, _, _>(
+            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -315,9 +319,10 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_per_call::<f64>),
                 None,
             ),
+            other => Err(unsupported_dtype(req, other, "i64 or f64")),
         },
         ("kll-cdf", "oxide") => match req.width {
-            Numeric::I64 => quantile_row::<i64, _, _, _, _, _>(
+            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -328,7 +333,7 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_cdf::<i64>),
                 Some(ko::prepare_kll_oxide_cdf::<i64>),
             ),
-            Numeric::F64 => quantile_row::<f64, _, _, _, _, _>(
+            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -339,9 +344,10 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_cdf::<f64>),
                 Some(ko::prepare_kll_oxide_cdf::<f64>),
             ),
+            other => Err(unsupported_dtype(req, other, "i64 or f64")),
         },
         ("kll-cdf", "lib") => match req.width {
-            Numeric::I64 => quantile_row::<i64, _, _, _, _, _>(
+            Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -352,7 +358,7 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_cdf::<i64>),
                 Some(kl::prepare_kll_lib_cdf::<i64>),
             ),
-            Numeric::F64 => quantile_row::<f64, _, _, _, _, _>(
+            Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
                 data,
                 want,
@@ -363,6 +369,7 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_cdf::<f64>),
                 Some(kl::prepare_kll_lib_cdf::<f64>),
             ),
+            other => Err(unsupported_dtype(req, other, "i64 or f64")),
         },
         // The exact baseline is i64 only, unlike the four sketch rows above it:
         // its grid is built from a sorted i64 column.
@@ -890,18 +897,26 @@ fn no_prepare() -> RunError {
     RunError::Sketch("provides no prepare".to_string())
 }
 
-/// Refuse `--dtype f64` on a row whose item type is `i64`. The registry says
-/// nothing about width, so refusing it needs to know which row was asked for —
-/// known here. The `kll-*` rows skip it: they genuinely build at both widths.
+/// Refuse any `--dtype` but `i64` on a row whose item type is `i64`. The
+/// registry says nothing about the item type, so refusing it needs to know
+/// which row was asked for — known here. The `kll-*` rows skip it: they
+/// genuinely build at both numeric widths.
 fn i64_only(req: &Requirement) -> Result<(), RunError> {
-    if req.width == Numeric::F64 {
-        return Err(RunError::Sketch(format!(
-            "{}/{} ingests i64 only; --dtype f64 is honoured by the kll rows, \
-             which build at either width",
-            req.algorithm, req.impl_name
-        )));
+    if req.width != Dtype::I64 {
+        return Err(unsupported_dtype(req, req.width, "i64"));
     }
     Ok(())
+}
+
+/// A `--dtype` this row cannot ingest, naming what it can. `aqpbm-datagen`
+/// renders four types; which of them reach a sketch is a property of the row.
+fn unsupported_dtype(req: &Requirement, got: Dtype, admits: &str) -> RunError {
+    RunError::Sketch(format!(
+        "{}/{} ingests {admits}; --dtype {} is not one of them",
+        req.algorithm,
+        req.impl_name,
+        got.name(),
+    ))
 }
 
 // ---------- the rows whose shape or precision selects a type ----------
@@ -1107,7 +1122,7 @@ mod tests {
             algorithm: e.algorithm.to_string(),
             impl_name: e.impl_name.to_string(),
             params: ParamSet::empty(e.algorithm),
-            width: Numeric::I64,
+            width: Dtype::I64,
             workers: 1,
             merge_shards: 2,
             comparator: None,

@@ -43,23 +43,40 @@ impl Capability {
     }
 }
 
-/// The item width a row is measured at: the one item-type choice a user still
-/// makes, since an ordered row (KLL) builds at either width and every other's
-/// is fixed by its Rust type. Here because [`Requirement`] carries it.
+/// The item type a row is measured at: the one item-type choice a user still
+/// makes. Every type `aqpbm-datagen` renders is spellable here; which of them a
+/// row can actually ingest is the row's own answer, and it refuses the rest.
+/// Here because [`Requirement`] carries it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Numeric {
+pub enum Dtype {
     #[default]
     I64,
+    U64,
     F64,
+    Str,
 }
 
-impl Numeric {
+impl Dtype {
     /// The `--dtype` spelling, which is also the `data_type` a description gives
     /// the value column.
     pub fn name(self) -> &'static str {
         match self {
-            Numeric::I64 => "i64",
-            Numeric::F64 => "f64",
+            Dtype::I64 => "i64",
+            Dtype::U64 => "u64",
+            Dtype::F64 => "f64",
+            Dtype::Str => "string",
+        }
+    }
+
+    /// Read the `--dtype` spelling back. `None` for anything `aqpbm-datagen`
+    /// cannot render.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "i64" => Some(Dtype::I64),
+            "u64" => Some(Dtype::U64),
+            "f64" => Some(Dtype::F64),
+            "string" => Some(Dtype::Str),
+            _ => None,
         }
     }
 }
@@ -82,7 +99,7 @@ pub struct Requirement {
     /// Construction parameters, already parsed into the row's vocabulary.
     pub params: ParamSet,
     /// Which item width to build at.
-    pub width: Numeric,
+    pub width: Dtype,
     /// Worker threads the parallel rows use. A run knob that reaches the row,
     /// so it travels with the request rather than in a whole-run config it has
     /// no business reading.

@@ -5,7 +5,7 @@
 use crate::request::Requirement;
 use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
 
-pub use crate::request::{Capability, Numeric};
+pub use crate::request::{Capability, Dtype};
 
 /// One registry entry: who a sketch is, and what it can be asked for. The four
 /// identity fields name it; the four below are what [`check`] reads. Item width

@@ -292,15 +292,15 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // is spawned, and only when the operator has not chosen a value.
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    // The only item-type choice left: the KLL sketches build at either width.
-    // Every other item type is fixed by its wrapper, which is what refuses a
-    // width it cannot honour — a construction choice like any other, so the
-    // registry does not screen it.
-    let width = match args.dtype.as_str() {
-        "i64" => registry::Numeric::I64,
-        "f64" => registry::Numeric::F64,
-        other => bail!("unknown --dtype: {other} (expected i64|f64)"),
-    };
+    // Every type `aqpbm-datagen` renders is spellable; which of them a row can
+    // ingest is the row's own answer, and it refuses the rest — a construction
+    // choice like any other, so the registry does not screen it.
+    let width = registry::Dtype::parse(&args.dtype).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown --dtype: {} (expected i64|u64|f64|string)",
+            args.dtype
+        )
+    })?;
     let spec = dataset_spec(&args)?;
     // clap makes both required whenever a measurement is asked for, so the `bail`s
     // are unreachable from the command line and exist for the type.
