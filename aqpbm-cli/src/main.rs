@@ -33,8 +33,8 @@ use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::measurement::MIN_MERGE_SHARDS;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_datagen::{
-    ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
-    RULE_NONE,
+    ColumnSpec, DataDistribution, GeneratedTable, StringOpts, TableDescription, UniformParameter,
+    ZipfParameter, RULE_NONE,
 };
 use clap::Parser;
 use sketch_bench::params::ParamSet;
@@ -43,7 +43,6 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::input_dataset::InputDataSetSpec;
 use sketch_bench::registry;
 use sketch_bench::request::Requirement;
 use sketch_bench::rows;
@@ -165,6 +164,37 @@ fn list_impls() -> Result<()> {
         println!("{line}");
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+enum InputDataSetSpec {
+    Generated(TableDescription),
+    Inline(TableDescription),
+}
+
+impl InputDataSetSpec {
+    /// Produce the data this spec describes, at `value_type` — the item type
+    /// the row named.
+    fn generate_at(&self, value_type: &str) -> Result<(TableDescription, GeneratedTable)> {
+        let description = self.describe(value_type);
+        let table = description.generate()?;
+        Ok((description, table))
+    }
+
+    /// The description to generate from at item type `item_type`. See the
+    /// variants above for why the two cases answer differently.
+    fn describe(&self, item_type: &str) -> TableDescription {
+        match self {
+            InputDataSetSpec::Generated(d) => d.clone(),
+            InputDataSetSpec::Inline(d) => {
+                let mut d = d.clone();
+                for column in &mut d.column_spec {
+                    column.data_type = item_type.to_string();
+                }
+                d
+            }
+        }
+    }
 }
 
 /// Load a `--spec` file as one [`TableDescription`]. One reader, because one

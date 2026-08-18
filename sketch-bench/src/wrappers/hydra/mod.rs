@@ -75,8 +75,7 @@ mod tests {
     use crate::params::ParamSet;
 
     use crate::params::SketchParams;
-    use aqpbm_core::input_dataset::Labeled;
-
+    
     fn built() -> HydraCms {
         build_hydra_cms(&ParamSet::of(&HydraCmsParams {
             rows: 3,
@@ -87,11 +86,8 @@ mod tests {
         .expect("canonical dimensions build")
     }
 
-    fn record(key: &str, value: i64) -> Labeled<i64> {
-        Labeled {
-            key: key.to_string(),
-            value,
-        }
+    fn record(key: &str, value: i64) -> (String, i64) {
+        (key.to_string(), value)
     }
 
     /// The statistic is the frequency of a value *within* a subpopulation, and
@@ -246,11 +242,8 @@ mod tests {
         .expect("canonical dimensions build")
     }
 
-    fn frecord(key: &str, value: f64) -> Labeled<f64> {
-        Labeled {
-            key: key.to_string(),
-            value,
-        }
+    fn frecord(key: &str, value: f64) -> (String, f64) {
+        (key.to_string(), value)
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one

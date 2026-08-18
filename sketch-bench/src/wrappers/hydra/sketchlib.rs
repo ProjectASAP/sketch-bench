@@ -5,7 +5,6 @@
 
 use super::*;
 use crate::params::ParamSet;
-use aqpbm_core::input_dataset::Labeled;
 use aqpbm_core::RunError;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
@@ -131,8 +130,8 @@ pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
 }
 
-pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>) {
-    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &(String, i64)) {
+    sketch.inner.update(&r.0, &DataInput::I64(r.1), None);
 }
 
 pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms) {
@@ -141,8 +140,8 @@ pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms) {
         .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>) {
-    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &(String, i64)) {
+    sketch.inner.update(&r.0, &DataInput::I64(r.1), None);
 }
 
 pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll) {
@@ -151,8 +150,8 @@ pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll) {
         .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>) {
-    sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
+pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &(String, f64)) {
+    sketch.inner.update(&r.0, &DataInput::F64(r.1), None);
 }
 
 pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {

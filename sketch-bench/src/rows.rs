@@ -18,13 +18,12 @@ use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::error::RunError;
-use aqpbm_core::input_dataset::{BenchItem, Labeled};
 use aqpbm_core::measurement::{
     bulk, insert_measurement, merge_measurement, per_item, prepare_measurement, query_measurement,
     questions, Insert, Measurement, Questions, Sketch,
 };
 use aqpbm_core::metrics::{Metric, Operation};
-use aqpbm_core::{GeneratedTable, TableDescription};
+use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
@@ -32,7 +31,6 @@ const SCORED_LABEL_COLUMN: usize = 0;
 fn value_column(description: &TableDescription) -> usize {
     description.column_spec.len().saturating_sub(1)
 }
-
 /// One invocation's worth of work: one closure per measurement, in the order
 /// they were asked for. The provenance is not here — the frontend generated the
 /// data and already holds the description that names it.
@@ -547,7 +545,7 @@ fn quantile_row<T, S, Bf, M, Per, Q>(
     prepare: Option<fn(&mut S)>,
 ) -> Result<Measurements, RunError>
 where
-    T: BenchItem + Clone + 'static,
+    T: ColumnItem,
     S: 'static,
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
@@ -593,7 +591,7 @@ where
     S: 'static,
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &Labeled<i64>) + Copy + 'static,
+    Per: Fn(&mut S, &(String, i64)) + Copy + 'static,
     Q: Fn(&mut S, &(Vec<String>, i64)) -> f64 + Copy + 'static,
 {
     let questions = questions(
@@ -603,7 +601,7 @@ where
         ),
         &table,
     )?;
-    let items = peel::<Labeled<i64>>(description, table)?;
+    let items = peel_labeled::<i64>(description, table)?;
     scored(
         req,
         want,
@@ -636,7 +634,7 @@ where
     S: 'static,
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &Labeled<i64>) + Copy + 'static,
+    Per: Fn(&mut S, &(String, i64)) + Copy + 'static,
     Q: Fn(&mut S, &Vec<String>) -> f64 + Copy + 'static,
 {
     let questions = questions(
@@ -646,7 +644,7 @@ where
         },
         &table,
     )?;
-    let items = peel::<Labeled<i64>>(description, table)?;
+    let items = peel_labeled::<i64>(description, table)?;
     scored(
         req,
         want,
@@ -679,7 +677,7 @@ where
     S: 'static,
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
-    Per: Fn(&mut S, &Labeled<f64>) + Copy + 'static,
+    Per: Fn(&mut S, &(String, f64)) + Copy + 'static,
     Q: Fn(&mut S, &(Vec<String>, f64)) -> f64 + Copy + 'static,
 {
     let questions = questions(
@@ -689,7 +687,7 @@ where
         },
         &table,
     )?;
-    let items = peel::<Labeled<f64>>(description, table)?;
+    let items = peel_labeled::<f64>(description, table)?;
     scored(
         req,
         want,
@@ -737,13 +735,75 @@ where
 
 // ---------- what every row does with what it named ----------
 
-/// Materialise at the item type this row ingests. The stream is moved into an
-/// `Rc` rather than copied: every measurement of this row reads the same one.
-fn peel<T: BenchItem>(
+/// Materialise at the item type this row ingests: the value column, read at
+/// the row's own width. The stream is moved into an `Rc` rather than copied:
+/// every measurement of this row reads the same one.
+fn peel<T: ColumnItem>(
     description: &TableDescription,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<T>>, RunError> {
-    Ok(Rc::new(T::materialise(description, table)?))
+    let column = table.into_column(value_column(description))?;
+    Ok(Rc::new(T::from_column(column)?))
+}
+
+/// The same, for the grouped rows: the columns before the value column joined
+/// with `;` into one key, paired with the value. The join happens here rather
+/// than on the insert path, so a wrapper feeding a library that takes `"a;b"`
+/// pays nothing for it per item.
+fn peel_labeled<V: ColumnItem>(
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Rc<Vec<(String, V)>>, RunError> {
+    let value_column = value_column(description);
+    if value_column == 0 {
+        return Err(RunError::Sketch(format!(
+            "this row ingests labelled records, so it needs at least one label \
+             column before the value column; the description has {} column(s)",
+            description.column_spec.len(),
+        )));
+    }
+    let titles = table.column_title.clone();
+    let mut columns = table.into_columns();
+    if value_column >= columns.len() {
+        return Err(RunError::Sketch(format!(
+            "column {value_column} was asked for, but the table holds {}",
+            columns.len(),
+        )));
+    }
+    let values = V::from_column(columns.remove(value_column)).map_err(|e| {
+        RunError::Sketch(format!(
+            "value column '{}': {e}. The value column's data_type has to be the \
+             row's item type",
+            titles[value_column],
+        ))
+    })?;
+    columns.truncate(value_column);
+    let labels: Vec<Vec<String>> = columns
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            String::from_column(c).map_err(|e| {
+                RunError::Sketch(format!(
+                    "label column '{}': {e}. Label columns are rendered as text, \
+                     so their data_type has to be `string`",
+                    titles[i],
+                ))
+            })
+        })
+        .collect::<Result<_, RunError>>()?;
+
+    let mut items = Vec::with_capacity(values.len());
+    for (row, value) in values.into_iter().enumerate() {
+        let mut key = String::new();
+        for (column, labels) in labels.iter().enumerate() {
+            if column > 0 {
+                key.push(';');
+            }
+            key.push_str(&labels[row]);
+        }
+        items.push((key, value));
+    }
+    Ok(Rc::new(items))
 }
 
 /// The row's construction vocabulary, captured. Past here nothing reads a

@@ -7,13 +7,12 @@ use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
 use ::polars::prelude::*;
-use aqpbm_core::input_dataset::Labeled;
 use aqpbm_core::RunError;
 use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct PolarsSubpopFrequency {
-    buf: Vec<Labeled<i64>>,
+    buf: Vec<(String, i64)>,
     counts: HashMap<(String, i64), u64>,
 }
 
@@ -36,14 +35,14 @@ impl PolarsSubpopFrequency {
 }
 
 pub fn memory_polars_subpop_frequency(sketch: &PolarsSubpopFrequency) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<Labeled<i64>>()
+    sketch.buf.capacity() * std::mem::size_of::<(String, i64)>()
         + sketch.counts.capacity() * (std::mem::size_of::<(String, i64)>() + 8)
 }
 
 /// `hydra-hll/polars` — exact subpopulation cardinality.
 #[derive(Default)]
 pub struct PolarsSubpopCardinality {
-    buf: Vec<Labeled<i64>>,
+    buf: Vec<(String, i64)>,
     distinct: HashMap<String, u64>,
 }
 
@@ -65,14 +64,14 @@ impl PolarsSubpopCardinality {
 }
 
 pub fn memory_polars_subpop_cardinality(sketch: &PolarsSubpopCardinality) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<Labeled<i64>>()
+    sketch.buf.capacity() * std::mem::size_of::<(String, i64)>()
         + sketch.distinct.capacity() * (std::mem::size_of::<String>() + 8)
 }
 
 /// `hydra-kll/polars` — exact subpopulation quantile.
 #[derive(Default)]
 pub struct PolarsSubpopQuantile {
-    buf: Vec<Labeled<f64>>,
+    buf: Vec<(String, f64)>,
     sorted: HashMap<String, Vec<f64>>,
 }
 
@@ -102,7 +101,7 @@ impl PolarsSubpopQuantile {
 }
 
 pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<Labeled<f64>>()
+    sketch.buf.capacity() * std::mem::size_of::<(String, f64)>()
         + sketch
             .sorted
             .values()
@@ -110,7 +109,7 @@ pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
             .sum::<usize>()
 }
 
-pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &Labeled<i64>) {
+pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &(String, i64)) {
     sketch.buf.push(r.clone());
 }
 
@@ -124,7 +123,7 @@ pub fn query_polars_subpop_frequency(
 pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
     let (mut keys, mut values) = (Vec::new(), Vec::new());
     for r in &sketch.buf {
-        fan_out(&r.key, r.value, &mut keys, &mut values);
+        fan_out(&r.0, r.1, &mut keys, &mut values);
     }
     if keys.is_empty() {
         return;
@@ -160,7 +159,7 @@ pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
     }
 }
 
-pub fn insert_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality, r: &Labeled<i64>) {
+pub fn insert_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality, r: &(String, i64)) {
     sketch.buf.push(r.clone());
 }
 
@@ -175,7 +174,7 @@ pub fn query_polars_subpop_cardinality(
 pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
     let (mut keys, mut values) = (Vec::new(), Vec::new());
     for r in &sketch.buf {
-        fan_out(&r.key, r.value, &mut keys, &mut values);
+        fan_out(&r.0, r.1, &mut keys, &mut values);
     }
     if keys.is_empty() {
         return;
@@ -209,7 +208,7 @@ pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
     }
 }
 
-pub fn insert_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile, r: &Labeled<f64>) {
+pub fn insert_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile, r: &(String, f64)) {
     sketch.buf.push(r.clone());
 }
 
@@ -223,7 +222,7 @@ pub fn query_polars_subpop_quantile(
 pub fn prepare_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile) {
     let (mut keys, mut values) = (Vec::new(), Vec::new());
     for r in &sketch.buf {
-        fan_out(&r.key, r.value, &mut keys, &mut values);
+        fan_out(&r.0, r.1, &mut keys, &mut values);
     }
     if keys.is_empty() {
         return;
