@@ -2,37 +2,24 @@
 //! and what each supports, written out entry by entry in
 //! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
+use crate::request::Requirement;
 use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
-use aqpbm_core::request::Requirement;
 
-pub use aqpbm_core::request::{Capability, Numeric};
+pub use crate::request::{Capability, Dtype};
 
-/// One registry entry: who a sketch is, and what it can be asked for. The four
-/// identity fields name it; the four below are what [`check`] reads. Item width
-/// is absent — a wrapper refuses a width it cannot build at, where it reads it.
+/// One registry entry: who a sketch is, and what it can be asked for.
 pub struct SketchId {
-    /// Entries sharing this answer the same question from the same knobs, so
-    /// this is what a cross-library comparison groups by. One parameter
-    /// vocabulary is one family.
+    /// Entries sharing this answer the same question from the same knobs
     pub family: &'static str,
-    /// The algorithm, structural variant included. `--algorithm` matches this
-    /// exactly, because one invocation measures one row.
     pub algorithm: &'static str,
     /// The implementing library, and only that.
     pub impl_name: &'static str,
     pub description: &'static str,
-
-    /// The statistic this sketch answers. [`Capability::None`] is measured but
-    /// not scored — timed only, no query. It is a real answer, not a missing
-    /// one.
+    /// The statistic this sketch answers
     pub capability: Capability,
-    /// The comparator `--comparator` selects this sketch by; `None` for one
-    /// nothing scores. One name, not a list: a second capability, or a second
-    /// comparator for one statistic, is a second entry.
+    /// The comparator `--comparator` selects this sketch by
     pub comparator: Option<&'static str>,
-    /// The operations this sketch can be measured over. Insert always; query
-    /// wherever a comparator exists; merge and prepare only where the wrapper
-    /// actually supplies them.
+    /// The operations this sketch can be measured over
     pub operations: OperationMask,
     /// The metrics this sketch can carry. Everything but accuracy, which needs
     /// a comparator and so follows [`SketchId::capability`].
@@ -150,9 +137,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap CMS, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -245,9 +231,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap Count, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -342,9 +327,8 @@ pub const REGISTRY: &[SketchId] = &[
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
         capability: Capability::None,
         comparator: None,
-        operations: OperationMask::INSERT.union(OperationMask::PREPARE),
+        operations: OperationMask::INSERT,
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
@@ -539,7 +523,7 @@ pub const REGISTRY: &[SketchId] = &[
 
 // ---------- what the frontend asks ----------
 
-fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
+pub fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
     REGISTRY
         .iter()
         .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
@@ -853,15 +837,16 @@ mod tests {
         }
     }
 
-    /// Insert holds of everything, and the timing and footprint metrics hold of
-    /// everything. Nothing in the table is measured over nothing.
+    /// Insert holds of everything, and throughput and the footprint metrics hold
+    /// of everything. Nothing in the table is measured over nothing. Latency is
+    /// not in the floor: a row that ingests the whole stream in one call has no
+    /// per-item region to time, and says so by not claiming the metric.
     #[test]
     fn every_entry_is_at_least_a_timed_insert() {
         for e in REGISTRY {
             assert!(e.operations.contains(OperationMask::INSERT));
             assert!(e.metrics.contains(
                 MetricsMask::THROUGHPUT
-                    .union(MetricsMask::LATENCY)
                     .union(MetricsMask::CPU)
                     .union(MetricsMask::MEMORY)
             ));

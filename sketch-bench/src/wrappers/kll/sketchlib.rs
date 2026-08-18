@@ -4,9 +4,11 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
-use aqpbm_core::accuracy::quantile::QuantileValue;
-use aqpbm_core::config::ParamSet;
+use crate::params::ParamSet;
+use crate::wrappers::partition;
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
@@ -31,10 +33,7 @@ pub struct KllLibPerCall<T: asap_sketchlib::common::numerical::NumericalValue = 
     k: u32,
 }
 
-pub fn build_kll_lib_per_call<T>(
-    config: &ParamSet,
-    _workers: usize,
-) -> Result<KllLibPerCall<T>, BuildError>
+pub fn build_kll_lib_per_call<T>(config: &ParamSet) -> Result<KllLibPerCall<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -52,24 +51,13 @@ where
     kll_footprint::<T>(sketch.k)
 }
 
-impl<T> KllLibPerCall<T>
-where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
-{
-    /// `KLL::quantile` rebuilds the full CDF per call. That is the cost this
-    /// row exists to show, so nothing here caches it.
-    pub fn estimate_quantile(&self, phi: f64) -> f64 {
-        self.inner.quantile(phi)
-    }
-}
-
 pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
     inner: asap_sketchlib::KLL<T>,
     k: u32,
     cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
-pub fn build_kll_lib_cdf<T>(config: &ParamSet, _workers: usize) -> Result<KllLibCdf<T>, BuildError>
+pub fn build_kll_lib_cdf<T>(config: &ParamSet) -> Result<KllLibCdf<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -88,65 +76,336 @@ where
     kll_footprint::<T>(sketch.k)
 }
 
-impl<T> KllLibCdf<T>
+pub fn insert_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    pub fn estimate_quantile(&self, phi: f64) -> f64 {
-        if let Some(cdf) = self.cdf.as_ref() {
-            return cdf.query(phi);
-        }
-        self.inner.quantile(phi)
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_kll_lib_per_call::<T>(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(v);
+            }
+            memory_kll_lib_per_call::<T>(&sketch)
+        }) as Pass);
     }
+    Ok(out)
 }
 
-pub fn insert_kll_lib_per_call<T>(sketch: &mut KllLibPerCall<T>, v: &T)
+pub fn insert_step_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    sketch.inner.update(v);
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_kll_lib_per_call::<T>(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(v);
+            }),
+            footprint: Box::new(move || memory_kll_lib_per_call::<T>(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn merge_kll_lib_per_call<T>(into: &mut KllLibPerCall<T>, from: &KllLibPerCall<T>)
+pub fn query_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    into.inner.merge(&from.inner);
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_kll_lib_per_call::<T>(params)?;
+        for v in items.iter() {
+            sketch.inner.update(v);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.inner.quantile(*p));
+            }
+            let footprint = memory_kll_lib_per_call::<T>(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
 }
 
-pub fn insert_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>, v: &T)
+pub fn merge_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    sketch.inner.update(v);
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = kll_lib_per_call_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner.merge(&other.inner);
+            }
+            memory_kll_lib_per_call::<T>(&acc)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-pub fn merge_kll_lib_cdf<T>(into: &mut KllLibCdf<T>, from: &KllLibCdf<T>)
+pub fn merge_step_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    into.inner.merge(&from.inner);
-    // A merged sketch invalidates any CDF cached from the pre-merge state.
-    into.cdf = None;
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = kll_lib_per_call_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner.merge(&other.inner);
+            }),
+            footprint: Box::new(move || memory_kll_lib_per_call::<T>(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn prepare_kll_lib_cdf<T>(sketch: &mut KllLibCdf<T>)
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn kll_lib_per_call_shards<T>(
+    params: &ParamSet,
+    items: &[T],
+    shards: usize,
+) -> Result<(KllLibPerCall<T>, Vec<KllLibPerCall<T>>), BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    sketch.cdf = Some(sketch.inner.cdf());
+    let mut parts: Vec<KllLibPerCall<T>> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_kll_lib_per_call::<T>(params)?;
+        for v in shard {
+            sketch.inner.update(v);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }
 
-pub fn ask_kll_lib_per_call<T>(s: &mut KllLibPerCall<T>, phi: &f64) -> f64
+pub fn insert_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    s.estimate_quantile(*phi)
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_kll_lib_cdf::<T>(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(v);
+            }
+            memory_kll_lib_cdf::<T>(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-pub fn ask_kll_lib_cdf<T>(s: &mut KllLibCdf<T>, phi: &f64) -> f64
+pub fn insert_step_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError>
 where
-    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
-    s.estimate_quantile(*phi)
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_kll_lib_cdf::<T>(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(v);
+            }),
+            footprint: Box::new(move || memory_kll_lib_cdf::<T>(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+pub fn query_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_kll_lib_cdf::<T>(params)?;
+        for v in items.iter() {
+            sketch.inner.update(v);
+        }
+        let cdf = sketch.inner.cdf();
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(cdf.query(*p));
+            }
+            let footprint = memory_kll_lib_cdf::<T>(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
+}
+
+pub fn merge_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = kll_lib_cdf_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner.merge(&other.inner);
+                // A merged sketch invalidates any CDF cached from the pre-merge state.
+                acc.cdf = None;
+            }
+            memory_kll_lib_cdf::<T>(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = kll_lib_cdf_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner.merge(&other.inner);
+                // A merged sketch invalidates any CDF cached from the pre-merge state.
+                acc.cdf = None;
+            }),
+            footprint: Box::new(move || memory_kll_lib_cdf::<T>(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn kll_lib_cdf_shards<T>(
+    params: &ParamSet,
+    items: &[T],
+    shards: usize,
+) -> Result<(KllLibCdf<T>, Vec<KllLibCdf<T>>), BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    let mut parts: Vec<KllLibCdf<T>> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_kll_lib_cdf::<T>(params)?;
+        for v in shard {
+            sketch.inner.update(v);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
+}
+
+pub fn prepare_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Fed here: the closure below is the step that makes it ready to answer.
+        let mut sketch = build_kll_lib_cdf::<T>(params)?;
+        for v in items.iter() {
+            sketch.inner.update(v);
+        }
+        out.push(Box::new(move || {
+            sketch.cdf = Some(sketch.inner.cdf());
+            memory_kll_lib_cdf::<T>(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }

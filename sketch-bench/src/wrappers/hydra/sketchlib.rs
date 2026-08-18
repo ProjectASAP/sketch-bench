@@ -4,18 +4,20 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::dataset::Labeled;
+use crate::params::ParamSet;
+use crate::wrappers::partition;
+use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct HydraCms {
-    inner: Hydra,
+    pub(super) inner: Hydra,
     params: HydraCmsParams,
 }
 
-pub fn build_hydra_cms(config: &ParamSet, _workers: usize) -> Result<HydraCms, BuildError> {
+pub fn build_hydra_cms(config: &ParamSet) -> Result<HydraCms, BuildError> {
     let p: HydraCmsParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-cms")?;
     for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
@@ -51,11 +53,11 @@ pub fn memory_hydra_cms(sketch: &HydraCms) -> usize {
 
 /// Hydra over HyperLogLog cells.
 pub struct HydraHll {
-    inner: Hydra,
+    pub(super) inner: Hydra,
     params: HydraHllParams,
 }
 
-pub fn build_hydra_hll(config: &ParamSet, _workers: usize) -> Result<HydraHll, BuildError> {
+pub fn build_hydra_hll(config: &ParamSet) -> Result<HydraHll, BuildError> {
     let p: HydraHllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-hll")?;
     // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
@@ -85,11 +87,11 @@ pub fn memory_hydra_hll(sketch: &HydraHll) -> usize {
 
 /// Hydra over KLL cells.
 pub struct HydraKll {
-    inner: Hydra,
+    pub(super) inner: Hydra,
     params: HydraKllParams,
 }
 
-pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, BuildError> {
+pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, BuildError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
     // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
@@ -131,48 +133,419 @@ pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
 }
 
-pub fn insert_hydra_cms(sketch: &mut HydraCms, r: &Labeled<i64>) {
-    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn insert_hydra_cms(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_hydra_cms(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            }
+            memory_hydra_cms(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-pub fn merge_hydra_cms(into: &mut HydraCms, from: &HydraCms) {
-    into.inner
-        .merge(&from.inner)
-        .expect("both operands built from one ParamSet, so grid and cell shapes match");
+pub fn insert_step_hydra_cms(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cms(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            }),
+            footprint: Box::new(move || memory_hydra_cms(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn insert_hydra_hll(sketch: &mut HydraHll, r: &Labeled<i64>) {
-    sketch.inner.update(&r.key, &DataInput::I64(r.value), None);
+pub fn query_hydra_cms(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    probes: Rc<Vec<(Vec<String>, i64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_hydra_cms(params)?;
+        for v in items.iter() {
+            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_frequency(&labels(&p.0), &p.1));
+            }
+            let footprint = memory_hydra_cms(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
 }
 
-pub fn merge_hydra_hll(into: &mut HydraHll, from: &HydraHll) {
-    into.inner
-        .merge(&from.inner)
-        .expect("both operands built from one ParamSet, so grid and cell shapes match");
+pub fn merge_hydra_cms(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = hydra_cms_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }
+            memory_hydra_cms(&acc)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-pub fn insert_hydra_kll(sketch: &mut HydraKll, r: &Labeled<f64>) {
-    sketch.inner.update(&r.key, &DataInput::F64(r.value), None);
+pub fn merge_step_hydra_cms(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = hydra_cms_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }),
+            footprint: Box::new(move || memory_hydra_cms(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {
-    into.inner
-        .merge(&from.inner)
-        .expect("both operands built from one ParamSet, so grid and cell shapes match");
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn hydra_cms_shards(
+    params: &ParamSet,
+    items: &[(String, i64)],
+    shards: usize,
+) -> Result<(HydraCms, Vec<HydraCms>), BuildError> {
+    let mut parts: Vec<HydraCms> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_hydra_cms(params)?;
+        for v in shard {
+            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }
 
-pub fn ask_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
-    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
+pub fn insert_hydra_hll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_hydra_hll(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            }
+            memory_hydra_hll(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
 }
 
-// `&String` and not `&str`: this is an `ask` closure, so its parameter type is
-// `&<SubpopCardinalityGT as GroundTruth<_>>::Probe`, and that associated type is
-// `String`. A `&str` here does not satisfy the bound.
-#[allow(clippy::ptr_arg)]
-pub fn ask_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
-    sketch.estimate_subpop_cardinality(&[probe.as_str()])
+pub fn insert_step_hydra_hll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_hll(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            }),
+            footprint: Box::new(move || memory_hydra_hll(&read.borrow())),
+        });
+    }
+    Ok(out)
 }
 
-pub fn ask_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
-    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
+pub fn query_hydra_hll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_hydra_hll(params)?;
+        for v in items.iter() {
+            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_cardinality(&labels(p)));
+            }
+            let footprint = memory_hydra_hll(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
+}
+
+pub fn merge_hydra_hll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = hydra_hll_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }
+            memory_hydra_hll(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_hydra_hll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, i64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = hydra_hll_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }),
+            footprint: Box::new(move || memory_hydra_hll(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn hydra_hll_shards(
+    params: &ParamSet,
+    items: &[(String, i64)],
+    shards: usize,
+) -> Result<(HydraHll, Vec<HydraHll>), BuildError> {
+    let mut parts: Vec<HydraHll> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_hydra_hll(params)?;
+        for v in shard {
+            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
+}
+
+pub fn insert_hydra_kll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built here, so calling the closure is the insert and nothing else.
+        let mut sketch = build_hydra_kll(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.0, &DataInput::F64(v.1), None);
+            }
+            memory_hydra_kll(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_step_hydra_kll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.0, &DataInput::F64(v.1), None);
+            }),
+            footprint: Box::new(move || memory_hydra_kll(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+pub fn query_hydra_kll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    probes: Rc<Vec<(Vec<String>, f64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        // Built and fed here: the closure below asks, and only asks.
+        let mut sketch = build_hydra_kll(params)?;
+        for v in items.iter() {
+            sketch.inner.update(&v.0, &DataInput::F64(v.1), None);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.estimate_subpop_quantile(&labels(&p.0), p.1));
+            }
+            let footprint = memory_hydra_kll(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
+    }
+    Ok(out)
+}
+
+pub fn merge_hydra_kll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = hydra_kll_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }
+            memory_hydra_kll(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_hydra_kll(
+    params: &ParamSet,
+    items: Rc<Vec<(String, f64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = hydra_kll_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            }),
+            footprint: Box::new(move || memory_hydra_kll(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+/// The shards a fold folds: the stream split `shards` ways, one sketch each,
+/// all fed. The first is the accumulator, the rest are what it folds in.
+#[allow(clippy::type_complexity)]
+fn hydra_kll_shards(
+    params: &ParamSet,
+    items: &[(String, f64)],
+    shards: usize,
+) -> Result<(HydraKll, Vec<HydraKll>), BuildError> {
+    let mut parts: Vec<HydraKll> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_hydra_kll(params)?;
+        for v in shard {
+            sketch.inner.update(&v.0, &DataInput::F64(v.1), None);
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

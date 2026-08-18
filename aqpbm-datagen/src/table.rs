@@ -314,6 +314,15 @@ impl GeneratedTable {
         Ok(())
     }
 
+    pub fn column(&self, i: usize) -> Result<&ColumnData, DataGenError> {
+        self.data.get(i).ok_or_else(|| {
+            DataGenError::BadParam(format!(
+                "column {i} was asked for, but the table holds {}",
+                self.data.len()
+            ))
+        })
+    }
+
     /// Take one column by index, giving up ownership of it.
     pub fn into_column(mut self, i: usize) -> Result<ColumnData, DataGenError> {
         if i >= self.data.len() {

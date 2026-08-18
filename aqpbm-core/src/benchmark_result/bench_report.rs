@@ -2,31 +2,31 @@
 //! measurement's per-run metrics into a [`BenchSection`]. The running itself is
 //! [`measure()`](fn@crate::measure), which times a closure and knows nothing else.
 
-use crate::dataset::DatasetDescription;
+use crate::benchmark_result::fold;
+use crate::benchmark_result::schema::{BenchSection, Mode, Record, Source};
 use crate::metrics::{Metric, Operation, RunMetrics};
-use crate::report::{BenchSection, Mode, Record, Source};
-use crate::run_stats;
+use aqpbm_datagen::TableDescription;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub dataset: DatasetDescription,
+    pub input_dataset: TableDescription,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
     pub runs: usize,
 }
 
 impl BenchReport {
-    /// Fold a measurement's runs into a report, labelled by what it measured.
+    /// Summarise a measurement's runs into a report, labelled by what it measured.
     ///
     /// The caller says which operation and metric this was; core does not
-    /// decide, it records. Which `BenchSection` slot the rate lands in follows
-    /// from the operation, because that is what the field names mean.
-    pub fn fold(
+    /// decide, it records. The pair picks the `BenchSection` slot: the operation
+    /// names it, and the metric is what entitles it to be written at all.
+    pub fn from_runs(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        dataset: DatasetDescription,
+        input_dataset: TableDescription,
         operation: Operation,
         metric: Metric,
         runs: Vec<RunMetrics>,
@@ -37,41 +37,44 @@ impl BenchReport {
             ..Default::default()
         };
 
-        // The rate this measurement produced, under the name that operation's
-        // rate carries in the schema.
-        match operation {
-            Operation::Insert => {
-                bench.throughput_items_per_sec = run_stats::rate(&runs);
-                bench.throughput_samples = run_stats::rate_samples(&runs);
+        // Only the metric that was asked for writes a number. A rate read off a
+        // `time_each` region prices the per-call clock, not the operation.
+        match (operation, metric) {
+            (Operation::Insert, Metric::Throughput) => {
+                bench.throughput_items_per_sec = fold::rate(&runs);
+                bench.throughput_samples = fold::rate_samples(&runs);
             }
-            Operation::Query => bench.query_throughput_items_per_sec = run_stats::rate(&runs),
-            Operation::Merge => {
-                bench.merge_folds_per_sec = run_stats::rate(&runs);
-                bench.merge_time_ms = run_stats::elapsed_ms(&runs);
-                bench.merge_supported = Some(true);
+            (Operation::Query, Metric::Throughput) => {
+                bench.query_throughput_items_per_sec = fold::rate(&runs);
             }
-            Operation::Prepare => bench.finalize_time_ms = run_stats::elapsed_ms(&runs),
+            (Operation::Merge, Metric::Throughput) => {
+                bench.merge_folds_per_sec = fold::rate(&runs);
+            }
+            (_, Metric::Latency) => bench.latency_ns = fold::latency(&runs),
+            (_, Metric::Accuracy) => bench.accuracy = fold::scores(&runs),
+            _ => {}
         }
-        if metric == Metric::Latency {
-            bench.latency_ns = run_stats::latency(&runs);
+        if operation == Operation::Merge {
+            bench.merge_time_ms = fold::elapsed_ms(&runs);
+            bench.merge_supported = Some(true);
         }
-        if metric == Metric::Accuracy {
-            bench.accuracy = run_stats::scores(&runs);
+        if operation == Operation::Prepare {
+            bench.finalize_time_ms = fold::elapsed_ms(&runs);
         }
 
-        bench.wall_time_ms = run_stats::elapsed_ms(&runs);
-        bench.cpu_time_ms = run_stats::cpu_time_ms(&runs);
-        let mem = run_stats::memory_maxima(&runs);
+        bench.wall_time_ms = fold::elapsed_ms(&runs);
+        bench.cpu_time_ms = fold::cpu_time_ms(&runs);
+        let mem = fold::memory_maxima(&runs);
         bench.rss_peak_kb = mem.rss_peak_kb;
         bench.heap_allocated_kb = mem.heap_allocated_kb;
         bench.heap_bytes_net = mem.heap_bytes_net;
         bench.heap_bytes_peak = mem.heap_bytes_peak;
-        bench.memory_bytes = run_stats::memory_bytes(&runs);
+        bench.memory_bytes = fold::memory_bytes(&runs);
 
         Self {
             sketch: sketch.into(),
             impl_name: impl_name.into(),
-            dataset,
+            input_dataset,
             runs: runs.len(),
             bench,
         }
@@ -82,7 +85,7 @@ impl BenchReport {
         let mut rec = Record::new(
             self.sketch.clone(),
             self.impl_name.clone(),
-            self.dataset.clone(),
+            self.input_dataset.clone(),
             Mode::Bench,
             self.runs,
         );

@@ -28,6 +28,9 @@ heap-track = ["aqpbm-core/heap-track"]
 # The framework: the measurement entry points the wrappers' closures are
 # handed to, and the comparators that score them.
 aqpbm-core.workspace = true
+# The generator's own types: `wrappers/` speaks these and the standard library,
+# and nothing of the framework.
+aqpbm-datagen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

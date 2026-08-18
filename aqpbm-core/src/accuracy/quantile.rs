@@ -5,82 +5,24 @@
 
 use std::collections::BTreeMap;
 
-use super::GroundTruth;
+use aqpbm_datagen::{DataGenError, GeneratedTable};
+
+use super::{f64_values, GroundTruth};
 
 /// How many points the quantile grid has: `0.00, 0.01, … 1.00`. Shared with the
 /// grouped rank-error comparator, so a grouped rank error and an ungrouped one
 /// are read on the same ruler.
 pub(crate) const GRID_POINTS: usize = 101;
 
-/// Lossy-cast to f64, for the numeric item types quantile sketches take.
-/// Separate from `Into<f64>` because std refuses `i64 -> f64` on precision
-/// grounds, which rank-error analysis does not care about.
-pub trait ToF64 {
-    fn to_f64(self) -> f64;
-}
-
-impl ToF64 for f64 {
-    fn to_f64(self) -> f64 {
-        self
-    }
-}
-impl ToF64 for f32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-
-/// A value an ordered (quantile) sketch can ingest. Adds a **total** order
-/// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
-/// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
-pub trait QuantileValue: ToF64 + Copy {
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
-}
-
-impl QuantileValue for i64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        Ord::cmp(self, other)
-    }
-}
-
-impl QuantileValue for f64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        f64::total_cmp(self, other)
-    }
-}
-
 // ---------- KLL: rank error ----------
 
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RankErrorGT;
+pub struct RankErrorGT {
+    pub column: usize,
+}
 
-impl<I> GroundTruth<I> for RankErrorGT
-where
-    I: Clone + PartialOrd + ToF64,
-{
+impl GroundTruth for RankErrorGT {
     /// Every value the stream carried, sorted. Rank is over occurrences, so
     /// nothing is deduplicated.
     type Truth = Vec<f64>;
@@ -88,10 +30,10 @@ where
     type Probe = f64;
     type Answer = f64;
 
-    fn truth(&self, items: &[I]) -> Vec<f64> {
-        let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        sorted
+    fn truth(&self, table: &GeneratedTable) -> Result<Vec<f64>, DataGenError> {
+        let mut sorted = f64_values(table.column(self.column)?)?;
+        sorted.sort_by(f64::total_cmp);
+        Ok(sorted)
     }
 
     fn probes(&self, truth: &Vec<f64>) -> Vec<f64> {
@@ -127,7 +69,7 @@ where
 // ---------- helpers ----------
 
 /// Rank error of one answer, in units of `n`. The returned value occupies the
-/// rank interval `[lower, upper]` — every rank a tie run spans — so a target
+/// rank interval `[lower, upper]` — every rank a tie run spans — so a row
 /// inside it is not an error, and outside it the distance to the near edge.
 pub(crate) fn rank_err(sorted: &[f64], est: f64, q: f64) -> f64 {
     let nf = sorted.len() as f64;

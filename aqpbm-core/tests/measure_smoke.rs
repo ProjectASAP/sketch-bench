@@ -1,11 +1,14 @@
-//! What `measure` promises: it runs a body, times the region the body marks,
-//! and reports what the body said it did. Nothing about sketches appears here,
-//! which is the point — the same guarantees hold for any closure.
+//! What `measure` promises: it calls one primed closure per run, times the
+//! call, and reports what that closure said it did. Nothing about sketches
+//! appears here, which is the point — the same guarantees hold for any closure.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aqpbm_core::measure::{measure, MeasureConfig, RunOutcome, Timed};
+use aqpbm_core::measure::{
+    measure, record_calls, MeasureConfig, Measurement, Pass, Report, RunOutcome,
+};
 use aqpbm_core::metrics::MetricsMask;
 
 fn cfg(runs: usize, warmup_runs: usize, metrics: MetricsMask) -> MeasureConfig {
@@ -16,43 +19,61 @@ fn cfg(runs: usize, warmup_runs: usize, metrics: MetricsMask) -> MeasureConfig {
     }
 }
 
-/// Warm-ups run and are discarded. A body that rebuilds per run pays its setup
-/// on them too, which is what they are for.
+/// `n` passes, each running `body` and reporting `work`.
+fn passes(n: usize, work: u64, body: impl Fn() + 'static) -> Measurement {
+    let body = Rc::new(body);
+    (0..n)
+        .map(|_| {
+            let body = body.clone();
+            Box::new(move || {
+                body();
+                Box::new(move || RunOutcome {
+                    work,
+                    ..Default::default()
+                }) as Report
+            }) as Pass
+        })
+        .collect()
+}
+
+/// Warm-ups run and are discarded. Each has a primed closure of its own, so the
+/// setup they pay for is the setup a measured run pays — which is what they are
+/// for.
 #[test]
 fn warmups_run_but_do_not_appear() {
-    let calls = AtomicUsize::new(0);
-    let runs = measure(&cfg(3, 2, MetricsMask::THROUGHPUT), |t| {
-        calls.fetch_add(1, Ordering::Relaxed);
-        t.time(|| std::hint::black_box(0u64));
-        RunOutcome {
-            work: 7,
-            ..Default::default()
-        }
-    });
+    let calls = Rc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let runs = measure(
+        &cfg(3, 2, MetricsMask::THROUGHPUT),
+        passes(5, 7, move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
     assert_eq!(calls.load(Ordering::Relaxed), 5, "3 measured + 2 warm-up");
     assert_eq!(runs.len(), 3, "only the measured ones are returned");
     assert!(runs.iter().all(|r| r.work == 7));
 }
 
-/// Setup outside `time` is not in the number. This is the property the whole
-/// design rests on: a query body fills a sketch before it measures anything,
-/// and that fill must not land in the query's elapsed time.
+/// Setup done while priming the closure is not in the number. This is the
+/// property the whole design rests on: a query closure fills a sketch before it
+/// is handed over, and that fill must not land in the query's elapsed time.
 #[test]
-fn only_the_marked_region_is_timed() {
-    let runs = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), |t| {
-        // "Setup" — deliberately the expensive part.
-        let mut acc = 0u64;
-        for i in 0..2_000_000u64 {
-            acc = acc.wrapping_add(i);
-        }
-        std::hint::black_box(acc);
-        // The measurement — deliberately trivial.
-        t.time(|| std::hint::black_box(1u64));
-        RunOutcome {
+fn only_the_call_is_timed() {
+    // "Setup" — deliberately the expensive part, done here rather than inside.
+    let mut acc = 0u64;
+    for i in 0..2_000_000u64 {
+        acc = acc.wrapping_add(i);
+    }
+    std::hint::black_box(acc);
+    let pass: Pass = Box::new(move || {
+        std::hint::black_box(1u64);
+        Box::new(move || RunOutcome {
             work: 1,
             ..Default::default()
-        }
+        }) as _
     });
+
+    let runs = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), vec![pass]);
     let elapsed = runs[0].elapsed_ns;
     assert!(
         elapsed < 1_000_000,
@@ -60,95 +81,106 @@ fn only_the_marked_region_is_timed() {
     );
 }
 
-/// Several marked regions in one body add up — a body may time more than one
-/// stretch and get their sum.
+/// The whole call is the region, so everything a pass does is in the number.
 #[test]
-fn marked_regions_accumulate() {
-    let runs = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), |t| {
-        t.time(|| std::thread::sleep(std::time::Duration::from_millis(5)));
-        t.time(|| std::thread::sleep(std::time::Duration::from_millis(5)));
-        RunOutcome {
-            work: 2,
-            ..Default::default()
-        }
-    });
+fn the_whole_call_is_the_region() {
+    let runs = measure(
+        &cfg(1, 0, MetricsMask::THROUGHPUT),
+        passes(1, 2, || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }),
+    );
     assert!(runs[0].elapsed_ns >= 9_000_000, "{}", runs[0].elapsed_ns);
 }
 
-/// The body reports its own footprint, because a body that owns what it built
-/// drops it on the way out and core would have nothing left to measure.
+/// The pass reports its own footprint, after the clock has stopped, because a
+/// closure that owns what it built drops it on the way out and core would have
+/// nothing left to measure.
 #[test]
-fn the_body_reports_its_own_footprint() {
-    let runs = measure(&cfg(2, 0, MetricsMask::MEMORY), |t| {
-        let v: Vec<u64> = (0..1024).collect();
-        t.time(|| std::hint::black_box(v.len()));
-        RunOutcome {
-            work: v.len() as u64,
-            memory_bytes: Some((v.capacity() * 8) as u64),
-            ..Default::default()
-        }
-    });
+fn the_pass_reports_its_own_footprint() {
+    let measurement: Measurement = (0..2)
+        .map(|_| {
+            Box::new(move || {
+                let v: Vec<u64> = (0..1024).collect();
+                std::hint::black_box(v.len());
+                Box::new(move || RunOutcome {
+                    work: v.len() as u64,
+                    memory_bytes: Some((v.capacity() * 8) as u64),
+                    ..Default::default()
+                }) as Report
+            }) as Pass
+        })
+        .collect();
+    let runs = measure(&cfg(2, 0, MetricsMask::MEMORY), measurement);
     assert!(runs.iter().all(|r| r.memory_bytes == Some(8192)));
 }
 
-/// `time_each` feeds the latency recorder, and only when the mask asks for it.
+/// A pass that times itself per call reports a distribution; one timed as a
+/// single region reports none. Which it is, is the pass's own choice.
 #[test]
-fn per_call_timing_is_opt_in() {
+fn per_call_timing_is_the_passs_choice() {
     let items: Vec<u64> = (0..1000).collect();
-    let with = measure(&cfg(1, 0, MetricsMask::LATENCY), |t: &mut Timed| {
-        t.time_each(&items, |v| *v + 1);
-        RunOutcome {
-            work: items.len() as u64,
-            ..Default::default()
-        }
-    });
-    assert!(with[0].latency_ns.is_some(), "LATENCY set → a distribution");
+    let each: Pass = {
+        let items = items.clone();
+        Box::new(move || {
+            let latency_ns = Some(record_calls(items.len(), |i| {
+                std::hint::black_box(items[i] + 1);
+            }));
+            Box::new(move || RunOutcome {
+                work: items.len() as u64,
+                latency_ns,
+                ..Default::default()
+            }) as _
+        })
+    };
+    let with = measure(&cfg(1, 0, MetricsMask::LATENCY), vec![each]);
+    assert!(with[0].latency_ns.is_some(), "recorded per call");
 
-    let without = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), |t: &mut Timed| {
-        t.time_each(&items, |v| *v + 1);
-        RunOutcome {
-            work: items.len() as u64,
-            ..Default::default()
-        }
-    });
-    assert!(without[0].latency_ns.is_none(), "no LATENCY → no histogram");
+    let without = measure(
+        &cfg(1, 0, MetricsMask::THROUGHPUT),
+        passes(1, items.len() as u64, move || {
+            for v in &items {
+                std::hint::black_box(*v + 1);
+            }
+        }),
+    );
+    assert!(without[0].latency_ns.is_none(), "one region → no histogram");
 }
 
 /// Named scalars pass through untouched; an empty map is absent, not empty.
 #[test]
 fn scores_pass_through_and_absent_stays_absent() {
-    let scored = measure(&cfg(1, 0, MetricsMask::ACCURACY), |t| {
-        t.time(|| ());
-        let mut scores = BTreeMap::new();
-        scores.insert("are_all".to_string(), 0.25);
-        RunOutcome {
-            work: 1,
-            scores,
-            ..Default::default()
-        }
+    let scored: Pass = Box::new(move || {
+        Box::new(move || {
+            let mut scores = BTreeMap::new();
+            scores.insert("are_all".to_string(), 0.25);
+            RunOutcome {
+                work: 1,
+                scores,
+                ..Default::default()
+            }
+        }) as _
     });
+    let scored = measure(&cfg(1, 0, MetricsMask::ACCURACY), vec![scored]);
     assert_eq!(scored[0].scores.as_ref().unwrap()["are_all"], 0.25);
 
-    let plain = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), |t| {
-        t.time(|| ());
-        RunOutcome {
-            work: 1,
-            ..Default::default()
-        }
-    });
+    let plain = measure(&cfg(1, 0, MetricsMask::THROUGHPUT), passes(1, 1, || {}));
     assert!(plain[0].scores.is_none());
 }
 
-/// Zero measured runs is legal and yields nothing — the body still runs its
-/// warm-ups, which is what a caller asking for zero would expect.
+/// Zero measured runs is legal and yields nothing — the warm-up passes still
+/// run, which is what a caller asking for zero would expect.
 #[test]
 fn zero_runs_yields_nothing() {
-    let calls = AtomicUsize::new(0);
-    let runs = measure(&cfg(0, 2, MetricsMask::THROUGHPUT), |t| {
-        calls.fetch_add(1, Ordering::Relaxed);
-        t.time(|| ());
-        RunOutcome::default()
-    });
+    let calls = Rc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let runs = measure(
+        &cfg(0, 2, MetricsMask::THROUGHPUT),
+        passes(2, 0, move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
     assert!(runs.is_empty());
     assert_eq!(calls.load(Ordering::Relaxed), 2);
 }
