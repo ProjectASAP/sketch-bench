@@ -10,6 +10,8 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use aqpbm_datagen::GeneratedTable;
+
 use crate::accuracy::GroundTruth;
 use crate::error::RunError;
 use crate::measure::{RunOutcome, Timed};
@@ -102,28 +104,34 @@ impl<P, Sc: Clone> Clone for Questions<P, Sc> {
     }
 }
 
-/// Draw them: the exact answer over the whole stream, the questions off it, and
-/// a scorer holding both. The one place core still reads a [`GroundTruth`], and
-/// it runs once per row, outside every clock.
+/// Draw them: the exact answer over the generated table, the questions off it,
+/// and a scorer holding both. The one place core still reads a [`GroundTruth`],
+/// and it runs once per row, outside every clock.
 #[allow(clippy::type_complexity)]
-pub fn questions<G, I>(
+pub fn questions<G>(
     gt: G,
-    items: &[I],
-) -> Questions<G::Probe, impl Fn(&[G::Answer]) -> BTreeMap<String, f64> + Clone + 'static>
+    table: &GeneratedTable,
+) -> Result<
+    Questions<G::Probe, impl Fn(&[G::Answer]) -> BTreeMap<String, f64> + Clone + 'static>,
+    RunError,
+>
 where
-    G: GroundTruth<I> + 'static,
+    G: GroundTruth + 'static,
     G::Truth: 'static,
     G::Probe: 'static,
     G::Answer: 'static,
 {
     let gt = Rc::new(gt);
-    let truth = Rc::new(gt.truth(items));
+    let truth = Rc::new(
+        gt.truth(table)
+            .map_err(|e| RunError::InputDataSet(e.into()))?,
+    );
     let probes = Rc::new(gt.probes(&truth));
     let score = {
         let (gt, truth, probes) = (gt.clone(), truth.clone(), probes.clone());
         move |answers: &[G::Answer]| gt.score(&truth, &probes, answers)
     };
-    Questions { probes, score }
+    Ok(Questions { probes, score })
 }
 
 /// **Insert**: build one, feed it the stream, report what it cost.

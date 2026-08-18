@@ -5,7 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use super::GroundTruth;
+use aqpbm_datagen::{DataGenError, GeneratedTable};
+
+use super::{f64_values, GroundTruth};
 
 /// How many points the quantile grid has: `0.00, 0.01, … 1.00`. Shared with the
 /// grouped rank-error comparator, so a grouped rank error and an ungrouped one
@@ -75,12 +77,11 @@ impl QuantileValue for f64 {
 
 /// Rank-error comparator for KLL-style sketches.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct RankErrorGT;
+pub struct RankErrorGT {
+    pub column: usize,
+}
 
-impl<I> GroundTruth<I> for RankErrorGT
-where
-    I: Clone + PartialOrd + ToF64,
-{
+impl GroundTruth for RankErrorGT {
     /// Every value the stream carried, sorted. Rank is over occurrences, so
     /// nothing is deduplicated.
     type Truth = Vec<f64>;
@@ -88,10 +89,10 @@ where
     type Probe = f64;
     type Answer = f64;
 
-    fn truth(&self, items: &[I]) -> Vec<f64> {
-        let mut sorted: Vec<f64> = items.iter().cloned().map(ToF64::to_f64).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        sorted
+    fn truth(&self, table: &GeneratedTable) -> Result<Vec<f64>, DataGenError> {
+        let mut sorted = f64_values(table.column(self.column)?)?;
+        sorted.sort_by(f64::total_cmp);
+        Ok(sorted)
     }
 
     fn probes(&self, truth: &Vec<f64>) -> Vec<f64> {

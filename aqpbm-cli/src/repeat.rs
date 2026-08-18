@@ -179,7 +179,7 @@ fn merge(records: Vec<Record>) -> Record {
 mod tests {
     use super::*;
     use aqpbm_core::benchmark_result::schema::{CpuTime, LatencySummary, Mode};
-    use aqpbm_core::InputDataSetDescription;
+    use aqpbm_datagen::{ColumnSpec, DataDistribution, TableDescription, UniformParameter};
 
     fn stats(mean: f64) -> RunStats {
         // `n = 5` is the *within-process* count. After merging R processes every
@@ -195,15 +195,22 @@ mod tests {
     /// A record with every measurable field populated, so the walk below has
     /// something to find in each of them.
     fn record(mean: f64) -> Record {
-        let wd = InputDataSetDescription {
-            shape: "uniform".into(),
-            size: 1000,
-            cardinality: Some(100),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(1),
-            spec: None,
-        };
+        let wd = TableDescription::single(
+            "key",
+            ColumnSpec {
+                distribution: DataDistribution::Uniform(UniformParameter {
+                    lower_bound: 0.0,
+                    upper_bound: 100.0,
+                    seed: 1,
+                }),
+                shift: None,
+                cardinality: None,
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+            },
+            1000,
+        );
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 5);
         rec.bench = Some(BenchSection {
             metric: Some("latency".into()),

@@ -13,36 +13,38 @@ use crate::params::ParamSet;
 use crate::request::{Dtype, Requirement};
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::accuracy::quantile::{RankErrorGT, ToF64};
+use aqpbm_core::accuracy::quantile::RankErrorGT;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::error::RunError;
-use aqpbm_core::input_dataset::{BenchItem, InputDataSetData, InputDataSetDescription, Labeled};
+use aqpbm_core::input_dataset::{BenchItem, Labeled};
 use aqpbm_core::measurement::{
     bulk, insert_measurement, merge_measurement, per_item, prepare_measurement, query_measurement,
     questions, Insert, Measurement, Questions, Sketch,
 };
 use aqpbm_core::metrics::{Metric, Operation};
+use aqpbm_core::{GeneratedTable, TableDescription};
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
 
-/// One invocation's worth of work: what the data turned out to be, and one
-/// closure per measurement, in the order they were asked for.
-pub struct Measurements {
-    pub dataset: InputDataSetDescription,
-    pub bodies: Vec<((Operation, Metric), Measurement)>,
+fn value_column(description: &TableDescription) -> usize {
+    description.column_spec.len().saturating_sub(1)
 }
 
-type Bodies = Vec<((Operation, Metric), Measurement)>;
+/// One invocation's worth of work: one closure per measurement, in the order
+/// they were asked for. The provenance is not here — the frontend generated the
+/// data and already holds the description that names it.
+pub type Measurements = Vec<((Operation, Metric), Measurement)>;
 
 /// Bind a row to its wrapper and hand back the closures. Each arm names only
 /// the statistic and the row's `build` / `insert` / `query`. `None` means the
 /// pair has no arm yet.
 pub fn measurements(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Option<Result<Measurements, RunError>> {
     use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
@@ -55,7 +57,8 @@ pub fn measurements(
         // -------- CMS (frequency) --------
         ("cms", "oxide") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             co::build_cms_oxide,
             co::memory_cms_oxide,
@@ -66,7 +69,8 @@ pub fn measurements(
         ),
         ("cms", "datasketches") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             cd::build_cms_datasketches,
             cd::memory_cms_datasketches,
@@ -77,7 +81,8 @@ pub fn measurements(
         ),
         ("cms", "polars") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             cp::build_polars_frequency_cms,
             cp::memory_polars_frequency_cms,
@@ -86,10 +91,11 @@ pub fn measurements(
             None,
             Some(cp::prepare_polars_frequency_cms),
         ),
-        ("cms-fastpath-fixedmatrix", "lib") => fixed_matrix_cms(req, data, want),
+        ("cms-fastpath-fixedmatrix", "lib") => fixed_matrix_cms(req, description, table, want),
         ("cms-fastpath-vector2d", "lib") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             cl::build_cms_lib_vector2d_fast,
             cl::memory_cms_lib_vector2d_fast,
@@ -100,7 +106,8 @@ pub fn measurements(
         ),
         ("cms-regularpath-vector2d", "lib") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             cl::build_cms_lib_vector2d_regular,
             cl::memory_cms_lib_vector2d_regular,
@@ -111,7 +118,8 @@ pub fn measurements(
         ),
         ("cms-fastpath-fixedmatrix-32k-parallel", "lib") => timed_row(
             req,
-            data,
+            description,
+            table,
             want,
             cl::build_parallel_cms_fast_path,
             cl::memory_parallel_cms_fast_path,
@@ -123,7 +131,8 @@ pub fn measurements(
         // -------- CountSketch (frequency) --------
         ("countsketch", "oxide") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             so::build_cs_oxide,
             so::memory_cs_oxide,
@@ -134,7 +143,8 @@ pub fn measurements(
         ),
         ("countsketch", "polars") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             sp::build_polars_frequency_cs,
             sp::memory_polars_frequency_cs,
@@ -143,10 +153,13 @@ pub fn measurements(
             None,
             Some(sp::prepare_polars_frequency_cs),
         ),
-        ("countsketch-fastpath-fixedmatrix", "lib") => fixed_matrix_cs(req, data, want),
+        ("countsketch-fastpath-fixedmatrix", "lib") => {
+            fixed_matrix_cs(req, description, table, want)
+        }
         ("countsketch-fastpath-vector2d", "lib") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             sl::build_cs_lib_vector2d_fast,
             sl::memory_cs_lib_vector2d_fast,
@@ -157,7 +170,8 @@ pub fn measurements(
         ),
         ("countsketch-regularpath-vector2d", "lib") => frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             sl::build_cs_lib_vector2d_regular,
             sl::memory_cs_lib_vector2d_regular,
@@ -168,7 +182,8 @@ pub fn measurements(
         ),
         ("countsketch-fastpath-fixedmatrix-32k-parallel", "lib") => timed_row(
             req,
-            data,
+            description,
+            table,
             want,
             sl::build_parallel_cs_fast_path,
             sl::memory_parallel_cs_fast_path,
@@ -180,7 +195,8 @@ pub fn measurements(
         // -------- HLL (cardinality) --------
         ("hll", "oxide") => cardinality_row(
             req,
-            data,
+            description,
+            table,
             want,
             ho::build_hll_oxide,
             ho::memory_hll_oxide,
@@ -191,7 +207,8 @@ pub fn measurements(
         ),
         ("hll", "datasketches") => cardinality_row(
             req,
-            data,
+            description,
+            table,
             want,
             hd::build_hll_datasketches,
             hd::memory_hll_datasketches,
@@ -200,10 +217,11 @@ pub fn measurements(
             Some(hd::merge_hll_datasketches),
             None,
         ),
-        ("hll", "lib") => hll_lib(req, data, want),
+        ("hll", "lib") => hll_lib(req, description, table, want),
         ("hll", "polars") => cardinality_row(
             req,
-            data,
+            description,
+            table,
             want,
             hpo::build_polars_cardinality,
             hpo::memory_polars_cardinality,
@@ -212,10 +230,11 @@ pub fn measurements(
             None,
             Some(hpo::prepare_polars_cardinality),
         ),
-        ("hll-hip", "lib") => hll_lib_hip(req, data, want),
+        ("hll-hip", "lib") => hll_lib_hip(req, description, table, want),
         ("hll-fastpath-parallel", "lib") => timed_row(
             req,
-            data,
+            description,
+            table,
             want,
             hl::build_parallel_hll_fast_path,
             hl::memory_parallel_hll_fast_path,
@@ -231,7 +250,8 @@ pub fn measurements(
         ("kll-percall", "oxide") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 ko::build_kll_oxide_per_call::<i64>,
                 ko::memory_kll_oxide_per_call::<i64>,
@@ -242,7 +262,8 @@ pub fn measurements(
             ),
             Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 ko::build_kll_oxide_per_call::<f64>,
                 ko::memory_kll_oxide_per_call::<f64>,
@@ -256,7 +277,8 @@ pub fn measurements(
         ("kll-percall", "lib") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 kl::build_kll_lib_per_call::<i64>,
                 kl::memory_kll_lib_per_call::<i64>,
@@ -267,7 +289,8 @@ pub fn measurements(
             ),
             Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 kl::build_kll_lib_per_call::<f64>,
                 kl::memory_kll_lib_per_call::<f64>,
@@ -281,7 +304,8 @@ pub fn measurements(
         ("kll-cdf", "oxide") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 ko::build_kll_oxide_cdf::<i64>,
                 ko::memory_kll_oxide_cdf::<i64>,
@@ -292,7 +316,8 @@ pub fn measurements(
             ),
             Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 ko::build_kll_oxide_cdf::<f64>,
                 ko::memory_kll_oxide_cdf::<f64>,
@@ -306,7 +331,8 @@ pub fn measurements(
         ("kll-cdf", "lib") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 kl::build_kll_lib_cdf::<i64>,
                 kl::memory_kll_lib_cdf::<i64>,
@@ -317,7 +343,8 @@ pub fn measurements(
             ),
             Dtype::F64 => quantile_row::<f64, _, _, _, _, _>(
                 req,
-                data,
+                description,
+                table,
                 want,
                 kl::build_kll_lib_cdf::<f64>,
                 kl::memory_kll_lib_cdf::<f64>,
@@ -332,7 +359,8 @@ pub fn measurements(
         // its grid is built from a sorted i64 column.
         ("kll-cdf", "polars") => quantile_row::<i64, _, _, _, _, _>(
             req,
-            data,
+            description,
+            table,
             want,
             kp::build_polars_quantile_kll,
             kp::memory_polars_quantile_kll,
@@ -345,7 +373,8 @@ pub fn measurements(
         // -------- Hydra (per-subpopulation statistics over labelled records) --------
         ("hydra-cms", "lib") => subpop_frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             hs::build_hydra_cms,
             hs::memory_hydra_cms,
@@ -356,7 +385,8 @@ pub fn measurements(
         ),
         ("hydra-cms", "polars") => subpop_frequency_row(
             req,
-            data,
+            description,
+            table,
             want,
             hp::build_polars_subpop_frequency,
             hp::memory_polars_subpop_frequency,
@@ -367,7 +397,8 @@ pub fn measurements(
         ),
         ("hydra-hll", "lib") => subpop_cardinality_row(
             req,
-            data,
+            description,
+            table,
             want,
             hs::build_hydra_hll,
             hs::memory_hydra_hll,
@@ -378,7 +409,8 @@ pub fn measurements(
         ),
         ("hydra-hll", "polars") => subpop_cardinality_row(
             req,
-            data,
+            description,
+            table,
             want,
             hp::build_polars_subpop_cardinality,
             hp::memory_polars_subpop_cardinality,
@@ -389,7 +421,8 @@ pub fn measurements(
         ),
         ("hydra-kll", "lib") => subpop_quantile_row(
             req,
-            data,
+            description,
+            table,
             want,
             hs::build_hydra_kll,
             hs::memory_hydra_kll,
@@ -400,7 +433,8 @@ pub fn measurements(
         ),
         ("hydra-kll", "polars") => subpop_quantile_row(
             req,
-            data,
+            description,
+            table,
             want,
             hp::build_polars_subpop_quantile,
             hp::memory_polars_subpop_quantile,
@@ -420,7 +454,8 @@ pub fn measurements(
 #[allow(clippy::too_many_arguments)]
 fn frequency_row<S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -436,8 +471,11 @@ where
     Per: Fn(&mut S, &i64) + Copy + 'static,
     Q: Fn(&mut S, &i64) -> u64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<i64>(data)?;
-    let questions = questions(FrequencyGT, &items);
+    let questions = questions(
+        FrequencyGT::<i64>::over_column(value_column(description)),
+        &table,
+    )?;
+    let items = peel::<i64>(description, table)?;
     scored(
         req,
         want,
@@ -449,7 +487,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row answering **cardinality**: how many distinct keys the stream carried.
@@ -457,7 +494,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn cardinality_row<S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -473,8 +511,13 @@ where
     Per: Fn(&mut S, &i64) + Copy + 'static,
     Q: Fn(&mut S, &()) -> f64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<i64>(data)?;
-    let questions = questions(CardinalityGT, &items);
+    let questions = questions(
+        CardinalityGT {
+            column: value_column(description),
+        },
+        &table,
+    )?;
+    let items = peel::<i64>(description, table)?;
     scored(
         req,
         want,
@@ -486,7 +529,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row answering **quantile**, scored in rank error: the value at a fraction
@@ -494,7 +536,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn quantile_row<T, S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -504,15 +547,20 @@ fn quantile_row<T, S, Bf, M, Per, Q>(
     prepare: Option<fn(&mut S)>,
 ) -> Result<Measurements, RunError>
 where
-    T: BenchItem + Clone + PartialOrd + ToF64 + 'static,
+    T: BenchItem + Clone + 'static,
     S: 'static,
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
     Per: Fn(&mut S, &T) + Copy + 'static,
     Q: Fn(&mut S, &f64) -> f64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<T>(data)?;
-    let questions = questions(RankErrorGT, &items);
+    let questions = questions(
+        RankErrorGT {
+            column: value_column(description),
+        },
+        &table,
+    )?;
+    let items = peel::<T>(description, table)?;
     scored(
         req,
         want,
@@ -524,7 +572,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row answering **subpopulation frequency**: how often a value occurs inside
@@ -532,7 +579,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn subpop_frequency_row<S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -546,15 +594,16 @@ where
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
     Per: Fn(&mut S, &Labeled<i64>) + Copy + 'static,
-    Q: Fn(&mut S, &(String, i64)) -> f64 + Copy + 'static,
+    Q: Fn(&mut S, &(Vec<String>, i64)) -> f64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<Labeled<i64>>(data)?;
     let questions = questions(
-        SubpopFrequencyGT {
-            label_column: SCORED_LABEL_COLUMN,
-        },
-        &items,
-    );
+        SubpopFrequencyGT::<i64>::over_columns(
+            vec![SCORED_LABEL_COLUMN],
+            value_column(description),
+        ),
+        &table,
+    )?;
+    let items = peel::<Labeled<i64>>(description, table)?;
     scored(
         req,
         want,
@@ -566,7 +615,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row answering **subpopulation cardinality**: how many distinct values a
@@ -574,7 +622,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn subpop_cardinality_row<S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -588,15 +637,16 @@ where
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
     Per: Fn(&mut S, &Labeled<i64>) + Copy + 'static,
-    Q: Fn(&mut S, &String) -> f64 + Copy + 'static,
+    Q: Fn(&mut S, &Vec<String>) -> f64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<Labeled<i64>>(data)?;
     let questions = questions(
         SubpopCardinalityGT {
-            label_column: SCORED_LABEL_COLUMN,
+            group_columns: vec![SCORED_LABEL_COLUMN],
+            value_column: value_column(description),
         },
-        &items,
-    );
+        &table,
+    )?;
+    let items = peel::<Labeled<i64>>(description, table)?;
     scored(
         req,
         want,
@@ -608,7 +658,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row answering **subpopulation quantile**: the ordered statistic inside a
@@ -616,7 +665,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn subpop_quantile_row<S, Bf, M, Per, Q>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -630,15 +680,16 @@ where
     Bf: Fn(&ParamSet) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
     Per: Fn(&mut S, &Labeled<f64>) + Copy + 'static,
-    Q: Fn(&mut S, &(String, f64)) -> f64 + Copy + 'static,
+    Q: Fn(&mut S, &(Vec<String>, f64)) -> f64 + Copy + 'static,
 {
-    let (dataset, items) = peel::<Labeled<f64>>(data)?;
     let questions = questions(
         SubpopRankErrorGT {
-            label_column: SCORED_LABEL_COLUMN,
+            group_columns: vec![SCORED_LABEL_COLUMN],
+            value_column: value_column(description),
         },
-        &items,
-    );
+        &table,
+    )?;
+    let items = peel::<Labeled<f64>>(description, table)?;
     scored(
         req,
         want,
@@ -650,7 +701,6 @@ where
         query,
         questions,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 /// A row that answers **nothing**: measured but not scored. The parallel-insert
@@ -659,7 +709,8 @@ where
 #[allow(clippy::too_many_arguments)]
 fn timed_row<S, Bf, M>(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
     build: Bf,
     footprint: M,
@@ -672,7 +723,7 @@ where
     Bf: Fn(&ParamSet, usize) -> Result<S, RunError> + Copy + 'static,
     M: Fn(&S) -> usize + Copy + 'static,
 {
-    let (dataset, items) = peel::<i64>(data)?;
+    let items = peel::<i64>(description, table)?;
     timed(
         req,
         want,
@@ -682,18 +733,17 @@ where
         merge,
         prepare,
     )
-    .map(|bodies| Measurements { dataset, bodies })
 }
 
 // ---------- what every row does with what it named ----------
 
-/// Materialise at the item type this row ingests, and take the stream away from
-/// the dataset rather than copying it.
+/// Materialise at the item type this row ingests. The stream is moved into an
+/// `Rc` rather than copied: every measurement of this row reads the same one.
 fn peel<T: BenchItem>(
-    data: InputDataSetData,
-) -> Result<(InputDataSetDescription, Rc<Vec<T>>), RunError> {
-    let (description, items) = T::materialise(data)?;
-    Ok((description, Rc::new(items)))
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Rc<Vec<T>>, RunError> {
+    Ok(Rc::new(T::materialise(description, table)?))
 }
 
 /// The row's construction vocabulary, captured. Past here nothing reads a
@@ -746,7 +796,7 @@ fn scored<S, P, A, I, B, M, Per, Q, Sc>(
     prepare: Option<fn(&mut S)>,
     query: Q,
     questions: Questions<P, Sc>,
-) -> Result<Bodies, RunError>
+) -> Result<Measurements, RunError>
 where
     S: 'static,
     I: 'static,
@@ -807,7 +857,7 @@ fn timed<S, I, B, M, Per>(
     items: Rc<Vec<I>>,
     merge: Option<fn(&mut S, &S)>,
     prepare: Option<fn(&mut S)>,
-) -> Result<Bodies, RunError>
+) -> Result<Measurements, RunError>
 where
     S: 'static,
     I: 'static,
@@ -877,7 +927,8 @@ fn no_prepare() -> RunError {
 /// is refused by name rather than run at 14 under its own label.
 fn hll_lib(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
     use crate::wrappers::hll::sketchlib as hl;
@@ -886,7 +937,8 @@ fn hll_lib(
         ($r:ty) => {
             cardinality_row(
                 req,
-                data,
+                description,
+                table,
                 want,
                 hl::build_hll_lib::<$r>,
                 hl::memory_hll_lib::<$r>,
@@ -909,7 +961,8 @@ fn hll_lib(
 /// estimate on the insert path and the library supplies no fold.
 fn hll_lib_hip(
     req: &Requirement,
-    data: InputDataSetData,
+    description: &TableDescription,
+    table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
     use crate::wrappers::hll::sketchlib as hl;
@@ -918,7 +971,8 @@ fn hll_lib_hip(
         ($r:ty) => {
             cardinality_row(
                 req,
-                data,
+                description,
+                table,
                 want,
                 hl::build_hll_lib_hip::<$r>,
                 hl::memory_hll_lib_hip::<$r>,
@@ -961,7 +1015,8 @@ macro_rules! fixed_matrix_row {
      $insert:ident, $query:ident, $merge:ident) => {
         fn $fname(
             req: &Requirement,
-            data: InputDataSetData,
+            description: &TableDescription,
+            table: GeneratedTable,
             want: &[(Operation, Metric)],
         ) -> Result<Measurements, RunError> {
             use crate::wrappers::fixed_matrix::{
@@ -976,15 +1031,22 @@ macro_rules! fixed_matrix_row {
                 .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;
             // Every shape in the table ingests i64, so the data is materialised
             // and the exact answer drawn before the shape is resolved.
-            let (dataset, items) = peel::<i64>(data)?;
+            let questions = questions(
+                FrequencyGT::<i64>::over_column(value_column(description)),
+                &table,
+            )?;
+            let items = peel::<i64>(description, table)?;
 
-            struct V<'a> {
+            struct V<'a, Sc> {
                 req: &'a Requirement,
                 want: &'a [(Operation, Metric)],
-                dataset: InputDataSetDescription,
                 items: Rc<Vec<i64>>,
+                questions: Questions<i64, Sc>,
             }
-            impl FixedMatrixVisitor for V<'_> {
+            impl<Sc> FixedMatrixVisitor for V<'_, Sc>
+            where
+                Sc: Fn(&[u64]) -> BTreeMap<String, f64> + Clone + 'static,
+            {
                 type Out = Result<Measurements, RunError>;
                 fn visit<M>(self) -> Self::Out
                 where
@@ -994,7 +1056,6 @@ macro_rules! fixed_matrix_row {
                         + Clone
                         + 'static,
                 {
-                    let questions = questions(FrequencyGT, &self.items);
                     scored(
                         self.req,
                         self.want,
@@ -1004,12 +1065,8 @@ macro_rules! fixed_matrix_row {
                         Some(w::$merge::<M>),
                         None,
                         w::$query::<M>,
-                        questions,
+                        self.questions,
                     )
-                    .map(|bodies| Measurements {
-                        dataset: self.dataset,
-                        bodies,
-                    })
                 }
             }
 
@@ -1019,8 +1076,8 @@ macro_rules! fixed_matrix_row {
                 V {
                     req,
                     want,
-                    dataset,
                     items,
+                    questions,
                 },
             )
             .unwrap_or_else(|| Err(RunError::Sketch(unsupported_shape($algo, p.rows, p.cols))))
@@ -1094,11 +1151,14 @@ mod tests {
                 4,
             );
             let table = description.generate().expect("four i64 rows generate");
-            InputDataSetData::Generated { description, table }
+            (description, table)
         };
         let missing: Vec<String> = crate::registry::REGISTRY
             .iter()
-            .filter(|e| measurements(&req(e), data(), &[]).is_none())
+            .filter(|e| {
+                let (description, table) = data();
+                measurements(&req(e), &description, table, &[]).is_none()
+            })
             .map(|e| format!("{}/{}", e.algorithm, e.impl_name))
             .collect();
         assert!(

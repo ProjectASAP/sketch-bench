@@ -116,9 +116,9 @@ pub fn insert_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency, r: &La
 
 pub fn query_polars_subpop_frequency(
     sketch: &mut PolarsSubpopFrequency,
-    probe: &(String, i64),
+    probe: &(Vec<String>, i64),
 ) -> f64 {
-    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
+    sketch.estimate_subpop_frequency(&labels(&probe.0), &probe.1)
 }
 
 pub fn prepare_polars_subpop_frequency(sketch: &mut PolarsSubpopFrequency) {
@@ -167,9 +167,9 @@ pub fn insert_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality, r:
 #[allow(clippy::ptr_arg)]
 pub fn query_polars_subpop_cardinality(
     sketch: &mut PolarsSubpopCardinality,
-    probe: &String,
+    probe: &Vec<String>,
 ) -> f64 {
-    sketch.estimate_subpop_cardinality(&[probe.as_str()])
+    sketch.estimate_subpop_cardinality(&labels(probe))
 }
 
 pub fn prepare_polars_subpop_cardinality(sketch: &mut PolarsSubpopCardinality) {
@@ -215,9 +215,9 @@ pub fn insert_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile, r: &Labe
 
 pub fn query_polars_subpop_quantile(
     sketch: &mut PolarsSubpopQuantile,
-    probe: &(String, f64),
+    probe: &(Vec<String>, f64),
 ) -> f64 {
-    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
+    sketch.estimate_subpop_quantile(&labels(&probe.0), probe.1)
 }
 
 pub fn prepare_polars_subpop_quantile(sketch: &mut PolarsSubpopQuantile) {

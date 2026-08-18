@@ -4,14 +4,14 @@
 
 use crate::benchmark_result::fold;
 use crate::benchmark_result::schema::{BenchSection, Mode, Record, Source};
-use crate::input_dataset::InputDataSetDescription;
 use crate::metrics::{Metric, Operation, RunMetrics};
+use aqpbm_datagen::TableDescription;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub impl_name: String,
-    pub input_dataset: InputDataSetDescription,
+    pub input_dataset: TableDescription,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
     pub runs: usize,
@@ -26,7 +26,7 @@ impl BenchReport {
     pub fn from_runs(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        input_dataset: InputDataSetDescription,
+        input_dataset: TableDescription,
         operation: Operation,
         metric: Metric,
         runs: Vec<RunMetrics>,

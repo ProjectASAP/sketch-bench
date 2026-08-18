@@ -6,19 +6,34 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::marker::PhantomData;
+
+use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
 use super::GroundTruth;
 
 /// Comparator for a sketch that reports the heavy items and their weights.
-pub struct HeavyHitterGT {
+pub struct HeavyHitterGT<K> {
     /// The heaviness bound, as a fraction of the stream: a key is heavy when it
     /// occurs more than `phi * n` times.
     pub phi: f64,
+    pub column: usize,
+    key: PhantomData<K>,
 }
 
-impl<K> GroundTruth<K> for HeavyHitterGT
+impl<K> HeavyHitterGT<K> {
+    pub fn over_column(phi: f64, column: usize) -> Self {
+        Self {
+            phi,
+            column,
+            key: PhantomData,
+        }
+    }
+}
+
+impl<K> GroundTruth for HeavyHitterGT<K>
 where
-    K: Eq + Hash + Ord + Clone,
+    K: ColumnItem + Eq + Hash + Ord,
 {
     /// The true heavy keys with their exact counts, heaviest first.
     type Truth = Vec<(K, u64)>;
@@ -26,7 +41,8 @@ where
     type Probe = ();
     type Answer = Vec<(K, u64)>;
 
-    fn truth(&self, items: &[K]) -> Vec<(K, u64)> {
+    fn truth(&self, table: &GeneratedTable) -> Result<Vec<(K, u64)>, DataGenError> {
+        let items = K::column_slice(table.column(self.column)?)?;
         let mut exact: HashMap<&K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it).or_insert(0) += 1;
@@ -40,7 +56,7 @@ where
         // Count descending, ties on the key — a total order, so the set is
         // reported in one order regardless of `HashMap` seed.
         heavy.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        heavy
+        Ok(heavy)
     }
 
     fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
@@ -110,6 +126,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accuracy::table_of;
+    use aqpbm_datagen::{ColumnData, GeneratedTable};
+
+    fn one_column(items: &[i64]) -> GeneratedTable {
+        table_of(&["key"], vec![ColumnData::Int64(items.to_vec())])
+    }
 
     /// An exact `HashMap` counter, which is what the comparator's own truth is
     /// built from — so it must score 1.0 on both axes. Anything less is the
@@ -161,12 +183,17 @@ mod tests {
     fn an_exact_source_scores_precision_and_recall_of_one() {
         let items = skewed();
         let n = items.len();
-        let gt = HeavyHitterGT { phi: PHI };
+        let gt = HeavyHitterGT::<i64>::over_column(PHI, 0);
         let ask = move |s: &mut ExactHeavy, _: &()| s.heavy(PHI, n);
         // Repeated: the truth is built from a `HashMap`, so a tie-break that
         // leaned on iteration order would be a per-seed coin flip.
         for _ in 0..32 {
-            let m = crate::accuracy::score_with(&gt, &ask, &mut exact_source(&items), &items);
+            let m = crate::accuracy::score_with(
+                &gt,
+                &ask,
+                &mut exact_source(&items),
+                &one_column(&items),
+            );
             assert_eq!(m["precision"], 1.0, "{m:?}");
             assert_eq!(m["recall"], 1.0, "{m:?}");
             assert_eq!(m["are_heavy"], 0.0, "{m:?}");
@@ -179,9 +206,10 @@ mod tests {
     #[test]
     fn a_null_estimator_scores_zero() {
         let items = skewed();
-        let gt = HeavyHitterGT { phi: PHI };
+        let gt = HeavyHitterGT::<i64>::over_column(PHI, 0);
         let ask = |_: &mut ExactHeavy, _: &()| Vec::new();
-        let m = crate::accuracy::score_with(&gt, &ask, &mut exact_source(&items), &items);
+        let m =
+            crate::accuracy::score_with(&gt, &ask, &mut exact_source(&items), &one_column(&items));
         assert_eq!(m["precision"], 0.0);
         assert_eq!(m["recall"], 0.0);
         assert_eq!(m["est_heavy_count"], 0.0);
@@ -193,12 +221,13 @@ mod tests {
     #[test]
     fn the_bound_is_strictly_greater_and_scales_with_the_stream() {
         let items: Vec<i64> = (1..=3).flat_map(|k| std::iter::repeat_n(k, 30)).collect();
-        let gt = HeavyHitterGT { phi: 0.3 };
-        let truth = <HeavyHitterGT as GroundTruth<i64>>::truth(&gt, &items);
+        let table = one_column(&items);
+        let gt = HeavyHitterGT::<i64>::over_column(0.3, 0);
+        let truth = gt.truth(&table).unwrap();
         assert_eq!(truth.len(), 3, "30 > 0.3*90 = 27");
 
-        let gt = HeavyHitterGT { phi: 1.0 / 3.0 };
-        let truth = <HeavyHitterGT as GroundTruth<i64>>::truth(&gt, &items);
+        let gt = HeavyHitterGT::<i64>::over_column(1.0 / 3.0, 0);
+        let truth = gt.truth(&table).unwrap();
         assert!(truth.is_empty(), "30 is not strictly greater than 30");
     }
 
@@ -208,7 +237,7 @@ mod tests {
     fn overcounted_weights_land_in_are_heavy() {
         let items = skewed();
         let n = items.len();
-        let gt = HeavyHitterGT { phi: PHI };
+        let gt = HeavyHitterGT::<i64>::over_column(PHI, 0);
         // Every weight doubled: the set is right, the weights are 100% off.
         let ask = move |s: &mut ExactHeavy, _: &()| {
             s.heavy(PHI, n)
@@ -216,7 +245,8 @@ mod tests {
                 .map(|(k, c)| (k, c * 2))
                 .collect()
         };
-        let m = crate::accuracy::score_with(&gt, &ask, &mut exact_source(&items), &items);
+        let m =
+            crate::accuracy::score_with(&gt, &ask, &mut exact_source(&items), &one_column(&items));
         assert_eq!(m["precision"], 1.0);
         assert_eq!(m["recall"], 1.0);
         assert!((m["are_heavy"] - 1.0).abs() < 1e-12, "{m:?}");

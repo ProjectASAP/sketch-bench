@@ -161,18 +161,18 @@ pub fn merge_hydra_kll(into: &mut HydraKll, from: &HydraKll) {
         .expect("both operands built from one ParamSet, so grid and cell shapes match");
 }
 
-pub fn query_hydra_cms(sketch: &mut HydraCms, probe: &(String, i64)) -> f64 {
-    sketch.estimate_subpop_frequency(&[probe.0.as_str()], &probe.1)
+pub fn query_hydra_cms(sketch: &mut HydraCms, probe: &(Vec<String>, i64)) -> f64 {
+    sketch.estimate_subpop_frequency(&labels(&probe.0), &probe.1)
 }
 
-// `&String` and not `&str`: this is an `ask` closure, so its parameter type is
-// `&<SubpopCardinalityGT as GroundTruth<_>>::Probe`, and that associated type is
-// `String`. A `&str` here does not satisfy the bound.
+// `&Vec<String>` and not `&[String]`: this is an `ask` closure, so its
+// parameter type is `&<SubpopCardinalityGT as GroundTruth>::Probe`, and that
+// associated type is `Vec<String>`. A slice here does not satisfy the bound.
 #[allow(clippy::ptr_arg)]
-pub fn query_hydra_hll(sketch: &mut HydraHll, probe: &String) -> f64 {
-    sketch.estimate_subpop_cardinality(&[probe.as_str()])
+pub fn query_hydra_hll(sketch: &mut HydraHll, probe: &Vec<String>) -> f64 {
+    sketch.estimate_subpop_cardinality(&labels(probe))
 }
 
-pub fn query_hydra_kll(sketch: &mut HydraKll, probe: &(String, f64)) -> f64 {
-    sketch.estimate_subpop_quantile(&[probe.0.as_str()], probe.1)
+pub fn query_hydra_kll(sketch: &mut HydraKll, probe: &(Vec<String>, f64)) -> f64 {
+    sketch.estimate_subpop_quantile(&labels(&probe.0), probe.1)
 }

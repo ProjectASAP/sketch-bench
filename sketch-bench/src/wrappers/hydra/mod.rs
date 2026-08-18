@@ -9,6 +9,10 @@ use asap_sketchlib::input::HydraCounter;
 pub mod polars;
 pub mod sketchlib;
 
+fn labels(group: &[String]) -> Vec<&str> {
+    group.iter().map(String::as_str).collect()
+}
+
 /// outer grid is the one shape they have in common.
 fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), RunError> {
     for (name, v) in [("rows", rows), ("cols", cols)] {

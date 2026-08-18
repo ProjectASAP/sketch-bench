@@ -368,20 +368,22 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let wired = || {
         anyhow::anyhow!("{algorithm}/{impl_name} is registered but not yet wired to its wrapper")
     };
-    let data = spec.generate_at(width.name())?;
+    // The description that actually generated comes back with the table: the
+    // inline path stamps `--dtype` onto its columns on the way through, and the
+    // record names what generated.
+    let (dataset, table) = spec.generate_at(width.name())?;
 
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
-    let prepared = rows::measurements(&req, data, &want)
+    let prepared = rows::measurements(&req, &dataset, table, &want)
         .ok_or_else(wired)?
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
-    let dataset = prepared.dataset;
 
     // One instruction at a time. Core is handed a closure and a run count and
     // told nothing else; which operation and which metric this was travels with
     // the closure that answers it.
-    let mut reports = Vec::with_capacity(prepared.bodies.len());
-    for ((operation, metric), body) in prepared.bodies {
+    let mut reports = Vec::with_capacity(prepared.len());
+    for ((operation, metric), body) in prepared {
         // Error is deterministic given (data, parameters), and a dataset is
         // drawn once and not redrawn — so looping an accuracy measurement would
         // fabricate spread: ten identical answers averaged to `stddev: 0.0` over

@@ -7,12 +7,27 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::marker::PhantomData;
+
+use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
 use super::curve;
 use super::GroundTruth;
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FrequencyGT;
+#[derive(Debug, Clone, Copy)]
+pub struct FrequencyGT<K> {
+    pub column: usize,
+    key: PhantomData<K>,
+}
+
+impl<K> FrequencyGT<K> {
+    pub fn over_column(column: usize) -> Self {
+        Self {
+            column,
+            key: PhantomData,
+        }
+    }
+}
 
 /// Everything the probe set and the scoring read: the exact counts, the true
 /// ranking, and the unfiltered population the `*_all` keys come from.
@@ -25,15 +40,16 @@ pub struct FrequencyTruth<K> {
     all: Vec<K>,
 }
 
-impl<K> GroundTruth<K> for FrequencyGT
+impl<K> GroundTruth for FrequencyGT<K>
 where
-    K: Eq + Hash + Ord + Clone,
+    K: ColumnItem + Eq + Hash + Ord,
 {
     type Truth = FrequencyTruth<K>;
     type Probe = K;
     type Answer = u64;
 
-    fn truth(&self, items: &[K]) -> FrequencyTruth<K> {
+    fn truth(&self, table: &GeneratedTable) -> Result<FrequencyTruth<K>, DataGenError> {
+        let items = K::column_slice(table.column(self.column)?)?;
         let mut exact: HashMap<K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it.clone()).or_insert(0) += 1;
@@ -42,7 +58,7 @@ where
         by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let all = curve::shuffled(&by_count);
         let ranked = by_count.into_iter().map(|(k, _)| k).collect();
-        FrequencyTruth { exact, ranked, all }
+        Ok(FrequencyTruth { exact, ranked, all })
     }
 
     /// Every key any population needs, asked once. The prefixes re-use the
@@ -79,6 +95,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accuracy::table_of;
+    use aqpbm_datagen::ColumnData;
+
+    fn one_column(items: Vec<i64>) -> aqpbm_datagen::GeneratedTable {
+        table_of(&["key"], vec![ColumnData::Int64(items)])
+    }
 
     /// The estimator that does no work: every frequency is zero.
     struct NullFreq;
@@ -96,8 +118,8 @@ mod tests {
     #[test]
     fn null_estimator_scores_exactly_one_on_are() {
         let items: Vec<i64> = (0..2000).map(|i| (i % 97) as i64).collect();
-        let gt = FrequencyGT;
-        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &items);
+        let gt = FrequencyGT::<i64>::over_column(0);
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &one_column(items));
         for key in ["are_all", "are_top1", "are_top10"] {
             let v = cmp[key];
             assert!(
@@ -117,8 +139,8 @@ mod tests {
         items.extend(std::iter::repeat_n(1, 100));
         items.extend(std::iter::repeat_n(2, 50));
         items.extend(3..=200);
-        let gt = FrequencyGT;
-        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &items);
+        let gt = FrequencyGT::<i64>::over_column(0);
+        let cmp = crate::accuracy::score_with(&gt, &query_null, &mut NullFreq, &one_column(items));
         // top1 is key 1, so AAE over it is exactly its true count.
         assert_eq!(cmp["aae_top1"], 100.0);
         assert_eq!(cmp["probes_top1"], 1.0);

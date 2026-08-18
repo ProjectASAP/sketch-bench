@@ -177,7 +177,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
 mod tests {
     use super::*;
     use aqpbm_core::benchmark_result::schema::{LatencySummary, Mode, RunStats};
-    use aqpbm_core::InputDataSetDescription;
+    use aqpbm_datagen::{ColumnSpec, DataDistribution, TableDescription, UniformParameter};
 
     fn stats(mean: f64) -> RunStats {
         RunStats {
@@ -200,15 +200,22 @@ mod tests {
     }
 
     fn record(operation: &str, metric: &str, bench: BenchSection) -> Record {
-        let wd = InputDataSetDescription {
-            shape: "uniform".into(),
-            size: 1000,
-            cardinality: Some(100),
-            zipf_s: None,
-            source_path: None,
-            seed: Some(1),
-            spec: None,
-        };
+        let wd = TableDescription::single(
+            "key",
+            ColumnSpec {
+                distribution: DataDistribution::Uniform(UniformParameter {
+                    lower_bound: 0.0,
+                    upper_bound: 100.0,
+                    seed: 1,
+                }),
+                shift: None,
+                cardinality: None,
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+            },
+            1000,
+        );
         let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 1);
         rec.bench = Some(BenchSection {
             operation: Some(operation.into()),
