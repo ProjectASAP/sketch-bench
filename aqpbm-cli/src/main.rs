@@ -366,24 +366,19 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         args.warmup_runs,
     );
 
-    // The hand-off `docs/component_walk_through.md` describes: the frontend asks
-    // the bundle what the row ingests, produces exactly that, and hands the data
-    // over. The item type is the row's answer, and generating needs it, so it is
-    // asked for first.
-    let wired = |e| {
-        anyhow::anyhow!(
-            "{algorithm}/{impl_name} is registered but not yet wired to its wrapper: {e}"
-        )
+    // The hand-off `docs/component_walk_through.md` describes: the frontend
+    // generates the data and hands it over. `--dtype` says what to generate and
+    // nothing here second-guesses it; a row handed a stream it cannot ingest
+    // says so when it materialises one.
+    let wired = || {
+        anyhow::anyhow!("{algorithm}/{impl_name} is registered but not yet wired to its wrapper")
     };
-    let item_type = rows::item_type(&req)
-        .ok_or_else(|| wired(""))?
-        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
-    let data = spec.generate_at(item_type)?;
+    let data = spec.generate_at(width.name())?;
 
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
     let prepared = rows::measurements(&req, data, &want)
-        .ok_or_else(|| wired(""))?
+        .ok_or_else(wired)?
         .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
     let dataset = prepared.dataset;
 

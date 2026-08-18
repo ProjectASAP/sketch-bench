@@ -37,49 +37,6 @@ pub struct Measurements {
 
 type Bodies = Vec<((Operation, Metric), Measurement)>;
 
-/// What this row ingests, so a frontend can produce it before asking for
-/// anything. The item type is the row's answer rather than the caller's
-/// question, and generating needs it — so it is asked for separately, ahead of
-/// the data. `None` means the pair has no arm, exactly as in [`measurements`].
-pub fn item_type(req: &Requirement) -> Option<Result<&'static str, RunError>> {
-    // The ordered rows build at either numeric width, and at neither of the
-    // other two: a KLL cell stores what it can compare.
-    let ordered = || match req.width {
-        Dtype::I64 => Ok(<i64 as BenchItem>::DATA_TYPE),
-        Dtype::F64 => Ok(<f64 as BenchItem>::DATA_TYPE),
-        other => Err(unsupported_dtype(req, other, "i64 or f64")),
-    };
-    Some(match (req.algorithm.as_str(), req.impl_name.as_str()) {
-        // The only rows `--dtype` selects anything for: their library is generic
-        // over the value type, so a width picks a monomorphisation rather than
-        // being refused.
-        ("kll-percall" | "kll-cdf", "oxide" | "lib") => ordered(),
-
-        // Labelled records. The value column carries the item type; the label
-        // columns are text and are named by the `--spec` that describes them.
-        ("hydra-kll", "lib" | "polars") => Ok(<Labeled<f64> as BenchItem>::DATA_TYPE),
-        ("hydra-cms" | "hydra-hll", "lib" | "polars") => Ok(<Labeled<i64> as BenchItem>::DATA_TYPE),
-
-        // Everything else ingests a plain i64 stream and refuses any other width.
-        ("cms", "oxide" | "datasketches" | "polars")
-        | ("cms-fastpath-fixedmatrix", "lib")
-        | ("cms-fastpath-vector2d", "lib")
-        | ("cms-regularpath-vector2d", "lib")
-        | ("cms-fastpath-fixedmatrix-32k-parallel", "lib")
-        | ("countsketch", "oxide" | "polars")
-        | ("countsketch-fastpath-fixedmatrix", "lib")
-        | ("countsketch-fastpath-vector2d", "lib")
-        | ("countsketch-regularpath-vector2d", "lib")
-        | ("countsketch-fastpath-fixedmatrix-32k-parallel", "lib")
-        | ("hll", "oxide" | "datasketches" | "lib" | "polars")
-        | ("hll-hip", "lib")
-        | ("hll-fastpath-parallel", "lib")
-        | ("kll-cdf", "polars") => i64_only(req).map(|()| <i64 as BenchItem>::DATA_TYPE),
-
-        _ => return None,
-    })
-}
-
 /// Bind a row to its wrapper and hand back the closures. Each arm names only
 /// the statistic and the row's `build` / `insert` / `query`. `None` means the
 /// pair has no arm yet.
@@ -294,7 +251,7 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_per_call::<f64>),
                 None,
             ),
-            other => Err(unsupported_dtype(req, other, "i64 or f64")),
+            other => Err(no_build_at(req, other)),
         },
         ("kll-percall", "lib") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
@@ -319,7 +276,7 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_per_call::<f64>),
                 None,
             ),
-            other => Err(unsupported_dtype(req, other, "i64 or f64")),
+            other => Err(no_build_at(req, other)),
         },
         ("kll-cdf", "oxide") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
@@ -344,7 +301,7 @@ pub fn measurements(
                 Some(ko::merge_kll_oxide_cdf::<f64>),
                 Some(ko::prepare_kll_oxide_cdf::<f64>),
             ),
-            other => Err(unsupported_dtype(req, other, "i64 or f64")),
+            other => Err(no_build_at(req, other)),
         },
         ("kll-cdf", "lib") => match req.width {
             Dtype::I64 => quantile_row::<i64, _, _, _, _, _>(
@@ -369,7 +326,7 @@ pub fn measurements(
                 Some(kl::merge_kll_lib_cdf::<f64>),
                 Some(kl::prepare_kll_lib_cdf::<f64>),
             ),
-            other => Err(unsupported_dtype(req, other, "i64 or f64")),
+            other => Err(no_build_at(req, other)),
         },
         // The exact baseline is i64 only, unlike the four sketch rows above it:
         // its grid is built from a sorted i64 column.
@@ -889,34 +846,25 @@ where
     Ok(bodies)
 }
 
+/// The ordered rows build at either numeric width and at neither of the other
+/// two: a KLL cell stores what it can compare. Nothing else reads `--dtype` —
+/// a row is handed the data the frontend generated, and materialising it at the
+/// row's own item type is what catches a stream it cannot ingest.
+fn no_build_at(req: &Requirement, got: Dtype) -> RunError {
+    RunError::Sketch(format!(
+        "{}/{} builds at i64 or f64; --dtype {} is neither",
+        req.algorithm,
+        req.impl_name,
+        got.name(),
+    ))
+}
+
 fn no_merge() -> RunError {
     RunError::Sketch("provides no merge".to_string())
 }
 
 fn no_prepare() -> RunError {
     RunError::Sketch("provides no prepare".to_string())
-}
-
-/// Refuse any `--dtype` but `i64` on a row whose item type is `i64`. The
-/// registry says nothing about the item type, so refusing it needs to know
-/// which row was asked for — known here. The `kll-*` rows skip it: they
-/// genuinely build at both numeric widths.
-fn i64_only(req: &Requirement) -> Result<(), RunError> {
-    if req.width != Dtype::I64 {
-        return Err(unsupported_dtype(req, req.width, "i64"));
-    }
-    Ok(())
-}
-
-/// A `--dtype` this row cannot ingest, naming what it can. `aqpbm-datagen`
-/// renders four types; which of them reach a sketch is a property of the row.
-fn unsupported_dtype(req: &Requirement, got: Dtype, admits: &str) -> RunError {
-    RunError::Sketch(format!(
-        "{}/{} ingests {admits}; --dtype {} is not one of them",
-        req.algorithm,
-        req.impl_name,
-        got.name(),
-    ))
 }
 
 // ---------- the rows whose shape or precision selects a type ----------
@@ -1108,10 +1056,9 @@ fixed_matrix_row!(
 mod tests {
     use super::*;
 
-    /// Every registered pair can actually be run, and can be generated for.
-    /// `registry::check`, [`item_type`] and the match in [`measurements`] are
-    /// three tables that have to agree — a pair that passes the check and finds
-    /// no code reads as a broken tool.
+    /// Every registered pair can actually be run. `registry::check` and the
+    /// match in [`measurements`] live in two tables that have to agree — a pair
+    /// that passes the check and finds no code reads as a broken tool.
     #[test]
     fn every_registry_entry_has_an_arm() {
         // A parameterless request over an unreadable file reaches the arm and
@@ -1132,9 +1079,7 @@ mod tests {
         };
         let missing: Vec<String> = crate::registry::REGISTRY
             .iter()
-            .filter(|e| {
-                measurements(&req(e), data(), &[]).is_none() || item_type(&req(e)).is_none()
-            })
+            .filter(|e| measurements(&req(e), data(), &[]).is_none())
             .map(|e| format!("{}/{}", e.algorithm, e.impl_name))
             .collect();
         assert!(
