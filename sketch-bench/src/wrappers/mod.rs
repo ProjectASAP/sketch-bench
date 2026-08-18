@@ -16,7 +16,7 @@ pub mod kll;
 pub mod fixed_matrix;
 pub mod polars_shared;
 
-use crate::build_error::BuildError;
+use aqpbm_core::RunError;
 use asap_sketchlib::impl_fixed_matrix;
 
 // The library types a caller has to *name* to select one of the monomorphisations
@@ -55,7 +55,7 @@ pub fn partition(items: &[i64], n: usize) -> Vec<&[i64]> {
 // requested label — so `sketch_config` is always the config that ran.
 
 /// A wrapper whose `(rows, cols)` are baked into its type runs at exactly one
-/// shape; any other requested config is a `BuildError` naming both shapes.
+/// shape; any other requested config is a `RunError` naming both shapes.
 /// Shared by the fixed-matrix CMS and CountSketch rows, which read the shape
 /// off the storage they were monomorphised at, and by the parallel rows, whose
 /// per-worker sketch is a compile-time type.
@@ -64,9 +64,9 @@ pub(crate) fn require_shape(
     cols: usize,
     want_rows: usize,
     want_cols: usize,
-) -> Result<(), BuildError> {
+) -> Result<(), RunError> {
     if (rows, cols) != (want_rows, want_cols) {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "fixed at {want_rows}x{want_cols}, requested {rows}x{cols}"
         )));
     }
@@ -76,18 +76,12 @@ pub(crate) fn require_shape(
 /// Refuse a parameter outside the range the wrapped library accepts, naming the
 /// value and the bound. The bound is an argument because it is the *library's* —
 /// `lg_k` is 4..=18 for one and {12,14,16} for another, so each row states its own.
-pub(crate) fn require_range<T>(
-    what: &str,
-    name: &str,
-    got: T,
-    lo: T,
-    hi: T,
-) -> Result<(), BuildError>
+pub(crate) fn require_range<T>(what: &str, name: &str, got: T, lo: T, hi: T) -> Result<(), RunError>
 where
     T: PartialOrd + std::fmt::Display,
 {
     if got < lo || got > hi {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "{what}: {name}={got} outside [{lo}, {hi}], which is what this library accepts"
         )));
     }
@@ -97,9 +91,9 @@ where
 /// Refuse a dimension of zero, for a library with a floor and no ceiling.
 /// Separate from [`require_range`] because printing `usize::MAX` as the upper
 /// bound would state a limit the library does not have.
-pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(), BuildError> {
+pub(crate) fn require_positive(what: &str, name: &str, got: usize) -> Result<(), RunError> {
     if got == 0 {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "{what}: {name} must be at least 1, got {got}"
         )));
     }
@@ -113,9 +107,9 @@ pub(crate) fn require_resolved_shape(
     what: &str,
     got: (usize, usize),
     want: (usize, usize),
-) -> Result<(), BuildError> {
+) -> Result<(), RunError> {
     if got != want {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "{what} resolves rows={} cols={} to a {}x{} table; it derives its \
              dimensions from error bounds and rounds the width up to a power of \
              two, so ask for a power-of-two `cols`",

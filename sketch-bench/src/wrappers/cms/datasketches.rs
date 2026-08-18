@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::{require_range, require_resolved_shape};
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 /// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
 /// the `u8` the API takes.
@@ -27,7 +27,7 @@ pub struct CmsDatasketches {
 pub fn build_cms_datasketches(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CmsDatasketches, BuildError> {
+) -> Result<CmsDatasketches, RunError> {
     let p: CmsParams = config.parse()?;
     require_range(
         "datasketches CMS",
@@ -48,7 +48,7 @@ pub fn build_cms_datasketches(
     // small number that passes.
     let entries = p.rows.saturating_mul(p.cols);
     if entries >= DS_CMS_MAX_ENTRIES {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "datasketches CMS: rows x cols = {entries} counters, and this library \
                  caps a table at {DS_CMS_MAX_ENTRIES}"
         )));

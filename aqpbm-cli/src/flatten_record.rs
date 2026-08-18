@@ -50,7 +50,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         runs: base.runs,
         source: base.source,
         sketch_config: base.sketch_config.clone(),
-        dataset: base.dataset.clone(),
+        input_dataset: base.input_dataset.clone(),
         memory_bytes: None,
         heap_bytes_net: None,
         heap_bytes_peak: None,
@@ -176,8 +176,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aqpbm_core::report::{LatencySummary, Mode, RunStats};
-    use aqpbm_core::DatasetDescription;
+    use aqpbm_core::benchmark_result::schema::{LatencySummary, Mode, RunStats};
+    use aqpbm_core::InputDataSetDescription;
 
     fn stats(mean: f64) -> RunStats {
         RunStats {
@@ -200,7 +200,7 @@ mod tests {
     }
 
     fn record(operation: &str, metric: &str, bench: BenchSection) -> Record {
-        let wd = DatasetDescription {
+        let wd = InputDataSetDescription {
             shape: "uniform".into(),
             size: 1000,
             cardinality: Some(100),

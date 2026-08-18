@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::partition;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog};
 use std::sync::Barrier;
 
@@ -21,7 +21,7 @@ pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBuc
 pub fn build_hll_lib<R: asap_sketchlib::HllRegisterStorage>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<HllLib<R>, BuildError> {
+) -> Result<HllLib<R>, RunError> {
     let p: HllParams = config.parse()?;
     // The registry picked `R` off this same `lg_k`, so this only fires for a
     // direct caller. It fires rather than silently building at `R`, because
@@ -54,7 +54,7 @@ pub struct HllLibHip<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::Hll
 pub fn build_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<HllLibHip<R>, BuildError> {
+) -> Result<HllLibHip<R>, RunError> {
     let p: HllParams = config.parse()?;
     if p.lg_k as usize != R::PRECISION {
         return Err(unsupported_precision(p.lg_k));
@@ -120,12 +120,12 @@ pub struct ParallelHllFastPath {
 pub fn build_parallel_hll_fast_path(
     config: &ParamSet,
     workers: usize,
-) -> Result<ParallelHllFastPath, BuildError> {
+) -> Result<ParallelHllFastPath, RunError> {
     let p: HllParams = config.parse()?;
     // `HyperLogLog<ErtlMLE>` is the P14 alias, so this row exists at one
     // precision. Refuse the others instead of running at 14 under their name.
     if p.lg_k != PARALLEL_HLL_LG_K {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "parallel HLL: fixed at lg_k={PARALLEL_HLL_LG_K}, requested lg_k={}",
             p.lg_k
         )));

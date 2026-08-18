@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
-use crate::latency::LatencyRecorder;
+use crate::metrics::latency::LatencyRecorder;
 use crate::metrics::memory::{JemallocAllocated, Rss};
 use crate::metrics::time::{CpuTimeSampler, WallClock};
 use crate::metrics::{MetricsMask, RunMetrics};

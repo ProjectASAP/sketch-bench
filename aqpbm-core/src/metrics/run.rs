@@ -1,12 +1,12 @@
 //! The per-run metric record: one of these per measured run, filled by the
-//! recorders `measure` arms and folded by `crate::run_stats`.
+//! recorders `measure` arms and folded by `crate::benchmark_result::fold`.
 
 use std::collections::BTreeMap;
 
-use crate::latency::LatencySnapshot;
+use crate::metrics::latency::LatencySnapshot;
 
 /// Metrics produced by a single run. `crate::measure` fills one per run;
-/// `crate::run_stats` folds them across N runs via the Welford accumulator.
+/// `crate::benchmark_result::fold` folds them across N runs via the Welford accumulator.
 #[derive(Debug, Clone, Default)]
 pub struct RunMetrics {
     /// Units of work the timed region covered — items inserted, probes asked,
@@ -35,7 +35,7 @@ pub struct RunMetrics {
     /// and `MetricsMask::LATENCY` was set.
     pub latency_ns: Option<LatencySnapshot>,
     /// Named scalars the body reported — error metrics, probe counts. Flat
-    /// rather than an opaque blob so `aggregate` folds every key across runs
+    /// rather than an opaque blob so the fold covers every key across runs
     /// without knowing any algorithm's shape.
     pub scores: Option<BTreeMap<String, f64>>,
 }

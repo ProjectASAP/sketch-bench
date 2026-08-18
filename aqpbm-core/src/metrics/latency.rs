@@ -1,6 +1,5 @@
 //! Per-update latency histogram, backed by `hdrhistogram` under the `hdrhist`
-//! feature (the default); with it off, a counter-only shim. At the crate root
-//! because it is the one recorder wanted without the rest of the machinery.
+//! feature (the default); with it off, a counter-only shim.
 
 #[cfg(feature = "hdrhist")]
 use hdrhistogram::Histogram;

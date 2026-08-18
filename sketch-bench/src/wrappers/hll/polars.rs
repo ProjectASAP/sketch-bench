@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use ::polars::prelude::*;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
@@ -22,7 +22,7 @@ pub struct PolarsCardinality {
 pub fn build_polars_cardinality(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsCardinality, BuildError> {
+) -> Result<PolarsCardinality, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

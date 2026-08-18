@@ -4,11 +4,11 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
 };
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 use asap_sketchlib::{
     Count, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
     Vector2D,
@@ -20,7 +20,7 @@ pub struct CsLibFixedmatrix<M: MatrixStorage>(pub Count<M, FastPath>);
 pub fn build_cs_lib_fixedmatrix<M>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CsLibFixedmatrix<M>, BuildError>
+) -> Result<CsLibFixedmatrix<M>, RunError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
@@ -50,7 +50,7 @@ pub struct CsLibVector2dFast {
 pub fn build_cs_lib_vector2d_fast(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CsLibVector2dFast, BuildError> {
+) -> Result<CsLibVector2dFast, RunError> {
     let p: CountSketchParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
     // zero-row matrix builds happily and then answers every query out of an
@@ -79,7 +79,7 @@ pub struct CsLibVector2dRegular {
 pub fn build_cs_lib_vector2d_regular(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CsLibVector2dRegular, BuildError> {
+) -> Result<CsLibVector2dRegular, RunError> {
     let p: CountSketchParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
     // zero-row matrix builds happily and then answers every query out of an
@@ -193,7 +193,7 @@ pub struct ParallelCsFastPath {
 pub fn build_parallel_cs_fast_path(
     config: &ParamSet,
     workers: usize,
-) -> Result<ParallelCsFastPath, BuildError> {
+) -> Result<ParallelCsFastPath, RunError> {
     let p: CountSketchParams = config.parse()?;
     require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
     Ok(ParallelCsFastPath {

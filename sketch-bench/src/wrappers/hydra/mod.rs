@@ -2,18 +2,18 @@
 //! item is a **record**; insert fans out into every non-empty label subset, so
 //! `d` labels cost `2^d - 1` cells and throughput is records per second.
 
-use crate::build_error::BuildError;
 use crate::params::*;
+use aqpbm_core::RunError;
 use asap_sketchlib::input::HydraCounter;
 
 pub mod polars;
 pub mod sketchlib;
 
 /// outer grid is the one shape they have in common.
-fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), BuildError> {
+fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<(), RunError> {
     for (name, v) in [("rows", rows), ("cols", cols)] {
         if v == 0 {
-            return Err(BuildError(format!("{algorithm}: {name} must be > 0")));
+            return Err(RunError::Target(format!("{algorithm}: {name} must be > 0")));
         }
     }
     Ok(())
@@ -68,10 +68,10 @@ fn kll_cell_slots(k: u32) -> usize {
 mod tests {
     use super::sketchlib::*;
     use super::*;
-    use aqpbm_core::config::ParamSet;
+    use crate::params::ParamSet;
 
-    use aqpbm_core::config::SketchParams;
-    use aqpbm_core::dataset::Labeled;
+    use crate::params::SketchParams;
+    use aqpbm_core::input_dataset::Labeled;
 
     fn built() -> HydraCms {
         build_hydra_cms(

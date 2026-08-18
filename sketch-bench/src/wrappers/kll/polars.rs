@@ -4,16 +4,16 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
 pub fn build_polars_quantile_kll(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsQuantileKll, BuildError> {
+) -> Result<PolarsQuantileKll, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

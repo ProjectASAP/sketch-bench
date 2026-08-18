@@ -4,11 +4,11 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::{
     partition, require_positive, require_shape, M5x32K, PARALLEL_COLS, PARALLEL_ROWS,
 };
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 use asap_sketchlib::{
     CountMin, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
@@ -21,7 +21,7 @@ pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMin<M, FastPath>);
 pub fn build_cms_lib_fixedmatrix<M>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CmsLibFixedmatrix<M>, BuildError>
+) -> Result<CmsLibFixedmatrix<M>, RunError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
@@ -55,7 +55,7 @@ pub struct CmsLibVector2dFast {
 pub fn build_cms_lib_vector2d_fast(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CmsLibVector2dFast, BuildError> {
+) -> Result<CmsLibVector2dFast, RunError> {
     let p: CmsParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
     // zero-row matrix builds happily and then answers every query out of an
@@ -84,7 +84,7 @@ pub struct CmsLibVector2dRegular {
 pub fn build_cms_lib_vector2d_regular(
     config: &ParamSet,
     _workers: usize,
-) -> Result<CmsLibVector2dRegular, BuildError> {
+) -> Result<CmsLibVector2dRegular, RunError> {
     let p: CmsParams = config.parse()?;
     // `Vector2D::init` takes `cols.ilog2()`, which aborts at 0, and a
     // zero-row matrix builds happily and then answers every query out of an
@@ -185,7 +185,7 @@ pub struct ParallelCmsFastPath {
 pub fn build_parallel_cms_fast_path(
     config: &ParamSet,
     workers: usize,
-) -> Result<ParallelCmsFastPath, BuildError> {
+) -> Result<ParallelCmsFastPath, RunError> {
     let p: CmsParams = config.parse()?;
     require_shape(p.rows, p.cols, PARALLEL_ROWS, PARALLEL_COLS)?;
     Ok(ParallelCmsFastPath {

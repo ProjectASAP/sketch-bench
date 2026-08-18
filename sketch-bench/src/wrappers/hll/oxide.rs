@@ -4,8 +4,8 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
-use aqpbm_core::config::ParamSet;
+use crate::params::ParamSet;
+use aqpbm_core::RunError;
 
 use sketch_oxide::Sketch as OxideSketch;
 
@@ -17,10 +17,10 @@ pub struct HllOxide {
     lg_k: u8,
 }
 
-pub fn build_hll_oxide(config: &ParamSet, _workers: usize) -> Result<HllOxide, BuildError> {
+pub fn build_hll_oxide(config: &ParamSet, _workers: usize) -> Result<HllOxide, RunError> {
     let p: HllParams = config.parse()?;
     let inner = sketch_oxide::cardinality::HyperLogLog::new(p.lg_k)
-        .map_err(|e| BuildError(format!("oxide HLL rejected lg_k={}: {e:?}", p.lg_k)))?;
+        .map_err(|e| RunError::Target(format!("oxide HLL rejected lg_k={}: {e:?}", p.lg_k)))?;
     Ok(HllOxide {
         inner,
         lg_k: p.lg_k,

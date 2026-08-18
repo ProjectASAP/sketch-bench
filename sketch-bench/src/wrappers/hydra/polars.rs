@@ -4,11 +4,11 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
 use ::polars::prelude::*;
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::dataset::Labeled;
+use aqpbm_core::input_dataset::Labeled;
+use aqpbm_core::RunError;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -20,7 +20,7 @@ pub struct PolarsSubpopFrequency {
 pub fn build_polars_subpop_frequency(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsSubpopFrequency, BuildError> {
+) -> Result<PolarsSubpopFrequency, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -53,7 +53,7 @@ pub struct PolarsSubpopCardinality {
 pub fn build_polars_subpop_cardinality(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsSubpopCardinality, BuildError> {
+) -> Result<PolarsSubpopCardinality, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -83,7 +83,7 @@ pub struct PolarsSubpopQuantile {
 pub fn build_polars_subpop_quantile(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsSubpopQuantile, BuildError> {
+) -> Result<PolarsSubpopQuantile, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

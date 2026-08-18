@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::require_range;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
@@ -26,7 +26,7 @@ pub const DS_LG_K: (u8, u8) = (4, 21);
 pub fn build_hll_datasketches(
     config: &ParamSet,
     _workers: usize,
-) -> Result<HllDatasketches, BuildError> {
+) -> Result<HllDatasketches, RunError> {
     let p: HllParams = config.parse()?;
     require_range("datasketches HLL", "lg_k", p.lg_k, DS_LG_K.0, DS_LG_K.1)?;
     let hll_type = ::datasketches::hll::HllType::Hll8;

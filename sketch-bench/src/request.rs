@@ -1,10 +1,12 @@
 //! What a frontend asks for, as one value: a [`Requirement`], from which the
 //! answer to "can this run" follows alone. See `docs/sketch-bench.md` §Input.
 
-use crate::config::ParamSet;
+use aqpbm_core::target::Opening;
+
+use crate::params::ParamSet;
 
 /// The statistic a target answers, as a *value* — one variant per statistic some
-/// [`GroundTruth`](crate::accuracy::GroundTruth) can score. Data, not a bound, so
+/// [`GroundTruth`](aqpbm_core::GroundTruth) can score. Data, not a bound, so
 /// a registry can print it. [`Capability::None`] is measured but not scored.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Capability {
@@ -71,7 +73,7 @@ impl Numeric {
 /// (the target's item type) rather than part of the question.
 ///
 /// Deliberately *not* what to measure. Which operation, read for which metric,
-/// is one instruction handed to [`Target::body`](crate::ops::Target::body) per call,
+/// is one instruction handed to [`Target::body`](aqpbm_core::Target::body) per call,
 /// so it is a pair of arguments rather than a pair of sets living here.
 #[derive(Clone, Debug)]
 pub struct Requirement {
@@ -93,4 +95,18 @@ pub struct Requirement {
     pub merge_shards: usize,
     /// A named comparator, or `None` for the target's default.
     pub comparator: Option<String>,
+}
+
+impl Requirement {
+    /// The five fields the framework reads, as the value it opens a target
+    /// with. What is left here is what only the registry looks at.
+    pub fn opening(&self) -> Opening<ParamSet> {
+        Opening {
+            algorithm: self.algorithm.clone(),
+            impl_name: self.impl_name.clone(),
+            params: self.params.clone(),
+            workers: self.workers,
+            merge_shards: self.merge_shards,
+        }
+    }
 }

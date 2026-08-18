@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::require_resolved_shape;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 // No `rows` / `cols` field, as in `CmsOxide`: `init` proves the built table
 // matches the request, so the sketch is the only place either is read from.
@@ -15,11 +15,11 @@ pub struct CsOxide {
     inner: sketch_oxide::frequency::CountSketch,
 }
 
-pub fn build_cs_oxide(config: &ParamSet, _workers: usize) -> Result<CsOxide, BuildError> {
+pub fn build_cs_oxide(config: &ParamSet, _workers: usize) -> Result<CsOxide, RunError> {
     let p: CountSketchParams = config.parse()?;
     let (epsilon, delta) = dims_to_err(p.rows, p.cols);
     let inner = sketch_oxide::frequency::CountSketch::new(epsilon, delta).map_err(|e| {
-        BuildError(format!(
+        RunError::Target(format!(
             "oxide CountSketch rejected ε={epsilon} δ={delta}: {e:?}"
         ))
     })?;

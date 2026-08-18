@@ -2,12 +2,10 @@
 //! N post-warm-up runs of one measurement. Not data aggregation, and not sketch
 //! union/merge — `Operation::Merge` only picks which statistic a merge reports.
 
-pub mod welford;
+use crate::benchmark_result::welford::Welford;
 
-use welford::Welford;
-
+use crate::benchmark_result::schema::{CpuTime, LatencySummary, RunStats};
 use crate::metrics::{ItemsPerSec, RunMetrics};
-use crate::report::{CpuTime, LatencySummary, RunStats};
 
 /// The rate this measurement produced: `work / elapsed`.
 ///

@@ -1,6 +1,6 @@
 //! The report-facing descriptor: what a run's dataset *was*, as it appears in
 //! every JSONL record. Deliberately not a [`TableDescription`] — it is a frozen
-//! wire format, and [`DatasetDescription::spec`] is the escape hatch.
+//! wire format, and [`InputDataSetDescription::spec`] is the escape hatch.
 
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,7 @@ use aqpbm_datagen::{DataDistribution, TableDescription};
 /// every report so a JSONL record can be re-run without
 /// external metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatasetDescription {
+pub struct InputDataSetDescription {
     pub shape: String, // "uniform" | "zipf" | "normal" | "columns" | "file"
     pub size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,7 +29,7 @@ pub struct DatasetDescription {
     pub spec: Option<serde_json::Value>,
 }
 
-impl DatasetDescription {
+impl InputDataSetDescription {
     /// Projection of a [`TableDescription`] into the report-facing descriptor.
     /// Lives here, not on the description, because it asks which of *this*
     /// type's fields can hold one — on the description the generator would be
@@ -54,7 +54,7 @@ impl DatasetDescription {
             _ => (None, None),
         };
 
-        DatasetDescription {
+        InputDataSetDescription {
             shape,
             size: spec.row_num as usize,
             cardinality,
@@ -110,15 +110,15 @@ mod tests {
 
         // A plain numeric column keeps the descriptor a record written before
         // the string axis existed would have had.
-        let plain = DatasetDescription::from_spec(&TableDescription::single(
+        let plain = InputDataSetDescription::from_spec(&TableDescription::single(
             "key",
             zipf_column(64, 1.0, 1, "i64"),
             32,
         ));
         assert!(plain.spec.is_none(), "{plain:?}");
 
-        let short = DatasetDescription::from_spec(&with_opts(4, 4));
-        let long = DatasetDescription::from_spec(&with_opts(16, 16));
+        let short = InputDataSetDescription::from_spec(&with_opts(4, 4));
+        let long = InputDataSetDescription::from_spec(&with_opts(16, 16));
         assert!(short.spec.is_some());
         assert_ne!(
             serde_json::to_string(&short).unwrap(),
@@ -134,12 +134,12 @@ mod tests {
     fn a_shift_or_a_rule_forces_the_full_description() {
         let mut shifted = zipf_column(64, 1.0, 1, "i64");
         shifted.shift = Some(15_000.0);
-        let d = DatasetDescription::from_spec(&TableDescription::single("key", shifted, 32));
+        let d = InputDataSetDescription::from_spec(&TableDescription::single("key", shifted, 32));
         assert!(d.spec.is_some());
 
         let mut ruled = zipf_column(64, 1.0, 1, "i64");
         ruled.special_rule = RULE_MONOTONIC_INCREASE;
-        let d = DatasetDescription::from_spec(&TableDescription::single("key", ruled, 32));
+        let d = InputDataSetDescription::from_spec(&TableDescription::single("key", ruled, 32));
         assert!(d.spec.is_some());
     }
 }

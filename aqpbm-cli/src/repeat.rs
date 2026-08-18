@@ -9,8 +9,8 @@ use std::ffi::OsString;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_core::report::{BenchSection, CpuTime, Record, RunStats};
-use aqpbm_core::run_stats::welford::Welford;
+use aqpbm_core::benchmark_result::schema::{BenchSection, CpuTime, Record, RunStats};
+use aqpbm_core::benchmark_result::welford::Welford;
 
 /// Marks a child so it runs exactly one repeat and writes to stdout, whatever
 /// its argv says. The argv is byte-identical to the parent's — provably the same
@@ -36,7 +36,7 @@ fn group_key(r: &Record) -> GroupKey {
             .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_default(),
-        serde_json::to_string(&r.dataset).unwrap_or_default(),
+        serde_json::to_string(&r.input_dataset).unwrap_or_default(),
         r.bench
             .as_ref()
             .and_then(|b| b.operation.clone())
@@ -178,8 +178,8 @@ fn merge(records: Vec<Record>) -> Record {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aqpbm_core::report::{CpuTime, LatencySummary, Mode};
-    use aqpbm_core::DatasetDescription;
+    use aqpbm_core::benchmark_result::schema::{CpuTime, LatencySummary, Mode};
+    use aqpbm_core::InputDataSetDescription;
 
     fn stats(mean: f64) -> RunStats {
         // `n = 5` is the *within-process* count. After merging R processes every
@@ -195,7 +195,7 @@ mod tests {
     /// A record with every measurable field populated, so the walk below has
     /// something to find in each of them.
     fn record(mean: f64) -> Record {
-        let wd = DatasetDescription {
+        let wd = InputDataSetDescription {
             shape: "uniform".into(),
             size: 1000,
             cardinality: Some(100),

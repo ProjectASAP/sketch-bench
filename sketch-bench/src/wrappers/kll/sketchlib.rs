@@ -4,18 +4,18 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use aqpbm_core::accuracy::quantile::QuantileValue;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
-fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::KLL<T>, BuildError>
+fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::KLL<T>, RunError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
     if !(LIB_K_MIN..=LIB_K_MAX).contains(&k) {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "asap KLL: k={k} outside [{LIB_K_MIN}, {LIB_K_MAX}]; the library clamps \
              to that range, so any other k would run at a value this record does not name"
         )));
@@ -34,7 +34,7 @@ pub struct KllLibPerCall<T: asap_sketchlib::common::numerical::NumericalValue = 
 pub fn build_kll_lib_per_call<T>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<KllLibPerCall<T>, BuildError>
+) -> Result<KllLibPerCall<T>, RunError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
@@ -69,7 +69,7 @@ pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64>
     cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
-pub fn build_kll_lib_cdf<T>(config: &ParamSet, _workers: usize) -> Result<KllLibCdf<T>, BuildError>
+pub fn build_kll_lib_cdf<T>(config: &ParamSet, _workers: usize) -> Result<KllLibCdf<T>, RunError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {

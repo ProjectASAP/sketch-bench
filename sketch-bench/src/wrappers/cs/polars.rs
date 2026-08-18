@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 pub fn insert_polars_frequency_cs(sketch: &mut PolarsFrequencyCs, v: &i64) {
     sketch.0.update(v);
@@ -24,7 +24,7 @@ pub struct PolarsFrequencyCs(PolarsFrequencyCore);
 pub fn build_polars_frequency_cs(
     config: &ParamSet,
     _workers: usize,
-) -> Result<PolarsFrequencyCs, BuildError> {
+) -> Result<PolarsFrequencyCs, RunError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

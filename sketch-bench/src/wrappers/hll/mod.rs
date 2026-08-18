@@ -2,8 +2,8 @@
 //! (a.k.a. asap_sketchlib). All of them are registered under
 //! `Capability::Cardinality`, which is what makes them cardinality rows.
 
-use crate::build_error::BuildError;
 use crate::params::*;
+use aqpbm_core::RunError;
 use sketch_oxide::Mergeable as _;
 
 pub mod datasketches;
@@ -17,8 +17,8 @@ pub const LIB_PRECISIONS: [u8; 3] = [12, 14, 16];
 /// The `lg_k` values this build compiled an HLL storage for, as a refusal.
 /// `asap_sketchlib` puts the register count in the storage *type*, so anything
 /// else is refused rather than built at a neighbouring precision.
-pub fn unsupported_precision(lg_k: u8) -> BuildError {
-    BuildError(format!(
+pub fn unsupported_precision(lg_k: u8) -> RunError {
+    RunError::Target(format!(
         "asap HLL is compiled in at lg_k {LIB_PRECISIONS:?}; {lg_k} is not one of them"
     ))
 }
@@ -29,7 +29,7 @@ mod tests {
     use super::oxide::*;
     use super::sketchlib::*;
     use super::*;
-    use aqpbm_core::config::ParamSet;
+    use crate::params::ParamSet;
 
     use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
 

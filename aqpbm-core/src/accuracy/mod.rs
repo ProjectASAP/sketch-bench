@@ -42,7 +42,7 @@ pub trait GroundTruth<I> {
 
 /// Drive one comparator end to end — truth, probes, ask, score — and hand back
 /// the metric map. Test-only: production runs the same sequence inside
-/// `ops::squares_for`, where it sits within the region `measure` times.
+/// `target::Target::body`, where it sits within the region `measure` times.
 #[cfg(test)]
 pub(crate) fn score_with<S, I, G, A>(
     gt: &G,

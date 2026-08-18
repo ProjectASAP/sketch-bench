@@ -1,15 +1,14 @@
-//! Replaying a dataset off disk. [`crate::binfile`] writes `.bin` and its
-//! sidecar; this module reads. Three formats chosen by extension, all yielding
-//! `i64` — `.bin` is the tool's own, `.pcap` and `.csv` carry external traces.
+//! Replaying a dataset off disk. Three formats chosen by extension, all
+//! yielding `i64` — `.bin` is the tool's own, `.pcap` and `.csv` carry
+//! external traces.
 
 use std::path::Path;
 
 use aqpbm_datagen::DataGenError;
 
-use super::{DatasetDescription, NumericDataset};
-use crate::binfile;
+use super::{InputDataSetDescription, NumericInputDataSet};
 
-impl NumericDataset<i64> {
+impl NumericInputDataSet<i64> {
     /// Load from a file, format from the extension: `.bin` (and anything else)
     /// is a little-endian `int64` stream; `.pcap` takes each IPv4 source address
     /// as big-endian `u32`; `.csv` parses column 0 below a header row.
@@ -22,10 +21,7 @@ impl NumericDataset<i64> {
         {
             Some("pcap") => load_pcap(path)?,
             Some("csv") => load_csv(path)?,
-            _ => {
-                reject_non_i64_bin(path)?;
-                load_bin(path)?
-            }
+            _ => load_bin(path)?,
         };
         if items.is_empty() {
             return Err(DataGenError::BadParam(format!(
@@ -35,7 +31,7 @@ impl NumericDataset<i64> {
         }
         Ok(Self::new(
             items,
-            DatasetDescription {
+            InputDataSetDescription {
                 shape: "file".into(),
                 size: 0, // overwritten by `new`
                 cardinality: None,
@@ -46,25 +42,6 @@ impl NumericDataset<i64> {
             },
         ))
     }
-}
-
-/// Reject a `.bin` whose sidecar declares an unreadable dtype. The stream is
-/// header-less, so an `f64` file is byte-indistinguishable from `i64` — `0.093`
-/// reads back as `4591388162153532928`. No sidecar means "assume i64".
-fn reject_non_i64_bin(path: &Path) -> Result<(), DataGenError> {
-    let Ok(Some(meta)) = binfile::read_meta(path) else {
-        return Ok(());
-    };
-    if meta.dtype != "i64" {
-        return Err(DataGenError::BadParam(format!(
-            "{}: sidecar declares dtype {}, but the benchmark only consumes i64. \
-             Re-generate with `--dtype i64`; reading it as i64 would silently \
-             reinterpret the raw bytes and produce meaningless keys.",
-            path.display(),
-            meta.dtype,
-        )));
-    }
-    Ok(())
 }
 
 fn load_bin(path: &Path) -> Result<Vec<i64>, DataGenError> {
@@ -178,10 +155,9 @@ fn extract_ipv4_src(packet: &[u8], linktype: u32) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::dataset::{Dataset, I64Dataset};
+    use crate::input_dataset::{I64InputDataSet, InputDataSet};
     use crate::test_support::{build, zipf_column};
-    use aqpbm_datagen::TableDescription;
+    use aqpbm_datagen::{ColumnData, TableDescription};
 
     #[test]
     fn file_bin_roundtrip() {
@@ -193,92 +169,44 @@ mod tests {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = I64Dataset::load(&path).unwrap();
+        let w = I64InputDataSet::load(&path).unwrap();
         assert_eq!(w.items(), &[1, -2, 3, 4]);
         assert_eq!(w.description().shape, "file");
         assert_eq!(w.description().size, 4);
         std::fs::remove_file(&path).ok();
     }
 
-    /// Write a `.bin` + sidecar at `data_type` and try to load it as i64.
-    fn load_generated(data_type: &str, tag: &str) -> Result<I64Dataset, DataGenError> {
-        let path = std::env::temp_dir().join(format!("sketchlib_dtype_guard_{tag}.bin"));
-        let spec = TableDescription::single("key", zipf_column(64, 1.0, 1, data_type), 32);
-        let column = spec.generate().unwrap().into_column(0).unwrap();
-        binfile::write_bin(&path, &column).unwrap();
-        binfile::write_meta(&path, &binfile::BinMeta::new(&spec, &column)).unwrap();
-        let out = I64Dataset::load(&path);
-        std::fs::remove_file(&path).ok();
-        std::fs::remove_file(binfile::sidecar_path(&path)).ok();
-        out
-    }
-
     #[test]
-    fn bin_with_i64_sidecar_loads() {
-        let w = load_generated("i64", "i64").expect("i64 must load");
-        assert_eq!(w.items().len(), 32);
-    }
-
-    #[test]
-    fn bin_with_non_i64_sidecar_is_rejected() {
-        // An f64/u64 stream is byte-indistinguishable from i64, so
-        // loading it would silently produce garbage keys rather than
-        // fail. The sidecar is the only thing that can catch it.
-        for tag in ["f64", "u64"] {
-            let err = load_generated(tag, tag)
-                .expect_err("a non-i64 stream must be rejected, not silently misread");
-            let msg = err.to_string();
-            assert!(
-                msg.contains(tag),
-                "error should name the offending item type: {msg}"
-            );
-        }
-    }
-
-    #[test]
-    fn bin_without_sidecar_is_assumed_i64() {
-        // Legacy `input/benchmark_data_*.bin` files have no sidecar and
-        // must keep loading unchanged.
+    fn bin_loads_as_i64() {
+        // Legacy `input/benchmark_data_*.bin` files must keep loading unchanged.
         use std::io::Write;
-        let path = std::env::temp_dir().join("sketchlib_no_sidecar.bin");
+        let path = std::env::temp_dir().join("sketchlib_bin_i64.bin");
         let mut f = std::fs::File::create(&path).unwrap();
         for v in [7i64, 8, 9] {
             f.write_all(&v.to_le_bytes()).unwrap();
         }
         drop(f);
-        let w = I64Dataset::load(&path).expect("no sidecar => assume i64");
+        let w = I64InputDataSet::load(&path).expect("a raw .bin is read as i64");
         assert_eq!(w.items(), &[7, 8, 9]);
         std::fs::remove_file(&path).ok();
     }
 
-    #[test]
-    fn unreadable_sidecar_does_not_break_a_loadable_bin() {
-        // A foreign `.meta.json`, or one from a future schema, must not
-        // fail a file that loaded fine before the guard existed.
-        use std::io::Write;
-        let path = std::env::temp_dir().join("sketchlib_bad_sidecar.bin");
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(&5i64.to_le_bytes()).unwrap();
-        drop(f);
-        std::fs::write(binfile::sidecar_path(&path), "{\"not\":\"ours\"}").unwrap();
-        let w = I64Dataset::load(&path).expect("unparseable sidecar => fall back to i64");
-        assert_eq!(w.items(), &[5]);
-        std::fs::remove_file(&path).ok();
-        std::fs::remove_file(binfile::sidecar_path(&path)).ok();
-    }
-
-    /// `dataset generate` (to a file) and `sketchbench --spec` (in memory) must
-    /// be the same dataset, or a run cannot be reproduced from its own file.
+    /// A `.bin` replayed with `--input` and `sketchbench --spec` (in memory)
+    /// must be the same dataset, or a run cannot be reproduced from its own file.
     #[test]
     fn the_file_and_the_memory_path_agree() {
         let spec = TableDescription::single("key", zipf_column(500, 1.3, 7, "i64"), 3000);
         let path = std::env::temp_dir().join("sketchlib_file_agreement.bin");
 
         let column = spec.generate().unwrap().into_column(0).unwrap();
-        binfile::write_bin(&path, &column).unwrap();
+        let ColumnData::Int64(values) = column else {
+            unreachable!("an i64 column spec generates an i64 column")
+        };
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(&path, &bytes).unwrap();
 
-        let from_file = I64Dataset::load(&path).unwrap();
-        let from_memory: I64Dataset = build(&spec).unwrap();
+        let from_file = I64InputDataSet::load(&path).unwrap();
+        let from_memory: I64InputDataSet = build(&spec).unwrap();
         assert_eq!(from_file.items(), from_memory.items());
         std::fs::remove_file(&path).ok();
     }
@@ -293,7 +221,7 @@ mod tests {
         writeln!(f).unwrap();
         writeln!(f, "-5,second").unwrap();
         drop(f);
-        let w = I64Dataset::load(&path).unwrap();
+        let w = I64InputDataSet::load(&path).unwrap();
         assert_eq!(w.items(), &[10, -5]);
         std::fs::remove_file(&path).ok();
     }
@@ -305,7 +233,7 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&[0u8; 32]).unwrap();
         drop(f);
-        let err = I64Dataset::load(&path).unwrap_err();
+        let err = I64InputDataSet::load(&path).unwrap_err();
         assert!(err.to_string().contains("pcap magic"));
         std::fs::remove_file(&path).ok();
     }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use crate::dataset::Labeled;
+use crate::input_dataset::Labeled;
 
 use super::curve;
 use super::quantile::{rank_err, QuantileValue};

@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
-use aqpbm_core::config::ParamSet;
-use aqpbm_core::dataset::Labeled;
+use crate::params::ParamSet;
+use aqpbm_core::input_dataset::Labeled;
+use aqpbm_core::RunError;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, HyperLogLog, Vector2D, KLL};
 
@@ -15,12 +15,12 @@ pub struct HydraCms {
     params: HydraCmsParams,
 }
 
-pub fn build_hydra_cms(config: &ParamSet, _workers: usize) -> Result<HydraCms, BuildError> {
+pub fn build_hydra_cms(config: &ParamSet, _workers: usize) -> Result<HydraCms, RunError> {
     let p: HydraCmsParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-cms")?;
     for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
         if v == 0 {
-            return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
+            return Err(RunError::Target(format!("hydra-cms: {name} must be > 0")));
         }
     }
     let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
@@ -55,7 +55,7 @@ pub struct HydraHll {
     params: HydraHllParams,
 }
 
-pub fn build_hydra_hll(config: &ParamSet, _workers: usize) -> Result<HydraHll, BuildError> {
+pub fn build_hydra_hll(config: &ParamSet, _workers: usize) -> Result<HydraHll, RunError> {
     let p: HydraHllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-hll")?;
     // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
@@ -89,14 +89,14 @@ pub struct HydraKll {
     params: HydraKllParams,
 }
 
-pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, BuildError> {
+pub fn build_hydra_kll(config: &ParamSet, _workers: usize) -> Result<HydraKll, RunError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
     // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
     // clamps `k` to its own range without saying so. Refuse for the same reason
     // those rows do: the grid would be built at a `cell_k` the record misnames.
     if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k) {
-        return Err(BuildError(format!(
+        return Err(RunError::Target(format!(
             "hydra-kll: cell_k={} outside [{}, {}]; the library clamps to that range",
             p.cell_k,
             crate::wrappers::kll::LIB_K_MIN,

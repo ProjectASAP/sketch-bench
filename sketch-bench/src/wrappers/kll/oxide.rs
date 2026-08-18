@@ -4,17 +4,17 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use aqpbm_core::accuracy::quantile::QuantileValue;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 /// uses; `sketch_oxide` takes a `u16`. Refuse out of range by name instead of
 /// truncating, which would run at a `k` other than the one requested.
-fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, BuildError> {
+fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, RunError> {
     let k16 = u16::try_from(k)
-        .map_err(|_| BuildError(format!("oxide KLL: k={k} exceeds the u16 its API takes")))?;
+        .map_err(|_| RunError::Target(format!("oxide KLL: k={k} exceeds the u16 its API takes")))?;
     sketch_oxide::quantiles::KllSketch::new(k16)
-        .map_err(|e| BuildError(format!("oxide KLL rejected k={k16}: {e:?}")))
+        .map_err(|e| RunError::Target(format!("oxide KLL rejected k={k16}: {e:?}")))
 }
 
 /// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
@@ -28,7 +28,7 @@ pub struct KllOxidePerCall<T = i64> {
 pub fn build_kll_oxide_per_call<T: QuantileValue>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<KllOxidePerCall<T>, BuildError> {
+) -> Result<KllOxidePerCall<T>, RunError> {
     let p: KllParams = config.parse()?;
     Ok(KllOxidePerCall {
         inner: oxide_kll(p.k)?,
@@ -60,7 +60,7 @@ pub struct KllOxideCdf<T = i64> {
 pub fn build_kll_oxide_cdf<T: QuantileValue>(
     config: &ParamSet,
     _workers: usize,
-) -> Result<KllOxideCdf<T>, BuildError> {
+) -> Result<KllOxideCdf<T>, RunError> {
     let p: KllParams = config.parse()?;
     Ok(KllOxideCdf {
         inner: oxide_kll(p.k)?,

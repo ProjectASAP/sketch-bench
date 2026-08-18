@@ -25,8 +25,8 @@ mod tests {
     use super::oxide::*;
     use super::sketchlib::*;
     use super::*;
+    use crate::params::ParamSet;
     use crate::wrappers::cs::oxide::{build_cs_oxide, memory_cs_oxide};
-    use aqpbm_core::config::ParamSet;
 
     fn shape() -> ParamSet {
         ParamSet::of(&CmsParams {

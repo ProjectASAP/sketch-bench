@@ -1,10 +1,10 @@
 //! The multi-column stream: `n - 1` label columns joined into a key, plus one
 //! value column — what the grouped (Hydra) rows ingest. As in [`super::numeric`],
-//! only [`LabeledDataset::from_table`] is offered here.
+//! only [`LabeledInputDataSet::from_table`] is offered here.
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, TableDescription};
 
-use super::{Dataset, DatasetDescription};
+use super::{InputDataSet, InputDataSetDescription};
 
 /// One record of a multi-column stream: the label columns joined with `;`, plus
 /// the measured value. The join happens once at generation, so a wrapper feeding
@@ -33,16 +33,16 @@ impl<V> Labeled<V> {
 /// all from one [`TableDescription`]. No new generator — this only zips the
 /// columns into records, so each stays independently steerable.
 #[derive(Debug, Clone)]
-pub struct LabeledDataset<V> {
+pub struct LabeledInputDataSet<V> {
     items: Vec<Labeled<V>>,
-    description: DatasetDescription,
+    description: InputDataSetDescription,
 }
 
-impl<V: ColumnItem> LabeledDataset<V> {
+impl<V: ColumnItem> LabeledInputDataSet<V> {
     /// Zip an already-generated table into records: all but the last column are
     /// label columns and must be `data_type: string`, the last is the value
     /// column and must be this row's item type. See
-    /// [`NumericDataset::from_table`](super::numeric::NumericDataset::from_table)
+    /// [`NumericInputDataSet::from_table`](super::numeric::NumericInputDataSet::from_table)
     /// for why the caller generates.
     pub fn from_table(
         spec: &TableDescription,
@@ -55,7 +55,7 @@ impl<V: ColumnItem> LabeledDataset<V> {
                 spec.column_spec.len(),
             )));
         }
-        let description = DatasetDescription::from_spec(spec);
+        let description = InputDataSetDescription::from_spec(spec);
         let labels_end = table.data.len() - 1;
         let titles = table.column_title.clone();
         let mut columns = table.into_columns();
@@ -103,10 +103,10 @@ impl<V: ColumnItem> LabeledDataset<V> {
     }
 }
 
-impl<V: ColumnItem> Dataset for LabeledDataset<V> {
+impl<V: ColumnItem> InputDataSet for LabeledInputDataSet<V> {
     type Item = Labeled<V>;
 
-    fn description(&self) -> DatasetDescription {
+    fn description(&self) -> InputDataSetDescription {
         self.description.clone()
     }
 
@@ -123,11 +123,11 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
-    /// Generate and zip — the two steps `DatasetSpec::build` takes before
+    /// Generate and zip — the two steps `InputDataSetSpec::build` takes before
     /// handing a labelled row its dataset.
-    fn build(spec: &TableDescription) -> Result<LabeledDataset<i64>, DataGenError> {
+    fn build(spec: &TableDescription) -> Result<LabeledInputDataSet<i64>, DataGenError> {
         let table = spec.generate()?;
-        LabeledDataset::from_table(spec, table)
+        LabeledInputDataSet::from_table(spec, table)
     }
 
     /// A label column: `cardinality` distinct strings over `alphabet`.

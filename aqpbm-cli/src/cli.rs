@@ -4,8 +4,6 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::dataset_cmd;
-
 #[derive(Parser, Debug)]
 // `max_term_width` is pinned so `--help` renders identically under any
 // terminal. `docs/aqpbm-cli-reference.md` is a checked-in expectation, and a
@@ -25,8 +23,6 @@ pub struct Cli {
 pub enum Cmd {
     /// Measure one target of the sketch bundle.
     Sketchbench(SketchbenchArgs),
-    /// Generate or inspect synthetic `.bin` datasets.
-    Dataset(dataset_cmd::DatasetArgs),
 }
 
 /// One target of the sketch bundle: one algorithm, one impl, one construction

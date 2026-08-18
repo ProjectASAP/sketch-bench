@@ -1,11 +1,9 @@
 //! `approxbench`, the approximate query processing benchmark suite.
 //!
-//! `sketchbench` measures one target of the sketch bundle, `sketchbench
-//! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs, and
-//! `dataset` generates or inspects synthetic `.bin` datasets.
+//! `sketchbench` measures one target of the sketch bundle, and `sketchbench
+//! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs.
 
 mod cli;
-mod dataset_cmd;
 mod flatten_record;
 mod repeat;
 mod runners;
@@ -31,10 +29,10 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::{bail, Result};
+use aqpbm_core::benchmark_result::bench_report::BenchReport;
 use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
-use aqpbm_core::ops::MIN_MERGE_SHARDS;
-use aqpbm_core::runner::BenchReport;
+use aqpbm_core::target::MIN_MERGE_SHARDS;
 use aqpbm_datagen::{
     ColumnSpec, DataDistribution, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_NONE,
@@ -46,9 +44,9 @@ use cli::{Cli, Cmd, SketchbenchArgs};
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
-use aqpbm_core::dataset::DatasetSpec;
-use aqpbm_core::request::Requirement;
+use aqpbm_core::input_dataset::InputDataSetSpec;
 use sketch_bench::registry;
+use sketch_bench::request::Requirement;
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -154,7 +152,6 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Sketchbench(args) => run_sketchbench(args),
-        Cmd::Dataset(args) => dataset_cmd::run(args),
     }
 }
 
@@ -173,9 +170,9 @@ fn list_impls() -> Result<()> {
 /// Load a `--spec` file as one [`TableDescription`]. One reader, because one
 /// description covers both cases: a plain target takes a one-column table, and
 /// a record-ingesting target takes label columns before the value column.
-fn load_spec(path: &str) -> Result<DatasetSpec> {
+fn load_spec(path: &str) -> Result<InputDataSetSpec> {
     TableDescription::from_path(std::path::Path::new(path))
-        .map(DatasetSpec::Generated)
+        .map(InputDataSetSpec::Generated)
         .map_err(|e| anyhow::anyhow!("loading spec from {path}: {e}"))
 }
 
@@ -183,9 +180,9 @@ fn load_spec(path: &str) -> Result<DatasetSpec> {
 /// `--spec` > the `--dataset` flags. The flag path builds the same
 /// `TableDescription` the spec path would, so it is sugar for a one-column
 /// description — one generator.
-fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
+fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
     if let Some(path) = args.input.as_deref() {
-        return Ok(DatasetSpec::File {
+        return Ok(InputDataSetSpec::File {
             path: path.to_string(),
         });
     }
@@ -227,7 +224,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<DatasetSpec> {
     // `Inline`, not `Generated`: these flags name a distribution and a size but
     // no type, so the target's item type is what fills `data_type` in. The
     // placeholder below is never the one that generates.
-    Ok(DatasetSpec::Inline(TableDescription::single(
+    Ok(InputDataSetSpec::Inline(TableDescription::single(
         "key",
         ColumnSpec {
             distribution,
@@ -405,7 +402,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             metrics: metric.bit() | secondary,
         };
         let runs = aqpbm_core::measure(&cfg, body);
-        let mut report = BenchReport::fold(
+        let mut report = BenchReport::from_runs(
             algorithm.as_str(),
             impl_name.as_str(),
             dataset.clone(),

@@ -4,9 +4,9 @@
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
-use crate::build_error::BuildError;
+use crate::params::ParamSet;
 use crate::wrappers::require_resolved_shape;
-use aqpbm_core::config::ParamSet;
+use aqpbm_core::RunError;
 
 // No `rows` / `cols` field: `init` has already proven the built table matches
 // the request, so the sketch itself is the one place either figure is read
@@ -15,12 +15,13 @@ pub struct CmsOxide {
     inner: sketch_oxide::frequency::CountMinSketch,
 }
 
-pub fn build_cms_oxide(config: &ParamSet, _workers: usize) -> Result<CmsOxide, BuildError> {
+pub fn build_cms_oxide(config: &ParamSet, _workers: usize) -> Result<CmsOxide, RunError> {
     let p: CmsParams = config.parse()?;
     // Native API takes an error bound, not raw dimensions — translate.
     let (epsilon, delta) = dims_to_err(p.rows, p.cols);
-    let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta)
-        .map_err(|e| BuildError(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}")))?;
+    let inner = sketch_oxide::frequency::CountMinSketch::new(epsilon, delta).map_err(|e| {
+        RunError::Target(format!("oxide CMS rejected ε={epsilon} δ={delta}: {e:?}"))
+    })?;
     require_resolved_shape(
         "oxide CMS",
         (inner.depth(), inner.width()),

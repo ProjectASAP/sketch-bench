@@ -4,7 +4,7 @@
 //!
 //! Both are *vocabulary*, not requests. A registry entry declares what it admits
 //! with them, and `MeasureConfig` arms recorders with them. What a frontend asks
-//! for is one [`Operation`] and one [`Metric`] — see [`crate::ops::Target::body`].
+//! for is one [`Operation`] and one [`Metric`] — see [`crate::target::Target::body`].
 //!
 //! See `docs/aqpbm-core.md` §Metrics and §Operations.
 

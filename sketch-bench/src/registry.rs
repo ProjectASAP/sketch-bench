@@ -2,10 +2,10 @@
 //! and what each supports, written out entry by entry in
 //! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
+use crate::request::Requirement;
 use aqpbm_core::metrics::{is_measurable, Metric, MetricsMask, Operation, OperationMask};
-use aqpbm_core::request::Requirement;
 
-pub use aqpbm_core::request::{Capability, Numeric};
+pub use crate::request::{Capability, Numeric};
 
 /// One registry entry: who a sketch is, and what it can be asked for. The four
 /// identity fields name it; the four below are what [`check`] reads. Item width

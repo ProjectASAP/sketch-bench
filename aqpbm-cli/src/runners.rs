@@ -2,10 +2,12 @@
 //! name is bound to code. In the frontend, not `sketch-bench`, because that crate
 //! need not know a command line exists — it hands back one erased [`Target`].
 
-use aqpbm_core::dataset::DatasetSpec;
-use aqpbm_core::ops::Target;
-use aqpbm_core::request::{Numeric, Requirement};
-use aqpbm_core::run_error::RunError;
+use aqpbm_core::error::RunError;
+use aqpbm_core::input_dataset::InputDataSetSpec;
+use aqpbm_core::target::Opening;
+use aqpbm_core::target::Target;
+use sketch_bench::params::ParamSet;
+use sketch_bench::request::{Numeric, Requirement};
 
 /// The targets this binary can run, opened at the target's own item type — the
 /// one point where that type is known, which is why the dataset is materialised
@@ -18,9 +20,10 @@ pub fn open_target(
     algorithm: &str,
     impl_name: &str,
     req: &Requirement,
-    spec: &DatasetSpec,
+    spec: &InputDataSetSpec,
 ) -> Option<Result<Box<dyn Target>, RunError>> {
-    use aqpbm_core::ops::{
+    let opening = req.opening();
+    use aqpbm_core::target::{
         open_target_cardinality, open_target_frequency, open_target_quantile,
         open_target_subpop_cardinality, open_target_subpop_frequency, open_target_subpop_quantile,
         open_target_timed_only,
@@ -42,7 +45,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 co::build_cms_oxide,
                 co::memory_cms_oxide,
@@ -57,7 +60,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 cd::build_cms_datasketches,
                 cd::memory_cms_datasketches,
@@ -72,7 +75,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 cp::build_polars_frequency_cms,
                 cp::memory_polars_frequency_cms,
@@ -88,7 +91,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 cl::build_cms_lib_vector2d_fast,
                 cl::memory_cms_lib_vector2d_fast,
@@ -103,7 +106,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 cl::build_cms_lib_vector2d_regular,
                 cl::memory_cms_lib_vector2d_regular,
@@ -114,8 +117,8 @@ pub fn open_target(
             )
         }
         ("cms-fastpath-fixedmatrix-32k-parallel", "lib") => {
-            open_target_timed_only::<_, i64, _, _, _>(
-                req,
+            open_target_timed_only::<_, _, i64, _, _, _>(
+                &opening,
                 spec,
                 cl::build_parallel_cms_fast_path,
                 cl::memory_parallel_cms_fast_path,
@@ -131,7 +134,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 so::build_cs_oxide,
                 so::memory_cs_oxide,
@@ -146,7 +149,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 sp::build_polars_frequency_cs,
                 sp::memory_polars_frequency_cs,
@@ -162,7 +165,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 sl::build_cs_lib_vector2d_fast,
                 sl::memory_cs_lib_vector2d_fast,
@@ -177,7 +180,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_frequency(
-                req,
+                &opening,
                 spec,
                 sl::build_cs_lib_vector2d_regular,
                 sl::memory_cs_lib_vector2d_regular,
@@ -188,8 +191,8 @@ pub fn open_target(
             )
         }
         ("countsketch-fastpath-fixedmatrix-32k-parallel", "lib") => {
-            open_target_timed_only::<_, i64, _, _, _>(
-                req,
+            open_target_timed_only::<_, _, i64, _, _, _>(
+                &opening,
                 spec,
                 sl::build_parallel_cs_fast_path,
                 sl::memory_parallel_cs_fast_path,
@@ -205,7 +208,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_cardinality(
-                req,
+                &opening,
                 spec,
                 ho::build_hll_oxide,
                 ho::memory_hll_oxide,
@@ -220,7 +223,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_cardinality(
-                req,
+                &opening,
                 spec,
                 hd::build_hll_datasketches,
                 hd::memory_hll_datasketches,
@@ -236,7 +239,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_cardinality(
-                req,
+                &opening,
                 spec,
                 hpo::build_polars_cardinality,
                 hpo::memory_polars_cardinality,
@@ -247,8 +250,8 @@ pub fn open_target(
             )
         }
         ("hll-hip", "lib") => return Some(hll_lib_hip(req, spec)),
-        ("hll-fastpath-parallel", "lib") => open_target_timed_only::<_, i64, _, _, _>(
-            req,
+        ("hll-fastpath-parallel", "lib") => open_target_timed_only::<_, _, i64, _, _, _>(
+            &opening,
             spec,
             hl::build_parallel_hll_fast_path,
             hl::memory_parallel_hll_fast_path,
@@ -263,7 +266,7 @@ pub fn open_target(
         // being refused. Each arm is its own instantiation.
         ("kll-percall", "oxide") => match req.width {
             Numeric::I64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 ko::build_kll_oxide_per_call::<i64>,
                 ko::memory_kll_oxide_per_call::<i64>,
@@ -273,7 +276,7 @@ pub fn open_target(
                 None,
             ),
             Numeric::F64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 ko::build_kll_oxide_per_call::<f64>,
                 ko::memory_kll_oxide_per_call::<f64>,
@@ -285,7 +288,7 @@ pub fn open_target(
         },
         ("kll-percall", "lib") => match req.width {
             Numeric::I64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 kl::build_kll_lib_per_call::<i64>,
                 kl::memory_kll_lib_per_call::<i64>,
@@ -295,7 +298,7 @@ pub fn open_target(
                 None,
             ),
             Numeric::F64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 kl::build_kll_lib_per_call::<f64>,
                 kl::memory_kll_lib_per_call::<f64>,
@@ -307,7 +310,7 @@ pub fn open_target(
         },
         ("kll-cdf", "oxide") => match req.width {
             Numeric::I64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 ko::build_kll_oxide_cdf::<i64>,
                 ko::memory_kll_oxide_cdf::<i64>,
@@ -317,7 +320,7 @@ pub fn open_target(
                 Some(ko::prepare_kll_oxide_cdf::<i64>),
             ),
             Numeric::F64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 ko::build_kll_oxide_cdf::<f64>,
                 ko::memory_kll_oxide_cdf::<f64>,
@@ -329,7 +332,7 @@ pub fn open_target(
         },
         ("kll-cdf", "lib") => match req.width {
             Numeric::I64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 kl::build_kll_lib_cdf::<i64>,
                 kl::memory_kll_lib_cdf::<i64>,
@@ -339,7 +342,7 @@ pub fn open_target(
                 Some(kl::prepare_kll_lib_cdf::<i64>),
             ),
             Numeric::F64 => open_target_quantile(
-                req,
+                &opening,
                 spec,
                 kl::build_kll_lib_cdf::<f64>,
                 kl::memory_kll_lib_cdf::<f64>,
@@ -356,7 +359,7 @@ pub fn open_target(
                 return Some(Err(e));
             }
             open_target_quantile(
-                req,
+                &opening,
                 spec,
                 kp::build_polars_quantile_kll,
                 kp::memory_polars_quantile_kll,
@@ -369,7 +372,7 @@ pub fn open_target(
 
         // -------- Hydra (per-subpopulation statistics over labelled records) --------
         ("hydra-cms", "lib") => open_target_subpop_frequency(
-            req,
+            &opening,
             spec,
             hs::build_hydra_cms,
             hs::memory_hydra_cms,
@@ -379,7 +382,7 @@ pub fn open_target(
             None,
         ),
         ("hydra-cms", "polars") => open_target_subpop_frequency(
-            req,
+            &opening,
             spec,
             hp::build_polars_subpop_frequency,
             hp::memory_polars_subpop_frequency,
@@ -389,7 +392,7 @@ pub fn open_target(
             Some(hp::prepare_polars_subpop_frequency),
         ),
         ("hydra-hll", "lib") => open_target_subpop_cardinality(
-            req,
+            &opening,
             spec,
             hs::build_hydra_hll,
             hs::memory_hydra_hll,
@@ -399,7 +402,7 @@ pub fn open_target(
             None,
         ),
         ("hydra-hll", "polars") => open_target_subpop_cardinality(
-            req,
+            &opening,
             spec,
             hp::build_polars_subpop_cardinality,
             hp::memory_polars_subpop_cardinality,
@@ -409,7 +412,7 @@ pub fn open_target(
             Some(hp::prepare_polars_subpop_cardinality),
         ),
         ("hydra-kll", "lib") => open_target_subpop_quantile(
-            req,
+            &opening,
             spec,
             hs::build_hydra_kll,
             hs::memory_hydra_kll,
@@ -419,7 +422,7 @@ pub fn open_target(
             None,
         ),
         ("hydra-kll", "polars") => open_target_subpop_quantile(
-            req,
+            &opening,
             spec,
             hp::build_polars_subpop_quantile,
             hp::memory_polars_subpop_quantile,
@@ -438,7 +441,7 @@ pub fn open_target(
 /// known here. The `kll-*` targets skip it: they genuinely build at both widths.
 fn i64_only(req: &Requirement) -> Result<(), RunError> {
     if req.width == Numeric::F64 {
-        return Err(RunError::Body(format!(
+        return Err(RunError::Target(format!(
             "{}/{} ingests i64 only; --dtype f64 is honoured by the kll rows, \
              which build at either width",
             req.algorithm, req.impl_name
@@ -455,15 +458,16 @@ fn i64_only(req: &Requirement) -> Result<(), RunError> {
 /// `lg_k` selects a register-storage type, because `asap_sketchlib` puts the
 /// register count in the type rather than in a field. A value outside the three
 /// is refused by name rather than run at 14 under its own label.
-fn hll_lib(req: &Requirement, spec: &DatasetSpec) -> Result<Box<dyn Target>, RunError> {
-    use aqpbm_core::ops::open_target_cardinality;
+fn hll_lib(req: &Requirement, spec: &InputDataSetSpec) -> Result<Box<dyn Target>, RunError> {
+    use aqpbm_core::target::open_target_cardinality;
     use sketch_bench::wrappers::hll::sketchlib as hl;
     use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     i64_only(req)?;
+    let opening = req.opening();
     macro_rules! at {
         ($r:ty) => {
             open_target_cardinality(
-                req,
+                &opening,
                 spec,
                 hl::build_hll_lib::<$r>,
                 hl::memory_hll_lib::<$r>,
@@ -484,15 +488,16 @@ fn hll_lib(req: &Requirement, spec: &DatasetSpec) -> Result<Box<dyn Target>, Run
 
 /// The HIP variant: same precision dispatch, but no merge — it maintains its
 /// estimate on the insert path and the library supplies no fold.
-fn hll_lib_hip(req: &Requirement, spec: &DatasetSpec) -> Result<Box<dyn Target>, RunError> {
-    use aqpbm_core::ops::open_target_cardinality;
+fn hll_lib_hip(req: &Requirement, spec: &InputDataSetSpec) -> Result<Box<dyn Target>, RunError> {
+    use aqpbm_core::target::open_target_cardinality;
     use sketch_bench::wrappers::hll::sketchlib as hl;
     use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     i64_only(req)?;
+    let opening = req.opening();
     macro_rules! at {
         ($r:ty) => {
             open_target_cardinality(
-                req,
+                &opening,
                 spec,
                 hl::build_hll_lib_hip::<$r>,
                 hl::memory_hll_lib_hip::<$r>,
@@ -515,12 +520,12 @@ fn lg_k(req: &Requirement) -> Result<u8, RunError> {
     let p: sketch_bench::params::HllParams = req
         .params
         .parse()
-        .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
+        .map_err(|e: aqpbm_core::DataGenError| RunError::Target(e.to_string()))?;
     Ok(p.lg_k)
 }
 
 fn unsupported_precision(lg_k: u8) -> RunError {
-    RunError::Body(format!(
+    RunError::Target(format!(
         "asap_sketchlib HLL is compiled at lg_k 12, 14 and 16; requested {lg_k}"
     ))
 }
@@ -533,8 +538,8 @@ fn unsupported_precision(lg_k: u8) -> RunError {
 macro_rules! fixed_matrix_row {
     ($fname:ident, $params:ty, $algo:literal, $module:ident, $build:ident, $memory:ident,
      $insert:ident, $ask:ident, $merge:ident) => {
-        fn $fname(req: &Requirement, spec: &DatasetSpec) -> Result<Box<dyn Target>, RunError> {
-            use aqpbm_core::ops::open_target_frequency;
+        fn $fname(req: &Requirement, spec: &InputDataSetSpec) -> Result<Box<dyn Target>, RunError> {
+            use aqpbm_core::target::open_target_frequency;
             use sketch_bench::wrappers::fixed_matrix::{
                 unsupported_shape, with_fixed_matrix, FixedMatrixVisitor,
             };
@@ -542,12 +547,13 @@ macro_rules! fixed_matrix_row {
             use sketch_bench::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
 
             i64_only(req)?;
+            let opening = req.opening();
             let p: $params = req
                 .params
                 .parse()
-                .map_err(|e: aqpbm_core::DataGenError| RunError::Body(e.to_string()))?;
+                .map_err(|e: aqpbm_core::DataGenError| RunError::Target(e.to_string()))?;
 
-            struct V<'a>(&'a Requirement, &'a DatasetSpec);
+            struct V<'a>(&'a Opening<ParamSet>, &'a InputDataSetSpec);
             impl FixedMatrixVisitor for V<'_> {
                 type Out = Result<Box<dyn Target>, RunError>;
                 fn visit<M>(self) -> Self::Out
@@ -571,8 +577,8 @@ macro_rules! fixed_matrix_row {
                 }
             }
 
-            with_fixed_matrix(p.rows, p.cols, V(req, spec))
-                .unwrap_or_else(|| Err(RunError::Body(unsupported_shape($algo, p.rows, p.cols))))
+            with_fixed_matrix(p.rows, p.cols, V(&opening, spec))
+                .unwrap_or_else(|| Err(RunError::Target(unsupported_shape($algo, p.rows, p.cols))))
         }
     };
 }
@@ -617,13 +623,13 @@ mod tests {
         let req = |e: &sketch_bench::registry::SketchId| Requirement {
             algorithm: e.algorithm.to_string(),
             impl_name: e.impl_name.to_string(),
-            params: aqpbm_core::ParamSet::empty(e.algorithm),
+            params: ParamSet::empty(e.algorithm),
             width: Numeric::I64,
             workers: 1,
             merge_shards: 2,
             comparator: None,
         };
-        let spec = DatasetSpec::File {
+        let spec = InputDataSetSpec::File {
             path: "unreadable on purpose: only the dispatch is under test".to_string(),
         };
         let missing: Vec<String> = sketch_bench::registry::REGISTRY

@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::dataset::DatasetDescription;
+use crate::input_dataset::InputDataSetDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
@@ -34,14 +34,14 @@ pub struct Record {
     #[serde(default)]
     pub language: Language,
     /// Algorithm-specific construction params used for this run, populated by
-    /// `bench` from the run's `ParamSet`.
+    /// `bench` from the run's construction parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sketch_config: Option<serde_json::Value>,
     /// The data this run was measured over. The wire name stays `workload` while
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub dataset: DatasetDescription,
+    pub input_dataset: InputDataSetDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,7 +162,7 @@ pub struct BenchSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
     /// Present, and `true`, whenever a merge was measured. Never `false`: a row
-    /// that provides no merge is refused in `ops::squares_for` before anything
+    /// that provides no merge is refused in `target::Target::body` before anything
     /// is timed, so the gap shows up as an error naming the row rather than as a
     /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,7 +223,7 @@ pub struct MergedRecord {
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub dataset: DatasetDescription,
+    pub input_dataset: InputDataSetDescription,
 
     pub memory_bytes: Option<u64>,
     /// Net bytes the tracking allocator attributes to this sketch's lifetime —
@@ -333,7 +333,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         impl_name: impl Into<String>,
-        dataset: DatasetDescription,
+        input_dataset: InputDataSetDescription,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -344,7 +344,7 @@ impl Record {
             impl_name: impl_name.into(),
             language: Language::Rust,
             sketch_config: None,
-            dataset,
+            input_dataset,
             mode,
             runs,
             bench: None,
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn record_roundtrips_through_json() {
-        let wd = DatasetDescription {
+        let wd = InputDataSetDescription {
             shape: "zipf".into(),
             size: 1_000_000,
             cardinality: Some(10_000),
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn cpp_record_roundtrips() {
-        let wd = DatasetDescription {
+        let wd = InputDataSetDescription {
             shape: "file".into(),
             size: 1_000_000,
             cardinality: None,
