@@ -11,6 +11,7 @@ pub mod cs;
 pub mod hll;
 pub mod hydra;
 pub mod kll;
+pub mod univmon;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;

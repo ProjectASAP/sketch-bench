@@ -17,6 +17,10 @@ fn cannot_build(e: BuildError) -> RunError {
 }
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
+use aqpbm_core::accuracy::keyedcardinality::KeyedCardinalityGT;
+use aqpbm_core::accuracy::keyedentropy::KeyedEntropyGT;
+use aqpbm_core::accuracy::keyedl1norm::KeyedL1NormGT;
+use aqpbm_core::accuracy::keyedl2norm::KeyedL2NormGT;
 use aqpbm_core::accuracy::quantile::RankErrorGT;
 use aqpbm_core::accuracy::{questions, GroundTruth};
 use aqpbm_core::accuracy::subpopulation::{
@@ -35,9 +39,12 @@ use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
 use sketch_bench::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
 use sketch_bench::wrappers::hydra::{polars as hp, sketchlib as hs};
 use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
+use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;
+
+const KEYED_KEY_COLUMN: usize = 0;
 
 fn value_column(description: &TableDescription) -> usize {
     description.column_spec.len().saturating_sub(1)
@@ -119,6 +126,13 @@ fn binding(algorithm: &str, impl_name: &str) -> Option<RowBinding> {
         ("hydra-hll", "polars") => row_hydra_hll_polars,
         ("hydra-kll", "lib") => row_hydra_kll_lib,
         ("hydra-kll", "polars") => row_hydra_kll_polars,
+        ("univmon-cardinality", "lib") => row_univmon_cardinality_lib,
+        ("univmon-l1-norm", "lib") => row_univmon_l1_norm_lib,
+        ("univmon-l1-norm", "oxide") => row_univmon_l1_norm_oxide,
+        ("univmon-l2-norm", "lib") => row_univmon_l2_norm_lib,
+        ("univmon-l2-norm", "oxide") => row_univmon_l2_norm_oxide,
+        ("univmon-entropy", "lib") => row_univmon_entropy_lib,
+        ("univmon-entropy", "oxide") => row_univmon_entropy_oxide,
         _ => return None,
     })
 }
@@ -713,6 +727,167 @@ pub(crate) fn row_hydra_kll_polars(
     )
 }
 
+pub(crate) fn row_univmon_cardinality_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedCardinalityGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        ul::insert_univmon_lib,
+        ul::insert_step_univmon_lib,
+        ul::query_univmon_lib_cardinality,
+        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_l1_norm_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedL1NormGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        ul::insert_univmon_lib,
+        ul::insert_step_univmon_lib,
+        ul::query_univmon_lib_l1_norm,
+        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_l1_norm_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedL1NormGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        uo::insert_univmon_oxide,
+        uo::insert_step_univmon_oxide,
+        uo::query_univmon_oxide_l1_norm,
+        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_l2_norm_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedL2NormGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        ul::insert_univmon_lib,
+        ul::insert_step_univmon_lib,
+        ul::query_univmon_lib_l2_norm,
+        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_l2_norm_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedL2NormGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        uo::insert_univmon_oxide,
+        uo::insert_step_univmon_oxide,
+        uo::query_univmon_oxide_l2_norm,
+        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_entropy_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedEntropyGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        ul::insert_univmon_lib,
+        ul::insert_step_univmon_lib,
+        ul::query_univmon_lib_entropy,
+        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
+        None,
+    )
+}
+
+pub(crate) fn row_univmon_entropy_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    keyed_row(
+        req,
+        description,
+        table,
+        want,
+        KeyedEntropyGT {
+            key_column: KEYED_KEY_COLUMN,
+            value_column: value_column(description),
+        },
+        uo::insert_univmon_oxide,
+        uo::insert_step_univmon_oxide,
+        uo::query_univmon_oxide_entropy,
+        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
+        None,
+    )
+}
+
 // ---------- the statistic a row answers ----------
 
 /// What an operation a row does not have would be: the registry declares the
@@ -879,6 +1054,38 @@ fn subpop_quantile_row(
             value_column: value_column(description),
         },
         peel_labeled::<f64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn keyed_row<G>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    ground_truth: G,
+    insert: InsertBody<(u64, i64)>,
+    insert_step: InsertStepBody<(u64, i64)>,
+    query: QueryBody<(u64, i64), (), f64>,
+    merge: Option<Folds<(u64, i64)>>,
+    prepare: Option<PrepareBody<(u64, i64)>>,
+) -> Result<Measurements, RunError>
+where
+    G: GroundTruth<Probe = (), Answer = f64> + 'static,
+    G::Truth: 'static,
+{
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        ground_truth,
+        peel_keyed,
         insert,
         insert_step,
         query,
@@ -1147,6 +1354,41 @@ fn peel_labeled<V: ColumnItem>(
         items.push((key, value));
     }
     Ok(Rc::new(items))
+}
+
+fn peel_keyed(
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Rc<Vec<(u64, i64)>>, RunError> {
+    let value_column = value_column(description);
+    if value_column == 0 {
+        return Err(RunError::Sketch(format!(
+            "this row ingests keyed records, so it needs a key column before the \
+             value column; the description has {} column(s)",
+            description.column_spec.len(),
+        )));
+    }
+    let titles = table.column_title.clone();
+    let mut columns = table.into_columns();
+    if value_column >= columns.len() {
+        return Err(RunError::Sketch(format!(
+            "column {value_column} was asked for, but the table holds {}",
+            columns.len(),
+        )));
+    }
+    let values = i64::from_column(columns.remove(value_column)).map_err(|e| {
+        RunError::Sketch(format!(
+            "value column '{}': {e}. A keyed row weights its keys with `i64`",
+            titles[value_column],
+        ))
+    })?;
+    let keys = u64::from_column(columns.remove(KEYED_KEY_COLUMN)).map_err(|e| {
+        RunError::Sketch(format!(
+            "key column '{}': {e}. A keyed row hashes its keys as `u64`",
+            titles[KEYED_KEY_COLUMN],
+        ))
+    })?;
+    Ok(Rc::new(keys.into_iter().zip(values).collect()))
 }
 
 /// The ordered rows build at either numeric width and at neither of the other

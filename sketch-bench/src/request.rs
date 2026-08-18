@@ -16,6 +16,10 @@ pub enum Capability {
     SubpopCardinality,
     SubpopFrequency,
     SubpopQuantile,
+    KeyedCardinality,
+    KeyedL1Norm,
+    KeyedL2Norm,
+    KeyedEntropy,
     #[default]
     None,
 }
@@ -32,6 +36,10 @@ impl Capability {
             Capability::SubpopCardinality => "subpop-cardinality",
             Capability::SubpopFrequency => "subpop-frequency",
             Capability::SubpopQuantile => "subpop-quantile",
+            Capability::KeyedCardinality => "keyed-cardinality",
+            Capability::KeyedL1Norm => "keyed-l1-norm",
+            Capability::KeyedL2Norm => "keyed-l2-norm",
+            Capability::KeyedEntropy => "keyed-entropy",
             Capability::None => "none",
         }
     }
