@@ -71,16 +71,6 @@
         }
       ]
     },
-    "insert_throughput_samples": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "number",
-        "format": "double"
-      }
-    },
     "insert_timestamp": {
       "type": [
         "string",
@@ -160,17 +150,6 @@
         "null"
       ]
     },
-    "merge_time_ms": {
-      "description": "How long one fold took: the latency reading of this operation.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "merge_timestamp": {
       "type": [
         "string",
@@ -195,16 +174,6 @@
       "anyOf": [
         {
           "$ref": "#/$defs/CpuTime"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "prepare_finalize_time_ms": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
         },
         {
           "type": "null"
@@ -341,7 +310,6 @@
     "insert_latency_ns",
     "insert_rss_peak_kb",
     "insert_throughput_items_per_sec",
-    "insert_throughput_samples",
     "insert_timestamp",
     "insert_wall_time_ms",
     "language",
@@ -351,12 +319,10 @@
     "merge_rss_peak_kb",
     "merge_shards",
     "merge_supported",
-    "merge_time_ms",
     "merge_timestamp",
     "merge_wall_time_ms",
     "mode",
     "prepare_cpu_time_ms",
-    "prepare_finalize_time_ms",
     "prepare_heap_allocated_kb",
     "prepare_rss_peak_kb",
     "prepare_timestamp",

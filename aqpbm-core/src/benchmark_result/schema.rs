@@ -88,34 +88,15 @@ pub enum Source {
 /// placeholders.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchSection {
-    /// What this record measured — `"throughput"`, `"latency"` or
-    /// `"accuracy"`. Half of a measurement's identity; [`Self::operation`] is
-    /// the other half, and one invocation emits one record per pair.
+    /// `"throughput"`, `"latency"` or `"accuracy"`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metric: Option<String>,
-    /// Which operation it was measured over — `"insert"`, `"query"`, `"merge"`
-    /// or `"prepare"`. Group by this and [`Self::metric`] together before
-    /// pooling anything.
+    /// `"insert"`, `"query"`, `"merge"`, `"prepare"`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
-    /// **Ingest rate**: `items / insert_wall`, with `prepare` excluded.
-    /// Deferred-build rows buffer on the insert path, so for those this times
-    /// the buffering and their real build cost is [`Self::finalize_time_ms`],
-    /// measured as its own measurement.
+    /// `items / wall_time_ms`, with `prepare` excluded
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_items_per_sec: Option<RunStats>,
-    /// Per-run ingest-rate samples (items/sec, one entry per measured run).
-    /// Kept alongside the aggregate so consumers can render box plots /
-    /// CDFs without re-running the bench.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub throughput_samples: Option<Vec<f64>>,
-    /// Wall time of `Accumulator::prepare` per run — the deferred build cost
-    /// that [`Self::throughput_items_per_sec`] excludes. `0.0` means finalize
-    /// really is a no-op, which is a measurement, not a gap.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finalize_time_ms: Option<RunStats>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub query_throughput_items_per_sec: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ns: Option<LatencySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,15 +123,10 @@ pub struct BenchSection {
     pub heap_bytes_peak: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<serde_json::Value>,
-    /// Wall time to fold `merge_shards` sketches into one, per run; absent
-    /// unless the merge operation was measured. Scales with sketch *state*,
-    /// not stream length, so compare against `memory_bytes`, not insert
-    /// throughput.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub merge_time_ms: Option<RunStats>,
     /// Folds per second. A fold is `merge_shards - 1` merge calls, so the unit
     /// is folds: merge consumes sketches, not a stream, and items per second
-    /// would have no denominator here.
+    /// would have no denominator here. Scales with sketch *state*, not stream
+    /// length, so compare against `memory_bytes`, not insert throughput.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_folds_per_sec: Option<RunStats>,
     /// How many shards were folded. Present whenever merge was measured, even
@@ -257,8 +233,6 @@ pub struct InsertMetrics {
     pub timestamp: Option<DateTime<Utc>>,
     #[serde(rename = "insert_throughput_items_per_sec")]
     pub throughput_items_per_sec: Option<RunStats>,
-    #[serde(rename = "insert_throughput_samples")]
-    pub throughput_samples: Option<Vec<f64>>,
     #[serde(rename = "insert_latency_ns")]
     pub latency_ns: Option<LatencySummary>,
     #[serde(rename = "insert_cpu_time_ms")]
@@ -299,8 +273,6 @@ pub struct QueryMetrics {
 pub struct MergeMetrics {
     #[serde(rename = "merge_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
-    /// How long one fold took: the latency reading of this operation.
-    pub merge_time_ms: Option<RunStats>,
     /// How many folds a second: the throughput reading of the same clock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_folds_per_sec: Option<RunStats>,
@@ -323,8 +295,6 @@ pub struct MergeMetrics {
 pub struct PrepareMetrics {
     #[serde(rename = "prepare_timestamp")]
     pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "prepare_finalize_time_ms")]
-    pub finalize_time_ms: Option<RunStats>,
     #[serde(rename = "prepare_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "prepare_wall_time_ms")]
