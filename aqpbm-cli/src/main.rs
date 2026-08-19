@@ -177,18 +177,26 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
         // would be editing the user's file from the command line.
         return load_spec(path);
     }
+    // Clap's `required_unless_present_any = ["list_impls", "spec"]` (and, for
+    // `zipf_s`, `required_if_eq`) guarantees these are `Some` by the time
+    // we're here: `--spec` already returned above, and `--list-impls` is
+    // handled before `dataset_spec` is ever called.
+    let dataset = args.dataset.as_deref().expect("clap requires --dataset");
+    let cardinality = args.cardinality.expect("clap requires --cardinality");
     // `--cardinality` names the key space either way: for uniform it is the
     // exclusive upper bound of `[0, n)`, and for zipf the population its ranks
     // `1..=n` are drawn over.
-    let distribution = match args.dataset.as_str() {
+    let distribution = match dataset {
         "uniform" => DataDistribution::Uniform(UniformParameter {
             lower_bound: 0.0,
-            upper_bound: args.cardinality as f64,
+            upper_bound: cardinality as f64,
             seed: args.seed,
         }),
         "zipf" => DataDistribution::Zipf(ZipfParameter {
-            skewness: args.zipf_s,
-            population_size: args.cardinality,
+            skewness: args
+                .zipf_s
+                .expect("clap requires --zipf-s when --dataset zipf"),
+            population_size: cardinality,
             seed: args.seed,
         }),
         other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
@@ -227,7 +235,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
                 (opts != StringOpts::default()).then_some(opts)
             },
         },
-        args.size as u64,
+        args.size.expect("clap requires --size") as u64,
     )))
 }
 
@@ -269,12 +277,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    let width = registry::Dtype::parse(&args.dtype).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown --dtype: {} (expected i64|u64|f64|string)",
-            args.dtype
-        )
-    })?;
+    let dtype = args.dtype.as_deref().expect("clap requires --dtype");
+    let width = registry::Dtype::parse(dtype)
+        .ok_or_else(|| anyhow::anyhow!("unknown --dtype: {dtype} (expected i64|u64|f64|string)"))?;
     let spec = dataset_spec(&args)?;
     let metrics_mask = parse_mask(
         args.metrics

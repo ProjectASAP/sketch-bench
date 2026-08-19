@@ -81,25 +81,42 @@ pub struct SketchbenchArgs {
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
     /// Inline shape: "uniform" or "zipf". Ignored when `--spec` is
-    /// set.
-    #[arg(long, default_value = "uniform", help_heading = "Dataset")]
-    pub dataset: String,
-    /// Number of items in the dataset.
-    #[arg(long, default_value_t = 1_000_000, help_heading = "Dataset")]
-    pub size: usize,
-    /// Cardinality (uniform: max key; zipf: key-space size).
-    #[arg(long, default_value_t = 100_000, help_heading = "Dataset")]
-    pub cardinality: u64,
-    /// Zipf `s` exponent (only used when `--dataset zipf`).
-    #[arg(long, default_value_t = 1.1, help_heading = "Dataset")]
-    pub zipf_s: f64,
+    /// set. Required unless `--spec` or `--list-impls` is given: a run either
+    /// names its shape or names its file, never falls back to one unasked.
+    #[arg(
+        long,
+        required_unless_present_any = ["list_impls", "spec"],
+        help_heading = "Dataset"
+    )]
+    pub dataset: Option<String>,
+    /// Number of items in the dataset. Required unless `--spec` or
+    /// `--list-impls` is given.
+    #[arg(
+        long,
+        required_unless_present_any = ["list_impls", "spec"],
+        help_heading = "Dataset"
+    )]
+    pub size: Option<usize>,
+    /// Cardinality (uniform: max key; zipf: key-space size). Required unless
+    /// `--spec` or `--list-impls` is given.
+    #[arg(
+        long,
+        required_unless_present_any = ["list_impls", "spec"],
+        help_heading = "Dataset"
+    )]
+    pub cardinality: Option<u64>,
+    /// Zipf `s` exponent. Required when `--dataset zipf` is given; ignored
+    /// otherwise.
+    #[arg(long, required_if_eq("dataset", "zipf"), help_heading = "Dataset")]
+    pub zipf_s: Option<f64>,
     /// Item type the value column is generated at: `i64`, `u64`, `f64` or
     /// `string` — every type the generator renders. The one item-type choice
     /// left, since a row's own wrapper fixes what it can ingest and refuses the
     /// rest by name; today the ordered rows (`kll-percall`, `kll-cdf`, `dd`) take
     /// either numeric width and every other row takes `i64`. Encoding only.
-    #[arg(long, default_value = "i64", help_heading = "Dataset")]
-    pub dtype: String,
+    /// Required unless `--list-impls` is given: read regardless of `--spec`.
+    #[arg(long, required_unless_present = "list_impls", help_heading = "Dataset")]
+    pub dtype: Option<String>,
     /// Alphabet for generated string keys, for the targets whose wrappers take
     /// text. Character order is the digit order of the positional encoding, so
     /// a rank always renders the same key. Overridden by `--spec`'s own
