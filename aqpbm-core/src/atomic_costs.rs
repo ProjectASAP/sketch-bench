@@ -33,6 +33,13 @@ pub type AtomicCostTable = Vec<AtomicCostEntry>;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SkipReason {
     MissingField(&'static str),
+    /// Like `MissingField`, but for the per-op measurements in
+    /// `cpu_secs_per_op`, which need to say *which* of an op's three
+    /// sub-fields (rate/elapsed/cpu_time) was absent rather than just the op
+    /// name — otherwise "missing insert" could mean any of the three, and
+    /// the operator has to go diff the raw `--flat` JSONL by hand to find
+    /// out which.
+    MissingSubField(&'static str, &'static str),
     /// A rate/elapsed pair implies zero work — dividing by it would produce
     /// `inf`/`NaN` rather than a real cost.
     ZeroWork(&'static str),
@@ -42,6 +49,7 @@ impl std::fmt::Display for SkipReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SkipReason::MissingField(field) => write!(f, "missing {field}"),
+            SkipReason::MissingSubField(op, field) => write!(f, "missing {op} {field}"),
             SkipReason::ZeroWork(op) => write!(f, "{op} rate/elapsed imply zero work"),
         }
     }
@@ -64,9 +72,9 @@ fn cpu_secs_per_op(
     elapsed_ms: Option<RunStats>,
     cpu_time_ms: Option<CpuTime>,
 ) -> Result<f64, SkipReason> {
-    let rate = rate.ok_or(SkipReason::MissingField(op))?;
-    let elapsed_ms = elapsed_ms.ok_or(SkipReason::MissingField(op))?;
-    let cpu_time_ms = cpu_time_ms.ok_or(SkipReason::MissingField(op))?;
+    let rate = rate.ok_or(SkipReason::MissingSubField(op, "rate"))?;
+    let elapsed_ms = elapsed_ms.ok_or(SkipReason::MissingSubField(op, "elapsed"))?;
+    let cpu_time_ms = cpu_time_ms.ok_or(SkipReason::MissingSubField(op, "cpu_time"))?;
 
     let work = rate.mean * (elapsed_ms.mean / 1000.0);
     if !work.is_finite() || work <= 0.0 {
@@ -257,7 +265,7 @@ mod tests {
         record.merge.cpu_time_ms = None;
         assert_eq!(
             reduce_one(&record),
-            Err(SkipReason::MissingField("merge"))
+            Err(SkipReason::MissingSubField("merge", "cpu_time"))
         );
     }
 
