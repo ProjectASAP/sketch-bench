@@ -84,6 +84,7 @@ point() {
         --dataset uniform \
         --size "$SIZE" \
         --cardinality "$CARDINALITY" \
+        --dtype i64 \
         --seed "$SEED" \
         --flat \
         --report "$GRID_JSONL"
