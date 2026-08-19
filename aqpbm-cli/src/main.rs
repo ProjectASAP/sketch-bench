@@ -3,6 +3,7 @@
 //! `sketchbench` measures one row of the sketch bundle, and `sketchbench
 //! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs.
 
+mod atomic_costs_cmd;
 mod cli;
 mod flatten_record;
 mod repeat;
@@ -114,6 +115,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Cmd::Sketchbench(args) => run_sketchbench(args),
+        Cmd::AtomicCosts(args) => atomic_costs_cmd::run(args),
     }
 }
 

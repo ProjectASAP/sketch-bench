@@ -4,6 +4,8 @@
 
 use clap::{Parser, Subcommand};
 
+use crate::atomic_costs_cmd;
+
 #[derive(Parser, Debug)]
 // `max_term_width` is pinned so `--help` renders identically under any
 // terminal. `docs/aqpbm-cli-reference.md` is a checked-in expectation, and a
@@ -23,6 +25,8 @@ pub struct Cli {
 pub enum Cmd {
     /// Measure one target of the sketch bundle.
     Sketchbench(SketchbenchArgs),
+    /// Reduce a `--flat` JSONL stream to ASAPQuery's atomic-cost table.
+    AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
 }
 
 /// One target of the sketch bundle: one algorithm, one impl, one construction
