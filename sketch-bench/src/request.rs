@@ -90,10 +90,10 @@ impl Dtype {
 /// Everything a registry needs to answer "can this run, and if so how"
 #[derive(Clone, Debug)]
 pub struct Requirement {
-    /// Matched against a row's algorithm exactly.
-    pub algorithm: String,
+    /// Matched against a row's variance exactly.
+    pub variance: String,
     /// The implementing library, and only that.
-    pub impl_name: String,
+    pub library: String,
     /// Construction parameters, already parsed into the row's vocabulary.
     pub params: ParamSet,
     /// Which item width to build at.

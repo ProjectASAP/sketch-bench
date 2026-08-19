@@ -14,7 +14,7 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
     let bench = record.bench.as_ref().ok_or_else(|| {
         format!(
             "flatten_record: {}/{} record has no bench section, so its pass is unknown",
-            record.sketch, record.impl_name
+            record.sketch, record.library
         )
     })?;
     match bench.operation.as_deref() {
@@ -24,11 +24,11 @@ fn operation_of(record: &Record) -> Result<&'static str, String> {
         Some("prepare") => Ok("prepare"),
         Some(other) => Err(format!(
             "flatten_record: {}/{} record has unrecognized bench.operation '{other}'",
-            record.sketch, record.impl_name
+            record.sketch, record.library
         )),
         None => Err(format!(
             "flatten_record: {}/{} record has bench section but no bench.operation set",
-            record.sketch, record.impl_name
+            record.sketch, record.library
         )),
     }
 }
@@ -44,7 +44,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
     let mut out = MergedRecord {
         schema_version: base.schema_version,
         sketch: base.sketch.clone(),
-        impl_name: base.impl_name.clone(),
+        library: base.library.clone(),
         language: base.language,
         mode: base.mode,
         runs: base.runs,

@@ -1,7 +1,7 @@
 //! `approxbench`, the approximate query processing benchmark suite.
 //!
 //! `sketchbench` measures one row of the sketch bundle, and `sketchbench
-//! --list-impls` enumerates that bundle's `(algorithm, impl)` pairs.
+//! --list-impls` enumerates that bundle's `(variance, library)` pairs.
 
 mod atomic_costs_cmd;
 mod cli;
@@ -239,9 +239,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if args.list_impls {
         return list_impls();
     }
-    let (algorithm, impl_name) = match (args.algorithm.as_deref(), args.impl_name.as_deref()) {
+    let (variance, library) = match (args.variance.as_deref(), args.library.as_deref()) {
         (Some(a), Some(i)) => (a.to_string(), i.to_string()),
-        _ => bail!("--algorithm and --impl are both required unless --list-impls is given"),
+        _ => bail!("--variance and --library are both required unless --list-impls is given"),
     };
     if args.repeats == 0 {
         bail!("--repeats must be >= 1");
@@ -289,13 +289,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let want = selected(operations_mask, metrics_mask);
     let secondary = metrics_mask & MetricsMask::SECONDARY;
     let params = match args.config.as_deref() {
-        Some(s) => ParamSet::single(&algorithm, s)?,
-        None => ParamSet::empty(&algorithm),
+        Some(s) => ParamSet::single(&variance, s)?,
+        None => ParamSet::empty(&variance),
     };
 
     let req = Requirement {
-        algorithm: algorithm.clone(),
-        impl_name: impl_name.clone(),
+        variance: variance.clone(),
+        library: library.clone(),
         params: params.clone(),
         width,
         workers: args.workers.max(1),
@@ -310,16 +310,14 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
     // An empty mask on either axis names no measurements.
     if want.is_empty() {
-        eprintln!(
-            "approxbench: {algorithm}/{impl_name} selected no measurements; nothing to measure"
-        );
+        eprintln!("approxbench: {variance}/{library} selected no measurements; nothing to measure");
         return Ok(());
     }
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
-        algorithm,
-        impl_name,
+        variance,
+        library,
         params_pretty(&params),
         args.runs,
         args.warmup_runs,
@@ -330,7 +328,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
     let prepared = rows::measurements(&req, &dataset, table, &want)
-        .map_err(|e| anyhow::anyhow!("{algorithm}/{impl_name} cannot run: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{variance}/{library} cannot run: {e}"))?;
 
     // One instruction at a time. Core is handed a closure and a run count and
     // told nothing else; which operation and which metric this was travels with
@@ -346,8 +344,8 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         };
         let runs = aqpbm_core::measure(&cfg, body);
         let mut report = BenchReport::from_runs(
-            algorithm.as_str(),
-            impl_name.as_str(),
+            variance.as_str(),
+            library.as_str(),
             dataset.clone(),
             operation,
             metric,
@@ -363,14 +361,15 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
     // One record per measurement, each on its own JSONL line; a downstream group-by on
     // (sketch, impl, sketch_config, dataset) merges them back. `sketch` names the
-    // variant, `family` groups the variants a cross-library comparison spans.
-    let family = registry::family_of(&algorithm).expect("check proved the algorithm is registered");
+    // variant, `algorithm` groups the variants a cross-library comparison spans.
+    let algorithm =
+        registry::algorithm_of(&variance).expect("check proved the variance is registered");
     let records: Vec<_> = reports
         .iter()
         .map(|report| {
             let mut record = report.to_record();
             record.sketch_config = Some(params.to_json_value());
-            record.family = Some(family.to_string());
+            record.algorithm = Some(algorithm.to_string());
             record
         })
         .collect();

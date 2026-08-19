@@ -19,14 +19,14 @@ pub struct Record {
     /// The algorithm this run measured, structural variant included
     /// (`cms-fastpath-vector2d`, not `cms`).
     pub sketch: String,
-    /// The family [`Self::sketch`] belongs to. Rows sharing it answer the same
+    /// The algorithm [`Self::sketch`] belongs to. Rows sharing it answer the same
     /// question from the same knobs, so this is what a cross-library comparison
     /// groups by; `sketch` is what a variant comparison groups by. Additive and
     /// optional, so records written before it still read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub family: Option<String>,
+    pub algorithm: Option<String>,
     #[serde(rename = "impl")]
-    pub impl_name: String,
+    pub library: String,
     /// Implementation language, so readers can split Rust from C++ records when
     /// both tracks dump into one JSONL stream. Defaults to `rust`.
     #[serde(default)]
@@ -220,7 +220,7 @@ pub struct MergedRecord {
     pub schema_version: u32,
     pub sketch: String,
     #[serde(rename = "impl")]
-    pub impl_name: String,
+    pub library: String,
     pub language: Language,
     pub mode: Mode,
     pub runs: usize,
@@ -344,7 +344,7 @@ pub struct PrepareMetrics {
 impl Record {
     pub fn new(
         sketch: impl Into<String>,
-        impl_name: impl Into<String>,
+        library: impl Into<String>,
         input_dataset: TableDescription,
         mode: Mode,
         runs: usize,
@@ -352,8 +352,8 @@ impl Record {
         Self {
             schema_version: SCHEMA_VERSION,
             sketch: sketch.into(),
-            family: None,
-            impl_name: impl_name.into(),
+            algorithm: None,
+            library: library.into(),
             language: Language::Rust,
             sketch_config: None,
             input_dataset,
@@ -401,7 +401,7 @@ pub fn merged_record_schema_json() -> String {
     let probe = MergedRecord {
         schema_version: SCHEMA_VERSION,
         sketch: String::new(),
-        impl_name: String::new(),
+        library: String::new(),
         language: Language::default(),
         mode: Mode::Bench,
         runs: 0,
@@ -494,7 +494,7 @@ mod tests {
         let s = rec.to_jsonl();
         let back: Record = serde_json::from_str(&s).unwrap();
         assert_eq!(back.sketch, "hll");
-        assert_eq!(back.impl_name, "oxide");
+        assert_eq!(back.library, "oxide");
         assert_eq!(back.mode, Mode::Bench);
         assert!(back.bench.is_some());
     }
@@ -538,7 +538,7 @@ mod tests {
             + r#","mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;
         let rec: Record = serde_json::from_str(&cpp_emitted).unwrap();
         assert_eq!(rec.sketch, "kll");
-        assert_eq!(rec.impl_name, "datasketches");
+        assert_eq!(rec.library, "datasketches");
         assert_eq!(rec.language, Language::Cpp);
         assert_eq!(rec.source, Source::CppBench);
         let bench = rec.bench.as_ref().unwrap();
