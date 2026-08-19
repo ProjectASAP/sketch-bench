@@ -10,12 +10,14 @@ pub mod cms;
 pub mod cs;
 pub mod dd;
 pub mod hll;
-pub mod hydra;
+pub mod hydra_cms;
+pub mod hydra_kll;
 pub mod kll;
 pub mod univmon;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;
+pub mod hydra_shared;
 pub mod polars_shared;
 
 use crate::params::ParamSet;

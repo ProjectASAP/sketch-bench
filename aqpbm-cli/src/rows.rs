@@ -40,7 +40,8 @@ use sketch_bench::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 use sketch_bench::wrappers::hll::{
     datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
 };
-use sketch_bench::wrappers::hydra::{polars as hp, sketchlib as hs};
+use sketch_bench::wrappers::hydra_cms::{polars as hp, sketchlib as hs};
+use sketch_bench::wrappers::hydra_kll::sketchlib as hks;
 use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};
 
@@ -773,10 +774,10 @@ pub(crate) fn row_hydra_kll_lib(
         description,
         table,
         want,
-        hs::insert_hydra_kll,
-        hs::insert_step_hydra_kll,
-        hs::query_hydra_kll,
-        Some((hs::merge_hydra_kll, hs::merge_step_hydra_kll)),
+        hks::insert_hydra_kll,
+        hks::insert_step_hydra_kll,
+        hks::query_hydra_kll,
+        Some((hks::merge_hydra_kll, hks::merge_step_hydra_kll)),
         None,
     )
 }
