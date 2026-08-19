@@ -80,24 +80,24 @@ pub fn measurements(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    sketch_bench::registry::find(&req.variance, &req.library).ok_or_else(|| {
+    sketch_bench::registry::find(&req.variant, &req.library).ok_or_else(|| {
         RunError::Sketch(format!(
             "{}/{} is not a registered row",
-            req.variance, req.library
+            req.variant, req.library
         ))
     })?;
-    let row = binding(&req.variance, &req.library).ok_or_else(|| {
+    let row = binding(&req.variant, &req.library).ok_or_else(|| {
         RunError::Sketch(format!(
             "{}/{} is registered, but no row here is bound to it",
-            req.variance, req.library
+            req.variant, req.library
         ))
     })?;
     row(req, description, table, want)
 }
 
 /// The pair a registry entry names, bound to the code that runs it.
-fn binding(variance: &str, library: &str) -> Option<RowBinding> {
-    Some(match (variance, library) {
+fn binding(variant: &str, library: &str) -> Option<RowBinding> {
+    Some(match (variant, library) {
         ("cms", "oxide") => row_cms_oxide,
         ("cms", "datasketches") => row_cms_datasketches,
         ("cms", "polars") => row_cms_polars,
@@ -1597,7 +1597,7 @@ fn peel_keyed(
 fn no_build_at(req: &Requirement, got: Dtype) -> RunError {
     RunError::Sketch(format!(
         "{}/{} builds at i64 or f64; --dtype {} is neither",
-        req.variance,
+        req.variant,
         req.library,
         got.name(),
     ))
@@ -1792,9 +1792,9 @@ mod tests {
     fn every_registered_pair_is_bound() {
         for e in REGISTRY {
             assert!(
-                binding(e.variance, e.library).is_some(),
+                binding(e.variant, e.library).is_some(),
                 "{}/{}",
-                e.variance,
+                e.variant,
                 e.library
             );
         }

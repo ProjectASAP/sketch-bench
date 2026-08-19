@@ -73,7 +73,7 @@ point() {
     local algorithm=$1 config=$2
     echo "  $algorithm ($config)" >&2
     "$BINARY" sketchbench \
-        --variance "$algorithm" \
+        --variant "$algorithm" \
         --library lib \
         --config "$config" \
         --operations insert,query,merge \

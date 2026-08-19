@@ -126,7 +126,7 @@ run_one() {
 end=\$((SECONDS+${WARMUP_SECONDS}))
 while [ \$SECONDS -lt \$end ]; do :; done
 exec '${BIN_PATH}' sketchbench \
-  --variance '${algorithm}' \
+  --variant '${algorithm}' \
   --library '${impl}' \
   --metrics throughput \
   --config '${params}' \

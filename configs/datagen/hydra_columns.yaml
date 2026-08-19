@@ -9,12 +9,12 @@
 # value type, and a description that disagreed with the row would be coerced
 # rather than honoured.
 #
-#   approxbench sketchbench --variance hydra-cms --library lib \
+#   approxbench sketchbench --variant hydra-cms --library lib \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
 #     --operations query --metrics accuracy
 #
-#   approxbench sketchbench --variance hydra-hll --library lib \
+#   approxbench sketchbench --variant hydra-hll --library lib \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024" --operations query --metrics accuracy
 #

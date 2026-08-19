@@ -83,7 +83,7 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
     """One cell: one algorithm, one impl, one construction point."""
     cmd = [
         str(BIN), "sketchbench",
-        "--variance", algorithm,
+        "--variant", algorithm,
         "--library", impl,
         "--config", config,
         "--runs", "1",
@@ -166,7 +166,7 @@ guess what a number was measured at.
     print()
     print("    omitting it is refused, naming the field the row needs:")
     proc = subprocess.run(
-        [str(BIN), "sketchbench", "--variance", "hll", "--library", "oxide",
+        [str(BIN), "sketchbench", "--variant", "hll", "--library", "oxide",
          "--size", "1000", "--runs", "1", "--warmup-runs", "0",
          "--metrics", "throughput"],
         capture_output=True, text=True,
@@ -240,7 +240,7 @@ A refusal names the bound, so the next invocation can be right.
 def section_5(args) -> None:
     heading(5, "one point crosses every library and variant", """
 `--library` is the library and nothing else, so grouping on it answers "which
-library implements this best". `--variance` carries the structural variant, so
+library implements this best". `--variant` carries the structural detail, so
 grouping on it answers "which variant of this structure wins". The `family`
 field groups the variants back together, and it is what a cross-library
 comparison is taken over.
