@@ -151,9 +151,9 @@ pub const REGISTRY: &[SketchId] = &[
     // `FixedMatrix` or parallel-insert variant yet (see the follow-up issue
     // linked from #95).
     SketchId {
-        family: "cms-heap",
-        algorithm: "cms-heap-fastpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms-heap",
+        variance: "cms-heap-fastpath-vector2d",
+        library: "lib",
         description: "asap CMSHeap, Vector2D, FastPath — per-key estimate() query",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -167,9 +167,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms-heap",
-        algorithm: "cms-heap-topk-fastpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms-heap",
+        variance: "cms-heap-topk-fastpath-vector2d",
+        library: "lib",
         description: "asap CMSHeap, Vector2D, FastPath — heap dump, top-k query. \
             Merge is heavier than plain CMS: it re-estimates every heap \
             candidate from both sides against the merged matrix.",
@@ -185,9 +185,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms-heap",
-        algorithm: "cms-heap-regularpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms-heap",
+        variance: "cms-heap-regularpath-vector2d",
+        library: "lib",
         description: "asap CMSHeap, Vector2D, RegularPath — per-key estimate() query",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -201,9 +201,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms-heap",
-        algorithm: "cms-heap-topk-regularpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms-heap",
+        variance: "cms-heap-topk-regularpath-vector2d",
+        library: "lib",
         description: "asap CMSHeap, Vector2D, RegularPath — heap dump, top-k query. \
             Merge is heavier than plain CMS: it re-estimates every heap \
             candidate from both sides against the merged matrix.",
