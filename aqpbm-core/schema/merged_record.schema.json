@@ -585,7 +585,7 @@
       ]
     },
     "RunStats": {
-      "description": "Aggregate across N samples: mean / stddev / optional 95% CI.",
+      "description": "Aggregate across N samples: mean / stddev / optional 95% CI, plus the raw\nsamples the aggregate was computed from.",
       "type": "object",
       "properties": {
         "ci95": {
@@ -610,6 +610,13 @@
           "type": "integer",
           "format": "uint",
           "minimum": 0
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
         },
         "stddev": {
           "type": "number",

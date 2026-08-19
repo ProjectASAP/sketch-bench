@@ -10,8 +10,8 @@ pub use crate::request::{Capability, Dtype};
 /// One registry entry: who a sketch is, and what it can be asked for.
 pub struct SketchId {
     /// Entries sharing this answer the same question from the same knobs
-    pub family: &'static str,
-    pub algorithm: &'static str,
+    pub family: &'static str, // should be algorithm / sketch
+    pub algorithm: &'static str, // should be variant; add an example to doc
     /// The implementing library, and only that.
     pub impl_name: &'static str,
     pub description: &'static str,

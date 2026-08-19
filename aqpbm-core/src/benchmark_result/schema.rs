@@ -170,9 +170,10 @@ pub struct BenchSection {
     pub merge_supported: Option<bool>,
 }
 
-/// Aggregate across N samples: mean / stddev / optional 95% CI.
+/// Aggregate across N samples: mean / stddev / optional 95% CI, plus the raw
+/// samples the aggregate was computed from.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunStats {
     pub mean: f64,
     pub stddev: f64,
@@ -184,11 +185,13 @@ pub struct RunStats {
     /// Number of samples behind `mean`. Iterations within one process when
     /// `ci95` is absent; independent processes when it is present.
     pub n: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<f64>,
 }
 
 /// CPU time split into user vs sys.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuTime {
     pub user_ms: RunStats,
     pub sys_ms: RunStats,
@@ -484,6 +487,7 @@ mod tests {
                 stddev: 1.1e6,
                 ci95: None,
                 n: 10,
+                samples: vec![4.1e7, 4.3e7],
             }),
             ..Default::default()
         });
@@ -538,7 +542,7 @@ mod tests {
         assert_eq!(rec.language, Language::Cpp);
         assert_eq!(rec.source, Source::CppBench);
         let bench = rec.bench.as_ref().unwrap();
-        let tput = bench.throughput_items_per_sec.unwrap();
+        let tput = bench.throughput_items_per_sec.as_ref().unwrap();
         assert_eq!(tput.n, 10);
         let lat = bench.latency_ns.unwrap();
         assert_eq!(lat.p99, 60);
