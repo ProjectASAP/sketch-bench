@@ -315,6 +315,7 @@ impl<E: Exporter> Sampler<E> {
                 stddev: 0.0,
                 ci95: None,
                 n: 1,
+                samples: vec![throughput],
             }),
             latency_ns: latency,
             wall_time_ms: Some(RunStats {
@@ -322,6 +323,7 @@ impl<E: Exporter> Sampler<E> {
                 stddev: 0.0,
                 ci95: None,
                 n: 1,
+                samples: vec![(wall_ns as f64) / 1_000_000.0],
             }),
             ..Default::default()
         };
