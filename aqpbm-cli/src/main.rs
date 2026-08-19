@@ -6,6 +6,7 @@
 mod atomic_costs_cmd;
 mod cli;
 mod flatten_record;
+mod repeat;
 mod report_sink;
 mod rows;
 
@@ -250,6 +251,29 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         (Some(a), Some(i)) => (a.to_string(), i.to_string()),
         _ => bail!("--variance and --library are both required unless --list-impls is given"),
     };
+    if args.repeat_experiment == 0 {
+        bail!("--repeat-experiment must be >= 1");
+    }
+    if args.repeat_experiment > 1 && !repeat::is_child() {
+        if args.flat {
+            bail!(
+                "--flat cannot be combined with --repeat-experiment: a flattened row holds one \
+                 per measurement, and folding the repeats into it would have to decide which \
+                 repeat that value came from"
+            );
+        }
+        let records = repeat::run_repeats(args.repeat_experiment)?;
+        let mut sink = ReportSink::open(args.report.as_deref())?;
+        for r in &records {
+            sink.write_line(&r.to_jsonl())?;
+        }
+        eprintln!(
+            "approxbench: merged {} repeats into {} record(s)",
+            args.repeat_experiment,
+            records.len()
+        );
+        return Ok(());
+    }
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }

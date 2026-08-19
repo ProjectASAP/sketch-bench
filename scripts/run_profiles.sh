@@ -29,8 +29,9 @@
 #
 # CPU (for cpu-accuracy curve):
 #   .bench.cpu_time_ms.user_ms.mean    CPU user time (ms, mean over runs)
-#   .bench.cpu_time_ms.user_ms.ci95    [lo, hi] 95% CI — nothing writes this
-#                                      today, so expect it absent.
+#   .bench.cpu_time_ms.user_ms.ci95    [lo, hi] 95% CI — only under
+#                                      `--repeat-experiment N`, N >= 2. This script
+#                                      does not pass it, so expect it absent.
 #   .bench.cpu_time_ms.sys_ms.mean     CPU sys time (ms)
 #   .bench.wall_time_ms.mean           wall clock time (ms)
 #

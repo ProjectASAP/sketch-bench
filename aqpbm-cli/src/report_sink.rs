@@ -3,6 +3,8 @@ use std::io::Write;
 
 use anyhow::Result;
 
+use crate::repeat;
+
 /// Open the `--report` destination. `None` or `"-"` → stdout.
 pub enum ReportSink {
     Stdout,
@@ -11,6 +13,9 @@ pub enum ReportSink {
 
 impl ReportSink {
     pub fn open(spec: Option<&str>) -> Result<Self> {
+        if repeat::is_child() {
+            return Ok(ReportSink::Stdout);
+        }
         match spec {
             None | Some("-") => Ok(ReportSink::Stdout),
             Some(path) => Ok(ReportSink::File(
