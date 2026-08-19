@@ -29,8 +29,7 @@ pub fn run(args: AtomicCostsArgs) -> Result<()> {
             .context("reading stdin")?;
         buf
     } else {
-        std::fs::read_to_string(&args.input)
-            .with_context(|| format!("reading {}", args.input))?
+        std::fs::read_to_string(&args.input).with_context(|| format!("reading {}", args.input))?
     };
 
     let records: Vec<MergedRecord> = raw

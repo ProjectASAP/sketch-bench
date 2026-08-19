@@ -370,6 +370,13 @@ pub struct KllParams {
 }
 sketch_params!(KllParams, "kll", KllParams { k: 100 });
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DdParams {
+    pub alpha: f64,
+}
+sketch_params!(DdParams, "dd", DdParams { alpha: 0.01 });
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CmsParams {
@@ -546,6 +553,7 @@ mod tests {
         }
         check::<HllParams>();
         check::<KllParams>();
+        check::<DdParams>();
         check::<CmsParams>();
         check::<CountSketchParams>();
         check::<HydraCmsParams>();
@@ -577,6 +585,9 @@ mod tests {
         assert!(KllParams::owns("kll-percall"));
         assert!(KllParams::owns("kll-cdf"));
         assert!(!KllParams::owns("hydra-kll"));
+
+        assert!(DdParams::owns("dd"));
+        assert!(!DdParams::owns("kll"));
 
         // The three Hydra cell types take different knobs, so they are three
         // families and none of them owns another's name.

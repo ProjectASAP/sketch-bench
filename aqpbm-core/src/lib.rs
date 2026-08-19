@@ -13,12 +13,12 @@ pub mod metrics;
 // sketches, and no file format — it hands back in-memory columns.
 // Re-exported so callers find it here.
 pub use accuracy::GroundTruth;
-pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
 pub use aqpbm_datagen::{
     ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
     NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
     RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
+pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord,
     Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
