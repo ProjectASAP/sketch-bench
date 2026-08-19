@@ -394,6 +394,26 @@ sketch_params!(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CmsHeapParams {
+    pub rows: usize,
+    pub cols: usize,
+}
+// No `top_k` field: the heap's capacity and the TopK comparator's grading `k`
+// are the same compile-time constant (`CMS_HEAP_TOP_K` in
+// `wrappers::cms_heap::sketchlib`), so there is nothing here for them to
+// silently disagree about. `deny_unknown_fields` turns a `--config` that
+// tries to set `top_k` anyway into a named error rather than ignoring it.
+sketch_params!(
+    CmsHeapParams,
+    "cms-heap",
+    CmsHeapParams {
+        rows: 3,
+        cols: 1024
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CountSketchParams {
     pub rows: usize,
     pub cols: usize,

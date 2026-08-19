@@ -7,6 +7,7 @@
 // finds the type, how it is built, how it is fed, and how it is asked, all in
 // one place.
 pub mod cms;
+pub mod cms_heap;
 pub mod cs;
 pub mod dd;
 pub mod hll;

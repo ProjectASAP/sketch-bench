@@ -142,6 +142,82 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
+    // -------- CMS + heap (frequency, and top-k) --------
+    // A separate family from `cms`: `CmsHeapParams` has no `top_k` (it's a
+    // compile-time constant, see wrappers::cms_heap::sketchlib::CMS_HEAP_TOP_K),
+    // so it's a different knob set, and `CMSHeap` answers two different
+    // questions (per-key frequency, and top-k), so it gets two rows per
+    // backend instead of one. Only `Vector2D` x {FastPath, RegularPath}: no
+    // `FixedMatrix` or parallel-insert variant yet (see the follow-up issue
+    // linked from #95).
+    SketchId {
+        algorithm: "cms-heap",
+        variance: "cms-heap-fastpath-vector2d",
+        library: "lib",
+        description: "asap CMSHeap, Vector2D, FastPath — per-key estimate() query",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "cms-heap",
+        variance: "cms-heap-topk-fastpath-vector2d",
+        library: "lib",
+        description: "asap CMSHeap, Vector2D, FastPath — heap dump, top-k query. \
+            Merge is heavier than plain CMS: it re-estimates every heap \
+            candidate from both sides against the merged matrix.",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "cms-heap",
+        variance: "cms-heap-regularpath-vector2d",
+        library: "lib",
+        description: "asap CMSHeap, Vector2D, RegularPath — per-key estimate() query",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "cms-heap",
+        variance: "cms-heap-topk-regularpath-vector2d",
+        library: "lib",
+        description: "asap CMSHeap, Vector2D, RegularPath — heap dump, top-k query. \
+            Merge is heavier than plain CMS: it re-estimates every heap \
+            candidate from both sides against the merged matrix.",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
     // -------- CountSketch (frequency) --------
     // No `datasketches` entry: that library ships no CountSketch.
     SketchId {
@@ -999,6 +1075,7 @@ mod tests {
             "cardinality",
             "frequency",
             "rank-error",
+            "topk",
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
