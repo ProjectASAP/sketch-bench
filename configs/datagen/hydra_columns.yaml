@@ -9,16 +9,16 @@
 # value type, and a description that disagreed with the row would be coerced
 # rather than honoured.
 #
-#   approxbench sketchbench --algorithm hydra-cms --impl lib \
+#   approxbench sketchbench --variance hydra-cms --library lib \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
 #     --operations query --metrics accuracy
 #
-#   approxbench sketchbench --algorithm hydra-hll --impl lib \
+#   approxbench sketchbench --variance hydra-hll --library lib \
 #     --spec configs/datagen/hydra_columns.yaml \
 #     --config "rows=3 cols=1024" --operations query --metrics accuracy
 #
-# Swap `--impl lib` for `--impl polars` to get the exact answer to the same
+# Swap `--library lib` for `--library polars` to get the exact answer to the same
 # question, through the same machinery. That row is what tells you how much of
 # a reported error is the sketch.
 #

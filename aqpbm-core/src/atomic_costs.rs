@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
 
-/// One row: measured atomic costs for one (sketch family, construction
+/// One row: measured atomic costs for one (sketch algorithm, construction
 /// params) point, at the grid resolution ASAPQuery's `candidate_gen.rs`
 /// sweeps. `sketch_config` is `MergedRecord::sketch_config` reused verbatim,
 /// so ASAPQuery's loader keys on it directly instead of re-deriving it.
@@ -233,7 +233,7 @@ mod tests {
         MergedRecord {
             schema_version: SCHEMA_VERSION,
             sketch: "cms".into(),
-            impl_name: "lib".into(),
+            library: "lib".into(),
             language: Language::Rust,
             mode: Mode::Bench,
             runs: 5,

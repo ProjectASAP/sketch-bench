@@ -107,7 +107,7 @@ bench() {
     echo ""
     echo "─── $algorithm / $label ───────────────────────────────────"
     "$BINARY" sketchbench \
-        --algorithm  "$algorithm" \
+        --variance  "$algorithm" \
         --runs      "$RUNS" \
         --warmup-runs "$WARMUP" \
         --metrics   "$METRICS" \

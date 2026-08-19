@@ -1,4 +1,4 @@
-//! The registry: one table naming every `(algorithm, impl)` this crate exposes
+//! The registry: one table naming every `(variance, library)` this crate exposes
 //! and what each supports, written out entry by entry in
 //! [`REGISTRY`](crate::registry::REGISTRY). [`check`](crate::registry::check) is what the frontend calls.
 
@@ -10,10 +10,10 @@ pub use crate::request::{Capability, Dtype};
 /// One registry entry: who a sketch is, and what it can be asked for.
 pub struct SketchId {
     /// Entries sharing this answer the same question from the same knobs
-    pub family: &'static str, // should be algorithm / sketch
-    pub algorithm: &'static str, // should be variant; add an example to doc
+    pub algorithm: &'static str,
+    pub variance: &'static str,
     /// The implementing library, and only that.
-    pub impl_name: &'static str,
+    pub library: &'static str,
     pub description: &'static str,
     /// The statistic this sketch answers
     pub capability: Capability,
@@ -28,15 +28,15 @@ pub struct SketchId {
 
 // ---------- the registry ----------
 
-/// Every `(algorithm, impl)` this crate exposes. Adding one is one entry here
-/// plus the wrapper it names. Entries stay grouped by family and contiguous,
-/// because [`list`] breaks a group the moment `family` differs from the row above.
+/// Every `(variance, library)` this crate exposes. Adding one is one entry here
+/// plus the wrapper it names. Entries stay grouped by algorithm and contiguous,
+/// because [`list`] breaks a group the moment `algorithm` differs from the row above.
 pub const REGISTRY: &[SketchId] = &[
     // -------- CMS (frequency) --------
     SketchId {
-        family: "cms",
         algorithm: "cms",
-        impl_name: "oxide",
+        variance: "cms",
+        library: "oxide",
         description: "sketch_oxide::frequency::CountMinSketch",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -50,9 +50,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms",
         algorithm: "cms",
-        impl_name: "datasketches",
+        variance: "cms",
+        library: "datasketches",
         description: "datasketches::countmin::CountMinSketch",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -66,9 +66,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms",
         algorithm: "cms",
-        impl_name: "polars",
+        variance: "cms",
+        library: "polars",
         description: "polars exact: group_by(v).agg(len)",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -82,9 +82,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms",
-        algorithm: "cms-fastpath-fixedmatrix",
-        impl_name: "lib",
+        algorithm: "cms",
+        variance: "cms-fastpath-fixedmatrix",
+        library: "lib",
         description: "asap CMS, FixedMatrix (shape baked at compile time), FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -98,9 +98,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms",
-        algorithm: "cms-fastpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms",
+        variance: "cms-fastpath-vector2d",
+        library: "lib",
         description: "asap CMS, Vector2D, FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -114,9 +114,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "cms",
-        algorithm: "cms-regularpath-vector2d",
-        impl_name: "lib",
+        algorithm: "cms",
+        variance: "cms-regularpath-vector2d",
+        library: "lib",
         description: "asap CMS, Vector2D, RegularPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -131,9 +131,9 @@ pub const REGISTRY: &[SketchId] = &[
     },
     // Parallel insert: no `ask`, so nothing scores it and no query is offered.
     SketchId {
-        family: "cms",
-        algorithm: "cms-fastpath-fixedmatrix-32k-parallel",
-        impl_name: "lib",
+        algorithm: "cms",
+        variance: "cms-fastpath-fixedmatrix-32k-parallel",
+        library: "lib",
         description: "asap CMS, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
@@ -145,9 +145,9 @@ pub const REGISTRY: &[SketchId] = &[
     // -------- CountSketch (frequency) --------
     // No `datasketches` entry: that library ships no CountSketch.
     SketchId {
-        family: "countsketch",
         algorithm: "countsketch",
-        impl_name: "oxide",
+        variance: "countsketch",
+        library: "oxide",
         description: "sketch_oxide::frequency::CountSketch",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -161,9 +161,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "countsketch",
         algorithm: "countsketch",
-        impl_name: "polars",
+        variance: "countsketch",
+        library: "polars",
         description: "polars exact: group_by(v).agg(len)",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -177,9 +177,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "countsketch",
-        algorithm: "countsketch-fastpath-fixedmatrix",
-        impl_name: "lib",
+        algorithm: "countsketch",
+        variance: "countsketch-fastpath-fixedmatrix",
+        library: "lib",
         description: "asap Count, FixedMatrix (shape baked at compile time), FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -193,9 +193,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "countsketch",
-        algorithm: "countsketch-fastpath-vector2d",
-        impl_name: "lib",
+        algorithm: "countsketch",
+        variance: "countsketch-fastpath-vector2d",
+        library: "lib",
         description: "asap Count, Vector2D, FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -209,9 +209,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "countsketch",
-        algorithm: "countsketch-regularpath-vector2d",
-        impl_name: "lib",
+        algorithm: "countsketch",
+        variance: "countsketch-regularpath-vector2d",
+        library: "lib",
         description: "asap Count, Vector2D, RegularPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
@@ -225,9 +225,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "countsketch",
-        algorithm: "countsketch-fastpath-fixedmatrix-32k-parallel",
-        impl_name: "lib",
+        algorithm: "countsketch",
+        variance: "countsketch-fastpath-fixedmatrix-32k-parallel",
+        library: "lib",
         description: "asap Count, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
@@ -237,12 +237,12 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY),
     },
     // -------- HLL (cardinality) --------
-    // The three `lib` precisions are one entry: one algorithm at one impl, with
+    // The three `lib` precisions are one entry: one variance at one library, with
     // `lg_k` the knob that moves between them.
     SketchId {
-        family: "hll",
         algorithm: "hll",
-        impl_name: "oxide",
+        variance: "hll",
+        library: "oxide",
         description: "sketch_oxide::cardinality::HyperLogLog (lg_k 4..=18)",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
@@ -256,9 +256,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hll",
         algorithm: "hll",
-        impl_name: "datasketches",
+        variance: "hll",
+        library: "datasketches",
         description: "datasketches::hll::HllSketch (Hll8)",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
@@ -272,9 +272,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hll",
         algorithm: "hll",
-        impl_name: "lib",
+        variance: "hll",
+        library: "lib",
         description: "asap_sketchlib::HyperLogLog<Classic>: O(m) estimate, lg_k in {12,14,16}",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
@@ -288,9 +288,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hll",
         algorithm: "hll",
-        impl_name: "polars",
+        variance: "hll",
+        library: "polars",
         description: "polars exact: DataFrame.n_unique()",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
@@ -303,13 +303,13 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
-    // Its own algorithm, not an impl of `hll`: the estimate is maintained on the
+    // Its own variance, not an impl of `hll`: the estimate is maintained on the
     // insert path instead of scanned at query time. It also supplies no `merge`,
     // which is why its operations stop at query.
     SketchId {
-        family: "hll",
-        algorithm: "hll-hip",
-        impl_name: "lib",
+        algorithm: "hll",
+        variance: "hll-hip",
+        library: "lib",
         description: "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
@@ -321,9 +321,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hll",
-        algorithm: "hll-fastpath-parallel",
-        impl_name: "lib",
+        algorithm: "hll",
+        variance: "hll-fastpath-parallel",
+        library: "lib",
         description: "asap HLL ErtlMLE, FastPath, parallel insert",
         capability: Capability::None,
         comparator: None,
@@ -337,9 +337,9 @@ pub const REGISTRY: &[SketchId] = &[
     // the per-call ones do not, which is the whole point of the split. These are
     // also the only entries that build at f64 as well as i64.
     SketchId {
-        family: "kll",
-        algorithm: "kll-percall",
-        impl_name: "oxide",
+        algorithm: "kll",
+        variance: "kll-percall",
+        library: "oxide",
         description: "sketch_oxide KllSketch: quantile() per call",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -353,9 +353,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "kll",
-        algorithm: "kll-percall",
-        impl_name: "lib",
+        algorithm: "kll",
+        variance: "kll-percall",
+        library: "lib",
         description: "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -369,9 +369,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "kll",
-        algorithm: "kll-cdf",
-        impl_name: "oxide",
+        algorithm: "kll",
+        variance: "kll-cdf",
+        library: "oxide",
         description: "sketch_oxide KllSketch: cdf() built in prepare",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -386,9 +386,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "kll",
-        algorithm: "kll-cdf",
-        impl_name: "lib",
+        algorithm: "kll",
+        variance: "kll-cdf",
+        library: "lib",
         description: "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -404,9 +404,9 @@ pub const REGISTRY: &[SketchId] = &[
     },
     // The exact baseline is i64 only, unlike the four sketch entries above it.
     SketchId {
-        family: "kll",
-        algorithm: "kll-cdf",
-        impl_name: "polars",
+        algorithm: "kll",
+        variance: "kll-cdf",
+        library: "polars",
         description: "polars exact: 101-point quantile grid",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -421,9 +421,9 @@ pub const REGISTRY: &[SketchId] = &[
     },
     // -------- DDSketch (quantile) --------
     SketchId {
-        family: "dd",
         algorithm: "dd",
-        impl_name: "lib",
+        variance: "dd",
+        library: "lib",
         description: "asap_sketchlib::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -437,9 +437,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "dd",
         algorithm: "dd",
-        impl_name: "oxide",
+        variance: "dd",
+        library: "oxide",
         description: "sketch_oxide::quantiles::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
@@ -457,9 +457,9 @@ pub const REGISTRY: &[SketchId] = &[
     // grid answers, so each cell type gets its own params vocabulary and its own
     // comparator. See `wrappers/hydra/mod.rs`.
     SketchId {
-        family: "hydra-cms",
         algorithm: "hydra-cms",
-        impl_name: "lib",
+        variance: "hydra-cms",
+        library: "lib",
         description: "asap_sketchlib::Hydra over Count-Min cells (subpopulation frequency)",
         capability: Capability::SubpopFrequency,
         comparator: Some("subpop-frequency"),
@@ -473,9 +473,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hydra-cms",
         algorithm: "hydra-cms",
-        impl_name: "polars",
+        variance: "hydra-cms",
+        library: "polars",
         description: "polars exact: group_by(subset, v).agg(len) over every label subset",
         capability: Capability::SubpopFrequency,
         comparator: Some("subpop-frequency"),
@@ -489,9 +489,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hydra-hll",
         algorithm: "hydra-hll",
-        impl_name: "lib",
+        variance: "hydra-hll",
+        library: "lib",
         description: "asap_sketchlib::Hydra over HyperLogLog cells (subpopulation cardinality)",
         capability: Capability::SubpopCardinality,
         comparator: Some("subpop-cardinality"),
@@ -505,9 +505,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hydra-hll",
         algorithm: "hydra-hll",
-        impl_name: "polars",
+        variance: "hydra-hll",
+        library: "polars",
         description: "polars exact: group_by(subset).agg(v.n_unique()) over every label subset",
         capability: Capability::SubpopCardinality,
         comparator: Some("subpop-cardinality"),
@@ -521,9 +521,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hydra-kll",
         algorithm: "hydra-kll",
-        impl_name: "lib",
+        variance: "hydra-kll",
+        library: "lib",
         description: "asap_sketchlib::Hydra over KLL cells (subpopulation quantile)",
         capability: Capability::SubpopQuantile,
         comparator: Some("subpop-rank-error"),
@@ -537,9 +537,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "hydra-kll",
         algorithm: "hydra-kll",
-        impl_name: "polars",
+        variance: "hydra-kll",
+        library: "polars",
         description: "polars exact: sorted values per label subset, quantile by rank",
         capability: Capability::SubpopQuantile,
         comparator: Some("subpop-rank-error"),
@@ -553,9 +553,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-cardinality",
-        impl_name: "lib",
+        algorithm: "univmon",
+        variance: "univmon-cardinality",
+        library: "lib",
         description: "asap_sketchlib::UnivMon: calc_card, the keys carrying a non-zero total",
         capability: Capability::KeyedCardinality,
         comparator: Some("keyed-cardinality"),
@@ -569,9 +569,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-l1-norm",
-        impl_name: "lib",
+        algorithm: "univmon",
+        variance: "univmon-l1-norm",
+        library: "lib",
         description: "asap_sketchlib::UnivMon: calc_l1, the sum of the per-key totals",
         capability: Capability::KeyedL1Norm,
         comparator: Some("keyed-l1-norm"),
@@ -585,9 +585,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-l1-norm",
-        impl_name: "oxide",
+        algorithm: "univmon",
+        variance: "univmon-l1-norm",
+        library: "oxide",
         description: "sketch_oxide::universal::UnivMon: estimate_l1, summed on the insert path",
         capability: Capability::KeyedL1Norm,
         comparator: Some("keyed-l1-norm"),
@@ -601,9 +601,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-l2-norm",
-        impl_name: "lib",
+        algorithm: "univmon",
+        variance: "univmon-l2-norm",
+        library: "lib",
         description: "asap_sketchlib::UnivMon: calc_l2, the root of the summed squared totals",
         capability: Capability::KeyedL2Norm,
         comparator: Some("keyed-l2-norm"),
@@ -617,9 +617,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-l2-norm",
-        impl_name: "oxide",
+        algorithm: "univmon",
+        variance: "univmon-l2-norm",
+        library: "oxide",
         description: "sketch_oxide::universal::UnivMon: estimate_l2, a Count Sketch self product",
         capability: Capability::KeyedL2Norm,
         comparator: Some("keyed-l2-norm"),
@@ -633,9 +633,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-entropy",
-        impl_name: "lib",
+        algorithm: "univmon",
+        variance: "univmon-entropy",
+        library: "lib",
         description: "asap_sketchlib::UnivMon: calc_entropy, Shannon entropy of the key shares",
         capability: Capability::KeyedEntropy,
         comparator: Some("keyed-entropy"),
@@ -649,9 +649,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
-        family: "univmon",
-        algorithm: "univmon-entropy",
-        impl_name: "oxide",
+        algorithm: "univmon",
+        variance: "univmon-entropy",
+        library: "oxide",
         description: "sketch_oxide::universal::UnivMon: estimate_entropy, over its sampled layers",
         capability: Capability::KeyedEntropy,
         comparator: Some("keyed-entropy"),
@@ -668,58 +668,54 @@ pub const REGISTRY: &[SketchId] = &[
 
 // ---------- what the frontend asks ----------
 
-pub fn find(algorithm: &str, impl_name: &str) -> Option<&'static SketchId> {
+pub fn find(variance: &str, library: &str) -> Option<&'static SketchId> {
     REGISTRY
         .iter()
-        .find(|r| r.algorithm == algorithm && r.impl_name == impl_name)
+        .find(|r| r.variance == variance && r.library == library)
 }
 
-/// One line per entry, grouped by family with a blank line between groups and
-/// declaration order inside one. The algorithm column is sized to the longest
+/// One line per entry, grouped by algorithm with a blank line between groups and
+/// declaration order inside one. The variance column is sized to the longest
 /// name present; the first line is the header, so a caller prints what it gets.
 pub fn list() -> Vec<String> {
     let algo_w = REGISTRY
         .iter()
-        .map(|r| r.algorithm.len())
+        .map(|r| r.variance.len())
         .max()
         .unwrap_or(0)
-        .max("# algorithm".len());
-    let impl_w = REGISTRY
-        .iter()
-        .map(|r| r.impl_name.len())
-        .max()
-        .unwrap_or(0);
+        .max("# variance".len());
+    let impl_w = REGISTRY.iter().map(|r| r.library.len()).max().unwrap_or(0);
     let mut out = Vec::with_capacity(REGISTRY.len() + 8);
     out.push(format!(
         "{:algo_w$}  {:impl_w$}  description",
-        "# algorithm", "impl"
+        "# variance", "library"
     ));
     let mut current: Option<&str> = None;
     for r in REGISTRY {
-        if current != Some(r.family) {
+        if current != Some(r.algorithm) {
             out.push(String::new());
-            current = Some(r.family);
+            current = Some(r.algorithm);
         }
         out.push(format!(
             "{:algo_w$}  {:impl_w$}  {}",
-            r.algorithm, r.impl_name, r.description
+            r.variance, r.library, r.description
         ));
     }
     out
 }
 
-pub fn algorithm_exists(algorithm: &str) -> bool {
-    REGISTRY.iter().any(|r| r.algorithm == algorithm)
+pub fn variance_exists(variance: &str) -> bool {
+    REGISTRY.iter().any(|r| r.variance == variance)
 }
 
-/// The family an algorithm belongs to, for the record's `family` field. `None`
-/// if the algorithm is unknown, which the frontend has already ruled out by the
+/// The algorithm a variance belongs to, for the record's `algorithm` field. `None`
+/// if the variance is unknown, which the frontend has already ruled out by the
 /// time it asks.
-pub fn family_of(algorithm: &str) -> Option<&'static str> {
+pub fn algorithm_of(variance: &str) -> Option<&'static str> {
     REGISTRY
         .iter()
-        .find(|r| r.algorithm == algorithm)
-        .map(|r| r.family)
+        .find(|r| r.variance == variance)
+        .map(|r| r.algorithm)
 }
 
 // ---------- can this request run? ----------
@@ -732,17 +728,17 @@ pub fn family_of(algorithm: &str) -> Option<&'static str> {
 /// `want` is the caller's whole list, checked up front: a request is refused
 /// as a unit rather than part-way through measuring it.
 pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), ResolveError> {
-    let entry = find(&req.algorithm, &req.impl_name).ok_or_else(|| {
+    let entry = find(&req.variance, &req.library).ok_or_else(|| {
         // Told apart, because they send a reader to different places: a bad
-        // algorithm means look at the list, a bad impl means look at the
-        // algorithm's entry in it.
-        if algorithm_exists(&req.algorithm) {
-            ResolveError::UnknownImpl {
-                algorithm: req.algorithm.clone(),
-                impl_name: req.impl_name.clone(),
+        // variance means look at the list, a bad library means look at the
+        // variance's entry in it.
+        if variance_exists(&req.variance) {
+            ResolveError::UnknownLibrary {
+                variance: req.variance.clone(),
+                library: req.library.clone(),
             }
         } else {
-            ResolveError::UnknownAlgorithm(req.algorithm.clone())
+            ResolveError::UnknownVariance(req.variance.clone())
         }
     })?;
 
@@ -779,8 +775,8 @@ pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), Reso
     ] {
         if wants_metric.contains(bit) && !entry.metrics.contains(bit) {
             return Err(ResolveError::MetricUnsupported {
-                algorithm: req.algorithm.clone(),
-                impl_name: req.impl_name.clone(),
+                variance: req.variance.clone(),
+                library: req.library.clone(),
                 metric,
                 capability: entry.capability.name(),
             });
@@ -795,8 +791,8 @@ pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), Reso
     ] {
         if wants_operation.contains(bit) && !entry.operations.contains(bit) {
             return Err(ResolveError::OperationUnsupported {
-                algorithm: req.algorithm.clone(),
-                impl_name: req.impl_name.clone(),
+                variance: req.variance.clone(),
+                library: req.library.clone(),
                 operation,
                 admits: operations_of(entry),
             });
@@ -808,8 +804,8 @@ pub fn check(req: &Requirement, want: &[(Operation, Metric)]) -> Result<(), Reso
     if let Some(name) = req.comparator.as_deref() {
         if entry.comparator != Some(name) {
             return Err(ResolveError::UnknownComparator {
-                algorithm: req.algorithm.clone(),
-                impl_name: req.impl_name.clone(),
+                variance: req.variance.clone(),
+                library: req.library.clone(),
                 name: name.to_string(),
                 admits: comparators_of(entry),
             });
@@ -844,8 +840,8 @@ fn comparators_of(entry: &SketchId) -> String {
 
 /// Which comparators an entry admits. `None` for an unknown entry, so a
 /// frontend can tell "no such sketch" from "that sketch is scored by nothing".
-pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>> {
-    find(algorithm, impl_name).map(|entry| entry.comparator.into_iter().collect())
+pub fn comparators(variance: &str, library: &str) -> Option<Vec<&'static str>> {
+    find(variance, library).map(|entry| entry.comparator.into_iter().collect())
 }
 
 /// Why a request cannot run. Every variant names the sketch and what about the
@@ -853,22 +849,22 @@ pub fn comparators(algorithm: &str, impl_name: &str) -> Option<Vec<&'static str>
 /// that the answer arrives before a dataset is generated.
 #[derive(Debug)]
 pub enum ResolveError {
-    UnknownAlgorithm(String),
-    UnknownImpl {
-        algorithm: String,
-        impl_name: String,
+    UnknownVariance(String),
+    UnknownLibrary {
+        variance: String,
+        library: String,
     },
     /// An operation this entry does not have — no merge, or no prepare.
     OperationUnsupported {
-        algorithm: String,
-        impl_name: String,
+        variance: String,
+        library: String,
         operation: &'static str,
         admits: String,
     },
     /// A metric this entry cannot carry — accuracy on a sketch nothing scores.
     MetricUnsupported {
-        algorithm: String,
-        impl_name: String,
+        variance: String,
+        library: String,
         metric: &'static str,
         capability: &'static str,
     },
@@ -879,8 +875,8 @@ pub enum ResolveError {
         metric: &'static str,
     },
     UnknownComparator {
-        algorithm: String,
-        impl_name: String,
+        variance: String,
+        library: String,
         name: String,
         admits: String,
     },
@@ -889,33 +885,30 @@ pub enum ResolveError {
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResolveError::UnknownAlgorithm(a) => write!(f, "unknown sketch algorithm: {a}"),
-            ResolveError::UnknownImpl {
-                algorithm,
-                impl_name,
-            } => {
-                write!(f, "no impl '{impl_name}' for algorithm '{algorithm}'")
+            ResolveError::UnknownVariance(a) => write!(f, "unknown sketch variance: {a}"),
+            ResolveError::UnknownLibrary { variance, library } => {
+                write!(f, "no library '{library}' for variance '{variance}'")
             }
             ResolveError::OperationUnsupported {
-                algorithm,
-                impl_name,
+                variance,
+                library,
                 operation,
                 admits,
             } => {
                 write!(
                     f,
-                    "{algorithm}/{impl_name} has no {operation}; it can be measured over {admits}"
+                    "{variance}/{library} has no {operation}; it can be measured over {admits}"
                 )
             }
             ResolveError::MetricUnsupported {
-                algorithm,
-                impl_name,
+                variance,
+                library,
                 metric,
                 capability,
             } => {
                 write!(
                     f,
-                    "{algorithm}/{impl_name} answers no statistic (capability {capability}), \
+                    "{variance}/{library} answers no statistic (capability {capability}), \
                      so nothing can score its {metric}"
                 )
             }
@@ -926,14 +919,14 @@ impl std::fmt::Display for ResolveError {
                 )
             }
             ResolveError::UnknownComparator {
-                algorithm,
-                impl_name,
+                variance,
+                library,
                 name,
                 admits,
             } => {
                 write!(
                     f,
-                    "{algorithm}/{impl_name} has no comparator '{name}'; it admits {admits}"
+                    "{variance}/{library} has no comparator '{name}'; it admits {admits}"
                 )
             }
         }
@@ -954,8 +947,8 @@ mod tests {
                 e.metrics.contains(MetricsMask::ACCURACY),
                 e.capability.scores(),
                 "{}/{}",
-                e.algorithm,
-                e.impl_name
+                e.variance,
+                e.library
             );
         }
     }
@@ -969,15 +962,15 @@ mod tests {
                 e.comparator.is_some(),
                 e.capability.scores(),
                 "{}/{} comparator",
-                e.algorithm,
-                e.impl_name
+                e.variance,
+                e.library
             );
             assert_eq!(
                 e.operations.contains(OperationMask::QUERY),
                 e.capability.scores(),
                 "{}/{} query",
-                e.algorithm,
-                e.impl_name
+                e.variance,
+                e.library
             );
         }
     }
@@ -1019,8 +1012,8 @@ mod tests {
                 assert!(
                     KNOWN.contains(&name),
                     "{}/{}: {name}",
-                    e.algorithm,
-                    e.impl_name
+                    e.variance,
+                    e.library
                 );
             }
         }

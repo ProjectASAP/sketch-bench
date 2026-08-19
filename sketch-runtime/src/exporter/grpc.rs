@@ -186,12 +186,12 @@ async fn flush(
             let schema_version = rec.schema_version;
             let source = source_label(rec.source);
             let sketch = rec.sketch.clone();
-            let impl_name = rec.impl_name.clone();
+            let library = rec.library.clone();
             let payload_json = serde_json::to_string(&rec).unwrap_or_default();
             PbRuntimeRecord {
                 source,
                 sketch,
-                impl_name,
+                library,
                 schema_version,
                 payload_json,
             }

@@ -83,8 +83,8 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
     """One cell: one algorithm, one impl, one construction point."""
     cmd = [
         str(BIN), "sketchbench",
-        "--algorithm", algorithm,
-        "--impl", impl,
+        "--variance", algorithm,
+        "--library", impl,
         "--config", config,
         "--runs", "1",
         "--warmup-runs", "0",
@@ -117,7 +117,7 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
 
 def show(algorithm: str, impl: str, config: str, args, note: str = "") -> Result:
     result = run(algorithm, impl, config, args)
-    family = result.record["family"] if result.ok else _family_guess(algorithm)
+    family = result.record["algorithm"] if result.ok else _family_guess(algorithm)
     label = f"{algorithm}/{impl}"
     print(f"    {label:<46} {config:<40} {result.cell(family)}")
     if note:
@@ -161,12 +161,12 @@ guess what a number was measured at.
     if result.ok:
         print()
         print("    the record says, verbatim:")
-        for field in ("family", "sketch", "impl", "sketch_config"):
+        for field in ("algorithm", "sketch", "impl", "sketch_config"):
             print(f"      {field:<14} {json.dumps(result.record[field])}")
     print()
     print("    omitting it is refused, naming the field the row needs:")
     proc = subprocess.run(
-        [str(BIN), "sketchbench", "--algorithm", "hll", "--impl", "oxide",
+        [str(BIN), "sketchbench", "--variance", "hll", "--library", "oxide",
          "--size", "1000", "--runs", "1", "--warmup-runs", "0",
          "--metrics", "throughput"],
         capture_output=True, text=True,
@@ -239,8 +239,8 @@ A refusal names the bound, so the next invocation can be right.
 
 def section_5(args) -> None:
     heading(5, "one point crosses every library and variant", """
-`--impl` is the library and nothing else, so grouping on it answers "which
-library implements this best". `--algorithm` carries the structural variant, so
+`--library` is the library and nothing else, so grouping on it answers "which
+library implements this best". `--variance` carries the structural variant, so
 grouping on it answers "which variant of this structure wins". The `family`
 field groups the variants back together, and it is what a cross-library
 comparison is taken over.

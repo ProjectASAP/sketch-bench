@@ -112,7 +112,7 @@ async fn grpc_exporter_pushes_compressed_batch_to_server() {
     assert!(!first.records.is_empty());
     let rec = &first.records[0];
     assert_eq!(rec.sketch, "hll");
-    assert_eq!(rec.impl_name, "oxide");
+    assert_eq!(rec.library, "oxide");
     assert_eq!(rec.source, "data-collector");
     // Against the constant, not a literal: this test owns that the exporter
     // *passes the version through* — same number on the wire, in the proto field
