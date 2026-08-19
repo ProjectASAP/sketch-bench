@@ -10,7 +10,7 @@ use aqpbm_datagen::TableDescription;
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
-    pub impl_name: String,
+    pub library: String,
     pub input_dataset: TableDescription,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
@@ -25,7 +25,7 @@ impl BenchReport {
     /// names it, and the metric is what entitles it to be written at all.
     pub fn from_runs(
         sketch: impl Into<String>,
-        impl_name: impl Into<String>,
+        library: impl Into<String>,
         input_dataset: TableDescription,
         operation: Operation,
         metric: Metric,
@@ -73,7 +73,7 @@ impl BenchReport {
 
         Self {
             sketch: sketch.into(),
-            impl_name: impl_name.into(),
+            library: library.into(),
             input_dataset,
             runs: runs.len(),
             bench,
@@ -84,7 +84,7 @@ impl BenchReport {
     pub fn to_record(&self) -> Record {
         let mut rec = Record::new(
             self.sketch.clone(),
-            self.impl_name.clone(),
+            self.library.clone(),
             self.input_dataset.clone(),
             Mode::Bench,
             self.runs,

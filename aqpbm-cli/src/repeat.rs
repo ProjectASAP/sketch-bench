@@ -31,7 +31,7 @@ type GroupKey = (String, String, String, String, String, String);
 fn group_key(r: &Record) -> GroupKey {
     (
         r.sketch.clone(),
-        r.impl_name.clone(),
+        r.library.clone(),
         r.sketch_config
             .as_ref()
             .map(|v| v.to_string())

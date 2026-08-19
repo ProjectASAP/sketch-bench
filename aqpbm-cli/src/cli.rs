@@ -30,37 +30,37 @@ pub enum Cmd {
     AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
 }
 
-/// One target of the sketch bundle: one algorithm, one impl, one construction
+/// One target of the sketch bundle: one variance, one library, one construction
 /// point, one dataset. `--list-impls` is the one mode that measures nothing.
 // `help` is declared by hand at the end so its block lands last, as the reference has it.
 #[derive(Parser, Debug)]
 #[command(
     disable_help_flag = true,
-    override_usage = "approxbench sketchbench [OPTIONS] --algorithm <ALGORITHM> --impl <IMPL_NAME>\n       approxbench sketchbench --list-impls"
+    override_usage = "approxbench sketchbench [OPTIONS] --variance <VARIANCE> --library <LIBRARY>\n       approxbench sketchbench --list-impls"
 )]
 pub struct SketchbenchArgs {
-    /// Accumulator algorithm, structural variant included: `cms` and
+    /// Accumulator variance, structural variant included: `cms` and
     /// `cms-fastpath-vector2d` are two of them, because a different hash
     /// strategy gives different estimates. Matched exactly, since one
     /// invocation measures one target. `--list-impls` prints every
-    /// (algorithm, impl) pair, grouped by the family they share knobs with.
+    /// (variance, library) pair, grouped by the algorithm they share knobs with.
     #[arg(
         long,
         required_unless_present = "list_impls",
         help_heading = "Identity"
     )]
-    pub algorithm: Option<String>,
+    pub variance: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
-    /// `polars`. `--list-impls` shows which the algorithm offers. One
-    /// invocation measures one (impl, config) point; to race several, invoke
-    /// once per impl.
+    /// `polars`. `--list-impls` shows which the variance offers. One
+    /// invocation measures one (library, config) point; to race several, invoke
+    /// once per library.
     #[arg(
-        long = "impl",
+        long = "library",
         required_unless_present = "list_impls",
         help_heading = "Identity"
     )]
-    pub impl_name: Option<String>,
-    /// Print every (algorithm, impl) pair this bundle offers, then exit.
+    pub library: Option<String>,
+    /// Print every (variance, library) pair this bundle offers, then exit.
     /// Measures nothing and writes no record, so it ignores every other option.
     #[arg(long, help_heading = "Identity")]
     pub list_impls: bool,

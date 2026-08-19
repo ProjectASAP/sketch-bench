@@ -23,15 +23,15 @@ use crate::switch::RuntimeSwitch;
 #[derive(Debug, Clone)]
 pub struct Tag {
     pub sketch: String,
-    pub impl_name: String,
+    pub library: String,
     pub source: Source,
 }
 
 impl Tag {
-    pub fn new(sketch: impl Into<String>, impl_name: impl Into<String>, source: Source) -> Self {
+    pub fn new(sketch: impl Into<String>, library: impl Into<String>, source: Source) -> Self {
         Self {
             sketch: sketch.into(),
-            impl_name: impl_name.into(),
+            library: library.into(),
             source,
         }
     }
@@ -340,7 +340,7 @@ impl<E: Exporter> Sampler<E> {
         };
         let mut rec = Record::new(
             self.tag.sketch.clone(),
-            self.tag.impl_name.clone(),
+            self.tag.library.clone(),
             wd,
             RecordMode::Runtime,
             1,

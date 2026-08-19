@@ -51,7 +51,7 @@ pub fn run(args: AtomicCostsArgs) -> Result<()> {
                 .as_ref()
                 .map(|c| c.to_string())
                 .unwrap_or_default(),
-            record.impl_name,
+            record.library,
         );
     }
 
