@@ -43,6 +43,14 @@ pub enum SkipReason {
     /// A rate/elapsed pair implies zero work — dividing by it would produce
     /// `inf`/`NaN` rather than a real cost.
     ZeroWork(&'static str),
+    /// `rate`, `elapsed_ms` and `cpu_time_ms` didn't carry the same number of
+    /// per-run samples, so there's no safe way to pair sample *i* of one with
+    /// sample *i* of another — `fold.rs`'s `rate()`/`elapsed_ms()`/
+    /// `cpu_time_ms()` each filter out unusable runs independently, so a run
+    /// dropped by one but not another shifts every later index out of step.
+    /// Pairing anyway would silently multiply/divide unrelated runs' numbers
+    /// together, which is worse than skipping.
+    MisalignedSamples(&'static str),
 }
 
 impl std::fmt::Display for SkipReason {
@@ -51,6 +59,9 @@ impl std::fmt::Display for SkipReason {
             SkipReason::MissingField(field) => write!(f, "missing {field}"),
             SkipReason::MissingSubField(op, field) => write!(f, "missing {op} {field}"),
             SkipReason::ZeroWork(op) => write!(f, "{op} rate/elapsed imply zero work"),
+            SkipReason::MisalignedSamples(op) => {
+                write!(f, "{op} rate/elapsed/cpu_time sample counts disagree")
+            }
         }
     }
 }
@@ -58,31 +69,50 @@ impl std::fmt::Display for SkipReason {
 /// Seconds of CPU time (user + sys) per single operation, derived from a
 /// rate/elapsed pair rather than from an assumed item or query count.
 ///
-/// `rate` (items or folds per sec) and `elapsed_ms` are both computed by
-/// `aqpbm-core::run_stats` from the same timed span's `work` count, so
-/// `rate.mean * (elapsed_ms.mean / 1000)` recovers that `work` count without
-/// this crate needing to know it independently (the raw count itself isn't
-/// serialized onto the record — only the rate and the elapsed time are). This
-/// works uniformly for insert (rate = items/sec), query (rate =
+/// `rate` (items or folds per sec) and `elapsed_ms` don't serialize the raw
+/// `work` count each run measured, only their own per-run samples. But
+/// `rate.samples[i]` and `elapsed_ms.samples[i]` come from the *same* run
+/// `i`, so `rate.samples[i] * elapsed_ms.samples[i]` recovers that run's
+/// exact `work` count (rather than `rate.mean * elapsed_ms.mean`, which is
+/// biased whenever elapsed time varies run to run — the mean of a ratio times
+/// the mean of its denominator isn't the mean of the numerator). Summing
+/// `work_i` and `cpu_i` separately and dividing the sums, instead of
+/// averaging each run's `cpu_i / work_i`, matches what "total CPU time over
+/// total ops" means physically.
+///
+/// This works uniformly for insert (rate = items/sec), query (rate =
 /// items/sec) and merge (rate = folds/sec, so the result is cost per fold,
 /// which is what `query_cost`'s `merges * merge_cpu_secs` wants).
 fn cpu_secs_per_op(
     op: &'static str,
-    rate: Option<RunStats>,
-    elapsed_ms: Option<RunStats>,
-    cpu_time_ms: Option<CpuTime>,
+    rate: Option<&RunStats>,
+    elapsed_ms: Option<&RunStats>,
+    cpu_time_ms: Option<&CpuTime>,
 ) -> Result<f64, SkipReason> {
     let rate = rate.ok_or(SkipReason::MissingSubField(op, "rate"))?;
     let elapsed_ms = elapsed_ms.ok_or(SkipReason::MissingSubField(op, "elapsed"))?;
     let cpu_time_ms = cpu_time_ms.ok_or(SkipReason::MissingSubField(op, "cpu_time"))?;
 
-    let work = rate.mean * (elapsed_ms.mean / 1000.0);
-    if !work.is_finite() || work <= 0.0 {
-        return Err(SkipReason::ZeroWork(op));
+    let n = rate.samples.len();
+    if n == 0
+        || elapsed_ms.samples.len() != n
+        || cpu_time_ms.user_ms.samples.len() != n
+        || cpu_time_ms.sys_ms.samples.len() != n
+    {
+        return Err(SkipReason::MisalignedSamples(op));
     }
 
-    let cpu_ms_total = cpu_time_ms.user_ms.mean + cpu_time_ms.sys_ms.mean;
-    Ok((cpu_ms_total / 1000.0) / work)
+    let mut work_total = 0.0;
+    let mut cpu_ms_total = 0.0;
+    for i in 0..n {
+        work_total += rate.samples[i] * (elapsed_ms.samples[i] / 1000.0);
+        cpu_ms_total += cpu_time_ms.user_ms.samples[i] + cpu_time_ms.sys_ms.samples[i];
+    }
+
+    if !work_total.is_finite() || work_total <= 0.0 {
+        return Err(SkipReason::ZeroWork(op));
+    }
+    Ok((cpu_ms_total / 1000.0) / work_total)
 }
 
 /// Reduce one [`MergedRecord`] to one [`AtomicCostEntry`], or say which
@@ -98,21 +128,21 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
 
     let insert_cpu_secs = cpu_secs_per_op(
         "insert",
-        record.insert.throughput_items_per_sec,
-        record.insert.wall_time_ms,
-        record.insert.cpu_time_ms,
+        record.insert.throughput_items_per_sec.as_ref(),
+        record.insert.wall_time_ms.as_ref(),
+        record.insert.cpu_time_ms.as_ref(),
     )?;
     let query_cpu_secs = cpu_secs_per_op(
         "query",
-        record.query.throughput_items_per_sec,
-        record.query.wall_time_ms,
-        record.query.cpu_time_ms,
+        record.query.throughput_items_per_sec.as_ref(),
+        record.query.wall_time_ms.as_ref(),
+        record.query.cpu_time_ms.as_ref(),
     )?;
     let merge_cpu_secs = cpu_secs_per_op(
         "merge",
-        record.merge.merge_folds_per_sec,
-        record.merge.wall_time_ms,
-        record.merge.cpu_time_ms,
+        record.merge.merge_folds_per_sec.as_ref(),
+        record.merge.wall_time_ms.as_ref(),
+        record.merge.cpu_time_ms.as_ref(),
     )?;
 
     Ok(AtomicCostEntry {
@@ -152,11 +182,19 @@ mod tests {
     use aqpbm_datagen::TableDescription;
 
     fn stats(mean: f64) -> RunStats {
+        stats_n(mean, 5)
+    }
+
+    /// Same, but with an explicit sample count — for tests that need a
+    /// specific `samples.len()` (e.g. to simulate one field's fold dropping
+    /// more runs than another's).
+    fn stats_n(mean: f64, n: usize) -> RunStats {
         RunStats {
             mean,
             stddev: 0.0,
             ci95: None,
-            n: 5,
+            n,
+            samples: vec![mean; n],
         }
     }
 
@@ -276,6 +314,21 @@ mod tests {
         assert_eq!(
             reduce_one(&record),
             Err(SkipReason::ZeroWork("insert"))
+        );
+    }
+
+    #[test]
+    fn mismatched_sample_counts_are_skipped_not_mispaired() {
+        // Simulates fold.rs's rate() dropping one run (e.g. a stray
+        // elapsed_ns == 0) that elapsed_ms()/cpu_time_ms() kept: rate has 4
+        // samples, elapsed_ms and cpu_time_ms have 5. Pairing by index
+        // anyway would silently multiply/divide unrelated runs' numbers
+        // together instead of the intended same-run pair.
+        let mut record = full_record();
+        record.insert.throughput_items_per_sec = Some(stats_n(1_000_000.0, 4));
+        assert_eq!(
+            reduce_one(&record),
+            Err(SkipReason::MisalignedSamples("insert"))
         );
     }
 
