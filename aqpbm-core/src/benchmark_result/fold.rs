@@ -150,7 +150,7 @@ fn maybe_runstats(samples: Vec<f64>) -> Option<RunStats> {
 
 /// Summarise the post-warmup iterations of one process. `ci95` is deliberately
 /// `None` — these iterations are not independent samples, so no interval over
-/// them means what one claims. `--repeats R` fills it in. See `RunStats::ci95`.
+/// them means what one claims. See `RunStats::ci95`.
 fn runstats_from(samples: Vec<f64>) -> RunStats {
     let mut w = Welford::new();
     for s in &samples {

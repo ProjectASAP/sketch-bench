@@ -143,18 +143,13 @@ pub struct SketchbenchArgs {
 
     /// Measured runs inside one process, summarised as mean / stddev /
     /// `throughput_samples`. They share a process, so they support no
-    /// confidence interval. See `--repeats`.
+    /// confidence interval.
     #[arg(long, default_value_t = 10, help_heading = "Repetition")]
     pub runs: usize,
     /// Runs discarded before measurement begins. A cold allocator and a cold
     /// cache measure the wrong thing.
     #[arg(long, default_value_t = 3, help_heading = "Repetition")]
     pub warmup_runs: usize,
-    /// Re-execute the whole invocation in this many separate processes and
-    /// report the 95% CI over their means. The only setting that makes `ci95`
-    /// appear. At 1 no interval is claimed. Costs R times the wall clock.
-    #[arg(long, default_value_t = 1, help_heading = "Repetition")]
-    pub repeats: usize,
 
     /// Comma-separated: throughput,latency,accuracy,cpu,memory. What is
     /// measured. Crossed with `--operations` to give the measurements this run

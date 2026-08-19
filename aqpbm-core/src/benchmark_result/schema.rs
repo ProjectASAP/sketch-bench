@@ -178,12 +178,13 @@ pub struct RunStats {
     pub mean: f64,
     pub stddev: f64,
     /// 95% CI on the mean — **present only when the samples are statistically
-    /// independent**, i.e. `--repeats R` (R > 1) over R processes. Iterations of
-    /// one `--runs N` share too much for an interval over them to mean anything.
+    /// independent**, which requires measuring in separate processes. Nothing
+    /// writes it today: iterations of one `--runs N` share a process, and share
+    /// too much for an interval over them to mean anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci95: Option<[f64; 2]>,
-    /// Number of samples behind `mean`. Iterations within one process when
-    /// `ci95` is absent; independent processes when it is present.
+    /// Number of samples behind `mean`: the measured iterations of one
+    /// `--runs N`, all within one process.
     pub n: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub samples: Vec<f64>,
