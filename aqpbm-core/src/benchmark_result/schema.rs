@@ -109,14 +109,9 @@ pub struct BenchSection {
     /// CDFs without re-running the bench.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_samples: Option<Vec<f64>>,
-    /// **Accumulator-build rate**: `items / (insert_wall + finalize_wall)`, the
-    /// rate a *ready-to-answer* sketch is produced at. No producer here writes
-    /// it; kept because the field is in the wire schema and must still pool.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub build_throughput_items_per_sec: Option<RunStats>,
     /// Wall time of `Accumulator::prepare` per run — the deferred build cost
-    /// separating the two throughput columns. `0.0` means finalize really is a
-    /// no-op, which is a measurement, not a gap.
+    /// that [`Self::throughput_items_per_sec`] excludes. `0.0` means finalize
+    /// really is a no-op, which is a measurement, not a gap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalize_time_ms: Option<RunStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -264,8 +259,6 @@ pub struct InsertMetrics {
     pub throughput_items_per_sec: Option<RunStats>,
     #[serde(rename = "insert_throughput_samples")]
     pub throughput_samples: Option<Vec<f64>>,
-    #[serde(rename = "insert_build_throughput_items_per_sec")]
-    pub build_throughput_items_per_sec: Option<RunStats>,
     #[serde(rename = "insert_latency_ns")]
     pub latency_ns: Option<LatencySummary>,
     #[serde(rename = "insert_cpu_time_ms")]

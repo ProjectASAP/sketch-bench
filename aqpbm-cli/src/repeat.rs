@@ -131,15 +131,6 @@ fn merge(records: Vec<Record>) -> Record {
         bench.throughput_samples = Some(tput.samples.clone());
         bench.throughput_items_per_sec = Some(tput);
     }
-    // Pooled on its own rather than derived from the pooled ingest rate: the
-    // two columns are means of ratios, and `items / (insert + finalize)` is
-    // not recoverable from `items / insert`. No producer writes this today, but
-    // the field is in the schema, so a record carrying one must pool it.
-    if let Some(b) = across(records.iter(), |b| {
-        b.build_throughput_items_per_sec.as_ref()
-    }) {
-        bench.build_throughput_items_per_sec = Some(b);
-    }
     if let Some(f) = across(records.iter(), |b| b.finalize_time_ms.as_ref()) {
         bench.finalize_time_ms = Some(f);
     }
@@ -223,7 +214,6 @@ mod tests {
             operation: Some("merge".into()),
             throughput_items_per_sec: Some(stats(mean)),
             throughput_samples: Some(vec![mean, mean + 1.0]),
-            build_throughput_items_per_sec: Some(stats(mean * 0.9)),
             finalize_time_ms: Some(stats(0.5)),
             query_throughput_items_per_sec: Some(stats(mean * 2.0)),
             latency_ns: Some(LatencySummary {

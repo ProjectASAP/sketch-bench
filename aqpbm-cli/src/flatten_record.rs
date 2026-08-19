@@ -74,7 +74,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             operation: _,
             throughput_items_per_sec,
             throughput_samples,
-            build_throughput_items_per_sec,
             finalize_time_ms,
             query_throughput_items_per_sec,
             latency_ns,
@@ -124,10 +123,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                     *throughput_items_per_sec
                 );
                 keep!(out.insert.throughput_samples, throughput_samples.clone());
-                keep!(
-                    out.insert.build_throughput_items_per_sec,
-                    *build_throughput_items_per_sec
-                );
                 keep!(out.insert.latency_ns, *latency_ns);
                 keep!(out.insert.cpu_time_ms, *cpu_time_ms);
                 keep!(out.insert.wall_time_ms, *wall_time_ms);

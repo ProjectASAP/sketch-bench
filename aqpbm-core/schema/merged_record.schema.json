@@ -25,16 +25,6 @@
     "impl": {
       "type": "string"
     },
-    "insert_build_throughput_items_per_sec": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "insert_cpu_time_ms": {
       "anyOf": [
         {
@@ -346,7 +336,6 @@
     "heap_bytes_net",
     "heap_bytes_peak",
     "impl",
-    "insert_build_throughput_items_per_sec",
     "insert_cpu_time_ms",
     "insert_heap_allocated_kb",
     "insert_latency_ns",
@@ -589,7 +578,7 @@
       "type": "object",
       "properties": {
         "ci95": {
-          "description": "95% CI on the mean — **present only when the samples are statistically\nindependent**, i.e. `--repeats R` (R > 1) over R processes. Iterations of\none `--runs N` share too much for an interval over them to mean anything.",
+          "description": "95% CI on the mean — **present only when the samples are statistically\nindependent**, i.e. `--repeat-experiment R` (R > 1) over R processes.\nIterations of\none `--runs N` share too much for an interval over them to mean anything.",
           "type": [
             "array",
             "null"
