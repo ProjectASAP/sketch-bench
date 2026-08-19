@@ -1,0 +1,777 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MergedRecord",
+  "description": "Flattened form of the [`Record`]s that share one (sketch, impl,\nsketch_config, dataset) identity: one row per invocation, where the record\nstream writes one per measurement. Built by `aqpbm-cli`'s `flatten_record`.\nLives beside [`Record`] because it is a JSONL wire shape, not CLI logic.",
+  "type": "object",
+  "properties": {
+    "heap_bytes_net": {
+      "description": "Net bytes the tracking allocator attributes to this sketch's lifetime —\n**measured**, where [`Self::memory_bytes`] is a self-reported formula.\nIts own field, so a gap between the two stays visible. Needs `heap-track`.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "heap_bytes_peak": {
+      "description": "High-water mark of the same counter across construction and insert.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "impl": {
+      "type": "string"
+    },
+    "insert_build_throughput_items_per_sec": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "insert_cpu_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CpuTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "insert_heap_allocated_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "insert_latency_ns": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LatencySummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "insert_rss_peak_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "insert_throughput_items_per_sec": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "insert_throughput_samples": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "number",
+        "format": "double"
+      }
+    },
+    "insert_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "insert_wall_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "language": {
+      "$ref": "#/$defs/Language"
+    },
+    "memory_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "merge_cpu_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CpuTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "merge_folds_per_sec": {
+      "description": "How many folds a second: the throughput reading of the same clock.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "merge_heap_allocated_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "merge_rss_peak_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "merge_shards": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0
+    },
+    "merge_supported": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "merge_time_ms": {
+      "description": "How long one fold took: the latency reading of this operation.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "merge_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "merge_wall_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mode": {
+      "$ref": "#/$defs/Mode"
+    },
+    "prepare_cpu_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CpuTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prepare_finalize_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prepare_heap_allocated_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "prepare_rss_peak_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "prepare_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "prepare_wall_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query_accuracy": {
+      "description": "The comparator's scores. Only this operation has them: accuracy is\nwhat an answer can be scored for, and query is what produces one."
+    },
+    "query_cpu_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CpuTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query_heap_allocated_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "query_latency_ns": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LatencySummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query_rss_peak_kb": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "query_throughput_items_per_sec": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "query_wall_time_ms": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStats"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runs": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "sketch": {
+      "type": "string"
+    },
+    "sketch_config": true,
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "workload": {
+      "description": "The data this run was measured over. The wire name stays `workload` while\nthe Rust name does not: it is the group key `scripts/merge_passes.py`\npools by, so renaming the field would be a schema break for a word.",
+      "$ref": "#/$defs/TableDescription"
+    }
+  },
+  "required": [
+    "heap_bytes_net",
+    "heap_bytes_peak",
+    "impl",
+    "insert_build_throughput_items_per_sec",
+    "insert_cpu_time_ms",
+    "insert_heap_allocated_kb",
+    "insert_latency_ns",
+    "insert_rss_peak_kb",
+    "insert_throughput_items_per_sec",
+    "insert_throughput_samples",
+    "insert_timestamp",
+    "insert_wall_time_ms",
+    "language",
+    "memory_bytes",
+    "merge_cpu_time_ms",
+    "merge_heap_allocated_kb",
+    "merge_rss_peak_kb",
+    "merge_shards",
+    "merge_supported",
+    "merge_time_ms",
+    "merge_timestamp",
+    "merge_wall_time_ms",
+    "mode",
+    "prepare_cpu_time_ms",
+    "prepare_finalize_time_ms",
+    "prepare_heap_allocated_kb",
+    "prepare_rss_peak_kb",
+    "prepare_timestamp",
+    "prepare_wall_time_ms",
+    "query_accuracy",
+    "query_cpu_time_ms",
+    "query_heap_allocated_kb",
+    "query_latency_ns",
+    "query_rss_peak_kb",
+    "query_throughput_items_per_sec",
+    "query_timestamp",
+    "query_wall_time_ms",
+    "runs",
+    "schema_version",
+    "sketch",
+    "sketch_config",
+    "source",
+    "workload"
+  ],
+  "x-schema-version": 4,
+  "$defs": {
+    "ColumnSpec": {
+      "description": "One column of a [`crate::TableDescription`].",
+      "type": "object",
+      "properties": {
+        "cardinality": {
+          "description": "A restatement of the distribution's domain size. Optional, and checked\nagainst the distribution rather than overriding it: two ways of saying\nthe same thing that disagree are a description error.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "data_type": {
+          "description": "Which [`ColumnData`] variant this column renders into.",
+          "type": "string"
+        },
+        "distribution": {
+          "$ref": "#/$defs/DataDistribution"
+        },
+        "shift": {
+          "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "special_rule": {
+          "description": "Bit mask; see [`crate::rule`]. `0` means no special rules.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "string": {
+          "description": "Rendering options for `data_type: string`. Absent means the defaults.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StringOpts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "distribution",
+        "data_type"
+      ]
+    },
+    "CpuTime": {
+      "description": "CPU time split into user vs sys.",
+      "type": "object",
+      "properties": {
+        "sys_ms": {
+          "$ref": "#/$defs/RunStats"
+        },
+        "user_ms": {
+          "$ref": "#/$defs/RunStats"
+        }
+      },
+      "required": [
+        "user_ms",
+        "sys_ms"
+      ]
+    },
+    "DataDistribution": {
+      "description": "A column's distribution. Serialises internally tagged, so a spec file reads\n`distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "zipf"
+            }
+          },
+          "$ref": "#/$defs/ZipfParameter",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "uniform"
+            }
+          },
+          "$ref": "#/$defs/UniformParameter",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "normal"
+            }
+          },
+          "$ref": "#/$defs/NormalParameter",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "Language": {
+      "description": "Implementation language of the run that produced this record.\nUsed by readers to split apples-to-apples comparisons.",
+      "type": "string",
+      "enum": [
+        "rust",
+        "cpp"
+      ]
+    },
+    "LatencySummary": {
+      "description": "Latency percentile summary extracted from an\n`hdrhistogram::Histogram`.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "p50": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "p95": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "p99": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "p999": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "p50",
+        "p95",
+        "p99",
+        "p999",
+        "max",
+        "count"
+      ]
+    },
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "bench",
+        "runtime"
+      ]
+    },
+    "NormalParameter": {
+      "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
+      "type": "object",
+      "properties": {
+        "mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "standard_deviation": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "mean",
+        "standard_deviation",
+        "seed"
+      ]
+    },
+    "RunStats": {
+      "description": "Aggregate across N samples: mean / stddev / optional 95% CI, plus the raw\nsamples the aggregate was computed from.",
+      "type": "object",
+      "properties": {
+        "ci95": {
+          "description": "95% CI on the mean — **present only when the samples are statistically\nindependent**, i.e. `--repeats R` (R > 1) over R processes. Iterations of\none `--runs N` share too much for an interval over them to mean anything.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "mean": {
+          "type": "number",
+          "format": "double"
+        },
+        "n": {
+          "description": "Number of samples behind `mean`. Iterations within one process when\n`ci95` is absent; independent processes when it is present.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "stddev": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "mean",
+        "stddev",
+        "n"
+      ]
+    },
+    "Source": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "data-collector",
+            "asap-query"
+          ]
+        },
+        {
+          "description": "Run produced by the `approxbench` CLI.",
+          "type": "string",
+          "const": "cli"
+        },
+        {
+          "description": "Run produced by an embedded sampler in one of the downstream apps.\nNo producer in this workspace emits these; they are read, not written.",
+          "type": "string",
+          "const": "asap-fusion"
+        },
+        {
+          "description": "Run produced by a `cpp-bench` binary (Google Benchmark\nbased C++ track). See `docs/archive/SCHEMA_V1.md`.",
+          "type": "string",
+          "const": "cpp-bench"
+        }
+      ]
+    },
+    "StringOpts": {
+      "description": "How a drawn rank becomes a string.",
+      "type": "object",
+      "properties": {
+        "alphabet": {
+          "description": "Characters strings are built from. Order matters: it is the digit order\nof the positional encoding below.",
+          "type": "string",
+          "default": "abcdefghijklmnopqrstuvwxyz0123456789"
+        },
+        "max_len": {
+          "type": "integer",
+          "format": "uint",
+          "default": 24,
+          "minimum": 0
+        },
+        "min_len": {
+          "description": "Inclusive length bounds. Equal values give fixed-length keys.",
+          "type": "integer",
+          "format": "uint",
+          "default": 8,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TableDescription": {
+      "description": "A complete generation request.",
+      "type": "object",
+      "properties": {
+        "column_connected": {
+          "description": "Groups of columns that vary together, named by label. See\n[`TableDescription::validate`] for what a group must satisfy.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "column_label": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "column_num": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "column_spec": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ColumnSpec"
+          }
+        },
+        "row_num": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "column_num",
+        "column_label",
+        "column_spec",
+        "row_num"
+      ]
+    },
+    "UniformParameter": {
+      "description": "Flat over `[lower_bound, upper_bound)`.",
+      "type": "object",
+      "properties": {
+        "lower_bound": {
+          "type": "number",
+          "format": "double"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "upper_bound": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "lower_bound",
+        "upper_bound",
+        "seed"
+      ]
+    },
+    "ZipfParameter": {
+      "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
+      "type": "object",
+      "properties": {
+        "population_size": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "skewness": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "skewness",
+        "population_size",
+        "seed"
+      ]
+    }
+  }
+}

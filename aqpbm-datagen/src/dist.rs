@@ -14,6 +14,7 @@ fn bad(msg: String) -> DataGenError {
 
 /// Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks
 /// `1..=population_size`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ZipfParameter {
     pub skewness: f64,
@@ -22,6 +23,7 @@ pub struct ZipfParameter {
 }
 
 /// Flat over `[lower_bound, upper_bound)`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UniformParameter {
     pub lower_bound: f64,
@@ -30,6 +32,7 @@ pub struct UniformParameter {
 }
 
 /// Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalParameter {
     pub mean: f64,
@@ -39,6 +42,7 @@ pub struct NormalParameter {
 
 /// A column's distribution. Serialises internally tagged, so a spec file reads
 /// `distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DataDistribution {

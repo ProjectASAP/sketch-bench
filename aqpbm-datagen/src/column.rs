@@ -14,6 +14,7 @@ use crate::value::{ColumnData, StrCfg, StringOpts};
 pub const DATA_TYPES: [&str; 4] = ["i64", "u64", "f64", "string"];
 
 /// One column of a [`crate::TableDescription`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnSpec {
     pub distribution: DataDistribution,

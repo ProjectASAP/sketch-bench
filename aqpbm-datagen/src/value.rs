@@ -166,6 +166,7 @@ impl ColumnItem for String {
 }
 
 /// How a drawn rank becomes a string.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StringOpts {

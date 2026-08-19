@@ -36,6 +36,7 @@ fn connected_chunk(bits: u64, member: usize, group_size: usize) -> u64 {
 }
 
 /// A complete generation request.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDescription {
     pub column_num: u32,
