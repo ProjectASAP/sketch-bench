@@ -22,11 +22,11 @@ use aqpbm_core::accuracy::keyedentropy::KeyedEntropyGT;
 use aqpbm_core::accuracy::keyedl1norm::KeyedL1NormGT;
 use aqpbm_core::accuracy::keyedl2norm::KeyedL2NormGT;
 use aqpbm_core::accuracy::quantile::RankErrorGT;
-use aqpbm_core::accuracy::{questions, GroundTruth};
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::Score;
+use aqpbm_core::accuracy::{questions, GroundTruth};
 use aqpbm_core::error::RunError;
 use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
@@ -36,7 +36,9 @@ use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 
 use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
 use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
-use sketch_bench::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
+use sketch_bench::wrappers::hll::{
+    datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
+};
 use sketch_bench::wrappers::hydra::{polars as hp, sketchlib as hs};
 use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};

@@ -15,7 +15,6 @@
 # Rust target directories
 target/
 **/target/
-Cargo.lock
 rust-target/
 target-local/
 .cargo-target/

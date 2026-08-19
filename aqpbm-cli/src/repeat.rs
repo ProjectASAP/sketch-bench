@@ -135,13 +135,17 @@ fn merge(records: Vec<Record>) -> Record {
     // two columns are means of ratios, and `items / (insert + finalize)` is
     // not recoverable from `items / insert`. No producer writes this today, but
     // the field is in the schema, so a record carrying one must pool it.
-    if let Some(b) = across(records.iter(), |b| b.build_throughput_items_per_sec.as_ref()) {
+    if let Some(b) = across(records.iter(), |b| {
+        b.build_throughput_items_per_sec.as_ref()
+    }) {
         bench.build_throughput_items_per_sec = Some(b);
     }
     if let Some(f) = across(records.iter(), |b| b.finalize_time_ms.as_ref()) {
         bench.finalize_time_ms = Some(f);
     }
-    if let Some(q) = across(records.iter(), |b| b.query_throughput_items_per_sec.as_ref()) {
+    if let Some(q) = across(records.iter(), |b| {
+        b.query_throughput_items_per_sec.as_ref()
+    }) {
         bench.query_throughput_items_per_sec = Some(q);
     }
     if let Some(wall) = across(records.iter(), |b| b.wall_time_ms.as_ref()) {
@@ -159,8 +163,12 @@ fn merge(records: Vec<Record>) -> Record {
     }
     // Same argument: CPU time is measured per process.
     if let (Some(user), Some(sys)) = (
-        across(records.iter(), |b| b.cpu_time_ms.as_ref().map(|c| &c.user_ms)),
-        across(records.iter(), |b| b.cpu_time_ms.as_ref().map(|c| &c.sys_ms)),
+        across(records.iter(), |b| {
+            b.cpu_time_ms.as_ref().map(|c| &c.user_ms)
+        }),
+        across(records.iter(), |b| {
+            b.cpu_time_ms.as_ref().map(|c| &c.sys_ms)
+        }),
     ) {
         bench.cpu_time_ms = Some(CpuTime {
             user_ms: user,
