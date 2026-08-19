@@ -25,6 +25,7 @@ use aqpbm_core::accuracy::quantile::RankErrorGT;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
 };
+use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::Score;
 use aqpbm_core::accuracy::{questions, GroundTruth};
 use aqpbm_core::error::RunError;
@@ -35,6 +36,7 @@ use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 
 use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
+use sketch_bench::wrappers::cms_heap::sketchlib as chl;
 use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
 use sketch_bench::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 use sketch_bench::wrappers::hll::{
@@ -105,6 +107,10 @@ fn binding(algorithm: &str, impl_name: &str) -> Option<RowBinding> {
         ("cms-fastpath-fixedmatrix-32k-parallel", "lib") => {
             row_cms_fastpath_fixedmatrix_32k_parallel_lib
         }
+        ("cms-heap-fastpath-vector2d", "lib") => row_cms_heap_fastpath_vector2d_lib,
+        ("cms-heap-regularpath-vector2d", "lib") => row_cms_heap_regularpath_vector2d_lib,
+        ("cms-heap-topk-fastpath-vector2d", "lib") => row_cms_heap_topk_fastpath_vector2d_lib,
+        ("cms-heap-topk-regularpath-vector2d", "lib") => row_cms_heap_topk_regularpath_vector2d_lib,
         ("countsketch", "oxide") => row_countsketch_oxide,
         ("countsketch", "polars") => row_countsketch_polars,
         ("countsketch-fastpath-fixedmatrix", "lib") => row_countsketch_fastpath_fixedmatrix_lib,
@@ -243,6 +249,94 @@ pub(crate) fn row_cms_regularpath_vector2d_lib(
             cl::merge_step_cms_lib_vector2d_regular,
         )),
         None,
+    )
+}
+
+// -------- CMS + heap --------
+
+pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        chl::insert_cms_heap_lib_vector2d_fast,
+        chl::insert_step_cms_heap_lib_vector2d_fast,
+        chl::query_cms_heap_lib_vector2d_fast_estimate,
+        Some((
+            chl::merge_cms_heap_lib_vector2d_fast,
+            chl::merge_step_cms_heap_lib_vector2d_fast,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    frequency_row(
+        req,
+        description,
+        table,
+        want,
+        chl::insert_cms_heap_lib_vector2d_regular,
+        chl::insert_step_cms_heap_lib_vector2d_regular,
+        chl::query_cms_heap_lib_vector2d_regular_estimate,
+        Some((
+            chl::merge_cms_heap_lib_vector2d_regular,
+            chl::merge_step_cms_heap_lib_vector2d_regular,
+        )),
+        None,
+    )
+}
+
+pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    topk_row(
+        req,
+        description,
+        table,
+        want,
+        chl::insert_cms_heap_lib_vector2d_fast,
+        chl::insert_step_cms_heap_lib_vector2d_fast,
+        chl::query_cms_heap_lib_vector2d_fast_topk,
+        Some((
+            chl::merge_cms_heap_lib_vector2d_fast,
+            chl::merge_step_cms_heap_lib_vector2d_fast,
+        )),
+    )
+}
+
+pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    topk_row(
+        req,
+        description,
+        table,
+        want,
+        chl::insert_cms_heap_lib_vector2d_regular,
+        chl::insert_step_cms_heap_lib_vector2d_regular,
+        chl::query_cms_heap_lib_vector2d_regular_topk,
+        Some((
+            chl::merge_cms_heap_lib_vector2d_regular,
+            chl::merge_step_cms_heap_lib_vector2d_regular,
+        )),
     )
 }
 
@@ -1037,6 +1131,37 @@ fn cardinality_row(
         query,
         merge,
         prepare,
+    )
+}
+
+/// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
+/// `()` — one question, the whole list, asked once — and `k` is
+/// `chl::CMS_HEAP_TOP_K`, the same compile-time constant the sketch was built
+/// with, so the heap's capacity and the truth it's graded against can never
+/// silently disagree (see #95's design-decision comment on the registry entry).
+#[allow(clippy::too_many_arguments)]
+fn topk_row(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<i64>,
+    insert_step: InsertStepBody<i64>,
+    query: QueryBody<i64, (), chl::TopkAnswer>,
+    merge: Option<Folds<i64>>,
+) -> Result<Measurements, RunError> {
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        TopkGT::<i64>::over_column(chl::CMS_HEAP_TOP_K, value_column(description)),
+        peel::<i64>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        None,
     )
 }
 
