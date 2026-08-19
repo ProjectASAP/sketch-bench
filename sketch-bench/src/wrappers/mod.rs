@@ -10,7 +10,7 @@ pub mod cms;
 pub mod cs;
 pub mod dd;
 pub mod hll;
-pub mod hydra;
+pub mod hydra_cms;
 pub mod kll;
 pub mod univmon;
 

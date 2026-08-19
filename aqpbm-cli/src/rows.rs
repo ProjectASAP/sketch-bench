@@ -40,7 +40,7 @@ use sketch_bench::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 use sketch_bench::wrappers::hll::{
     datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
 };
-use sketch_bench::wrappers::hydra::{polars as hp, sketchlib as hs};
+use sketch_bench::wrappers::hydra_cms::{polars as hp, sketchlib as hs};
 use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};
 
