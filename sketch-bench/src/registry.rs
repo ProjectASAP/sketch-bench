@@ -419,6 +419,39 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    // -------- DDSketch (quantile) --------
+    SketchId {
+        family: "dd",
+        algorithm: "dd",
+        impl_name: "lib",
+        description: "asap_sketchlib::DDSketch: relative-error buckets, alpha in (0, 1)",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        family: "dd",
+        algorithm: "dd",
+        impl_name: "oxide",
+        description: "sketch_oxide::quantiles::DDSketch: relative-error buckets, alpha in (0, 1)",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
     // Three families, not one: what sits in a cell decides which statistic the
     // grid answers, so each cell type gets its own params vocabulary and its own

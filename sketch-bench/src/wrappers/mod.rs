@@ -8,6 +8,7 @@
 // one place.
 pub mod cms;
 pub mod cs;
+pub mod dd;
 pub mod hll;
 pub mod hydra;
 pub mod kll;

@@ -36,6 +36,7 @@ use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 
 use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
 use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
+use sketch_bench::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 use sketch_bench::wrappers::hll::{
     datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
 };
@@ -122,6 +123,8 @@ fn binding(algorithm: &str, impl_name: &str) -> Option<RowBinding> {
         ("kll-cdf", "oxide") => row_kll_cdf_oxide,
         ("kll-cdf", "lib") => row_kll_cdf_lib,
         ("kll-cdf", "polars") => row_kll_cdf_polars,
+        ("dd", "lib") => row_dd_lib,
+        ("dd", "oxide") => row_dd_oxide,
         ("hydra-cms", "lib") => row_hydra_cms_lib,
         ("hydra-cms", "polars") => row_hydra_cms_polars,
         ("hydra-hll", "lib") => row_hydra_hll_lib,
@@ -611,6 +614,74 @@ pub(crate) fn row_kll_cdf_polars(
         None,
         Some(kp::prepare_polars_quantile_kll),
     )
+}
+
+// -------- DDSketch (quantile) --------
+
+pub(crate) fn row_dd_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            ddl::insert_dd_lib::<i64>,
+            ddl::insert_step_dd_lib::<i64>,
+            ddl::query_dd_lib::<i64>,
+            Some((ddl::merge_dd_lib::<i64>, ddl::merge_step_dd_lib::<i64>)),
+            None,
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            ddl::insert_dd_lib::<f64>,
+            ddl::insert_step_dd_lib::<f64>,
+            ddl::query_dd_lib::<f64>,
+            Some((ddl::merge_dd_lib::<f64>, ddl::merge_step_dd_lib::<f64>)),
+            None,
+        ),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_dd_oxide(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    match req.width {
+        Dtype::I64 => quantile_row::<i64>(
+            req,
+            description,
+            table,
+            want,
+            ddo::insert_dd_oxide::<i64>,
+            ddo::insert_step_dd_oxide::<i64>,
+            ddo::query_dd_oxide::<i64>,
+            Some((ddo::merge_dd_oxide::<i64>, ddo::merge_step_dd_oxide::<i64>)),
+            None,
+        ),
+        Dtype::F64 => quantile_row::<f64>(
+            req,
+            description,
+            table,
+            want,
+            ddo::insert_dd_oxide::<f64>,
+            ddo::insert_step_dd_oxide::<f64>,
+            ddo::query_dd_oxide::<f64>,
+            Some((ddo::merge_dd_oxide::<f64>, ddo::merge_step_dd_oxide::<f64>)),
+            None,
+        ),
+        other => Err(no_build_at(req, other)),
+    }
 }
 
 // -------- Hydra (per-subpopulation statistics over labelled records) --------

@@ -238,7 +238,9 @@ mod tests {
             mode: Mode::Bench,
             runs: 5,
             source: Source::Cli,
-            sketch_config: Some(serde_json::json!({"algorithm": "cms", "params": {"rows": 3, "cols": 1024}})),
+            sketch_config: Some(
+                serde_json::json!({"algorithm": "cms", "params": {"rows": 3, "cols": 1024}}),
+            ),
             input_dataset: dataset(),
             memory_bytes: Some(12_288),
             heap_bytes_net: None,
@@ -311,10 +313,7 @@ mod tests {
     fn zero_elapsed_time_is_skipped_not_divided() {
         let mut record = full_record();
         record.insert.wall_time_ms = Some(stats(0.0));
-        assert_eq!(
-            reduce_one(&record),
-            Err(SkipReason::ZeroWork("insert"))
-        );
+        assert_eq!(reduce_one(&record), Err(SkipReason::ZeroWork("insert")));
     }
 
     #[test]
