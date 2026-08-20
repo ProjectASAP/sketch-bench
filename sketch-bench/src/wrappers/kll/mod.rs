@@ -4,62 +4,7 @@
 //! and support multiple quantile queries from the precomputation
 //! not from KLL itself
 
-/// grounds, which rank-error analysis does not care about.
-pub trait ToF64 {
-    fn to_f64(self) -> f64;
-}
-
-impl ToF64 for f64 {
-    fn to_f64(self) -> f64 {
-        self
-    }
-}
-impl ToF64 for f32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for i32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u64 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-impl ToF64 for u32 {
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-
-/// A value an ordered (quantile) sketch can ingest. Adds a **total** order
-/// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
-/// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
-pub trait QuantileValue: ToF64 + Copy {
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
-}
-
-impl QuantileValue for i64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        Ord::cmp(self, other)
-    }
-}
-
-impl QuantileValue for f64 {
-    #[inline(always)]
-    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        f64::total_cmp(self, other)
-    }
-}
+pub use super::quantile_value::{QuantileValue, ToF64};
 
 use crate::params::*;
 use sketch_oxide::Mergeable as _;

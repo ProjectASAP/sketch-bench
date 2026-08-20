@@ -51,15 +51,47 @@ impl PolarsFrequencyCore {
     }
 }
 
+/// A value the `polars` baselines can build a column out of, at the width it
+/// was ingested at. Declared here, beside the only rows that build columns,
+/// rather than on the ordering trait the sketch rows share: `dd` has no
+/// `polars` row, and bolting this onto `QuantileValue` would have made every
+/// DDSketch wrapper carry a column-building method it never calls.
+pub trait PolarsColumnItem: Copy {
+    fn polars_column(values: &[Self]) -> Column;
+}
+
+impl PolarsColumnItem for i64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
+impl PolarsColumnItem for u64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
+impl PolarsColumnItem for f64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
 /// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
 /// quantile grid — lives in `prepare`, which the runner times separately.
 /// Insert is pure `Vec::push`; per-call `query()` is an array lookup.
-pub struct PolarsQuantileCore {
-    buf: Vec<i64>,
+///
+/// Generic over the ingested width: this row is what the sketch rows are scored
+/// against, so a width they build at and this one did not would leave their
+/// error unattributable. The `Dtype` match in each row is what keeps the two
+/// sets aligned.
+pub struct PolarsQuantileCore<T: PolarsColumnItem = i64> {
+    buf: Vec<T>,
     quantiles: [f64; 101],
 }
 
-impl Default for PolarsQuantileCore {
+impl<T: PolarsColumnItem> Default for PolarsQuantileCore<T> {
     fn default() -> Self {
         Self {
             buf: Vec::new(),
@@ -68,13 +100,13 @@ impl Default for PolarsQuantileCore {
     }
 }
 
-impl PolarsQuantileCore {
+impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     #[inline(always)]
-    pub fn update(&mut self, v: &i64) {
+    pub fn update(&mut self, v: &T) {
         self.buf.push(*v);
     }
     pub fn finalize(&mut self) {
-        let series = Column::new("v".into(), &self.buf);
+        let series = T::polars_column(&self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let exprs: Vec<Expr> = (0..=100)
             .map(|i| {
@@ -103,7 +135,7 @@ impl PolarsQuantileCore {
         self.quantiles[i]
     }
     pub fn memory_bytes(&self) -> usize {
-        self.buf.capacity() * std::mem::size_of::<i64>()
+        self.buf.capacity() * std::mem::size_of::<T>()
     }
 }
 

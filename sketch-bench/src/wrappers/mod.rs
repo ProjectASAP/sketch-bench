@@ -20,6 +20,7 @@ pub mod univmon;
 pub mod fixed_matrix;
 pub mod hydra_shared;
 pub mod polars_shared;
+pub mod quantile_value;
 
 use crate::params::ParamSet;
 use aqpbm_datagen::DataGenError;

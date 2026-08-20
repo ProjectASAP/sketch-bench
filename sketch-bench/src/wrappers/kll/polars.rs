@@ -12,7 +12,9 @@ use std::rc::Rc;
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_quantile_kll(config: &ParamSet) -> Result<PolarsQuantileKll, BuildError> {
+pub fn build_polars_quantile_kll<T: PolarsColumnItem>(
+    config: &ParamSet,
+) -> Result<PolarsQuantileKll<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -21,22 +23,30 @@ pub fn build_polars_quantile_kll(config: &ParamSet) -> Result<PolarsQuantileKll,
     Ok(PolarsQuantileKll::default())
 }
 
-pub fn memory_polars_quantile_kll(sketch: &PolarsQuantileKll) -> usize {
+pub fn memory_polars_quantile_kll<T: PolarsColumnItem>(sketch: &PolarsQuantileKll<T>) -> usize {
     sketch.0.memory_bytes()
 }
 
-#[derive(Default)]
-pub struct PolarsQuantileKll(PolarsQuantileCore);
+pub struct PolarsQuantileKll<T: PolarsColumnItem = i64>(PolarsQuantileCore<T>);
 
-pub fn insert_polars_quantile_kll(
+// Hand-written rather than derived: `derive` would bound `T: Default`, which
+// the ingested widths have no reason to satisfy. An empty buffer is what
+// "default" means here, and that needs nothing of `T`.
+impl<T: PolarsColumnItem> Default for PolarsQuantileKll<T> {
+    fn default() -> Self {
+        Self(PolarsQuantileCore::default())
+    }
+}
+
+pub fn insert_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_polars_quantile_kll(params)?;
+        let mut sketch = build_polars_quantile_kll::<T>(params)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -48,14 +58,14 @@ pub fn insert_polars_quantile_kll(
     Ok(out)
 }
 
-pub fn insert_step_polars_quantile_kll(
+pub fn insert_step_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_quantile_kll(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_quantile_kll::<T>(params)?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -71,16 +81,16 @@ pub fn insert_step_polars_quantile_kll(
     Ok(out)
 }
 
-pub fn query_polars_quantile_kll(
+pub fn query_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<f64>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_polars_quantile_kll(params)?;
+        let mut sketch = build_polars_quantile_kll::<T>(params)?;
         for v in items.iter() {
             sketch.0.update(v);
         }
@@ -98,15 +108,15 @@ pub fn query_polars_quantile_kll(
     Ok(out)
 }
 
-pub fn prepare_polars_quantile_kll(
+pub fn prepare_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Fed here: the closure below is the step that makes it ready to answer.
-        let mut sketch = build_polars_quantile_kll(params)?;
+        let mut sketch = build_polars_quantile_kll::<T>(params)?;
         for v in items.iter() {
             sketch.0.update(v);
         }
