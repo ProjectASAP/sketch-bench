@@ -2,7 +2,6 @@
 //! core, and the subset fan-out every grouped baseline needs. Hoisted here
 //! when the baselines moved next to the algorithms they score.
 
-use super::kll::QuantileValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
 
@@ -52,19 +51,47 @@ impl PolarsFrequencyCore {
     }
 }
 
+/// A value the `polars` baselines can build a column out of, at the width it
+/// was ingested at. Declared here, beside the only rows that build columns,
+/// rather than on the ordering trait the sketch rows share: `dd` has no
+/// `polars` row, and bolting this onto `QuantileValue` would have made every
+/// DDSketch wrapper carry a column-building method it never calls.
+pub trait PolarsColumnItem: Copy {
+    fn polars_column(values: &[Self]) -> Column;
+}
+
+impl PolarsColumnItem for i64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
+impl PolarsColumnItem for u64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
+impl PolarsColumnItem for f64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
 /// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
 /// quantile grid — lives in `prepare`, which the runner times separately.
 /// Insert is pure `Vec::push`; per-call `query()` is an array lookup.
 ///
-/// Generic over the ingested width, and over the same [`QuantileValue`] the
-/// sketch rows are: this row is what those rows are scored against, so a width
-/// they build at and this one did not would leave their error unattributable.
-pub struct PolarsQuantileCore<T: QuantileValue = i64> {
+/// Generic over the ingested width: this row is what the sketch rows are scored
+/// against, so a width they build at and this one did not would leave their
+/// error unattributable. The `Dtype` match in each row is what keeps the two
+/// sets aligned.
+pub struct PolarsQuantileCore<T: PolarsColumnItem = i64> {
     buf: Vec<T>,
     quantiles: [f64; 101],
 }
 
-impl<T: QuantileValue> Default for PolarsQuantileCore<T> {
+impl<T: PolarsColumnItem> Default for PolarsQuantileCore<T> {
     fn default() -> Self {
         Self {
             buf: Vec::new(),
@@ -73,7 +100,7 @@ impl<T: QuantileValue> Default for PolarsQuantileCore<T> {
     }
 }
 
-impl<T: QuantileValue> PolarsQuantileCore<T> {
+impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     #[inline(always)]
     pub fn update(&mut self, v: &T) {
         self.buf.push(*v);

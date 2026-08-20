@@ -4,7 +4,7 @@ use crate::wrappers::BuildError;
 pub mod oxide;
 pub mod sketchlib;
 
-pub use super::kll::{QuantileValue, ToF64};
+pub use super::quantile_value::{QuantileValue, ToF64};
 
 fn require_alpha(what: &str, alpha: f64) -> Result<(), BuildError> {
     if !(alpha > 0.0 && alpha < 1.0) {

@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_quantile_kll<T: QuantileValue>(
+pub fn build_polars_quantile_kll<T: PolarsColumnItem>(
     config: &ParamSet,
 ) -> Result<PolarsQuantileKll<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
@@ -23,22 +23,22 @@ pub fn build_polars_quantile_kll<T: QuantileValue>(
     Ok(PolarsQuantileKll::default())
 }
 
-pub fn memory_polars_quantile_kll<T: QuantileValue>(sketch: &PolarsQuantileKll<T>) -> usize {
+pub fn memory_polars_quantile_kll<T: PolarsColumnItem>(sketch: &PolarsQuantileKll<T>) -> usize {
     sketch.0.memory_bytes()
 }
 
-pub struct PolarsQuantileKll<T: QuantileValue = i64>(PolarsQuantileCore<T>);
+pub struct PolarsQuantileKll<T: PolarsColumnItem = i64>(PolarsQuantileCore<T>);
 
 // Hand-written rather than derived: `derive` would bound `T: Default`, which
 // the ingested widths have no reason to satisfy. An empty buffer is what
 // "default" means here, and that needs nothing of `T`.
-impl<T: QuantileValue> Default for PolarsQuantileKll<T> {
+impl<T: PolarsColumnItem> Default for PolarsQuantileKll<T> {
     fn default() -> Self {
         Self(PolarsQuantileCore::default())
     }
 }
 
-pub fn insert_polars_quantile_kll<T: QuantileValue + 'static>(
+pub fn insert_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     passes: usize,
@@ -58,7 +58,7 @@ pub fn insert_polars_quantile_kll<T: QuantileValue + 'static>(
     Ok(out)
 }
 
-pub fn insert_step_polars_quantile_kll<T: QuantileValue + 'static>(
+pub fn insert_step_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     passes: usize,
@@ -81,7 +81,7 @@ pub fn insert_step_polars_quantile_kll<T: QuantileValue + 'static>(
     Ok(out)
 }
 
-pub fn query_polars_quantile_kll<T: QuantileValue + 'static>(
+pub fn query_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     probes: Rc<Vec<f64>>,
@@ -108,7 +108,7 @@ pub fn query_polars_quantile_kll<T: QuantileValue + 'static>(
     Ok(out)
 }
 
-pub fn prepare_polars_quantile_kll<T: QuantileValue + 'static>(
+pub fn prepare_polars_quantile_kll<T: PolarsColumnItem + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     passes: usize,
