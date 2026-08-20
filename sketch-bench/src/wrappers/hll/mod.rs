@@ -4,7 +4,116 @@
 
 use crate::params::*;
 use crate::wrappers::BuildError;
+use ::polars::prelude::Column;
+use asap_sketchlib::DataInput;
 use sketch_oxide::Mergeable as _;
+use std::hash::Hash;
+
+pub trait CardinalityValue: Clone + Sync + 'static {
+    type HashKey<'a>: Hash
+    where
+        Self: 'a;
+
+    fn hash_key(&self) -> Self::HashKey<'_>;
+
+    fn data_input(&self) -> DataInput<'_>;
+
+    fn polars_column(values: &[Self]) -> Column;
+
+    fn heap_bytes(&self) -> usize;
+}
+
+impl CardinalityValue for i64 {
+    type HashKey<'a> = i64;
+
+    #[inline(always)]
+    fn hash_key(&self) -> i64 {
+        *self
+    }
+
+    #[inline(always)]
+    fn data_input(&self) -> DataInput<'_> {
+        DataInput::I64(*self)
+    }
+
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl CardinalityValue for u64 {
+    type HashKey<'a> = u64;
+
+    #[inline(always)]
+    fn hash_key(&self) -> u64 {
+        *self
+    }
+
+    #[inline(always)]
+    fn data_input(&self) -> DataInput<'_> {
+        DataInput::U64(*self)
+    }
+
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl CardinalityValue for f64 {
+    type HashKey<'a> = u64;
+
+    #[inline(always)]
+    fn hash_key(&self) -> u64 {
+        self.to_bits()
+    }
+
+    #[inline(always)]
+    fn data_input(&self) -> DataInput<'_> {
+        DataInput::F64(*self)
+    }
+
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl CardinalityValue for String {
+    type HashKey<'a> = &'a str;
+
+    #[inline(always)]
+    fn hash_key(&self) -> &str {
+        self.as_str()
+    }
+
+    #[inline(always)]
+    fn data_input(&self) -> DataInput<'_> {
+        DataInput::Str(self.as_str())
+    }
+
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        self.capacity()
+    }
+}
 
 pub mod datasketches;
 pub mod oxide;

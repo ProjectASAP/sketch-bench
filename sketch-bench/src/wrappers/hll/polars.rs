@@ -13,15 +13,18 @@ use std::rc::Rc;
 // `merge` lives on sketch_oxide's `Mergeable`, not on its `Accumulator`.
 
 /// `hll/polars` — distinct count via `n_unique`.
-pub struct PolarsCardinality {
-    buf: Vec<i64>,
+pub struct PolarsCardinality<T: CardinalityValue = i64> {
+    buf: Vec<T>,
+    buffered_heap_bytes: usize,
     estimate: f64,
 }
 
 /// Polars computes the exact answer and has no `(rows, cols)` to tune, so it
 /// ignores the `ParamSet` and builds unconditionally. Its record carries
 /// whatever config the run was given.
-pub fn build_polars_cardinality(config: &ParamSet) -> Result<PolarsCardinality, BuildError> {
+pub fn build_polars_cardinality<T: CardinalityValue>(
+    config: &ParamSet,
+) -> Result<PolarsCardinality<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -29,19 +32,20 @@ pub fn build_polars_cardinality(config: &ParamSet) -> Result<PolarsCardinality, 
     let _p: HllParams = config.parse()?;
     Ok(PolarsCardinality {
         buf: Vec::new(),
+        buffered_heap_bytes: 0,
         estimate: 0.0,
     })
 }
 
-pub fn memory_polars_cardinality(sketch: &PolarsCardinality) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<i64>()
+pub fn memory_polars_cardinality<T: CardinalityValue>(sketch: &PolarsCardinality<T>) -> usize {
+    sketch.buf.capacity() * std::mem::size_of::<T>() + sketch.buffered_heap_bytes
 }
 
-impl PolarsCardinality {
+impl<T: CardinalityValue> PolarsCardinality<T> {
     /// The exact answer, over the stream as buffered. Its own step because the
     /// runner times it as `prepare` — this row's cost is the pass, not the ask.
     fn finalize(&mut self) {
-        let series = Column::new("v".into(), &self.buf);
+        let series = T::polars_column(&self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let result = df
             .lazy()
@@ -57,19 +61,20 @@ impl PolarsCardinality {
     }
 }
 
-pub fn insert_polars_cardinality(
+pub fn insert_polars_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_polars_cardinality(params)?;
+        let mut sketch = build_polars_cardinality::<T>(params)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.buf.push(*v);
+                sketch.buffered_heap_bytes += v.heap_bytes();
+                sketch.buf.push(v.clone());
             }
             memory_polars_cardinality(&sketch)
         }) as Pass);
@@ -77,14 +82,14 @@ pub fn insert_polars_cardinality(
     Ok(out)
 }
 
-pub fn insert_step_polars_cardinality(
+pub fn insert_step_polars_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_cardinality(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_cardinality::<T>(params)?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -92,7 +97,8 @@ pub fn insert_step_polars_cardinality(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.buf.push(*v);
+                sketch.buffered_heap_bytes += v.heap_bytes();
+                sketch.buf.push(v.clone());
             }),
             footprint: Box::new(move || memory_polars_cardinality(&read.borrow())),
         });
@@ -100,18 +106,19 @@ pub fn insert_step_polars_cardinality(
     Ok(out)
 }
 
-pub fn query_polars_cardinality(
+pub fn query_polars_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_polars_cardinality(params)?;
+        let mut sketch = build_polars_cardinality::<T>(params)?;
         for v in items.iter() {
-            sketch.buf.push(*v);
+            sketch.buffered_heap_bytes += v.heap_bytes();
+            sketch.buf.push(v.clone());
         }
         sketch.finalize();
         let probes = probes.clone();
@@ -127,17 +134,18 @@ pub fn query_polars_cardinality(
     Ok(out)
 }
 
-pub fn prepare_polars_cardinality(
+pub fn prepare_polars_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Fed here: the closure below is the step that makes it ready to answer.
-        let mut sketch = build_polars_cardinality(params)?;
+        let mut sketch = build_polars_cardinality::<T>(params)?;
         for v in items.iter() {
-            sketch.buf.push(*v);
+            sketch.buffered_heap_bytes += v.heap_bytes();
+            sketch.buf.push(v.clone());
         }
         out.push(Box::new(move || {
             sketch.finalize();

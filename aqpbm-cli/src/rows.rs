@@ -462,17 +462,27 @@ pub(crate) fn row_hll_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    cardinality_row(
-        req,
-        description,
-        table,
-        want,
-        ho::insert_hll_oxide,
-        ho::insert_step_hll_oxide,
-        ho::query_hll_oxide,
-        Some((ho::merge_hll_oxide, ho::merge_step_hll_oxide)),
-        None,
-    )
+    macro_rules! at {
+        ($t:ty) => {
+            cardinality_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                ho::insert_hll_oxide::<$t>,
+                ho::insert_step_hll_oxide::<$t>,
+                ho::query_hll_oxide::<$t>,
+                Some((ho::merge_hll_oxide::<$t>, ho::merge_step_hll_oxide::<$t>)),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_hll_datasketches(
@@ -481,17 +491,30 @@ pub(crate) fn row_hll_datasketches(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    cardinality_row(
-        req,
-        description,
-        table,
-        want,
-        hd::insert_hll_datasketches,
-        hd::insert_step_hll_datasketches,
-        hd::query_hll_datasketches,
-        Some((hd::merge_hll_datasketches, hd::merge_step_hll_datasketches)),
-        None,
-    )
+    macro_rules! at {
+        ($t:ty) => {
+            cardinality_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hd::insert_hll_datasketches::<$t>,
+                hd::insert_step_hll_datasketches::<$t>,
+                hd::query_hll_datasketches::<$t>,
+                Some((
+                    hd::merge_hll_datasketches::<$t>,
+                    hd::merge_step_hll_datasketches::<$t>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_hll_polars(
@@ -500,17 +523,27 @@ pub(crate) fn row_hll_polars(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    cardinality_row(
-        req,
-        description,
-        table,
-        want,
-        hpo::insert_polars_cardinality,
-        hpo::insert_step_polars_cardinality,
-        hpo::query_polars_cardinality,
-        None,
-        Some(hpo::prepare_polars_cardinality),
-    )
+    macro_rules! at {
+        ($t:ty) => {
+            cardinality_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hpo::insert_polars_cardinality::<$t>,
+                hpo::insert_step_polars_cardinality::<$t>,
+                hpo::query_polars_cardinality::<$t>,
+                None,
+                Some(hpo::prepare_polars_cardinality::<$t>),
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_hll_fastpath_parallel_lib(
@@ -519,20 +552,31 @@ pub(crate) fn row_hll_fastpath_parallel_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    timed_row(
-        req,
-        description,
-        table,
-        want,
-        hl::insert_parallel_hll_fast_path,
-    )
+    macro_rules! at {
+        ($t:ty) => {
+            timed_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hl::insert_parallel_hll_fast_path::<$t>,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 // -------- KLL (quantile) --------
 //
-// The only rows `--dtype` selects anything for: their library is generic over
-// the value type, so a width picks a monomorphisation rather than being
-// refused. Each arm is its own instantiation.
+// Rows `--dtype` selects a type for: their library is generic over the value
+// type, so a width picks a monomorphisation rather than being refused. Each
+// arm is its own instantiation, and the two the library cannot order are
+// refused by name.
 
 pub(crate) fn row_kll_percall_oxide(
     req: &Requirement,
@@ -1106,16 +1150,16 @@ fn frequency_row(
 /// A row answering **cardinality**: how many distinct keys the stream carried.
 /// The probe is `()` — there is one question, asked repeatedly.
 #[allow(clippy::too_many_arguments)]
-fn cardinality_row(
+fn cardinality_row<T: ColumnItem>(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    insert: InsertBody<i64>,
-    insert_step: InsertStepBody<i64>,
-    query: QueryBody<i64, (), f64>,
-    merge: Option<Folds<i64>>,
-    prepare: Option<PrepareBody<i64>>,
+    insert: InsertBody<T>,
+    insert_step: InsertStepBody<T>,
+    query: QueryBody<T, (), f64>,
+    merge: Option<Folds<T>>,
+    prepare: Option<PrepareBody<T>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
@@ -1125,7 +1169,7 @@ fn cardinality_row(
         CardinalityGT {
             column: value_column(description),
         },
-        peel::<i64>,
+        peel::<T>,
         insert,
         insert_step,
         query,
@@ -1384,14 +1428,14 @@ where
 /// A row that answers **nothing**: measured but not scored. The parallel-insert
 /// rows, whose worker sketches are dropped rather than asked, and whose ingest
 /// is one call over the whole stream rather than a loop over it.
-fn timed_row(
+fn timed_row<T: ColumnItem>(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
-    insert: ParallelInsertBody,
+    insert: ParallelInsertBody<T>,
 ) -> Result<Measurements, RunError> {
-    let items = peel::<i64>(description, table)?;
+    let items = peel::<T>(description, table)?;
     let workers = req.workers.max(1);
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {
@@ -1591,9 +1635,10 @@ fn peel_keyed(
 }
 
 /// The ordered rows build at either numeric width and at neither of the other
-/// two: a KLL cell stores what it can compare. Nothing else reads `--dtype` —
-/// a row is handed the data the frontend generated, and materialising it at the
-/// row's own item type is what catches a stream it cannot ingest.
+/// two: a KLL cell stores what it can compare. The cardinality rows read every
+/// width the generator renders, so they never reach this. The rows that read no
+/// width at all are handed the data the frontend generated, and materialising it
+/// at the row's own item type is what catches a stream they cannot ingest.
 fn no_build_at(req: &Requirement, got: Dtype) -> RunError {
     RunError::Sketch(format!(
         "{}/{} builds at i64 or f64; --dtype {} is neither",
@@ -1620,25 +1665,38 @@ pub(crate) fn row_hll_lib(
     use sketch_bench::wrappers::hll::sketchlib as hl;
     use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     macro_rules! at {
-        ($r:ty) => {
-            cardinality_row(
+        ($r:ty, $t:ty) => {
+            cardinality_row::<$t>(
                 req,
                 description,
                 table,
                 want,
-                hl::insert_hll_lib::<$r>,
-                hl::insert_step_hll_lib::<$r>,
-                hl::query_hll_lib::<$r>,
-                Some((hl::merge_hll_lib::<$r>, hl::merge_step_hll_lib::<$r>)),
+                hl::insert_hll_lib::<$r, $t>,
+                hl::insert_step_hll_lib::<$r, $t>,
+                hl::query_hll_lib::<$r, $t>,
+                Some((
+                    hl::merge_hll_lib::<$r, $t>,
+                    hl::merge_step_hll_lib::<$r, $t>,
+                )),
                 None,
             )
         };
     }
-    match lg_k(req)? {
-        12 => at!(HllBucketListP12),
-        14 => at!(HllBucketListP14),
-        16 => at!(HllBucketListP16),
-        other => Err(unsupported_precision(other)),
+    macro_rules! at_precision {
+        ($t:ty) => {
+            match lg_k(req)? {
+                12 => at!(HllBucketListP12, $t),
+                14 => at!(HllBucketListP14, $t),
+                16 => at!(HllBucketListP16, $t),
+                other => Err(unsupported_precision(other)),
+            }
+        };
+    }
+    match req.width {
+        Dtype::I64 => at_precision!(i64),
+        Dtype::U64 => at_precision!(u64),
+        Dtype::F64 => at_precision!(f64),
+        Dtype::Str => at_precision!(String),
     }
 }
 
@@ -1653,25 +1711,35 @@ pub(crate) fn row_hll_hip_lib(
     use sketch_bench::wrappers::hll::sketchlib as hl;
     use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
     macro_rules! at {
-        ($r:ty) => {
-            cardinality_row(
+        ($r:ty, $t:ty) => {
+            cardinality_row::<$t>(
                 req,
                 description,
                 table,
                 want,
-                hl::insert_hll_lib_hip::<$r>,
-                hl::insert_step_hll_lib_hip::<$r>,
-                hl::query_hll_lib_hip::<$r>,
+                hl::insert_hll_lib_hip::<$r, $t>,
+                hl::insert_step_hll_lib_hip::<$r, $t>,
+                hl::query_hll_lib_hip::<$r, $t>,
                 None,
                 None,
             )
         };
     }
-    match lg_k(req)? {
-        12 => at!(HllBucketListP12),
-        14 => at!(HllBucketListP14),
-        16 => at!(HllBucketListP16),
-        other => Err(unsupported_precision(other)),
+    macro_rules! at_precision {
+        ($t:ty) => {
+            match lg_k(req)? {
+                12 => at!(HllBucketListP12, $t),
+                14 => at!(HllBucketListP14, $t),
+                16 => at!(HllBucketListP16, $t),
+                other => Err(unsupported_precision(other)),
+            }
+        };
+    }
+    match req.width {
+        Dtype::I64 => at_precision!(i64),
+        Dtype::U64 => at_precision!(u64),
+        Dtype::F64 => at_precision!(f64),
+        Dtype::Str => at_precision!(String),
     }
 }
 

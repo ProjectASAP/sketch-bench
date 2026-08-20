@@ -83,8 +83,8 @@ pub type InsertStepBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Step
 
 /// The same for a row whose ingest is one call over the whole stream: it reads
 /// the worker count, which no other row does.
-pub type ParallelInsertBody =
-    fn(&ParamSet, usize, Rc<Vec<i64>>, usize) -> Result<Vec<Pass>, BuildError>;
+pub type ParallelInsertBody<I> =
+    fn(&ParamSet, usize, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
 
 /// Prime `passes` runs of a query: each sketch is built and fed here, so the
 /// pass asks and only asks.
