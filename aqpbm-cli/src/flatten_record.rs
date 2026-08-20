@@ -100,13 +100,33 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         if let Some(hp) = heap_bytes_peak {
             out.heap_bytes_peak.get_or_insert(*hp);
         }
-        // Assigned with `get_or_insert`-style guards on the fields two measurements
-        // of one operation both carry: `(insert, throughput)` and
-        // `(insert, latency)` each bring their own `wall_time_ms`, and whichever
-        // arrives second must not blank what the first placed.
-        macro_rules! keep {
+        // `cpu_time_ms`/`wall_time_ms`/`rss_peak_kb`/`heap_allocated_kb` are
+        // secondary: they ride along with every square of an operation
+        // regardless of which metric drove it (see `MetricsMask::SECONDARY`),
+        // so `(insert, throughput)` and `(insert, latency)` both legitimately
+        // carry their own `wall_time_ms`. Neither corrects the other — first
+        // one measured wins, silently, same as `memory_bytes` above.
+        macro_rules! keep_shared {
             ($slot:expr, $v:expr) => {
+                if let Some(v) = $v {
+                    $slot.get_or_insert(v.clone());
+                }
+            };
+        }
+        // `throughput_items_per_sec`, `latency_ns`, `accuracy` and the
+        // `merge_*` fields are each owned by exactly one metric-pass per
+        // operation — nothing legitimately produces a second value for one
+        // of these within a slot. A second value is a genuine duplicate, so
+        // it is refused by field name rather than silently resolved.
+        macro_rules! keep_owned {
+            ($slot:expr, $v:expr, $field:literal) => {
                 if $v.is_some() {
+                    if $slot.is_some() {
+                        return Err(format!(
+                            "flatten_record: {}/{} {operation} has two values for {}",
+                            record.sketch, record.library, $field
+                        ));
+                    }
                     $slot = $v.clone();
                 }
             };
@@ -114,45 +134,55 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         match operation {
             "insert" => {
                 out.insert.timestamp = Some(record.timestamp);
-                keep!(
+                keep_owned!(
                     out.insert.throughput_items_per_sec,
-                    *throughput_items_per_sec
+                    *throughput_items_per_sec,
+                    "throughput_items_per_sec"
                 );
-                keep!(out.insert.latency_ns, *latency_ns);
-                keep!(out.insert.cpu_time_ms, *cpu_time_ms);
-                keep!(out.insert.wall_time_ms, *wall_time_ms);
-                keep!(out.insert.rss_peak_kb, *rss_peak_kb);
-                keep!(out.insert.heap_allocated_kb, *heap_allocated_kb);
+                keep_owned!(out.insert.latency_ns, *latency_ns, "latency_ns");
+                keep_shared!(out.insert.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.insert.wall_time_ms, wall_time_ms);
+                keep_shared!(out.insert.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.insert.heap_allocated_kb, heap_allocated_kb);
             }
             "query" => {
                 out.query.timestamp = Some(record.timestamp);
-                keep!(
+                keep_owned!(
                     out.query.throughput_items_per_sec,
-                    *throughput_items_per_sec
+                    *throughput_items_per_sec,
+                    "throughput_items_per_sec"
                 );
-                keep!(out.query.latency_ns, *latency_ns);
-                keep!(out.query.accuracy, accuracy.clone());
-                keep!(out.query.cpu_time_ms, *cpu_time_ms);
-                keep!(out.query.wall_time_ms, *wall_time_ms);
-                keep!(out.query.rss_peak_kb, *rss_peak_kb);
-                keep!(out.query.heap_allocated_kb, *heap_allocated_kb);
+                keep_owned!(out.query.latency_ns, *latency_ns, "latency_ns");
+                keep_owned!(out.query.accuracy, accuracy.clone(), "accuracy");
+                keep_shared!(out.query.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.query.wall_time_ms, wall_time_ms);
+                keep_shared!(out.query.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.query.heap_allocated_kb, heap_allocated_kb);
             }
             "merge" => {
                 out.merge.timestamp = Some(record.timestamp);
-                keep!(out.merge.merge_folds_per_sec, *merge_folds_per_sec);
-                keep!(out.merge.merge_shards, *merge_shards);
-                keep!(out.merge.merge_supported, *merge_supported);
-                keep!(out.merge.cpu_time_ms, *cpu_time_ms);
-                keep!(out.merge.wall_time_ms, *wall_time_ms);
-                keep!(out.merge.rss_peak_kb, *rss_peak_kb);
-                keep!(out.merge.heap_allocated_kb, *heap_allocated_kb);
+                keep_owned!(
+                    out.merge.merge_folds_per_sec,
+                    *merge_folds_per_sec,
+                    "merge_folds_per_sec"
+                );
+                keep_owned!(out.merge.merge_shards, *merge_shards, "merge_shards");
+                keep_owned!(
+                    out.merge.merge_supported,
+                    *merge_supported,
+                    "merge_supported"
+                );
+                keep_shared!(out.merge.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.merge.wall_time_ms, wall_time_ms);
+                keep_shared!(out.merge.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.merge.heap_allocated_kb, heap_allocated_kb);
             }
             "prepare" => {
                 out.prepare.timestamp = Some(record.timestamp);
-                keep!(out.prepare.cpu_time_ms, *cpu_time_ms);
-                keep!(out.prepare.wall_time_ms, *wall_time_ms);
-                keep!(out.prepare.rss_peak_kb, *rss_peak_kb);
-                keep!(out.prepare.heap_allocated_kb, *heap_allocated_kb);
+                keep_shared!(out.prepare.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.prepare.wall_time_ms, wall_time_ms);
+                keep_shared!(out.prepare.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.prepare.heap_allocated_kb, heap_allocated_kb);
             }
             _ => unreachable!("operation_of only returns insert/query/merge/prepare"),
         }
@@ -321,5 +351,63 @@ mod tests {
         let rows = vec![record("teleport", "latency", BenchSection::default())];
         let err = flatten_record(&rows).expect_err("no slot holds it");
         assert!(err.contains("teleport"), "{err}");
+    }
+
+    /// `cpu_time_ms`/`wall_time_ms`/`rss_peak_kb`/`heap_allocated_kb` ride
+    /// along with every square regardless of which metric drove it — an
+    /// ordinary run crossing `insert` with both `throughput` and `latency`
+    /// has both squares set `wall_time_ms`. That's expected, not a
+    /// duplicate, so the first one measured wins silently.
+    #[test]
+    fn shared_timing_fields_on_two_squares_of_one_operation_first_wins() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    wall_time_ms: Some(stats(1.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "insert",
+                "latency",
+                BenchSection {
+                    wall_time_ms: Some(stats(2.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("shared fields never collide");
+        assert_eq!(out.insert.wall_time_ms.unwrap().mean, 1.0);
+    }
+
+    /// `throughput_items_per_sec` is owned by exactly one metric-pass per
+    /// operation — nothing legitimately produces it twice for `insert`. A
+    /// second value here is a genuine duplicate, refused by field name
+    /// rather than the second value silently overwriting or being silently
+    /// dropped.
+    #[test]
+    fn two_squares_colliding_on_an_owned_field_is_an_error() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(900.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(901.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let err = flatten_record(&rows).expect_err("both squares set throughput_items_per_sec");
+        assert!(err.contains("throughput_items_per_sec"), "{err}");
     }
 }

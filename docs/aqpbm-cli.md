@@ -135,7 +135,8 @@ A square is named by both, so a slot keyed on either name alone would hold two s
 
 Each record joins the slot its operation names.
 Two squares of one operation share a slot and combine field by field, since each fills the fields its own metric produced.
-A field already holding a value keeps it, because the two squares carry a reading each and neither is the other's correction.
+A second value for a field one metric owns — `throughput_items_per_sec`, `latency_ns`, `accuracy`, `merge_folds_per_sec`, `merge_shards`, `merge_supported` — is refused by field name, since nothing legitimately produces that field twice for one operation.
+`cpu_time_ms`, `wall_time_ms`, `rss_peak_kb` and `heap_allocated_kb` ride along with every square of an operation regardless of which metric drove it, so a field already holding one of those keeps it: the two squares carry a reading each and neither is the other's correction.
 
 Every metric field carries the name of the operation it was measured over.
 A metric only one operation ever produces keeps that prefix too, so a reader never has to know which squares ran.
