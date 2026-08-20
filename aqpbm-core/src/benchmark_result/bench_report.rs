@@ -40,12 +40,8 @@ impl BenchReport {
         // Only the metric that was asked for writes a number. A rate read off a
         // `time_each` region prices the per-call clock, not the operation.
         match (operation, metric) {
-            (Operation::Insert, Metric::Throughput) => {
+            (Operation::Insert | Operation::Query, Metric::Throughput) => {
                 bench.throughput_items_per_sec = fold::rate(&runs);
-                bench.throughput_samples = fold::rate_samples(&runs);
-            }
-            (Operation::Query, Metric::Throughput) => {
-                bench.query_throughput_items_per_sec = fold::rate(&runs);
             }
             (Operation::Merge, Metric::Throughput) => {
                 bench.merge_folds_per_sec = fold::rate(&runs);
@@ -55,11 +51,7 @@ impl BenchReport {
             _ => {}
         }
         if operation == Operation::Merge {
-            bench.merge_time_ms = fold::elapsed_ms(&runs);
             bench.merge_supported = Some(true);
-        }
-        if operation == Operation::Prepare {
-            bench.finalize_time_ms = fold::elapsed_ms(&runs);
         }
 
         bench.wall_time_ms = fold::elapsed_ms(&runs);

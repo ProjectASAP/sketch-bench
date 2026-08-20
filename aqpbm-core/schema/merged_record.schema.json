@@ -25,16 +25,6 @@
     "impl": {
       "type": "string"
     },
-    "insert_build_throughput_items_per_sec": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "insert_cpu_time_ms": {
       "anyOf": [
         {
@@ -80,16 +70,6 @@
           "type": "null"
         }
       ]
-    },
-    "insert_throughput_samples": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "number",
-        "format": "double"
-      }
     },
     "insert_timestamp": {
       "type": [
@@ -170,17 +150,6 @@
         "null"
       ]
     },
-    "merge_time_ms": {
-      "description": "How long one fold took: the latency reading of this operation.",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "merge_timestamp": {
       "type": [
         "string",
@@ -205,16 +174,6 @@
       "anyOf": [
         {
           "$ref": "#/$defs/CpuTime"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "prepare_finalize_time_ms": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/RunStats"
         },
         {
           "type": "null"
@@ -346,13 +305,11 @@
     "heap_bytes_net",
     "heap_bytes_peak",
     "impl",
-    "insert_build_throughput_items_per_sec",
     "insert_cpu_time_ms",
     "insert_heap_allocated_kb",
     "insert_latency_ns",
     "insert_rss_peak_kb",
     "insert_throughput_items_per_sec",
-    "insert_throughput_samples",
     "insert_timestamp",
     "insert_wall_time_ms",
     "language",
@@ -362,12 +319,10 @@
     "merge_rss_peak_kb",
     "merge_shards",
     "merge_supported",
-    "merge_time_ms",
     "merge_timestamp",
     "merge_wall_time_ms",
     "mode",
     "prepare_cpu_time_ms",
-    "prepare_finalize_time_ms",
     "prepare_heap_allocated_kb",
     "prepare_rss_peak_kb",
     "prepare_timestamp",
@@ -589,7 +544,7 @@
       "type": "object",
       "properties": {
         "ci95": {
-          "description": "95% CI on the mean — **present only when the samples are statistically\nindependent**, i.e. `--repeats R` (R > 1) over R processes. Iterations of\none `--runs N` share too much for an interval over them to mean anything.",
+          "description": "95% CI on the mean — **present only when the samples are statistically\nindependent**, i.e. `--repeat-experiment R` (R > 1) over R processes.\nIterations of\none `--runs N` share too much for an interval over them to mean anything.",
           "type": [
             "array",
             "null"

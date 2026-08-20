@@ -73,10 +73,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             metric: _,
             operation: _,
             throughput_items_per_sec,
-            throughput_samples,
-            build_throughput_items_per_sec,
-            finalize_time_ms,
-            query_throughput_items_per_sec,
             latency_ns,
             cpu_time_ms,
             wall_time_ms,
@@ -86,7 +82,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             heap_bytes_net,
             heap_bytes_peak,
             accuracy,
-            merge_time_ms,
             merge_folds_per_sec,
             merge_shards,
             merge_supported,
@@ -123,11 +118,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                     out.insert.throughput_items_per_sec,
                     *throughput_items_per_sec
                 );
-                keep!(out.insert.throughput_samples, throughput_samples.clone());
-                keep!(
-                    out.insert.build_throughput_items_per_sec,
-                    *build_throughput_items_per_sec
-                );
                 keep!(out.insert.latency_ns, *latency_ns);
                 keep!(out.insert.cpu_time_ms, *cpu_time_ms);
                 keep!(out.insert.wall_time_ms, *wall_time_ms);
@@ -138,7 +128,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 out.query.timestamp = Some(record.timestamp);
                 keep!(
                     out.query.throughput_items_per_sec,
-                    *query_throughput_items_per_sec
+                    *throughput_items_per_sec
                 );
                 keep!(out.query.latency_ns, *latency_ns);
                 keep!(out.query.accuracy, accuracy.clone());
@@ -149,7 +139,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             }
             "merge" => {
                 out.merge.timestamp = Some(record.timestamp);
-                keep!(out.merge.merge_time_ms, *merge_time_ms);
                 keep!(out.merge.merge_folds_per_sec, *merge_folds_per_sec);
                 keep!(out.merge.merge_shards, *merge_shards);
                 keep!(out.merge.merge_supported, *merge_supported);
@@ -160,7 +149,6 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             }
             "prepare" => {
                 out.prepare.timestamp = Some(record.timestamp);
-                keep!(out.prepare.finalize_time_ms, *finalize_time_ms);
                 keep!(out.prepare.cpu_time_ms, *cpu_time_ms);
                 keep!(out.prepare.wall_time_ms, *wall_time_ms);
                 keep!(out.prepare.rss_peak_kb, *rss_peak_kb);
@@ -243,7 +231,7 @@ mod tests {
                 "query",
                 "throughput",
                 BenchSection {
-                    query_throughput_items_per_sec: Some(stats(700.0)),
+                    throughput_items_per_sec: Some(stats(700.0)),
                     ..Default::default()
                 },
             ),
@@ -290,7 +278,7 @@ mod tests {
                 "merge",
                 "latency",
                 BenchSection {
-                    merge_time_ms: Some(stats(0.15)),
+                    wall_time_ms: Some(stats(0.15)),
                     merge_shards: Some(4),
                     ..Default::default()
                 },
@@ -305,7 +293,7 @@ mod tests {
             ),
         ];
         let out = flatten_record(&rows).expect("both measurements are named");
-        assert_eq!(out.merge.merge_time_ms.unwrap().mean, 0.15);
+        assert_eq!(out.merge.wall_time_ms.unwrap().mean, 0.15);
         assert_eq!(out.merge.merge_folds_per_sec.unwrap().mean, 19_496.0);
         assert_eq!(out.merge.merge_shards, Some(4));
     }
@@ -313,17 +301,17 @@ mod tests {
     /// The deferred build has its own slot, so a caller asking only about
     /// inserting does not read it off the insert record.
     #[test]
-    fn prepare_carries_its_own_finalize_time() {
+    fn prepare_carries_its_own_time() {
         let rows = vec![record(
             "prepare",
             "latency",
             BenchSection {
-                finalize_time_ms: Some(stats(0.005)),
+                wall_time_ms: Some(stats(0.005)),
                 ..Default::default()
             },
         )];
         let out = flatten_record(&rows).expect("the measurement is named");
-        assert_eq!(out.prepare.finalize_time_ms.unwrap().mean, 0.005);
+        assert_eq!(out.prepare.wall_time_ms.unwrap().mean, 0.005);
     }
 
     /// A record whose operation this function does not place is an error, not

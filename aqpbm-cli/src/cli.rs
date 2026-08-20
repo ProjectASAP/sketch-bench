@@ -30,28 +30,28 @@ pub enum Cmd {
     AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
 }
 
-/// One target of the sketch bundle: one variance, one library, one construction
+/// One target of the sketch bundle: one variant, one library, one construction
 /// point, one dataset. `--list-impls` is the one mode that measures nothing.
 // `help` is declared by hand at the end so its block lands last, as the reference has it.
 #[derive(Parser, Debug)]
 #[command(
     disable_help_flag = true,
-    override_usage = "approxbench sketchbench [OPTIONS] --variance <VARIANCE> --library <LIBRARY>\n       approxbench sketchbench --list-impls"
+    override_usage = "approxbench sketchbench [OPTIONS] --variant <VARIANT> --library <LIBRARY>\n       approxbench sketchbench --list-impls"
 )]
 pub struct SketchbenchArgs {
-    /// Accumulator variance, structural variant included: `cms` and
+    /// Accumulator variant, structural detail included: `cms` and
     /// `cms-fastpath-vector2d` are two of them, because a different hash
     /// strategy gives different estimates. Matched exactly, since one
     /// invocation measures one target. `--list-impls` prints every
-    /// (variance, library) pair, grouped by the algorithm they share knobs with.
+    /// (variant, library) pair, grouped by the algorithm they share knobs with.
     #[arg(
         long,
         required_unless_present = "list_impls",
         help_heading = "Identity"
     )]
-    pub variance: Option<String>,
+    pub variant: Option<String>,
     /// Implementing library, and only that: `oxide`, `datasketches`, `lib` or
-    /// `polars`. `--list-impls` shows which the variance offers. One
+    /// `polars`. `--list-impls` shows which the variant offers. One
     /// invocation measures one (library, config) point; to race several, invoke
     /// once per library.
     #[arg(
@@ -60,7 +60,7 @@ pub struct SketchbenchArgs {
         help_heading = "Identity"
     )]
     pub library: Option<String>,
-    /// Print every (variance, library) pair this bundle offers, then exit.
+    /// Print every (variant, library) pair this bundle offers, then exit.
     /// Measures nothing and writes no record, so it ignores every other option.
     #[arg(long, help_heading = "Identity")]
     pub list_impls: bool,
@@ -143,7 +143,7 @@ pub struct SketchbenchArgs {
 
     /// Measured runs inside one process, summarised as mean / stddev /
     /// `throughput_samples`. They share a process, so they support no
-    /// confidence interval. See `--repeats`.
+    /// confidence interval. See `--repeat-experiment`.
     #[arg(long, default_value_t = 10, help_heading = "Repetition")]
     pub runs: usize,
     /// Runs discarded before measurement begins. A cold allocator and a cold
@@ -154,7 +154,7 @@ pub struct SketchbenchArgs {
     /// report the 95% CI over their means. The only setting that makes `ci95`
     /// appear. At 1 no interval is claimed. Costs R times the wall clock.
     #[arg(long, default_value_t = 1, help_heading = "Repetition")]
-    pub repeats: usize,
+    pub repeat_experiment: usize,
 
     /// Comma-separated: throughput,latency,accuracy,cpu,memory. What is
     /// measured. Crossed with `--operations` to give the measurements this run

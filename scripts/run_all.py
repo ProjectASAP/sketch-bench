@@ -156,7 +156,7 @@ def select_combos(args: Args) -> list[tuple[str, str, str]]:
 def rust_cmd(args: Args, sketch: str, impl: str) -> list[str]:
     cmd = [
         str(args.rust_bin), "sketchbench",
-        "--variance", sketch,
+        "--variant", sketch,
         "--library", impl,
         "--runs", str(args.runs),
         "--input", str(args.workload_file),

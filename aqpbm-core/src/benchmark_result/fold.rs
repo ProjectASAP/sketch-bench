@@ -21,17 +21,6 @@ pub fn rate(runs: &[RunMetrics]) -> Option<RunStats> {
     )
 }
 
-/// The same rate, one entry per measured run, so a consumer can draw a box
-/// plot without re-running the bench.
-pub fn rate_samples(runs: &[RunMetrics]) -> Option<Vec<f64>> {
-    let samples: Vec<f64> = runs
-        .iter()
-        .filter(|r| r.elapsed_ns > 0)
-        .map(|r| ItemsPerSec::compute(r.work, r.elapsed_ns))
-        .collect();
-    (!samples.is_empty()).then_some(samples)
-}
-
 /// The timed region, in milliseconds.
 pub fn elapsed_ms(runs: &[RunMetrics]) -> Option<RunStats> {
     maybe_runstats(
@@ -150,7 +139,8 @@ fn maybe_runstats(samples: Vec<f64>) -> Option<RunStats> {
 
 /// Summarise the post-warmup iterations of one process. `ci95` is deliberately
 /// `None` — these iterations are not independent samples, so no interval over
-/// them means what one claims. `--repeats R` fills it in. See `RunStats::ci95`.
+/// them means what one claims. `--repeat-experiment R` fills it in. See
+/// `RunStats::ci95`.
 fn runstats_from(samples: Vec<f64>) -> RunStats {
     let mut w = Welford::new();
     for s in &samples {
@@ -187,23 +177,11 @@ mod tests {
         assert_eq!(r.n, 2);
     }
 
-    /// The samples are the same numbers, unaggregated, so a consumer can draw
-    /// the spread without re-running.
-    #[test]
-    fn samples_cover_the_same_runs_as_the_mean() {
-        let runs = vec![rm(1_000_000, 100_000_000), rm(1_000_000, 50_000_000)];
-        let s = rate_samples(&runs).expect("two runs");
-        assert_eq!(s.len(), 2);
-        assert!((s[0] - 10_000_000.0).abs() < 1.0);
-        assert!((s[1] - 20_000_000.0).abs() < 1.0);
-    }
-
     /// A run that timed nothing contributes no rate — dividing by zero would
     /// otherwise report an infinite one.
     #[test]
     fn a_run_that_timed_nothing_is_not_a_rate() {
         assert!(rate(&[rm(1000, 0)]).is_none());
-        assert!(rate_samples(&[rm(1000, 0)]).is_none());
     }
 
     /// The timed region in milliseconds, over the same population.

@@ -2,7 +2,7 @@
 # whose item is a float: `hydra-kll`, which orders its values rather than
 # counting them.
 #
-#   approxbench sketchbench --variance hydra-kll --library lib \
+#   approxbench sketchbench --variant hydra-kll --library lib \
 #     --spec configs/datagen/hydra_columns_f64.yaml \
 #     --config "rows=3 cols=1024 cell_k=200" \
 #     --operations query --metrics accuracy

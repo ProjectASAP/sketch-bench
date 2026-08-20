@@ -4,8 +4,10 @@ merge_passes.py — merge multi-pass JSONL records into one row per config.
 
 The bench runner emits one record per metric pass:
   - insert pass: throughput_items_per_sec + cpu/wall/rss/heap/memory_bytes
-  - query pass:  query_throughput_items_per_sec + accuracy + cpu/wall/rss/heap/memory_bytes
+  - query pass:  throughput_items_per_sec + accuracy + cpu/wall/rss/heap/memory_bytes
                  (cpu/wall/rss/heap are absent or null for impls with no accuracy comparator)
+The pass is named by the record's `bench.operation`, not guessed from which
+fields are present.
 
 This script groups by (sketch, impl, language, sketch_config, workload, mode)
 and merges into a single flat record with prefixed fields.
@@ -23,10 +25,9 @@ from collections import defaultdict
 
 def phase(record):
     b = record.get("bench") or {}
-    if "throughput_items_per_sec" in b:
+    op = b.get("operation")
+    if op == "insert":
         return "insert"
-    if "query_throughput_items_per_sec" in b:
-        return "query"
     return "query"  # memory-only second pass — still the query/accuracy slot
 
 
@@ -67,13 +68,12 @@ def merge_group(records):
         "memory_bytes": insert_bench.get("memory_bytes") or query_bench.get("memory_bytes"),
         # insert-phase metrics
         "insert_throughput_items_per_sec": insert_bench.get("throughput_items_per_sec"),
-        "insert_throughput_samples": insert_bench.get("throughput_samples"),
         "insert_cpu_time_ms": insert_bench.get("cpu_time_ms"),
         "insert_wall_time_ms": insert_bench.get("wall_time_ms"),
         "insert_rss_peak_kb": insert_bench.get("rss_peak_kb"),
         "insert_heap_allocated_kb": insert_bench.get("heap_allocated_kb"),
         # query/accuracy-phase metrics (null for impls with no accuracy comparator)
-        "query_throughput_items_per_sec": query_bench.get("query_throughput_items_per_sec"),
+        "query_throughput_items_per_sec": query_bench.get("throughput_items_per_sec"),
         "query_cpu_time_ms": query_bench.get("cpu_time_ms"),
         "query_wall_time_ms": query_bench.get("wall_time_ms"),
         "query_rss_peak_kb": query_bench.get("rss_peak_kb"),

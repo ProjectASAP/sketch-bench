@@ -30,7 +30,7 @@
 # CPU (for cpu-accuracy curve):
 #   .bench.cpu_time_ms.user_ms.mean    CPU user time (ms, mean over runs)
 #   .bench.cpu_time_ms.user_ms.ci95    [lo, hi] 95% CI — only under
-#                                      `--repeats N`, N >= 2. This script
+#                                      `--repeat-experiment N`, N >= 2. This script
 #                                      does not pass it, so expect it absent.
 #   .bench.cpu_time_ms.sys_ms.mean     CPU sys time (ms)
 #   .bench.wall_time_ms.mean           wall clock time (ms)
@@ -107,7 +107,7 @@ bench() {
     echo ""
     echo "─── $algorithm / $label ───────────────────────────────────"
     "$BINARY" sketchbench \
-        --variance  "$algorithm" \
+        --variant  "$algorithm" \
         --runs      "$RUNS" \
         --warmup-runs "$WARMUP" \
         --metrics   "$METRICS" \

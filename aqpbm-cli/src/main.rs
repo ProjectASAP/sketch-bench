@@ -1,7 +1,7 @@
 //! `approxbench`, the approximate query processing benchmark suite.
 //!
 //! `sketchbench` measures one row of the sketch bundle, and `sketchbench
-//! --list-impls` enumerates that bundle's `(variance, library)` pairs.
+//! --list-impls` enumerates that bundle's `(variant, library)` pairs.
 
 mod atomic_costs_cmd;
 mod cli;
@@ -247,29 +247,29 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if args.list_impls {
         return list_impls();
     }
-    let (variance, library) = match (args.variance.as_deref(), args.library.as_deref()) {
+    let (variant, library) = match (args.variant.as_deref(), args.library.as_deref()) {
         (Some(a), Some(i)) => (a.to_string(), i.to_string()),
-        _ => bail!("--variance and --library are both required unless --list-impls is given"),
+        _ => bail!("--variant and --library are both required unless --list-impls is given"),
     };
-    if args.repeats == 0 {
-        bail!("--repeats must be >= 1");
+    if args.repeat_experiment == 0 {
+        bail!("--repeat-experiment must be >= 1");
     }
-    if args.repeats > 1 && !repeat::is_child() {
+    if args.repeat_experiment > 1 && !repeat::is_child() {
         if args.flat {
             bail!(
-                "--flat cannot be combined with --repeats: a flattened row holds one value \
+                "--flat cannot be combined with --repeat-experiment: a flattened row holds one \
                  per measurement, and folding the repeats into it would have to decide which \
                  repeat that value came from"
             );
         }
-        let records = repeat::run_repeats(args.repeats)?;
+        let records = repeat::run_repeats(args.repeat_experiment)?;
         let mut sink = ReportSink::open(args.report.as_deref())?;
         for r in &records {
             sink.write_line(&r.to_jsonl())?;
         }
         eprintln!(
             "approxbench: merged {} repeats into {} record(s)",
-            args.repeats,
+            args.repeat_experiment,
             records.len()
         );
         return Ok(());
@@ -294,12 +294,12 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let want = selected(operations_mask, metrics_mask);
     let secondary = metrics_mask & MetricsMask::SECONDARY;
     let params = match args.config.as_deref() {
-        Some(s) => ParamSet::single(&variance, s)?,
-        None => ParamSet::empty(&variance),
+        Some(s) => ParamSet::single(&variant, s)?,
+        None => ParamSet::empty(&variant),
     };
 
     let req = Requirement {
-        variance: variance.clone(),
+        variant: variant.clone(),
         library: library.clone(),
         params: params.clone(),
         width,
@@ -315,13 +315,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
     // An empty mask on either axis names no measurements.
     if want.is_empty() {
-        eprintln!("approxbench: {variance}/{library} selected no measurements; nothing to measure");
+        eprintln!("approxbench: {variant}/{library} selected no measurements; nothing to measure");
         return Ok(());
     }
 
     eprintln!(
         "approxbench: {}/{} config={} runs={} warmup={}",
-        variance,
+        variant,
         library,
         params_pretty(&params),
         args.runs,
@@ -333,7 +333,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
     let prepared = rows::measurements(&req, &dataset, table, &want)
-        .map_err(|e| anyhow::anyhow!("{variance}/{library} cannot run: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{variant}/{library} cannot run: {e}"))?;
 
     // One instruction at a time. Core is handed a closure and a run count and
     // told nothing else; which operation and which metric this was travels with
@@ -349,7 +349,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         };
         let runs = aqpbm_core::measure(&cfg, body);
         let mut report = BenchReport::from_runs(
-            variance.as_str(),
+            variant.as_str(),
             library.as_str(),
             dataset.clone(),
             operation,
@@ -368,7 +368,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     // (sketch, impl, sketch_config, dataset) merges them back. `sketch` names the
     // variant, `algorithm` groups the variants a cross-library comparison spans.
     let algorithm =
-        registry::algorithm_of(&variance).expect("check proved the variance is registered");
+        registry::algorithm_of(&variant).expect("check proved the variant is registered");
     let records: Vec<_> = reports
         .iter()
         .map(|report| {

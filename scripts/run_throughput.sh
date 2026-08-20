@@ -11,7 +11,7 @@
 #   sketch-bench/src/wrappers/parallel.rs  — *-parallel/lib (octo)
 #   sketch-bench/src/wrappers/{cms,countsketch,hll,kll,dd,nitro}.rs  — the rest
 #
-# `--variance` takes the structural variant too (`cms-fastpath-vector2d`, not
+# `--variant` takes the structural detail too (`cms-fastpath-vector2d`, not
 # `cms`), and `--library` takes the library alone. `--list-impls` prints the pairs.
 #
 # Output layout mirrors the legacy `throughput/<algorithm>/output/`
@@ -83,7 +83,7 @@ run_algorithm() {
   echo "===== throughput: ${ALGORITHM} (impl=${IMPL_FILTER}) ====="
   # shellcheck disable=SC2086
   cargo run --release --quiet -p aqpbm-cli -- sketchbench \
-    --variance "${ALGORITHM}" --library "${IMPL_FILTER}" \
+    --variant "${ALGORITHM}" --library "${IMPL_FILTER}" \
     --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
     ${ACCURACY} \
     "${CONFIG_ARGS[@]}" \
@@ -108,7 +108,7 @@ run_octo() {
       local CFG="${algo_cfg#*|}"
       echo "===== throughput: ${ALGO}/lib workers=${n} ====="
       cargo run --release --quiet -p aqpbm-cli -- sketchbench \
-        --variance "${ALGO}" --library lib \
+        --variant "${ALGO}" --library lib \
         --config "${CFG}" \
         --input "${DATA}" --runs "${RUNS}" --warmup-runs "${WARMUP}" \
         --workers "${n}" \

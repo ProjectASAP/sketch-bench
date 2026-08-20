@@ -1,4 +1,4 @@
-//! `--repeats R` — the only way this tool can honestly publish a confidence
+//! `--repeat-experiment R` — the only way this tool can honestly publish a confidence
 //! interval on throughput. A repeat is a whole process, so each gets a fresh
 //! arena, ASLR layout, governor ramp and page-cache state: exactly the variance
 //! that cancels within one process. Accuracy does not use this axis — its error
@@ -51,7 +51,7 @@ fn group_key(r: &Record) -> GroupKey {
 /// Spawn `repeats` fresh processes over this exact argv, then return one
 /// merged record per measurement. Grouping is ordered so output is stable.
 pub fn run_repeats(repeats: usize) -> Result<Vec<Record>> {
-    let exe = std::env::current_exe().context("locating own executable for --repeats")?;
+    let exe = std::env::current_exe().context("locating own executable for --repeat-experiment")?;
     let argv: Vec<OsString> = std::env::args_os().skip(1).collect();
     let mut groups: BTreeMap<GroupKey, Vec<Record>> = BTreeMap::new();
 
@@ -128,33 +128,10 @@ fn merge(records: Vec<Record>) -> Record {
     if let Some(tput) = across(records.iter(), |b| b.throughput_items_per_sec.as_ref()) {
         // The per-repeat means, not the within-process iterations: the samples
         // and the interval computed from them must describe one population.
-        bench.throughput_samples = Some(tput.samples.clone());
         bench.throughput_items_per_sec = Some(tput);
-    }
-    // Pooled on its own rather than derived from the pooled ingest rate: the
-    // two columns are means of ratios, and `items / (insert + finalize)` is
-    // not recoverable from `items / insert`. No producer writes this today, but
-    // the field is in the schema, so a record carrying one must pool it.
-    if let Some(b) = across(records.iter(), |b| {
-        b.build_throughput_items_per_sec.as_ref()
-    }) {
-        bench.build_throughput_items_per_sec = Some(b);
-    }
-    if let Some(f) = across(records.iter(), |b| b.finalize_time_ms.as_ref()) {
-        bench.finalize_time_ms = Some(f);
-    }
-    if let Some(q) = across(records.iter(), |b| {
-        b.query_throughput_items_per_sec.as_ref()
-    }) {
-        bench.query_throughput_items_per_sec = Some(q);
     }
     if let Some(wall) = across(records.iter(), |b| b.wall_time_ms.as_ref()) {
         bench.wall_time_ms = Some(wall);
-    }
-    // The fold is a timing like any other, and varies across processes for the
-    // same reasons: arena, layout, governor.
-    if let Some(m) = across(records.iter(), |b| b.merge_time_ms.as_ref()) {
-        bench.merge_time_ms = Some(m);
     }
     // The rate belongs with the time it is derived from, or a record says
     // `runs: R` over a folds/sec that describes one repeat.
@@ -222,10 +199,6 @@ mod tests {
             metric: Some("latency".into()),
             operation: Some("merge".into()),
             throughput_items_per_sec: Some(stats(mean)),
-            throughput_samples: Some(vec![mean, mean + 1.0]),
-            build_throughput_items_per_sec: Some(stats(mean * 0.9)),
-            finalize_time_ms: Some(stats(0.5)),
-            query_throughput_items_per_sec: Some(stats(mean * 2.0)),
             latency_ns: Some(LatencySummary {
                 p50: 10,
                 p95: 20,
@@ -245,7 +218,6 @@ mod tests {
             heap_bytes_net: Some(40960),
             heap_bytes_peak: Some(65536),
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
-            merge_time_ms: Some(stats(0.4)),
             merge_folds_per_sec: Some(stats(mean * 0.5)),
             merge_shards: Some(4),
             merge_supported: Some(true),
@@ -281,7 +253,7 @@ mod tests {
         }
     }
 
-    /// The invariant `--repeats` owes its reader: after merging R processes,
+    /// The invariant `--repeat-experiment` owes its reader: after merging R processes,
     /// **every** aggregate in the record describes those R processes. A walk over
     /// the serialised record, so a new `BenchSection` field is covered for free.
     #[test]
@@ -295,7 +267,7 @@ mod tests {
         sample_counts(&json, "", &mut found);
 
         assert!(
-            found.len() >= 7,
+            found.len() >= 5,
             "expected an aggregate in every measured field, found {}: {found:?}",
             found.len()
         );
@@ -328,10 +300,10 @@ mod tests {
     /// The reason the axis exists: R independent processes support an interval,
     /// and the merge measurement must get one like every other.
     #[test]
-    fn merge_time_gets_an_interval_across_repeats() {
+    fn merge_wall_time_gets_an_interval_across_repeats() {
         let merged = merge((0..3).map(|i| record(100.0 + i as f64)).collect());
         let bench = merged.bench.expect("bench section");
-        let m = bench.merge_time_ms.expect("merge time survives the merge");
+        let m = bench.wall_time_ms.expect("merge time survives the merge");
         assert_eq!(m.n, 3);
         assert!(
             m.ci95.is_some(),
@@ -345,7 +317,7 @@ mod tests {
     fn a_single_repeat_claims_no_interval() {
         let merged = merge(vec![record(100.0)]);
         let bench = merged.bench.expect("bench section");
-        let m = bench.merge_time_ms.expect("merge time survives");
+        let m = bench.wall_time_ms.expect("merge time survives");
         assert_eq!(m.n, 1);
         assert!(m.ci95.is_none());
     }
