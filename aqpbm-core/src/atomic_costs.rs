@@ -7,6 +7,8 @@
 //! (asap_sketchlib#69), so there is nothing to measure. ASAPQuery's loader
 //! treats a missing entry as "drop the candidate", which covers this too.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
@@ -23,6 +25,14 @@ pub struct AtomicCostEntry {
     pub insert_cpu_secs: f64,
     pub merge_cpu_secs: f64,
     pub query_cpu_secs: f64,
+    /// The registry's comparator score for this (sketch, config) point,
+    /// carried over verbatim from `MergedRecord::query.accuracy` — its keys
+    /// are whatever that comparator's `GroundTruth::score` named them
+    /// (`aqpbm_core::accuracy`), which differ by sketch family (frequency's
+    /// `are_top10`/`l1_err`/… vs. cardinality's `relative_error` vs.
+    /// rank-error's `mean_rank_err`). No single scalar covers all of them, so
+    /// this stays a map rather than picking one field to promote.
+    pub query_accuracy: BTreeMap<String, f64>,
 }
 
 pub type AtomicCostTable = Vec<AtomicCostEntry>;
@@ -51,6 +61,11 @@ pub enum SkipReason {
     /// Pairing anyway would silently multiply/divide unrelated runs' numbers
     /// together, which is worse than skipping.
     MisalignedSamples(&'static str),
+    /// A field was present but not shaped the way this reduction expects
+    /// (e.g. `query_accuracy` holding something other than a flat object of
+    /// numbers) — a comparator/schema bug, not a run that simply didn't
+    /// measure the field.
+    InvalidField(&'static str),
 }
 
 impl std::fmt::Display for SkipReason {
@@ -62,6 +77,7 @@ impl std::fmt::Display for SkipReason {
             SkipReason::MisalignedSamples(op) => {
                 write!(f, "{op} rate/elapsed/cpu_time sample counts disagree")
             }
+            SkipReason::InvalidField(field) => write!(f, "{field} is not the expected shape"),
         }
     }
 }
@@ -145,6 +161,8 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
         record.merge.cpu_time_ms.as_ref(),
     )?;
 
+    let query_accuracy = query_accuracy(record.query.accuracy.as_ref())?;
+
     Ok(AtomicCostEntry {
         sketch: record.sketch.clone(),
         sketch_config: record
@@ -155,7 +173,29 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
         insert_cpu_secs,
         merge_cpu_secs,
         query_cpu_secs,
+        query_accuracy,
     })
+}
+
+/// `MergedRecord::query.accuracy` down to the flat numeric map every
+/// comparator's `GroundTruth::score` actually produces. Required like the
+/// cost fields (missing skips the row, `SkipReason` says which): an entry
+/// with no comparator never runs a query at all (registry's `comparator:
+/// None` entries are all insert-only), so it is already excluded here by
+/// `query_cpu_secs` above — requiring accuracy too costs nothing further and
+/// keeps every kept row equally complete.
+fn query_accuracy(
+    accuracy: Option<&serde_json::Value>,
+) -> Result<BTreeMap<String, f64>, SkipReason> {
+    let accuracy = accuracy.ok_or(SkipReason::MissingField("query_accuracy"))?;
+    let object = accuracy
+        .as_object()
+        .ok_or(SkipReason::InvalidField("query_accuracy"))?;
+    object
+        .iter()
+        .map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)))
+        .collect::<Option<_>>()
+        .ok_or(SkipReason::InvalidField("query_accuracy"))
 }
 
 /// Reduce every record that has what it takes, skipping (and reporting) the
@@ -255,6 +295,7 @@ mod tests {
                 throughput_items_per_sec: Some(stats(100_000.0)),
                 wall_time_ms: Some(stats(100.0)),
                 cpu_time_ms: Some(cpu(30.0, 10.0)),
+                accuracy: Some(serde_json::json!({"relative_error_mean": 0.01})),
                 ..Default::default()
             },
             merge: MergeMetrics {
@@ -284,6 +325,37 @@ mod tests {
         // merge: work = 100 folds/sec * 0.03s = 3 folds;
         // cpu = 0.03s total -> 10ms/fold.
         assert!((entry.merge_cpu_secs - 10e-3).abs() < 1e-9);
+
+        assert_eq!(
+            entry.query_accuracy,
+            BTreeMap::from([("relative_error_mean".to_string(), 0.01)])
+        );
+    }
+
+    #[test]
+    fn missing_query_accuracy_is_skipped_not_defaulted() {
+        // No comparator ran (e.g. `--metrics` didn't include `accuracy`) --
+        // silently shipping an empty map would read as "perfect accuracy" to
+        // anything skimming the table.
+        let mut record = full_record();
+        record.query.accuracy = None;
+        assert_eq!(
+            reduce_one(&record),
+            Err(SkipReason::MissingField("query_accuracy"))
+        );
+    }
+
+    #[test]
+    fn non_numeric_query_accuracy_is_skipped_not_coerced() {
+        // A comparator producing something other than its documented flat
+        // `BTreeMap<String, f64>` is a bug worth surfacing, not silently
+        // dropping the offending key.
+        let mut record = full_record();
+        record.query.accuracy = Some(serde_json::json!({"relative_error_mean": "not a number"}));
+        assert_eq!(
+            reduce_one(&record),
+            Err(SkipReason::InvalidField("query_accuracy"))
+        );
     }
 
     #[test]
@@ -353,11 +425,12 @@ mod tests {
             insert_cpu_secs: 5e-7,
             merge_cpu_secs: 1e-2,
             query_cpu_secs: 4e-6,
+            query_accuracy: BTreeMap::from([("relative_error_mean".to_string(), 0.01)]),
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(
             json,
-            r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6}"#
+            r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}"#
         );
     }
 }

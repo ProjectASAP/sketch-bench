@@ -3,10 +3,11 @@
 # atomic-cost table (ASAPQuery#524, sketch-bench#30).
 #
 # Loops exactly the param grid ASAPQuery's asap-planner-rs/src/optimizer/
-# constants.rs sweeps (CMS_DEPTHS x CMS_WIDTHS, HLL_PRECISIONS, KLL_KS), one
-# `sketchbench --flat` invocation per grid point, against the specific
-# (algorithm, impl) pair each ASAPQuery accumulator actually deploys — not
-# just any "lib" row for the family:
+# constants.rs sweeps (CMS_DEPTHS x CMS_WIDTHS, HLL_PRECISIONS, KLL_KS), two
+# `sketchbench` invocations per grid point (cost, then accuracy — see `point`
+# below for why they can't be one), against the specific (algorithm, impl)
+# pair each ASAPQuery accumulator actually deploys — not just any "lib" row
+# for the family:
 #   - cms-fastpath-vector2d: asap_sketchlib's `CountMinSketch` is a type alias
 #     for `CountMin<Vector2D<f64>, FastPath>` (message_pack_format/portable/
 #     countminsketch.rs), which is what count_min_sketch_accumulator.rs wraps.
@@ -25,8 +26,10 @@
 #   scripts/export_atomic_costs.sh --no-build   # skip cargo build
 #
 # Output: out/atomic_costs.json (the flat AtomicCostTable ASAPQuery loads),
-# plus out/atomic_costs_grid.jsonl (the raw --flat MergedRecord rows, kept
-# for provenance / re-deriving the table without re-running the benchmark).
+# plus out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
+# provenance / re-deriving the table without re-running the benchmark) and
+# out/atomic_costs_raw.jsonl (the un-flattened Records `flatten` folds into
+# it — see below for why there are two passes per grid point).
 
 set -euo pipefail
 
@@ -36,10 +39,11 @@ if [[ "${1:-}" == "--no-build" ]]; then
 fi
 
 OUT_DIR=out
+RAW_JSONL="$OUT_DIR/atomic_costs_raw.jsonl"
 GRID_JSONL="$OUT_DIR/atomic_costs_grid.jsonl"
 TABLE_JSON="$OUT_DIR/atomic_costs.json"
 mkdir -p "$OUT_DIR"
-rm -f "$GRID_JSONL"
+rm -f "$RAW_JSONL" "$GRID_JSONL"
 
 if [[ $BUILD -eq 1 ]]; then
     echo "==> Building approxbench (release)..." >&2
@@ -69,11 +73,43 @@ CMS_WIDTHS=(512 1024 2048)
 HLL_PRECISIONS=(12 14)
 KLL_KS=(200 500)
 
+# Two invocations, not one: `--metrics` is crossed with every named
+# `--operations`, and accuracy only applies to `query` — asking for it
+# alongside insert/merge throughput in one invocation is refused by name
+# ("nothing measures the accuracy of insert"), unconditionally, regardless of
+# comparator. Both write raw (non-`--flat`) records to the same file; `flatten`
+# below folds the two passes of one grid point back into one row.
+#
+# Accuracy first, cost second — order matters. `BenchReport::from_runs` sets
+# every square's own wall_time_ms/cpu_time_ms unconditionally, not just the
+# metric that was asked for, and accuracy always runs exactly 1 sample
+# (`aqpbm_core::runs_for`) regardless of `--runs`. `flatten_record`'s merge is
+# last-square-wins per field, so whichever pass is written second decides
+# query's wall_time_ms/cpu_time_ms. Cost must win that, since query_cpu_secs
+# pairs them against query's throughput samples (`atomic_costs.rs`) — pairing
+# them against accuracy's unrelated single-sample timing instead skips the row
+# ("query rate/elapsed/cpu_time sample counts disagree"). query.accuracy
+# itself is unaffected by the order: only the accuracy square ever sets it.
 point() {
-    local algorithm=$1 config=$2
+    local algorithm=$1 config=$2 comparator=$3
     echo "  $algorithm ($config)" >&2
     "$BINARY" sketchbench \
         --variant "$algorithm" \
+        --library lib \
+        --config "$config" \
+        --operations query \
+        --metrics accuracy \
+        --comparator "$comparator" \
+        --runs "$RUNS" \
+        --warmup-runs "$WARMUP" \
+        --dataset uniform \
+        --size "$SIZE" \
+        --cardinality "$CARDINALITY" \
+        --dtype i64 \
+        --seed "$SEED" \
+        --report "$RAW_JSONL"
+    "$BINARY" sketchbench \
+        --variance "$algorithm" \
         --library lib \
         --config "$config" \
         --operations insert,query,merge \
@@ -86,26 +122,28 @@ point() {
         --cardinality "$CARDINALITY" \
         --dtype i64 \
         --seed "$SEED" \
-        --flat \
-        --report "$GRID_JSONL"
+        --report "$RAW_JSONL"
 }
 
 echo "==> cms-fastpath-vector2d (CMS_DEPTHS x CMS_WIDTHS)" >&2
 for depth in "${CMS_DEPTHS[@]}"; do
     for width in "${CMS_WIDTHS[@]}"; do
-        point cms-fastpath-vector2d "rows=$depth cols=$width"
+        point cms-fastpath-vector2d "rows=$depth cols=$width" frequency
     done
 done
 
 echo "==> hll (HLL_PRECISIONS)" >&2
 for lg_k in "${HLL_PRECISIONS[@]}"; do
-    point hll "lg_k=$lg_k"
+    point hll "lg_k=$lg_k" cardinality
 done
 
 echo "==> kll-percall (KLL_KS)" >&2
 for k in "${KLL_KS[@]}"; do
-    point kll-percall "k=$k"
+    point kll-percall "k=$k" rank-error
 done
+
+echo "==> Flattening cost + accuracy passes into one row per grid point..." >&2
+"$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
 echo "==> Reducing to atomic-cost table..." >&2
 "$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
