@@ -116,10 +116,7 @@ pub struct SketchbenchArgs {
     #[arg(long, required_if_eq("dataset", "zipf"), help_heading = "Dataset")]
     pub zipf_s: Option<f64>,
     /// Item type the value column is generated at: `i64`, `u64`, `f64` or
-    /// `string` — every type the generator renders. The one item-type choice
-    /// left, since a row's own wrapper fixes what it can ingest and refuses the
-    /// rest by name; today the ordered rows (`kll-percall`, `kll-cdf`, `dd`) take
-    /// either numeric width and every other row takes `i64`. Encoding only.
+    /// `string`
     /// Required unless `--list-impls` is given: read regardless of `--spec`.
     #[arg(long, required_unless_present = "list_impls", help_heading = "Dataset")]
     pub dtype: Option<String>,

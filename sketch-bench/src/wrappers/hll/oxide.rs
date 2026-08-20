@@ -35,9 +35,9 @@ pub fn memory_hll_oxide(sketch: &HllOxide) -> usize {
     1usize << sketch.lg_k
 }
 
-pub fn insert_hll_oxide(
+pub fn insert_hll_oxide<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -47,7 +47,7 @@ pub fn insert_hll_oxide(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(v);
+                sketch.inner.update(&v.hash_key());
             }
             memory_hll_oxide(&sketch)
         }) as Pass);
@@ -55,9 +55,9 @@ pub fn insert_hll_oxide(
     Ok(out)
 }
 
-pub fn insert_step_hll_oxide(
+pub fn insert_step_hll_oxide<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -70,7 +70,7 @@ pub fn insert_step_hll_oxide(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(v);
+                sketch.inner.update(&v.hash_key());
             }),
             footprint: Box::new(move || memory_hll_oxide(&read.borrow())),
         });
@@ -78,9 +78,9 @@ pub fn insert_step_hll_oxide(
     Ok(out)
 }
 
-pub fn query_hll_oxide(
+pub fn query_hll_oxide<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -89,7 +89,7 @@ pub fn query_hll_oxide(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hll_oxide(params)?;
         for v in items.iter() {
-            sketch.inner.update(v);
+            sketch.inner.update(&v.hash_key());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -104,9 +104,9 @@ pub fn query_hll_oxide(
     Ok(out)
 }
 
-pub fn merge_hll_oxide(
+pub fn merge_hll_oxide<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -125,9 +125,9 @@ pub fn merge_hll_oxide(
     Ok(out)
 }
 
-pub fn merge_step_hll_oxide(
+pub fn merge_step_hll_oxide<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -154,16 +154,16 @@ pub fn merge_step_hll_oxide(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hll_oxide_shards(
+fn hll_oxide_shards<T: CardinalityValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(HllOxide, Vec<HllOxide>), BuildError> {
     let mut parts: Vec<HllOxide> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_hll_oxide(params)?;
         for v in shard {
-            sketch.inner.update(v);
+            sketch.inner.update(&v.hash_key());
         }
         parts.push(sketch);
     }

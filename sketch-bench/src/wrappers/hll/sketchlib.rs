@@ -7,7 +7,7 @@ use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::{DataInput, ErtlMLE, HyperLogLog};
+use asap_sketchlib::{ErtlMLE, HyperLogLog};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Barrier;
@@ -106,7 +106,7 @@ pub fn memory_parallel_hll_fast_path(sketch: &ParallelHllFastPath) -> usize {
     sketch.workers * (1usize << PARALLEL_HLL_LG_K)
 }
 
-fn run_parallel_hll(items: &[i64], workers: usize) {
+fn run_parallel_hll<T: CardinalityValue>(items: &[T], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
     std::thread::scope(|s| {
@@ -115,8 +115,8 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
             s.spawn(move || {
                 let mut sketch = HyperLogLog::<ErtlMLE>::default();
                 barrier.wait();
-                for &v in *part {
-                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                for v in *part {
+                    sketch.insert_emit_delta(&v.data_input(), &mut |d| {
                         std::hint::black_box(&d);
                     });
                 }
@@ -126,9 +126,9 @@ fn run_parallel_hll(items: &[i64], workers: usize) {
     });
 }
 
-pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -138,7 +138,7 @@ pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_hll_lib(&sketch)
         }) as Pass);
@@ -146,9 +146,9 @@ pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn insert_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn insert_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -161,7 +161,7 @@ pub fn insert_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_hll_lib(&read.borrow())),
         });
@@ -169,9 +169,9 @@ pub fn insert_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn query_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn query_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -180,7 +180,7 @@ pub fn query_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hll_lib::<R>(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -195,15 +195,15 @@ pub fn query_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn merge_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn merge_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (mut acc, rest) = hll_lib_shards::<R>(params, &items, shards)?;
+        let (mut acc, rest) = hll_lib_shards::<R, T>(params, &items, shards)?;
         out.push(Box::new(move || {
             for other in rest.iter() {
                 acc.inner.merge(&other.inner);
@@ -214,15 +214,15 @@ pub fn merge_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn merge_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn merge_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (acc, rest) = hll_lib_shards::<R>(params, &items, shards)?;
+        let (acc, rest) = hll_lib_shards::<R, T>(params, &items, shards)?;
         let acc: Shared<_> = Rc::new(RefCell::new(acc));
         let (driven, read) = (acc.clone(), acc);
         out.push(StepPass {
@@ -241,16 +241,16 @@ pub fn merge_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static>(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hll_lib_shards<R: asap_sketchlib::HllRegisterStorage + 'static>(
+fn hll_lib_shards<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(HllLib<R>, Vec<HllLib<R>>), BuildError> {
     let mut parts: Vec<HllLib<R>> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_hll_lib::<R>(params)?;
         for v in shard {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -261,9 +261,9 @@ fn hll_lib_shards<R: asap_sketchlib::HllRegisterStorage + 'static>(
     ))
 }
 
-pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -273,7 +273,7 @@ pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_hll_lib_hip(&sketch)
         }) as Pass);
@@ -281,9 +281,12 @@ pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn insert_step_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn insert_step_hll_lib_hip<
+    R: asap_sketchlib::HllRegisterStorage + 'static,
+    T: CardinalityValue,
+>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -296,7 +299,7 @@ pub fn insert_step_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_hll_lib_hip(&read.borrow())),
         });
@@ -304,9 +307,9 @@ pub fn insert_step_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
     Ok(out)
 }
 
-pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
+pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -315,7 +318,7 @@ pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hll_lib_hip::<R>(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -332,10 +335,10 @@ pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static>(
 
 /// The whole stream in one call: this row's ingest *is* the parallel fan-out,
 /// so there is no per-item step to buffer and none to time.
-pub fn insert_parallel_hll_fast_path(
+pub fn insert_parallel_hll_fast_path<T: CardinalityValue>(
     params: &ParamSet,
     workers: usize,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);

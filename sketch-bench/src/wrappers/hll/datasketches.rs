@@ -47,9 +47,9 @@ pub fn memory_hll_datasketches(sketch: &HllDatasketches) -> usize {
     }
 }
 
-pub fn insert_hll_datasketches(
+pub fn insert_hll_datasketches<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -59,7 +59,7 @@ pub fn insert_hll_datasketches(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(*v);
+                sketch.inner.update(v.hash_key());
             }
             memory_hll_datasketches(&sketch)
         }) as Pass);
@@ -67,9 +67,9 @@ pub fn insert_hll_datasketches(
     Ok(out)
 }
 
-pub fn insert_step_hll_datasketches(
+pub fn insert_step_hll_datasketches<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -82,7 +82,7 @@ pub fn insert_step_hll_datasketches(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(*v);
+                sketch.inner.update(v.hash_key());
             }),
             footprint: Box::new(move || memory_hll_datasketches(&read.borrow())),
         });
@@ -90,9 +90,9 @@ pub fn insert_step_hll_datasketches(
     Ok(out)
 }
 
-pub fn query_hll_datasketches(
+pub fn query_hll_datasketches<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -101,7 +101,7 @@ pub fn query_hll_datasketches(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hll_datasketches(params)?;
         for v in items.iter() {
-            sketch.inner.update(*v);
+            sketch.inner.update(v.hash_key());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -116,9 +116,9 @@ pub fn query_hll_datasketches(
     Ok(out)
 }
 
-pub fn merge_hll_datasketches(
+pub fn merge_hll_datasketches<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -138,9 +138,9 @@ pub fn merge_hll_datasketches(
     Ok(out)
 }
 
-pub fn merge_step_hll_datasketches(
+pub fn merge_step_hll_datasketches<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -168,16 +168,16 @@ pub fn merge_step_hll_datasketches(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hll_datasketches_shards(
+fn hll_datasketches_shards<T: CardinalityValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(HllDatasketches, Vec<HllDatasketches>), BuildError> {
     let mut parts: Vec<HllDatasketches> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_hll_datasketches(params)?;
         for v in shard {
-            sketch.inner.update(*v);
+            sketch.inner.update(v.hash_key());
         }
         parts.push(sketch);
     }
