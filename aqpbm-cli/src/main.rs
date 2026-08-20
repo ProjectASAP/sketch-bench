@@ -5,6 +5,7 @@
 
 mod atomic_costs_cmd;
 mod cli;
+mod flatten_cmd;
 mod flatten_record;
 mod repeat;
 mod report_sink;
@@ -116,6 +117,7 @@ fn main() -> Result<()> {
     match cli.command {
         Cmd::Sketchbench(args) => run_sketchbench(args),
         Cmd::AtomicCosts(args) => atomic_costs_cmd::run(args),
+        Cmd::Flatten(args) => flatten_cmd::run(args),
     }
 }
 
