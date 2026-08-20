@@ -20,14 +20,13 @@ not just adjusting the number
 what different cli flag means and what can be done with that is more important
 
 ```sh
-% ./target/release/approxbench sketchbench \
-      --algorithm hll --impl lib --config 'lg_k=14' \
-      --dataset zipf --size 1000000 --zipf-s 1.1 --cardinality 100000 \
+./target/release/approxbench sketchbench \
+      --variant hll --library lib --config 'lg_k=14' \
+      --dataset zipf --size 1000000 --zipf-s 1.1 --cardinality 100000 --dtype i64 \
       --runs 10 --warmup-runs 3 \
       --operations insert --metrics throughput
 approxbench: hll/lib config={"lg_k":14} runs=10 warmup=3
-{"schema_version":3,"sketch":"hll","family":"hll","impl":"lib","language":"rust","sketch_config":{"algorithm":"hll","params":{"lg_k":14}},"workload":{"shape":"zipf","size":1000000,"cardinality":100000,"zipf_s":1.1,"seed":42},"mode":"bench","runs":10,"bench":{"metric":"throughput","operation":"insert","throughput_items_per_sec":{"mean":694468886.4950684,"stddev":3084050.9269289766,"n":10},"throughput_samples":[695289414.2186685,697695024.9460857,692321325.7122601,695894224.0779402,699361832.3280008,689377519.6748344,695732999.9380797,694163404.6771342,690428928.972124,694424190.4055575],"wall_time_ms":{"mean":1.4399749,"stddev":0.006400518945106468,"n":10},"memory_bytes":16384},"source":"cli","timestamp":"2026-08-17T09:11:20.208786Z"}
-
+{"schema_version":4,"sketch":"hll","algorithm":"hll","impl":"lib","language":"rust","sketch_config":{"algorithm":"hll","params":{"lg_k":14}},"workload":{"column_num":1,"column_label":["key"],"column_spec":[{"distribution":{"kind":"zipf","skewness":1.1,"population_size":100000,"seed":42},"special_rule":0,"data_type":"i64"}],"row_num":1000000},"mode":"bench","runs":10,"bench":{"metric":"throughput","operation":"insert","throughput_items_per_sec":{"mean":649049287.9350125,"stddev":16059873.037390046,"n":10,"samples":[651112458.1904414,650847598.8279536,651288868.1055374,648245685.1146585,659286177.6697134,655935130.6393204,657408168.2964911,662050848.1533417,649052253.8988569,605265690.4538101]},"wall_time_ms":{"mean":1.5416123999999998,"stddev":0.040304852639188135,"n":10,"samples":[1.535833,1.536458,1.535417,1.542625,1.516792,1.524541,1.521125,1.510458,1.540708,1.652167]},"memory_bytes":16384},"source":"cli","timestamp":"2026-08-19T21:06:41.288130Z"}
 ```
 
 #### Explanaition
@@ -41,14 +40,14 @@ Data is in field `throughput_items_per_sec`.
 ### Example: Hydra merge throughput
 
 ```sh
-% ./target/release/approxbench sketchbench \
-    --algorithm hydra-cms --impl lib \
-    --spec configs/datagen/hydra_columns.yaml \
+./target/release/approxbench sketchbench \
+    --variant hydra-cms --library lib \
+    --spec configs/datagen/hydra_columns.yaml --dtype i64\
     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
     --operations insert,merge --metrics throughput,cpu,memory \
     --merge-shards 8 --runs 5 --warmup-runs 2 --flat
 approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"rows":3} runs=5 warmup=2
-{"schema_version":3,"sketch":"hydra-cms","impl":"lib","language":"rust","mode":"bench","runs":5,"source":"cli","sketch_config":{"algorithm":"hydra-cms","params":{"cell_cols":1024,"cell_rows":3,"cols":1024,"rows":3}},"workload":{"shape":"columns","size":200000,"seed":1,"spec":{"column_label":["key1","key2","value"],"column_num":3,"column_spec":[{"data_type":"string","distribution":{"kind":"uniform","lower_bound":0.0,"seed":1,"upper_bound":200.0},"special_rule":0},{"data_type":"string","distribution":{"kind":"zipf","population_size":50,"seed":2,"skewness":1.1},"special_rule":0},{"data_type":"i64","distribution":{"kind":"zipf","population_size":1000,"seed":3,"skewness":1.2},"special_rule":0}],"row_num":200000}},"memory_bytes":38437088,"heap_bytes_net":null,"heap_bytes_peak":null,"insert_timestamp":"2026-08-17T09:08:16.354935Z","insert_throughput_items_per_sec":{"mean":3146644.494778336,"stddev":661990.5995087331,"n":5},"insert_throughput_samples":[3548652.8107388476,2007851.5428301138,3160803.907486936,3379170.3714341833,3636743.841401601],"insert_build_throughput_items_per_sec":null,"insert_latency_ns":null,"insert_cpu_time_ms":{"user_ms":{"mean":65.00460000000001,"stddev":12.732758353946721,"n":5},"sys_ms":{"mean":0.9918,"stddev":1.0513268759049204,"n":5}},"insert_wall_time_ms":{"mean":66.6847582,"stddev":18.67578157952414,"n":5},"insert_rss_peak_kb":null,"insert_heap_allocated_kb":18221,"query_timestamp":null,"query_throughput_items_per_sec":null,"query_latency_ns":null,"query_accuracy":null,"query_cpu_time_ms":null,"query_wall_time_ms":null,"query_rss_peak_kb":null,"query_heap_allocated_kb":null,"merge_timestamp":"2026-08-17T09:08:16.354940Z","merge_time_ms":{"mean":12.1078084,"stddev":0.2835344216392432,"n":5},"merge_folds_per_sec":{"mean":578.3938365703082,"stddev":13.58991397643068,"n":5},"merge_shards":8,"merge_supported":true,"merge_cpu_time_ms":{"user_ms":{"mean":95.2826,"stddev":2.1805422032146056,"n":5},"sys_ms":{"mean":17.5492,"stddev":2.0397143672583176,"n":5}},"merge_wall_time_ms":{"mean":12.1078084,"stddev":0.2835344216392432,"n":5},"merge_rss_peak_kb":null,"merge_heap_allocated_kb":18268,"prepare_timestamp":null,"prepare_finalize_time_ms":null,"prepare_cpu_time_ms":null,"prepare_wall_time_ms":null,"prepare_rss_peak_kb":null,"prepare_heap_allocated_kb":null}
+{"schema_version":4,"sketch":"hydra-cms","impl":"lib","language":"rust","mode":"bench","runs":5,"source":"cli","sketch_config":{"algorithm":"hydra-cms","params":{"cell_cols":1024,"cell_rows":3,"cols":1024,"rows":3}},"workload":{"column_num":3,"column_label":["key1","key2","value"],"column_spec":[{"distribution":{"kind":"uniform","lower_bound":0.0,"upper_bound":200.0,"seed":1},"special_rule":0,"data_type":"string"},{"distribution":{"kind":"zipf","skewness":1.1,"population_size":50,"seed":2},"special_rule":0,"data_type":"string"},{"distribution":{"kind":"zipf","skewness":1.2,"population_size":1000,"seed":3},"special_rule":0,"data_type":"i64"}],"row_num":200000},"memory_bytes":38437088,"heap_bytes_net":null,"heap_bytes_peak":null,"insert_timestamp":"2026-08-20T04:10:29.932751Z","insert_throughput_items_per_sec":{"mean":3144342.5644713533,"stddev":86587.66744001806,"n":5,"samples":[3061671.618818454,3206185.7840062855,3216220.454673226,3199008.307424698,3038626.657434103]},"insert_latency_ns":null,"insert_cpu_time_ms":{"user_ms":{"mean":57.973800000000004,"stddev":1.0205582785906928,"n":5,"samples":[57.318,57.56,57.344,57.895,59.752]},"sys_ms":{"mean":5.2842,"stddev":0.7191360789169184,"n":5,"samples":[6.066,4.821,4.842,4.625,6.067]}},"insert_wall_time_ms":{"mean":63.6453168,"stddev":1.7710492566904223,"n":5,"samples":[65.323792,62.379417,62.184792,62.519375,65.819208]},"insert_rss_peak_kb":null,"insert_heap_allocated_kb":2276888,"query_timestamp":null,"query_throughput_items_per_sec":null,"query_latency_ns":null,"query_accuracy":null,"query_cpu_time_ms":null,"query_wall_time_ms":null,"query_rss_peak_kb":null,"query_heap_allocated_kb":null,"merge_timestamp":"2026-08-20T04:10:29.932972Z","merge_folds_per_sec":{"mean":249.32326079031935,"stddev":54.1908216627536,"n":5,"samples":[156.9734021127992,250.75113397722643,262.8807729415769,292.45568774088423,283.55530717911]},"merge_shards":8,"merge_supported":true,"merge_cpu_time_ms":{"user_ms":{"mean":13.682800000000002,"stddev":1.8371292006824134,"n":5,"samples":[16.892,13.565,12.683,12.65,12.624]},"sys_ms":{"mean":15.867,"stddev":6.73111517506572,"n":5,"samples":[27.69,14.351,13.945,11.286,12.063]}},"merge_wall_time_ms":{"mean":29.551900000000003,"stddev":8.554153538622835,"n":5,"samples":[44.593542,27.916125,26.628041,23.93525,24.686542]},"merge_rss_peak_kb":null,"merge_heap_allocated_kb":1204849,"prepare_timestamp":null,"prepare_cpu_time_ms":null,"prepare_wall_time_ms":null,"prepare_rss_peak_kb":null,"prepare_heap_allocated_kb":null}
 ```
 
 #### Explanation
@@ -66,7 +65,7 @@ A detailed roadmap (under construction) for sketch instance benchmark can be fou
 
 ## Want to add more?
 
-Check this (under construction) [developer_guida](./docs/developer_guide.md) about how to add a sketch instance to benchmark and how to adjust ground-truth calculation to meet demands.
+Check this (under construction) [developer_guide](./docs/developer_guide.md) about how to add a sketch instance to benchmark and how to adjust ground-truth calculation to meet demands.
 
 ## Reference
 
