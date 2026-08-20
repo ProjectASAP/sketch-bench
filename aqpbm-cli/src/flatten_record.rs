@@ -126,7 +126,10 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             }
             "query" => {
                 out.query.timestamp = Some(record.timestamp);
-                keep!(out.query.throughput_items_per_sec, *throughput_items_per_sec);
+                keep!(
+                    out.query.throughput_items_per_sec,
+                    *throughput_items_per_sec
+                );
                 keep!(out.query.latency_ns, *latency_ns);
                 keep!(out.query.accuracy, accuracy.clone());
                 keep!(out.query.cpu_time_ms, *cpu_time_ms);

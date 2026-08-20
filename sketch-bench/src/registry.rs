@@ -1086,12 +1086,7 @@ mod tests {
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {
-                assert!(
-                    KNOWN.contains(&name),
-                    "{}/{}: {name}",
-                    e.variant,
-                    e.library
-                );
+                assert!(KNOWN.contains(&name), "{}/{}: {name}", e.variant, e.library);
             }
         }
     }
