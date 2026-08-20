@@ -109,7 +109,7 @@ point() {
         --seed "$SEED" \
         --report "$RAW_JSONL"
     "$BINARY" sketchbench \
-        --variance "$algorithm" \
+        --variant "$algorithm" \
         --library lib \
         --config "$config" \
         --operations insert,query,merge \
