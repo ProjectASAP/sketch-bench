@@ -5,6 +5,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::atomic_costs_cmd;
+use crate::flatten_cmd;
 
 #[derive(Parser, Debug)]
 // `max_term_width` is pinned so `--help` renders identically under any
@@ -28,6 +29,11 @@ pub enum Cmd {
     Sketchbench(SketchbenchArgs),
     /// Reduce a `--flat` JSONL stream to ASAPQuery's atomic-cost table.
     AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
+    /// Group raw (non-`--flat`) JSONL by (sketch, impl, sketch_config,
+    /// workload) and fold each group into one `--flat`-shaped row — for
+    /// records that came from several invocations of the same cell rather
+    /// than one.
+    Flatten(flatten_cmd::FlattenArgs),
 }
 
 /// One target of the sketch bundle: one variant, one library, one construction
