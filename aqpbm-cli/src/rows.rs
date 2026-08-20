@@ -575,8 +575,8 @@ pub(crate) fn row_hll_fastpath_parallel_lib(
 //
 // Rows `--dtype` selects a type for: their library is generic over the value
 // type, so a width picks a monomorphisation rather than being refused. Each
-// arm is its own instantiation, and the two the library cannot order are
-// refused by name.
+// arm is its own instantiation, and the one width these rows cannot order —
+// `string` — is refused by name.
 
 pub(crate) fn row_kll_percall_oxide(
     req: &Requirement,
@@ -584,35 +584,28 @@ pub(crate) fn row_kll_percall_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                ko::insert_kll_oxide_per_call::<$t>,
+                ko::insert_step_kll_oxide_per_call::<$t>,
+                ko::query_kll_oxide_per_call::<$t>,
+                Some((
+                    ko::merge_kll_oxide_per_call::<$t>,
+                    ko::merge_step_kll_oxide_per_call::<$t>,
+                )),
+                None,
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            ko::insert_kll_oxide_per_call::<i64>,
-            ko::insert_step_kll_oxide_per_call::<i64>,
-            ko::query_kll_oxide_per_call::<i64>,
-            Some((
-                ko::merge_kll_oxide_per_call::<i64>,
-                ko::merge_step_kll_oxide_per_call::<i64>,
-            )),
-            None,
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            ko::insert_kll_oxide_per_call::<f64>,
-            ko::insert_step_kll_oxide_per_call::<f64>,
-            ko::query_kll_oxide_per_call::<f64>,
-            Some((
-                ko::merge_kll_oxide_per_call::<f64>,
-                ko::merge_step_kll_oxide_per_call::<f64>,
-            )),
-            None,
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
@@ -623,35 +616,28 @@ pub(crate) fn row_kll_percall_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                kl::insert_kll_lib_per_call::<$t>,
+                kl::insert_step_kll_lib_per_call::<$t>,
+                kl::query_kll_lib_per_call::<$t>,
+                Some((
+                    kl::merge_kll_lib_per_call::<$t>,
+                    kl::merge_step_kll_lib_per_call::<$t>,
+                )),
+                None,
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            kl::insert_kll_lib_per_call::<i64>,
-            kl::insert_step_kll_lib_per_call::<i64>,
-            kl::query_kll_lib_per_call::<i64>,
-            Some((
-                kl::merge_kll_lib_per_call::<i64>,
-                kl::merge_step_kll_lib_per_call::<i64>,
-            )),
-            None,
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            kl::insert_kll_lib_per_call::<f64>,
-            kl::insert_step_kll_lib_per_call::<f64>,
-            kl::query_kll_lib_per_call::<f64>,
-            Some((
-                kl::merge_kll_lib_per_call::<f64>,
-                kl::merge_step_kll_lib_per_call::<f64>,
-            )),
-            None,
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
@@ -662,35 +648,28 @@ pub(crate) fn row_kll_cdf_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                ko::insert_kll_oxide_cdf::<$t>,
+                ko::insert_step_kll_oxide_cdf::<$t>,
+                ko::query_kll_oxide_cdf::<$t>,
+                Some((
+                    ko::merge_kll_oxide_cdf::<$t>,
+                    ko::merge_step_kll_oxide_cdf::<$t>,
+                )),
+                Some(ko::prepare_kll_oxide_cdf::<$t>),
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            ko::insert_kll_oxide_cdf::<i64>,
-            ko::insert_step_kll_oxide_cdf::<i64>,
-            ko::query_kll_oxide_cdf::<i64>,
-            Some((
-                ko::merge_kll_oxide_cdf::<i64>,
-                ko::merge_step_kll_oxide_cdf::<i64>,
-            )),
-            Some(ko::prepare_kll_oxide_cdf::<i64>),
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            ko::insert_kll_oxide_cdf::<f64>,
-            ko::insert_step_kll_oxide_cdf::<f64>,
-            ko::query_kll_oxide_cdf::<f64>,
-            Some((
-                ko::merge_kll_oxide_cdf::<f64>,
-                ko::merge_step_kll_oxide_cdf::<f64>,
-            )),
-            Some(ko::prepare_kll_oxide_cdf::<f64>),
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
@@ -701,58 +680,62 @@ pub(crate) fn row_kll_cdf_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                kl::insert_kll_lib_cdf::<$t>,
+                kl::insert_step_kll_lib_cdf::<$t>,
+                kl::query_kll_lib_cdf::<$t>,
+                Some((
+                    kl::merge_kll_lib_cdf::<$t>,
+                    kl::merge_step_kll_lib_cdf::<$t>,
+                )),
+                Some(kl::prepare_kll_lib_cdf::<$t>),
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            kl::insert_kll_lib_cdf::<i64>,
-            kl::insert_step_kll_lib_cdf::<i64>,
-            kl::query_kll_lib_cdf::<i64>,
-            Some((
-                kl::merge_kll_lib_cdf::<i64>,
-                kl::merge_step_kll_lib_cdf::<i64>,
-            )),
-            Some(kl::prepare_kll_lib_cdf::<i64>),
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            kl::insert_kll_lib_cdf::<f64>,
-            kl::insert_step_kll_lib_cdf::<f64>,
-            kl::query_kll_lib_cdf::<f64>,
-            Some((
-                kl::merge_kll_lib_cdf::<f64>,
-                kl::merge_step_kll_lib_cdf::<f64>,
-            )),
-            Some(kl::prepare_kll_lib_cdf::<f64>),
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
 
-// The exact baseline is i64 only, unlike the four sketch rows above it: its
-// grid is built from a sorted i64 column.
+// The exact baseline reads every width the sketch rows above it build at. It
+// has to: it is what their reported error is measured against, so a width they
+// run at and this row refused would leave that error with nothing to subtract.
 pub(crate) fn row_kll_cdf_polars(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    quantile_row::<i64>(
-        req,
-        description,
-        table,
-        want,
-        kp::insert_polars_quantile_kll,
-        kp::insert_step_polars_quantile_kll,
-        kp::query_polars_quantile_kll,
-        None,
-        Some(kp::prepare_polars_quantile_kll),
-    )
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                kp::insert_polars_quantile_kll::<$t>,
+                kp::insert_step_polars_quantile_kll::<$t>,
+                kp::query_polars_quantile_kll::<$t>,
+                None,
+                Some(kp::prepare_polars_quantile_kll::<$t>),
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        other => Err(no_build_at(req, other)),
+    }
 }
 
 // -------- DDSketch (quantile) --------
@@ -763,29 +746,25 @@ pub(crate) fn row_dd_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                ddl::insert_dd_lib::<$t>,
+                ddl::insert_step_dd_lib::<$t>,
+                ddl::query_dd_lib::<$t>,
+                Some((ddl::merge_dd_lib::<$t>, ddl::merge_step_dd_lib::<$t>)),
+                None,
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            ddl::insert_dd_lib::<i64>,
-            ddl::insert_step_dd_lib::<i64>,
-            ddl::query_dd_lib::<i64>,
-            Some((ddl::merge_dd_lib::<i64>, ddl::merge_step_dd_lib::<i64>)),
-            None,
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            ddl::insert_dd_lib::<f64>,
-            ddl::insert_step_dd_lib::<f64>,
-            ddl::query_dd_lib::<f64>,
-            Some((ddl::merge_dd_lib::<f64>, ddl::merge_step_dd_lib::<f64>)),
-            None,
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
@@ -796,29 +775,25 @@ pub(crate) fn row_dd_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                ddo::insert_dd_oxide::<$t>,
+                ddo::insert_step_dd_oxide::<$t>,
+                ddo::query_dd_oxide::<$t>,
+                Some((ddo::merge_dd_oxide::<$t>, ddo::merge_step_dd_oxide::<$t>)),
+                None,
+            )
+        };
+    }
     match req.width {
-        Dtype::I64 => quantile_row::<i64>(
-            req,
-            description,
-            table,
-            want,
-            ddo::insert_dd_oxide::<i64>,
-            ddo::insert_step_dd_oxide::<i64>,
-            ddo::query_dd_oxide::<i64>,
-            Some((ddo::merge_dd_oxide::<i64>, ddo::merge_step_dd_oxide::<i64>)),
-            None,
-        ),
-        Dtype::F64 => quantile_row::<f64>(
-            req,
-            description,
-            table,
-            want,
-            ddo::insert_dd_oxide::<f64>,
-            ddo::insert_step_dd_oxide::<f64>,
-            ddo::query_dd_oxide::<f64>,
-            Some((ddo::merge_dd_oxide::<f64>, ddo::merge_step_dd_oxide::<f64>)),
-            None,
-        ),
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
         other => Err(no_build_at(req, other)),
     }
 }
@@ -1634,14 +1609,15 @@ fn peel_keyed(
     Ok(Rc::new(keys.into_iter().zip(values).collect()))
 }
 
-/// The ordered rows build at either numeric width and at neither of the other
-/// two: a KLL cell stores what it can compare. The cardinality rows read every
-/// width the generator renders, so they never reach this. The rows that read no
-/// width at all are handed the data the frontend generated, and materialising it
-/// at the row's own item type is what catches a stream they cannot ingest.
+/// The ordered rows build at every numeric width and at neither `string`: a
+/// quantile cell stores what it can compare, and text is the one thing the
+/// generator renders that carries no order to compare on. The cardinality rows
+/// read every width, so they never reach this. The rows that read no width at
+/// all are handed the data the frontend generated, and materialising it at the
+/// row's own item type is what catches a stream they cannot ingest.
 fn no_build_at(req: &Requirement, got: Dtype) -> RunError {
     RunError::Sketch(format!(
-        "{}/{} builds at i64 or f64; --dtype {} is neither",
+        "{}/{} builds at i64, u64 or f64; --dtype {} is none of them",
         req.variant,
         req.library,
         got.name(),

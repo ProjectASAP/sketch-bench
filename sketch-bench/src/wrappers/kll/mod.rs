@@ -43,8 +43,17 @@ impl ToF64 for u32 {
 /// A value an ordered (quantile) sketch can ingest. Adds a **total** order
 /// over [`ToF64`]: `f64` is only partially ordered, so `partial_cmp().unwrap()`
 /// panics on NaN. Use `f64::total_cmp`; integers just use `Ord::cmp`.
+///
+/// The three widths the generator renders that carry an order. `string` is the
+/// one it renders that does not, so no impl exists for it and the rows refuse
+/// it by name. `polars_column` is here rather than beside the baseline because
+/// an exact answer has to be read off a column at the width that was ingested:
+/// widening to `f64` first would make the baseline answer a different question
+/// from the sketches it scores.
 pub trait QuantileValue: ToF64 + Copy {
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
+
+    fn polars_column(values: &[Self]) -> ::polars::prelude::Column;
 }
 
 impl QuantileValue for i64 {
@@ -52,12 +61,31 @@ impl QuantileValue for i64 {
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         Ord::cmp(self, other)
     }
+
+    fn polars_column(values: &[Self]) -> ::polars::prelude::Column {
+        ::polars::prelude::Column::new("v".into(), values)
+    }
+}
+
+impl QuantileValue for u64 {
+    #[inline(always)]
+    fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        Ord::cmp(self, other)
+    }
+
+    fn polars_column(values: &[Self]) -> ::polars::prelude::Column {
+        ::polars::prelude::Column::new("v".into(), values)
+    }
 }
 
 impl QuantileValue for f64 {
     #[inline(always)]
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         f64::total_cmp(self, other)
+    }
+
+    fn polars_column(values: &[Self]) -> ::polars::prelude::Column {
+        ::polars::prelude::Column::new("v".into(), values)
     }
 }
 

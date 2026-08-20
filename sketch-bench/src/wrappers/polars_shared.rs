@@ -2,6 +2,7 @@
 //! core, and the subset fan-out every grouped baseline needs. Hoisted here
 //! when the baselines moved next to the algorithms they score.
 
+use super::kll::QuantileValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
 
@@ -54,12 +55,16 @@ impl PolarsFrequencyCore {
 /// Polars-backed quantile baseline. The heavy work — one sort plus a 101-point
 /// quantile grid — lives in `prepare`, which the runner times separately.
 /// Insert is pure `Vec::push`; per-call `query()` is an array lookup.
-pub struct PolarsQuantileCore {
-    buf: Vec<i64>,
+///
+/// Generic over the ingested width, and over the same [`QuantileValue`] the
+/// sketch rows are: this row is what those rows are scored against, so a width
+/// they build at and this one did not would leave their error unattributable.
+pub struct PolarsQuantileCore<T: QuantileValue = i64> {
+    buf: Vec<T>,
     quantiles: [f64; 101],
 }
 
-impl Default for PolarsQuantileCore {
+impl<T: QuantileValue> Default for PolarsQuantileCore<T> {
     fn default() -> Self {
         Self {
             buf: Vec::new(),
@@ -68,13 +73,13 @@ impl Default for PolarsQuantileCore {
     }
 }
 
-impl PolarsQuantileCore {
+impl<T: QuantileValue> PolarsQuantileCore<T> {
     #[inline(always)]
-    pub fn update(&mut self, v: &i64) {
+    pub fn update(&mut self, v: &T) {
         self.buf.push(*v);
     }
     pub fn finalize(&mut self) {
-        let series = Column::new("v".into(), &self.buf);
+        let series = T::polars_column(&self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let exprs: Vec<Expr> = (0..=100)
             .map(|i| {
@@ -103,7 +108,7 @@ impl PolarsQuantileCore {
         self.quantiles[i]
     }
     pub fn memory_bytes(&self) -> usize {
-        self.buf.capacity() * std::mem::size_of::<i64>()
+        self.buf.capacity() * std::mem::size_of::<T>()
     }
 }
 
