@@ -3,12 +3,11 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::marker::PhantomData;
 
-use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
+use aqpbm_datagen::{DataGenError, GeneratedTable};
 
-use super::GroundTruth;
+use super::{CountedValue, GroundTruth};
 
 pub struct TopkGT<K> {
     pub k: usize,
@@ -28,7 +27,7 @@ impl<K> TopkGT<K> {
 
 impl<K> GroundTruth for TopkGT<K>
 where
-    K: ColumnItem + Eq + Hash + Ord,
+    K: CountedValue,
 {
     /// The true k heaviest keys, in the total order every top-k impl ranks by.
     type Truth = Vec<(K, u64)>;
@@ -38,15 +37,24 @@ where
 
     fn truth(&self, table: &GeneratedTable) -> Result<Vec<(K, u64)>, DataGenError> {
         let items = K::column_slice(table.column(self.column)?)?;
-        let mut exact: HashMap<K, u64> = HashMap::new();
+        // Tallied by counting key so the float width can be counted at all;
+        // the value itself is carried alongside, because the answer this is
+        // compared against is a list of keys at the row's own item type.
+        let mut exact: HashMap<K::CountKey, (K, u64)> = HashMap::new();
         for it in items {
-            *exact.entry(it.clone()).or_insert(0) += 1;
+            exact
+                .entry(it.count_key())
+                .or_insert_with(|| (it.clone(), 0))
+                .1 += 1;
         }
-        let mut exact_vec: Vec<(K, u64)> = exact.into_iter().collect();
+        let mut exact_vec: Vec<(K, u64)> = exact.into_values().collect();
         // Count descending, ties on the key — a total order, the same one every
         // top-k impl ranks by. On count alone the k-th place falls to HashMap
         // order, and an exact source scores below 1.0 against itself.
-        exact_vec.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        exact_vec.sort_unstable_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.count_key().cmp(&b.0.count_key()))
+        });
         exact_vec.truncate(self.k);
         Ok(exact_vec)
     }
@@ -63,8 +71,10 @@ where
     ) -> BTreeMap<String, f64> {
         let empty = Vec::new();
         let est = answers.first().unwrap_or(&empty);
-        let est_set: std::collections::HashSet<&K> = est.iter().map(|(k, _)| k).collect();
-        let truth_set: std::collections::HashSet<&K> = truth.iter().map(|(k, _)| k).collect();
+        let est_set: std::collections::HashSet<K::CountKey> =
+            est.iter().map(|(k, _)| k.count_key()).collect();
+        let truth_set: std::collections::HashSet<K::CountKey> =
+            truth.iter().map(|(k, _)| k.count_key()).collect();
 
         let tp = est_set.intersection(&truth_set).count() as f64;
         let precision = if est.is_empty() {

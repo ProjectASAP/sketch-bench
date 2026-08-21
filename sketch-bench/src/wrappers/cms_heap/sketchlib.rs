@@ -3,13 +3,12 @@
 //! variant, see the follow-up issue linked from #95.
 
 use crate::params::{CmsHeapParams, ParamSet};
+use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use asap_sketchlib::{
-    heap_item_to_sketch_input, CMSHeap, DataInput, FastPath, RegularPath, Vector2D,
-};
+use asap_sketchlib::{heap_item_to_sketch_input, CMSHeap, FastPath, RegularPath, Vector2D};
 
 /// The heap's fixed capacity, and the `k` every TopK-capability row grades
 /// against. The two are the same constant on purpose (see #95's design-decision
@@ -20,16 +19,13 @@ use asap_sketchlib::{
 /// follow-up issue tracks loosening that.
 pub const CMS_HEAP_TOP_K: usize = 32;
 
-/// One key read off the heap, paired with its estimated count. `TopkGT<i64>`
+/// One key read off the heap, paired with its estimated count. `TopkGT<T>`
 /// scores a `Vec` of these against the exact top-k.
-pub type TopkAnswer = Vec<(i64, u64)>;
-
-fn heap_key_to_i64(item: &DataInput) -> i64 {
-    match item {
-        DataInput::I64(v) => *v,
-        other => panic!("cms-heap rows only ever insert DataInput::I64 keys, got {other:?}"),
-    }
-}
+///
+/// The keys come back at the width they went in at: `HeapItem` carries the
+/// variant the insert stored, so a row fed `u64` reads `u64` back. Widening
+/// that translation is what [`FrequencyValue::from_data_input`] is for.
+pub type TopkAnswer<T> = Vec<(T, u64)>;
 
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CmsHeapLibVector2dFast {
@@ -84,9 +80,9 @@ pub fn memory_cms_heap_lib_vector2d_regular(sketch: &CmsHeapLibVector2dRegular) 
 
 // ---------- insert / insert_step (FastPath) ----------
 
-pub fn insert_cms_heap_lib_vector2d_fast(
+pub fn insert_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -95,7 +91,7 @@ pub fn insert_cms_heap_lib_vector2d_fast(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_cms_heap_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -103,9 +99,9 @@ pub fn insert_cms_heap_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn insert_step_cms_heap_lib_vector2d_fast(
+pub fn insert_step_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -118,7 +114,7 @@ pub fn insert_step_cms_heap_lib_vector2d_fast(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_heap_lib_vector2d_fast(&read.borrow())),
         });
@@ -128,9 +124,9 @@ pub fn insert_step_cms_heap_lib_vector2d_fast(
 
 // ---------- insert / insert_step (RegularPath) ----------
 
-pub fn insert_cms_heap_lib_vector2d_regular(
+pub fn insert_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -139,7 +135,7 @@ pub fn insert_cms_heap_lib_vector2d_regular(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_cms_heap_lib_vector2d_regular(&sketch)
         }) as Pass);
@@ -147,9 +143,9 @@ pub fn insert_cms_heap_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn insert_step_cms_heap_lib_vector2d_regular(
+pub fn insert_step_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -162,7 +158,7 @@ pub fn insert_step_cms_heap_lib_vector2d_regular(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_heap_lib_vector2d_regular(&read.borrow())),
         });
@@ -172,23 +168,23 @@ pub fn insert_step_cms_heap_lib_vector2d_regular(
 
 // ---------- query: per-key estimate (Frequency capability) ----------
 
-pub fn query_cms_heap_lib_vector2d_fast_estimate(
+pub fn query_cms_heap_lib_vector2d_fast_estimate<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(&DataInput::I64(*p)) as u64);
+                answers.push(sketch.inner.estimate(&p.data_input()) as u64);
             }
             let footprint = memory_cms_heap_lib_vector2d_fast(&sketch);
             (answers, footprint)
@@ -197,23 +193,23 @@ pub fn query_cms_heap_lib_vector2d_fast_estimate(
     Ok(out)
 }
 
-pub fn query_cms_heap_lib_vector2d_regular_estimate(
+pub fn query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(&DataInput::I64(*p)) as u64);
+                answers.push(sketch.inner.estimate(&p.data_input()) as u64);
             }
             let footprint = memory_cms_heap_lib_vector2d_regular(&sketch);
             (answers, footprint)
@@ -229,66 +225,66 @@ pub fn query_cms_heap_lib_vector2d_regular_estimate(
 // length 1 — there is nothing per-item to loop over the way the estimate
 // queries do.
 
-pub fn query_cms_heap_lib_vector2d_fast_topk(
+pub fn query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     _probes: Rc<Vec<()>>,
     passes: usize,
-) -> Result<Vec<QueryPass<TopkAnswer>>, BuildError> {
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         out.push(Box::new(move || {
-            let ranked: TopkAnswer = sketch
+            let ranked: TopkAnswer<T> = sketch
                 .inner
                 .heap()
                 .heap()
                 .iter()
                 .map(|item| {
                     (
-                        heap_key_to_i64(&heap_item_to_sketch_input(&item.key)),
+                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
                         item.count as u64,
                     )
                 })
                 .collect();
             let footprint = memory_cms_heap_lib_vector2d_fast(&sketch);
             (vec![ranked], footprint)
-        }) as QueryPass<TopkAnswer>);
+        }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
 }
 
-pub fn query_cms_heap_lib_vector2d_regular_topk(
+pub fn query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     _probes: Rc<Vec<()>>,
     passes: usize,
-) -> Result<Vec<QueryPass<TopkAnswer>>, BuildError> {
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         out.push(Box::new(move || {
-            let ranked: TopkAnswer = sketch
+            let ranked: TopkAnswer<T> = sketch
                 .inner
                 .heap()
                 .heap()
                 .iter()
                 .map(|item| {
                     (
-                        heap_key_to_i64(&heap_item_to_sketch_input(&item.key)),
+                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
                         item.count as u64,
                     )
                 })
                 .collect();
             let footprint = memory_cms_heap_lib_vector2d_regular(&sketch);
             (vec![ranked], footprint)
-        }) as QueryPass<TopkAnswer>);
+        }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
 }
@@ -300,9 +296,9 @@ pub fn query_cms_heap_lib_vector2d_regular_topk(
 // 2 * CMS_HEAP_TOP_K `estimate()` calls) to rebuild the merged heap. Not a
 // pure cell-fold the way plain CMS merge is — see the registry description.
 
-pub fn merge_cms_heap_lib_vector2d_fast(
+pub fn merge_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -319,9 +315,9 @@ pub fn merge_cms_heap_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn merge_step_cms_heap_lib_vector2d_fast(
+pub fn merge_step_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -344,16 +340,16 @@ pub fn merge_step_cms_heap_lib_vector2d_fast(
 }
 
 #[allow(clippy::type_complexity)]
-fn cms_heap_lib_vector2d_fast_shards(
+fn cms_heap_lib_vector2d_fast_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsHeapLibVector2dFast, Vec<CmsHeapLibVector2dFast>), BuildError> {
     let mut parts: Vec<CmsHeapLibVector2dFast> = Vec::new();
     for shard in crate::wrappers::partition(items, shards) {
         let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -364,9 +360,9 @@ fn cms_heap_lib_vector2d_fast_shards(
     ))
 }
 
-pub fn merge_cms_heap_lib_vector2d_regular(
+pub fn merge_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -383,9 +379,9 @@ pub fn merge_cms_heap_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn merge_step_cms_heap_lib_vector2d_regular(
+pub fn merge_step_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -408,16 +404,16 @@ pub fn merge_step_cms_heap_lib_vector2d_regular(
 }
 
 #[allow(clippy::type_complexity)]
-fn cms_heap_lib_vector2d_regular_shards(
+fn cms_heap_lib_vector2d_regular_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsHeapLibVector2dRegular, Vec<CmsHeapLibVector2dRegular>), BuildError> {
     let mut parts: Vec<CmsHeapLibVector2dRegular> = Vec::new();
     for shard in crate::wrappers::partition(items, shards) {
         let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
         for v in shard {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         parts.push(sketch);
     }

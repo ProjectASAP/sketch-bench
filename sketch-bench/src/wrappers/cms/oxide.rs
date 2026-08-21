@@ -10,6 +10,8 @@ use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::wrappers::frequency_value::FrequencyValue;
+
 // No `rows` / `cols` field: `init` has already proven the built table matches
 // the request, so the sketch itself is the one place either figure is read
 // from, and a library upgrade that changed the rounding cannot slip past.
@@ -38,9 +40,9 @@ pub fn memory_cms_oxide(sketch: &CmsOxide) -> usize {
     sketch.inner.depth() * sketch.inner.width() * std::mem::size_of::<u64>()
 }
 
-pub fn insert_cms_oxide(
+pub fn insert_cms_oxide<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -50,7 +52,7 @@ pub fn insert_cms_oxide(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(v);
+                sketch.inner.update(&v.hash_key());
             }
             memory_cms_oxide(&sketch)
         }) as Pass);
@@ -58,9 +60,9 @@ pub fn insert_cms_oxide(
     Ok(out)
 }
 
-pub fn insert_step_cms_oxide(
+pub fn insert_step_cms_oxide<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -73,7 +75,7 @@ pub fn insert_step_cms_oxide(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(v);
+                sketch.inner.update(&v.hash_key());
             }),
             footprint: Box::new(move || memory_cms_oxide(&read.borrow())),
         });
@@ -81,10 +83,10 @@ pub fn insert_step_cms_oxide(
     Ok(out)
 }
 
-pub fn query_cms_oxide(
+pub fn query_cms_oxide<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -92,13 +94,13 @@ pub fn query_cms_oxide(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_cms_oxide(params)?;
         for v in items.iter() {
-            sketch.inner.update(v);
+            sketch.inner.update(&v.hash_key());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(p));
+                answers.push(sketch.inner.estimate(&p.hash_key()));
             }
             let footprint = memory_cms_oxide(&sketch);
             (answers, footprint)
@@ -107,9 +109,9 @@ pub fn query_cms_oxide(
     Ok(out)
 }
 
-pub fn merge_cms_oxide(
+pub fn merge_cms_oxide<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -128,9 +130,9 @@ pub fn merge_cms_oxide(
     Ok(out)
 }
 
-pub fn merge_step_cms_oxide(
+pub fn merge_step_cms_oxide<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -157,16 +159,16 @@ pub fn merge_step_cms_oxide(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn cms_oxide_shards(
+fn cms_oxide_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsOxide, Vec<CmsOxide>), BuildError> {
     let mut parts: Vec<CmsOxide> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_cms_oxide(params)?;
         for v in shard {
-            sketch.inner.update(v);
+            sketch.inner.update(&v.hash_key());
         }
         parts.push(sketch);
     }

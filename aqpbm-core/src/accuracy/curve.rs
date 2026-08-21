@@ -26,17 +26,24 @@ pub(crate) fn shuffled<T: Clone>(ranked: &[(T, u64)]) -> Vec<T> {
 /// Everything either population needs, asked once. A prefix re-uses the answers
 /// instead of re-querying: an estimate is deterministic given the sketch, so a
 /// second call would only measure a warm cache.
-pub(crate) fn union_of<T: Clone + Eq + Hash>(all: &[T], ranked: &[T]) -> Vec<T> {
-    let mut seen: HashSet<&T> = HashSet::new();
+/// Deduplicated by an explicit key rather than by the probe itself: the
+/// frequency comparators key the float width by its bits, and the grouped ones
+/// probe with label vectors that are their own key.
+pub(crate) fn union_of<T: Clone, K: Eq + Hash>(
+    all: &[T],
+    ranked: &[T],
+    key: impl Fn(&T) -> K,
+) -> Vec<T> {
+    let mut seen: HashSet<K> = HashSet::new();
     let mut out: Vec<T> = Vec::with_capacity(all.len());
     for t in all {
-        if seen.insert(t) {
+        if seen.insert(key(t)) {
             out.push(t.clone());
         }
     }
     let deepest = *TOP_K_REPORTED.last().unwrap_or(&0);
     for t in ranked.iter().take(deepest) {
-        if seen.insert(t) {
+        if seen.insert(key(t)) {
             out.push(t.clone());
         }
     }
