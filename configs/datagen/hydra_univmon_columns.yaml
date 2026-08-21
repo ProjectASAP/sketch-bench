@@ -1,0 +1,51 @@
+# `hydra_columns.yaml` at a row count the UnivMon-celled rows can run:
+# `hydra-univmon-cardinality`, `-l1-norm`, `-l2-norm` and `-entropy`. The label
+# columns and every distribution parameter match that file exactly, so the
+# workload is the same shape read at a smaller size.
+#
+#   approxbench sketchbench --variant hydra-univmon-cardinality --library lib \
+#     --spec configs/datagen/hydra_univmon_columns.yaml --dtype i64 \
+#     --config "rows=2 cols=8 cell_heap_size=1000 cell_sketch_row=5 \
+#               cell_sketch_col=2048 cell_layer_size=8" \
+#     --operations query --metrics accuracy
+#
+# 20000 rows and not the 200000 the other hydra files carry, because a cell here
+# is a whole UnivMon: a record is written into every non-empty label subset, and
+# each of those writes is `cell_layer_size` Count-Sketch updates plus a heap
+# update. Measured on this shape at the cell below: ~5.7k records/sec, against
+# ~3M for `hydra-cms`. Raise the row count only after measuring.
+#
+# The cell knobs hold the same four values `UnivMonParams` takes, so the cell
+# priced here is the one the ungrouped `univmon` rows price. Memory is the grid
+# area times that cell — ~16 MB at the eight cells below, and ~366 MB at the
+# 3x128 grid the other hydra rows default to. The grid is the term to shrink.
+
+column_num: 3
+column_label: [key1, key2, value]
+row_num: 20000
+
+column_spec:
+  # key1: the column the comparator groups by.
+  - data_type: string
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 200.0
+      seed: 1
+
+  # key2: a second label, skewed, so the subset fan-out is not uniform.
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 50
+      seed: 2
+
+  # value: the key each cell's UnivMon counts, and whose frequency vector the
+  # L1, L2 and entropy rows are taken over.
+  - data_type: i64
+    distribution:
+      kind: zipf
+      skewness: 1.2
+      population_size: 1000
+      seed: 3

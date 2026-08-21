@@ -453,6 +453,28 @@ sketch_params!(
     }
 );
 
+/// Hydra over Count Sketch cells: `rows` / `cols` size the outer grid a
+/// subpopulation key hashes into, `cell_rows` / `cell_cols` the counter array
+/// inside each cell. Memory is their product, so the two pairs are not alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraCsParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_rows: usize,
+    pub cell_cols: usize,
+}
+sketch_params!(
+    HydraCsParams,
+    "hydra-cs",
+    HydraCsParams {
+        rows: 3,
+        cols: 128,
+        cell_rows: 3,
+        cell_cols: 512
+    }
+);
+
 /// Hydra over HyperLogLog cells: the grid shape and nothing else. The library
 /// fixes the cell at `HyperLogLogP14` — 2^14 one-byte registers — so a `lg_k`
 /// here would be a knob the row reads and cannot act on.
@@ -466,6 +488,33 @@ sketch_params!(
     HydraHllParams,
     "hydra-hll",
     HydraHllParams { rows: 3, cols: 128 }
+);
+
+/// Hydra over UnivMon cells: the grid shape plus the four knobs one UnivMon
+/// takes, `cell_`-prefixed for the reason the Count-Min row prefixes its own —
+/// they size the structure inside a cell, and reading them as grid dimensions
+/// would understate the footprint by the grid area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraUnivmonParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_heap_size: usize,
+    pub cell_sketch_row: usize,
+    pub cell_sketch_col: usize,
+    pub cell_layer_size: usize,
+}
+sketch_params!(
+    HydraUnivmonParams,
+    "hydra-univmon",
+    HydraUnivmonParams {
+        rows: 2,
+        cols: 8,
+        cell_heap_size: 1000,
+        cell_sketch_row: 5,
+        cell_sketch_col: 2048,
+        cell_layer_size: 8
+    }
 );
 
 /// Hydra over KLL cells: the grid shape plus the cell's accuracy parameter.
@@ -577,8 +626,10 @@ mod tests {
         check::<CmsParams>();
         check::<CountSketchParams>();
         check::<HydraCmsParams>();
+        check::<HydraCsParams>();
         check::<HydraHllParams>();
         check::<HydraKllParams>();
+        check::<HydraUnivmonParams>();
         check::<UnivMonParams>();
     }
 
@@ -613,6 +664,12 @@ mod tests {
         // families and none of them owns another's name.
         assert!(HydraCmsParams::owns("hydra-cms"));
         assert!(!HydraCmsParams::owns("hydra-hll"));
+        assert!(!HydraCmsParams::owns("hydra-cs"));
+        assert!(HydraCsParams::owns("hydra-cs"));
+        assert!(HydraUnivmonParams::owns("hydra-univmon"));
+        assert!(HydraUnivmonParams::owns("hydra-univmon-entropy"));
+        assert!(!HydraUnivmonParams::owns("univmon"));
+        assert!(!UnivMonParams::owns("hydra-univmon"));
         assert!(!HydraHllParams::owns("hydra-kll"));
 
         assert!(UnivMonParams::owns("univmon-cardinality"));

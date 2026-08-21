@@ -1,0 +1,48 @@
+# `hydra_columns.yaml` with a `string` value column, for the record-ingesting
+# rows that count rather than order: `hydra-cms`, `hydra-cs`, `hydra-hll` and
+# the `hydra-univmon-*` rows. `hydra-kll` cannot read it — text carries no
+# order — and refuses the width by name.
+#
+#   approxbench sketchbench --variant hydra-hll --library lib \
+#     --spec configs/datagen/hydra_columns_string.yaml --dtype string \
+#     --config "rows=3 cols=1024" \
+#     --operations query --metrics accuracy
+#
+# The label columns and every distribution parameter match `hydra_columns.yaml`
+# exactly, so the files describe the same workload read at different value
+# types — which is what makes a number taken at one width comparable with the
+# same row's number at another.
+#
+# A description states one `data_type` per column and the row's item type has to
+# agree with it, so this is a separate file rather than a flag on the other one:
+# a `--dtype` that rewrote a field of the user's file would make the file a
+# suggestion.
+
+column_num: 3
+column_label: [key1, key2, value]
+row_num: 200000
+
+column_spec:
+  # key1: the column the comparator groups by.
+  - data_type: string
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 200.0
+      seed: 1
+
+  # key2: a second label, skewed, so the subset fan-out is not uniform.
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 50
+      seed: 2
+
+  # value: what the cells hold inside each subpopulation.
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.2
+      population_size: 1000
+      seed: 3

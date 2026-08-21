@@ -1,5 +1,10 @@
+//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022). Their
+//! item is a **record**; insert fans out into every non-empty label subset, so
+//! `d` labels cost `2^d - 1` cells and throughput is records per second.
+
 use crate::params::*;
 
+pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
