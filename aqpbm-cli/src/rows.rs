@@ -29,13 +29,13 @@ use aqpbm_core::accuracy::subpopulation::{
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::Score;
 use aqpbm_core::accuracy::{questions, CountedValue, GroundTruth};
-use sketch_bench::wrappers::frequency_value::FrequencyValue;
 use aqpbm_core::error::RunError;
 use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
 };
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
+use sketch_bench::wrappers::frequency_value::FrequencyValue;
 
 use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
 use sketch_bench::wrappers::cms_heap::sketchlib as chl;
@@ -161,17 +161,17 @@ pub(crate) fn row_cms_oxide(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            co::insert_cms_oxide::<$t>,
-            co::insert_step_cms_oxide::<$t>,
-            co::query_cms_oxide::<$t>,
-            Some((co::merge_cms_oxide::<$t>, co::merge_step_cms_oxide)),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                co::insert_cms_oxide::<$t>,
+                co::insert_step_cms_oxide::<$t>,
+                co::query_cms_oxide::<$t>,
+                Some((co::merge_cms_oxide::<$t>, co::merge_step_cms_oxide)),
+                None,
+            )
         };
     }
     match req.width {
@@ -190,17 +190,20 @@ pub(crate) fn row_cms_datasketches(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            cd::insert_cms_datasketches::<$t>,
-            cd::insert_step_cms_datasketches::<$t>,
-            cd::query_cms_datasketches::<$t>,
-            Some((cd::merge_cms_datasketches::<$t>, cd::merge_step_cms_datasketches)),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                cd::insert_cms_datasketches::<$t>,
+                cd::insert_step_cms_datasketches::<$t>,
+                cd::query_cms_datasketches::<$t>,
+                Some((
+                    cd::merge_cms_datasketches::<$t>,
+                    cd::merge_step_cms_datasketches,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -219,17 +222,17 @@ pub(crate) fn row_cms_polars(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            cp::insert_polars_frequency_cms::<$t>,
-            cp::insert_step_polars_frequency_cms::<$t>,
-            cp::query_polars_frequency_cms::<$t>,
-            None,
-            Some(cp::prepare_polars_frequency_cms),
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                cp::insert_polars_frequency_cms::<$t>,
+                cp::insert_step_polars_frequency_cms::<$t>,
+                cp::query_polars_frequency_cms::<$t>,
+                None,
+                Some(cp::prepare_polars_frequency_cms),
+            )
         };
     }
     match req.width {
@@ -248,20 +251,20 @@ pub(crate) fn row_cms_fastpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            cl::insert_cms_lib_vector2d_fast::<$t>,
-            cl::insert_step_cms_lib_vector2d_fast::<$t>,
-            cl::query_cms_lib_vector2d_fast::<$t>,
-            Some((
-                cl::merge_cms_lib_vector2d_fast::<$t>,
-                cl::merge_step_cms_lib_vector2d_fast::<$t>,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                cl::insert_cms_lib_vector2d_fast::<$t>,
+                cl::insert_step_cms_lib_vector2d_fast::<$t>,
+                cl::query_cms_lib_vector2d_fast::<$t>,
+                Some((
+                    cl::merge_cms_lib_vector2d_fast::<$t>,
+                    cl::merge_step_cms_lib_vector2d_fast::<$t>,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -280,20 +283,20 @@ pub(crate) fn row_cms_regularpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            cl::insert_cms_lib_vector2d_regular::<$t>,
-            cl::insert_step_cms_lib_vector2d_regular::<$t>,
-            cl::query_cms_lib_vector2d_regular::<$t>,
-            Some((
-                cl::merge_cms_lib_vector2d_regular::<$t>,
-                cl::merge_step_cms_lib_vector2d_regular::<$t>,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                cl::insert_cms_lib_vector2d_regular::<$t>,
+                cl::insert_step_cms_lib_vector2d_regular::<$t>,
+                cl::query_cms_lib_vector2d_regular::<$t>,
+                Some((
+                    cl::merge_cms_lib_vector2d_regular::<$t>,
+                    cl::merge_step_cms_lib_vector2d_regular::<$t>,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -314,20 +317,20 @@ pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            chl::insert_cms_heap_lib_vector2d_fast::<$t>,
-            chl::insert_step_cms_heap_lib_vector2d_fast::<$t>,
-            chl::query_cms_heap_lib_vector2d_fast_estimate::<$t>,
-            Some((
-                chl::merge_cms_heap_lib_vector2d_fast::<$t>,
-                chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                chl::insert_cms_heap_lib_vector2d_fast::<$t>,
+                chl::insert_step_cms_heap_lib_vector2d_fast::<$t>,
+                chl::query_cms_heap_lib_vector2d_fast_estimate::<$t>,
+                Some((
+                    chl::merge_cms_heap_lib_vector2d_fast::<$t>,
+                    chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -346,20 +349,20 @@ pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            chl::insert_cms_heap_lib_vector2d_regular::<$t>,
-            chl::insert_step_cms_heap_lib_vector2d_regular::<$t>,
-            chl::query_cms_heap_lib_vector2d_regular_estimate::<$t>,
-            Some((
-                chl::merge_cms_heap_lib_vector2d_regular::<$t>,
-                chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                chl::insert_cms_heap_lib_vector2d_regular::<$t>,
+                chl::insert_step_cms_heap_lib_vector2d_regular::<$t>,
+                chl::query_cms_heap_lib_vector2d_regular_estimate::<$t>,
+                Some((
+                    chl::merge_cms_heap_lib_vector2d_regular::<$t>,
+                    chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -378,19 +381,19 @@ pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        topk_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            chl::insert_cms_heap_lib_vector2d_fast::<$t>,
-            chl::insert_step_cms_heap_lib_vector2d_fast::<$t>,
-            chl::query_cms_heap_lib_vector2d_fast_topk::<$t>,
-            Some((
-                chl::merge_cms_heap_lib_vector2d_fast::<$t>,
-                chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
-            )),
-        )
+            topk_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                chl::insert_cms_heap_lib_vector2d_fast::<$t>,
+                chl::insert_step_cms_heap_lib_vector2d_fast::<$t>,
+                chl::query_cms_heap_lib_vector2d_fast_topk::<$t>,
+                Some((
+                    chl::merge_cms_heap_lib_vector2d_fast::<$t>,
+                    chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
+                )),
+            )
         };
     }
     match req.width {
@@ -409,19 +412,19 @@ pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        topk_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            chl::insert_cms_heap_lib_vector2d_regular::<$t>,
-            chl::insert_step_cms_heap_lib_vector2d_regular::<$t>,
-            chl::query_cms_heap_lib_vector2d_regular_topk::<$t>,
-            Some((
-                chl::merge_cms_heap_lib_vector2d_regular::<$t>,
-                chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
-            )),
-        )
+            topk_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                chl::insert_cms_heap_lib_vector2d_regular::<$t>,
+                chl::insert_step_cms_heap_lib_vector2d_regular::<$t>,
+                chl::query_cms_heap_lib_vector2d_regular_topk::<$t>,
+                Some((
+                    chl::merge_cms_heap_lib_vector2d_regular::<$t>,
+                    chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
+                )),
+            )
         };
     }
     match req.width {
@@ -440,7 +443,13 @@ pub(crate) fn row_cms_fastpath_fixedmatrix_32k_parallel_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            timed_row::<$t>(req, description, table, want, cl::insert_parallel_cms_fast_path::<$t>)
+            timed_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                cl::insert_parallel_cms_fast_path::<$t>,
+            )
         };
     }
     match req.width {
@@ -461,17 +470,17 @@ pub(crate) fn row_countsketch_oxide(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            so::insert_cs_oxide,
-            so::insert_step_cs_oxide,
-            so::query_cs_oxide,
-            Some((so::merge_cs_oxide, so::merge_step_cs_oxide)),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                so::insert_cs_oxide,
+                so::insert_step_cs_oxide,
+                so::query_cs_oxide,
+                Some((so::merge_cs_oxide, so::merge_step_cs_oxide)),
+                None,
+            )
         };
     }
     match req.width {
@@ -490,17 +499,17 @@ pub(crate) fn row_countsketch_polars(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            sp::insert_polars_frequency_cs,
-            sp::insert_step_polars_frequency_cs,
-            sp::query_polars_frequency_cs,
-            None,
-            Some(sp::prepare_polars_frequency_cs),
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                sp::insert_polars_frequency_cs,
+                sp::insert_step_polars_frequency_cs,
+                sp::query_polars_frequency_cs,
+                None,
+                Some(sp::prepare_polars_frequency_cs),
+            )
         };
     }
     match req.width {
@@ -519,20 +528,20 @@ pub(crate) fn row_countsketch_fastpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            sl::insert_cs_lib_vector2d_fast,
-            sl::insert_step_cs_lib_vector2d_fast,
-            sl::query_cs_lib_vector2d_fast,
-            Some((
-                sl::merge_cs_lib_vector2d_fast,
-                sl::merge_step_cs_lib_vector2d_fast,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                sl::insert_cs_lib_vector2d_fast,
+                sl::insert_step_cs_lib_vector2d_fast,
+                sl::query_cs_lib_vector2d_fast,
+                Some((
+                    sl::merge_cs_lib_vector2d_fast,
+                    sl::merge_step_cs_lib_vector2d_fast,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -551,20 +560,20 @@ pub(crate) fn row_countsketch_regularpath_vector2d_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-        frequency_row::<$t>(
-            req,
-            description,
-            table,
-            want,
-            sl::insert_cs_lib_vector2d_regular,
-            sl::insert_step_cs_lib_vector2d_regular,
-            sl::query_cs_lib_vector2d_regular,
-            Some((
-                sl::merge_cs_lib_vector2d_regular,
-                sl::merge_step_cs_lib_vector2d_regular,
-            )),
-            None,
-        )
+            frequency_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                sl::insert_cs_lib_vector2d_regular,
+                sl::insert_step_cs_lib_vector2d_regular,
+                sl::query_cs_lib_vector2d_regular,
+                Some((
+                    sl::merge_cs_lib_vector2d_regular,
+                    sl::merge_step_cs_lib_vector2d_regular,
+                )),
+                None,
+            )
         };
     }
     match req.width {
@@ -583,7 +592,13 @@ pub(crate) fn row_countsketch_fastpath_fixedmatrix_32k_parallel_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            timed_row::<$t>(req, description, table, want, sl::insert_parallel_cs_fast_path::<$t>)
+            timed_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                sl::insert_parallel_cs_fast_path::<$t>,
+            )
         };
     }
     match req.width {

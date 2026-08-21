@@ -20,7 +20,9 @@ impl<T: PolarsFrequencyItem> Default for PolarsFrequencyCms<T> {
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_frequency_cms<T: PolarsFrequencyItem>(config: &ParamSet) -> Result<PolarsFrequencyCms<T>, BuildError> {
+pub fn build_polars_frequency_cms<T: PolarsFrequencyItem>(
+    config: &ParamSet,
+) -> Result<PolarsFrequencyCms<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -29,7 +31,9 @@ pub fn build_polars_frequency_cms<T: PolarsFrequencyItem>(config: &ParamSet) -> 
     Ok(PolarsFrequencyCms::<T>::default())
 }
 
-pub fn memory_polars_frequency_cms<T: PolarsFrequencyItem>(sketch: &PolarsFrequencyCms<T>) -> usize {
+pub fn memory_polars_frequency_cms<T: PolarsFrequencyItem>(
+    sketch: &PolarsFrequencyCms<T>,
+) -> usize {
     sketch.0.memory_bytes()
 }
 

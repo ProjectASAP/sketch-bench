@@ -15,8 +15,7 @@ use std::rc::Rc;
 use crate::wrappers::frequency_value::FrequencyValue;
 
 use asap_sketchlib::{
-    CountMin, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
-    Vector2D,
+    CountMin, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
 };
 use std::sync::Barrier;
 

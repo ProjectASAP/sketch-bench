@@ -10,8 +10,7 @@ use crate::wrappers::{
 };
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::{
-    Count, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
-    Vector2D,
+    Count, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
 };
 use std::cell::RefCell;
 use std::rc::Rc;

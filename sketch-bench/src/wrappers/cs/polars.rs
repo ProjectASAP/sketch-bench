@@ -20,7 +20,9 @@ impl<T: PolarsFrequencyItem> Default for PolarsFrequencyCs<T> {
 
 /// No tunable shape: the exact baseline stores the stream itself, so it
 /// ignores the config rather than refusing it.
-pub fn build_polars_frequency_cs<T: PolarsFrequencyItem>(config: &ParamSet) -> Result<PolarsFrequencyCs<T>, BuildError> {
+pub fn build_polars_frequency_cs<T: PolarsFrequencyItem>(
+    config: &ParamSet,
+) -> Result<PolarsFrequencyCs<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce

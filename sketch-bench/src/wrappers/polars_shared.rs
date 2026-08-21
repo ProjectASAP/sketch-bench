@@ -92,7 +92,12 @@ impl PolarsFrequencyItem for i64 {
         *self
     }
     fn count_keys(column: &Column) -> Vec<i64> {
-        column.i64().expect("i64 keys").into_iter().flatten().collect()
+        column
+            .i64()
+            .expect("i64 keys")
+            .into_iter()
+            .flatten()
+            .collect()
     }
     #[inline(always)]
     fn heap_bytes(&self) -> usize {
@@ -107,7 +112,12 @@ impl PolarsFrequencyItem for u64 {
         *self
     }
     fn count_keys(column: &Column) -> Vec<u64> {
-        column.u64().expect("u64 keys").into_iter().flatten().collect()
+        column
+            .u64()
+            .expect("u64 keys")
+            .into_iter()
+            .flatten()
+            .collect()
     }
     #[inline(always)]
     fn heap_bytes(&self) -> usize {
