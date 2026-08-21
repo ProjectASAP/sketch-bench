@@ -174,6 +174,38 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
 /// A row answering **subpopulation quantile**: the ordered statistic inside a
 /// group, scored in rank error.
 #[allow(clippy::too_many_arguments)]
+pub(super) fn subpop_vector_row<V: ColumnItem + 'static, G>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    ground_truth: G,
+    insert: InsertBody<(String, V)>,
+    insert_step: InsertStepBody<(String, V)>,
+    query: QueryBody<(String, V), Vec<String>, f64>,
+    merge: Option<Folds<(String, V)>>,
+    prepare: Option<PrepareBody<(String, V)>>,
+) -> Result<Measurements, RunError>
+where
+    G: GroundTruth<Probe = Vec<String>, Answer = f64> + 'static,
+    G::Truth: 'static,
+{
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        ground_truth,
+        peel_labeled::<V>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     req: &Requirement,
     description: &TableDescription,

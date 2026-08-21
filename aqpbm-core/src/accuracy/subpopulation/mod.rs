@@ -2,11 +2,19 @@
 //! subpopulation, one comparator per statistic.
 
 mod cardinality;
+mod entropy;
 mod frequency;
+mod frequency_vector;
+mod l1_norm;
+mod l2_norm;
 mod rank_error;
 
 pub use cardinality::{SubpopCardTruth, SubpopCardinalityGT};
+pub use entropy::{entropy, SubpopEntropyGT};
 pub use frequency::{SubpopFreqTruth, SubpopFrequencyGT};
+pub use frequency_vector::SubpopVectorTruth;
+pub use l1_norm::{l1_norm, SubpopL1NormGT};
+pub use l2_norm::{l2_norm, SubpopL2NormGT};
 pub use rank_error::{SubpopRankErrorGT, SubpopRankTruth};
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
@@ -62,5 +70,32 @@ fn records() -> GeneratedTable {
             ColumnData::String(rows.iter().map(|r| r.1.to_string()).collect()),
             ColumnData::Int64(rows.iter().map(|r| r.2).collect()),
         ],
+    )
+}
+
+#[cfg(test)]
+fn null_over<G>(gt: &G, table: &GeneratedTable) -> std::collections::BTreeMap<String, f64>
+where
+    G: crate::accuracy::GroundTruth<Probe = Group, Answer = f64>,
+{
+    crate::accuracy::score_with(gt, &|_: &mut (), _: &Group| 0.0, &mut (), table)
+}
+
+#[cfg(test)]
+fn exact_over<G>(gt: &G, table: &GeneratedTable) -> std::collections::BTreeMap<String, f64>
+where
+    G: crate::accuracy::GroundTruth<Truth = SubpopVectorTruth, Probe = Group, Answer = f64>,
+{
+    let mut exact = gt
+        .truth(table)
+        .expect("the test's table matches its comparator")
+        .exact;
+    crate::accuracy::score_with(
+        gt,
+        &|held: &mut std::collections::HashMap<Group, f64>, p: &Group| {
+            held.get(p).copied().unwrap_or(0.0)
+        },
+        &mut exact,
+        table,
     )
 }

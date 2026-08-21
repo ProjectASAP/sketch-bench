@@ -15,6 +15,7 @@ pub mod hydra_cms;
 pub mod hydra_cs;
 pub mod hydra_hll;
 pub mod hydra_kll;
+pub mod hydra_univmon;
 pub mod kll;
 pub mod univmon;
 

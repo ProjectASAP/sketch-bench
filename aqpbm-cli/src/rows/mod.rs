@@ -24,7 +24,8 @@ use aqpbm_core::accuracy::keyedl1norm::KeyedL1NormGT;
 use aqpbm_core::accuracy::keyedl2norm::KeyedL2NormGT;
 use aqpbm_core::accuracy::quantile::RankErrorGT;
 use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopFrequencyGT, SubpopRankErrorGT,
+    SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT, SubpopL2NormGT,
+    SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::Score;
@@ -130,6 +131,14 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("hydra-hll", "polars") => row_hydra_hll_polars,
         ("hydra-kll", "lib") => row_hydra_kll_lib,
         ("hydra-kll", "polars") => row_hydra_kll_polars,
+        ("hydra-univmon-cardinality", "lib") => row_hydra_univmon_cardinality_lib,
+        ("hydra-univmon-cardinality", "polars") => row_hydra_univmon_cardinality_polars,
+        ("hydra-univmon-l1-norm", "lib") => row_hydra_univmon_l1_norm_lib,
+        ("hydra-univmon-l1-norm", "polars") => row_hydra_univmon_l1_norm_polars,
+        ("hydra-univmon-l2-norm", "lib") => row_hydra_univmon_l2_norm_lib,
+        ("hydra-univmon-l2-norm", "polars") => row_hydra_univmon_l2_norm_polars,
+        ("hydra-univmon-entropy", "lib") => row_hydra_univmon_entropy_lib,
+        ("hydra-univmon-entropy", "polars") => row_hydra_univmon_entropy_polars,
         ("univmon-cardinality", "lib") => row_univmon_cardinality_lib,
         ("univmon-l1-norm", "lib") => row_univmon_l1_norm_lib,
         ("univmon-l1-norm", "oxide") => row_univmon_l1_norm_oxide,
@@ -148,6 +157,7 @@ mod dd;
 mod fixed_matrix;
 mod hll;
 mod hydra;
+mod hydra_univmon;
 mod kll;
 mod materialise;
 mod measurement;
@@ -161,6 +171,7 @@ use dd::*;
 use fixed_matrix::*;
 use hll::*;
 use hydra::*;
+use hydra_univmon::*;
 use kll::*;
 use materialise::*;
 use measurement::*;

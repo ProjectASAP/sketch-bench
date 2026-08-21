@@ -8,26 +8,17 @@ use crate::params::ParamSet;
 use crate::wrappers::hll::CardinalityValue;
 use crate::wrappers::polars_shared::*;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use ::polars::prelude::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-/// `hydra-hll/polars` — exact subpopulation cardinality.
-pub struct PolarsSubpopCardinality<T: CardinalityValue = i64> {
-    buf: Vec<(String, T)>,
-    distinct: HashMap<String, u64>,
-}
+pub struct PolarsSubpopCardinality<T: CardinalityValue = i64>(PolarsSubpopCardinalityCore<T>);
 
 // Hand-written rather than derived: `derive` would bound `T: Default`, which
 // the ingested widths have no reason to satisfy. An empty buffer is what
 // "default" means here, and that needs nothing of `T`.
 impl<T: CardinalityValue> Default for PolarsSubpopCardinality<T> {
     fn default() -> Self {
-        Self {
-            buf: Vec::new(),
-            distinct: HashMap::new(),
-        }
+        Self(PolarsSubpopCardinalityCore::default())
     }
 }
 
@@ -44,62 +35,14 @@ pub fn build_polars_subpop_cardinality<T: CardinalityValue>(
 
 impl<T: CardinalityValue> PolarsSubpopCardinality<T> {
     pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
-        self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
+        self.0.query(labels)
     }
 }
 
 pub fn memory_polars_subpop_cardinality<T: CardinalityValue>(
     sketch: &PolarsSubpopCardinality<T>,
 ) -> usize {
-    let held: usize = sketch
-        .buf
-        .iter()
-        .map(|(g, v)| g.capacity() + v.heap_bytes())
-        .sum();
-    sketch.buf.capacity() * std::mem::size_of::<(String, T)>()
-        + held
-        + sketch.distinct.capacity() * (std::mem::size_of::<String>() + 8)
-}
-
-impl<T: CardinalityValue> PolarsSubpopCardinality<T> {
-    /// The exact answer, over the stream as buffered. Its own step because the
-    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
-    fn finalize(&mut self) {
-        let (mut keys, mut values) = (Vec::new(), Vec::new());
-        for r in &self.buf {
-            fan_out(&r.0, &r.1, &mut keys, &mut values);
-        }
-        if keys.is_empty() {
-            return;
-        }
-        let df = DataFrame::new(vec![
-            Column::new("g".into(), &keys),
-            T::polars_column(&values),
-        ])
-        .expect("DataFrame::new");
-        let result = df
-            .lazy()
-            .group_by([col("g")])
-            .agg([col("v").n_unique().alias("c")])
-            .collect()
-            .expect("polars group_by collect");
-
-        let groups = result.column("g").expect("g column");
-        let groups = groups.str().expect("str groups");
-        let counts = result
-            .column("c")
-            .expect("c column")
-            .cast(&DataType::UInt64)
-            .expect("cast to u64");
-        let counts = counts.u64().expect("u64 counts");
-
-        self.distinct.reserve(groups.len());
-        for (g, c) in groups.into_iter().zip(counts) {
-            if let (Some(g), Some(c)) = (g, c) {
-                self.distinct.insert(g.to_string(), c);
-            }
-        }
-    }
+    sketch.0.memory_bytes()
 }
 
 pub fn insert_polars_subpop_cardinality<T: CardinalityValue>(
@@ -114,7 +57,7 @@ pub fn insert_polars_subpop_cardinality<T: CardinalityValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.buf.push(v.clone());
+                sketch.0.update(v);
             }
             memory_polars_subpop_cardinality(&sketch)
         }) as Pass);
@@ -138,7 +81,7 @@ pub fn insert_step_polars_subpop_cardinality<T: CardinalityValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.buf.push(v.clone());
+                sketch.0.update(v);
             }),
             footprint: Box::new(move || memory_polars_subpop_cardinality(&read.borrow())),
         });
@@ -157,9 +100,9 @@ pub fn query_polars_subpop_cardinality<T: CardinalityValue>(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_polars_subpop_cardinality::<T>(params)?;
         for v in items.iter() {
-            sketch.buf.push(v.clone());
+            sketch.0.update(v);
         }
-        sketch.finalize();
+        sketch.0.finalize();
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
@@ -183,10 +126,10 @@ pub fn prepare_polars_subpop_cardinality<T: CardinalityValue>(
         // Fed here: the closure below is the step that makes it ready to answer.
         let mut sketch = build_polars_subpop_cardinality::<T>(params)?;
         for v in items.iter() {
-            sketch.buf.push(v.clone());
+            sketch.0.update(v);
         }
         out.push(Box::new(move || {
-            sketch.finalize();
+            sketch.0.finalize();
             memory_polars_subpop_cardinality(&sketch)
         }) as Pass);
     }

@@ -2,6 +2,7 @@
 //! core, and the subset fan-out every grouped baseline needs. Hoisted here
 //! when the baselines moved next to the algorithms they score.
 
+use crate::wrappers::hll::CardinalityValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
 
@@ -364,4 +365,158 @@ impl<T: PolarsFrequencyItem> PolarsSubpopFrequencyCore<T> {
             + self.counts.capacity()
                 * (std::mem::size_of::<(String, T::CountKey)>() + std::mem::size_of::<u64>())
     }
+}
+
+pub struct PolarsSubpopCardinalityCore<T: CardinalityValue = i64> {
+    buf: Vec<(String, T)>,
+    distinct: HashMap<String, u64>,
+}
+
+impl<T: CardinalityValue> Default for PolarsSubpopCardinalityCore<T> {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            distinct: HashMap::new(),
+        }
+    }
+}
+
+impl<T: CardinalityValue> PolarsSubpopCardinalityCore<T> {
+    #[inline(always)]
+    pub fn update(&mut self, record: &(String, T)) {
+        self.buf.push(record.clone());
+    }
+
+    /// The exact answer, over the stream as buffered. Its own step because the
+    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
+    pub fn finalize(&mut self) {
+        let Some(result) = grouped_values(&self.buf, |lazy| {
+            lazy.group_by([col("g")])
+                .agg([col("v").n_unique().alias("c")])
+        }) else {
+            return;
+        };
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let counts = result
+            .column("c")
+            .expect("c column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.distinct.reserve(groups.len());
+        for (g, c) in groups.into_iter().zip(counts) {
+            if let (Some(g), Some(c)) = (g, c) {
+                self.distinct.insert(g.to_string(), c);
+            }
+        }
+    }
+
+    pub fn query(&self, labels: &[&str]) -> f64 {
+        self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        let held: usize = self
+            .buf
+            .iter()
+            .map(|(g, v)| g.capacity() + v.heap_bytes())
+            .sum();
+        self.buf.capacity() * std::mem::size_of::<(String, T)>()
+            + held
+            + self.distinct.capacity() * (std::mem::size_of::<String>() + 8)
+    }
+}
+
+pub struct PolarsSubpopVectorCore<T: CardinalityValue = i64> {
+    buf: Vec<(String, T)>,
+    exact: HashMap<String, f64>,
+    fold: fn(&[u64]) -> f64,
+}
+
+impl<T: CardinalityValue> PolarsSubpopVectorCore<T> {
+    pub fn folding(fold: fn(&[u64]) -> f64) -> Self {
+        Self {
+            buf: Vec::new(),
+            exact: HashMap::new(),
+            fold,
+        }
+    }
+
+    #[inline(always)]
+    pub fn update(&mut self, record: &(String, T)) {
+        self.buf.push(record.clone());
+    }
+
+    /// The exact answer, over the stream as buffered. Its own step because the
+    /// runner times it as `prepare`: this row's cost is the pass, not the ask.
+    pub fn finalize(&mut self) {
+        let Some(result) = grouped_values(&self.buf, |lazy| {
+            lazy.group_by([col("g"), col("v")])
+                .agg([len().alias("count")])
+        }) else {
+            return;
+        };
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let counts = result
+            .column("count")
+            .expect("count column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        let mut per_group: HashMap<String, Vec<u64>> = HashMap::new();
+        for (g, c) in groups.into_iter().zip(counts) {
+            if let (Some(g), Some(c)) = (g, c) {
+                per_group.entry(g.to_string()).or_default().push(c);
+            }
+        }
+        self.exact = per_group
+            .into_iter()
+            .map(|(g, counts)| {
+                let folded = (self.fold)(&counts);
+                (g, folded)
+            })
+            .collect();
+    }
+
+    pub fn query(&self, labels: &[&str]) -> f64 {
+        self.exact.get(&labels.join(";")).copied().unwrap_or(0.0)
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        let held: usize = self
+            .buf
+            .iter()
+            .map(|(g, v)| g.capacity() + v.heap_bytes())
+            .sum();
+        self.buf.capacity() * std::mem::size_of::<(String, T)>()
+            + held
+            + self.exact.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<f64>())
+    }
+}
+
+fn grouped_values<T: CardinalityValue>(
+    buf: &[(String, T)],
+    aggregate: impl Fn(LazyFrame) -> LazyFrame,
+) -> Option<DataFrame> {
+    let (mut keys, mut values) = (Vec::new(), Vec::new());
+    for r in buf {
+        fan_out(&r.0, &r.1, &mut keys, &mut values);
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    let df = DataFrame::new(vec![
+        Column::new("g".into(), &keys),
+        T::polars_column(&values),
+    ])
+    .expect("DataFrame::new");
+    Some(
+        aggregate(df.lazy())
+            .collect()
+            .expect("polars group_by collect"),
+    )
 }

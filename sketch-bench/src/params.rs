@@ -490,6 +490,33 @@ sketch_params!(
     HydraHllParams { rows: 3, cols: 128 }
 );
 
+/// Hydra over UnivMon cells: the grid shape plus the four knobs one UnivMon
+/// takes, `cell_`-prefixed for the reason the Count-Min row prefixes its own —
+/// they size the structure inside a cell, and reading them as grid dimensions
+/// would understate the footprint by the grid area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraUnivmonParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_heap_size: usize,
+    pub cell_sketch_row: usize,
+    pub cell_sketch_col: usize,
+    pub cell_layer_size: usize,
+}
+sketch_params!(
+    HydraUnivmonParams,
+    "hydra-univmon",
+    HydraUnivmonParams {
+        rows: 2,
+        cols: 8,
+        cell_heap_size: 1000,
+        cell_sketch_row: 5,
+        cell_sketch_col: 2048,
+        cell_layer_size: 8
+    }
+);
+
 /// Hydra over KLL cells: the grid shape plus the cell's accuracy parameter.
 ///
 /// `cell_k` is the KLL `k`, named with the `cell_` prefix the Count-Min row
@@ -602,6 +629,7 @@ mod tests {
         check::<HydraCsParams>();
         check::<HydraHllParams>();
         check::<HydraKllParams>();
+        check::<HydraUnivmonParams>();
         check::<UnivMonParams>();
     }
 
@@ -638,6 +666,10 @@ mod tests {
         assert!(!HydraCmsParams::owns("hydra-hll"));
         assert!(!HydraCmsParams::owns("hydra-cs"));
         assert!(HydraCsParams::owns("hydra-cs"));
+        assert!(HydraUnivmonParams::owns("hydra-univmon"));
+        assert!(HydraUnivmonParams::owns("hydra-univmon-entropy"));
+        assert!(!HydraUnivmonParams::owns("univmon"));
+        assert!(!UnivMonParams::owns("hydra-univmon"));
         assert!(!HydraHllParams::owns("hydra-kll"));
 
         assert!(UnivMonParams::owns("univmon-cardinality"));
