@@ -18,6 +18,7 @@ pub mod univmon;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;
+pub mod frequency_value;
 pub mod hydra_shared;
 pub mod polars_shared;
 pub mod quantile_value;

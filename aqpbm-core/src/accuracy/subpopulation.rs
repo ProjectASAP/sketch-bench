@@ -120,7 +120,7 @@ where
     }
 
     fn probes(&self, truth: &SubpopFreqTruth<V>) -> Vec<(Group, V)> {
-        curve::union_of(&truth.all, &truth.ranked)
+        curve::union_of(&truth.all, &truth.ranked, Clone::clone)
     }
 
     fn score(
@@ -223,7 +223,7 @@ impl GroundTruth for SubpopCardinalityGT {
     }
 
     fn probes(&self, truth: &SubpopCardTruth) -> Vec<Group> {
-        curve::union_of(&truth.all, &truth.ranked)
+        curve::union_of(&truth.all, &truth.ranked, Clone::clone)
     }
 
     fn score(

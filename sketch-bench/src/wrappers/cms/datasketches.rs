@@ -10,6 +10,8 @@ use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::wrappers::frequency_value::FrequencyValue;
+
 /// asserts are in `countmin/sketch.rs::entries_for_config`; the row bound is
 /// the `u8` the API takes.
 const DS_CMS_ROWS: (usize, usize) = (1, u8::MAX as usize);
@@ -75,9 +77,9 @@ pub fn memory_cms_datasketches(sketch: &CmsDatasketches) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i64>()
 }
 
-pub fn insert_cms_datasketches(
+pub fn insert_cms_datasketches<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -87,7 +89,7 @@ pub fn insert_cms_datasketches(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(*v);
+                sketch.inner.update(v.hash_key());
             }
             memory_cms_datasketches(&sketch)
         }) as Pass);
@@ -95,9 +97,9 @@ pub fn insert_cms_datasketches(
     Ok(out)
 }
 
-pub fn insert_step_cms_datasketches(
+pub fn insert_step_cms_datasketches<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -110,7 +112,7 @@ pub fn insert_step_cms_datasketches(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(*v);
+                sketch.inner.update(v.hash_key());
             }),
             footprint: Box::new(move || memory_cms_datasketches(&read.borrow())),
         });
@@ -118,10 +120,10 @@ pub fn insert_step_cms_datasketches(
     Ok(out)
 }
 
-pub fn query_cms_datasketches(
+pub fn query_cms_datasketches<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -129,13 +131,13 @@ pub fn query_cms_datasketches(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_cms_datasketches(params)?;
         for v in items.iter() {
-            sketch.inner.update(*v);
+            sketch.inner.update(v.hash_key());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(*p).max(0) as u64);
+                answers.push(sketch.inner.estimate(p.hash_key()).max(0) as u64);
             }
             let footprint = memory_cms_datasketches(&sketch);
             (answers, footprint)
@@ -144,9 +146,9 @@ pub fn query_cms_datasketches(
     Ok(out)
 }
 
-pub fn merge_cms_datasketches(
+pub fn merge_cms_datasketches<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -163,9 +165,9 @@ pub fn merge_cms_datasketches(
     Ok(out)
 }
 
-pub fn merge_step_cms_datasketches(
+pub fn merge_step_cms_datasketches<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -190,16 +192,16 @@ pub fn merge_step_cms_datasketches(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn cms_datasketches_shards(
+fn cms_datasketches_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsDatasketches, Vec<CmsDatasketches>), BuildError> {
     let mut parts: Vec<CmsDatasketches> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_cms_datasketches(params)?;
         for v in shard {
-            sketch.inner.update(*v);
+            sketch.inner.update(v.hash_key());
         }
         parts.push(sketch);
     }

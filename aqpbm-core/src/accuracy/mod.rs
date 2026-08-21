@@ -23,6 +23,57 @@ pub mod quantile;
 pub mod subpopulation;
 pub mod topk;
 
+/// The key an exact counter tallies a value under.
+///
+/// Counting needs `Eq + Hash` to tally and `Ord` to break ranking ties
+/// deterministically, and `f64` has none of the three. Rather than shut the
+/// float width out of the counting comparators, each width names the key it is
+/// counted by: itself, for the three that can be one, and the bit pattern for
+/// `f64` — the same choice [`distinct`] makes one screen down, and the same one
+/// the frequency wrappers make when they feed a library that hashes.
+///
+/// The consequence is worth stating: keyed by bits, `0.0` and `-0.0` are two
+/// keys and `NaN` equals itself. Both sides of the comparison have to agree on
+/// that or the reported error is noise, which is why this lives next to the
+/// scorers rather than in either one.
+pub trait CountedValue: ColumnItem {
+    type CountKey: Eq + std::hash::Hash + Ord + Clone;
+
+    fn count_key(&self) -> Self::CountKey;
+}
+
+impl CountedValue for i64 {
+    type CountKey = i64;
+    #[inline(always)]
+    fn count_key(&self) -> i64 {
+        *self
+    }
+}
+
+impl CountedValue for u64 {
+    type CountKey = u64;
+    #[inline(always)]
+    fn count_key(&self) -> u64 {
+        *self
+    }
+}
+
+impl CountedValue for f64 {
+    type CountKey = u64;
+    #[inline(always)]
+    fn count_key(&self) -> u64 {
+        self.to_bits()
+    }
+}
+
+impl CountedValue for String {
+    type CountKey = String;
+    #[inline(always)]
+    fn count_key(&self) -> String {
+        self.clone()
+    }
+}
+
 /// The exact answer a sketch is scored against. Taken over the table
 /// `aqpbm-datagen` produced, not over whatever a row materialised out of it:
 /// the truth is a property of the data, and a row's item type is not.

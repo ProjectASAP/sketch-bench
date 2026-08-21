@@ -7,19 +7,32 @@ use std::collections::HashMap;
 
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
-#[derive(Default)]
-pub struct PolarsFrequencyCore {
-    buf: Vec<i64>,
-    counts: HashMap<i64, u64>,
+///
+/// Generic over the ingested width for the same reason the quantile core below
+/// is: this row is the exact baseline its sketch siblings are scored against,
+/// so a width they build at and this one did not would leave their error with
+/// nothing to subtract.
+pub struct PolarsFrequencyCore<T: PolarsFrequencyItem = i64> {
+    buf: Vec<T>,
+    counts: HashMap<T::CountKey, u64>,
 }
 
-impl PolarsFrequencyCore {
+impl<T: PolarsFrequencyItem> Default for PolarsFrequencyCore<T> {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            counts: HashMap::new(),
+        }
+    }
+}
+
+impl<T: PolarsFrequencyItem> PolarsFrequencyCore<T> {
     #[inline(always)]
-    pub fn update(&mut self, v: &i64) {
-        self.buf.push(*v);
+    pub fn update(&mut self, v: &T) {
+        self.buf.push(v.clone());
     }
     pub fn finalize(&mut self) {
-        let series = Column::new("v".into(), &self.buf);
+        let series = T::polars_column(&self.buf);
         let df = DataFrame::new(vec![series]).expect("DataFrame::new");
         let result = df
             .lazy()
@@ -27,8 +40,7 @@ impl PolarsFrequencyCore {
             .agg([len().alias("count")])
             .collect()
             .expect("polars group_by collect");
-        let keys = result.column("v").expect("v column");
-        let keys = keys.i64().expect("i64 keys");
+        let keys = T::count_keys(result.column("v").expect("v column"));
         let counts = result
             .column("count")
             .expect("count column")
@@ -37,17 +49,111 @@ impl PolarsFrequencyCore {
         let counts = counts.u64().expect("u64 counts");
         self.counts.reserve(keys.len());
         for (k, c) in keys.into_iter().zip(counts) {
-            if let (Some(k), Some(c)) = (k, c) {
+            if let Some(c) = c {
                 self.counts.insert(k, c);
             }
         }
     }
-    pub fn query(&self, q: i64) -> u64 {
-        self.counts.get(&q).copied().unwrap_or(0)
+    pub fn query(&self, q: &T) -> u64 {
+        self.counts.get(&q.count_key()).copied().unwrap_or(0)
     }
     pub fn memory_bytes(&self) -> usize {
-        self.buf.capacity() * std::mem::size_of::<i64>()
-            + self.counts.capacity() * (std::mem::size_of::<i64>() + std::mem::size_of::<u64>())
+        let keys: usize = self.buf.iter().map(T::heap_bytes).sum();
+        self.buf.capacity() * std::mem::size_of::<T>()
+            + keys
+            + self.counts.capacity()
+                * (std::mem::size_of::<T::CountKey>() + std::mem::size_of::<u64>())
+    }
+}
+
+/// What the exact frequency baseline needs on top of building a column: an
+/// owned key it can count on, and how to read one back out of what `group_by`
+/// answered. Its own trait rather than more methods on [`PolarsColumnItem`],
+/// so the quantile baseline does not carry a counting key it never uses.
+pub trait PolarsFrequencyItem: PolarsColumnItem + 'static {
+    /// `Self` for the widths that can key a map; the bit pattern for `f64`,
+    /// matching how the frequency wrappers and the exact scorer both key it.
+    type CountKey: Eq + std::hash::Hash + 'static;
+
+    fn count_key(&self) -> Self::CountKey;
+
+    /// Peel the grouped key column back at this width.
+    fn count_keys(column: &Column) -> Vec<Self::CountKey>;
+
+    /// Bytes this value owns away from the `Vec` that holds it. Zero for the
+    /// numeric widths; the allocation for `String`, which `size_of` misses.
+    fn heap_bytes(&self) -> usize;
+}
+
+impl PolarsFrequencyItem for i64 {
+    type CountKey = i64;
+    #[inline(always)]
+    fn count_key(&self) -> i64 {
+        *self
+    }
+    fn count_keys(column: &Column) -> Vec<i64> {
+        column.i64().expect("i64 keys").into_iter().flatten().collect()
+    }
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl PolarsFrequencyItem for u64 {
+    type CountKey = u64;
+    #[inline(always)]
+    fn count_key(&self) -> u64 {
+        *self
+    }
+    fn count_keys(column: &Column) -> Vec<u64> {
+        column.u64().expect("u64 keys").into_iter().flatten().collect()
+    }
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl PolarsFrequencyItem for f64 {
+    type CountKey = u64;
+    #[inline(always)]
+    fn count_key(&self) -> u64 {
+        self.to_bits()
+    }
+    fn count_keys(column: &Column) -> Vec<u64> {
+        column
+            .f64()
+            .expect("f64 keys")
+            .into_iter()
+            .flatten()
+            .map(f64::to_bits)
+            .collect()
+    }
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
+impl PolarsFrequencyItem for String {
+    type CountKey = String;
+    #[inline(always)]
+    fn count_key(&self) -> String {
+        self.clone()
+    }
+    fn count_keys(column: &Column) -> Vec<String> {
+        column
+            .str()
+            .expect("string keys")
+            .into_iter()
+            .flatten()
+            .map(str::to_string)
+            .collect()
+    }
+    #[inline(always)]
+    fn heap_bytes(&self) -> usize {
+        self.capacity()
     }
 }
 
@@ -56,7 +162,7 @@ impl PolarsFrequencyCore {
 /// rather than on the ordering trait the sketch rows share: `dd` has no
 /// `polars` row, and bolting this onto `QuantileValue` would have made every
 /// DDSketch wrapper carry a column-building method it never calls.
-pub trait PolarsColumnItem: Copy {
+pub trait PolarsColumnItem: Clone {
     fn polars_column(values: &[Self]) -> Column;
 }
 
@@ -73,6 +179,12 @@ impl PolarsColumnItem for u64 {
 }
 
 impl PolarsColumnItem for f64 {
+    fn polars_column(values: &[Self]) -> Column {
+        Column::new("v".into(), values)
+    }
+}
+
+impl PolarsColumnItem for String {
     fn polars_column(values: &[Self]) -> Column {
         Column::new("v".into(), values)
     }
@@ -103,7 +215,7 @@ impl<T: PolarsColumnItem> Default for PolarsQuantileCore<T> {
 impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     #[inline(always)]
     pub fn update(&mut self, v: &T) {
-        self.buf.push(*v);
+        self.buf.push(v.clone());
     }
     pub fn finalize(&mut self) {
         let series = T::polars_column(&self.buf);

@@ -6,13 +6,12 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::marker::PhantomData;
 
-use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
+use aqpbm_datagen::{DataGenError, GeneratedTable};
 
 use super::curve;
-use super::GroundTruth;
+use super::{CountedValue, GroundTruth};
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrequencyGT<K> {
@@ -31,8 +30,8 @@ impl<K> FrequencyGT<K> {
 
 /// Everything the probe set and the scoring read: the exact counts, the true
 /// ranking, and the unfiltered population the `*_all` keys come from.
-pub struct FrequencyTruth<K> {
-    exact: HashMap<K, u64>,
+pub struct FrequencyTruth<K: CountedValue> {
+    exact: HashMap<K::CountKey, u64>,
     /// Keys by true count descending, ties on the key, so a top-k prefix is
     /// deterministic across runs and implementations.
     ranked: Vec<K>,
@@ -42,7 +41,7 @@ pub struct FrequencyTruth<K> {
 
 impl<K> GroundTruth for FrequencyGT<K>
 where
-    K: ColumnItem + Eq + Hash + Ord,
+    K: CountedValue,
 {
     type Truth = FrequencyTruth<K>;
     type Probe = K;
@@ -50,12 +49,27 @@ where
 
     fn truth(&self, table: &GeneratedTable) -> Result<FrequencyTruth<K>, DataGenError> {
         let items = K::column_slice(table.column(self.column)?)?;
-        let mut exact: HashMap<K, u64> = HashMap::new();
+        // Tallied by counting key, but ranked and probed as the values
+        // themselves: the wrapper is handed probes at its own item type, so the
+        // key is a scoring detail that never leaves this file.
+        let mut exact: HashMap<K::CountKey, u64> = HashMap::new();
+        let mut first_seen: HashMap<K::CountKey, K> = HashMap::new();
         for it in items {
-            *exact.entry(it.clone()).or_insert(0) += 1;
+            let key = it.count_key();
+            *exact.entry(key.clone()).or_insert(0) += 1;
+            first_seen.entry(key).or_insert_with(|| it.clone());
         }
-        let mut by_count: Vec<(K, u64)> = exact.iter().map(|(k, c)| (k.clone(), *c)).collect();
-        by_count.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut by_count: Vec<(K, u64)> = first_seen
+            .into_iter()
+            .map(|(key, value)| {
+                let count = exact[&key];
+                (value, count)
+            })
+            .collect();
+        by_count.sort_unstable_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.count_key().cmp(&b.0.count_key()))
+        });
         let all = curve::shuffled(&by_count);
         let ranked = by_count.into_iter().map(|(k, _)| k).collect();
         Ok(FrequencyTruth { exact, ranked, all })
@@ -65,7 +79,7 @@ where
     /// answers instead of re-querying: an estimate is deterministic given the
     /// sketch, so a second call would only measure a warm cache.
     fn probes(&self, truth: &FrequencyTruth<K>) -> Vec<K> {
-        curve::union_of(&truth.all, &truth.ranked)
+        curve::union_of(&truth.all, &truth.ranked, K::count_key)
     }
 
     fn score(
@@ -74,16 +88,20 @@ where
         probes: &[K],
         answers: &[u64],
     ) -> BTreeMap<String, f64> {
-        let estimates: HashMap<&K, u64> =
-            probes.iter().zip(answers).map(|(k, v)| (k, *v)).collect();
+        let estimates: HashMap<K::CountKey, u64> = probes
+            .iter()
+            .zip(answers)
+            .map(|(k, v)| (k.count_key(), *v))
+            .collect();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         curve::error_curve(
             &truth.ranked,
             &truth.all,
             |k| {
+                let key = k.count_key();
                 (
-                    *estimates.get(k).unwrap_or(&0) as f64,
-                    *truth.exact.get(k).unwrap_or(&0) as f64,
+                    *estimates.get(&key).unwrap_or(&0) as f64,
+                    *truth.exact.get(&key).unwrap_or(&0) as f64,
                 )
             },
             &mut metrics,

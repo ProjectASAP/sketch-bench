@@ -12,8 +12,10 @@ use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::wrappers::frequency_value::FrequencyValue;
+
 use asap_sketchlib::{
-    CountMin, DataInput, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
+    CountMin, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath,
     Vector2D,
 };
 use std::sync::Barrier;
@@ -125,7 +127,7 @@ pub fn memory_parallel_cms_fast_path(sketch: &ParallelCmsFastPath) -> usize {
 /// The barrier is load-bearing: a worker inserting while its peers are still
 /// being spawned is not measuring a parallel insert. It costs one rendezvous
 /// inside the runner's timed region, which is the honest place for it.
-fn run_parallel_cms(items: &[i64], workers: usize) {
+fn run_parallel_cms<T: FrequencyValue>(items: &[T], workers: usize) {
     let parts = partition(items, workers);
     let barrier = Barrier::new(parts.len());
     std::thread::scope(|s| {
@@ -134,8 +136,8 @@ fn run_parallel_cms(items: &[i64], workers: usize) {
             s.spawn(move || {
                 let mut sketch = CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
                 barrier.wait();
-                for &v in *part {
-                    sketch.insert_emit_delta(&DataInput::I64(v), &mut |d| {
+                for v in *part {
+                    sketch.insert_emit_delta(&v.data_input(), &mut |d| {
                         std::hint::black_box(&d);
                     });
                 }
@@ -145,13 +147,14 @@ fn run_parallel_cms(items: &[i64], workers: usize) {
     });
 }
 
-pub fn insert_cms_lib_fixedmatrix<M>(
+pub fn insert_cms_lib_fixedmatrix<M, T>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
@@ -160,7 +163,7 @@ where
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.0.insert(&DataInput::I64(*v));
+                sketch.0.insert(&v.data_input());
             }
             memory_cms_lib_fixedmatrix::<M>(&sketch)
         }) as Pass);
@@ -168,13 +171,14 @@ where
     Ok(out)
 }
 
-pub fn insert_step_cms_lib_fixedmatrix<M>(
+pub fn insert_step_cms_lib_fixedmatrix<M, T>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
@@ -186,7 +190,7 @@ where
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.0.insert(&DataInput::I64(*v));
+                sketch.0.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_fixedmatrix::<M>(&read.borrow())),
         });
@@ -194,27 +198,28 @@ where
     Ok(out)
 }
 
-pub fn query_cms_lib_fixedmatrix<M>(
+pub fn query_cms_lib_fixedmatrix<M, T>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_cms_lib_fixedmatrix::<M>(params)?;
         for v in items.iter() {
-            sketch.0.insert(&DataInput::I64(*v));
+            sketch.0.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.0.estimate(&DataInput::I64(*p)) as u64);
+                answers.push(sketch.0.estimate(&p.data_input()) as u64);
             }
             let footprint = memory_cms_lib_fixedmatrix::<M>(&sketch);
             (answers, footprint)
@@ -223,14 +228,15 @@ where
     Ok(out)
 }
 
-pub fn merge_cms_lib_fixedmatrix<M>(
+pub fn merge_cms_lib_fixedmatrix<M, T>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
@@ -245,14 +251,15 @@ where
     Ok(out)
 }
 
-pub fn merge_step_cms_lib_fixedmatrix<M>(
+pub fn merge_step_cms_lib_fixedmatrix<M, T>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
@@ -275,19 +282,20 @@ where
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn cms_lib_fixedmatrix_shards<M>(
+fn cms_lib_fixedmatrix_shards<M, T>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsLibFixedmatrix<M>, Vec<CmsLibFixedmatrix<M>>), BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
+    T: FrequencyValue,
 {
     let mut parts: Vec<CmsLibFixedmatrix<M>> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_fixedmatrix::<M>(params)?;
         for v in shard {
-            sketch.0.insert(&DataInput::I64(*v));
+            sketch.0.insert(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -298,9 +306,9 @@ where
     ))
 }
 
-pub fn insert_cms_lib_vector2d_fast(
+pub fn insert_cms_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -310,7 +318,7 @@ pub fn insert_cms_lib_vector2d_fast(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_cms_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -318,9 +326,9 @@ pub fn insert_cms_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn insert_step_cms_lib_vector2d_fast(
+pub fn insert_step_cms_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -333,7 +341,7 @@ pub fn insert_step_cms_lib_vector2d_fast(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_vector2d_fast(&read.borrow())),
         });
@@ -341,10 +349,10 @@ pub fn insert_step_cms_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn query_cms_lib_vector2d_fast(
+pub fn query_cms_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -352,13 +360,13 @@ pub fn query_cms_lib_vector2d_fast(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_cms_lib_vector2d_fast(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(&DataInput::I64(*p)) as u64);
+                answers.push(sketch.inner.estimate(&p.data_input()) as u64);
             }
             let footprint = memory_cms_lib_vector2d_fast(&sketch);
             (answers, footprint)
@@ -367,9 +375,9 @@ pub fn query_cms_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn merge_cms_lib_vector2d_fast(
+pub fn merge_cms_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -386,9 +394,9 @@ pub fn merge_cms_lib_vector2d_fast(
     Ok(out)
 }
 
-pub fn merge_step_cms_lib_vector2d_fast(
+pub fn merge_step_cms_lib_vector2d_fast<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -413,16 +421,16 @@ pub fn merge_step_cms_lib_vector2d_fast(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn cms_lib_vector2d_fast_shards(
+fn cms_lib_vector2d_fast_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsLibVector2dFast, Vec<CmsLibVector2dFast>), BuildError> {
     let mut parts: Vec<CmsLibVector2dFast> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -433,9 +441,9 @@ fn cms_lib_vector2d_fast_shards(
     ))
 }
 
-pub fn insert_cms_lib_vector2d_regular(
+pub fn insert_cms_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -445,7 +453,7 @@ pub fn insert_cms_lib_vector2d_regular(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }
             memory_cms_lib_vector2d_regular(&sketch)
         }) as Pass);
@@ -453,9 +461,9 @@ pub fn insert_cms_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn insert_step_cms_lib_vector2d_regular(
+pub fn insert_step_cms_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -468,7 +476,7 @@ pub fn insert_step_cms_lib_vector2d_regular(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&DataInput::I64(*v));
+                sketch.inner.insert(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_vector2d_regular(&read.borrow())),
         });
@@ -476,10 +484,10 @@ pub fn insert_step_cms_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn query_cms_lib_vector2d_regular(
+pub fn query_cms_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
-    probes: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -487,13 +495,13 @@ pub fn query_cms_lib_vector2d_regular(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_cms_lib_vector2d_regular(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate(&DataInput::I64(*p)) as u64);
+                answers.push(sketch.inner.estimate(&p.data_input()) as u64);
             }
             let footprint = memory_cms_lib_vector2d_regular(&sketch);
             (answers, footprint)
@@ -502,9 +510,9 @@ pub fn query_cms_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn merge_cms_lib_vector2d_regular(
+pub fn merge_cms_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -521,9 +529,9 @@ pub fn merge_cms_lib_vector2d_regular(
     Ok(out)
 }
 
-pub fn merge_step_cms_lib_vector2d_regular(
+pub fn merge_step_cms_lib_vector2d_regular<T: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -548,16 +556,16 @@ pub fn merge_step_cms_lib_vector2d_regular(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn cms_lib_vector2d_regular_shards(
+fn cms_lib_vector2d_regular_shards<T: FrequencyValue>(
     params: &ParamSet,
-    items: &[i64],
+    items: &[T],
     shards: usize,
 ) -> Result<(CmsLibVector2dRegular, Vec<CmsLibVector2dRegular>), BuildError> {
     let mut parts: Vec<CmsLibVector2dRegular> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_vector2d_regular(params)?;
         for v in shard {
-            sketch.inner.insert(&DataInput::I64(*v));
+            sketch.inner.insert(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -570,10 +578,10 @@ fn cms_lib_vector2d_regular_shards(
 
 /// The whole stream in one call: this row's ingest *is* the parallel fan-out,
 /// so there is no per-item step to buffer and none to time.
-pub fn insert_parallel_cms_fast_path(
+pub fn insert_parallel_cms_fast_path<T: FrequencyValue>(
     params: &ParamSet,
     workers: usize,
-    items: Rc<Vec<i64>>,
+    items: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
