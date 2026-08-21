@@ -1,57 +1,52 @@
 //! The `asap_sketchlib` implementation.
 //!
-//! Grouped under `wrappers/hydra_cms/` with the other implementations of this
+//! Grouped under `wrappers/hydra_hll/` with the other implementations of this
 //! algorithm; how each is driven lives beside it.
 
 use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::input::HydraCounter;
-use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, Vector2D};
+use asap_sketchlib::input::{HydraCounter, HydraQuery};
+use asap_sketchlib::{DataInput, Hydra, HyperLogLog};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub struct HydraCms {
+/// Hydra over HyperLogLog cells.
+pub struct HydraHll {
     pub(super) inner: Hydra,
-    params: HydraCmsParams,
+    params: HydraHllParams,
 }
 
-pub fn build_hydra_cms(config: &ParamSet) -> Result<HydraCms, BuildError> {
-    let p: HydraCmsParams = config.parse()?;
-    check_grid(p.rows, p.cols, "hydra-cms")?;
-    for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
-        if v == 0 {
-            return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
-        }
-    }
-    let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
-        p.cell_rows,
-        p.cell_cols,
-    ));
-    Ok(HydraCms {
+pub fn build_hydra_hll(config: &ParamSet) -> Result<HydraHll, BuildError> {
+    let p: HydraHllParams = config.parse()?;
+    check_grid(p.rows, p.cols, "hydra-hll")?;
+    // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
+    // alias over the variant, so `new()` is ambiguous between the
+    // estimators the alias can carry. The enum fixes this one.
+    let cell = HydraCounter::HLL(HyperLogLog::<asap_sketchlib::ErtlMLE>::new());
+    Ok(HydraHll {
         inner: Hydra::with_dimensions(p.rows, p.cols, cell),
         params: p,
     })
 }
 
-impl HydraCms {
+impl HydraHll {
     #[inline]
-    pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
         self.inner
-            .query_frequency(labels.to_vec(), &DataInput::I64(*value))
+            .query_key(labels.to_vec(), &HydraQuery::Cardinality)
     }
 }
 
-/// The grid holds `rows * cols` cells and every cell is a full Count-Min of
-/// `i32` counters, so the counter term is the product of both shapes.
-pub fn memory_hydra_cms(sketch: &HydraCms) -> usize {
+/// One byte per register per cell. The cell is fixed-shape, so unlike the
+/// Count-Min row there is no cell parameter in this product.
+pub fn memory_hydra_hll(sketch: &HydraHll) -> usize {
     let p = &sketch.params;
-    p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
-        + grid_overhead_bytes(p.rows, p.cols)
+    p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
 }
 
-pub fn insert_hydra_cms(
+pub fn insert_hydra_hll(
     params: &ParamSet,
     items: Rc<Vec<(String, i64)>>,
     passes: usize,
@@ -59,26 +54,26 @@ pub fn insert_hydra_cms(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_cms(params)?;
+        let mut sketch = build_hydra_hll(params)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
                 sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
             }
-            memory_hydra_cms(&sketch)
+            memory_hydra_hll(&sketch)
         }) as Pass);
     }
     Ok(out)
 }
 
-pub fn insert_step_hydra_cms(
+pub fn insert_step_hydra_hll(
     params: &ParamSet,
     items: Rc<Vec<(String, i64)>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cms(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_hll(params)?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -88,22 +83,22 @@ pub fn insert_step_hydra_cms(
                 let v = &stream[i];
                 sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
             }),
-            footprint: Box::new(move || memory_hydra_cms(&read.borrow())),
+            footprint: Box::new(move || memory_hydra_hll(&read.borrow())),
         });
     }
     Ok(out)
 }
 
-pub fn query_hydra_cms(
+pub fn query_hydra_hll(
     params: &ParamSet,
     items: Rc<Vec<(String, i64)>>,
-    probes: Rc<Vec<(Vec<String>, i64)>>,
+    probes: Rc<Vec<Vec<String>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hydra_cms(params)?;
+        let mut sketch = build_hydra_hll(params)?;
         for v in items.iter() {
             sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
         }
@@ -111,16 +106,16 @@ pub fn query_hydra_cms(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.estimate_subpop_frequency(&labels(&p.0), &p.1));
+                answers.push(sketch.estimate_subpop_cardinality(&labels(p)));
             }
-            let footprint = memory_hydra_cms(&sketch);
+            let footprint = memory_hydra_hll(&sketch);
             (answers, footprint)
         }) as QueryPass<f64>);
     }
     Ok(out)
 }
 
-pub fn merge_hydra_cms(
+pub fn merge_hydra_hll(
     params: &ParamSet,
     items: Rc<Vec<(String, i64)>>,
     shards: usize,
@@ -128,20 +123,20 @@ pub fn merge_hydra_cms(
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (mut acc, rest) = hydra_cms_shards(params, &items, shards)?;
+        let (mut acc, rest) = hydra_hll_shards(params, &items, shards)?;
         out.push(Box::new(move || {
             for other in rest.iter() {
                 acc.inner
                     .merge(&other.inner)
                     .expect("both operands built from one ParamSet, so grid and cell shapes match");
             }
-            memory_hydra_cms(&acc)
+            memory_hydra_hll(&acc)
         }) as Pass);
     }
     Ok(out)
 }
 
-pub fn merge_step_hydra_cms(
+pub fn merge_step_hydra_hll(
     params: &ParamSet,
     items: Rc<Vec<(String, i64)>>,
     shards: usize,
@@ -149,7 +144,7 @@ pub fn merge_step_hydra_cms(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (acc, rest) = hydra_cms_shards(params, &items, shards)?;
+        let (acc, rest) = hydra_hll_shards(params, &items, shards)?;
         let acc: Shared<_> = Rc::new(RefCell::new(acc));
         let (driven, read) = (acc.clone(), acc);
         out.push(StepPass {
@@ -161,7 +156,7 @@ pub fn merge_step_hydra_cms(
                     .merge(&other.inner)
                     .expect("both operands built from one ParamSet, so grid and cell shapes match");
             }),
-            footprint: Box::new(move || memory_hydra_cms(&read.borrow())),
+            footprint: Box::new(move || memory_hydra_hll(&read.borrow())),
         });
     }
     Ok(out)
@@ -170,14 +165,14 @@ pub fn merge_step_hydra_cms(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hydra_cms_shards(
+fn hydra_hll_shards(
     params: &ParamSet,
     items: &[(String, i64)],
     shards: usize,
-) -> Result<(HydraCms, Vec<HydraCms>), BuildError> {
-    let mut parts: Vec<HydraCms> = Vec::new();
+) -> Result<(HydraHll, Vec<HydraHll>), BuildError> {
+    let mut parts: Vec<HydraHll> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_cms(params)?;
+        let mut sketch = build_hydra_hll(params)?;
         for v in shard {
             sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
         }

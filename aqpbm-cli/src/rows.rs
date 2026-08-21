@@ -45,7 +45,8 @@ use sketch_bench::wrappers::hll::{
     datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
 };
 use sketch_bench::wrappers::hydra_cms::{polars as hp, sketchlib as hs};
-use sketch_bench::wrappers::hydra_kll::sketchlib as hks;
+use sketch_bench::wrappers::hydra_hll::{polars as hhp, sketchlib as hhs};
+use sketch_bench::wrappers::hydra_kll::{polars as hkp, sketchlib as hks};
 use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};
 
@@ -1004,10 +1005,10 @@ pub(crate) fn row_hydra_hll_lib(
         description,
         table,
         want,
-        hs::insert_hydra_hll,
-        hs::insert_step_hydra_hll,
-        hs::query_hydra_hll,
-        Some((hs::merge_hydra_hll, hs::merge_step_hydra_hll)),
+        hhs::insert_hydra_hll,
+        hhs::insert_step_hydra_hll,
+        hhs::query_hydra_hll,
+        Some((hhs::merge_hydra_hll, hhs::merge_step_hydra_hll)),
         None,
     )
 }
@@ -1023,11 +1024,11 @@ pub(crate) fn row_hydra_hll_polars(
         description,
         table,
         want,
-        hp::insert_polars_subpop_cardinality,
-        hp::insert_step_polars_subpop_cardinality,
-        hp::query_polars_subpop_cardinality,
+        hhp::insert_polars_subpop_cardinality,
+        hhp::insert_step_polars_subpop_cardinality,
+        hhp::query_polars_subpop_cardinality,
         None,
-        Some(hp::prepare_polars_subpop_cardinality),
+        Some(hhp::prepare_polars_subpop_cardinality),
     )
 }
 
@@ -1061,11 +1062,11 @@ pub(crate) fn row_hydra_kll_polars(
         description,
         table,
         want,
-        hp::insert_polars_subpop_quantile,
-        hp::insert_step_polars_subpop_quantile,
-        hp::query_polars_subpop_quantile,
+        hkp::insert_polars_subpop_quantile,
+        hkp::insert_step_polars_subpop_quantile,
+        hkp::query_polars_subpop_quantile,
         None,
-        Some(hp::prepare_polars_subpop_quantile),
+        Some(hkp::prepare_polars_subpop_quantile),
     )
 }
 
