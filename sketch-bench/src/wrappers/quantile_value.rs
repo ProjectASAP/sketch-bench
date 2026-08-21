@@ -54,9 +54,16 @@ impl ToF64 for u32 {
 /// runtime check.
 pub trait QuantileValue: ToF64 + Copy {
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering;
+
+    fn data_input(&self) -> asap_sketchlib::DataInput<'_>;
 }
 
 impl QuantileValue for i64 {
+    #[inline(always)]
+    fn data_input(&self) -> asap_sketchlib::DataInput<'_> {
+        asap_sketchlib::DataInput::I64(*self)
+    }
+
     #[inline(always)]
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         Ord::cmp(self, other)
@@ -65,12 +72,22 @@ impl QuantileValue for i64 {
 
 impl QuantileValue for u64 {
     #[inline(always)]
+    fn data_input(&self) -> asap_sketchlib::DataInput<'_> {
+        asap_sketchlib::DataInput::U64(*self)
+    }
+
+    #[inline(always)]
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         Ord::cmp(self, other)
     }
 }
 
 impl QuantileValue for f64 {
+    #[inline(always)]
+    fn data_input(&self) -> asap_sketchlib::DataInput<'_> {
+        asap_sketchlib::DataInput::F64(*self)
+    }
+
     #[inline(always)]
     fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         f64::total_cmp(self, other)

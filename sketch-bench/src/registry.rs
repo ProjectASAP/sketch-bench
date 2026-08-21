@@ -565,6 +565,38 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
+        algorithm: "hydra-cs",
+        variant: "hydra-cs",
+        library: "lib",
+        description: "asap_sketchlib::Hydra over Count Sketch cells (subpopulation frequency)",
+        capability: Capability::SubpopFrequency,
+        comparator: Some("subpop-frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-cs",
+        variant: "hydra-cs",
+        library: "polars",
+        description: "polars exact: group_by(subset, v).agg(len) over every label subset",
+        capability: Capability::SubpopFrequency,
+        comparator: Some("subpop-frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
         algorithm: "hydra-hll",
         variant: "hydra-hll",
         library: "lib",

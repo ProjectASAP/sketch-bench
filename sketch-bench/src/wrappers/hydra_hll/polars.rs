@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::params::ParamSet;
+use crate::wrappers::hll::CardinalityValue;
 use crate::wrappers::polars_shared::*;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use ::polars::prelude::*;
@@ -13,15 +14,26 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 /// `hydra-hll/polars` — exact subpopulation cardinality.
-#[derive(Default)]
-pub struct PolarsSubpopCardinality {
-    buf: Vec<(String, i64)>,
+pub struct PolarsSubpopCardinality<T: CardinalityValue = i64> {
+    buf: Vec<(String, T)>,
     distinct: HashMap<String, u64>,
 }
 
-pub fn build_polars_subpop_cardinality(
+// Hand-written rather than derived: `derive` would bound `T: Default`, which
+// the ingested widths have no reason to satisfy. An empty buffer is what
+// "default" means here, and that needs nothing of `T`.
+impl<T: CardinalityValue> Default for PolarsSubpopCardinality<T> {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            distinct: HashMap::new(),
+        }
+    }
+}
+
+pub fn build_polars_subpop_cardinality<T: CardinalityValue>(
     config: &ParamSet,
-) -> Result<PolarsSubpopCardinality, BuildError> {
+) -> Result<PolarsSubpopCardinality<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -30,31 +42,39 @@ pub fn build_polars_subpop_cardinality(
     Ok(PolarsSubpopCardinality::default())
 }
 
-impl PolarsSubpopCardinality {
+impl<T: CardinalityValue> PolarsSubpopCardinality<T> {
     pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
         self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
     }
 }
 
-pub fn memory_polars_subpop_cardinality(sketch: &PolarsSubpopCardinality) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<(String, i64)>()
+pub fn memory_polars_subpop_cardinality<T: CardinalityValue>(
+    sketch: &PolarsSubpopCardinality<T>,
+) -> usize {
+    let held: usize = sketch
+        .buf
+        .iter()
+        .map(|(g, v)| g.capacity() + v.heap_bytes())
+        .sum();
+    sketch.buf.capacity() * std::mem::size_of::<(String, T)>()
+        + held
         + sketch.distinct.capacity() * (std::mem::size_of::<String>() + 8)
 }
 
-impl PolarsSubpopCardinality {
+impl<T: CardinalityValue> PolarsSubpopCardinality<T> {
     /// The exact answer, over the stream as buffered. Its own step because the
     /// runner times it as `prepare`: this row's cost is the pass, not the ask.
     fn finalize(&mut self) {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         for r in &self.buf {
-            fan_out(&r.0, r.1, &mut keys, &mut values);
+            fan_out(&r.0, &r.1, &mut keys, &mut values);
         }
         if keys.is_empty() {
             return;
         }
         let df = DataFrame::new(vec![
             Column::new("g".into(), &keys),
-            Column::new("v".into(), &values),
+            T::polars_column(&values),
         ])
         .expect("DataFrame::new");
         let result = df
@@ -82,15 +102,15 @@ impl PolarsSubpopCardinality {
     }
 }
 
-pub fn insert_polars_subpop_cardinality(
+pub fn insert_polars_subpop_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_polars_subpop_cardinality(params)?;
+        let mut sketch = build_polars_subpop_cardinality::<T>(params)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -102,14 +122,15 @@ pub fn insert_polars_subpop_cardinality(
     Ok(out)
 }
 
-pub fn insert_step_polars_subpop_cardinality(
+pub fn insert_step_polars_subpop_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_cardinality(params)?));
+        let sketch: Shared<_> =
+            Rc::new(RefCell::new(build_polars_subpop_cardinality::<T>(params)?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -125,16 +146,16 @@ pub fn insert_step_polars_subpop_cardinality(
     Ok(out)
 }
 
-pub fn query_polars_subpop_cardinality(
+pub fn query_polars_subpop_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, T)>>,
     probes: Rc<Vec<Vec<String>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_polars_subpop_cardinality(params)?;
+        let mut sketch = build_polars_subpop_cardinality::<T>(params)?;
         for v in items.iter() {
             sketch.buf.push(v.clone());
         }
@@ -152,15 +173,15 @@ pub fn query_polars_subpop_cardinality(
     Ok(out)
 }
 
-pub fn prepare_polars_subpop_cardinality(
+pub fn prepare_polars_subpop_cardinality<T: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Fed here: the closure below is the step that makes it ready to answer.
-        let mut sketch = build_polars_subpop_cardinality(params)?;
+        let mut sketch = build_polars_subpop_cardinality::<T>(params)?;
         for v in items.iter() {
             sketch.buf.push(v.clone());
         }

@@ -97,8 +97,6 @@ mod tests {
         );
     }
 
-    /// The zero-dimension refusal is the grid's, shared with the sibling rows —
-    /// see `hydra_shared::check_grid` — but the name it reports is this row's.
     #[test]
     fn zero_dimensions_are_refused_by_name() {
         let bad = ParamSet::of(&HydraHllParams { rows: 3, cols: 0 });

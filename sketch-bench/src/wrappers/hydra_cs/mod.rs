@@ -17,8 +17,8 @@ mod tests {
 
     use crate::params::SketchParams;
 
-    fn built() -> HydraCms {
-        build_hydra_cms(&ParamSet::of(&HydraCmsParams {
+    fn built() -> HydraCs {
+        build_hydra_cs(&ParamSet::of(&HydraCsParams {
             rows: 3,
             cols: 64,
             cell_rows: 3,
@@ -31,7 +31,7 @@ mod tests {
         (key.to_string(), value)
     }
 
-    fn fed(sketch: &mut HydraCms, r: &(String, i64)) {
+    fn fed(sketch: &mut HydraCs, r: &(String, i64)) {
         sketch
             .inner
             .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
@@ -69,7 +69,7 @@ mod tests {
         assert_eq!(h.estimate_subpop_frequency(&["zzz"], &10i64), 0.0);
     }
 
-    /// Count-Min is linear and the grid is cell-wise, so folding two shards is
+    /// Count Sketch is linear and the grid is cell-wise, so folding two shards is
     /// exact, not approximate.
     #[test]
     fn merging_shards_is_exact() {
@@ -88,13 +88,13 @@ mod tests {
 
     #[test]
     fn zero_dimensions_are_refused_by_name() {
-        let bad = ParamSet::of(&HydraCmsParams {
+        let bad = ParamSet::of(&HydraCsParams {
             rows: 3,
             cols: 0,
             cell_rows: 3,
             cell_cols: 256,
         });
-        let Err(err) = build_hydra_cms(&bad) else {
+        let Err(err) = build_hydra_cs(&bad) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -107,14 +107,14 @@ mod tests {
     fn footprint_is_the_product_of_both_shapes() {
         let h = built();
         let counters = 3 * 64 * 3 * 256 * 4;
-        assert_eq!(memory_hydra_cms(&h), counters + grid_overhead_bytes(3, 64));
+        assert_eq!(memory_hydra_cs(&h), counters + grid_overhead_bytes(3, 64));
         // The counters still dominate, so the overhead term must not be what
         // the number is mostly made of.
-        assert!(memory_hydra_cms(&h) < counters * 2);
+        assert!(memory_hydra_cs(&h) < counters * 2);
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical())).is_ok());
+        assert!(build_hydra_cs(&ParamSet::of(&HydraCsParams::canonical())).is_ok());
     }
 }

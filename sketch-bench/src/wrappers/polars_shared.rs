@@ -280,10 +280,88 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
 /// Expand one record into `(subset_key, value)` rows, one per non-empty subset
 /// of its labels. Empty label parts are dropped, matching the library's
 /// `split(';').filter(|s| !s.is_empty())`.
-pub fn fan_out<V: Copy>(key: &str, value: V, keys: &mut Vec<String>, values: &mut Vec<V>) {
+pub fn fan_out<V: Clone>(key: &str, value: &V, keys: &mut Vec<String>, values: &mut Vec<V>) {
     let parts: Vec<&str> = key.split(';').filter(|s| !s.is_empty()).collect();
     for mask in 1..(1usize << parts.len()) {
         keys.push(subset_key(&parts, mask));
-        values.push(value);
+        values.push(value.clone());
+    }
+}
+
+pub struct PolarsSubpopFrequencyCore<T: PolarsFrequencyItem = i64> {
+    buf: Vec<(String, T)>,
+    counts: HashMap<(String, T::CountKey), u64>,
+}
+
+impl<T: PolarsFrequencyItem> Default for PolarsSubpopFrequencyCore<T> {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            counts: HashMap::new(),
+        }
+    }
+}
+
+impl<T: PolarsFrequencyItem> PolarsSubpopFrequencyCore<T> {
+    #[inline(always)]
+    pub fn update(&mut self, record: &(String, T)) {
+        self.buf.push(record.clone());
+    }
+
+    pub fn finalize(&mut self) {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        for r in &self.buf {
+            fan_out(&r.0, &r.1, &mut keys, &mut values);
+        }
+        if keys.is_empty() {
+            return;
+        }
+        let df = DataFrame::new(vec![
+            Column::new("g".into(), &keys),
+            T::polars_column(&values),
+        ])
+        .expect("DataFrame::new");
+        let result = df
+            .lazy()
+            .group_by([col("g"), col("v")])
+            .agg([len().alias("count")])
+            .collect()
+            .expect("polars group_by collect");
+
+        let groups = result.column("g").expect("g column");
+        let groups = groups.str().expect("str groups");
+        let vals = T::count_keys(result.column("v").expect("v column"));
+        let counts = result
+            .column("count")
+            .expect("count column")
+            .cast(&DataType::UInt64)
+            .expect("cast to u64");
+        let counts = counts.u64().expect("u64 counts");
+
+        self.counts.reserve(groups.len());
+        for ((g, v), c) in groups.into_iter().zip(vals).zip(counts) {
+            if let (Some(g), Some(c)) = (g, c) {
+                self.counts.insert((g.to_string(), v), c);
+            }
+        }
+    }
+
+    pub fn query(&self, labels: &[&str], value: &T) -> f64 {
+        self.counts
+            .get(&(labels.join(";"), value.count_key()))
+            .copied()
+            .unwrap_or(0) as f64
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        let keys: usize = self
+            .buf
+            .iter()
+            .map(|(g, v)| g.capacity() + v.heap_bytes())
+            .sum();
+        self.buf.capacity() * std::mem::size_of::<(String, T)>()
+            + keys
+            + self.counts.capacity()
+                * (std::mem::size_of::<(String, T::CountKey)>() + std::mem::size_of::<u64>())
     }
 }

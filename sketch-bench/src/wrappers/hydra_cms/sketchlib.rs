@@ -5,10 +5,11 @@
 
 use super::*;
 use crate::params::ParamSet;
+use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::HydraCounter;
-use asap_sketchlib::{CountMin, DataInput, FastPath, Hydra, Vector2D};
+use asap_sketchlib::{CountMin, FastPath, Hydra, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -37,9 +38,9 @@ pub fn build_hydra_cms(config: &ParamSet) -> Result<HydraCms, BuildError> {
 
 impl HydraCms {
     #[inline]
-    pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &i64) -> f64 {
+    pub fn estimate_subpop_frequency<V: FrequencyValue>(&self, labels: &[&str], value: &V) -> f64 {
         self.inner
-            .query_frequency(labels.to_vec(), &DataInput::I64(*value))
+            .query_frequency(labels.to_vec(), &value.data_input())
     }
 }
 
@@ -51,9 +52,9 @@ pub fn memory_hydra_cms(sketch: &HydraCms) -> usize {
         + grid_overhead_bytes(p.rows, p.cols)
 }
 
-pub fn insert_hydra_cms(
+pub fn insert_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -63,7 +64,7 @@ pub fn insert_hydra_cms(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+                sketch.inner.update(&v.0, &v.1.data_input(), None);
             }
             memory_hydra_cms(&sketch)
         }) as Pass);
@@ -71,9 +72,9 @@ pub fn insert_hydra_cms(
     Ok(out)
 }
 
-pub fn insert_step_hydra_cms(
+pub fn insert_step_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -86,7 +87,7 @@ pub fn insert_step_hydra_cms(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+                sketch.inner.update(&v.0, &v.1.data_input(), None);
             }),
             footprint: Box::new(move || memory_hydra_cms(&read.borrow())),
         });
@@ -94,10 +95,10 @@ pub fn insert_step_hydra_cms(
     Ok(out)
 }
 
-pub fn query_hydra_cms(
+pub fn query_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
-    probes: Rc<Vec<(Vec<String>, i64)>>,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<String>, V)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -105,7 +106,7 @@ pub fn query_hydra_cms(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hydra_cms(params)?;
         for v in items.iter() {
-            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            sketch.inner.update(&v.0, &v.1.data_input(), None);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -120,9 +121,9 @@ pub fn query_hydra_cms(
     Ok(out)
 }
 
-pub fn merge_hydra_cms(
+pub fn merge_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -141,9 +142,9 @@ pub fn merge_hydra_cms(
     Ok(out)
 }
 
-pub fn merge_step_hydra_cms(
+pub fn merge_step_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -170,16 +171,16 @@ pub fn merge_step_hydra_cms(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hydra_cms_shards(
+fn hydra_cms_shards<V: FrequencyValue>(
     params: &ParamSet,
-    items: &[(String, i64)],
+    items: &[(String, V)],
     shards: usize,
 ) -> Result<(HydraCms, Vec<HydraCms>), BuildError> {
     let mut parts: Vec<HydraCms> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_hydra_cms(params)?;
         for v in shard {
-            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            sketch.inner.update(&v.0, &v.1.data_input(), None);
         }
         parts.push(sketch);
     }

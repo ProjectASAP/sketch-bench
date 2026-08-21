@@ -6,6 +6,7 @@
 use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::polars_shared::*;
+use crate::wrappers::quantile_value::QuantileValue;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use ::polars::prelude::*;
 use std::cell::RefCell;
@@ -13,13 +14,26 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 /// `hydra-kll/polars` — exact subpopulation quantile.
-#[derive(Default)]
-pub struct PolarsSubpopQuantile {
-    buf: Vec<(String, f64)>,
+pub struct PolarsSubpopQuantile<T: QuantileValue + PolarsColumnItem = i64> {
+    buf: Vec<(String, T)>,
     sorted: HashMap<String, Vec<f64>>,
 }
 
-pub fn build_polars_subpop_quantile(config: &ParamSet) -> Result<PolarsSubpopQuantile, BuildError> {
+// Hand-written rather than derived: `derive` would bound `T: Default`, which
+// the ingested widths have no reason to satisfy. An empty buffer is what
+// "default" means here, and that needs nothing of `T`.
+impl<T: QuantileValue + PolarsColumnItem> Default for PolarsSubpopQuantile<T> {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            sorted: HashMap::new(),
+        }
+    }
+}
+
+pub fn build_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem>(
+    config: &ParamSet,
+) -> Result<PolarsSubpopQuantile<T>, BuildError> {
     // Exact, so no knob here does anything. The config is still parsed
     // and discarded: this row is the baseline its sketch siblings are
     // scored against, and a config they refuse must not quietly produce
@@ -28,7 +42,7 @@ pub fn build_polars_subpop_quantile(config: &ParamSet) -> Result<PolarsSubpopQua
     Ok(PolarsSubpopQuantile::default())
 }
 
-impl PolarsSubpopQuantile {
+impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// `floor(phi * n)`, clamped to the last index. That is the index whose
     /// rank interval contains `phi * n`, which is what the rank-error
     /// comparator scores against, so an exact answer scores zero.
@@ -44,8 +58,12 @@ impl PolarsSubpopQuantile {
     }
 }
 
-pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
-    sketch.buf.capacity() * std::mem::size_of::<(String, f64)>()
+pub fn memory_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem>(
+    sketch: &PolarsSubpopQuantile<T>,
+) -> usize {
+    let held: usize = sketch.buf.iter().map(|(g, _)| g.capacity()).sum();
+    sketch.buf.capacity() * std::mem::size_of::<(String, T)>()
+        + held
         + sketch
             .sorted
             .values()
@@ -53,20 +71,20 @@ pub fn memory_polars_subpop_quantile(sketch: &PolarsSubpopQuantile) -> usize {
             .sum::<usize>()
 }
 
-impl PolarsSubpopQuantile {
+impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// The exact answer, over the stream as buffered. Its own step because the
     /// runner times it as `prepare`: this row's cost is the pass, not the ask.
     fn finalize(&mut self) {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         for r in &self.buf {
-            fan_out(&r.0, r.1, &mut keys, &mut values);
+            fan_out(&r.0, &r.1, &mut keys, &mut values);
         }
         if keys.is_empty() {
             return;
         }
         let df = DataFrame::new(vec![
             Column::new("g".into(), &keys),
-            Column::new("v".into(), &values),
+            T::polars_column(&values),
         ])
         .expect("DataFrame::new");
         let result = df
@@ -77,7 +95,11 @@ impl PolarsSubpopQuantile {
 
         let groups = result.column("g").expect("g column");
         let groups = groups.str().expect("str groups");
-        let vals = result.column("v").expect("v column");
+        let vals = result
+            .column("v")
+            .expect("v column")
+            .cast(&DataType::Float64)
+            .expect("cast to f64");
         let vals = vals.f64().expect("f64 values");
 
         for (g, v) in groups.into_iter().zip(vals) {
@@ -89,15 +111,15 @@ impl PolarsSubpopQuantile {
     }
 }
 
-pub fn insert_polars_subpop_quantile(
+pub fn insert_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<(String, f64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_polars_subpop_quantile(params)?;
+        let mut sketch = build_polars_subpop_quantile::<T>(params)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -109,14 +131,14 @@ pub fn insert_polars_subpop_quantile(
     Ok(out)
 }
 
-pub fn insert_step_polars_subpop_quantile(
+pub fn insert_step_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<(String, f64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_quantile(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_polars_subpop_quantile::<T>(params)?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -132,16 +154,16 @@ pub fn insert_step_polars_subpop_quantile(
     Ok(out)
 }
 
-pub fn query_polars_subpop_quantile(
+pub fn query_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<(String, f64)>>,
+    items: Rc<Vec<(String, T)>>,
     probes: Rc<Vec<(Vec<String>, f64)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_polars_subpop_quantile(params)?;
+        let mut sketch = build_polars_subpop_quantile::<T>(params)?;
         for v in items.iter() {
             sketch.buf.push(v.clone());
         }
@@ -159,15 +181,15 @@ pub fn query_polars_subpop_quantile(
     Ok(out)
 }
 
-pub fn prepare_polars_subpop_quantile(
+pub fn prepare_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'static>(
     params: &ParamSet,
-    items: Rc<Vec<(String, f64)>>,
+    items: Rc<Vec<(String, T)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Fed here: the closure below is the step that makes it ready to answer.
-        let mut sketch = build_polars_subpop_quantile(params)?;
+        let mut sketch = build_polars_subpop_quantile::<T>(params)?;
         for v in items.iter() {
             sketch.buf.push(v.clone());
         }

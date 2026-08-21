@@ -453,6 +453,28 @@ sketch_params!(
     }
 );
 
+/// Hydra over Count Sketch cells: `rows` / `cols` size the outer grid a
+/// subpopulation key hashes into, `cell_rows` / `cell_cols` the counter array
+/// inside each cell. Memory is their product, so the two pairs are not alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HydraCsParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub cell_rows: usize,
+    pub cell_cols: usize,
+}
+sketch_params!(
+    HydraCsParams,
+    "hydra-cs",
+    HydraCsParams {
+        rows: 3,
+        cols: 128,
+        cell_rows: 3,
+        cell_cols: 512
+    }
+);
+
 /// Hydra over HyperLogLog cells: the grid shape and nothing else. The library
 /// fixes the cell at `HyperLogLogP14` — 2^14 one-byte registers — so a `lg_k`
 /// here would be a knob the row reads and cannot act on.
@@ -577,6 +599,7 @@ mod tests {
         check::<CmsParams>();
         check::<CountSketchParams>();
         check::<HydraCmsParams>();
+        check::<HydraCsParams>();
         check::<HydraHllParams>();
         check::<HydraKllParams>();
         check::<UnivMonParams>();
@@ -613,6 +636,8 @@ mod tests {
         // families and none of them owns another's name.
         assert!(HydraCmsParams::owns("hydra-cms"));
         assert!(!HydraCmsParams::owns("hydra-hll"));
+        assert!(!HydraCmsParams::owns("hydra-cs"));
+        assert!(HydraCsParams::owns("hydra-cs"));
         assert!(!HydraHllParams::owns("hydra-kll"));
 
         assert!(UnivMonParams::owns("univmon-cardinality"));

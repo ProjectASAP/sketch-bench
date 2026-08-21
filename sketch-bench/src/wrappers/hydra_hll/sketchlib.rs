@@ -5,10 +5,11 @@
 
 use super::*;
 use crate::params::ParamSet;
+use crate::wrappers::hll::CardinalityValue;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
-use asap_sketchlib::{DataInput, Hydra, HyperLogLog};
+use asap_sketchlib::{Hydra, HyperLogLog};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -46,9 +47,9 @@ pub fn memory_hydra_hll(sketch: &HydraHll) -> usize {
     p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
 }
 
-pub fn insert_hydra_hll(
+pub fn insert_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -58,7 +59,7 @@ pub fn insert_hydra_hll(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+                sketch.inner.update(&v.0, &v.1.data_input(), None);
             }
             memory_hydra_hll(&sketch)
         }) as Pass);
@@ -66,9 +67,9 @@ pub fn insert_hydra_hll(
     Ok(out)
 }
 
-pub fn insert_step_hydra_hll(
+pub fn insert_step_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -81,7 +82,7 @@ pub fn insert_step_hydra_hll(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+                sketch.inner.update(&v.0, &v.1.data_input(), None);
             }),
             footprint: Box::new(move || memory_hydra_hll(&read.borrow())),
         });
@@ -89,9 +90,9 @@ pub fn insert_step_hydra_hll(
     Ok(out)
 }
 
-pub fn query_hydra_hll(
+pub fn query_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     probes: Rc<Vec<Vec<String>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -100,7 +101,7 @@ pub fn query_hydra_hll(
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hydra_hll(params)?;
         for v in items.iter() {
-            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            sketch.inner.update(&v.0, &v.1.data_input(), None);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -115,9 +116,9 @@ pub fn query_hydra_hll(
     Ok(out)
 }
 
-pub fn merge_hydra_hll(
+pub fn merge_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -136,9 +137,9 @@ pub fn merge_hydra_hll(
     Ok(out)
 }
 
-pub fn merge_step_hydra_hll(
+pub fn merge_step_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
-    items: Rc<Vec<(String, i64)>>,
+    items: Rc<Vec<(String, V)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -165,16 +166,16 @@ pub fn merge_step_hydra_hll(
 /// The shards a fold folds: the stream split `shards` ways, one sketch each,
 /// all fed. The first is the accumulator, the rest are what it folds in.
 #[allow(clippy::type_complexity)]
-fn hydra_hll_shards(
+fn hydra_hll_shards<V: CardinalityValue>(
     params: &ParamSet,
-    items: &[(String, i64)],
+    items: &[(String, V)],
     shards: usize,
 ) -> Result<(HydraHll, Vec<HydraHll>), BuildError> {
     let mut parts: Vec<HydraHll> = Vec::new();
     for shard in partition(items, shards) {
         let mut sketch = build_hydra_hll(params)?;
         for v in shard {
-            sketch.inner.update(&v.0, &DataInput::I64(v.1), None);
+            sketch.inner.update(&v.0, &v.1.data_input(), None);
         }
         parts.push(sketch);
     }
