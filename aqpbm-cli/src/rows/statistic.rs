@@ -236,17 +236,17 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn keyed_row<G>(
+pub(super) fn keyed_row<K: ColumnItem, G>(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     ground_truth: G,
-    insert: InsertBody<(u64, i64)>,
-    insert_step: InsertStepBody<(u64, i64)>,
-    query: QueryBody<(u64, i64), (), f64>,
-    merge: Option<Folds<(u64, i64)>>,
-    prepare: Option<PrepareBody<(u64, i64)>>,
+    insert: InsertBody<(K, i64)>,
+    insert_step: InsertStepBody<(K, i64)>,
+    query: QueryBody<(K, i64), (), f64>,
+    merge: Option<Folds<(K, i64)>>,
+    prepare: Option<PrepareBody<(K, i64)>>,
 ) -> Result<Measurements, RunError>
 where
     G: GroundTruth<Probe = (), Answer = f64> + 'static,
@@ -258,7 +258,7 @@ where
         table,
         want,
         ground_truth,
-        peel_keyed,
+        peel_keyed::<K>,
         insert,
         insert_step,
         query,

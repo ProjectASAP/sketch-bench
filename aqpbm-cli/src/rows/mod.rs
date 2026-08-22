@@ -18,10 +18,9 @@ fn cannot_build(e: BuildError) -> RunError {
 }
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
-use aqpbm_core::accuracy::keyedcardinality::KeyedCardinalityGT;
-use aqpbm_core::accuracy::keyedentropy::KeyedEntropyGT;
-use aqpbm_core::accuracy::keyedl1norm::KeyedL1NormGT;
-use aqpbm_core::accuracy::keyedl2norm::KeyedL2NormGT;
+use aqpbm_core::accuracy::keyed::{
+    KeyedCardinalityGT, KeyedEntropyGT, KeyedL1NormGT, KeyedL2NormGT,
+};
 use aqpbm_core::accuracy::quantile::RankErrorGT;
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT, SubpopL2NormGT,

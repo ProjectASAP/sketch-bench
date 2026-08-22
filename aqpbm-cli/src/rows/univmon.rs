@@ -7,21 +7,31 @@ pub(crate) fn row_univmon_cardinality_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedCardinalityGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        ul::insert_univmon_lib,
-        ul::insert_step_univmon_lib,
-        ul::query_univmon_lib_cardinality,
-        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedCardinalityGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                ul::insert_univmon_lib::<$k>,
+                ul::insert_step_univmon_lib::<$k>,
+                ul::query_univmon_lib_cardinality::<$k>,
+                Some((
+                    ul::merge_univmon_lib::<$k>,
+                    ul::merge_step_univmon_lib::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_l1_norm_lib(
@@ -30,21 +40,31 @@ pub(crate) fn row_univmon_l1_norm_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedL1NormGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        ul::insert_univmon_lib,
-        ul::insert_step_univmon_lib,
-        ul::query_univmon_lib_l1_norm,
-        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                ul::insert_univmon_lib::<$k>,
+                ul::insert_step_univmon_lib::<$k>,
+                ul::query_univmon_lib_l1_norm::<$k>,
+                Some((
+                    ul::merge_univmon_lib::<$k>,
+                    ul::merge_step_univmon_lib::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_l1_norm_oxide(
@@ -53,21 +73,31 @@ pub(crate) fn row_univmon_l1_norm_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedL1NormGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        uo::insert_univmon_oxide,
-        uo::insert_step_univmon_oxide,
-        uo::query_univmon_oxide_l1_norm,
-        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                uo::insert_univmon_oxide::<$k>,
+                uo::insert_step_univmon_oxide::<$k>,
+                uo::query_univmon_oxide_l1_norm::<$k>,
+                Some((
+                    uo::merge_univmon_oxide::<$k>,
+                    uo::merge_step_univmon_oxide::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_l2_norm_lib(
@@ -76,21 +106,31 @@ pub(crate) fn row_univmon_l2_norm_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedL2NormGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        ul::insert_univmon_lib,
-        ul::insert_step_univmon_lib,
-        ul::query_univmon_lib_l2_norm,
-        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                ul::insert_univmon_lib::<$k>,
+                ul::insert_step_univmon_lib::<$k>,
+                ul::query_univmon_lib_l2_norm::<$k>,
+                Some((
+                    ul::merge_univmon_lib::<$k>,
+                    ul::merge_step_univmon_lib::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_l2_norm_oxide(
@@ -99,21 +139,31 @@ pub(crate) fn row_univmon_l2_norm_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedL2NormGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        uo::insert_univmon_oxide,
-        uo::insert_step_univmon_oxide,
-        uo::query_univmon_oxide_l2_norm,
-        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                uo::insert_univmon_oxide::<$k>,
+                uo::insert_step_univmon_oxide::<$k>,
+                uo::query_univmon_oxide_l2_norm::<$k>,
+                Some((
+                    uo::merge_univmon_oxide::<$k>,
+                    uo::merge_step_univmon_oxide::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_entropy_lib(
@@ -122,21 +172,31 @@ pub(crate) fn row_univmon_entropy_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedEntropyGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        ul::insert_univmon_lib,
-        ul::insert_step_univmon_lib,
-        ul::query_univmon_lib_entropy,
-        Some((ul::merge_univmon_lib, ul::merge_step_univmon_lib)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                ul::insert_univmon_lib::<$k>,
+                ul::insert_step_univmon_lib::<$k>,
+                ul::query_univmon_lib_entropy::<$k>,
+                Some((
+                    ul::merge_univmon_lib::<$k>,
+                    ul::merge_step_univmon_lib::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }
 
 pub(crate) fn row_univmon_entropy_oxide(
@@ -145,19 +205,29 @@ pub(crate) fn row_univmon_entropy_oxide(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    keyed_row(
-        req,
-        description,
-        table,
-        want,
-        KeyedEntropyGT {
-            key_column: KEYED_KEY_COLUMN,
-            value_column: value_column(description),
-        },
-        uo::insert_univmon_oxide,
-        uo::insert_step_univmon_oxide,
-        uo::query_univmon_oxide_entropy,
-        Some((uo::merge_univmon_oxide, uo::merge_step_univmon_oxide)),
-        None,
-    )
+    macro_rules! at {
+        ($k:ty) => {
+            keyed_row::<$k, _>(
+                req,
+                description,
+                table,
+                want,
+                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                uo::insert_univmon_oxide::<$k>,
+                uo::insert_step_univmon_oxide::<$k>,
+                uo::query_univmon_oxide_entropy::<$k>,
+                Some((
+                    uo::merge_univmon_oxide::<$k>,
+                    uo::merge_step_univmon_oxide::<$k>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        Dtype::Str => at!(String),
+    }
 }

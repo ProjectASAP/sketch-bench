@@ -3,7 +3,7 @@ use crate::params::ParamSet;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::HHItem;
-use asap_sketchlib::{DataInput, UnivMon};
+use asap_sketchlib::UnivMon;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -23,8 +23,8 @@ pub fn build_univmon_lib(config: &ParamSet) -> Result<UnivMonLib, BuildError> {
 
 impl UnivMonLib {
     #[inline]
-    pub(super) fn feed(&mut self, record: &Record) {
-        self.inner.insert(&DataInput::U64(record.0), record.1);
+    pub(super) fn feed<K: UnivMonKey>(&mut self, record: &Record<K>) {
+        self.inner.insert(&record.0.data_input(), record.1);
     }
 
     #[inline]
@@ -55,9 +55,9 @@ pub fn memory_univmon_lib(sketch: &UnivMonLib) -> usize {
     p.layer_size * (counters + heap)
 }
 
-pub fn insert_univmon_lib(
+pub fn insert_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -74,9 +74,9 @@ pub fn insert_univmon_lib(
     Ok(out)
 }
 
-pub fn insert_step_univmon_lib(
+pub fn insert_step_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -95,9 +95,9 @@ pub fn insert_step_univmon_lib(
     Ok(out)
 }
 
-fn asked_univmon_lib(
+fn asked_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
     estimate: fn(&UnivMonLib) -> f64,
@@ -118,9 +118,9 @@ fn asked_univmon_lib(
     Ok(out)
 }
 
-pub fn query_univmon_lib_cardinality(
+pub fn query_univmon_lib_cardinality<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -133,36 +133,36 @@ pub fn query_univmon_lib_cardinality(
     )
 }
 
-pub fn query_univmon_lib_l1_norm(
+pub fn query_univmon_lib_l1_norm<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_l1_norm)
 }
 
-pub fn query_univmon_lib_l2_norm(
+pub fn query_univmon_lib_l2_norm<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_l2_norm)
 }
 
-pub fn query_univmon_lib_entropy(
+pub fn query_univmon_lib_entropy<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_entropy)
 }
 
-pub fn merge_univmon_lib(
+pub fn merge_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -179,9 +179,9 @@ pub fn merge_univmon_lib(
     Ok(out)
 }
 
-pub fn merge_step_univmon_lib(
+pub fn merge_step_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -202,9 +202,9 @@ pub fn merge_step_univmon_lib(
 }
 
 #[allow(clippy::type_complexity)]
-fn univmon_lib_shards(
+fn univmon_lib_shards<K: UnivMonKey>(
     params: &ParamSet,
-    items: &[Record],
+    items: &[Record<K>],
     shards: usize,
 ) -> Result<(UnivMonLib, Vec<UnivMonLib>), BuildError> {
     let mut parts: Vec<UnivMonLib> = Vec::new();

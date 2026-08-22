@@ -73,10 +73,10 @@ pub(super) fn peel_labeled<V: ColumnItem>(
     Ok(Rc::new(items))
 }
 
-pub(super) fn peel_keyed(
+pub(super) fn peel_keyed<K: ColumnItem>(
     description: &TableDescription,
     table: GeneratedTable,
-) -> Result<Rc<Vec<(u64, i64)>>, RunError> {
+) -> Result<Rc<Vec<(K, i64)>>, RunError> {
     let value_column = value_column(description);
     if value_column == 0 {
         return Err(RunError::Sketch(format!(
@@ -99,9 +99,10 @@ pub(super) fn peel_keyed(
             titles[value_column],
         ))
     })?;
-    let keys = u64::from_column(columns.remove(KEYED_KEY_COLUMN)).map_err(|e| {
+    let keys = K::from_column(columns.remove(KEYED_KEY_COLUMN)).map_err(|e| {
         RunError::Sketch(format!(
-            "key column '{}': {e}. A keyed row hashes its keys as `u64`",
+            "key column '{}': {e}. A keyed row hashes its keys at the width \
+             `--dtype` names",
             titles[KEYED_KEY_COLUMN],
         ))
     })?;
