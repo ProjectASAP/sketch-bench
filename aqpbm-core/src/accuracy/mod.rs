@@ -15,10 +15,7 @@ pub mod cardinality;
 pub(crate) mod curve;
 pub mod frequency;
 pub mod heavy_hitter;
-pub mod keyedcardinality;
-pub mod keyedentropy;
-pub mod keyedl1norm;
-pub mod keyedl2norm;
+pub mod keyed;
 pub mod quantile;
 pub mod subpopulation;
 pub mod topk;
@@ -136,22 +133,6 @@ where
         Rc::new(move |answers: &[G::Answer]| gt.score(&truth, &probes, answers))
     };
     Ok((probes, score))
-}
-
-pub(crate) const KEYED_QUERY_REPEATS: usize = 4096;
-
-pub(crate) fn keyed_totals(
-    table: &GeneratedTable,
-    key_column: usize,
-    value_column: usize,
-) -> Result<BTreeMap<u64, i64>, DataGenError> {
-    let keys = u64::column_slice(table.column(key_column)?)?;
-    let values = i64::column_slice(table.column(value_column)?)?;
-    let mut totals: BTreeMap<u64, i64> = BTreeMap::new();
-    for (key, value) in keys.iter().zip(values) {
-        *totals.entry(*key).or_insert(0) += value;
-    }
-    Ok(totals)
 }
 
 pub(crate) fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64> {

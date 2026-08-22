@@ -61,9 +61,9 @@ pub fn build_univmon_oxide(config: &ParamSet) -> Result<UnivMonOxide, BuildError
 
 impl UnivMonOxide {
     #[inline]
-    pub(super) fn feed(&mut self, record: &Record) {
+    pub(super) fn feed<K: UnivMonKey>(&mut self, record: &Record<K>) {
         self.inner
-            .update(&record.0.to_le_bytes(), record.1 as f64)
+            .update(record.0.key_bytes().as_ref(), record.1 as f64)
             .expect("the stream was proved non-negative before this pass was primed");
     }
 
@@ -87,18 +87,18 @@ pub fn memory_univmon_oxide(sketch: &UnivMonOxide) -> usize {
     sketch.inner.stats().total_memory as usize
 }
 
-fn require_non_negative(items: &[Record]) -> Result<(), BuildError> {
+fn require_non_negative<K: UnivMonKey>(items: &[Record<K>]) -> Result<(), BuildError> {
     match items.iter().find(|(_, value)| *value < 0) {
         Some((key, value)) => Err(BuildError(format!(
-            "oxide UnivMon refuses a negative weight, and key {key} carries {value}"
+            "oxide UnivMon refuses a negative weight, and key {key:?} carries {value}"
         ))),
         None => Ok(()),
     }
 }
 
-pub fn insert_univmon_oxide(
+pub fn insert_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
     require_non_negative(&items)?;
@@ -116,9 +116,9 @@ pub fn insert_univmon_oxide(
     Ok(out)
 }
 
-pub fn insert_step_univmon_oxide(
+pub fn insert_step_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
     require_non_negative(&items)?;
@@ -138,9 +138,9 @@ pub fn insert_step_univmon_oxide(
     Ok(out)
 }
 
-fn asked_univmon_oxide(
+fn asked_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
     estimate: fn(&UnivMonOxide) -> f64,
@@ -162,9 +162,9 @@ fn asked_univmon_oxide(
     Ok(out)
 }
 
-pub fn query_univmon_oxide_l1_norm(
+pub fn query_univmon_oxide_l1_norm<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -177,9 +177,9 @@ pub fn query_univmon_oxide_l1_norm(
     )
 }
 
-pub fn query_univmon_oxide_l2_norm(
+pub fn query_univmon_oxide_l2_norm<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -192,9 +192,9 @@ pub fn query_univmon_oxide_l2_norm(
     )
 }
 
-pub fn query_univmon_oxide_entropy(
+pub fn query_univmon_oxide_entropy<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -207,9 +207,9 @@ pub fn query_univmon_oxide_entropy(
     )
 }
 
-pub fn merge_univmon_oxide(
+pub fn merge_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<Pass>, BuildError> {
@@ -228,9 +228,9 @@ pub fn merge_univmon_oxide(
     Ok(out)
 }
 
-pub fn merge_step_univmon_oxide(
+pub fn merge_step_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
-    items: Rc<Vec<Record>>,
+    items: Rc<Vec<Record<K>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<StepPass>, BuildError> {
@@ -255,9 +255,9 @@ pub fn merge_step_univmon_oxide(
 }
 
 #[allow(clippy::type_complexity)]
-fn univmon_oxide_shards(
+fn univmon_oxide_shards<K: UnivMonKey>(
     params: &ParamSet,
-    items: &[Record],
+    items: &[Record<K>],
     shards: usize,
 ) -> Result<(UnivMonOxide, Vec<UnivMonOxide>), BuildError> {
     require_non_negative(items)?;
