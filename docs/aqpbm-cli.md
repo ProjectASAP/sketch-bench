@@ -4,6 +4,8 @@
 It builds the `approxbench` binary.
 That binary is the only program in the workspace that reads argv, writes a report file, or spawns a process.
 
+If user want to use the benchmark somehow or use the built-in benchmark, this is where they should go.
+<!-- 
 ## 1. Purpose
 
 Three stages, in order.
@@ -160,4 +162,4 @@ approxbench sketchbench \
 No report path is given, so records land on stdout while progress lands on stderr.
 Redirecting stdout yields clean JSONL.
 
-`scripts/example_config_override.py` walks the same surface as a runnable tour: what each family's knobs are, that they reach the structure, that an odd point is honoured exactly, and what a row says when it cannot build at the point it was given.
+`scripts/example_config_override.py` walks the same surface as a runnable tour: what each family's knobs are, that they reach the structure, that an odd point is honoured exactly, and what a row says when it cannot build at the point it was given. -->
