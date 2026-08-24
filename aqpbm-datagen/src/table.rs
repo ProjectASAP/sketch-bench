@@ -62,7 +62,7 @@ impl TableDescription {
         }
     }
 
-    /// Load a description from a `.yaml`/`.yml` (serde_yaml) or otherwise JSON
+    /// Load a description from a `.yaml`/`.yml` (serde_norway) or otherwise JSON
     /// file.
     pub fn from_path(path: &Path) -> Result<Self, DataGenError> {
         let text = std::fs::read_to_string(path)?;
@@ -71,7 +71,7 @@ impl TableDescription {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase());
         match ext.as_deref() {
-            Some("yaml") | Some("yml") => serde_yaml::from_str(&text)
+            Some("yaml") | Some("yml") => serde_norway::from_str(&text)
                 .map_err(|e| DataGenError::BadParam(format!("spec yaml: {e}"))),
             _ => serde_json::from_str(&text)
                 .map_err(|e| DataGenError::BadParam(format!("spec json: {e}"))),

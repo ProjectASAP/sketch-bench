@@ -143,7 +143,7 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY),
     },
     // -------- CMS + heap (frequency, and top-k) --------
-    // A separate family from `cms`: `CmsHeapParams` has no `top_k` (it's a
+    // A separate algorithm from `cms`: `CmsHeapParams` has no `top_k` (it's a
     // compile-time constant, see wrappers::cms_heap::sketchlib::CMS_HEAP_TOP_K),
     // so it's a different knob set, and `CMSHeap` answers two different
     // questions (per-key frequency, and top-k), so it gets two rows per
@@ -529,7 +529,7 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     // -------- Hydra (per-subpopulation statistics over labelled records) --------
-    // Three families, not one: what sits in a cell decides which statistic the
+    // Three algorithms, not one: what sits in a cell decides which statistic the
     // grid answers, so each cell type gets its own params vocabulary and its own
     // comparator. See `wrappers/hydra/mod.rs`.
     SketchId {

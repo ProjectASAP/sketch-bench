@@ -461,8 +461,8 @@ mod tests {
     #[test]
     fn a_description_round_trips_through_yaml() {
         let d = flow_table(42, Some(20_000.0));
-        let text = serde_yaml::to_string(&d).unwrap();
-        let back: TableDescription = serde_yaml::from_str(&text).unwrap();
+        let text = serde_norway::to_string(&d).unwrap();
+        let back: TableDescription = serde_norway::from_str(&text).unwrap();
         assert_eq!(d, back);
         assert_eq!(d.generate().unwrap(), back.generate().unwrap());
     }
@@ -482,7 +482,7 @@ column_spec:
       population_size: 200
       seed: 1
 ";
-        let d: TableDescription = serde_yaml::from_str(yaml).unwrap();
+        let d: TableDescription = serde_norway::from_str(yaml).unwrap();
         assert_eq!(d.column_spec[0].cardinality, Some(200));
         assert_eq!(d.column_spec[0].distribution.seed(), 1);
         assert_eq!(d.generate().unwrap().data[0].len(), 100);

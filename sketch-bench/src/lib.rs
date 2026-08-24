@@ -1,8 +1,8 @@
 //! `sketch-bench` — the sketches themselves: the wrapped implementations, their
-//! per-family construction parameters, and the registry that resolves
+//! per-algorithm construction parameters, and the registry that resolves
 //! `("hll-hip", "lib")` to one. A bundle, not a framework. See `docs/sketch-bench.md`.
 
-/// The per-family construction parameter vocabularies.
+/// The per-algorithm construction parameter vocabularies.
 pub mod params;
 /// Which sketches are registered, what each supports, and how a request
 /// resolves to one.

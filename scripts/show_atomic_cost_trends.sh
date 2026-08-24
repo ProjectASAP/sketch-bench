@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # show_atomic_cost_trends.sh — dump out/atomic_costs.json as one sorted,
-# column-aligned table per sketch family so cost-vs-param trends are visible
+# column-aligned table per sketch algorithm so cost-vs-param trends are visible
 # at a glance. Usage: scripts/show_atomic_cost_trends.sh [path/to/atomic_costs.json]
 
 set -euo pipefail

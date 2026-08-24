@@ -17,9 +17,9 @@
 # Output layout mirrors the legacy `throughput/<algorithm>/output/`
 # shape so the plot scripts under `visualization/plots/throughput/`
 # keep working without changes: each algorithm writes
-# `<family>_throughput_results_rust.csv` (insert) and, when
-# accuracy ran, `<family>_throughput_query_results_rust.csv`.
-# One file per family: a structural variant is told apart by the
+# `<algorithm>_throughput_results_rust.csv` (insert) and, when
+# accuracy ran, `<algorithm>_throughput_query_results_rust.csv`.
+# One file per algorithm: a structural variant is told apart by the
 # `implementation` column inside it, not by a file of its own.
 # Octo-parallel rows land in `octo_throughput_results_rust.csv`.
 #
@@ -133,5 +133,5 @@ esac
 
 echo "----"
 echo "JSONL report : ${REPORT}"
-echo "Legacy CSVs  : ${OUTPUT_DIR}/<family>_throughput_results_rust.csv"
+echo "Legacy CSVs  : ${OUTPUT_DIR}/<algorithm>_throughput_results_rust.csv"
 echo "Octo CSV     : ${OUTPUT_DIR}/octo_throughput_results_rust.csv"

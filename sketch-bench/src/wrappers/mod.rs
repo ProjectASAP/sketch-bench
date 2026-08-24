@@ -27,7 +27,7 @@ pub mod polars_shared;
 pub mod quantile_value;
 
 use crate::params::ParamSet;
-use aqpbm_datagen::DataGenError;
+use aqpbm_core::DataGenError;
 use asap_sketchlib::impl_fixed_matrix;
 use std::cell::RefCell;
 use std::fmt;
