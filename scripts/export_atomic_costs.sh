@@ -7,7 +7,7 @@
 # `sketchbench` invocations per grid point (cost, then accuracy — see `point`
 # below for why they can't be one), against the specific (algorithm, impl)
 # pair each ASAPQuery accumulator actually deploys — not just any "lib" row
-# for the family:
+# for the algorithm:
 #   - cms-fastpath-vector2d: asap_sketchlib's `CountMinSketch` is a type alias
 #     for `CountMin<Vector2D<f64>, FastPath>` (message_pack_format/portable/
 #     countminsketch.rs), which is what count_min_sketch_accumulator.rs wraps.

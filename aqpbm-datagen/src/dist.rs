@@ -106,7 +106,7 @@ impl DataDistribution {
                     return Err(bad("zipf: population_size must be > 0".into()));
                 }
                 Ok(Sampler::Zipf(
-                    Zipf::new(p.population_size, p.skewness)
+                    Zipf::new(p.population_size as f64, p.skewness)
                         .map_err(|e| bad(format!("zipf: {e}")))?,
                 ))
             }
@@ -122,7 +122,10 @@ impl DataDistribution {
                         p.lower_bound, p.upper_bound
                     )));
                 }
-                Ok(Sampler::Uniform(Uniform::new(p.lower_bound, p.upper_bound)))
+                Ok(Sampler::Uniform(
+                    Uniform::new(p.lower_bound, p.upper_bound)
+                        .map_err(|e| bad(format!("uniform: {e}")))?,
+                ))
             }
             DataDistribution::Normal(p) => {
                 if !p.standard_deviation.is_finite() || p.standard_deviation <= 0.0 {

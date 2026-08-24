@@ -1,10 +1,4 @@
 # Workspace manifest for sketch-bench → sketchlib-tool.
-#
-# Cargo workspace for the `aqpbm-*` crates. The monolithic legacy `rust/`
-# crate and the per-sketch `throughput/<family>/rust/` +
-# `accuracy/<stat>/rust/` harnesses have all been retired in favour of
-# `approxbench sketchbench`. See docs/component_walk_through.md for the
-# crate-by-crate split, and docs/archive/MERGE_PLAN.md for how it got here.
 [workspace]
 resolver = "2"
 members = [
@@ -13,17 +7,7 @@ members = [
     "sketch-bench",
     "aqpbm-cli",
 ]
-# Parked, not retired. `sketch-runtime` is the embedded sampler linked into
-# downstream apps; it is out of the workspace so it does not hold the offline
-# benchmark path's API still while that path is being cleaned up. Excluded
-# rather than merely unlisted so cargo does not treat the directory as an
-# orphan package. Note it inherits `version.workspace` / `edition.workspace`,
-# so it does not build standalone while excluded.
-#
-# Reviving it is no longer just a matter of listing it here: it still imports
-# `aqpbm_core::workload::WorkloadDescription` (sampler.rs, exporter/fanout.rs),
-# and that module is now `aqpbm_core::dataset` with the type renamed to
-# `DatasetDescription`. Fix those two imports first.
+
 exclude = ["sketch-runtime"]
 
 [workspace.package]
@@ -36,12 +20,8 @@ repository = "https://github.com/ProjectASAP/sketch-bench"
 # Serde + JSON for the report schema (`aqpbm_core::report`).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_norway = "0.9"
 
-# JSON Schema generation for the report types, so out-of-tree readers of the
-# JSONL stream (the leaderboard) validate against a schema derived from these
-# structs instead of a hand-copied field list. Opt-in: see aqpbm-core's
-# `schema` feature.
 schemars = { version = "1", features = ["chrono04"] }
 
 # Time / stats.
@@ -49,40 +29,34 @@ chrono = { version = "0.4", features = ["serde"] }
 hdrhistogram = "7"
 
 # Memory metrics (opt-in via feature).
-tikv-jemalloc-ctl = "0.5"
-tikv-jemallocator = "0.5"
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
+tikv-jemallocator = "0.7"
 
 # RNG for workload generators.
-rand = "0.8"
-rand_distr = "0.4"
-rand_xoshiro = "0.6"
+rand = "0.9"
+rand_distr = "0.5"
+rand_xoshiro = "0.7"
 
-# CLI parsing. `wrap_help` is what makes `--help` reflow to the terminal
-# width, and to 100 columns when stdout is a pipe. `docs/aqpbm-cli-reference.md`
-# is written at that width, so without it every option renders as one long
-# line and `scripts/dump_cli_reference.sh` can never match.
 clap = { version = "4", features = ["derive", "wrap_help"] }
 
 # Errors.
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 
 # Bitflags for MetricsMask.
 bitflags = "2"
 
 # Sketch impls used by the 21 wrappers.
+polars = { version = "0.46", features = ["lazy"] }
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"
 asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 
 # Internal workspace crates.
 aqpbm-datagen = { path = "aqpbm-datagen" }
-# default-features off at the workspace level so each consumer states
-# whether it wants the hdrhistogram-backed LatencyRecorder: sketch-bench
-# forwards its own `hdrhist` feature, sketch-runtime takes it outright.
 aqpbm-core = { path = "aqpbm-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
-# sketch-runtime = { path = "sketch-runtime" }  # parked; see `exclude` above.
+# sketch-runtime = { path = "sketch-runtime" }  # parked;
 
 [profile.release]
 opt-level = 3

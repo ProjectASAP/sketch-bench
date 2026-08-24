@@ -12,7 +12,7 @@ That is the whole contract, and this script demonstrates it end to end:
   2. the knob moves the sketch, so a sweep measures something
   3. an odd point is honoured exactly, not snapped to a convenient one
   4. a point the library cannot honour is refused by name
-  5. one point crosses every library and variant in a family
+  5. one point crosses every library and variant in an algorithm
 
 Usage:
 
@@ -36,8 +36,8 @@ import sys
 REPO = pathlib.Path(__file__).resolve().parent.parent
 BIN = REPO / "target" / "release" / "approxbench"
 
-# Which accuracy metric to show per family. Each family is scored by its own
-# comparator, so there is no one column that means the same thing across them.
+# Which accuracy metric to show per algorithm. Each algorithm is scored by its
+# own comparator, so there is no one column that means the same thing across them.
 ERROR_KEY = {
     "hll": "relative_error",
     "kll": "mean_rank_err",
@@ -65,25 +65,25 @@ class Result:
     def ok(self) -> bool:
         return self.record is not None
 
-    def cell(self, family: str) -> str:
+    def cell(self, algorithm: str) -> str:
         """One line of numbers, or the refusal, whichever the run produced."""
         if not self.ok:
             return f"REFUSED  {self.error}"
         bench = self.record["bench"]
         memory = bench.get("memory_bytes")
         accuracy = bench.get("accuracy") or {}
-        err = accuracy.get(ERROR_KEY.get(family, ""))
+        err = accuracy.get(ERROR_KEY.get(algorithm, ""))
         parts = [f"memory={memory:>10,} B" if memory is not None else " " * 20]
         if err is not None:
             parts.append(f"error={err:<12.6g}")
         return "  ".join(parts)
 
 
-def run(algorithm: str, impl: str, config: str, args) -> Result:
-    """One cell: one algorithm, one impl, one construction point."""
+def run(variant: str, impl: str, config: str, args) -> Result:
+    """One cell: one variant, one impl, one construction point."""
     cmd = [
         str(BIN), "sketchbench",
-        "--variant", algorithm,
+        "--variant", variant,
         "--library", impl,
         "--config", config,
         "--runs", "1",
@@ -91,7 +91,7 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
         "--accuracy",
         "--metrics", "accuracy",
     ]
-    if algorithm.startswith("hydra"):
+    if variant.startswith("hydra"):
         cmd += ["--spec", str(HYDRA_SPEC)]
     else:
         cmd += [
@@ -115,22 +115,22 @@ def run(algorithm: str, impl: str, config: str, args) -> Result:
     return Result(error=message.replace("Error: ", "", 1))
 
 
-def show(algorithm: str, impl: str, config: str, args, note: str = "") -> Result:
-    result = run(algorithm, impl, config, args)
-    family = result.record["algorithm"] if result.ok else _family_guess(algorithm)
-    label = f"{algorithm}/{impl}"
-    print(f"    {label:<46} {config:<40} {result.cell(family)}")
+def show(variant: str, impl: str, config: str, args, note: str = "") -> Result:
+    result = run(variant, impl, config, args)
+    algorithm = result.record["algorithm"] if result.ok else _algorithm_guess(variant)
+    label = f"{variant}/{impl}"
+    print(f"    {label:<46} {config:<40} {result.cell(algorithm)}")
     if note:
         print(f"    {'':46} {note}")
     return result
 
 
-def _family_guess(algorithm: str) -> str:
-    """The family of a row that did not build, for picking its error column."""
-    for family in sorted(ERROR_KEY, key=len, reverse=True):
-        if algorithm == family or algorithm.startswith(family + "-"):
-            return family
-    return algorithm
+def _algorithm_guess(variant: str) -> str:
+    """The algorithm of a row that did not build, for picking its error column."""
+    for algorithm in sorted(ERROR_KEY, key=len, reverse=True):
+        if variant == algorithm or variant.startswith(algorithm + "-"):
+            return algorithm
+    return variant
 
 
 def heading(number: int, title: str, body: str) -> None:
@@ -149,7 +149,7 @@ def heading(number: int, title: str, body: str) -> None:
 
 def section_1(args) -> None:
     heading(1, "a run states its own construction point", """
-A cell is one algorithm, one impl, one construction point, one workload.
+A cell is one variant, one impl, one construction point, one workload.
 `--config` is that point, and it is not optional: omitting it is an error
 naming the first field the row needs.
 
@@ -241,7 +241,7 @@ def section_5(args) -> None:
     heading(5, "one point crosses every library and variant", """
 `--library` is the library and nothing else, so grouping on it answers "which
 library implements this best". `--variant` carries the structural detail, so
-grouping on it answers "which variant of this structure wins". The `family`
+grouping on it answers "which variant of this structure wins". The `algorithm`
 field groups the variants back together, and it is what a cross-library
 comparison is taken over.
 
@@ -252,7 +252,7 @@ library made, and the footprint column reports it instead of hiding it. The
 `polars` row holds the whole stream, since an exact answer is what it is for.
 """)
     config = "rows=5 cols=2048"
-    for algorithm, impl in (
+    for variant, impl in (
         ("cms", "oxide"),
         ("cms", "datasketches"),
         ("cms", "polars"),
@@ -262,9 +262,9 @@ library made, and the footprint column reports it instead of hiding it. The
         ("countsketch", "oxide"),
         ("countsketch-fastpath-vector2d", "lib"),
     ):
-        show(algorithm, impl, config, args)
+        show(variant, impl, config, args)
     print()
-    print("  `--list-impls` prints every pair, grouped by family.")
+    print("  `--list-impls` prints every pair, grouped by algorithm.")
 
 
 SECTIONS = [section_1, section_2, section_3, section_4, section_5]

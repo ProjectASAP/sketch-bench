@@ -1,5 +1,5 @@
 //! `asap_sketchlib::CMSHeap` wrappers — a Count-Min sketch paired with a
-//! fixed-capacity top-k heap. A separate family from `cms`: it takes a
+//! fixed-capacity top-k heap. A separate algorithm from `cms`: it takes a
 //! different knob set (no `top_k` in `--config`, see `sketchlib::CMS_HEAP_TOP_K`)
 //! and answers two different questions (per-key frequency, and top-k), so it
 //! gets two registry rows per backend rather than one.
@@ -19,7 +19,7 @@ mod tests {
     #[test]
     fn top_k_is_not_a_config_field() {
         let bad = ParamSet {
-            algorithm: "cms-heap-fastpath-vector2d".into(),
+            variant: "cms-heap-fastpath-vector2d".into(),
             params: serde_json::json!({"rows": 3, "cols": 256, "top_k": 64}),
         };
         let err = build_cms_heap_lib_vector2d_fast(&bad)

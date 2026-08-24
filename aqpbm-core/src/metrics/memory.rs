@@ -24,7 +24,7 @@ impl Rss {
 
 /// Jemalloc currently-allocated bytes (`stats.allocated`), only under
 /// `heap-jemalloc`; `None` on the system allocator. A process-level proxy, not
-/// a peak — `tikv-jemalloc-ctl 0.5` has no peak read. See `heap_track`.
+/// a peak — `tikv-jemalloc-ctl 0.7` has no peak read. See `heap_track`.
 pub struct JemallocAllocated;
 
 impl JemallocAllocated {

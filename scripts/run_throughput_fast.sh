@@ -46,9 +46,9 @@ if [[ ${#ALGORITHMS[@]} -eq 0 ]]; then
     ALGORITHMS=(kll cms countsketch hll)
 fi
 
-# Canonical (algorithm, impl, --config) tuples, keyed by the short family name
-# the caller types. The algorithm the binary is given carries the structural
-# variant; the impl is the library.
+# Canonical (variant, impl, --config) tuples, keyed by the short algorithm name
+# the caller types. The variant the binary is given carries the structural
+# detail; the impl is the library.
 config_for() {
     case "$1" in
         kll)          echo "kll-cdf|lib|k=200" ;;
@@ -112,21 +112,21 @@ else
 fi
 
 run_one() {
-    local family="$1"
+    local algorithm="$1"
     local cfg
-    cfg=$(config_for "${family}")
-    local algorithm="${cfg%%|*}"
+    cfg=$(config_for "${algorithm}")
+    local variant="${cfg%%|*}"
     local rest="${cfg#*|}"
     local impl="${rest%%|*}"
     local params="${rest#*|}"
 
-    echo "# === ${algorithm} / ${impl} / ${params} ===" >&2
+    echo "# === ${variant} / ${impl} / ${params} ===" >&2
     # Bash-quoted exec so the pre-warm busy-loop runs on the pinned core.
     taskset -c "${PIN_CORE}" bash -c "
 end=\$((SECONDS+${WARMUP_SECONDS}))
 while [ \$SECONDS -lt \$end ]; do :; done
 exec '${BIN_PATH}' sketchbench \
-  --variant '${algorithm}' \
+  --variant '${variant}' \
   --library '${impl}' \
   --metrics throughput \
   --config '${params}' \

@@ -28,7 +28,7 @@ pub struct AtomicCostEntry {
     /// The registry's comparator score for this (sketch, config) point,
     /// carried over verbatim from `MergedRecord::query.accuracy` — its keys
     /// are whatever that comparator's `GroundTruth::score` named them
-    /// (`aqpbm_core::accuracy`), which differ by sketch family (frequency's
+    /// (`aqpbm_core::accuracy`), which differ by capability (frequency's
     /// `are_top10`/`l1_err`/… vs. cardinality's `relative_error` vs.
     /// rank-error's `mean_rank_err`). No single scalar covers all of them, so
     /// this stays a map rather than picking one field to promote.

@@ -4,33 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The sketches themselves: the wrapped implementations, their per-family construction parameters, and the registry that resolves an (algorithm, impl) pair to one of them. See docs/sketch-bench.md."
+description = "The sketches themselves: the wrapped implementations, their per-algorithm construction parameters, and the registry that resolves an (variant, library) pair to one of them. See docs/sketch-bench.md."
 
 [features]
 default = ["hdrhist"]
-# Enable the hdrhistogram-backed latency recorder. Off → the
-# LATENCY mask bit is a no-op that costs nothing. The recorder
-# itself lives in aqpbm-core now; this forwards.
 hdrhist = ["aqpbm-core/hdrhist"]
-# Enable tikv-jemalloc-ctl `stats.allocated` sampling. Forces
-# jemalloc on the linking binary — opt-in only. Off →
-# heap_allocated_kb = None. The sampler lives in aqpbm-core now;
-# this forwards.
 heap-jemalloc = ["aqpbm-core/heap-jemalloc"]
-# Compile in the per-sketch tracking allocator. The recorder lives
-# in aqpbm-core now; this forwards. The linking binary still has to
-# install `TrackingAllocator` as its `#[global_allocator]` for
-# counters to advance — see `aqpbm-cli`'s allocator setup. Off →
-# heap_bytes_* = None.
 heap-track = ["aqpbm-core/heap-track"]
 
 [dependencies]
-# The framework: the measurement entry points the wrappers' closures are
-# handed to, and the comparators that score them.
 aqpbm-core.workspace = true
-# The generator's own types: `wrappers/` speaks these and the standard library,
-# and nothing of the framework.
-aqpbm-datagen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -41,4 +24,4 @@ sketch_oxide.workspace = true
 datasketches.workspace = true
 asap_sketchlib.workspace = true
 # DataFrame-engine baselines (hll/cms/kll/dd `polars` impls).
-polars = { version = "0.46", features = ["lazy"] }
+polars.workspace = true

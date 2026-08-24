@@ -193,7 +193,7 @@ mod tests {
         );
     }
 
-    /// Every row in the family agrees on a degenerate shape.
+    /// Every row in the algorithm agrees on a degenerate shape.
     #[test]
     fn the_frequency_rows_agree_on_a_degenerate_shape() {
         let p = ParamSet::of(&CmsParams {
