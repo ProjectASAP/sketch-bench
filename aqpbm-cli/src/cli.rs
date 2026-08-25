@@ -199,6 +199,15 @@ pub struct SketchbenchArgs {
     /// shape a leaderboard reads.
     #[arg(long, default_value_t = false, help_heading = "Output")]
     pub flat: bool,
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Indent each record over several lines instead of one JSON object per line. \
+                Readable, not a JSONL stream: `flatten` and `atomic-costs` read a line at a \
+                time, so a report meant to be piped back in stays compact.",
+        help_heading = "Output"
+    )]
+    pub pretty_print: bool,
 
     #[arg(
         short = 'h',
