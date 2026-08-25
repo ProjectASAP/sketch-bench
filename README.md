@@ -59,6 +59,9 @@ Warmup the benchmark with 2 runs, and benchmark is run for 5 times.
 `merge` folds 8 shards into one.
 Data is in field `insert_throughput_items_per_sec` and `merge_time_ms` / `merge_folds_per_sec` (merge/sec).
 
+add one line description for each field existing
+also pretty-print (JSONL) can be helpful
+
 ## How to use
 
 A detailed roadmap (under construction) for sketch instance benchmark can be found at [workflow](./docs/sketch-bench-workflow.md).
