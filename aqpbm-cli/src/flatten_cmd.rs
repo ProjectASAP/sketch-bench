@@ -26,6 +26,12 @@ pub struct FlattenArgs {
     /// Output path for the flattened JSONL. Defaults to stdout.
     #[arg(short, long)]
     output: Option<String>,
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Indent each row over several lines instead of one JSON object per line."
+    )]
+    pretty_print: bool,
 }
 
 /// The identity `flatten_record` folds by, serialised so grouping needs
@@ -77,7 +83,11 @@ pub fn run(args: FlattenArgs) -> Result<()> {
     for key in &order {
         let group = &groups[key];
         let merged = flatten_record::flatten_record(group).map_err(|e| anyhow::anyhow!("{e}"))?;
-        sink.write_line(&serde_json::to_string(&merged)?)?;
+        if args.pretty_print {
+            sink.write_pretty(&merged)?;
+        } else {
+            sink.write_line(&serde_json::to_string(&merged)?)?;
+        }
     }
 
     eprintln!(

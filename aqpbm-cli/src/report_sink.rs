@@ -2,6 +2,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::repeat;
 
@@ -22,6 +23,10 @@ impl ReportSink {
                 OpenOptions::new().create(true).append(true).open(path)?,
             )),
         }
+    }
+    pub fn write_pretty<T: Serialize>(&mut self, value: &T) -> Result<()> {
+        let text = serde_json::to_string_pretty(value)?;
+        self.write_line(&text)
     }
     pub fn write_line(&mut self, line: &str) -> Result<()> {
         match self {

@@ -30,6 +30,7 @@ aqpbm-datagen.workspace = true
 aqpbm-core.workspace = true
 sketch-bench.workspace = true
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }

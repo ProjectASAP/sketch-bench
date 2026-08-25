@@ -109,6 +109,7 @@ dependencies = [
  "aqpbm-core",
  "aqpbm-datagen",
  "clap",
+ "serde",
  "serde_json",
  "sketch-bench",
  "tikv-jemallocator",

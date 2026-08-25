@@ -256,6 +256,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if args.repeat_experiment == 0 {
         bail!("--repeat-experiment must be >= 1");
     }
+    let pretty = args.pretty_print && !repeat::is_child();
     if args.repeat_experiment > 1 && !repeat::is_child() {
         if args.flat {
             bail!(
@@ -267,7 +268,11 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         let records = repeat::run_repeats(args.repeat_experiment)?;
         let mut sink = ReportSink::open(args.report.as_deref())?;
         for r in &records {
-            sink.write_line(&r.to_jsonl())?;
+            if pretty {
+                sink.write_pretty(r)?;
+            } else {
+                sink.write_line(&r.to_jsonl())?;
+            }
         }
         eprintln!(
             "approxbench: merged {} repeats into {} record(s)",
@@ -387,10 +392,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if args.flat {
         let merged =
             flatten_record::flatten_record(&records).map_err(|e| anyhow::anyhow!("{e}"))?;
-        sink.write_line(&serde_json::to_string(&merged)?)?;
+        if pretty {
+            sink.write_pretty(&merged)?;
+        } else {
+            sink.write_line(&serde_json::to_string(&merged)?)?;
+        }
     } else {
         for record in &records {
-            sink.write_line(&record.to_jsonl())?;
+            if pretty {
+                sink.write_pretty(record)?;
+            } else {
+                sink.write_line(&record.to_jsonl())?;
+            }
         }
     }
     Ok(())
