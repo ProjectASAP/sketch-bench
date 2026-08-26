@@ -39,7 +39,7 @@ Thus, the ground-truth logic is hard-coded.
 For example, `quantile` ground truth means 101 quereis from `p0` `p1` to `p100`.
 If user need to know `quantile` accuracy under different meaning (i.e., `p50` only), user need to re-write the ground-truth file and adjust the wrapper accordingly.
 
-## TO-ADD: data generation ( as shared functionality )
+<!-- ## TO-ADD: data generation ( as shared functionality )
 
 ## To be continued
 
@@ -67,4 +67,4 @@ output of benchmark
 
 e.g.: if there is a python script to process the jsonl result to a plot (unnecessary) (lower priority)
 e.g.: if the result really makes sense
-e.g.: how to verify the output is reasonale (like which part I should look into to check if the output makes sense) (higher priority)
+e.g.: how to verify the output is reasonale (like which part I should look into to check if the output makes sense) (higher priority) -->
