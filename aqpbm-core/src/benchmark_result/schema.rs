@@ -9,7 +9,46 @@ use aqpbm_datagen::TableDescription;
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
+
+/// The provenance and selection semantics of the input records.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkloadDescription {
+    /// A table generated from the existing datagen description.
+    Synthetic { description: TableDescription },
+    /// A bounded selection from an external trace.
+    External(ExternalWorkload),
+}
+
+impl From<TableDescription> for WorkloadDescription {
+    fn from(description: TableDescription) -> Self {
+        Self::Synthetic { description }
+    }
+}
+
+/// Metadata written with an external workload. Paths are logical dataset
+/// identities, never machine-specific absolute paths.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExternalWorkload {
+    pub source: String,
+    pub dataset: String,
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variate: Option<usize>,
+    pub value_column: String,
+    pub window_start_ns: i64,
+    pub window_end_ns: i64,
+    pub records_loaded: u64,
+    pub source_timestamp_unit: String,
+    pub timestamp_unit: String,
+}
 
 /// A single record in the JSONL report stream. One record
 /// per benchmark / runtime window.
@@ -39,7 +78,7 @@ pub struct Record {
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub input_dataset: TableDescription,
+    pub input_dataset: WorkloadDescription,
     pub mode: Mode,
     pub runs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -203,7 +242,7 @@ pub struct MergedRecord {
     /// the Rust name does not: it is the group key `scripts/merge_passes.py`
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
-    pub input_dataset: TableDescription,
+    pub input_dataset: WorkloadDescription,
 
     pub memory_bytes: Option<u64>,
     /// Net bytes the tracking allocator attributes to this sketch's lifetime —
@@ -309,7 +348,7 @@ impl Record {
     pub fn new(
         sketch: impl Into<String>,
         library: impl Into<String>,
-        input_dataset: TableDescription,
+        input_dataset: impl Into<WorkloadDescription>,
         mode: Mode,
         runs: usize,
     ) -> Self {
@@ -320,7 +359,7 @@ impl Record {
             library: library.into(),
             language: Language::Rust,
             sketch_config: None,
-            input_dataset,
+            input_dataset: input_dataset.into(),
             mode,
             runs,
             bench: None,
@@ -374,12 +413,14 @@ pub fn merged_record_schema_json() -> String {
         // Only this record's own key set is read below, so the dataset just
         // has to be constructible — its shape is described by schemars from
         // `TableDescription` itself.
-        input_dataset: TableDescription {
-            column_num: 0,
-            column_label: Vec::new(),
-            column_spec: Vec::new(),
-            column_connected: Vec::new(),
-            row_num: 0,
+        input_dataset: WorkloadDescription::Synthetic {
+            description: TableDescription {
+                column_num: 0,
+                column_label: Vec::new(),
+                column_spec: Vec::new(),
+                column_connected: Vec::new(),
+                row_num: 0,
+            },
         },
         memory_bytes: None,
         heap_bytes_net: None,
@@ -463,31 +504,53 @@ mod tests {
         assert!(back.bench.is_some());
     }
 
+    #[test]
+    fn external_workload_preserves_selected_variate() {
+        let workload = WorkloadDescription::External(ExternalWorkload {
+            source: "boom".into(),
+            dataset: "datadog_boom/data/boom_benchmark/ds-1-T".into(),
+            mode: "scalar".into(),
+            key_columns: Vec::new(),
+            group_columns: Vec::new(),
+            variate: Some(3),
+            value_column: "target".into(),
+            window_start_ns: 10,
+            window_end_ns: 20,
+            records_loaded: 4,
+            source_timestamp_unit: "frequency-derived".into(),
+            timestamp_unit: "nanoseconds".into(),
+        });
+        let rec = Record::new("hll", "oxide", workload, Mode::Bench, 1);
+        let back: Record = serde_json::from_str(&rec.to_jsonl()).unwrap();
+        let WorkloadDescription::External(workload) = back.input_dataset else {
+            panic!("expected external workload");
+        };
+        assert_eq!(workload.variate, Some(3));
+    }
+
     /// A gate, not a behaviour test: bumping `SCHEMA_VERSION` turns this red on
     /// purpose. The number leaves the repo — in every JSONL record, and on the
     /// wire as `RuntimeRecord.schema_version` — so a bump is a contract change.
     #[test]
-    fn schema_version_is_v3() {
-        assert_eq!(SCHEMA_VERSION, 4);
+    fn schema_version_is_v5() {
+        assert_eq!(SCHEMA_VERSION, 5);
     }
 
     #[test]
     fn language_defaults_to_rust_when_absent() {
         // A v2 JSONL record produced before the `language` field
         // existed must still deserialise, with language = Rust.
-        let legacy = format!(
-            r#"{{
+        let legacy = serde_json::json!({
             "schema_version": 2,
             "sketch": "hll",
             "impl": "oxide",
-            "workload": {},
+            "workload": {"synthetic": {"description": table()}},
             "mode": "bench",
             "runs": 1,
             "source": "cli",
             "timestamp": "2025-01-01T00:00:00Z"
-        }}"#,
-            serde_json::to_string(&table()).unwrap()
-        );
+        })
+        .to_string();
         let rec: Record = serde_json::from_str(&legacy).unwrap();
         assert_eq!(rec.language, Language::Rust);
     }
@@ -497,9 +560,10 @@ mod tests {
     /// field-name drift without compiling that side.
     #[test]
     fn cpp_bench_jsonl_parses() {
-        let cpp_emitted = r#"{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":"#.to_string()
-            + &serde_json::to_string(&table()).unwrap()
-            + r#","mode":"bench","runs":10,"bench":{"throughput_items_per_sec":{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10},"latency_ns":{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000},"accuracy":{"queries":[0.5,0.95,0.99],"abs_rank_err":{"mean":0.0021,"max":0.0084},"rel_rank_err":{"mean":0.0043,"max":0.019}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}"#;
+        let cpp_emitted = format!(
+            r#"{{"schema_version":2,"sketch":"kll","impl":"datasketches","language":"cpp","workload":{},"mode":"bench","runs":10,"bench":{{"throughput_items_per_sec":{{"mean":42000000,"stddev":1100000,"ci95":[41500000,42500000],"n":10}},"latency_ns":{{"p50":17,"p95":41,"p99":60,"p999":95,"max":312,"count":1000}},"accuracy":{{"queries":[0.5,0.95,0.99],"abs_rank_err":{{"mean":0.0021,"max":0.0084}},"rel_rank_err":{{"mean":0.0043,"max":0.019}}}}}},"source":"cpp-bench","timestamp":"2026-05-13T07:14:22.123456Z"}}"#,
+            serde_json::to_string(&WorkloadDescription::from(table())).unwrap()
+        );
         let rec: Record = serde_json::from_str(&cpp_emitted).unwrap();
         assert_eq!(rec.sketch, "kll");
         assert_eq!(rec.library, "datasketches");

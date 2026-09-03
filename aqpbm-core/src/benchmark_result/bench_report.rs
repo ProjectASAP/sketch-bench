@@ -3,15 +3,14 @@
 //! [`measure()`](fn@crate::measure), which times a closure and knows nothing else.
 
 use crate::benchmark_result::fold;
-use crate::benchmark_result::schema::{BenchSection, Mode, Record, Source};
+use crate::benchmark_result::schema::{BenchSection, Mode, Record, Source, WorkloadDescription};
 use crate::metrics::{Metric, Operation, RunMetrics};
-use aqpbm_datagen::TableDescription;
 
 /// One measurement, ready to become a record.
 pub struct BenchReport {
     pub sketch: String,
     pub library: String,
-    pub input_dataset: TableDescription,
+    pub input_dataset: WorkloadDescription,
     pub bench: BenchSection,
     /// Measured iterations, for the record's `runs` field.
     pub runs: usize,
@@ -26,7 +25,7 @@ impl BenchReport {
     pub fn from_runs(
         sketch: impl Into<String>,
         library: impl Into<String>,
-        input_dataset: TableDescription,
+        input_dataset: impl Into<WorkloadDescription>,
         operation: Operation,
         metric: Metric,
         runs: Vec<RunMetrics>,
@@ -66,7 +65,7 @@ impl BenchReport {
         Self {
             sketch: sketch.into(),
             library: library.into(),
-            input_dataset,
+            input_dataset: input_dataset.into(),
             runs: runs.len(),
             bench,
         }

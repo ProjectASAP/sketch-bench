@@ -5,6 +5,7 @@
 
 mod atomic_costs_cmd;
 mod cli;
+mod external;
 mod flatten_cmd;
 mod flatten_record;
 mod repeat;
@@ -39,6 +40,7 @@ use aqpbm_datagen::{
 };
 use clap::Parser;
 use sketch_bench::params::ParamSet;
+use std::path::Path;
 
 use cli::{Cli, Cmd, SketchbenchArgs};
 use report_sink::ReportSink;
@@ -284,10 +286,33 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     if std::env::var_os("BENCH_WARMUP_SECS").is_none() {
         std::env::set_var("BENCH_WARMUP_SECS", DEFAULT_WARMUP_SECS);
     }
-    let dtype = args.dtype.as_deref().expect("clap requires --dtype");
+    let dtype = args.dtype.as_deref().unwrap_or("f64");
     let width = registry::Dtype::parse(dtype)
         .ok_or_else(|| anyhow::anyhow!("unknown --dtype: {dtype} (expected i64|u64|f64|string)"))?;
-    let spec = dataset_spec(&args)?;
+    let external_workload = match args.workload_spec.as_deref() {
+        Some(path) => {
+            let mut spec = external::load_spec(Path::new(path))?;
+            if let Some(start) = args.window_start.clone() {
+                spec.window.start = start;
+                spec.window.end = args.window_end.clone().expect("clap requires --window-end");
+            }
+            let loaded = external::load(&spec, Path::new(&args.data_root))?;
+            if loaded.is_none() {
+                eprintln!("approxbench: external workload window is empty; skipping");
+                return Ok(());
+            }
+            Some(loaded.expect("checked that the external window is non-empty"))
+        }
+        None => None,
+    };
+    if external_workload.is_some() && width != registry::Dtype::F64 {
+        bail!("external workloads currently expose numeric values as f64; use --dtype f64");
+    }
+    let spec = if external_workload.is_none() {
+        Some(dataset_spec(&args)?)
+    } else {
+        None
+    };
     let metrics_mask = parse_mask(
         args.metrics
             .as_deref()
@@ -335,7 +360,16 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         args.warmup_runs,
     );
 
-    let (dataset, table) = spec.generate_at(width.name())?;
+    let (dataset, table, workload) = match external_workload {
+        Some(loaded) => (loaded.table_shape, loaded.table, loaded.workload),
+        None => {
+            let (dataset, table) = spec
+                .expect("synthetic workload spec")
+                .generate_at(width.name())?;
+            let workload = aqpbm_core::benchmark_result::WorkloadDescription::from(dataset.clone());
+            (dataset, table, workload)
+        }
+    };
 
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
@@ -358,7 +392,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         let mut report = BenchReport::from_runs(
             variant.as_str(),
             library.as_str(),
-            dataset.clone(),
+            workload.clone(),
             operation,
             metric,
             runs,

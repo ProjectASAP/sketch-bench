@@ -1,0 +1,8 @@
+source: boom
+dataset: datadog_boom/data/boom_benchmark/ds-0-T
+mode: scalar
+value_column: target
+window:
+  start: "2024-12-22T19:13:00Z"
+  end: "2024-12-22T19:14:00Z"
+min_records: 1

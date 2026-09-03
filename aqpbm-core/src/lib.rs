@@ -20,8 +20,9 @@ pub use aqpbm_datagen::{
 };
 pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
 pub use benchmark_result::{
-    BenchReport, BenchSection, CpuTime, InsertMetrics, LatencySummary, MergeMetrics, MergedRecord,
-    Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source, SCHEMA_VERSION,
+    BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
+    MergeMetrics, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
+    WorkloadDescription, SCHEMA_VERSION,
 };
 pub use error::RunError;
 pub use measure::{

@@ -298,7 +298,7 @@
     },
     "workload": {
       "description": "The data this run was measured over. The wire name stays `workload` while\nthe Rust name does not: it is the group key `scripts/merge_passes.py`\npools by, so renaming the field would be a schema break for a word.",
-      "$ref": "#/$defs/TableDescription"
+      "$ref": "#/$defs/WorkloadDescription"
     }
   },
   "required": [
@@ -342,7 +342,7 @@
     "source",
     "workload"
   ],
-  "x-schema-version": 4,
+  "x-schema-version": 5,
   "$defs": {
     "ColumnSpec": {
       "description": "One column of a [`crate::TableDescription`].",
@@ -454,6 +454,74 @@
             "kind"
           ]
         }
+      ]
+    },
+    "ExternalWorkload": {
+      "description": "Metadata written with an external workload. Paths are logical dataset\nidentities, never machine-specific absolute paths.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "group_columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "key_columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "type": "string"
+        },
+        "records_loaded": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_timestamp_unit": {
+          "type": "string"
+        },
+        "timestamp_unit": {
+          "type": "string"
+        },
+        "value_column": {
+          "type": "string"
+        },
+        "variate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "window_end_ns": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "window_start_ns": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "source",
+        "dataset",
+        "mode",
+        "value_column",
+        "window_start_ns",
+        "window_end_ns",
+        "records_loaded",
+        "source_timestamp_unit",
+        "timestamp_unit"
       ]
     },
     "Language": {
@@ -701,6 +769,45 @@
         "lower_bound",
         "upper_bound",
         "seed"
+      ]
+    },
+    "WorkloadDescription": {
+      "description": "The provenance and selection semantics of the input records.",
+      "oneOf": [
+        {
+          "description": "A table generated from the existing datagen description.",
+          "type": "object",
+          "properties": {
+            "synthetic": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "$ref": "#/$defs/TableDescription"
+                }
+              },
+              "required": [
+                "description"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "synthetic"
+          ]
+        },
+        {
+          "description": "A bounded selection from an external trace.",
+          "type": "object",
+          "properties": {
+            "external": {
+              "$ref": "#/$defs/ExternalWorkload"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "external"
+          ]
+        }
       ]
     },
     "ZipfParameter": {

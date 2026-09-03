@@ -281,7 +281,7 @@ mod tests {
             sketch_config: Some(
                 serde_json::json!({"algorithm": "cms", "params": {"rows": 3, "cols": 1024}}),
             ),
-            input_dataset: dataset(),
+            input_dataset: dataset().into(),
             memory_bytes: Some(12_288),
             heap_bytes_net: None,
             heap_bytes_peak: None,
