@@ -1,4 +1,4 @@
-//! Reduce [`MergedRecord`]s down to the flat per-op cost table ASAPQuery's
+//! Reduce [`MergedRecord`]s down to the per-op cost document ASAPQuery's
 //! optimizer loads (see ASAPQuery#524, sketch-bench#30). Lives in `aqpbm-core`
 //! rather than `aqpbm-cli` because it is a JSONL-derived wire shape, same
 //! reasoning as `MergedRecord` itself.
@@ -6,18 +6,52 @@
 //! No `subtract_cpu_secs` field: `asap_sketchlib` has no `subtract` yet
 //! (asap_sketchlib#69), so there is nothing to measure. ASAPQuery's loader
 //! treats a missing entry as "drop the candidate", which covers this too.
+//!
+//! Costs and accuracy are workload-dependent (external traces make that
+//! literal, not hypothetical), so entries are grouped into one
+//! [`AtomicCostProfile`] per distinct [`WorkloadDescription`] rather than
+//! flattened into one bare array — a reader that ignored `workload` would
+//! silently mix measurements that were never comparable.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
+use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescription};
+
+/// Bumped whenever a breaking change lands in [`AtomicCostDocument`],
+/// [`AtomicCostProfile`] or [`AtomicCostEntry`]. Independent of
+/// `benchmark_result::SCHEMA_VERSION`: this is a different wire interface
+/// (ASAPQuery's loader), with its own compatibility lifecycle, not a
+/// derivative of the report schema's.
+pub const ATOMIC_COST_SCHEMA_VERSION: u32 = 1;
+
+/// The atomic-cost document ASAPQuery's loader reads: a version gate plus one
+/// profile per workload the grid was measured against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtomicCostDocument {
+    pub schema_version: u32,
+    pub profiles: Vec<AtomicCostProfile>,
+}
+
+/// Every atomic-cost entry measured against one workload. Entries never mix
+/// across profiles: `(sketch, sketch_config)` is only unique *within* a
+/// profile, since the same construction point measured against two workloads
+/// is two different real numbers, not a collision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtomicCostProfile {
+    pub workload: WorkloadDescription,
+    pub entries: Vec<AtomicCostEntry>,
+}
 
 /// One row: measured atomic costs for one (sketch algorithm, construction
 /// params) point, at the grid resolution ASAPQuery's `candidate_gen.rs`
 /// sweeps. `sketch_config` is `MergedRecord::sketch_config` reused verbatim,
 /// so ASAPQuery's loader keys on it directly instead of re-deriving it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AtomicCostEntry {
     pub sketch: String,
     pub sketch_config: serde_json::Value,
@@ -34,8 +68,6 @@ pub struct AtomicCostEntry {
     /// this stays a map rather than picking one field to promote.
     pub query_accuracy: BTreeMap<String, f64>,
 }
-
-pub type AtomicCostTable = Vec<AtomicCostEntry>;
 
 /// Why one [`MergedRecord`] didn't produce a row. Not an error: the caller
 /// logs these and moves on, same "missing entry, no crash" policy the table's
@@ -198,26 +230,114 @@ fn query_accuracy(
         .ok_or(SkipReason::InvalidField("query_accuracy"))
 }
 
-/// Reduce every record that has what it takes, skipping (and reporting) the
-/// rest. Order follows `records`.
-pub fn reduce_all(records: &[MergedRecord]) -> (AtomicCostTable, Vec<(usize, SkipReason)>) {
-    let mut table = Vec::with_capacity(records.len());
-    let mut skipped = Vec::new();
-    for (i, record) in records.iter().enumerate() {
-        match reduce_one(record) {
-            Ok(entry) => table.push(entry),
-            Err(reason) => skipped.push((i, reason)),
-        }
+/// Two records grouped into the same [`AtomicCostProfile`] reduced to the
+/// same `(sketch, sketch_config)` point. ASAPQuery's loader keys entries by
+/// that pair within a profile, so silently keeping one of the two (first- or
+/// last-wins) would silently discard a real measurement — this is reported
+/// as a hard error instead, same "don't guess" policy as [`SkipReason`], just
+/// not one a single record can detect on its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicateEntry {
+    pub workload: WorkloadDescription,
+    pub sketch: String,
+    pub sketch_config: serde_json::Value,
+}
+
+impl std::fmt::Display for DuplicateEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "duplicate atomic-cost entry for sketch={:?} sketch_config={} in workload {}",
+            self.sketch,
+            self.sketch_config,
+            serde_json::to_string(&self.workload).unwrap_or_else(|_| "<unserializable>".into()),
+        )
     }
-    (table, skipped)
+}
+
+impl std::error::Error for DuplicateEntry {}
+
+/// Reduce every record that has what it takes, skipping (and reporting) the
+/// rest, then group the survivors into one [`AtomicCostProfile`] per exact
+/// [`WorkloadDescription`] — grouped by its canonical JSON encoding (stable
+/// since `serde_json::Map` here is a `BTreeMap`, not insertion-order), so two
+/// records only share a profile when their workload is identical field for
+/// field. External windows are never merged: `window_start_ns`,
+/// `window_end_ns` and `records_loaded` are part of that encoding, so two
+/// windows over the same dataset stay distinct profiles.
+///
+/// Profiles are emitted sorted by that same canonical encoding, and entries
+/// within a profile follow `records` order — both independent of any
+/// hash-map iteration, so the document is byte-for-byte reproducible from the
+/// same input regardless of process or platform.
+///
+/// A duplicate `(sketch, sketch_config)` within one profile fails the whole
+/// reduction: it means the input already lost information (e.g. the same
+/// grid point measured twice), and there is no default that isn't a guess
+/// about which measurement to keep. Skipped records are still returned
+/// alongside the error, so the caller can report both.
+pub fn reduce_all(
+    records: &[MergedRecord],
+) -> (
+    Result<AtomicCostDocument, DuplicateEntry>,
+    Vec<(usize, SkipReason)>,
+) {
+    let mut skipped = Vec::new();
+    let mut groups: BTreeMap<String, (WorkloadDescription, Vec<AtomicCostEntry>)> = BTreeMap::new();
+    let mut duplicate = None;
+
+    for (i, record) in records.iter().enumerate() {
+        let entry = match reduce_one(record) {
+            Ok(entry) => entry,
+            Err(reason) => {
+                skipped.push((i, reason));
+                continue;
+            }
+        };
+
+        let key = serde_json::to_string(&record.input_dataset)
+            .expect("WorkloadDescription -> JSON should not fail");
+        let (_, entries) = groups
+            .entry(key)
+            .or_insert_with(|| (record.input_dataset.clone(), Vec::new()));
+
+        let is_duplicate = entries
+            .iter()
+            .any(|e| e.sketch == entry.sketch && e.sketch_config == entry.sketch_config);
+        if is_duplicate {
+            duplicate.get_or_insert(DuplicateEntry {
+                workload: record.input_dataset.clone(),
+                sketch: entry.sketch,
+                sketch_config: entry.sketch_config,
+            });
+            continue;
+        }
+        entries.push(entry);
+    }
+
+    if let Some(duplicate) = duplicate {
+        return (Err(duplicate), skipped);
+    }
+
+    let profiles = groups
+        .into_values()
+        .map(|(workload, entries)| AtomicCostProfile { workload, entries })
+        .collect();
+    (
+        Ok(AtomicCostDocument {
+            schema_version: ATOMIC_COST_SCHEMA_VERSION,
+            profiles,
+        }),
+        skipped,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::benchmark_result::{
-        InsertMetrics, Language, MergeMetrics, Mode, PrepareMetrics, QueryMetrics, Source,
-        SCHEMA_VERSION,
+        ExternalWorkload, InsertMetrics, Language, MergeMetrics, Mode, PrepareMetrics,
+        QueryMetrics, Source, SCHEMA_VERSION,
     };
     use aqpbm_datagen::TableDescription;
 
@@ -403,15 +523,125 @@ mod tests {
         );
     }
 
+    /// An external-trace variant of [`full_record`], same measurements, a
+    /// different workload — for tests exercising grouping rather than
+    /// reduction. `window` lets a test carve out a second, disjoint window
+    /// over the same dataset without repeating every field.
+    fn external_record(window: (i64, i64), records_loaded: u64) -> MergedRecord {
+        let mut record = full_record();
+        record.input_dataset = WorkloadDescription::External(ExternalWorkload {
+            source: "boom".into(),
+            dataset: "datadog_boom/data/boom_benchmark/ds-1-T".into(),
+            mode: "scalar".into(),
+            key_columns: Vec::new(),
+            group_columns: Vec::new(),
+            variate: Some(3),
+            value_column: "target".into(),
+            window_start_ns: window.0,
+            window_end_ns: window.1,
+            records_loaded,
+            source_timestamp_unit: "frequency-derived".into(),
+            timestamp_unit: "nanoseconds".into(),
+        });
+        record
+    }
+
     #[test]
     fn reduce_all_partitions_ok_and_skipped_records() {
         let good = full_record();
         let mut bad = full_record();
         bad.memory_bytes = None;
 
-        let (table, skipped) = reduce_all(&[good, bad]);
-        assert_eq!(table.len(), 1);
+        let (document, skipped) = reduce_all(&[good, bad]);
+        let document = document.expect("no duplicates");
+        assert_eq!(document.schema_version, ATOMIC_COST_SCHEMA_VERSION);
+        assert_eq!(document.profiles.len(), 1);
+        assert_eq!(document.profiles[0].entries.len(), 1);
         assert_eq!(skipped, vec![(1, SkipReason::MissingField("memory_bytes"))]);
+    }
+
+    #[test]
+    fn synthetic_workload_round_trips_through_the_document() {
+        let (document, skipped) = reduce_all(&[full_record()]);
+        let document = document.expect("no duplicates");
+        assert!(skipped.is_empty());
+
+        let json = serde_json::to_string(&document).unwrap();
+        let back: AtomicCostDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, document);
+        assert_eq!(back.profiles[0].workload, dataset().into());
+    }
+
+    #[test]
+    fn external_workload_round_trips_with_window_and_provenance() {
+        let record = external_record((10, 20), 4);
+        let (document, skipped) = reduce_all(&[record]);
+        let document = document.expect("no duplicates");
+        assert!(skipped.is_empty());
+
+        let json = serde_json::to_string(&document).unwrap();
+        let back: AtomicCostDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, document);
+
+        let WorkloadDescription::External(workload) = &back.profiles[0].workload else {
+            panic!("expected external workload");
+        };
+        assert_eq!(workload.window_start_ns, 10);
+        assert_eq!(workload.window_end_ns, 20);
+        assert_eq!(workload.records_loaded, 4);
+        assert_eq!(workload.variate, Some(3));
+    }
+
+    #[test]
+    fn records_from_different_workloads_become_different_profiles() {
+        let synthetic = full_record();
+        let external = external_record((10, 20), 4);
+
+        let (document, skipped) = reduce_all(&[synthetic, external]);
+        let document = document.expect("no duplicates");
+        assert!(skipped.is_empty());
+        assert_eq!(document.profiles.len(), 2);
+    }
+
+    #[test]
+    fn records_from_different_external_windows_become_different_profiles() {
+        // Same dataset, disjoint windows: window_start_ns/window_end_ns/
+        // records_loaded are provenance, but different provenance can mean
+        // different measured behaviour, so each window keeps its own profile
+        // rather than collapsing into the dataset it was drawn from.
+        let window_a = external_record((0, 10), 4);
+        let window_b = external_record((10, 20), 4);
+
+        let (document, skipped) = reduce_all(&[window_a, window_b]);
+        let document = document.expect("no duplicates");
+        assert!(skipped.is_empty());
+        assert_eq!(document.profiles.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_sketch_and_config_within_one_profile_fails_loudly() {
+        let first = full_record();
+        let second = full_record();
+
+        let (document, _skipped) = reduce_all(&[first, second]);
+        let err = document.expect_err("duplicate must be rejected, not silently merged");
+        assert_eq!(err.sketch, "cms");
+        assert_eq!(err.workload, dataset().into());
+    }
+
+    #[test]
+    fn same_sketch_and_config_in_different_profiles_is_allowed() {
+        let synthetic = full_record();
+        let external = external_record((10, 20), 4);
+        assert_eq!(synthetic.sketch, external.sketch);
+        assert_eq!(synthetic.sketch_config, external.sketch_config);
+
+        let (document, skipped) = reduce_all(&[synthetic, external]);
+        let document = document.expect("same (sketch, sketch_config) across profiles is fine");
+        assert!(skipped.is_empty());
+        assert_eq!(document.profiles.len(), 2);
+        assert_eq!(document.profiles[0].entries.len(), 1);
+        assert_eq!(document.profiles[1].entries.len(), 1);
     }
 
     #[test]
@@ -432,5 +662,69 @@ mod tests {
             json,
             r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}"#
         );
+    }
+
+    #[test]
+    fn atomic_cost_document_serialises_to_the_documented_shape() {
+        // Pinned end-to-end (document -> profile -> entry) so ASAPQuery's
+        // loader shape is exercised as a whole, not just its innermost row.
+        let (document, skipped) = reduce_all(&[full_record()]);
+        let document = document.expect("no duplicates");
+        assert!(skipped.is_empty());
+
+        let json = serde_json::to_string(&document).unwrap();
+        assert_eq!(
+            json,
+            r#"{"schema_version":1,"profiles":[{"workload":{"synthetic":{"description":{"column_num":1,"column_label":["key"],"column_spec":[{"distribution":{"kind":"uniform","lower_bound":0.0,"upper_bound":100000.0,"seed":42},"cardinality":100000,"special_rule":0,"data_type":"i64"}],"row_num":1000000}}},"entries":[{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}]}]}"#
+        );
+    }
+
+    #[test]
+    fn unknown_document_level_field_is_rejected() {
+        let json = r#"{"schema_version":1,"profiles":[],"extra":true}"#;
+        assert!(serde_json::from_str::<AtomicCostDocument>(json).is_err());
+    }
+
+    #[test]
+    fn unknown_profile_level_field_is_rejected() {
+        let json = serde_json::json!({
+            "workload": {"synthetic": {"description": dataset()}},
+            "entries": [],
+            "extra": true,
+        })
+        .to_string();
+        assert!(serde_json::from_str::<AtomicCostProfile>(&json).is_err());
+    }
+
+    #[test]
+    fn unknown_entry_level_field_is_rejected() {
+        let json = serde_json::json!({
+            "sketch": "cms",
+            "sketch_config": serde_json::Value::Null,
+            "mem_bytes_per_instance": 1.0,
+            "insert_cpu_secs": 1.0,
+            "merge_cpu_secs": 1.0,
+            "query_cpu_secs": 1.0,
+            "query_accuracy": {},
+            "extra": true,
+        })
+        .to_string();
+        assert!(serde_json::from_str::<AtomicCostEntry>(&json).is_err());
+    }
+
+    #[test]
+    fn entry_missing_query_accuracy_is_rejected() {
+        // No default and no Option: an entry that never measured accuracy
+        // must not deserialize into one that looks like it scored perfectly.
+        let json = serde_json::json!({
+            "sketch": "cms",
+            "sketch_config": serde_json::Value::Null,
+            "mem_bytes_per_instance": 1.0,
+            "insert_cpu_secs": 1.0,
+            "merge_cpu_secs": 1.0,
+            "query_cpu_secs": 1.0,
+        })
+        .to_string();
+        assert!(serde_json::from_str::<AtomicCostEntry>(&json).is_err());
     }
 }

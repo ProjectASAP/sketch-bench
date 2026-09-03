@@ -25,9 +25,10 @@
 #   scripts/export_atomic_costs.sh             # build + run everything
 #   scripts/export_atomic_costs.sh --no-build   # skip cargo build
 #
-# Output: out/atomic_costs.json (the flat AtomicCostTable ASAPQuery loads),
-# plus out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
-# provenance / re-deriving the table without re-running the benchmark) and
+# Output: out/atomic_costs.json (the versioned AtomicCostDocument ASAPQuery
+# loads — one profile per workload, entries grouped inside it), plus
+# out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
+# provenance / re-deriving the document without re-running the benchmark) and
 # out/atomic_costs_raw.jsonl (the un-flattened Records `flatten` folds into
 # it — see below for why there are two passes per grid point).
 
