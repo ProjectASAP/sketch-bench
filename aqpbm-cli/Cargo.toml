@@ -27,10 +27,15 @@ heap-track = ["sketch-bench/heap-track", "aqpbm-core/heap-track"]
 
 [dependencies]
 aqpbm-datagen.workspace = true
+csv.workspace = true
+flate2.workspace = true
+polars.workspace = true
 aqpbm-core.workspace = true
 sketch-bench.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_norway.workspace = true
+chrono.workspace = true
 anyhow.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }

@@ -27,6 +27,8 @@ schemars = { version = "1", features = ["chrono04"] }
 # Time / stats.
 chrono = { version = "0.4", features = ["serde"] }
 hdrhistogram = "7"
+csv = "1"
+flate2 = "1"
 
 # Memory metrics (opt-in via feature).
 tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
@@ -47,7 +49,7 @@ anyhow = "1"
 bitflags = "2"
 
 # Sketch impls used by the 21 wrappers.
-polars = { version = "0.46", features = ["lazy"] }
+polars = { version = "0.46", features = ["lazy", "ipc", "ipc_streaming"] }
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"
 asap_sketchlib = { version = "0.2.2", features = ["experimental"] }

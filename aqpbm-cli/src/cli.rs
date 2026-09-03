@@ -91,7 +91,7 @@ pub struct SketchbenchArgs {
     /// names its shape or names its file, never falls back to one unasked.
     #[arg(
         long,
-        required_unless_present_any = ["list_impls", "spec"],
+        required_unless_present_any = ["list_impls", "spec", "workload_spec"],
         help_heading = "Dataset"
     )]
     pub dataset: Option<String>,
@@ -99,7 +99,7 @@ pub struct SketchbenchArgs {
     /// `--list-impls` is given.
     #[arg(
         long,
-        required_unless_present_any = ["list_impls", "spec"],
+        required_unless_present_any = ["list_impls", "spec", "workload_spec"],
         help_heading = "Dataset"
     )]
     pub size: Option<usize>,
@@ -107,7 +107,7 @@ pub struct SketchbenchArgs {
     /// `--spec` or `--list-impls` is given.
     #[arg(
         long,
-        required_unless_present_any = ["list_impls", "spec"],
+        required_unless_present_any = ["list_impls", "spec", "workload_spec"],
         help_heading = "Dataset"
     )]
     pub cardinality: Option<u64>,
@@ -118,7 +118,11 @@ pub struct SketchbenchArgs {
     /// Item type the value column is generated at: `i64`, `u64`, `f64` or
     /// `string`
     /// Required unless `--list-impls` is given: read regardless of `--spec`.
-    #[arg(long, required_unless_present = "list_impls", help_heading = "Dataset")]
+    #[arg(
+        long,
+        required_unless_present_any = ["list_impls", "workload_spec"],
+        help_heading = "Dataset"
+    )]
     pub dtype: Option<String>,
     /// Alphabet for generated string keys, for the targets whose wrappers take
     /// text. Character order is the digit order of the positional encoding, so
@@ -143,6 +147,20 @@ pub struct SketchbenchArgs {
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42, help_heading = "Dataset")]
     pub seed: u64,
+
+    /// YAML/JSON external workload selection. The dataset path inside the
+    /// spec is resolved relative to --data-root.
+    #[arg(long, conflicts_with = "spec", help_heading = "Dataset")]
+    pub workload_spec: Option<String>,
+    /// Root directory for logical paths named by --workload-spec.
+    #[arg(long, default_value = ".", help_heading = "Dataset")]
+    pub data_root: String,
+    /// Override the external window start. Must be supplied with --window-end.
+    #[arg(long, requires = "window_end", help_heading = "Dataset")]
+    pub window_start: Option<String>,
+    /// Override the external window end. Must be supplied with --window-start.
+    #[arg(long, requires = "window_start", help_heading = "Dataset")]
+    pub window_end: Option<String>,
 
     /// Measured runs inside one process, summarised as mean / stddev /
     /// `throughput_samples`. They share a process, so they support no

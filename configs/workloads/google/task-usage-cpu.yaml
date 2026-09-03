@@ -1,0 +1,11 @@
+source: google
+dataset: google-cluster-data/ClusterData2011/clusterdata-2011-2/task_usage/part-00262-of-00500.csv.gz
+table: task_usage
+mode: grouped
+group_columns:
+  - machine_id
+value_column: cpu_rate
+window:
+  start: "1970-01-16T04:52:15Z"
+  end: "1970-01-16T04:55:15Z"
+min_records: 1

@@ -1,0 +1,11 @@
+source: alibaba
+dataset: alibaba-cluster-data/cluster-trace-microservices-v2022/0d0_0d1/data/MSMetrics/MSMetricsUpdate_0.csv
+mode: grouped
+group_columns:
+  - msname
+value_column: cpu_utilization
+timestamp_unit: milliseconds
+window:
+  start: "1970-01-01T00:05:00Z"
+  end: "1970-01-01T00:06:00Z"
+min_records: 1
