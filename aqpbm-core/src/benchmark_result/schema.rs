@@ -40,6 +40,8 @@ pub struct ExternalWorkload {
     pub key_columns: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub group_columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variate: Option<usize>,
     pub value_column: String,
     pub window_start_ns: i64,
     pub window_end_ns: i64,
@@ -500,6 +502,30 @@ mod tests {
         assert_eq!(back.library, "oxide");
         assert_eq!(back.mode, Mode::Bench);
         assert!(back.bench.is_some());
+    }
+
+    #[test]
+    fn external_workload_preserves_selected_variate() {
+        let workload = WorkloadDescription::External(ExternalWorkload {
+            source: "boom".into(),
+            dataset: "datadog_boom/data/boom_benchmark/ds-1-T".into(),
+            mode: "scalar".into(),
+            key_columns: Vec::new(),
+            group_columns: Vec::new(),
+            variate: Some(3),
+            value_column: "target".into(),
+            window_start_ns: 10,
+            window_end_ns: 20,
+            records_loaded: 4,
+            source_timestamp_unit: "frequency-derived".into(),
+            timestamp_unit: "nanoseconds".into(),
+        });
+        let rec = Record::new("hll", "oxide", workload, Mode::Bench, 1);
+        let back: Record = serde_json::from_str(&rec.to_jsonl()).unwrap();
+        let WorkloadDescription::External(workload) = back.input_dataset else {
+            panic!("expected external workload");
+        };
+        assert_eq!(workload.variate, Some(3));
     }
 
     /// A gate, not a behaviour test: bumping `SCHEMA_VERSION` turns this red on

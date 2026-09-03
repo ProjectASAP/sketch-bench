@@ -163,6 +163,7 @@ pub fn load(spec: &WorkloadSpec, data_root: &Path) -> Result<Option<LoadedWorklo
         mode: mode_name(spec.mode).to_string(),
         key_columns: spec.key_columns.clone(),
         group_columns: spec.group_columns.clone(),
+        variate: spec.variate,
         value_column: spec.value_column.clone(),
         window_start_ns,
         window_end_ns,
