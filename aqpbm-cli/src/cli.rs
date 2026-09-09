@@ -5,6 +5,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::atomic_costs_cmd;
+use crate::erp_cmd;
 use crate::flatten_cmd;
 
 #[derive(Parser, Debug)]
@@ -29,6 +30,8 @@ pub enum Cmd {
     Sketchbench(SketchbenchArgs),
     /// Reduce a `--flat` JSONL stream to ASAPQuery's atomic-cost table.
     AtomicCosts(atomic_costs_cmd::AtomicCostsArgs),
+    /// Preserve distribution-conditioned error and resource measurements as ERP v1.
+    Erp(erp_cmd::ErpArgs),
     /// Group raw (non-`--flat`) JSONL by (sketch, impl, sketch_config,
     /// workload) and fold each group into one `--flat`-shaped row — for
     /// records that came from several invocations of the same cell rather
