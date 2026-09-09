@@ -88,6 +88,24 @@ fn validate_primary_ownership(
             record.sketch, record.library
         ));
     }
+    let required_primary = match (operation, metric) {
+        ("insert" | "query", PassMetric::Throughput) => (
+            "throughput_items_per_sec",
+            bench.throughput_items_per_sec.is_some(),
+        ),
+        ("insert", PassMetric::Latency) => ("latency_ns", bench.latency_ns.is_some()),
+        ("query", PassMetric::Accuracy) => ("accuracy", bench.accuracy.is_some()),
+        ("merge", PassMetric::Throughput) => {
+            ("merge_folds_per_sec", bench.merge_folds_per_sec.is_some())
+        }
+        _ => unreachable!("supported combinations are exhaustive above"),
+    };
+    if !required_primary.1 {
+        return Err(format!(
+            "flatten_record: {}/{} {operation}/{metric_name} is missing its required primary field {}",
+            record.sketch, record.library, required_primary.0
+        ));
+    }
     for (field, present, owner) in [
         (
             "throughput_items_per_sec",
@@ -514,6 +532,7 @@ mod tests {
             "accuracy",
             BenchSection {
                 throughput_items_per_sec: Some(stats(1_000.0)),
+                accuracy: Some(serde_json::json!({"mean_rank_err": 0.01})),
                 ..Default::default()
             },
         )];
@@ -521,6 +540,15 @@ mod tests {
         let err = flatten_record(&rows).expect_err("accuracy cannot own throughput");
         assert!(err.contains("accuracy"), "{err}");
         assert!(err.contains("throughput_items_per_sec"), "{err}");
+    }
+
+    #[test]
+    fn supported_pass_without_its_primary_result_is_refused_by_name() {
+        let rows = vec![record("query", "accuracy", BenchSection::default())];
+
+        let err = flatten_record(&rows).expect_err("accuracy pass must carry accuracy");
+        assert!(err.contains("query/accuracy"), "{err}");
+        assert!(err.contains("accuracy"), "{err}");
     }
 
     /// `throughput_items_per_sec` is owned by exactly one metric-pass per
