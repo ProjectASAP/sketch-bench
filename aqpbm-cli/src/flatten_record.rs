@@ -71,10 +71,23 @@ fn metric_of(record: &Record) -> Result<PassMetric, String> {
 /// owner below.
 fn validate_primary_ownership(
     record: &Record,
+    operation: &str,
     metric: PassMetric,
     bench: &BenchSection,
 ) -> Result<(), String> {
     let metric_name = bench.metric.as_deref().unwrap_or("<missing>");
+    let supported = matches!(
+        (operation, metric),
+        ("insert", PassMetric::Throughput | PassMetric::Latency)
+            | ("query", PassMetric::Throughput | PassMetric::Accuracy)
+            | ("merge", PassMetric::Throughput)
+    );
+    if !supported {
+        return Err(format!(
+            "flatten_record: {}/{} {operation}/{metric_name} has no representable canonical output",
+            record.sketch, record.library
+        ));
+    }
     for (field, present, owner) in [
         (
             "throughput_items_per_sec",
@@ -87,6 +100,21 @@ fn validate_primary_ownership(
             PassMetric::Latency,
         ),
         ("accuracy", bench.accuracy.is_some(), PassMetric::Accuracy),
+        (
+            "merge_folds_per_sec",
+            bench.merge_folds_per_sec.is_some(),
+            PassMetric::Throughput,
+        ),
+        (
+            "merge_shards",
+            bench.merge_shards.is_some(),
+            PassMetric::Throughput,
+        ),
+        (
+            "merge_supported",
+            bench.merge_supported.is_some(),
+            PassMetric::Throughput,
+        ),
     ] {
         if present && metric != owner {
             return Err(format!(
@@ -153,13 +181,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         } = bench;
 
         let metric = metric_of(record)?;
-        validate_primary_ownership(record, metric, bench)?;
-        if operation == "merge" && metric == PassMetric::Latency {
-            return Err(format!(
-                "flatten_record: {}/{} merge latency cannot be flattened because MergedRecord has no merge latency field",
-                record.sketch, record.library
-            ));
-        }
+        validate_primary_ownership(record, operation, metric, bench)?;
 
         // A flattened field has exactly one canonical primary-pass owner.
         // Secondary telemetry on a latency/accuracy record is deliberately
@@ -172,8 +194,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 }
             };
         }
-        let owns_cost_telemetry = metric == PassMetric::Throughput
-            || (operation == "prepare" && metric == PassMetric::Latency);
+        let owns_cost_telemetry = metric == PassMetric::Throughput;
         if metric == PassMetric::Throughput {
             if let Some(mb) = memory_bytes {
                 out.memory_bytes.get_or_insert(*mb);
@@ -271,13 +292,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 }
             }
             "prepare" => {
-                if metric == PassMetric::Latency {
-                    out.prepare.timestamp = Some(record.timestamp);
-                    keep_shared!(out.prepare.cpu_time_ms, cpu_time_ms);
-                    keep_shared!(out.prepare.wall_time_ms, wall_time_ms);
-                    keep_shared!(out.prepare.rss_peak_kb, rss_peak_kb);
-                    keep_shared!(out.prepare.heap_allocated_kb, heap_allocated_kb);
-                }
+                unreachable!("prepare is rejected by validate_primary_ownership")
             }
             _ => unreachable!("operation_of only returns insert/query/merge/prepare"),
         }
@@ -366,32 +381,19 @@ mod tests {
         assert_eq!(out.query.throughput_items_per_sec.unwrap().mean, 700.0);
     }
 
-    /// Both latencies are `latency_ns` in their own record, so the flattened
-    /// row is where they must stop being one field. `count` tells them apart:
-    /// inserts are counted per item, probes per question.
+    /// Insert latency has a dedicated flattened field.
     #[test]
-    fn insert_and_query_latency_are_two_fields() {
-        let rows = vec![
-            record(
-                "insert",
-                "latency",
-                BenchSection {
-                    latency_ns: Some(latency(30_000)),
-                    ..Default::default()
-                },
-            ),
-            record(
-                "query",
-                "latency",
-                BenchSection {
-                    latency_ns: Some(latency(2_381)),
-                    ..Default::default()
-                },
-            ),
-        ];
-        let out = flatten_record(&rows).expect("both measurements are named");
+    fn insert_latency_has_a_canonical_output() {
+        let rows = vec![record(
+            "insert",
+            "latency",
+            BenchSection {
+                latency_ns: Some(latency(30_000)),
+                ..Default::default()
+            },
+        )];
+        let out = flatten_record(&rows).expect("insert latency is representable");
         assert_eq!(out.insert.latency_ns.unwrap().count, 30_000);
-        assert_eq!(out.query.latency_ns.unwrap().count, 2_381);
     }
 
     /// Merge latency has no representation in `MergedRecord`; accepting it
@@ -418,13 +420,13 @@ mod tests {
             ),
         ];
         let err = flatten_record(&rows).expect_err("merge latency must not be silently dropped");
-        assert!(err.contains("merge latency"), "{err}");
+        assert!(err.contains("merge/latency"), "{err}");
     }
 
-    /// The deferred build has its own slot, so a caller asking only about
-    /// inserting does not read it off the insert record.
+    /// Prepare has no primary field in `MergedRecord`, so flattening it must
+    /// fail rather than misrepresenting latency as generic timing metadata.
     #[test]
-    fn prepare_carries_its_own_time() {
+    fn prepare_latency_without_a_primary_output_is_refused() {
         let rows = vec![record(
             "prepare",
             "latency",
@@ -433,8 +435,8 @@ mod tests {
                 ..Default::default()
             },
         )];
-        let out = flatten_record(&rows).expect("the measurement is named");
-        assert_eq!(out.prepare.wall_time_ms.unwrap().mean, 0.005);
+        let err = flatten_record(&rows).expect_err("prepare latency is not representable");
+        assert!(err.contains("prepare/latency"), "{err}");
     }
 
     /// A record whose operation this function does not place is an error, not
@@ -446,27 +448,26 @@ mod tests {
         assert!(err.contains("teleport"), "{err}");
     }
 
-    /// `cpu_time_ms`/`wall_time_ms`/`rss_peak_kb`/`heap_allocated_kb` ride
-    /// along with every square regardless of which metric drove it — an
-    /// ordinary run crossing `insert` with both `throughput` and `latency`
-    /// has both squares set `wall_time_ms`. That's expected, not a
-    /// duplicate, so the first one measured wins silently.
+    /// Throughput is the sole owner of cost telemetry, even when a latency
+    /// record appears first and carries incidental wall-clock metadata.
     #[test]
-    fn shared_timing_fields_on_two_squares_of_one_operation_first_wins() {
+    fn throughput_owns_timing_when_latency_arrives_first() {
         let rows = vec![
             record(
                 "insert",
-                "throughput",
+                "latency",
                 BenchSection {
-                    wall_time_ms: Some(stats(1.0)),
+                    latency_ns: Some(latency(10)),
+                    wall_time_ms: Some(stats(2.0)),
                     ..Default::default()
                 },
             ),
             record(
                 "insert",
-                "latency",
+                "throughput",
                 BenchSection {
-                    wall_time_ms: Some(stats(2.0)),
+                    throughput_items_per_sec: Some(stats(1_000.0)),
+                    wall_time_ms: Some(stats(1.0)),
                     ..Default::default()
                 },
             ),
