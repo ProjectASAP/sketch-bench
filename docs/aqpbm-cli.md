@@ -50,6 +50,21 @@ approxbench sketchbench \
     --report results.jsonl
 ```
 
+### ERP export
+
+After a parameter/distribution sweep has been reduced to flat `MergedRecord`
+JSONL, export a versioned Error–Resource Profile for ASAPPlanner with:
+
+```sh
+approxbench erp results.flat.jsonl \
+    --producer-version "$(git rev-parse HEAD)" \
+    --output erp.json
+```
+
+ERP preserves the complete workload descriptor as an applicability key and
+stores observed error together with memory and per-operation CPU. It does not
+claim that benchmark means are formal worst-case accuracy guarantees.
+
 ## Interaction with aqpbm-datagen
 
 User define how input data looks like through command line.
