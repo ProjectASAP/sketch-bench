@@ -150,6 +150,20 @@ pub struct SketchbenchArgs {
     /// Seed for reproducibility.
     #[arg(long, default_value_t = 42, help_heading = "Dataset")]
     pub seed: u64,
+    /// Rows per traffic interval when injecting AutoSketch-style bursts.
+    #[arg(long, requires = "burst_intervals", help_heading = "Dataset")]
+    pub burst_interval_rows: Option<usize>,
+    /// Number of randomly selected intervals that receive extra traffic.
+    #[arg(long, requires = "burst_interval_rows", help_heading = "Dataset")]
+    pub burst_intervals: Option<usize>,
+    /// Extra rows as a fraction of each selected interval.
+    #[arg(
+        long,
+        default_value_t = 0.0,
+        requires = "burst_intervals",
+        help_heading = "Dataset"
+    )]
+    pub burst_extra_fraction: f64,
 
     /// YAML/JSON external workload selection. The dataset path inside the
     /// spec is resolved relative to --data-root.

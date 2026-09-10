@@ -365,10 +365,28 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let (dataset, table, workload) = match external_workload {
         Some(loaded) => (loaded.table_shape, loaded.table, loaded.workload),
         None => {
-            let (dataset, table) = spec
+            let (mut dataset, mut table) = spec
                 .expect("synthetic workload spec")
                 .generate_at(width.name())?;
-            let workload = aqpbm_core::benchmark_result::WorkloadDescription::from(dataset.clone());
+            let burst = if let (Some(interval_rows), Some(burst_intervals)) =
+                (args.burst_interval_rows, args.burst_intervals)
+            {
+                let burst = aqpbm_datagen::BurstSpec {
+                    interval_rows,
+                    burst_intervals,
+                    extra_fraction: args.burst_extra_fraction,
+                    seed: args.seed,
+                };
+                table.inject_bursts(burst)?;
+                dataset.row_num = table.row_num;
+                Some(burst)
+            } else {
+                None
+            };
+            let workload = aqpbm_core::benchmark_result::WorkloadDescription::Synthetic {
+                description: dataset.clone(),
+                burst,
+            };
             (dataset, table, workload)
         }
     };

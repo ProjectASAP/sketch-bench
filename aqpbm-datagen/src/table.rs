@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::column::ColumnSpec;
 use crate::error::DataGenError;
 use crate::value::ColumnData;
+use crate::{inject_interval_bursts, BurstSpec};
 
 /// Scramble a latent rank before dividing it among connected columns. This
 /// SplitMix64 finalizer spreads nearby ranks across the word while keeping the
@@ -285,6 +286,29 @@ pub struct GeneratedTable {
 }
 
 impl GeneratedTable {
+    /// Inject the same deterministic interval-burst schedule into every column.
+    /// Reusing the seed preserves row alignment for multi-column workloads.
+    pub fn inject_bursts(&mut self, spec: BurstSpec) -> Result<(), DataGenError> {
+        for column in &mut self.data {
+            *column = match column {
+                ColumnData::Int64(values) => {
+                    ColumnData::Int64(inject_interval_bursts(values, spec)?)
+                }
+                ColumnData::Float64(values) => {
+                    ColumnData::Float64(inject_interval_bursts(values, spec)?)
+                }
+                ColumnData::Unsigned64(values) => {
+                    ColumnData::Unsigned64(inject_interval_bursts(values, spec)?)
+                }
+                ColumnData::String(values) => {
+                    ColumnData::String(inject_interval_bursts(values, spec)?)
+                }
+            };
+        }
+        self.row_num = self.data.first().map_or(0, |column| column.len() as u64);
+        self.validate()
+    }
+
     /// The doc's two required checks, on the output side: the column count
     /// matches what was claimed, and every column is the same length.
     pub fn validate(&self) -> Result<(), DataGenError> {

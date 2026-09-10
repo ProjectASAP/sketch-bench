@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use aqpbm_datagen::TableDescription;
+use aqpbm_datagen::{BurstSpec, TableDescription};
 
 /// Bumped whenever a breaking field change lands. Readers
 /// should refuse to process records with a mismatched version.
@@ -17,14 +17,21 @@ pub const SCHEMA_VERSION: u32 = 5;
 #[serde(rename_all = "lowercase")]
 pub enum WorkloadDescription {
     /// A table generated from the existing datagen description.
-    Synthetic { description: TableDescription },
+    Synthetic {
+        description: TableDescription,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        burst: Option<BurstSpec>,
+    },
     /// A bounded selection from an external trace.
     External(ExternalWorkload),
 }
 
 impl From<TableDescription> for WorkloadDescription {
     fn from(description: TableDescription) -> Self {
-        Self::Synthetic { description }
+        Self::Synthetic {
+            description,
+            burst: None,
+        }
     }
 }
 
@@ -421,6 +428,7 @@ pub fn merged_record_schema_json() -> String {
                 column_connected: Vec::new(),
                 row_num: 0,
             },
+            burst: None,
         },
         memory_bytes: None,
         heap_bytes_net: None,
