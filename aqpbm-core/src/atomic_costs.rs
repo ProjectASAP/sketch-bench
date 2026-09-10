@@ -24,7 +24,21 @@ use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescripti
 /// `benchmark_result::SCHEMA_VERSION`: this is a different wire interface
 /// (ASAPQuery's loader), with its own compatibility lifecycle, not a
 /// derivative of the report schema's.
-pub const ATOMIC_COST_SCHEMA_VERSION: u32 = 1;
+pub const ATOMIC_COST_SCHEMA_VERSION: u32 = 2;
+
+/// Immutable identity of the exporter-ready scenario on which a cost profile
+/// was measured. This is deliberately profile-level provenance: all entries
+/// in a profile share the same stream, while entries differ only by sketch
+/// construction configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScenarioIdentity {
+    /// SHA-256 of the canonical decompressed wrangled CSV payload.
+    pub payload_sha256: String,
+    pub exported_metric: String,
+    pub grouping_labels: Vec<String>,
+    pub source_time_range_us: [i64; 2],
+}
 
 /// The atomic-cost document ASAPQuery's loader reads: a version gate plus one
 /// profile per workload the grid was measured against.
@@ -43,6 +57,7 @@ pub struct AtomicCostDocument {
 #[serde(deny_unknown_fields)]
 pub struct AtomicCostProfile {
     pub workload: WorkloadDescription,
+    pub scenario: ScenarioIdentity,
     pub entries: Vec<AtomicCostEntry>,
 }
 
@@ -278,6 +293,7 @@ impl std::error::Error for DuplicateEntry {}
 /// alongside the error, so the caller can report both.
 pub fn reduce_all(
     records: &[MergedRecord],
+    scenario: ScenarioIdentity,
 ) -> (
     Result<AtomicCostDocument, DuplicateEntry>,
     Vec<(usize, SkipReason)>,
@@ -321,7 +337,11 @@ pub fn reduce_all(
 
     let profiles = groups
         .into_values()
-        .map(|(workload, entries)| AtomicCostProfile { workload, entries })
+        .map(|(workload, entries)| AtomicCostProfile {
+            workload,
+            scenario: scenario.clone(),
+            entries,
+        })
         .collect();
     (
         Ok(AtomicCostDocument {
@@ -546,13 +566,22 @@ mod tests {
         record
     }
 
+    fn scenario() -> ScenarioIdentity {
+        ScenarioIdentity {
+            payload_sha256: "a".repeat(64),
+            exported_metric: "google_mean_cpu_usage_rate_0".into(),
+            grouping_labels: vec!["job_id".into(), "task_index".into(), "machine_id".into()],
+            source_time_range_us: [1_313_535_000_000, 1_313_715_000_000],
+        }
+    }
+
     #[test]
     fn reduce_all_partitions_ok_and_skipped_records() {
         let good = full_record();
         let mut bad = full_record();
         bad.memory_bytes = None;
 
-        let (document, skipped) = reduce_all(&[good, bad]);
+        let (document, skipped) = reduce_all(&[good, bad], scenario());
         let document = document.expect("no duplicates");
         assert_eq!(document.schema_version, ATOMIC_COST_SCHEMA_VERSION);
         assert_eq!(document.profiles.len(), 1);
@@ -562,7 +591,7 @@ mod tests {
 
     #[test]
     fn synthetic_workload_round_trips_through_the_document() {
-        let (document, skipped) = reduce_all(&[full_record()]);
+        let (document, skipped) = reduce_all(&[full_record()], scenario());
         let document = document.expect("no duplicates");
         assert!(skipped.is_empty());
 
@@ -575,7 +604,7 @@ mod tests {
     #[test]
     fn external_workload_round_trips_with_window_and_provenance() {
         let record = external_record((10, 20), 4);
-        let (document, skipped) = reduce_all(&[record]);
+        let (document, skipped) = reduce_all(&[record], scenario());
         let document = document.expect("no duplicates");
         assert!(skipped.is_empty());
 
@@ -597,7 +626,7 @@ mod tests {
         let synthetic = full_record();
         let external = external_record((10, 20), 4);
 
-        let (document, skipped) = reduce_all(&[synthetic, external]);
+        let (document, skipped) = reduce_all(&[synthetic, external], scenario());
         let document = document.expect("no duplicates");
         assert!(skipped.is_empty());
         assert_eq!(document.profiles.len(), 2);
@@ -612,7 +641,7 @@ mod tests {
         let window_a = external_record((0, 10), 4);
         let window_b = external_record((10, 20), 4);
 
-        let (document, skipped) = reduce_all(&[window_a, window_b]);
+        let (document, skipped) = reduce_all(&[window_a, window_b], scenario());
         let document = document.expect("no duplicates");
         assert!(skipped.is_empty());
         assert_eq!(document.profiles.len(), 2);
@@ -623,7 +652,7 @@ mod tests {
         let first = full_record();
         let second = full_record();
 
-        let (document, _skipped) = reduce_all(&[first, second]);
+        let (document, _skipped) = reduce_all(&[first, second], scenario());
         let err = document.expect_err("duplicate must be rejected, not silently merged");
         assert_eq!(err.sketch, "cms");
         assert_eq!(err.workload, dataset().into());
@@ -636,7 +665,7 @@ mod tests {
         assert_eq!(synthetic.sketch, external.sketch);
         assert_eq!(synthetic.sketch_config, external.sketch_config);
 
-        let (document, skipped) = reduce_all(&[synthetic, external]);
+        let (document, skipped) = reduce_all(&[synthetic, external], scenario());
         let document = document.expect("same (sketch, sketch_config) across profiles is fine");
         assert!(skipped.is_empty());
         assert_eq!(document.profiles.len(), 2);
@@ -668,14 +697,14 @@ mod tests {
     fn atomic_cost_document_serialises_to_the_documented_shape() {
         // Pinned end-to-end (document -> profile -> entry) so ASAPQuery's
         // loader shape is exercised as a whole, not just its innermost row.
-        let (document, skipped) = reduce_all(&[full_record()]);
+        let (document, skipped) = reduce_all(&[full_record()], scenario());
         let document = document.expect("no duplicates");
         assert!(skipped.is_empty());
 
         let json = serde_json::to_string(&document).unwrap();
         assert_eq!(
             json,
-            r#"{"schema_version":1,"profiles":[{"workload":{"synthetic":{"description":{"column_num":1,"column_label":["key"],"column_spec":[{"distribution":{"kind":"uniform","lower_bound":0.0,"upper_bound":100000.0,"seed":42},"cardinality":100000,"special_rule":0,"data_type":"i64"}],"row_num":1000000}}},"entries":[{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}]}]}"#
+            r#"{"schema_version":2,"profiles":[{"workload":{"synthetic":{"description":{"column_num":1,"column_label":["key"],"column_spec":[{"distribution":{"kind":"uniform","lower_bound":0.0,"upper_bound":100000.0,"seed":42},"cardinality":100000,"special_rule":0,"data_type":"i64"}],"row_num":1000000}}},"scenario":{"payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","exported_metric":"google_mean_cpu_usage_rate_0","grouping_labels":["job_id","task_index","machine_id"],"source_time_range_us":[1313535000000,1313715000000]},"entries":[{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}]}]}"#
         );
     }
 

@@ -11,8 +11,9 @@ use std::io::Read;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use serde::Deserialize;
 
-use aqpbm_core::{reduce_all, MergedRecord, SCHEMA_VERSION};
+use aqpbm_core::{reduce_all, MergedRecord, ScenarioIdentity, SCHEMA_VERSION};
 
 #[derive(Parser, Debug)]
 pub struct AtomicCostsArgs {
@@ -22,6 +23,80 @@ pub struct AtomicCostsArgs {
     /// Output path for the reduced document (JSON). Defaults to stdout.
     #[arg(short, long)]
     output: Option<String>,
+    /// Dataset-wrangler scenario manifest identifying the exact CSV measured.
+    #[arg(long)]
+    scenario_manifest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScenarioManifest {
+    scenario_spec: ScenarioSpec,
+    output_payload_sha256: String,
+    source_sha256: String,
+    output_sha256: String,
+    records_loaded: u64,
+    grouping_state_count: usize,
+    arrival_rate_hz: f64,
+    duplicate_policy: String,
+    schema_version: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScenarioSpec {
+    exported_metric: String,
+    grouping_labels: Vec<String>,
+    source_time_range_us: [i64; 2],
+    source_file: String,
+    rebase_to_offset: bool,
+}
+
+fn load_scenario_identity(path: &str) -> Result<ScenarioIdentity> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+    let manifest: ScenarioManifest =
+        serde_json::from_str(&raw).with_context(|| format!("parsing scenario manifest {path}"))?;
+    if manifest.schema_version != 1 {
+        bail!(
+            "scenario manifest {path} has unsupported schema_version {}",
+            manifest.schema_version
+        );
+    }
+    for (field, hash) in [
+        ("source_sha256", &manifest.source_sha256),
+        ("output_sha256", &manifest.output_sha256),
+        ("output_payload_sha256", &manifest.output_payload_sha256),
+    ] {
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("scenario manifest {path} has invalid {field}");
+        }
+    }
+    if manifest.scenario_spec.source_file.is_empty()
+        || manifest.scenario_spec.exported_metric.is_empty()
+        || manifest.scenario_spec.grouping_labels.is_empty()
+    {
+        bail!("scenario manifest {path} has no grouping_labels");
+    }
+    if manifest.scenario_spec.source_time_range_us[0]
+        >= manifest.scenario_spec.source_time_range_us[1]
+    {
+        bail!("scenario manifest {path} has an empty or inverted source_time_range_us");
+    }
+    if manifest.records_loaded == 0
+        || manifest.grouping_state_count == 0
+        || !manifest.arrival_rate_hz.is_finite()
+        || manifest.arrival_rate_hz <= 0.0
+        || manifest.duplicate_policy != "fail"
+    {
+        bail!("scenario manifest {path} violates the required wrangler invariants");
+    }
+    let _timestamp_rebased = manifest.scenario_spec.rebase_to_offset;
+    Ok(ScenarioIdentity {
+        payload_sha256: manifest.output_payload_sha256,
+        exported_metric: manifest.scenario_spec.exported_metric,
+        grouping_labels: manifest.scenario_spec.grouping_labels,
+        source_time_range_us: manifest.scenario_spec.source_time_range_us,
+    })
 }
 
 /// Parse a `--flat` JSONL stream into `MergedRecord`s, refusing any line
@@ -62,8 +137,9 @@ pub fn run(args: AtomicCostsArgs) -> Result<()> {
     };
 
     let records = parse_records(&raw)?;
+    let scenario = load_scenario_identity(&args.scenario_manifest)?;
 
-    let (document, skipped) = reduce_all(&records);
+    let (document, skipped) = reduce_all(&records, scenario);
     for (i, reason) in &skipped {
         let record = &records[*i];
         eprintln!(
@@ -101,6 +177,38 @@ pub fn run(args: AtomicCostsArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn manifest(payload_sha256: &str) -> String {
+        serde_json::json!({
+            "schema_version": 1,
+            "scenario_spec": {
+                "source_file": "google/task_usage.csv.gz",
+                "source_time_range_us": [1313535000000_i64, 1313715000000_i64],
+                "exported_metric": "google_mean_cpu_usage_rate_0",
+                "grouping_labels": ["job_id", "task_index", "machine_id"],
+                "rebase_to_offset": true
+            },
+            "source_sha256": "b".repeat(64),
+            "output_sha256": "c".repeat(64),
+            "output_payload_sha256": payload_sha256,
+            "records_loaded": 20051,
+            "grouping_state_count": 10379,
+            "arrival_rate_hz": 111.394,
+            "duplicate_policy": "fail"
+        })
+        .to_string()
+    }
+
+    fn write_manifest(contents: String) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("aqpbm-scenario-{nonce}.json"));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
 
     fn line(schema_version: u32) -> String {
         serde_json::json!({
@@ -139,5 +247,30 @@ mod tests {
         assert!(msg.contains("line 2"), "{msg}");
         assert!(msg.contains(&(SCHEMA_VERSION - 1).to_string()), "{msg}");
         assert!(msg.contains(&SCHEMA_VERSION.to_string()), "{msg}");
+    }
+
+    #[test]
+    fn scenario_manifest_becomes_profile_identity() {
+        let path = write_manifest(manifest(&"a".repeat(64)));
+
+        let identity = load_scenario_identity(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+
+        assert_eq!(identity.payload_sha256, "a".repeat(64));
+        assert_eq!(identity.exported_metric, "google_mean_cpu_usage_rate_0");
+        assert_eq!(
+            identity.grouping_labels,
+            ["job_id", "task_index", "machine_id"]
+        );
+    }
+
+    #[test]
+    fn scenario_manifest_rejects_invalid_payload_hash() {
+        let path = write_manifest(manifest("not-a-sha"));
+
+        let error = load_scenario_identity(path.to_str().unwrap()).unwrap_err();
+        std::fs::remove_file(path).unwrap();
+
+        assert!(error.to_string().contains("output_payload_sha256"));
     }
 }

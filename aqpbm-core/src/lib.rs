@@ -20,7 +20,7 @@ pub use aqpbm_datagen::{
 };
 pub use atomic_costs::{
     reduce_all, reduce_one, AtomicCostDocument, AtomicCostEntry, AtomicCostProfile, DuplicateEntry,
-    SkipReason, ATOMIC_COST_SCHEMA_VERSION,
+    ScenarioIdentity, SkipReason, ATOMIC_COST_SCHEMA_VERSION,
 };
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
