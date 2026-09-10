@@ -33,3 +33,26 @@ python3 scripts/run_external_sweep.py \
 
 Keyed external workloads are intentionally separate from this first slice and
 are tracked in issue #122.
+
+Users may benchmark their own headered CSV or `.csv.gz` without adding a
+source-specific adapter. A custom spec names the timestamp, optional interval
+end, value, and grouping columns:
+
+```yaml
+source: custom
+dataset: my-trace/events.csv.gz
+mode: grouped
+timestamp_column: timestamp_ms
+end_timestamp_column: end_ms
+timestamp_unit: milliseconds
+group_columns: [service]
+value_column: key
+window: {start: "0", end: "60000"}
+min_records: 10000
+```
+
+`dataset` remains a logical path resolved below `--data-root`; it and the
+selected window are retained in ERP provenance. Profiles for a custom dataset
+are exact-matched by that descriptor unless the caller also supplies a fitted
+`erp_shape` family and parameters. An unseen dataset therefore cannot silently
+borrow evidence from an unrelated synthetic distribution.

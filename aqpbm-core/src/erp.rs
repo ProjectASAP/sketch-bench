@@ -52,8 +52,9 @@ pub struct ErpArtifact {
 #[serde(deny_unknown_fields)]
 pub struct ErpDataShape {
     pub cardinality: u64,
-    /// Absent means uniform; present means the Zipf exponent.
-    pub zipf_exponent: Option<f64>,
+    pub family: String,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, f64>,
     pub benchmark_events: u64,
 }
 
@@ -62,15 +63,27 @@ fn distribution_descriptor(workload: &WorkloadDescription) -> serde_json::Value 
     let shape = match workload {
         WorkloadDescription::Synthetic { description, .. } => {
             description.column_spec.first().and_then(|column| {
-                let cardinality = column.distribution.domain()?.size;
-                let zipf_exponent = match &column.distribution {
-                    DataDistribution::Zipf(parameters) => Some(parameters.skewness),
-                    DataDistribution::Uniform(_) => None,
-                    DataDistribution::Normal(_) => return None,
+                let cardinality = column
+                    .cardinality
+                    .or_else(|| column.distribution.domain().map(|domain| domain.size))?;
+                let (family, parameters) = match &column.distribution {
+                    DataDistribution::Zipf(value) => (
+                        "zipf",
+                        BTreeMap::from([("exponent".into(), value.skewness)]),
+                    ),
+                    DataDistribution::Uniform(_) => ("uniform", BTreeMap::new()),
+                    DataDistribution::Normal(value) => (
+                        "normal",
+                        BTreeMap::from([
+                            ("mean".into(), value.mean),
+                            ("standard_deviation".into(), value.standard_deviation),
+                        ]),
+                    ),
                 };
                 Some(ErpDataShape {
                     cardinality,
-                    zipf_exponent,
+                    family: family.into(),
+                    parameters,
                     benchmark_events: description.row_num,
                 })
             })
@@ -167,7 +180,8 @@ mod tests {
         };
         let descriptor = distribution_descriptor(&workload);
         assert_eq!(descriptor["erp_shape"]["cardinality"], 1_000);
-        assert_eq!(descriptor["erp_shape"]["zipf_exponent"], 1.2);
+        assert_eq!(descriptor["erp_shape"]["family"], "zipf");
+        assert_eq!(descriptor["erp_shape"]["parameters"]["exponent"], 1.2);
         assert_eq!(descriptor["erp_shape"]["benchmark_events"], 100_000);
         assert_eq!(
             descriptor["workload"]["synthetic"]["description"]["row_num"],
