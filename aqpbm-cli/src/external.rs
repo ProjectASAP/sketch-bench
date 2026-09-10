@@ -28,6 +28,8 @@ pub enum Source {
     Boom,
     Google,
     Alibaba,
+    /// User-provided CSV (optionally gzip-compressed).
+    Custom,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -57,6 +59,12 @@ pub struct WorkloadSpec {
     #[serde(default)]
     pub group_columns: Vec<String>,
     pub value_column: String,
+    /// Required for `source: custom` and interpreted using `timestamp_unit`.
+    #[serde(default)]
+    pub timestamp_column: Option<String>,
+    /// Optional interval end column. Without it, rows are timestamped points.
+    #[serde(default)]
+    pub end_timestamp_column: Option<String>,
     #[serde(default)]
     pub variate: Option<usize>,
     #[serde(default)]
@@ -127,6 +135,9 @@ pub fn load(spec: &WorkloadSpec, data_root: &Path) -> Result<Option<LoadedWorklo
     if spec.mode == InputMode::Scalar && !spec.group_columns.is_empty() {
         bail!("scalar external workloads cannot specify group_columns");
     }
+    if matches!(spec.source, Source::Custom) && spec.timestamp_column.is_none() {
+        bail!("custom workloads require timestamp_column");
+    }
 
     let window_start_ns = parse_timestamp_ns(&spec.window.start)
         .with_context(|| format!("invalid window start '{}'", spec.window.start))?;
@@ -140,6 +151,7 @@ pub fn load(spec: &WorkloadSpec, data_root: &Path) -> Result<Option<LoadedWorklo
         Source::Boom => load_boom(spec, &path, window_start_ns, window_end_ns)?,
         Source::Google => load_google(spec, &path, window_start_ns, window_end_ns)?,
         Source::Alibaba => load_alibaba(spec, &path, window_start_ns, window_end_ns)?,
+        Source::Custom => load_custom(spec, &path, window_start_ns, window_end_ns)?,
     };
     records.sort_by_key(|r| (r.start_ns, r.source_row));
     if records.len() < spec.min_records {
@@ -183,6 +195,7 @@ fn source_name(source: &Source) -> &'static str {
         Source::Boom => "boom",
         Source::Google => "google",
         Source::Alibaba => "alibaba",
+        Source::Custom => "custom",
     }
 }
 
@@ -194,6 +207,10 @@ fn source_timestamp_unit(spec: &WorkloadSpec) -> String {
             .timestamp_unit
             .clone()
             .unwrap_or_else(|| "milliseconds".to_string()),
+        Source::Custom => spec
+            .timestamp_unit
+            .clone()
+            .unwrap_or_else(|| "nanoseconds".to_string()),
     }
 }
 
@@ -353,6 +370,70 @@ fn load_alibaba(
                 groups: groups
                     .iter()
                     .map(|i| field(&record, *i, row).map(str::to_string))
+                    .collect::<Result<_>>()?,
+                value,
+                source_row: row,
+            },
+            window_start_ns,
+            window_end_ns,
+            &mut out,
+        );
+    }
+    Ok(out)
+}
+
+fn load_custom(
+    spec: &WorkloadSpec,
+    path: &Path,
+    window_start_ns: i64,
+    window_end_ns: i64,
+) -> Result<Vec<RawRecord>> {
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(false)
+        .from_reader(open_reader(path)?);
+    let headers = reader
+        .headers()
+        .context("reading custom CSV header")?
+        .clone();
+    let timestamp_name = spec
+        .timestamp_column
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("custom workloads require timestamp_column"))?;
+    let timestamp = index(&headers, timestamp_name)?;
+    let end_timestamp = spec
+        .end_timestamp_column
+        .as_deref()
+        .map(|name| index(&headers, name))
+        .transpose()?;
+    let value = index(&headers, &spec.value_column)?;
+    let groups: Vec<usize> = spec
+        .group_columns
+        .iter()
+        .map(|name| index(&headers, name))
+        .collect::<Result<_>>()?;
+    let unit = spec.timestamp_unit.as_deref().unwrap_or("nanoseconds");
+    let mut out = Vec::new();
+    for (row, result) in reader.records().enumerate() {
+        let record = result.with_context(|| format!("malformed custom CSV row {}", row + 2))?;
+        let start_ns = number_to_ns(field(&record, timestamp, row)?, unit)
+            .with_context(|| format!("custom row {} timestamp", row + 2))?;
+        let end_ns = end_timestamp
+            .map(|column| number_to_ns(field(&record, column, row)?, unit))
+            .transpose()
+            .with_context(|| format!("custom row {} end timestamp", row + 2))?
+            .unwrap_or(start_ns);
+        if end_ns < start_ns {
+            bail!("custom row {} ends before it starts", row + 2);
+        }
+        let value = parse_value(field(&record, value, row)?)
+            .with_context(|| format!("custom row {} value", row + 2))?;
+        include(
+            RawRecord {
+                start_ns,
+                end_ns,
+                groups: groups
+                    .iter()
+                    .map(|column| field(&record, *column, row).map(str::to_string))
                     .collect::<Result<_>>()?,
                 value,
                 source_row: row,
@@ -656,5 +737,28 @@ mod tests {
             parse_timestamp_ns("1970-01-01T00:00:01").unwrap(),
             NANOS_PER_SECOND
         );
+    }
+
+    #[test]
+    fn user_csv_spec_preserves_generic_column_mapping() {
+        let spec: WorkloadSpec = serde_norway::from_str(
+            r#"
+source: custom
+dataset: tenant/events.csv.gz
+mode: grouped
+timestamp_column: ts
+end_timestamp_column: end_ts
+timestamp_unit: milliseconds
+group_columns: [service]
+value_column: key
+window: {start: "0", end: "60000"}
+min_records: 100
+"#,
+        )
+        .unwrap();
+        assert!(matches!(spec.source, Source::Custom));
+        assert_eq!(spec.timestamp_column.as_deref(), Some("ts"));
+        assert_eq!(spec.end_timestamp_column.as_deref(), Some("end_ts"));
+        assert_eq!(spec.dataset, "tenant/events.csv.gz");
     }
 }
