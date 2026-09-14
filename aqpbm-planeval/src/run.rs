@@ -82,6 +82,11 @@ pub struct RunOutcome {
     pub rows_scanned: u64,
     pub rows_emitted: u64,
     pub verified: bool,
+    /// Values the exact arm held, summed over every `(node, group)`. Counted
+    /// here rather than derived from `readouts`, which are empty for a plan
+    /// whose state *is* its answer (an exact accumulator has no
+    /// `SummaryEstimate`) even though the exact arm still retained a column.
+    pub retained_values: usize,
     pub readouts: Vec<Readout>,
     /// Summary state held per node, summed over that node's groups.
     pub node_footprints: Vec<(PostAsapNodeId, usize)>,
@@ -292,6 +297,7 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
         rows_scanned: source.scanned(),
         rows_emitted: source.emitted(),
         verified: cfg.verify,
+        retained_values: retained.values().map(Vec::len).sum(),
         readouts,
         node_footprints,
         approximate: ArmTiming {

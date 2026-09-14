@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use asap_types::post_asap::{ExecutableOperator, PostAsapNodeId};
+use asap_types::post_asap::{ExecutableOperator, PostAsapNodeId, SummaryFamilyType};
 
 use crate::plan::Plan;
 use crate::run::{ArmTiming, RunOutcome};
@@ -107,14 +107,11 @@ impl PlanEvalRecord {
                 node: node.id.0,
                 operator: format!("{:?}", node.operator),
                 family: match node.operator {
-                    ExecutableOperator::SummaryAgg => Some(format!(
-                        "{:?}",
-                        node.output_schema
-                            .fields
-                            .first()
-                            .map(|f| &f.dtype)
-                            .expect("a SummaryAgg output schema has a field")
-                    )),
+                    ExecutableOperator::SummaryAgg => node
+                        .output_schema
+                        .fields
+                        .first()
+                        .map(|field| family_label(&field.dtype)),
                     _ => None,
                 },
                 state_bytes: footprints.get(&node.id).copied(),
@@ -123,15 +120,7 @@ impl PlanEvalRecord {
 
         let state_bytes: usize = outcome.node_footprints.iter().map(|(_, b)| b).sum();
         // The exact arm's cost is the column it had to keep.
-        let retained_bytes = if outcome.verified {
-            outcome
-                .readouts
-                .iter()
-                .map(|r| r.observations as usize * std::mem::size_of::<f64>())
-                .sum()
-        } else {
-            0
-        };
+        let retained_bytes = outcome.retained_values * std::mem::size_of::<f64>();
 
         Self {
             schema_version: PLANEVAL_SCHEMA_VERSION,
@@ -184,6 +173,18 @@ impl PlanEvalRecord {
 
     pub fn to_jsonl(&self) -> String {
         serde_json::to_string(self).expect("PlanEvalRecord is serializable")
+    }
+}
+
+/// `Sketch(Kll{k:269})` rather than the whole `Debug` of a `SketchKind`, whose
+/// private fields make its derived form unreadable in a terminal.
+fn family_label(family: &SummaryFamilyType) -> String {
+    match family {
+        SummaryFamilyType::Sketch(kind, _) => {
+            format!("Sketch({:?}, {:?})", kind.algorithm(), kind.params())
+        }
+        SummaryFamilyType::ExactAggregate(kind, _) => format!("Exact({kind:?})"),
+        other => format!("{other:?}"),
     }
 }
 

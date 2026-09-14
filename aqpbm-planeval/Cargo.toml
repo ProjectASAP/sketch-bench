@@ -6,9 +6,15 @@ license.workspace = true
 repository.workspace = true
 description = "Decodes a post-ASAP DAG, runs it over rows holding one summary per (plan, node, group), and scores each readout against the exact answer."
 
-# Local path deps for development only. These MUST become git + rev before
-# this member is committed: CI checks out sketch-bench alone, and a missing
-# path dep fails manifest resolution for every member of the workspace.
+# A thin bin over a real lib. `aqpbm-cli` is bin-only, which is why its
+# `rows::binding()` and `rows::measurements()` cannot be called in-process.
+[[bin]]
+name = "planeval"
+path = "src/main.rs"
+
+# Local path deps for development only. These MUST become git + rev before this
+# member reaches a shared branch: CI checks out sketch-bench alone, and a
+# missing path dep fails manifest resolution for every member of the workspace.
 [dependencies]
 asap-types = { path = "../../ASAPPlanner/crates/types" }
 asap-aware-mapping = { path = "../../ASAPPlanner/crates/asap-aware-mapping" }
@@ -24,6 +30,7 @@ csv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+clap.workspace = true
 thiserror.workspace = true
 blake3 = "1"
 
