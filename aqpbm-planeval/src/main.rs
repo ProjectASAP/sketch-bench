@@ -14,7 +14,8 @@ use clap::Parser;
 use aqpbm_planeval::admit::admit;
 use aqpbm_planeval::plan::{plan_promql, to_json};
 use aqpbm_planeval::record::PlanEvalRecord;
-use aqpbm_planeval::run::{run, RunConfig};
+use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
+use aqpbm_datagen::table::TableDescription;
 use asap_types::types::AccuracyTarget;
 
 #[derive(Parser, Debug)]
@@ -27,10 +28,20 @@ struct Args {
     #[arg(long)]
     query: String,
 
+    /// Generate the rows in process from a `datagen` spec file (examples in
+    /// `configs/datagen/`). Wins over `--csv`.
+    ///
+    /// A path, not an inline description: the spec states one `data_type` per
+    /// column and the plan's schema has to agree with it, so a flag that
+    /// rewrote a field of the file would make the file a suggestion. This is
+    /// the same rule `aqpbm-cli` follows.
+    #[arg(long, conflicts_with = "csv")]
+    spec: Option<PathBuf>,
+
     /// CSV to read. Its header names must match the leaf's schema; a PromQL
     /// leaf carries the usage-derived `ts,value`.
-    #[arg(long)]
-    csv: PathBuf,
+    #[arg(long, required_unless_present = "spec")]
+    csv: Option<PathBuf>,
 
     /// End-to-end accuracy target the plan is sized against.
     #[arg(long, default_value_t = 0.01)]
@@ -91,10 +102,37 @@ fn real_main() -> Result<()> {
     };
 
     let mut last: Option<PlanEvalRecord> = None;
+    // Built once, outside the seed loop: the rows are the same every seed, so
+    // a difference between seeds is the sketch's and never the data's.
+    let rows = match (&args.spec, &args.csv) {
+        (Some(path), _) => {
+            let description = TableDescription::from_path(path)
+                .with_context(|| format!("loading {}", path.display()))?;
+            description
+                .validate()
+                .with_context(|| format!("validating {}", path.display()))?;
+            let table = description
+                .generate()
+                .with_context(|| format!("generating from {}", path.display()))?;
+            println!(
+                "rows     generated from {} — {} columns x {} rows",
+                path.display(),
+                table.column_num,
+                table.row_num
+            );
+            RowsFrom::Generated(table)
+        }
+        (None, Some(path)) => RowsFrom::Csv(path.clone()),
+        // clap's `required_unless_present` already rejects this.
+        (None, None) => anyhow::bail!("one of --spec or --csv is required"),
+    };
+
     for seed in 0..args.seeds {
-        let config = RunConfig::new(&args.csv)
-            .seed(seed)
-            .verify(!args.no_verify);
+        let config = RunConfig {
+            rows: rows.clone(),
+            seed,
+            verify: !args.no_verify,
+        };
         let outcome = run(&plan, &admitted, &config)
             .with_context(|| format!("running seed {seed}"))?;
         let record = PlanEvalRecord::from_run(&args.query, &plan, &outcome);

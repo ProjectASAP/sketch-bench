@@ -9,6 +9,7 @@
 //! they saw.
 
 use std::collections::HashMap;
+use aqpbm_datagen::table::GeneratedTable;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -23,11 +24,23 @@ use crate::rows;
 use crate::score;
 use crate::types::{Answer, EvalError, GroupKey, ItemKey, Row, StateKey, Value};
 
-/// Everything the DAG cannot carry: which bytes the leaf's identity names, the
-/// seed, and whether the exact arm is computed at all.
+/// Where the rows come from. `Source::Table{table_ref}` / `TimeSeries{metric}`
+/// carries only the leaf's *identity*; which bytes that identity names is the
+/// run's business, not the plan's.
+#[derive(Debug, Clone)]
+pub enum RowsFrom {
+    Csv(PathBuf),
+    /// Generated in process from a `TableDescription`. Cloned per seed, which
+    /// is deliberate: the table is the same every time, so a difference
+    /// between seeds is the sketch's, never the data's.
+    Generated(GeneratedTable),
+}
+
+/// Everything the DAG cannot carry: where the rows are, the seed, and whether
+/// the exact arm is computed at all.
 #[derive(Debug, Clone)]
 pub struct RunConfig {
-    pub csv: PathBuf,
+    pub rows: RowsFrom,
     pub seed: u64,
     /// Retain the summarized column so the exact answer and the rank error can
     /// be computed. O(n) memory. The outcome records whether it ran.
@@ -37,7 +50,15 @@ pub struct RunConfig {
 impl RunConfig {
     pub fn new(csv: impl Into<PathBuf>) -> Self {
         Self {
-            csv: csv.into(),
+            rows: RowsFrom::Csv(csv.into()),
+            seed: 0,
+            verify: true,
+        }
+    }
+
+    pub fn from_table(table: GeneratedTable) -> Self {
+        Self {
+            rows: RowsFrom::Generated(table),
             seed: 0,
             verify: true,
         }
@@ -153,7 +174,12 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
     let mut build_elapsed = Duration::ZERO;
 
     // ── one pass over the rows, feeding every aggregate ─────────────────────
-    let mut source = rows::open(scan, &cfg.csv, &source_node.output_schema)?;
+    let mut source = match &cfg.rows {
+        RowsFrom::Csv(path) => rows::open(scan, path, &source_node.output_schema)?,
+        RowsFrom::Generated(table) => {
+            rows::open_generated(scan, table.clone(), &source_node.output_schema)?
+        }
+    };
     let mut update_elapsed = Duration::ZERO;
     let mut exact_elapsed = Duration::ZERO;
 

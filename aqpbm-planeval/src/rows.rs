@@ -27,7 +27,10 @@
 //!    PromQL-produced plan (PLAN.md §1.3).
 
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use aqpbm_datagen::table::GeneratedTable;
+use aqpbm_datagen::value::ColumnData;
 
 use asap_types::post_asap::{SummaryFamilyType, SummarySchema};
 use asap_types::pre_asap::{
@@ -45,26 +48,48 @@ use crate::types::{EvalError, Row, Value};
 /// header is matched by name, so a CSV may carry its columns in any order and
 /// may carry extra columns the plan never references.
 pub struct RowSource {
-    reader: csv::Reader<File>,
-    record: csv::StringRecord,
-    /// Which CSV column feeds each schema field, in schema field order.
+    backend: Backend,
+    /// Which source column feeds each schema field, in schema field order.
     projection: Vec<usize>,
     /// Decoded type per schema field, in schema field order.
     types: Vec<DataType>,
     nullable: Vec<bool>,
     predicates: Vec<Predicate>,
-    path: PathBuf,
-    /// Rows read from the file, whether or not they passed the predicates.
+    /// What the rows came from, for error messages.
+    origin: String,
+    /// Rows read from the source, whether or not they passed the predicates.
     scanned: u64,
     /// Rows handed to the caller.
     emitted: u64,
     finished: bool,
 }
 
+/// Where the rows come from.
+///
+/// `Generated` exists because `aqpbm-datagen` is in-memory by contract and the
+/// repository has no CSV writer at all — round-tripping a `GeneratedTable`
+/// through a temporary file would add a serialize/parse pair to the hot path
+/// to gain nothing. It also removes string parsing from the measured region,
+/// which matters once the row loop is driven by `aqpbm_core::measure`: there
+/// the whole pass is one timed span, so anything left inside it is billed to
+/// the sketch.
+enum Backend {
+    Csv {
+        reader: csv::Reader<File>,
+        record: csv::StringRecord,
+    },
+    /// Columns in *schema field order*, already projected and typed.
+    Generated {
+        columns: Vec<ColumnData>,
+        cursor: usize,
+        row_num: usize,
+    },
+}
+
 impl std::fmt::Debug for RowSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RowSource")
-            .field("path", &self.path)
+            .field("origin", &self.origin)
             .field("projection", &self.projection)
             .field("predicates", &self.predicates.len())
             .field("scanned", &self.scanned)
@@ -84,9 +109,9 @@ impl RowSource {
         self.emitted
     }
 
-    /// The file these rows come from.
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// What the rows came from — a file path, or the generated table's shape.
+    pub fn origin(&self) -> &str {
+        &self.origin
     }
 }
 
@@ -98,11 +123,13 @@ impl RowSource {
 /// (PromQL) are accepted — the source only carries the leaf's identity, and
 /// which bytes that identity names is the run manifest's business, which is
 /// why the path is a separate argument.
-pub fn open(
-    scan: &QueryExpr,
-    csv_path: &Path,
+/// The parts of a `Fallback` payload a row source needs, once it has been
+/// checked. Shared by both constructors so a `GeneratedTable` cannot slip past
+/// a check the CSV path performs.
+fn scan_parts<'a>(
+    scan: &'a QueryExpr,
     schema: &SummarySchema,
-) -> Result<RowSource, EvalError> {
+) -> Result<(&'a Schema, &'a [Predicate]), EvalError> {
     let (scan_schema, predicates) = match scan {
         QueryExpr::Scan {
             source,
@@ -110,11 +137,11 @@ pub fn open(
             schema: scan_schema,
         } => {
             // Exhaustive rather than ignored: a third source variant must not
-            // reach a CSV reader by default.
+            // reach a row reader by default.
             match source {
                 Source::Table { .. } | Source::TimeSeries { .. } => {}
             }
-            (scan_schema, predicates)
+            (scan_schema, predicates.as_slice())
         }
         other => {
             return Err(EvalError::RowSource(format!(
@@ -131,6 +158,17 @@ pub fn open(
             EvalError::RowSource(format!("Scan.predicates: {}", fault.detail()))
         })?;
     }
+
+    Ok((scan_schema, predicates))
+}
+
+/// Open the row source over a CSV file.
+pub fn open(
+    scan: &QueryExpr,
+    csv_path: &Path,
+    schema: &SummarySchema,
+) -> Result<RowSource, EvalError> {
+    let (scan_schema, predicates) = scan_parts(scan, schema)?;
 
     let file = File::open(csv_path)?;
     let mut reader = csv::ReaderBuilder::new()
@@ -157,8 +195,10 @@ pub fn open(
     }
 
     Ok(RowSource {
-        reader,
-        record: csv::StringRecord::new(),
+        backend: Backend::Csv {
+            reader,
+            record: csv::StringRecord::new(),
+        },
         projection,
         types: scan_schema
             .columns
@@ -170,12 +210,114 @@ pub fn open(
             .iter()
             .map(|column| column.nullable)
             .collect(),
-        predicates: predicates.clone(),
-        path: csv_path.to_path_buf(),
+        predicates: predicates.to_vec(),
+        origin: csv_path.display().to_string(),
         scanned: 0,
         emitted: 0,
         finished: false,
     })
+}
+
+/// Open the row source over a table generated in process from a
+/// `TableDescription`.
+///
+/// The table is consumed: its columns are reordered into schema field order
+/// once, here, so the row loop is an index into typed vectors rather than a
+/// lookup plus a parse.
+pub fn open_generated(
+    scan: &QueryExpr,
+    table: GeneratedTable,
+    schema: &SummarySchema,
+) -> Result<RowSource, EvalError> {
+    let (scan_schema, predicates) = scan_parts(scan, schema)?;
+
+    let row_num = table.row_num as usize;
+    let GeneratedTable {
+        column_title,
+        mut data,
+        ..
+    } = table;
+
+    // Project into schema field order, checking the declared type as we go: a
+    // generated column whose type disagrees with the plan's schema would
+    // otherwise decode into a plausible wrong number.
+    let mut columns = Vec::with_capacity(scan_schema.columns.len());
+    for column in &scan_schema.columns {
+        let index = column_title
+            .iter()
+            .position(|name| *name == column.name)
+            .ok_or_else(|| {
+                EvalError::RowSource(format!(
+                    "the generated table has no column named {:?} (has: {:?})",
+                    column.name, column_title
+                ))
+            })?;
+        let generated = std::mem::replace(&mut data[index], ColumnData::Int64(Vec::new()));
+        check_generated_type(&column.name, &generated, &column.dtype)?;
+        if generated.len() != row_num {
+            return Err(EvalError::RowSource(format!(
+                "generated column {:?} holds {} values, the table declares {row_num} rows",
+                column.name,
+                generated.len()
+            )));
+        }
+        columns.push(generated);
+    }
+
+    Ok(RowSource {
+        backend: Backend::Generated {
+            columns,
+            cursor: 0,
+            row_num,
+        },
+        // Already projected, so the row loop reads field `i` from column `i`.
+        projection: (0..scan_schema.columns.len()).collect(),
+        types: scan_schema
+            .columns
+            .iter()
+            .map(|column| column.dtype.clone())
+            .collect(),
+        nullable: scan_schema
+            .columns
+            .iter()
+            .map(|column| column.nullable)
+            .collect(),
+        predicates: predicates.to_vec(),
+        origin: format!("generated table, {row_num} rows"),
+        scanned: 0,
+        emitted: 0,
+        finished: false,
+    })
+}
+
+/// A generated column's own type must match what the plan's schema declares.
+/// `Timestamp` is the one widening accepted: `aqpbm-datagen` has no timestamp
+/// type, so a monotonic series is declared `i64` there and `Timestamp` here.
+fn check_generated_type(
+    name: &str,
+    column: &ColumnData,
+    declared: &DataType,
+) -> Result<(), EvalError> {
+    let ok = matches!(
+        (column, declared),
+        (ColumnData::Int64(_), DataType::Int64)
+            | (ColumnData::Int64(_), DataType::Timestamp)
+            | (ColumnData::Float64(_), DataType::Float64)
+            | (ColumnData::Unsigned64(_), DataType::Int64)
+            | (ColumnData::String(_), DataType::Utf8)
+    );
+    if ok {
+        return Ok(());
+    }
+    Err(EvalError::RowSource(format!(
+        "generated column {name:?} is {}, but the plan's schema declares {declared:?}",
+        match column {
+            ColumnData::Int64(_) => "i64",
+            ColumnData::Float64(_) => "f64",
+            ColumnData::Unsigned64(_) => "u64",
+            ColumnData::String(_) => "string",
+        }
+    )))
 }
 
 impl Iterator for RowSource {
@@ -186,20 +328,31 @@ impl Iterator for RowSource {
             if self.finished {
                 return None;
             }
-            match self.reader.read_record(&mut self.record) {
-                Ok(false) => {
-                    self.finished = true;
-                    return None;
+            match &mut self.backend {
+                Backend::Csv { reader, record } => match reader.read_record(record) {
+                    Ok(false) => {
+                        self.finished = true;
+                        return None;
+                    }
+                    Err(err) => {
+                        self.finished = true;
+                        return Some(Err(EvalError::RowSource(format!(
+                            "{}: row {}: {err}",
+                            self.origin,
+                            self.scanned + 1
+                        ))));
+                    }
+                    Ok(true) => {}
+                },
+                Backend::Generated {
+                    cursor, row_num, ..
+                } => {
+                    if *cursor >= *row_num {
+                        self.finished = true;
+                        return None;
+                    }
+                    *cursor += 1;
                 }
-                Err(err) => {
-                    self.finished = true;
-                    return Some(Err(EvalError::RowSource(format!(
-                        "{}: row {}: {err}",
-                        self.path.display(),
-                        self.scanned + 1
-                    ))));
-                }
-                Ok(true) => {}
             }
             self.scanned += 1;
 
@@ -228,20 +381,42 @@ impl Iterator for RowSource {
 
 impl RowSource {
     fn decode(&self) -> Result<Row, EvalError> {
-        let mut values = Vec::with_capacity(self.projection.len());
-        for (field, &csv_index) in self.projection.iter().enumerate() {
-            let raw = self.record.get(csv_index).ok_or_else(|| {
-                EvalError::RowSource(format!(
-                    "{}: row {} has {} fields, needs at least {}",
-                    self.path.display(),
-                    self.scanned,
-                    self.record.len(),
-                    csv_index + 1
-                ))
-            })?;
-            values.push(self.decode_one(field, raw)?);
+        match &self.backend {
+            Backend::Csv { record, .. } => {
+                let mut values = Vec::with_capacity(self.projection.len());
+                for (field, &csv_index) in self.projection.iter().enumerate() {
+                    let raw = record.get(csv_index).ok_or_else(|| {
+                        EvalError::RowSource(format!(
+                            "{}: row {} has {} fields, needs at least {}",
+                            self.origin,
+                            self.scanned,
+                            record.len(),
+                            csv_index + 1
+                        ))
+                    })?;
+                    values.push(self.decode_one(field, raw)?);
+                }
+                Ok(Row(values))
+            }
+            // Already typed: the row is a read, not a parse. `cursor` has
+            // already been advanced past this row.
+            Backend::Generated { columns, cursor, .. } => {
+                let index = *cursor - 1;
+                let mut values = Vec::with_capacity(columns.len());
+                for (field, column) in columns.iter().enumerate() {
+                    values.push(match column {
+                        ColumnData::Int64(v) => match self.types[field] {
+                            DataType::Timestamp => Value::Timestamp(v[index]),
+                            _ => Value::Int(v[index]),
+                        },
+                        ColumnData::Unsigned64(v) => Value::Int(v[index] as i64),
+                        ColumnData::Float64(v) => Value::Float(v[index]),
+                        ColumnData::String(v) => Value::Str(v[index].clone()),
+                    });
+                }
+                Ok(Row(values))
+            }
         }
-        Ok(Row(values))
     }
 
     fn decode_one(&self, field: usize, raw: &str) -> Result<Value, EvalError> {
@@ -252,14 +427,14 @@ impl RowSource {
             }
             return Err(EvalError::RowSource(format!(
                 "{}: row {}: empty value in non-nullable {dtype:?} column",
-                self.path.display(),
+                self.origin,
                 self.scanned
             )));
         }
         let parse_failure = |wanted: &str| {
             EvalError::RowSource(format!(
                 "{}: row {}: {raw:?} is not {wanted}",
-                self.path.display(),
+                self.origin,
                 self.scanned
             ))
         };
@@ -293,7 +468,7 @@ impl RowSource {
             DataType::List { .. } | DataType::Struct { .. } | DataType::Map { .. } => {
                 Err(EvalError::RowSource(format!(
                     "{}: column {} has nested type {}, which a CSV row source cannot decode",
-                    self.path.display(),
+                    self.origin,
                     field,
                     data_type_name(dtype)
                 )))
@@ -737,7 +912,7 @@ pub(crate) mod tests {
         }
     }
 
-    struct TempCsv(PathBuf);
+    struct TempCsv(std::path::PathBuf);
 
     impl TempCsv {
         fn new(name: &str, body: &str) -> Self {
@@ -1248,5 +1423,184 @@ pub(crate) mod tests {
             source.next().is_none(),
             "the iterator is done after an error"
         );
+    }
+}
+
+#[cfg(test)]
+mod generated_tests {
+    use super::*;
+    use aqpbm_datagen::table::TableDescription;
+    use asap_types::post_asap::{SummaryFamilyType, SummaryField};
+    use asap_types::pre_asap::schema::{Column, Schema};
+    use asap_types::pre_asap::Source;
+    use std::rc::Rc;
+
+    fn leaf_spec() -> TableDescription {
+        TableDescription::from_path(Path::new("../configs/datagen/planeval_promql_leaf.yaml"))
+            .expect("the checked-in spec loads")
+    }
+
+    /// The PromQL leaf's own shape: `(ts, value)`, open schema.
+    fn promql_leaf_scan() -> QueryExpr {
+        QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "cpu_cores".into(),
+            },
+            predicates: Vec::new(),
+            schema: Schema::with_time_index(
+                vec![
+                    Column::new("ts", DataType::Timestamp, false),
+                    Column::new("value", DataType::Float64, false),
+                ],
+                0,
+                vec![],
+            ),
+        }
+    }
+
+    fn node_schema() -> SummarySchema {
+        SummarySchema {
+            fields: vec![
+                SummaryField {
+                    name: "ts".into(),
+                    dtype: SummaryFamilyType::Plain(DataType::Timestamp),
+                    nullable: false,
+                },
+                SummaryField {
+                    name: "value".into(),
+                    dtype: SummaryFamilyType::Plain(DataType::Float64),
+                    nullable: false,
+                },
+            ],
+            time_index: Some(0),
+        }
+    }
+
+    #[test]
+    fn the_checked_in_spec_loads_validates_and_generates() {
+        let description = leaf_spec();
+        description.validate().expect("spec is valid");
+        let table = description.generate().expect("generates");
+        assert_eq!(table.column_title, vec!["ts", "value"]);
+        assert_eq!(table.row_num, 200_000);
+    }
+
+    #[test]
+    fn a_generated_table_feeds_the_row_source_without_a_csv() {
+        let table = leaf_spec().generate().unwrap();
+        let source =
+            open_generated(&promql_leaf_scan(), table, &node_schema()).expect("opens");
+        let rows: Vec<_> = source.collect::<Result<Vec<_>, _>>().expect("all rows decode");
+        assert_eq!(rows.len(), 200_000);
+        // Typed on arrival: no parsing happened, so these are the generator's
+        // own values, not a round trip through decimal text.
+        assert!(matches!(rows[0].0[0], Value::Timestamp(_)));
+        assert!(matches!(rows[0].0[1], Value::Float(_)));
+    }
+
+    #[test]
+    fn the_timestamp_column_is_monotonic_as_the_rule_promises() {
+        let table = leaf_spec().generate().unwrap();
+        let rows: Vec<_> = open_generated(&promql_leaf_scan(), table, &node_schema())
+            .unwrap()
+            .take(1000)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let ts: Vec<i64> = rows
+            .iter()
+            .map(|row| match row.0[0] {
+                Value::Timestamp(v) => v,
+                ref other => panic!("expected a timestamp, got {other:?}"),
+            })
+            .collect();
+        assert!(ts.windows(2).all(|w| w[1] >= w[0]), "special_rule 1 is monotonic");
+        assert!(ts[0] >= 1_700_000_000_000, "shift is where the series starts");
+    }
+
+    #[test]
+    fn the_same_spec_generates_the_same_rows_every_time() {
+        let first = leaf_spec().generate().unwrap();
+        let second = leaf_spec().generate().unwrap();
+        assert_eq!(first, second, "the per-column seed contract");
+    }
+
+    #[test]
+    fn a_column_whose_type_disagrees_with_the_plan_is_refused_not_coerced() {
+        // The generator makes `value` an f64; claim it is Utf8 in the plan.
+        let mut scan_schema = vec![
+            Column::new("ts", DataType::Timestamp, false),
+            Column::new("value", DataType::Utf8, false),
+        ];
+        let scan = QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "cpu_cores".into(),
+            },
+            predicates: Vec::new(),
+            schema: Schema::with_time_index(std::mem::take(&mut scan_schema), 0, vec![]),
+        };
+        let mut node = node_schema();
+        node.fields[1].dtype = SummaryFamilyType::Plain(DataType::Utf8);
+
+        let err = open_generated(&scan, leaf_spec().generate().unwrap(), &node)
+            .expect_err("a type mismatch is not a coercion");
+        let message = format!("{err}");
+        assert!(message.contains("value"), "{message}");
+        assert!(message.contains("Utf8"), "{message}");
+    }
+
+    #[test]
+    fn a_missing_column_names_what_the_table_actually_has() {
+        let scan = QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "cpu_cores".into(),
+            },
+            predicates: Vec::new(),
+            schema: Schema::with_time_index(
+                vec![
+                    Column::new("ts", DataType::Timestamp, false),
+                    Column::new("latency", DataType::Float64, false),
+                ],
+                0,
+                vec![],
+            ),
+        };
+        let mut node = node_schema();
+        node.fields[1].name = "latency".into();
+
+        let err = open_generated(&scan, leaf_spec().generate().unwrap(), &node)
+            .expect_err("no such column");
+        let message = format!("{err}");
+        assert!(message.contains("latency") && message.contains("value"), "{message}");
+    }
+
+    #[test]
+    fn predicates_still_apply_to_generated_rows() {
+        let scan = QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "cpu_cores".into(),
+            },
+            predicates: vec![Predicate(Rc::new(QueryExpr::Compare {
+                left: Rc::new(QueryExpr::Column(1)),
+                op: CompareOpKind::Gt,
+                right: Rc::new(QueryExpr::Literal(ScalarValue::Float64(500.0))),
+            }))],
+            schema: Schema::with_time_index(
+                vec![
+                    Column::new("ts", DataType::Timestamp, false),
+                    Column::new("value", DataType::Float64, false),
+                ],
+                0,
+                vec![],
+            ),
+        };
+        let mut source = open_generated(&scan, leaf_spec().generate().unwrap(), &node_schema())
+            .expect("opens");
+        let kept = source.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(source.scanned(), 200_000);
+        assert_eq!(source.emitted() as usize, kept.len());
+        assert!(kept.len() < 200_000, "the predicate filtered something");
+        assert!(kept
+            .iter()
+            .all(|row| matches!(row.0[1], Value::Float(v) if v > 500.0)));
     }
 }
