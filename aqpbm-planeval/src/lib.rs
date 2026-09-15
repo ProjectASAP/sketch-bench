@@ -16,4 +16,4 @@ pub mod run;
 pub mod score;
 pub mod types;
 
-pub use types::{Answer, EvalError, GroupKey, ItemKey, PlanId, Refusal, Row, StateKey, Value};
+pub use types::{Answer, EvalError, GroupKey, ItemKey, PlanId, Refusal, Row, Value};

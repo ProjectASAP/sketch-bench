@@ -41,21 +41,6 @@ impl Plan {
     pub fn document(&self) -> PostAsapDagDocument {
         PostAsapDagDocument::new(self.dag.clone())
     }
-
-    /// Edges whose producer id is not smaller than their consumer id.
-    ///
-    /// Non-fatal by construction: a violation means only that the wire
-    /// document is not id-ordered, which it never promised to be. Reported so a
-    /// corpus sweep can tell whether the compiler's incidental ordering still
-    /// holds, and ignored by everything else.
-    pub fn id_order_violations(&self) -> Vec<(PostAsapNodeId, PostAsapNodeId)> {
-        self.dag
-            .edges
-            .iter()
-            .filter(|edge| edge.producer.0 >= edge.consumer.0)
-            .map(|edge| (edge.producer, edge.consumer))
-            .collect()
-    }
 }
 
 /// PromQL -> pre-ASAP -> post-ASAP -> `ExecutableDag`, all in memory.
@@ -112,17 +97,6 @@ pub fn plan_promql_workload(
     Ok(planned)
 }
 
-/// Decode a previously dumped document. Runs `validate()`.
-///
-/// Decoding goes through `asap-types`' own serde implementation; the three
-/// redundant copies of every schema in the document are exactly what
-/// `validate()` cross-checks, so nothing here reads one and skips the others.
-pub fn from_json(bytes: &[u8]) -> Result<Plan, EvalError> {
-    let document: PostAsapDagDocument = serde_json::from_slice(bytes)
-        .map_err(|err| EvalError::Validation(format!("decode post-ASAP DAG document: {err}")))?;
-    from_dag(document.dag)
-}
-
 /// Canonical JSON: 2-space pretty, LF, no trailing newline.
 ///
 /// This is the exact byte string the `PlanId` hashes, so a fixture written from
@@ -176,7 +150,10 @@ fn topological_order(dag: &ExecutableDag) -> Result<Vec<PostAsapNodeId>, EvalErr
         // are counted once each: the consumer is ready only after every
         // incoming edge has been released.
         *indegree.entry(edge.consumer).or_insert(0) += 1;
-        consumers.entry(edge.producer).or_default().push(edge.consumer);
+        consumers
+            .entry(edge.producer)
+            .or_default()
+            .push(edge.consumer);
     }
 
     let mut ready: BinaryHeap<Reverse<u32>> = indegree
@@ -212,6 +189,13 @@ fn topological_order(dag: &ExecutableDag) -> Result<Vec<PostAsapNodeId>, EvalErr
 
 #[cfg(test)]
 mod tests {
+    fn from_json(bytes: &[u8]) -> Result<Plan, EvalError> {
+        let document: PostAsapDagDocument = serde_json::from_slice(bytes).map_err(|err| {
+            EvalError::Validation(format!("decode post-ASAP DAG document: {err}"))
+        })?;
+        from_dag(document.dag)
+    }
+
     use super::*;
     use asap_types::post_asap::ExecutableOperator;
 
@@ -250,7 +234,6 @@ mod tests {
             ]
         );
         assert_eq!(plan.dag.root, PostAsapNodeId(2));
-        assert!(plan.id_order_violations().is_empty());
     }
 
     #[test]
@@ -365,12 +348,5 @@ mod tests {
             vec![PostAsapNodeId(2), PostAsapNodeId(1), PostAsapNodeId(0)],
             "order must follow the edges, not the ids"
         );
-
-        let reordered = Plan {
-            id: plan.id,
-            dag,
-            order,
-        };
-        assert_eq!(reordered.id_order_violations().len(), 2);
     }
 }

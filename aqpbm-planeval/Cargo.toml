@@ -22,9 +22,9 @@ asap-frontend-promql = { path = "../../ASAPPlanner/crates/frontend-promql" }
 
 # 0.3.0, not the workspace pin (0.2.2): cdf_cached/quantile_cached do not
 # exist before 0.3.0 and a 101-point probe grid re-sorts on every call there.
-asap_sketchlib = { path = "../../asap_sketchlib", features = ["experimental"] }
+asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", rev = "da3635a80f8f854d47b772d49d5a9e5fb6927d8e", features = ["experimental"] }
 
-aqpbm-core.workspace = true
+aqpbm-core = { workspace = true, features = ["hdrhist"] }
 aqpbm-datagen.workspace = true
 csv.workspace = true
 serde.workspace = true

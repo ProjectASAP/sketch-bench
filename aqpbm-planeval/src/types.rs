@@ -3,13 +3,6 @@ use asap_types::post_asap::{PostAsapNodeId, SketchQuery, SummaryFamilyType};
 pub type PlanId = [u8; 32];
 pub type GroupKey = String;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct StateKey {
-    pub plan: PlanId,
-    pub node: PostAsapNodeId,
-    pub group: GroupKey,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -33,10 +26,16 @@ impl Value {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row(pub Vec<Value>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// An item a keyed summary counts occurrences of. `Float` is here because
+/// `SummaryInputExpr::Column(SampleValue)` is a keyed input the planner really
+/// emits — `count(cpu_cores)` — over a `float64` column, and `DataInput::F64`
+/// is a key `asap_sketchlib` hashes natively (`common/hash.rs:141`). Carrying
+/// it means `Eq`/`Hash` cannot be derived; nothing keys a map by an `ItemKey`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ItemKey {
     Str(String),
     Int(i64),
+    Float(f64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,31 +49,78 @@ pub enum Answer {
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Refusal {
     #[error("node {node:?}: Fallback payload is a program, not a row source: {variant}")]
-    FallbackIsAProgram { node: PostAsapNodeId, variant: String },
+    FallbackIsAProgram {
+        node: PostAsapNodeId,
+        variant: String,
+    },
     #[error("node {node:?}: operator {operator} is not implemented")]
-    UnsupportedOperator { node: PostAsapNodeId, operator: String },
+    UnsupportedOperator {
+        node: PostAsapNodeId,
+        operator: String,
+    },
     #[error("node {node:?}: no inverse operation exists for {operator}")]
-    NoInverseOperation { node: PostAsapNodeId, operator: String },
-    #[error("node {node:?}: summary family {family:?} has no binding")]
-    UnboundFamily { node: PostAsapNodeId, family: Box<SummaryFamilyType> },
+    NoInverseOperation {
+        node: PostAsapNodeId,
+        operator: String,
+    },
+    #[error("node {node:?}: summary family {family:?} has no binding: {reason}")]
+    UnboundFamily {
+        node: PostAsapNodeId,
+        family: Box<SummaryFamilyType>,
+        reason: String,
+    },
     #[error("node {node:?}: parameter out of bounds: {detail}")]
-    ParameterOutOfBounds { node: PostAsapNodeId, detail: String },
+    ParameterOutOfBounds {
+        node: PostAsapNodeId,
+        detail: String,
+    },
     #[error("node {node:?}: SketchKind is internally inconsistent: {detail}")]
-    InconsistentSketchKind { node: PostAsapNodeId, detail: String },
+    InconsistentSketchKind {
+        node: PostAsapNodeId,
+        detail: String,
+    },
     #[error("node {node:?}: readout {query:?} is not implemented")]
-    UnsupportedReadout { node: PostAsapNodeId, query: Box<SketchQuery> },
+    UnsupportedReadout {
+        node: PostAsapNodeId,
+        query: Box<SketchQuery>,
+    },
+    #[error(
+        "node {node:?}: summary family {family:?} does not answer readout {query:?}; the exact \
+         arm would score a different question"
+    )]
+    FamilyDoesNotAnswerReadout {
+        node: PostAsapNodeId,
+        family: Box<SummaryFamilyType>,
+        query: Box<SketchQuery>,
+    },
     #[error("node {node:?}: cannot resolve column {column}: {detail}")]
-    UnresolvableColumn { node: PostAsapNodeId, column: String, detail: String },
+    UnresolvableColumn {
+        node: PostAsapNodeId,
+        column: String,
+        detail: String,
+    },
     #[error("node {node:?}: unsupported grouping: {detail}")]
-    UnsupportedGrouping { node: PostAsapNodeId, detail: String },
+    UnsupportedGrouping {
+        node: PostAsapNodeId,
+        detail: String,
+    },
     #[error("node {node:?}: unsupported update shape: {detail}")]
-    UnsupportedUpdate { node: PostAsapNodeId, detail: String },
+    UnsupportedUpdate {
+        node: PostAsapNodeId,
+        detail: String,
+    },
     #[error("node {node:?}: unmet window obligation on edge from {producer:?}")]
-    UnmetWindowObligation { node: PostAsapNodeId, producer: PostAsapNodeId },
+    UnmetWindowObligation {
+        node: PostAsapNodeId,
+        producer: PostAsapNodeId,
+    },
     #[error("node {node:?}: extension escape hatch {name} has no registry entry")]
     UnregisteredExtension { node: PostAsapNodeId, name: String },
     #[error("node {node:?}: unsupported value operation: {detail}")]
-    UnsupportedValueOperation { node: PostAsapNodeId, detail: String },
+    UnsupportedValueOperation {
+        node: PostAsapNodeId,
+        detail: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

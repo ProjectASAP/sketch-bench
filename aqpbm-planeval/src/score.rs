@@ -25,13 +25,15 @@
 //! coefficients from the observed `(k, bound)` pair and records them beside the
 //! literal, so a future run can detect the literal lying.
 
-
 use asap_types::post_asap::guarantee::{ErrorMetric, GuaranteeSource, ResultGuarantee};
 use asap_types::post_asap::SketchQuery;
 use asap_types::pre_asap::ColumnRef;
 use serde::{Deserialize, Serialize};
 
-use crate::types::EvalError;
+use std::collections::BTreeMap;
+
+use crate::run::Readout;
+use crate::types::{Answer, EvalError};
 
 /// The coefficient `asap-aware-mapping` used for the KLL empirical 99th
 /// percentile fit when this module was written. Copied, not imported: the
@@ -58,7 +60,7 @@ const FIT_AGREEMENT_TOLERANCE: f64 = 1e-9;
 pub struct GuaranteeCheck {
     /// The quantile this readout asked for. `f64::NAN` for readouts that are
     /// not quantile queries.
-    #[serde(with = "nan_null")]
+    #[serde(with = "json_f64")]
     pub q: f64,
     /// [`ResultGuarantee::metric`] in its serialized spelling (`"rank"`,
     /// `"relative_value"`, …). A string because `ErrorMetric` is
@@ -74,15 +76,23 @@ pub struct GuaranteeCheck {
     /// (seed, probe) pair.
     pub seeds: usize,
     /// Fraction of observations whose error exceeded `claimed_bound`.
-    /// `NaN` — serialized as `null` — when there is no bound to exceed or no
-    /// observation to test, because `0.0` there would read as "nothing was
-    /// violated" when in fact nothing was checked.
-    #[serde(with = "nan_null")]
+    /// `NaN` — serialized as `null` — when there is no bound to exceed, no
+    /// observation to test, or an observation whose error is itself `NaN`,
+    /// because `0.0` there would read as "nothing was violated" when in fact
+    /// nothing was checked.
+    #[serde(with = "json_f64")]
     pub observed_violation_rate: f64,
-    #[serde(with = "nan_null")]
-    pub mean_rank_err: f64,
-    #[serde(with = "nan_null")]
-    pub max_rank_err: f64,
+    #[serde(with = "json_f64")]
+    pub mean_error: f64,
+    #[serde(with = "json_f64")]
+    pub max_error: f64,
+    pub unevaluatable: Option<UnevaluatableReason>,
+    /// How many of the `seeds` observations carried a `NaN` error — an error
+    /// no arithmetic produced, as distinct from a large one or an infinite
+    /// one. Any such observation blocks the three numbers above rather than
+    /// being folded in as a clean draw.
+    #[serde(default)]
+    pub uncomputed_errors: usize,
     /// [`GuaranteeSource::SketchReadout::contract`], verbatim.
     pub contract: Option<String>,
     /// The coefficients implied by this guarantee's own `(k, bound)` pair.
@@ -125,10 +135,9 @@ impl ImpliedKllFit {
         let coefficient_at_reference_exponent = claimed_bound * kf.powf(REFERENCE_KLL_EXPONENT_99);
         let exponent_at_reference_coefficient =
             (REFERENCE_KLL_COEFFICIENT_99 / claimed_bound).ln() / kf.ln();
-        let agrees_with_reference = (coefficient_at_reference_exponent
-            - REFERENCE_KLL_COEFFICIENT_99)
-            .abs()
-            <= FIT_AGREEMENT_TOLERANCE * REFERENCE_KLL_COEFFICIENT_99;
+        let agrees_with_reference =
+            (coefficient_at_reference_exponent - REFERENCE_KLL_COEFFICIENT_99).abs()
+                <= FIT_AGREEMENT_TOLERANCE * REFERENCE_KLL_COEFFICIENT_99;
         Some(Self {
             k,
             claimed_bound,
@@ -141,13 +150,234 @@ impl ImpliedKllFit {
     }
 }
 
+pub const PLANEVAL_GUARANTEE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadoutGuarantee {
+    pub schema_version: u32,
+    pub node: u32,
+    pub group: String,
+    pub query: String,
+    pub check: GuaranteeCheck,
+}
+
+#[derive(Debug, Default)]
+pub struct GuaranteeObservations {
+    by_readout: BTreeMap<(u32, String, String), ObservedReadout>,
+}
+
+#[derive(Debug)]
+struct ObservedReadout {
+    q: f64,
+    guarantee: ResultGuarantee,
+    pairs: Vec<(f64, f64)>,
+}
+
+impl GuaranteeObservations {
+    pub fn observe(&mut self, readout: &Readout) {
+        let Some(guarantee) = readout.guarantee.as_ref() else {
+            return;
+        };
+        let query = format!("{:?}", readout.query);
+        let entry = self
+            .by_readout
+            .entry((readout.node.0, readout.group.clone(), query))
+            .or_insert_with(|| ObservedReadout {
+                q: match readout.query {
+                    SketchQuery::Quantile { q } => q,
+                    _ => f64::NAN,
+                },
+                guarantee: guarantee.clone(),
+                pairs: Vec::new(),
+            });
+        let Answer::Scalar(estimate) = &readout.approximate else {
+            return;
+        };
+        match &readout.observed_error {
+            ObservedError::Measured { error, .. } => entry.pairs.push((*estimate, *error)),
+            // Carried into the population as the `NaN` it is, rather than
+            // dropped: an observation silently missing from the denominator
+            // would let the survivors publish a clean rate over a population
+            // that was never fully checked.
+            ObservedError::Unevaluatable {
+                reason: UnevaluatableReason::ErrorIsNotANumber,
+                ..
+            } => entry.pairs.push((*estimate, f64::NAN)),
+            _ => {}
+        }
+    }
+
+    pub fn checks(&self) -> Vec<ReadoutGuarantee> {
+        self.by_readout
+            .iter()
+            .map(|((node, group, query), observed)| ReadoutGuarantee {
+                schema_version: PLANEVAL_GUARANTEE_SCHEMA_VERSION,
+                node: *node,
+                group: group.clone(),
+                query: query.clone(),
+                check: check_guarantee(&observed.guarantee, observed.q, &observed.pairs),
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnevaluatableReason {
+    NoQuantileInTheQuery,
+    TrueDistinctCount,
+    StreamL1Norm,
+    StreamL2Norm,
+    TrueTopKSet,
+    UnrecognizedMetric,
+    /// The metric's own arithmetic produced `NaN` — an estimate or a truth
+    /// that is not a number. Distinct from `+inf`, which is the real answer
+    /// "infinitely outside the bound" and stays a measurement.
+    ErrorIsNotANumber,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "measurement", rename_all = "snake_case")]
+pub enum ObservedError {
+    NotVerified,
+    NoGuarantee,
+    Measured {
+        metric: String,
+        #[serde(with = "json_f64")]
+        error: f64,
+    },
+    Unevaluatable {
+        metric: String,
+        reason: UnevaluatableReason,
+    },
+}
+
+impl ObservedError {
+    pub fn measured(&self) -> Option<f64> {
+        match self {
+            ObservedError::Measured { error, .. } => Some(*error),
+            _ => None,
+        }
+    }
+}
+
+pub fn error_under_metric(
+    metric: &ErrorMetric,
+    values: &[f64],
+    query: &SketchQuery,
+    estimate: f64,
+    truth: f64,
+) -> Result<f64, UnevaluatableReason> {
+    match metric {
+        ErrorMetric::Rank if !is_sorted_by_total_cmp(values) => {
+            let mut sorted = values.to_vec();
+            sorted.sort_by(f64::total_cmp);
+            error_under_metric_sorted(metric, &sorted, query, estimate, truth)
+        }
+        _ => error_under_metric_sorted(metric, values, query, estimate, truth),
+    }
+}
+
+fn is_sorted_by_total_cmp(values: &[f64]) -> bool {
+    values
+        .windows(2)
+        .all(|pair| pair[0].total_cmp(&pair[1]).is_le())
+}
+
+fn error_under_metric_sorted(
+    metric: &ErrorMetric,
+    sorted: &[f64],
+    query: &SketchQuery,
+    estimate: f64,
+    truth: f64,
+) -> Result<f64, UnevaluatableReason> {
+    let q = match query {
+        SketchQuery::Quantile { q } => *q,
+        _ => f64::NAN,
+    };
+    if let Some(reason) = unevaluatable_reason(metric, q) {
+        return Err(reason);
+    }
+    if !estimate.is_finite() {
+        return Err(UnevaluatableReason::ErrorIsNotANumber);
+    }
+    match metric {
+        ErrorMetric::Rank => Ok(rank_error_sorted(sorted, estimate, q)),
+        ErrorMetric::AbsoluteValue => Ok((estimate - truth).abs()),
+        ErrorMetric::RelativeValue => Ok(relative_error(estimate, truth)),
+        _ => Err(UnevaluatableReason::UnrecognizedMetric),
+    }
+}
+
+fn unevaluatable_reason(metric: &ErrorMetric, q: f64) -> Option<UnevaluatableReason> {
+    match metric {
+        ErrorMetric::Rank => q
+            .is_nan()
+            .then_some(UnevaluatableReason::NoQuantileInTheQuery),
+        ErrorMetric::AbsoluteValue | ErrorMetric::RelativeValue => None,
+        ErrorMetric::Cardinality => Some(UnevaluatableReason::TrueDistinctCount),
+        ErrorMetric::Frequency => Some(UnevaluatableReason::StreamL1Norm),
+        ErrorMetric::L2Frequency => Some(UnevaluatableReason::StreamL2Norm),
+        ErrorMetric::TopKMembership => Some(UnevaluatableReason::TrueTopKSet),
+        _ => Some(UnevaluatableReason::UnrecognizedMetric),
+    }
+}
+
+fn relative_error(estimate: f64, truth: f64) -> f64 {
+    let gap = (estimate - truth).abs();
+    if truth == 0.0 {
+        return if gap == 0.0 { 0.0 } else { f64::INFINITY };
+    }
+    gap / truth.abs()
+}
+
+pub fn observed_error(
+    guarantee: Option<&ResultGuarantee>,
+    values: &[f64],
+    query: &SketchQuery,
+    approximate: &Answer,
+    truth: f64,
+) -> ObservedError {
+    scored(guarantee, approximate, |metric, estimate| {
+        error_under_metric(metric, values, query, estimate, truth)
+    })
+}
+
+fn scored(
+    guarantee: Option<&ResultGuarantee>,
+    approximate: &Answer,
+    error: impl FnOnce(&ErrorMetric, f64) -> Result<f64, UnevaluatableReason>,
+) -> ObservedError {
+    let Some(guarantee) = guarantee else {
+        return ObservedError::NoGuarantee;
+    };
+    let metric = metric_name(&guarantee.metric);
+    let Answer::Scalar(estimate) = approximate else {
+        return ObservedError::Unevaluatable {
+            metric,
+            reason: UnevaluatableReason::TrueTopKSet,
+        };
+    };
+    match error(&guarantee.metric, *estimate) {
+        // A `NaN` error is not a small error; it is the absence of one, and
+        // `Measured` is this crate's word for "a number was computed".
+        Ok(error) if error.is_nan() => ObservedError::Unevaluatable {
+            metric,
+            reason: UnevaluatableReason::ErrorIsNotANumber,
+        },
+        Ok(error) => ObservedError::Measured { metric, error },
+        Err(reason) => ObservedError::Unevaluatable { metric, reason },
+    }
+}
+
 // ── rank error ──────────────────────────────────────────────────────────────
 
 /// Exact rank error of `estimate` against the true distribution of `values` at
 /// quantile `q`, in units of `n`.
 ///
-/// Numerically identical to `aqpbm_core::accuracy::quantile`'s `rank_err`,
-/// which `RankErrorGT` scores every existing `MergedRecord` with. That
+/// Numerically identical, for a finite estimate, to
+/// `aqpbm_core::accuracy::quantile`'s `rank_err`, which `RankErrorGT` scores
+/// every existing `MergedRecord` with. That
 /// function is `pub(crate)` and its probe grid is a hard-coded 101 points, so
 /// it cannot be asked for one specific `q` from outside the crate — hence the
 /// reimplementation, and hence `rank_error_agrees_with_rank_error_gt`, which
@@ -164,10 +394,13 @@ pub fn rank_error(values: &[f64], estimate: f64, q: f64) -> f64 {
 
 /// [`rank_error`] over an already-sorted slice — the form to use when scoring a
 /// whole probe grid, so the sort is paid once instead of once per probe.
-pub fn rank_error_sorted(sorted: &[f64], estimate: f64, q: f64) -> f64 {
+pub(crate) fn rank_error_sorted(sorted: &[f64], estimate: f64, q: f64) -> f64 {
     let nf = sorted.len() as f64;
     if nf == 0.0 {
         return 0.0;
+    }
+    if !estimate.is_finite() {
+        return f64::NAN;
     }
     let target = q * nf;
     let lower = lower_bound(sorted, estimate) as f64;
@@ -218,15 +451,20 @@ fn upper_bound(sorted: &[f64], x: f64) -> usize {
 
 // ── exact answers ───────────────────────────────────────────────────────────
 
+pub fn needs_a_sorted_column(query: &SketchQuery) -> bool {
+    matches!(query, SketchQuery::Quantile { .. })
+}
+
 /// Exact answer for a readout, computed from the same rows the sketch
 /// consumed — the `exact` arm of PLAN.md §1.10.3.
 ///
-/// `values` is the column the node's `SummaryUpdate.weight` resolved to, in
-/// stream order. The frequency-flavoured queries are taken over the
-/// *value-frequency distribution* of that column (a value's frequency is how
-/// many times it occurred), matching `SketchQuery`'s own definitions, not over
-/// the numeric values themselves.
-pub fn exact_answer(values: &[f64], query: &SketchQuery) -> Result<f64, EvalError> {
+/// `sorted` is the column the node's `SummaryUpdate.weight` resolved to, sorted
+/// by the caller whenever [`needs_a_sorted_column`] says so. The
+/// frequency-flavoured queries are taken over the *value-frequency
+/// distribution* of that column (a value's frequency is how many times it
+/// occurred), matching `SketchQuery`'s own definitions, not over the numeric
+/// values themselves.
+pub fn exact_answer_sorted(sorted: &[f64], query: &SketchQuery) -> Result<f64, EvalError> {
     match query {
         SketchQuery::Quantile { q } => {
             if !(0.0..=1.0).contains(q) {
@@ -234,14 +472,12 @@ pub fn exact_answer(values: &[f64], query: &SketchQuery) -> Result<f64, EvalErro
                     "quantile q = {q} is outside [0, 1]"
                 )));
             }
-            if values.is_empty() {
+            if sorted.is_empty() {
                 return Err(EvalError::Validation(
                     "exact quantile of an empty column is undefined".into(),
                 ));
             }
-            let mut sorted = values.to_vec();
-            sorted.sort_by(f64::total_cmp);
-            Ok(exact_quantile_sorted(&sorted, *q))
+            Ok(exact_quantile_sorted(sorted, *q))
         }
         // The bare bucket total, which is how an exact accumulator's state is
         // read out: `SampleValue` with no item is the sum of the weights the
@@ -249,11 +485,11 @@ pub fn exact_answer(values: &[f64], query: &SketchQuery) -> Result<f64, EvalErro
         SketchQuery::PointCount {
             key: ColumnRef::SampleValue,
             value: None,
-        } => Ok(values.iter().sum()),
+        } => Ok(sorted.iter().sum()),
         SketchQuery::PointCount {
             key: ColumnRef::Wildcard,
             value: None,
-        } => Ok(values.len() as f64),
+        } => Ok(sorted.len() as f64),
         // Everything else needs either item keys the weight column does not
         // carry, or a family v0 does not bind. Admission refuses these, so
         // reaching here is a seam bug rather than a user error.
@@ -275,10 +511,10 @@ fn exact_quantile_sorted(sorted: &[f64], q: f64) -> f64 {
 
 /// Check one guarantee against a population of observations.
 ///
-/// `observations` is one `(estimate, rank_err)` pair per (seed, probe): the
-/// whole point is that a single pair cannot check a bound carrying δ≈0.01.
-/// The estimate is carried for the caller's provenance; the rate is computed
-/// from the errors.
+/// `observations` is one `(estimate, error)` pair per (seed, probe), each error
+/// measured under `guarantee.metric`: the whole point is that a single pair
+/// cannot check a bound carrying δ≈0.01. The estimate is carried for the
+/// caller's provenance; the rate is computed from the errors.
 pub fn check_guarantee(
     guarantee: &ResultGuarantee,
     q: f64,
@@ -290,7 +526,15 @@ pub fn check_guarantee(
     let mut sum_err = 0.0_f64;
     let mut max_err = f64::NEG_INFINITY;
     let mut violations = 0usize;
+    let mut uncomputed_errors = 0usize;
     for (_estimate, err) in observations {
+        // `NaN > bound` is `false`, so an unguarded comparison would file an
+        // error that does not exist as a draw that stayed inside the bound.
+        // `+inf` is not that case: it is a real error, and it is a violation.
+        if err.is_nan() {
+            uncomputed_errors += 1;
+            continue;
+        }
         sum_err += *err;
         if *err > max_err {
             max_err = *err;
@@ -303,16 +547,18 @@ pub fn check_guarantee(
     }
 
     let n = observations.len();
-    let (mean_rank_err, max_rank_err) = if n == 0 {
+    let (mean_error, max_error) = if n == 0 || uncomputed_errors > 0 {
         (f64::NAN, f64::NAN)
     } else {
         (sum_err / n as f64, max_err)
     };
-    // No bound and no observations are two different ways of having checked
-    // nothing, and both have to stay distinguishable from "checked, zero
-    // violations" — which is why neither produces 0.0.
-    let observed_violation_rate = match (claimed_bound, n) {
-        (Some(_), 1..) => violations as f64 / n as f64,
+    let unevaluatable = unevaluatable_reason(&guarantee.metric, q);
+    // No bound, no observations, a metric the exact arm cannot compute, and an
+    // observation whose error is itself NaN are four different ways of having
+    // checked nothing, and all four have to stay distinguishable from
+    // "checked, zero violations" — which is why none of them produces 0.0.
+    let observed_violation_rate = match (claimed_bound, n, unevaluatable, uncomputed_errors) {
+        (Some(_), 1.., None, 0) => violations as f64 / n as f64,
         _ => f64::NAN,
     };
 
@@ -335,8 +581,10 @@ pub fn check_guarantee(
         failure_probability,
         seeds: n,
         observed_violation_rate,
-        mean_rank_err,
-        max_rank_err,
+        mean_error,
+        max_error,
+        unevaluatable,
+        uncomputed_errors,
         contract,
         implied_fit,
     }
@@ -370,21 +618,52 @@ fn metric_name(metric: &ErrorMetric) -> String {
         .unwrap_or_else(|| format!("{metric:?}"))
 }
 
-/// `NaN` ⇄ `null`. A rate that was never computed is absent from the JSON, not
-/// zero, and it survives a round trip as the same `NaN` it went in as.
-mod nan_null {
+/// An `f64` through JSON, which has no spelling for a non-finite number.
+///
+/// `NaN` ⇄ `null`: a rate that was never computed is absent from the JSON, not
+/// zero, and it survives a round trip as the same `NaN` it went in as. The
+/// infinities ⇄ `"inf"` / `"-inf"`, because an infinite error is a computed
+/// answer — "infinitely outside the bound" — and writing it as `null` would
+/// file the one result that most needs reading as a result that does not
+/// exist.
+pub(crate) mod json_f64 {
+    use serde::de::{Error, Unexpected};
     use serde::{Deserialize, Deserializer, Serializer};
+
+    const POSITIVE_INFINITY: &str = "inf";
+    const NEGATIVE_INFINITY: &str = "-inf";
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Encoded {
+        Number(f64),
+        Marker(String),
+        NotComputed,
+    }
 
     pub fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
         if value.is_finite() {
             serializer.serialize_f64(*value)
+        } else if *value == f64::INFINITY {
+            serializer.serialize_str(POSITIVE_INFINITY)
+        } else if *value == f64::NEG_INFINITY {
+            serializer.serialize_str(NEGATIVE_INFINITY)
         } else {
             serializer.serialize_none()
         }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-        Ok(Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN))
+        match Encoded::deserialize(deserializer)? {
+            Encoded::Number(value) => Ok(value),
+            Encoded::Marker(marker) if marker == POSITIVE_INFINITY => Ok(f64::INFINITY),
+            Encoded::Marker(marker) if marker == NEGATIVE_INFINITY => Ok(f64::NEG_INFINITY),
+            Encoded::Marker(marker) => Err(D::Error::invalid_value(
+                Unexpected::Str(&marker),
+                &"a number, null, \"inf\" or \"-inf\"",
+            )),
+            Encoded::NotComputed => Ok(f64::NAN),
+        }
     }
 }
 
@@ -426,6 +705,70 @@ mod tests {
                 query: "Quantile { q: 0.5 }".into(),
             }],
         }
+    }
+
+    fn observed_readout(rank_error: Option<f64>, guarantee: Option<ResultGuarantee>) -> Readout {
+        let observed_error = match rank_error {
+            Some(error) => ObservedError::Measured {
+                metric: "rank".to_string(),
+                error,
+            },
+            None => ObservedError::NotVerified,
+        };
+        Readout {
+            node: asap_types::post_asap::PostAsapNodeId(2),
+            producer: asap_types::post_asap::PostAsapNodeId(1),
+            group: String::new(),
+            query: SketchQuery::Quantile { q: 0.5 },
+            approximate: Answer::Scalar(12.0),
+            exact: Some(12.0),
+            observed_error,
+            guarantee,
+            observations: 200_000,
+        }
+    }
+
+    #[test]
+    fn observations_accumulate_across_seeds_into_one_check() {
+        let mut observations = GuaranteeObservations::default();
+        for err in [0.001, 0.002, 0.02, 0.003] {
+            observations.observe(&observed_readout(Some(err), Some(planner_kll_guarantee())));
+        }
+
+        let checks = observations.checks();
+        assert_eq!(checks.len(), 1, "one readout identity, one check");
+        let check = &checks[0].check;
+        assert_eq!(check.seeds, 4);
+        assert_eq!(check.observed_violation_rate, 0.25);
+        assert_eq!(check.max_error, 0.02);
+        assert!(
+            check
+                .implied_fit
+                .as_ref()
+                .expect("Kll fit")
+                .agrees_with_reference
+        );
+    }
+
+    #[test]
+    fn a_readout_without_a_guarantee_produces_no_check() {
+        let mut observations = GuaranteeObservations::default();
+        observations.observe(&observed_readout(Some(0.001), None));
+        assert!(observations.checks().is_empty());
+    }
+
+    #[test]
+    fn an_unverified_readout_is_counted_as_unchecked_not_as_zero_violations() {
+        let mut observations = GuaranteeObservations::default();
+        for _ in 0..3 {
+            observations.observe(&observed_readout(None, Some(planner_kll_guarantee())));
+        }
+
+        let checks = observations.checks();
+        let check = &checks[0].check;
+        assert_eq!(check.seeds, 0);
+        assert!(check.observed_violation_rate.is_nan());
+        assert!(serde_json::to_value(check).unwrap()["observed_violation_rate"].is_null());
     }
 
     #[test]
@@ -509,7 +852,7 @@ mod tests {
         let values = uniform_0_10000();
         for i in 0..=100 {
             let q = i as f64 / 100.0;
-            let answer = exact_answer(&values, &SketchQuery::Quantile { q }).unwrap();
+            let answer = exact_answer_sorted(&values, &SketchQuery::Quantile { q }).unwrap();
             assert_eq!(
                 rank_error(&values, answer, q),
                 0.0,
@@ -523,11 +866,11 @@ mod tests {
         let values: Vec<f64> = (1..=100).map(|i| i as f64).collect();
 
         // A KLL readout.
-        let median = exact_answer(&values, &SketchQuery::Quantile { q: 0.5 }).unwrap();
+        let median = exact_answer_sorted(&values, &SketchQuery::Quantile { q: 0.5 }).unwrap();
         assert_eq!(median, 51.0, "value at rank floor(0.5 * 100)");
 
         // An exact accumulator read out as a bucket total.
-        let total = exact_answer(
+        let total = exact_answer_sorted(
             &values,
             &SketchQuery::PointCount {
                 key: ColumnRef::SampleValue,
@@ -545,19 +888,19 @@ mod tests {
             SketchQuery::TopK { k: 5 },
         ] {
             assert!(
-                exact_answer(&values, &unreachable).is_err(),
+                exact_answer_sorted(&values, &unreachable).is_err(),
                 "{unreachable:?} must not produce a number"
             );
         }
     }
 
-        #[test]
+    #[test]
     fn exact_answer_refuses_what_it_cannot_compute() {
         let values = vec![1.0, 2.0];
-        assert!(exact_answer(&values, &SketchQuery::TopK { k: 3 }).is_err());
-        assert!(exact_answer(&values, &SketchQuery::Quantile { q: 1.5 }).is_err());
-        assert!(exact_answer(&[], &SketchQuery::Quantile { q: 0.5 }).is_err());
-        assert!(exact_answer(
+        assert!(exact_answer_sorted(&values, &SketchQuery::TopK { k: 3 }).is_err());
+        assert!(exact_answer_sorted(&values, &SketchQuery::Quantile { q: 1.5 }).is_err());
+        assert!(exact_answer_sorted(&[], &SketchQuery::Quantile { q: 0.5 }).is_err());
+        assert!(exact_answer_sorted(
             &values,
             &SketchQuery::PointCount {
                 key: ColumnRef::Named("item".into()),
@@ -592,7 +935,7 @@ mod tests {
         assert_ne!(check.failure_probability, Some(0.0));
         // Nothing was checked, so the violation rate is not 0.0 either.
         assert!(check.observed_violation_rate.is_nan());
-        assert_eq!(check.mean_rank_err, 0.7);
+        assert_eq!(check.mean_error, 0.7);
         assert_eq!(check.contract, None);
         assert!(check.implied_fit.is_none());
 
@@ -628,7 +971,7 @@ mod tests {
         assert_eq!(check.seeds, 100);
         assert_eq!(check.observed_violation_rate, 0.03);
         assert_eq!(check.failure_probability, Some(0.01));
-        assert_eq!(check.max_rank_err, bound * 3.0);
+        assert_eq!(check.max_error, bound * 3.0);
         assert_eq!(check.metric, "rank");
     }
 
@@ -637,8 +980,8 @@ mod tests {
         let check = check_guarantee(&planner_kll_guarantee(), 0.5, &[]);
         assert_eq!(check.seeds, 0);
         assert!(check.observed_violation_rate.is_nan());
-        assert!(check.mean_rank_err.is_nan());
-        assert!(check.max_rank_err.is_nan());
+        assert!(check.mean_error.is_nan());
+        assert!(check.max_error.is_nan());
         // The bound itself is still known — it is the sample that is missing.
         assert_eq!(check.claimed_bound, Some(0.009_966_065_608_321_138));
     }
@@ -721,5 +1064,449 @@ mod tests {
             back.implied_fit.map(|fit| fit.k),
             check.implied_fit.map(|fit| fit.k)
         );
+    }
+
+    fn planner_ddsketch_guarantee(alpha: f64) -> ResultGuarantee {
+        ResultGuarantee {
+            metric: ErrorMetric::RelativeValue,
+            bound: BoundExpr::Constant { value: alpha },
+            failure_probability: ProbabilityExpr::Zero,
+            provenance: vec![GuaranteeSource::SketchReadout {
+                algorithm: "DDSketch".into(),
+                contract: "ddsketch_relative_error_alpha_v1".into(),
+                params: serde_json::json!({ "DDSketch": { "alpha": alpha } }),
+                query: "Quantile { q: 0.5 }".into(),
+            }],
+        }
+    }
+
+    fn guarantee_with_metric(metric: ErrorMetric, bound: f64) -> ResultGuarantee {
+        ResultGuarantee {
+            metric,
+            bound: BoundExpr::Constant { value: bound },
+            failure_probability: ProbabilityExpr::Constant { value: 0.01 },
+            provenance: vec![],
+        }
+    }
+
+    #[test]
+    fn a_rank_error_is_the_same_whether_or_not_the_caller_sorted_the_column() {
+        let sorted = uniform_0_10000();
+        let mut shuffled = sorted.clone();
+        shuffled.rotate_left(3_137);
+        shuffled.swap(0, 9_999);
+        assert!(!is_sorted_by_total_cmp(&shuffled));
+
+        let query = SketchQuery::Quantile { q: 0.5 };
+        let guarantee = guarantee_with_metric(ErrorMetric::Rank, 0.01);
+        let approximate = Answer::Scalar(5_100.0);
+
+        assert_eq!(
+            error_under_metric(&ErrorMetric::Rank, &shuffled, &query, 5_100.0, 5_000.0),
+            error_under_metric(&ErrorMetric::Rank, &sorted, &query, 5_100.0, 5_000.0),
+            "the metric must not read a rank off an unsorted slice"
+        );
+        assert_eq!(
+            error_under_metric(&ErrorMetric::Rank, &shuffled, &query, 5_100.0, 5_000.0),
+            Ok(0.01)
+        );
+        assert_eq!(
+            observed_error(Some(&guarantee), &shuffled, &query, &approximate, 5_000.0),
+            observed_error(Some(&guarantee), &sorted, &query, &approximate, 5_000.0)
+        );
+    }
+
+    #[test]
+    fn a_relative_value_bound_is_measured_by_relative_error_not_by_rank_error() {
+        let values = uniform_0_10000();
+        let query = SketchQuery::Quantile { q: 0.5 };
+        let truth = exact_answer_sorted(&values, &query).unwrap();
+        assert_eq!(truth, 5000.0);
+        let estimate = 5100.0;
+
+        let rank = rank_error(&values, estimate, 0.5);
+        let relative = error_under_metric(
+            &ErrorMetric::RelativeValue,
+            &values,
+            &query,
+            estimate,
+            truth,
+        )
+        .expect("the retained column answers a relative-value error");
+        assert_eq!(relative, 100.0 / 5000.0);
+        assert_ne!(relative, rank);
+
+        let alpha = 0.01;
+        assert!(relative > alpha);
+        assert!(rank <= alpha);
+
+        let check = check_guarantee(
+            &planner_ddsketch_guarantee(alpha),
+            0.5,
+            &[(estimate, relative)],
+        );
+        assert_eq!(check.metric, "relative_value");
+        assert_eq!(check.unevaluatable, None);
+        assert_eq!(check.claimed_bound, Some(alpha));
+        assert_eq!(check.observed_violation_rate, 1.0);
+        assert_eq!(check.max_error, relative);
+    }
+
+    /// `NaN > bound` is `false`, so an error that does not exist used to land
+    /// in the denominator as a draw that stayed inside the bound, and the
+    /// record published "checked, zero violations".
+    #[test]
+    fn a_nan_error_is_never_reported_as_a_clean_observation() {
+        let check = check_guarantee(
+            &guarantee_with_metric(ErrorMetric::RelativeValue, 0.01),
+            f64::NAN,
+            &[(1.0, f64::NAN)],
+        );
+
+        assert_eq!(check.seeds, 1);
+        assert_eq!(check.uncomputed_errors, 1);
+        assert!(
+            check.observed_violation_rate.is_nan(),
+            "a rate of {} claims an observation was checked and clean",
+            check.observed_violation_rate
+        );
+
+        let json = serde_json::to_value(&check).expect("serializes");
+        assert!(
+            json["observed_violation_rate"].is_null(),
+            "{json} reads as a checked rate"
+        );
+        assert_eq!(json["uncomputed_errors"], 1);
+    }
+
+    /// The mixed case: nine measurable observations must not vouch for the
+    /// tenth, which produced no error at all.
+    #[test]
+    fn one_nan_among_clean_observations_blocks_the_whole_rate() {
+        let mut observations = vec![(1.0, 0.001); 9];
+        observations.push((1.0, f64::NAN));
+
+        let check = check_guarantee(
+            &guarantee_with_metric(ErrorMetric::RelativeValue, 0.01),
+            f64::NAN,
+            &observations,
+        );
+
+        assert_eq!(check.seeds, 10);
+        assert_eq!(check.uncomputed_errors, 1);
+        assert!(check.observed_violation_rate.is_nan());
+        assert!(
+            check.max_error.is_nan() && check.mean_error.is_nan(),
+            "max {} / mean {} summarize nine of ten observations as if they were ten",
+            check.max_error,
+            check.mean_error
+        );
+    }
+
+    /// The other side of the same coin: `+inf` is a computed answer — the
+    /// estimate missed a truth of zero — and it is a violation, not a gap.
+    #[test]
+    fn an_infinite_relative_error_counts_as_a_violation() {
+        assert_eq!(relative_error(3.0, 0.0), f64::INFINITY);
+
+        let check = check_guarantee(
+            &guarantee_with_metric(ErrorMetric::RelativeValue, 0.01),
+            f64::NAN,
+            &[(3.0, f64::INFINITY)],
+        );
+
+        assert_eq!(check.observed_violation_rate, 1.0);
+        assert_eq!(check.uncomputed_errors, 0);
+        assert_eq!(check.max_error, f64::INFINITY);
+        assert_eq!(check.unevaluatable, None);
+
+        // And it survives the JSON round trip as infinity rather than as the
+        // `null` that means "no error was computed".
+        let json = serde_json::to_string(&check).expect("serializes");
+        let back: GuaranteeCheck = serde_json::from_str(&json).expect("round trips");
+        assert_eq!(back.max_error, f64::INFINITY);
+        assert!(json.contains("\"max_error\":\"inf\""), "{json}");
+    }
+
+    #[test]
+    fn a_nan_error_is_unevaluatable_rather_than_a_measurement() {
+        let guarantee = guarantee_with_metric(ErrorMetric::RelativeValue, 0.01);
+        let query = SketchQuery::PointCount {
+            key: ColumnRef::SampleValue,
+            value: None,
+        };
+
+        let observed = observed_error(
+            Some(&guarantee),
+            &[1.0, 2.0],
+            &query,
+            &Answer::Scalar(f64::NAN),
+            3.0,
+        );
+
+        assert_eq!(
+            observed,
+            ObservedError::Unevaluatable {
+                metric: "relative_value".to_string(),
+                reason: UnevaluatableReason::ErrorIsNotANumber,
+            }
+        );
+        assert_eq!(observed.measured(), None);
+    }
+
+    /// An unevaluatable observation that simply vanished from `pairs` would
+    /// shrink the denominator and let the survivors publish a clean rate.
+    #[test]
+    fn an_uncomputable_error_still_reaches_the_population_it_belongs_to() {
+        let mut observations = GuaranteeObservations::default();
+        for error in [Some(0.001), Some(0.002)] {
+            observations.observe(&observed_readout(error, Some(planner_kll_guarantee())));
+        }
+        let mut uncomputable = observed_readout(Some(0.0), Some(planner_kll_guarantee()));
+        uncomputable.observed_error = ObservedError::Unevaluatable {
+            metric: "rank".to_string(),
+            reason: UnevaluatableReason::ErrorIsNotANumber,
+        };
+        observations.observe(&uncomputable);
+
+        let checks = observations.checks();
+        assert_eq!(checks.len(), 1);
+        let check = &checks[0].check;
+        assert_eq!(check.seeds, 3, "the third observation was dropped");
+        assert_eq!(check.uncomputed_errors, 1);
+        assert!(check.observed_violation_rate.is_nan());
+    }
+
+    #[test]
+    fn an_absolute_value_bound_is_measured_in_the_values_own_units() {
+        let values = uniform_0_10000();
+        let query = SketchQuery::Quantile { q: 0.5 };
+        let error =
+            error_under_metric(&ErrorMetric::AbsoluteValue, &values, &query, 5100.0, 5000.0)
+                .expect("an absolute error needs nothing the column does not have");
+        assert_eq!(error, 100.0);
+    }
+
+    #[test]
+    fn a_rank_bound_on_a_readout_with_no_quantile_is_not_measured_as_zero() {
+        let values = uniform_0_10000();
+        let total = SketchQuery::PointCount {
+            key: ColumnRef::SampleValue,
+            value: None,
+        };
+        assert_eq!(
+            error_under_metric(&ErrorMetric::Rank, &values, &total, 1.0, 1.0),
+            Err(UnevaluatableReason::NoQuantileInTheQuery)
+        );
+    }
+
+    #[test]
+    fn the_metrics_the_retained_column_cannot_normalize_say_what_they_would_need() {
+        let values = uniform_0_10000();
+        let query = SketchQuery::Quantile { q: 0.5 };
+        let approximate = Answer::Scalar(5100.0);
+
+        for (metric, expected) in [
+            (
+                ErrorMetric::Cardinality,
+                UnevaluatableReason::TrueDistinctCount,
+            ),
+            (ErrorMetric::Frequency, UnevaluatableReason::StreamL1Norm),
+            (ErrorMetric::L2Frequency, UnevaluatableReason::StreamL2Norm),
+            (
+                ErrorMetric::TopKMembership,
+                UnevaluatableReason::TrueTopKSet,
+            ),
+        ] {
+            let guarantee = guarantee_with_metric(metric, 0.01);
+            match observed_error(Some(&guarantee), &values, &query, &approximate, 5000.0) {
+                ObservedError::Unevaluatable {
+                    reason,
+                    metric: name,
+                } => {
+                    assert_eq!(reason, expected, "{name}");
+                }
+                other => panic!("{metric:?} must not produce a number: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            observed_error(None, &values, &query, &approximate, 5000.0),
+            ObservedError::NoGuarantee
+        );
+        assert!(matches!(
+            observed_error(
+                Some(&planner_kll_guarantee()),
+                &values,
+                &query,
+                &approximate,
+                5000.0
+            ),
+            ObservedError::Measured { .. }
+        ));
+    }
+
+    #[test]
+    fn an_unevaluatable_metric_is_reported_as_unevaluatable_not_as_zero_violations() {
+        let guarantee = guarantee_with_metric(ErrorMetric::Cardinality, 0.0065);
+
+        let mut observations = GuaranteeObservations::default();
+        let mut readout = observed_readout(None, Some(guarantee.clone()));
+        readout.observed_error = ObservedError::Unevaluatable {
+            metric: "cardinality".to_string(),
+            reason: UnevaluatableReason::TrueDistinctCount,
+        };
+        for _ in 0..4 {
+            observations.observe(&readout);
+        }
+
+        let checks = observations.checks();
+        let check = &checks[0].check;
+        assert_eq!(
+            check.claimed_bound,
+            Some(0.0065),
+            "the bound itself is known"
+        );
+        assert_eq!(
+            check.seeds, 0,
+            "an unevaluatable error is not an observation"
+        );
+        assert_eq!(
+            check.unevaluatable,
+            Some(UnevaluatableReason::TrueDistinctCount)
+        );
+        assert!(check.observed_violation_rate.is_nan());
+        assert_ne!(check.observed_violation_rate, 0.0);
+
+        let json = serde_json::to_value(check).unwrap();
+        assert_eq!(json["unevaluatable"], "true_distinct_count");
+        assert!(json["observed_violation_rate"].is_null());
+
+        // And an error measured under some *other* rule cannot back-fill it.
+        let smuggled = check_guarantee(&guarantee, f64::NAN, &[(1.0, 0.0), (1.0, 0.0)]);
+        assert!(smuggled.observed_violation_rate.is_nan());
+    }
+
+    #[test]
+    fn a_non_finite_measured_error_round_trips_instead_of_becoming_null() {
+        for (error, spelling) in [
+            (0.25_f64, "0.25"),
+            (f64::INFINITY, "\"inf\""),
+            (f64::NEG_INFINITY, "\"-inf\""),
+            (f64::NAN, "null"),
+        ] {
+            let observed = ObservedError::Measured {
+                metric: "relative_value".to_string(),
+                error,
+            };
+            let json = serde_json::to_string(&observed).expect("serializes");
+            assert!(json.contains(&format!("\"error\":{spelling}")), "{json}");
+
+            let back: ObservedError = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("{json} must read back, got {e}"));
+            let ObservedError::Measured { error: read, .. } = back else {
+                panic!("{json} came back as a different measurement");
+            };
+            assert_eq!(read.total_cmp(&error), std::cmp::Ordering::Equal, "{json}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_estimate_is_not_an_answer_and_is_never_measured() {
+        let values = uniform_0_10000();
+        let query = SketchQuery::Quantile { q: 0.5 };
+
+        for estimate in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for q in [0.5, 0.99] {
+                assert!(
+                    rank_error(&values, estimate, q).is_nan(),
+                    "rank_error({estimate}, {q}) fabricated a number"
+                );
+            }
+            assert_eq!(
+                error_under_metric(&ErrorMetric::Rank, &values, &query, estimate, 5000.0),
+                Err(UnevaluatableReason::ErrorIsNotANumber),
+                "{estimate}"
+            );
+
+            let observed = observed_error(
+                Some(&planner_kll_guarantee()),
+                &values,
+                &query,
+                &Answer::Scalar(estimate),
+                5000.0,
+            );
+            assert_eq!(
+                observed,
+                ObservedError::Unevaluatable {
+                    metric: "rank".to_string(),
+                    reason: UnevaluatableReason::ErrorIsNotANumber,
+                },
+                "{estimate}"
+            );
+            assert_eq!(observed.measured(), None, "{estimate}");
+        }
+
+        let total = SketchQuery::PointCount {
+            key: ColumnRef::SampleValue,
+            value: None,
+        };
+        let infinite = observed_error(
+            Some(&guarantee_with_metric(ErrorMetric::RelativeValue, 0.01)),
+            &values,
+            &total,
+            &Answer::Scalar(3.0),
+            0.0,
+        );
+        assert_eq!(
+            infinite.measured(),
+            Some(f64::INFINITY),
+            "an infinite error is a real result and must stay a measurement"
+        );
+    }
+
+    #[test]
+    fn the_guarantee_stream_carries_its_own_version() {
+        let mut observations = GuaranteeObservations::default();
+        observations.observe(&observed_readout(
+            Some(0.001),
+            Some(planner_kll_guarantee()),
+        ));
+
+        let checks = observations.checks();
+        assert_eq!(checks[0].schema_version, PLANEVAL_GUARANTEE_SCHEMA_VERSION);
+
+        let line = serde_json::to_string(&checks[0]).expect("serializes");
+        assert!(!line.contains('\n'), "one guarantee, one line");
+        assert!(line.contains("\"schema_version\":1"), "{line}");
+
+        let back: ReadoutGuarantee =
+            serde_json::from_str(&line).expect("the guarantee document round trips");
+        assert_eq!(back.schema_version, PLANEVAL_GUARANTEE_SCHEMA_VERSION);
+        assert_eq!(back.node, checks[0].node);
+    }
+
+    #[test]
+    fn the_readout_error_round_trips_as_typed_data() {
+        for error in [
+            ObservedError::NotVerified,
+            ObservedError::NoGuarantee,
+            ObservedError::Measured {
+                metric: "rank".to_string(),
+                error: 0.002,
+            },
+            ObservedError::Unevaluatable {
+                metric: "frequency".to_string(),
+                reason: UnevaluatableReason::StreamL1Norm,
+            },
+        ] {
+            let json = serde_json::to_string(&error).unwrap();
+            let back: ObservedError = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, error);
+            assert_eq!(
+                error.measured().is_some(),
+                matches!(error, ObservedError::Measured { .. })
+            );
+        }
     }
 }

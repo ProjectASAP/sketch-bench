@@ -277,7 +277,7 @@ fn payload_decision(
             grouping,
         } => admit_summary_agg(node, dag, family, input, reduction, grouping),
         ExecutableOperatorPayload::SummaryEstimate { query } => {
-            admit_summary_estimate(node, query).map(|()| NodeDecision::Readout(query.clone()))
+            admit_summary_estimate(node, dag, query).map(|()| NodeDecision::Readout(query.clone()))
         }
         // Admitted-but-unexecuted is strictly worse than refused: a read-time
         // `Filter` that is ignored reports the unfiltered readout as the
@@ -555,7 +555,11 @@ fn sketch_kind_inconsistency(kind: &SketchKind) -> Option<String> {
 
 // ── SummaryEstimate ──────────────────────────────────────────────────────────
 
-fn admit_summary_estimate(node: &ExecutableDagNode, query: &SketchQuery) -> Result<(), Refusal> {
+fn admit_summary_estimate(
+    node: &ExecutableDagNode,
+    dag: &ExecutableDag,
+    query: &SketchQuery,
+) -> Result<(), Refusal> {
     match query {
         SketchQuery::Quantile { q } => {
             // `q` is documented as (0, 1]; a value outside it is not a readout
@@ -566,7 +570,6 @@ fn admit_summary_estimate(node: &ExecutableDagNode, query: &SketchQuery) -> Resu
                     detail: format!("Quantile q = {q} is outside (0, 1]"),
                 });
             }
-            Ok(())
         }
         // The bare bucket total, which is how an exact accumulator's state is
         // read. A *named* key paired with a value is a per-item point lookup:
@@ -574,19 +577,34 @@ fn admit_summary_estimate(node: &ExecutableDagNode, query: &SketchQuery) -> Resu
         // to look one up by, so admitting it would produce an approximate
         // number with no ground truth to check it against.
         SketchQuery::PointCount { key, value }
-            if matches!(key, ColumnRef::SampleValue | ColumnRef::Wildcard) && value.is_none() =>
-        {
-            Ok(())
-        }
+            if matches!(key, ColumnRef::SampleValue | ColumnRef::Wildcard) && value.is_none() => {}
         // Cardinality, the frequency moments and TopK all need a family v0
         // does not bind (see `handle::check_bindable`).
         SketchQuery::Cardinality
         | SketchQuery::PointCount { .. }
         | SketchQuery::TopK { .. }
         | SketchQuery::FrequencyL2
-        | SketchQuery::FrequencyEntropy => Err(Refusal::UnsupportedReadout {
+        | SketchQuery::FrequencyEntropy => {
+            return Err(Refusal::UnsupportedReadout {
+                node: node.id,
+                query: Box::new(query.clone()),
+            })
+        }
+    }
+    let producer = input_edge(node, dag)?.0;
+    match &producer.payload {
+        ExecutableOperatorPayload::SummaryAgg { family, .. } => {
+            crate::handle::check_readout(family, query, node.id)
+        }
+        // Waving an unrecognized producer through would admit a readout that
+        // `run` then finds no handle for, and admitted-but-unexecuted is
+        // strictly worse than refused.
+        other => Err(Refusal::UnsupportedOperator {
             node: node.id,
-            query: Box::new(query.clone()),
+            operator: format!(
+                "SummaryEstimate reading from a {:?}, which builds no summary",
+                other.operator()
+            ),
         }),
     }
 }
@@ -707,7 +725,8 @@ mod tests {
     use std::rc::Rc;
 
     use asap_types::post_asap::{
-        ExecutableOperator, ExecutionTiming, GroupingEdgeCompatibility, SummaryField,
+        ExactKind, ExactParams, ExecutableOperator, ExecutionTiming, GroupingEdgeCompatibility,
+        SummaryField,
     };
     use asap_types::pre_asap::{
         CompareOpKind, DataType, GroupKeys, Predicate, ScalarValue, Source,
@@ -788,13 +807,24 @@ mod tests {
         victim.operator = ExecutableOperator::SummarySubtract;
         victim.payload = ExecutableOperatorPayload::SummarySubtract;
 
+        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
         let refusals = admit(&dag).expect_err("is refused");
         assert_eq!(
             refusals,
-            vec![Refusal::NoInverseOperation {
-                node: agg,
-                operator: "SummarySubtract".to_string(),
-            }]
+            vec![
+                Refusal::NoInverseOperation {
+                    node: agg,
+                    operator: "SummarySubtract".to_string(),
+                },
+                // The readout downstream of it is refused too: its producer
+                // builds no summary, so nothing would execute it.
+                Refusal::UnsupportedOperator {
+                    node: estimate,
+                    operator: "SummaryEstimate reading from a SummarySubtract, which builds no \
+                               summary"
+                        .to_string(),
+                },
+            ]
         );
     }
 
@@ -814,7 +844,13 @@ mod tests {
 
         let refusals = admit(&dag).expect_err("is refused");
         assert!(
-            matches!(refusals.as_slice(), [Refusal::NoInverseOperation { operator, .. }] if operator == "SummaryDelete"),
+            matches!(
+                refusals.as_slice(),
+                [
+                    Refusal::NoInverseOperation { operator, .. },
+                    Refusal::UnsupportedOperator { .. },
+                ] if operator == "SummaryDelete"
+            ),
             "{refusals:?}"
         );
     }
@@ -833,7 +869,38 @@ mod tests {
 
         let refusals = admit(&dag).expect_err("is refused");
         assert!(
-            matches!(refusals.as_slice(), [Refusal::UnsupportedOperator { operator, .. }] if operator == "SummaryMerge"),
+            matches!(
+                refusals.as_slice(),
+                [
+                    Refusal::UnsupportedOperator { operator, .. },
+                    Refusal::UnsupportedOperator { .. },
+                ] if operator == "SummaryMerge"
+            ),
+            "{refusals:?}"
+        );
+    }
+
+    /// The pairing gate used to run only when the producer was a `SummaryAgg`
+    /// and to return `Ok` otherwise. `Fallback -> SummaryEstimate` is the
+    /// shape that survived: admitted unchecked, and then `run` finds no handle
+    /// for a `Fallback` and the readout produces nothing at all.
+    #[test]
+    fn a_readout_whose_producer_builds_no_summary_is_refused_rather_than_waved_through() {
+        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let edge = dag
+            .edges
+            .iter_mut()
+            .find(|edge| edge.consumer == estimate)
+            .expect("the readout's input edge");
+        edge.producer = fallback;
+
+        let refusals = admit(&dag).expect_err("is refused");
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| matches!(refusal, Refusal::UnsupportedOperator { node, .. } if *node == estimate)),
             "{refusals:?}"
         );
     }
@@ -1127,12 +1194,17 @@ mod tests {
             },
         ];
         let accepted = [
-            SketchQuery::Quantile { q: 0.99 },
-            // The bucket total — how an exact accumulator's state is read.
-            SketchQuery::PointCount {
-                key: ColumnRef::SampleValue,
-                value: None,
-            },
+            (SketchQuery::Quantile { q: 0.99 }, None),
+            (
+                SketchQuery::PointCount {
+                    key: ColumnRef::SampleValue,
+                    value: None,
+                },
+                Some(SummaryFamilyType::ExactAggregate(
+                    ExactKind::Sum,
+                    ExactParams::Sum,
+                )),
+            ),
         ];
 
         for query in refused {
@@ -1143,10 +1215,108 @@ mod tests {
                 "{query:?}: {refusals:?}"
             );
         }
-        for query in accepted {
-            let dag = with_readout(&query);
+        for (query, family) in accepted {
+            let dag = match family {
+                Some(family) => with_family(with_readout(&query), family),
+                None => with_readout(&query),
+            };
             assert!(admit(&dag).is_ok(), "{query:?} should be admitted");
         }
+    }
+
+    #[test]
+    fn a_family_and_a_readout_that_name_different_questions_are_refused() {
+        let mispairings = [
+            (
+                SummaryFamilyType::ExactAggregate(ExactKind::Count, ExactParams::Count),
+                SketchQuery::PointCount {
+                    key: ColumnRef::SampleValue,
+                    value: None,
+                },
+            ),
+            (
+                SummaryFamilyType::ExactAggregate(ExactKind::Sum, ExactParams::Sum),
+                SketchQuery::PointCount {
+                    key: ColumnRef::Wildcard,
+                    value: None,
+                },
+            ),
+            (
+                SummaryFamilyType::Sketch(
+                    SketchKind::new(SketchAlgorithm::Kll, SketchParams::Kll { k: 269 }),
+                    GroupingStrategy::PerSubpopulationInstance,
+                ),
+                SketchQuery::PointCount {
+                    key: ColumnRef::SampleValue,
+                    value: None,
+                },
+            ),
+            (
+                SummaryFamilyType::ExactAggregate(ExactKind::Sum, ExactParams::Sum),
+                SketchQuery::Quantile { q: 0.5 },
+            ),
+        ];
+
+        for (family, query) in mispairings {
+            let dag = with_family(with_readout(&query), family.clone());
+            let refusals = admit(&dag).expect_err("is refused");
+            assert!(
+                matches!(
+                    refusals.as_slice(),
+                    [Refusal::FamilyDoesNotAnswerReadout { .. }]
+                ),
+                "{family:?} / {query:?}: {refusals:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pairings_that_do_name_the_same_question_are_admitted() {
+        let pairings = [
+            (
+                SummaryFamilyType::ExactAggregate(ExactKind::Count, ExactParams::Count),
+                SketchQuery::PointCount {
+                    key: ColumnRef::Wildcard,
+                    value: None,
+                },
+            ),
+            (
+                SummaryFamilyType::ExactAggregate(ExactKind::Max, ExactParams::Max),
+                SketchQuery::Quantile { q: 1.0 },
+            ),
+            (
+                SummaryFamilyType::Sketch(
+                    SketchKind::new(
+                        SketchAlgorithm::DDSketch,
+                        SketchParams::DDSketch { alpha: 0.01 },
+                    ),
+                    GroupingStrategy::PerSubpopulationInstance,
+                ),
+                SketchQuery::Quantile { q: 0.5 },
+            ),
+        ];
+
+        for (family, query) in pairings {
+            let dag = with_family(with_readout(&query), family.clone());
+            assert!(
+                admit(&dag).is_ok(),
+                "{family:?} / {query:?} should be admitted"
+            );
+        }
+    }
+
+    fn with_family(mut dag: ExecutableDag, family: SummaryFamilyType) -> ExecutableDag {
+        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let victim = dag
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == agg)
+            .expect("the SummaryAgg node");
+        let ExecutableOperatorPayload::SummaryAgg { family: slot, .. } = &mut victim.payload else {
+            panic!("the SummaryAgg node lost its payload");
+        };
+        *slot = family;
+        dag
     }
 
     #[test]
@@ -1205,7 +1375,6 @@ mod tests {
         dag.root = id;
         dag
     }
-
 
     #[test]
     fn every_value_node_is_refused_in_v0_and_says_why() {
@@ -1334,6 +1503,8 @@ mod tests {
         victim.payload = ExecutableOperatorPayload::Binary {
             timing: ExecutionTiming::ReadTime,
             operator: asap_types::post_asap::BinaryOperator {
+                checked_relative_division: false,
+                checked_finite_division: false,
                 kind: asap_types::pre_asap::BinaryOpKind::Compare(CompareOpKind::Gt),
                 vector_match: None,
             },

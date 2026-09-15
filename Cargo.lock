@@ -164,6 +164,7 @@ dependencies = [
  "asap-types",
  "asap_sketchlib 0.3.0",
  "blake3",
+ "clap",
  "csv",
  "serde",
  "serde_json",
@@ -206,6 +207,7 @@ name = "asap-aware-mapping"
 version = "0.1.0"
 dependencies = [
  "asap-types",
+ "asap_sketchlib 0.3.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -248,6 +250,7 @@ dependencies = [
 [[package]]
 name = "asap_sketchlib"
 version = "0.3.0"
+source = "git+https://github.com/ProjectASAP/asap_sketchlib?rev=da3635a80f8f854d47b772d49d5a9e5fb6927d8e#da3635a80f8f854d47b772d49d5a9e5fb6927d8e"
 dependencies = [
  "bytes",
  "prost",
