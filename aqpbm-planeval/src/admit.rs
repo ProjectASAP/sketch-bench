@@ -36,13 +36,13 @@
 use std::collections::HashMap;
 
 use asap_types::post_asap::{
-    DataPrimitive, EdgeRole, ExecutableDag, ExecutableDagEdge, ExecutableDagNode,
+    DataPrimitive, EdgeRole, EntityIdentity, ExecutableDag, ExecutableDagEdge, ExecutableDagNode,
     ExecutableOperatorPayload, ExecutionDataState, PostAsapNodeId, SketchAlgorithm, SketchCategory,
     SketchKind, SketchParams, SketchQuery, SummaryFamilyType, SummaryInputExpr, SummarySchema,
     SummaryUpdate, WindowEdgeCompatibility,
 };
 use asap_types::post_asap::{ExactOperation, GroupingStrategy, ValueOperation};
-use asap_types::pre_asap::{ColumnRef, ProjectItem, QueryExpr, Reduction};
+use asap_types::pre_asap::{ColumnRef, DataType, ProjectItem, QueryExpr, Reduction};
 
 use crate::rows::{check_predicate, resolve_column, variant_name};
 use crate::types::Refusal;
@@ -474,12 +474,14 @@ fn resolve_input(
             }
             Ok(ResolvedInput::Tuple(resolved))
         }
-        // A PromQL label set is not a column of the CSV row schema; there is no
-        // series identity to reconstruct from one flat file.
-        SummaryInputExpr::EntityIdentity(_) => Err(Refusal::UnsupportedUpdate {
-            node: node.id,
-            detail: "EntityIdentity has no representation over flat rows".to_string(),
-        }),
+        SummaryInputExpr::EntityIdentity(EntityIdentity::PromqlLabelSet { excluding }) => {
+            Ok(ResolvedInput::Tuple(
+                label_columns(node, schema, excluding)?
+                    .into_iter()
+                    .map(ResolvedInput::Column)
+                    .collect(),
+            ))
+        }
         // Needs the previous sample for the same series, which a one-shot scan
         // of an unordered file does not have.
         SummaryInputExpr::ResetAwareCounterDelta { .. } => Err(Refusal::UnsupportedUpdate {
@@ -487,6 +489,56 @@ fn resolve_input(
             detail: "ResetAwareCounterDelta needs per-series carry-over state".to_string(),
         }),
     }
+}
+
+fn label_columns(
+    node: &ExecutableDagNode,
+    schema: &SummarySchema,
+    excluding: &[ColumnRef],
+) -> Result<Vec<usize>, Refusal> {
+    let sample_value = resolve_column(&ColumnRef::SampleValue, schema);
+    let mut excluded: Vec<usize> = Vec::with_capacity(excluding.len());
+    for column in excluding {
+        match resolve_column(column, schema) {
+            Some(position) => excluded.push(position),
+            None => {
+                return Err(Refusal::UnresolvableColumn {
+                    node: node.id,
+                    column: column_ref_name(column),
+                    detail: "EntityIdentity excludes a column the producer's schema lacks"
+                        .to_string(),
+                })
+            }
+        }
+    }
+
+    let labels: Vec<usize> = schema
+        .fields
+        .iter()
+        .enumerate()
+        .filter(|(position, field)| {
+            !matches!(field.dtype, SummaryFamilyType::Plain(DataType::Timestamp))
+                && Some(*position) != sample_value
+                && !excluded.contains(position)
+        })
+        .map(|(position, _)| position)
+        .collect();
+
+    if labels.is_empty() {
+        return Err(Refusal::UnsupportedUpdate {
+            node: node.id,
+            detail: format!(
+                "EntityIdentity over a schema with no label column: fields {:?}, excluding {:?}",
+                schema
+                    .fields
+                    .iter()
+                    .map(|field| field.name.as_str())
+                    .collect::<Vec<_>>(),
+                excluding
+            ),
+        });
+    }
+    Ok(labels)
 }
 
 fn column_ref_name(column: &ColumnRef) -> String {
@@ -1118,9 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn an_entity_identity_update_is_refused() {
-        use asap_types::post_asap::EntityIdentity;
-
+    fn an_entity_identity_over_a_schema_with_no_label_column_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
         let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
         let victim = dag
@@ -1140,6 +1190,102 @@ mod tests {
             matches!(refusals.as_slice(), [Refusal::UnsupportedUpdate { .. }]),
             "{refusals:?}"
         );
+    }
+
+    #[test]
+    fn an_entity_identity_resolves_to_the_label_columns_of_the_producer() {
+        for (excluding, expected) in [
+            (vec![], vec![1usize, 2]),
+            (vec![ColumnRef::Named("cluster".into())], vec![2usize]),
+        ] {
+            let mut dag = with_labels(plan("quantile(0.5, cpu_cores)"));
+            let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+            let victim = dag
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == agg)
+                .expect("the SummaryAgg node");
+            let ExecutableOperatorPayload::SummaryAgg { input, .. } = &mut victim.payload else {
+                panic!("the SummaryAgg node lost its payload");
+            };
+            input.item = Some(SummaryInputExpr::EntityIdentity(
+                EntityIdentity::PromqlLabelSet {
+                    excluding: excluding.clone(),
+                },
+            ));
+
+            let admitted = match admit(&dag) {
+                Ok(admitted) => admitted,
+                Err(refusals) => panic!("{excluding:?}: refused: {refusals:?}"),
+            };
+            let Some(NodeDecision::Aggregate { item, weight, .. }) = admitted.decision(agg) else {
+                panic!("the SummaryAgg node lost its decision");
+            };
+            assert_eq!(
+                item.as_ref(),
+                Some(&ResolvedInput::Tuple(
+                    expected
+                        .iter()
+                        .copied()
+                        .map(ResolvedInput::Column)
+                        .collect()
+                )),
+                "{excluding:?}"
+            );
+            assert_eq!(
+                weight,
+                &ResolvedInput::Column(3),
+                "the sample value is the weight, never part of the identity"
+            );
+        }
+    }
+
+    fn with_labels(mut dag: ExecutableDag) -> ExecutableDag {
+        use asap_types::pre_asap::Column;
+
+        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let labels = ["cluster", "task"];
+        for node in &mut dag.nodes {
+            if node.id != fallback {
+                continue;
+            }
+            for (offset, label) in labels.iter().enumerate() {
+                node.output_schema.fields.insert(
+                    1 + offset,
+                    SummaryField {
+                        name: (*label).to_string(),
+                        dtype: SummaryFamilyType::Plain(DataType::Utf8),
+                        nullable: false,
+                    },
+                );
+            }
+            let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
+                panic!("the Fallback node lost its payload");
+            };
+            let QueryExpr::Scan { schema, .. } = expression else {
+                panic!("the Fallback node lost its Scan");
+            };
+            for (offset, label) in labels.iter().enumerate() {
+                schema.columns.insert(
+                    1 + offset,
+                    Column {
+                        name: (*label).to_string(),
+                        dtype: DataType::Utf8,
+                        nullable: false,
+                        table: None,
+                    },
+                );
+            }
+        }
+        let schema = node_of(&dag, ExecutableOperator::Fallback)
+            .output_schema
+            .clone();
+        for edge in &mut dag.edges {
+            if edge.producer == fallback {
+                edge.intermediate_schema = schema.clone();
+            }
+        }
+        dag
     }
 
     #[test]

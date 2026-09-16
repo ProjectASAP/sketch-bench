@@ -826,6 +826,20 @@ fn resolve_item(input: &ResolvedInput, row: &Row) -> Result<ItemKey, EvalError> 
                 "item column {position} is past the row"
             ))),
         },
+        ResolvedInput::Tuple(parts) => {
+            let mut key = String::new();
+            for (i, part) in parts.iter().enumerate() {
+                if i > 0 {
+                    key.push(';');
+                }
+                match resolve_item(part, row)? {
+                    ItemKey::Str(held) => key.push_str(&held),
+                    ItemKey::Int(held) => key.push_str(&held.to_string()),
+                    ItemKey::Float(held) => key.push_str(&held.to_string()),
+                }
+            }
+            Ok(ItemKey::Str(key))
+        }
         other => Err(EvalError::RowSource(format!(
             "item must be a column reference, found {other:?}"
         ))),
@@ -860,6 +874,70 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn an_entity_identity_item_counts_the_distinct_series_in_the_rows() {
+        use asap_types::post_asap::{EntityIdentity, SummaryField, SummaryInputExpr};
+        use asap_types::pre_asap::{Column, ColumnRef, DataType};
+
+        let mut plan =
+            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let leaf = plan.dag.nodes[0].id;
+        for node in &mut plan.dag.nodes {
+            if node.id == leaf {
+                node.output_schema.fields.push(SummaryField {
+                    name: "cluster".to_string(),
+                    dtype: SummaryFamilyType::Plain(DataType::Utf8),
+                    nullable: false,
+                });
+                let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
+                    panic!("the Fallback node lost its payload");
+                };
+                let asap_types::pre_asap::QueryExpr::Scan { schema, .. } = expression else {
+                    panic!("the Fallback node lost its Scan");
+                };
+                schema.columns.push(Column {
+                    name: "cluster".to_string(),
+                    dtype: DataType::Utf8,
+                    nullable: false,
+                    table: None,
+                });
+                continue;
+            }
+            match &mut node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
+                    *family = SummaryFamilyType::Sketch(
+                        SketchKind::new(SketchAlgorithm::Hll, SketchParams::Hll { precision: 14 }),
+                        GroupingStrategy::PerSubpopulationInstance,
+                    );
+                    input.item = Some(SummaryInputExpr::EntityIdentity(
+                        EntityIdentity::PromqlLabelSet { excluding: vec![] },
+                    ));
+                    input.weight = SummaryInputExpr::Column(ColumnRef::SampleValue);
+                }
+                ExecutableOperatorPayload::SummaryEstimate { query } => {
+                    *query = SketchQuery::Cardinality;
+                }
+                _ => {}
+            }
+        }
+        let schema = plan.dag.nodes[0].output_schema.clone();
+        for edge in &mut plan.dag.edges {
+            if edge.producer == leaf {
+                edge.intermediate_schema = schema.clone();
+            }
+        }
+
+        let admitted = admit(&plan.dag).expect("admitted");
+        let csv = grouped_csv(12, 600);
+        let outcome = run(&plan, &admitted, &csv_config(csv.path(), 3, true)).expect("run");
+
+        assert_eq!(
+            outcome.readouts[0].exact,
+            Some(12.0),
+            "the identity is the cluster label, so the distinct count is the cluster count"
+        );
     }
 
     #[test]
