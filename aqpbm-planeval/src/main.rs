@@ -300,7 +300,7 @@ fn print_readouts(seed: u64, record: &PlanEvalRecord) {
             readout.query, readout.approximate
         );
         match (
-            readout.exact,
+            readout.exact.as_ref(),
             &readout.observed_error,
             readout.claimed_bound,
         ) {

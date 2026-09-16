@@ -66,6 +66,14 @@ impl ItemKey {
         }
     }
 
+    pub fn rendered(&self) -> String {
+        match self {
+            ItemKey::Str(held) => held.clone(),
+            ItemKey::Int(held) => held.to_string(),
+            ItemKey::Float(held) => held.to_string(),
+        }
+    }
+
     pub fn heap_bytes(&self) -> usize {
         match self {
             ItemKey::Str(s) => s.len(),

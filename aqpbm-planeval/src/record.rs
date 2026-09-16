@@ -19,7 +19,7 @@ use crate::run::{ArmTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 4;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
@@ -93,15 +93,77 @@ pub struct Phase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum AnswerRecord {
+    Scalar {
+        #[serde(with = "crate::score::json_f64")]
+        value: f64,
+    },
+    Ranked {
+        entries: Vec<RankedEntry>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RankedEntry {
+    pub key: String,
+    pub count: u64,
+}
+
+impl AnswerRecord {
+    pub fn of(answer: &Answer) -> Self {
+        match answer {
+            Answer::Scalar(value) => AnswerRecord::Scalar { value: *value },
+            Answer::Ranked(entries) => AnswerRecord::Ranked {
+                entries: entries
+                    .iter()
+                    .map(|(key, count)| RankedEntry {
+                        key: key.rendered(),
+                        count: *count,
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn scalar(&self) -> Option<f64> {
+        match self {
+            AnswerRecord::Scalar { value } => Some(*value),
+            AnswerRecord::Ranked { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for AnswerRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnswerRecord::Scalar { value } => match f.precision() {
+                Some(places) => write!(f, "{value:.places$}"),
+                None => write!(f, "{value}"),
+            },
+            AnswerRecord::Ranked { entries } => {
+                write!(f, "[")?;
+                for (index, entry) in entries.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}={}", entry.key, entry.count)?;
+                }
+                write!(f, "]")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReadoutRecord {
     pub node: u32,
     pub group: String,
     pub query: String,
-    #[serde(with = "crate::score::json_f64")]
-    pub approximate: f64,
+    pub approximate: AnswerRecord,
     /// `None` when `verify` was off. Never 0.0, which would read as "the
     /// sketch was exactly right".
-    pub exact: Option<f64>,
+    pub exact: Option<AnswerRecord>,
     pub observed_error: ObservedError,
     pub claimed_bound: Option<f64>,
     pub failure_probability: Option<f64>,
@@ -170,11 +232,8 @@ impl PlanEvalRecord {
                     node: r.node.0,
                     group: r.group.clone(),
                     query: format!("{:?}", r.query),
-                    approximate: match &r.approximate {
-                        Answer::Scalar(v) => *v,
-                        Answer::Ranked(_) => f64::NAN,
-                    },
-                    exact: r.exact,
+                    approximate: AnswerRecord::of(&r.approximate),
+                    exact: r.exact.as_ref().map(AnswerRecord::of),
                     observed_error: r.observed_error.clone(),
                     claimed_bound: r.guarantee.as_ref().and_then(|g| g.bound.evaluate()),
                     failure_probability: r
@@ -354,7 +413,7 @@ mod tests {
             (f64::NAN, "null"),
         ] {
             let mut record = base.clone();
-            record.readouts[0].approximate = value;
+            record.readouts[0].approximate = AnswerRecord::Scalar { value };
             record.readouts[0].observed_error = ObservedError::Measured {
                 metric: "rank".to_string(),
                 error: value,
@@ -362,7 +421,9 @@ mod tests {
 
             let line = record.to_jsonl();
             assert!(
-                line.contains(&format!("\"approximate\":{spelling}")),
+                line.contains(&format!(
+                    "\"approximate\":{{\"shape\":\"scalar\",\"value\":{spelling}}}"
+                )),
                 "{line}"
             );
             assert!(line.contains(&format!("\"error\":{spelling}")), "{line}");
@@ -371,7 +432,11 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{line} must read back, got {e}"));
             let readout = &back.readouts[0];
             assert_eq!(
-                readout.approximate.total_cmp(&value),
+                readout
+                    .approximate
+                    .scalar()
+                    .expect("a scalar")
+                    .total_cmp(&value),
                 std::cmp::Ordering::Equal,
                 "{line}"
             );
@@ -386,10 +451,10 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 4);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 5);
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
         assert!(
-            record.to_jsonl().contains("\"schema_version\":4"),
+            record.to_jsonl().contains("\"schema_version\":5"),
             "the stream has to say which encoding it is in"
         );
     }

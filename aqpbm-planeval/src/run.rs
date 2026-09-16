@@ -84,7 +84,7 @@ pub struct Readout {
     pub approximate: Answer,
     /// `None` when `verify` was off — never 0.0, which would read as "exact
     /// and the sketch was perfect".
-    pub exact: Option<f64>,
+    pub exact: Option<Answer>,
     pub observed_error: ObservedError,
     pub guarantee: Option<ResultGuarantee>,
     pub observations: u64,
@@ -269,7 +269,7 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
     let mut exact = ArmTiming::default();
     let mut retained_values = 0usize;
     let mut retained_bytes_held = 0usize;
-    let mut truths: Vec<f64> = Vec::new();
+    let mut truths: Vec<Answer> = Vec::new();
     let mut retained: RetainedState = Vec::new();
     if cfg.verify {
         let (timing, columns) = time_retains(drained.slots.len(), &drained.updates, cfg);
@@ -300,9 +300,9 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
                     column,
                     &probe.query,
                     &approximate,
-                    *truth,
+                    truth,
                 );
-                (Some(*truth), err)
+                (Some(truth.clone()), err)
             }
             None => (None, ObservedError::NotVerified),
         };
@@ -763,12 +763,13 @@ fn time_exact_estimates(
     probes: &Rc<Vec<Probe>>,
     states: Vec<RetainedState>,
     cfg: &RunConfig,
-) -> Result<(Vec<RunMetrics>, Vec<f64>, RetainedState), EvalError> {
+) -> Result<(Vec<RunMetrics>, Vec<Answer>, RetainedState), EvalError> {
     if probes.is_empty() || states.is_empty() {
         return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
     let fault: Fault = Rc::new(RefCell::new(None));
-    let kept: Kept<(Vec<f64>, RetainedState, LatencyRecorder)> = Rc::new(RefCell::new(Vec::new()));
+    let kept: Kept<(Vec<Answer>, RetainedState, LatencyRecorder)> =
+        Rc::new(RefCell::new(Vec::new()));
 
     let (_, config) = phase_config(Metric::Throughput, MetricsMask::LATENCY, cfg);
     let mut passes: Measurement = Vec::with_capacity(states.len());
@@ -776,7 +777,7 @@ fn time_exact_estimates(
         let probes = Rc::clone(probes);
         let fault = Rc::clone(&fault);
         let kept = Rc::clone(&kept);
-        let answered: Vec<f64> = Vec::with_capacity(probes.len());
+        let answered: Vec<Answer> = Vec::with_capacity(probes.len());
         let recorder = LatencyRecorder::new();
         let pass: Pass = Box::new(move || {
             let mut columns = state;
@@ -894,11 +895,7 @@ fn resolve_item(input: &ResolvedInput, row: &Row) -> Result<ItemKey, EvalError> 
                 if i > 0 {
                     key.push(';');
                 }
-                match resolve_item(part, row)? {
-                    ItemKey::Str(held) => key.push_str(&held),
-                    ItemKey::Int(held) => key.push_str(&held.to_string()),
-                    ItemKey::Float(held) => key.push_str(&held.to_string()),
-                }
+                key.push_str(&resolve_item(part, row)?.rendered());
             }
             Ok(ItemKey::Str(key))
         }
@@ -936,6 +933,74 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn a_topk_readout_is_scored_against_the_true_ranked_set() {
+        use asap_types::post_asap::SummaryInputExpr;
+        use asap_types::pre_asap::ColumnRef;
+
+        let mut plan =
+            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        for node in &mut plan.dag.nodes {
+            match &mut node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
+                    *family = SummaryFamilyType::Sketch(
+                        SketchKind::new(
+                            SketchAlgorithm::CmsWithHeap,
+                            SketchParams::CmsWithHeap {
+                                width: 2048,
+                                depth: 5,
+                                heap_size: 32,
+                            },
+                        ),
+                        GroupingStrategy::PerSubpopulationInstance,
+                    );
+                    input.item = Some(SummaryInputExpr::Column(ColumnRef::SampleValue));
+                    input.weight = SummaryInputExpr::Constant(1.0);
+                }
+                ExecutableOperatorPayload::SummaryEstimate { query } => {
+                    *query = SketchQuery::TopK { k: 5 };
+                }
+                _ => {}
+            }
+        }
+
+        let mut values: Vec<f64> = Vec::new();
+        for (value, count) in [(0.0, 100), (1.0, 90), (2.0, 80), (3.0, 70), (4.0, 60)] {
+            values.extend(std::iter::repeat_n(value, count));
+        }
+        values.extend((0..200).map(|i| 10.0 + i as f64));
+
+        let admitted = admit(&plan.dag).expect("admitted");
+        let csv = csv_with(&values);
+        let outcome = run(&plan, &admitted, &csv_config(csv.path(), 5, true)).expect("run");
+
+        let readout = &outcome.readouts[0];
+        assert_eq!(
+            readout.exact,
+            Some(Answer::Ranked(vec![
+                (ItemKey::Float(0.0), 100),
+                (ItemKey::Float(1.0), 90),
+                (ItemKey::Float(2.0), 80),
+                (ItemKey::Float(3.0), 70),
+                (ItemKey::Float(4.0), 60),
+            ]))
+        );
+        let Answer::Ranked(estimated) = &readout.approximate else {
+            panic!(
+                "a heap family answers a ranked list: {:?}",
+                readout.approximate
+            );
+        };
+        let named: Vec<f64> = estimated
+            .iter()
+            .map(|(key, _)| match key {
+                ItemKey::Float(value) => *value,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(named, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]
@@ -1025,7 +1090,7 @@ mod tests {
 
         assert_eq!(
             outcome.readouts[0].exact,
-            Some(12.0),
+            Some(Answer::Scalar(12.0)),
             "the identity is the cluster label, so the distinct count is the cluster count"
         );
     }
@@ -1059,7 +1124,7 @@ mod tests {
 
         let outcome = run(&plan, &admitted, &csv_config(csv.path(), 7, true)).expect("run");
         let readout = &outcome.readouts[0];
-        assert_eq!(readout.exact, Some(97.0));
+        assert_eq!(readout.exact, Some(Answer::Scalar(97.0)));
         let Answer::Scalar(estimate) = readout.approximate else {
             panic!("HLL answers a scalar: {:?}", readout.approximate);
         };
@@ -1382,7 +1447,7 @@ mod tests {
             }
         );
         assert_eq!(readout.approximate, Answer::Scalar(5_000.0));
-        assert_eq!(readout.exact, Some(5_000.0));
+        assert_eq!(readout.exact, Some(Answer::Scalar(5_000.0)));
         // The state it cost, and that it is nothing like the retained column.
         assert_eq!(outcome.node_footprints.len(), 1);
         assert!(outcome.node_footprints[0].1 > 0);

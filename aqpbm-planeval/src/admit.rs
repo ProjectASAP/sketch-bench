@@ -616,22 +616,16 @@ fn admit_summary_estimate(
                 });
             }
         }
-        // The bare bucket total, a per-item point lookup, the distinct count
-        // and the two frequency moments are all answered exactly from the
-        // retained `(item, weight)` stream, so the shape of the readout is the
-        // exact arm's business rather than a reason to decline the plan.
+        // The bare bucket total, a per-item point lookup, the distinct count,
+        // the two frequency moments and the top-k list are all answered
+        // exactly from the retained `(item, weight)` stream, so the shape of
+        // the readout is the exact arm's business rather than a reason to
+        // decline the plan.
         SketchQuery::PointCount { .. }
         | SketchQuery::Cardinality
         | SketchQuery::FrequencyL2
-        | SketchQuery::FrequencyEntropy => {}
-        // The truth is a ranked key set, which the scalar path this crate
-        // scores against does not carry yet.
-        SketchQuery::TopK { .. } => {
-            return Err(Refusal::UnsupportedReadout {
-                node: node.id,
-                query: Box::new(query.clone()),
-            })
-        }
+        | SketchQuery::FrequencyEntropy
+        | SketchQuery::TopK { .. } => {}
     }
     let producer = input_edge(node, dag)?.0;
     match &producer.payload {
@@ -1315,8 +1309,7 @@ mod tests {
     // ── SummaryEstimate ──────────────────────────────────────────────────────
 
     #[test]
-    fn unsupported_readouts_are_refused_and_supported_ones_are_not() {
-        let refused = [SketchQuery::TopK { k: 10 }];
+    fn every_readout_shape_is_admitted_when_its_family_answers_it() {
         let accepted = [
             (SketchQuery::Quantile { q: 0.99 }, None),
             (
@@ -1351,16 +1344,19 @@ mod tests {
                     },
                 )),
             ),
+            (
+                SketchQuery::TopK { k: 10 },
+                Some(sketch(
+                    SketchAlgorithm::CmsWithHeap,
+                    SketchParams::CmsWithHeap {
+                        width: 256,
+                        depth: 5,
+                        heap_size: 32,
+                    },
+                )),
+            ),
         ];
 
-        for query in refused {
-            let dag = with_readout(&query);
-            let refusals = admit(&dag).expect_err("is refused");
-            assert!(
-                matches!(refusals.as_slice(), [Refusal::UnsupportedReadout { .. }]),
-                "{query:?}: {refusals:?}"
-            );
-        }
         for (query, family) in accepted {
             let dag = match family {
                 Some(family) => with_family(with_readout(&query), family),
@@ -1664,7 +1660,7 @@ mod tests {
                 node.payload = ExecutableOperatorPayload::SummarySubtract;
             } else if node.id == estimate {
                 node.payload = ExecutableOperatorPayload::SummaryEstimate {
-                    query: SketchQuery::TopK { k: 5 },
+                    query: SketchQuery::Quantile { q: 1.5 },
                 };
             }
         }
@@ -1680,7 +1676,7 @@ mod tests {
             .any(|refusal| matches!(refusal, Refusal::NoInverseOperation { .. })));
         assert!(refusals
             .iter()
-            .any(|refusal| matches!(refusal, Refusal::UnsupportedReadout { .. })));
+            .any(|refusal| matches!(refusal, Refusal::ParameterOutOfBounds { .. })));
     }
 
     #[test]

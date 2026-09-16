@@ -10,7 +10,8 @@
 //! describing an algorithm that did not run, voiding the accuracy claim while
 //! every number still looked reasonable.
 
-use asap_sketchlib::input::DataInput;
+use asap_sketchlib::common::heap::HHHeap;
+use asap_sketchlib::input::{DataInput, HeapItem};
 use asap_sketchlib::sketch_framework::univmon::UnivMon;
 use asap_sketchlib::sketches::hll::HyperLogLogImpl;
 use asap_sketchlib::{
@@ -272,6 +273,9 @@ pub fn answers_the_same_question(family: &SummaryFamilyType, query: &SketchQuery
                     key: ColumnRef::SampleValue,
                     value: None,
                 }
+            ) | (
+                SketchAlgorithm::CmsWithHeap | SketchAlgorithm::CountSketchWithHeap,
+                SketchQuery::TopK { .. }
             ) | (
                 SketchAlgorithm::UnivMon,
                 SketchQuery::Cardinality | SketchQuery::FrequencyL2 | SketchQuery::FrequencyEntropy
@@ -757,6 +761,9 @@ impl SummaryHandle for CmsHeapHandle {
     }
 
     fn estimate(&mut self, query: &SketchQuery) -> Result<Answer, EvalError> {
+        if let SketchQuery::TopK { k } = query {
+            return heap_topk(self.node, self.inner.heap(), *k);
+        }
         let key = point_key(self.node, query)?;
         Ok(Answer::Scalar(f64::from(self.inner.estimate(&key))))
     }
@@ -788,6 +795,9 @@ impl SummaryHandle for CsHeapHandle {
     }
 
     fn estimate(&mut self, query: &SketchQuery) -> Result<Answer, EvalError> {
+        if let SketchQuery::TopK { k } = query {
+            return heap_topk(self.node, self.inner.heap(), *k);
+        }
         let key = point_key(self.node, query)?;
         Ok(Answer::Scalar(self.inner.estimate(&key)))
     }
@@ -798,6 +808,33 @@ impl SummaryHandle for CsHeapHandle {
 
     fn footprint_bytes(&self) -> usize {
         self.rows * self.cols * std::mem::size_of::<i32>() + self.heap_size * 24
+    }
+}
+
+fn heap_topk(node: PostAsapNodeId, heap: &HHHeap, k: usize) -> Result<Answer, EvalError> {
+    let mut ranked: Vec<(ItemKey, u64)> = Vec::with_capacity(heap.len());
+    for item in heap.heap() {
+        ranked.push((heap_key(node, &item.key)?, item.count.max(0) as u64));
+    }
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.total_cmp(&right.0))
+    });
+    ranked.truncate(k);
+    Ok(Answer::Ranked(ranked))
+}
+
+fn heap_key(node: PostAsapNodeId, item: &HeapItem) -> Result<ItemKey, EvalError> {
+    match item {
+        HeapItem::String(held) => Ok(ItemKey::Str(held.clone())),
+        HeapItem::I64(held) => Ok(ItemKey::Int(*held)),
+        HeapItem::F64(held) => Ok(ItemKey::Float(*held)),
+        other => Err(EvalError::Handle(format!(
+            "node {node:?}: the heap holds a {other:?} key, which no update this crate \
+             performs could have put there"
+        ))),
     }
 }
 
@@ -1341,7 +1378,7 @@ mod tests {
                 query,
             )
             .unwrap();
-            assert_eq!(approximate, exact, "{query:?}");
+            assert_eq!(Answer::Scalar(approximate), exact, "{query:?}");
         }
     }
 
