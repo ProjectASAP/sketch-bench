@@ -38,6 +38,72 @@ pub enum ItemKey {
     Float(f64),
 }
 
+impl ItemKey {
+    pub fn total_cmp(&self, other: &ItemKey) -> std::cmp::Ordering {
+        fn rank(key: &ItemKey) -> u8 {
+            match key {
+                ItemKey::Str(_) => 0,
+                ItemKey::Int(_) => 1,
+                ItemKey::Float(_) => 2,
+            }
+        }
+        match (self, other) {
+            (ItemKey::Str(a), ItemKey::Str(b)) => a.cmp(b),
+            (ItemKey::Int(a), ItemKey::Int(b)) => a.cmp(b),
+            (ItemKey::Float(a), ItemKey::Float(b)) => a.total_cmp(b),
+            _ => rank(self).cmp(&rank(other)),
+        }
+    }
+
+    pub fn is_literal(&self, value: &str) -> bool {
+        match self {
+            ItemKey::Str(held) => held == value,
+            ItemKey::Int(held) => value.parse::<i64>().map(|v| v == *held).unwrap_or(false),
+            ItemKey::Float(held) => value
+                .parse::<f64>()
+                .map(|v| v.total_cmp(held).is_eq())
+                .unwrap_or(false),
+        }
+    }
+
+    pub fn heap_bytes(&self) -> usize {
+        match self {
+            ItemKey::Str(s) => s.len(),
+            ItemKey::Int(_) | ItemKey::Float(_) => 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Retained {
+    pub weights: Vec<f64>,
+    pub keyed: Vec<(ItemKey, f64)>,
+}
+
+impl Retained {
+    pub fn push(&mut self, item: Option<&ItemKey>, weight: f64) {
+        self.weights.push(weight);
+        if let Some(item) = item {
+            self.keyed.push((item.clone(), weight));
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.weights.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.weights.is_empty()
+    }
+
+    pub fn bytes(&self) -> usize {
+        let keys: usize = self.keyed.iter().map(|(key, _)| key.heap_bytes()).sum();
+        self.weights.len() * std::mem::size_of::<f64>()
+            + self.keyed.len() * std::mem::size_of::<(ItemKey, f64)>()
+            + keys
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Answer {
     Scalar(f64),

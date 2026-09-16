@@ -1333,7 +1333,14 @@ mod tests {
                 Answer::Scalar(value) => value,
                 other => panic!("expected a scalar, got {other:?}"),
             };
-            let exact = crate::score::exact_answer_sorted(&values, query).unwrap();
+            let exact = crate::score::exact_answer(
+                &crate::types::Retained {
+                    weights: values.clone(),
+                    keyed: Vec::new(),
+                },
+                query,
+            )
+            .unwrap();
             assert_eq!(approximate, exact, "{query:?}");
         }
     }

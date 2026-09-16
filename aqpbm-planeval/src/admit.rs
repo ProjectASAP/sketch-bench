@@ -571,20 +571,17 @@ fn admit_summary_estimate(
                 });
             }
         }
-        // The bare bucket total, which is how an exact accumulator's state is
-        // read. A *named* key paired with a value is a per-item point lookup:
-        // the exact arm has only the weight column, which carries no item keys
-        // to look one up by, so admitting it would produce an approximate
-        // number with no ground truth to check it against.
-        SketchQuery::PointCount { key, value }
-            if matches!(key, ColumnRef::SampleValue | ColumnRef::Wildcard) && value.is_none() => {}
-        // Cardinality, the frequency moments and TopK all need a family v0
-        // does not bind (see `handle::check_bindable`).
-        SketchQuery::Cardinality
-        | SketchQuery::PointCount { .. }
-        | SketchQuery::TopK { .. }
+        // The bare bucket total, a per-item point lookup, the distinct count
+        // and the two frequency moments are all answered exactly from the
+        // retained `(item, weight)` stream, so the shape of the readout is the
+        // exact arm's business rather than a reason to decline the plan.
+        SketchQuery::PointCount { .. }
+        | SketchQuery::Cardinality
         | SketchQuery::FrequencyL2
-        | SketchQuery::FrequencyEntropy => {
+        | SketchQuery::FrequencyEntropy => {}
+        // The truth is a ranked key set, which the scalar path this crate
+        // scores against does not carry yet.
+        SketchQuery::TopK { .. } => {
             return Err(Refusal::UnsupportedReadout {
                 node: node.id,
                 query: Box::new(query.clone()),
@@ -1180,19 +1177,7 @@ mod tests {
 
     #[test]
     fn unsupported_readouts_are_refused_and_supported_ones_are_not() {
-        let refused = [
-            SketchQuery::TopK { k: 10 },
-            SketchQuery::FrequencyL2,
-            SketchQuery::FrequencyEntropy,
-            // Needs a family v0 does not bind.
-            SketchQuery::Cardinality,
-            // A per-item lookup: the exact arm has only the weight column, so
-            // there would be no ground truth to check the estimate against.
-            SketchQuery::PointCount {
-                key: ColumnRef::Named("service".into()),
-                value: Some("api".into()),
-            },
-        ];
+        let refused = [SketchQuery::TopK { k: 10 }];
         let accepted = [
             (SketchQuery::Quantile { q: 0.99 }, None),
             (
@@ -1203,6 +1188,28 @@ mod tests {
                 Some(SummaryFamilyType::ExactAggregate(
                     ExactKind::Sum,
                     ExactParams::Sum,
+                )),
+            ),
+            (
+                SketchQuery::Cardinality,
+                Some(sketch(
+                    SketchAlgorithm::Hll,
+                    SketchParams::Hll { precision: 14 },
+                )),
+            ),
+            (SketchQuery::FrequencyL2, Some(univmon())),
+            (SketchQuery::FrequencyEntropy, Some(univmon())),
+            (
+                SketchQuery::PointCount {
+                    key: ColumnRef::Named("service".into()),
+                    value: Some("api".into()),
+                },
+                Some(sketch(
+                    SketchAlgorithm::Cms,
+                    SketchParams::Cms {
+                        width: 256,
+                        depth: 5,
+                    },
                 )),
             ),
         ];
@@ -1303,6 +1310,25 @@ mod tests {
                 "{family:?} / {query:?} should be admitted"
             );
         }
+    }
+
+    fn sketch(algorithm: SketchAlgorithm, params: SketchParams) -> SummaryFamilyType {
+        SummaryFamilyType::Sketch(
+            SketchKind::new(algorithm, params),
+            GroupingStrategy::PerSubpopulationInstance,
+        )
+    }
+
+    fn univmon() -> SummaryFamilyType {
+        sketch(
+            SketchAlgorithm::UnivMon,
+            SketchParams::UnivMon {
+                heap_size: 1000,
+                sketch_rows: 5,
+                sketch_cols: 256,
+                layers: 16,
+            },
+        )
     }
 
     fn with_family(mut dag: ExecutableDag, family: SummaryFamilyType) -> ExecutableDag {

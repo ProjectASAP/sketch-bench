@@ -31,7 +31,7 @@ use crate::rows;
 use crate::rows::RowSource;
 use crate::score;
 use crate::score::ObservedError;
-use crate::types::{Answer, EvalError, GroupKey, ItemKey, Row, Value};
+use crate::types::{Answer, EvalError, GroupKey, ItemKey, Retained, Row, Value};
 
 pub const DEFAULT_TIMED_RUNS: usize = 3;
 pub const DEFAULT_WARMUP_RUNS: usize = 1;
@@ -107,6 +107,7 @@ pub struct RunOutcome {
     /// whose state *is* its answer (an exact accumulator has no
     /// `SummaryEstimate`) even though the exact arm still retained a column.
     pub retained_values: usize,
+    pub retained_bytes: usize,
     pub readouts: Vec<Readout>,
     /// Summary state held per node, summed over that node's groups.
     pub node_footprints: Vec<(PostAsapNodeId, usize)>,
@@ -152,7 +153,7 @@ struct AggregateSpec<'a> {
 }
 
 type SummaryState = Vec<Box<dyn SummaryHandle>>;
-type RetainedState = Vec<Vec<f64>>;
+type RetainedState = Vec<Retained>;
 type Fault = Rc<RefCell<Option<EvalError>>>;
 type Kept<T> = Rc<RefCell<Vec<T>>>;
 
@@ -284,6 +285,7 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
 
     let mut exact = ArmTiming::default();
     let mut retained_values = 0usize;
+    let mut retained_bytes_held = 0usize;
     let mut truths: Vec<f64> = Vec::new();
     let mut retained: RetainedState = Vec::new();
     if cfg.verify {
@@ -291,8 +293,9 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
         exact.update = timing;
         retained_values = columns
             .last()
-            .map(|set| set.iter().map(Vec::len).sum())
+            .map(|set| set.iter().map(Retained::len).sum())
             .unwrap_or(0);
+        retained_bytes_held = columns.last().map(retained_bytes).unwrap_or(0) as usize;
         let (timing, answered, columns) = time_exact_estimates(&probes, columns, cfg)?;
         exact.readout = timing;
         truths = answered;
@@ -307,10 +310,8 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
         })?;
         let (exact_value, observed_error) = match truths.get(i) {
             Some(truth) => {
-                let column = retained
-                    .get(probe.slot as usize)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
+                let empty = Retained::default();
+                let column = retained.get(probe.slot as usize).unwrap_or(&empty);
                 let err = score::observed_error(
                     probe.guarantee.as_ref(),
                     column,
@@ -358,6 +359,7 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
         rows_emitted: drained.emitted,
         verified: cfg.verify,
         retained_values,
+        retained_bytes: retained_bytes_held,
         readouts,
         node_footprints,
         approximate: ArmTiming {
@@ -455,8 +457,7 @@ fn state_bytes(handles: &SummaryState) -> u64 {
 }
 
 fn retained_bytes(columns: &RetainedState) -> u64 {
-    let held: usize = columns.iter().map(Vec::len).sum();
-    (held * std::mem::size_of::<f64>()) as u64
+    columns.iter().map(|column| column.bytes() as u64).sum()
 }
 
 fn bind_all(slots: &[Slot], seed: u64) -> Result<SummaryState, EvalError> {
@@ -668,11 +669,11 @@ fn time_retains(
     for _ in 0..total {
         let updates = Rc::clone(updates);
         let kept = Rc::clone(&kept);
-        let columns: RetainedState = vec![Vec::new(); slot_count];
+        let columns: RetainedState = vec![Retained::default(); slot_count];
         let pass: Pass = Box::new(move || {
             let mut columns = columns;
             for update in updates.iter() {
-                columns[update.slot as usize].push(update.weight);
+                columns[update.slot as usize].push(update.item.as_ref(), update.weight);
             }
             let work = updates.len() as u64;
             let report: Report = Box::new(move || {
@@ -724,9 +725,9 @@ fn time_exact_estimates(
                 let probe = &probes[i];
                 let column = &mut columns[probe.slot as usize];
                 if score::needs_a_sorted_column(&probe.query) {
-                    column.sort_by(f64::total_cmp);
+                    column.weights.sort_by(f64::total_cmp);
                 }
-                match score::exact_answer_sorted(column, &probe.query) {
+                match score::exact_answer(column, &probe.query) {
                     Ok(truth) => answered.push(truth),
                     Err(err) => {
                         if failure.is_none() {
@@ -859,6 +860,49 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn a_cardinality_readout_is_scored_against_the_true_distinct_count() {
+        use asap_types::post_asap::SummaryInputExpr;
+        use asap_types::pre_asap::ColumnRef;
+
+        let mut plan =
+            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        for node in &mut plan.dag.nodes {
+            match &mut node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
+                    *family = SummaryFamilyType::Sketch(
+                        SketchKind::new(SketchAlgorithm::Hll, SketchParams::Hll { precision: 14 }),
+                        GroupingStrategy::PerSubpopulationInstance,
+                    );
+                    input.item = Some(SummaryInputExpr::Column(ColumnRef::SampleValue));
+                }
+                ExecutableOperatorPayload::SummaryEstimate { query } => {
+                    *query = SketchQuery::Cardinality;
+                }
+                _ => {}
+            }
+        }
+
+        let admitted = admit(&plan.dag).expect("admitted");
+        let values: Vec<f64> = (0..600).map(|i| (i % 97) as f64).collect();
+        let csv = csv_with(&values);
+
+        let outcome = run(&plan, &admitted, &csv_config(csv.path(), 7, true)).expect("run");
+        let readout = &outcome.readouts[0];
+        assert_eq!(readout.exact, Some(97.0));
+        let Answer::Scalar(estimate) = readout.approximate else {
+            panic!("HLL answers a scalar: {:?}", readout.approximate);
+        };
+        assert!(
+            (estimate - 97.0).abs() / 97.0 < 0.05,
+            "estimate {estimate} is nowhere near the 97 distinct values"
+        );
+        assert!(
+            outcome.retained_bytes > outcome.retained_values * std::mem::size_of::<f64>(),
+            "the retained item keys are not in the reported footprint"
+        );
     }
 
     #[test]

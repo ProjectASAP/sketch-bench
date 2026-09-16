@@ -140,7 +140,7 @@ impl PlanEvalRecord {
 
         let state_bytes: usize = outcome.node_footprints.iter().map(|(_, b)| b).sum();
         // The exact arm's cost is the column it had to keep.
-        let retained_bytes = outcome.retained_values * std::mem::size_of::<f64>();
+        let retained_bytes = outcome.retained_bytes;
 
         Self {
             schema_version: PLANEVAL_SCHEMA_VERSION,

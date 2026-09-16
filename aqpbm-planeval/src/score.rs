@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::run::Readout;
-use crate::types::{Answer, EvalError};
+use crate::types::{Answer, EvalError, ItemKey, Retained};
 
 /// The coefficient `asap-aware-mapping` used for the KLL empirical 99th
 /// percentile fit when this module was written. Copied, not imported: the
@@ -263,18 +263,19 @@ impl ObservedError {
 
 pub fn error_under_metric(
     metric: &ErrorMetric,
-    values: &[f64],
+    retained: &Retained,
     query: &SketchQuery,
     estimate: f64,
     truth: f64,
 ) -> Result<f64, UnevaluatableReason> {
+    let keyed = retained.keyed.as_slice();
     match metric {
-        ErrorMetric::Rank if !is_sorted_by_total_cmp(values) => {
-            let mut sorted = values.to_vec();
+        ErrorMetric::Rank if !is_sorted_by_total_cmp(&retained.weights) => {
+            let mut sorted = retained.weights.clone();
             sorted.sort_by(f64::total_cmp);
-            error_under_metric_sorted(metric, &sorted, query, estimate, truth)
+            error_under_metric_sorted(metric, &sorted, keyed, query, estimate, truth)
         }
-        _ => error_under_metric_sorted(metric, values, query, estimate, truth),
+        _ => error_under_metric_sorted(metric, &retained.weights, keyed, query, estimate, truth),
     }
 }
 
@@ -287,6 +288,7 @@ fn is_sorted_by_total_cmp(values: &[f64]) -> bool {
 fn error_under_metric_sorted(
     metric: &ErrorMetric,
     sorted: &[f64],
+    keyed: &[(ItemKey, f64)],
     query: &SketchQuery,
     estimate: f64,
     truth: f64,
@@ -304,9 +306,36 @@ fn error_under_metric_sorted(
     match metric {
         ErrorMetric::Rank => Ok(rank_error_sorted(sorted, estimate, q)),
         ErrorMetric::AbsoluteValue => Ok((estimate - truth).abs()),
-        ErrorMetric::RelativeValue => Ok(relative_error(estimate, truth)),
+        ErrorMetric::RelativeValue | ErrorMetric::Cardinality => {
+            Ok(relative_error(estimate, truth))
+        }
+        ErrorMetric::Frequency => match norm(keyed, Norm::L1) {
+            Some(norm) => Ok((estimate - truth).abs() / norm),
+            None => Err(UnevaluatableReason::StreamL1Norm),
+        },
+        ErrorMetric::L2Frequency => match norm(keyed, Norm::L2) {
+            Some(norm) => Ok((estimate - truth).abs() / norm),
+            None => Err(UnevaluatableReason::StreamL2Norm),
+        },
         _ => Err(UnevaluatableReason::UnrecognizedMetric),
     }
+}
+
+enum Norm {
+    L1,
+    L2,
+}
+
+fn norm(keyed: &[(ItemKey, f64)], which: Norm) -> Option<f64> {
+    if keyed.is_empty() {
+        return None;
+    }
+    let frequencies = frequencies(keyed);
+    let value = match which {
+        Norm::L1 => frequencies.iter().map(|f| f.abs()).sum::<f64>(),
+        Norm::L2 => frequencies.iter().map(|f| f * f).sum::<f64>().sqrt(),
+    };
+    (value.is_finite() && value > 0.0).then_some(value)
 }
 
 fn unevaluatable_reason(metric: &ErrorMetric, q: f64) -> Option<UnevaluatableReason> {
@@ -314,10 +343,11 @@ fn unevaluatable_reason(metric: &ErrorMetric, q: f64) -> Option<UnevaluatableRea
         ErrorMetric::Rank => q
             .is_nan()
             .then_some(UnevaluatableReason::NoQuantileInTheQuery),
-        ErrorMetric::AbsoluteValue | ErrorMetric::RelativeValue => None,
-        ErrorMetric::Cardinality => Some(UnevaluatableReason::TrueDistinctCount),
-        ErrorMetric::Frequency => Some(UnevaluatableReason::StreamL1Norm),
-        ErrorMetric::L2Frequency => Some(UnevaluatableReason::StreamL2Norm),
+        ErrorMetric::AbsoluteValue
+        | ErrorMetric::RelativeValue
+        | ErrorMetric::Cardinality
+        | ErrorMetric::Frequency
+        | ErrorMetric::L2Frequency => None,
         ErrorMetric::TopKMembership => Some(UnevaluatableReason::TrueTopKSet),
         _ => Some(UnevaluatableReason::UnrecognizedMetric),
     }
@@ -333,13 +363,13 @@ fn relative_error(estimate: f64, truth: f64) -> f64 {
 
 pub fn observed_error(
     guarantee: Option<&ResultGuarantee>,
-    values: &[f64],
+    retained: &Retained,
     query: &SketchQuery,
     approximate: &Answer,
     truth: f64,
 ) -> ObservedError {
     scored(guarantee, approximate, |metric, estimate| {
-        error_under_metric(metric, values, query, estimate, truth)
+        error_under_metric(metric, retained, query, estimate, truth)
     })
 }
 
@@ -464,7 +494,8 @@ pub fn needs_a_sorted_column(query: &SketchQuery) -> bool {
 /// distribution* of that column (a value's frequency is how many times it
 /// occurred), matching `SketchQuery`'s own definitions, not over the numeric
 /// values themselves.
-pub fn exact_answer_sorted(sorted: &[f64], query: &SketchQuery) -> Result<f64, EvalError> {
+pub fn exact_answer(retained: &Retained, query: &SketchQuery) -> Result<f64, EvalError> {
+    let sorted = retained.weights.as_slice();
     match query {
         SketchQuery::Quantile { q } => {
             if !(0.0..=1.0).contains(q) {
@@ -490,13 +521,74 @@ pub fn exact_answer_sorted(sorted: &[f64], query: &SketchQuery) -> Result<f64, E
             key: ColumnRef::Wildcard,
             value: None,
         } => Ok(sorted.len() as f64),
-        // Everything else needs either item keys the weight column does not
-        // carry, or a family v0 does not bind. Admission refuses these, so
-        // reaching here is a seam bug rather than a user error.
-        other => Err(EvalError::Validation(format!(
-            "no exact answer for {other:?} from a weight column alone"
+        SketchQuery::PointCount {
+            key: ColumnRef::Named(_) | ColumnRef::Qualified { .. },
+            value: Some(wanted),
+        } => {
+            let keyed = keyed_updates(retained, query)?;
+            Ok(keyed
+                .iter()
+                .filter(|(item, _)| item.is_literal(wanted))
+                .map(|(_, weight)| *weight)
+                .sum())
+        }
+        SketchQuery::Cardinality => Ok(frequencies(keyed_updates(retained, query)?).len() as f64),
+        SketchQuery::FrequencyL2 => {
+            let frequencies = frequencies(keyed_updates(retained, query)?);
+            Ok(frequencies.iter().map(|f| f * f).sum::<f64>().sqrt())
+        }
+        SketchQuery::FrequencyEntropy => {
+            let frequencies = frequencies(keyed_updates(retained, query)?);
+            let total: f64 = frequencies.iter().sum();
+            if total <= 0.0 {
+                return Err(EvalError::Validation(
+                    "exact entropy of an empty frequency distribution is undefined".into(),
+                ));
+            }
+            Ok(-frequencies
+                .iter()
+                .map(|f| f / total)
+                .filter(|p| *p > 0.0)
+                .map(|p| p * p.log2())
+                .sum::<f64>())
+        }
+        SketchQuery::TopK { k } => Err(EvalError::Validation(format!(
+            "TopK{{k: {k}}}: the exact answer is a ranked key set, which the scalar truth path \
+             does not carry"
+        ))),
+        SketchQuery::PointCount { key, value } => Err(EvalError::Validation(format!(
+            "PointCount{{key: {key:?}, value: {value:?}}} names no item to look up"
         ))),
     }
+}
+
+fn keyed_updates<'a>(
+    retained: &'a Retained,
+    query: &SketchQuery,
+) -> Result<&'a [(ItemKey, f64)], EvalError> {
+    if retained.keyed.is_empty() && !retained.weights.is_empty() {
+        return Err(EvalError::Validation(format!(
+            "{query:?} needs item keys, and this node's updates carried none"
+        )));
+    }
+    Ok(&retained.keyed)
+}
+
+fn frequencies(keyed: &[(ItemKey, f64)]) -> Vec<f64> {
+    let mut order: Vec<&(ItemKey, f64)> = keyed.iter().collect();
+    order.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut out: Vec<f64> = Vec::new();
+    let mut previous: Option<&ItemKey> = None;
+    for (item, weight) in order {
+        match previous {
+            Some(held) if held.total_cmp(item).is_eq() => {
+                *out.last_mut().expect("a run has a head") += weight;
+            }
+            _ => out.push(*weight),
+        }
+        previous = Some(item);
+    }
+    out
 }
 
 /// The value at rank `q·n`, on the same ruler [`rank_error`] measures against:
@@ -669,6 +761,113 @@ pub(crate) mod json_f64 {
 
 #[cfg(test)]
 mod tests {
+    fn held(weights: &[f64]) -> Retained {
+        Retained {
+            weights: weights.to_vec(),
+            keyed: Vec::new(),
+        }
+    }
+
+    fn held_keyed(pairs: &[(ItemKey, f64)]) -> Retained {
+        Retained {
+            weights: pairs.iter().map(|(_, weight)| *weight).collect(),
+            keyed: pairs.to_vec(),
+        }
+    }
+
+    fn three_a_one_b() -> Retained {
+        held_keyed(&[
+            (ItemKey::Str("a".into()), 1.0),
+            (ItemKey::Str("a".into()), 2.0),
+            (ItemKey::Str("b".into()), 1.0),
+        ])
+    }
+
+    #[test]
+    fn the_keyed_readouts_are_answered_from_the_retained_item_stream() {
+        let retained = three_a_one_b();
+
+        assert_eq!(
+            exact_answer(&retained, &SketchQuery::Cardinality).unwrap(),
+            2.0
+        );
+        assert_eq!(
+            exact_answer(
+                &retained,
+                &SketchQuery::PointCount {
+                    key: ColumnRef::Named("service".into()),
+                    value: Some("a".into()),
+                }
+            )
+            .unwrap(),
+            3.0,
+            "a point lookup sums that item's weights, it does not count its rows"
+        );
+        assert_eq!(
+            exact_answer(&retained, &SketchQuery::FrequencyL2).unwrap(),
+            10.0_f64.sqrt()
+        );
+        let entropy = -(0.75_f64 * 0.75_f64.log2() + 0.25 * 0.25_f64.log2());
+        assert!(
+            (exact_answer(&retained, &SketchQuery::FrequencyEntropy).unwrap() - entropy).abs()
+                < 1e-12
+        );
+    }
+
+    #[test]
+    fn a_keyless_column_refuses_a_keyed_readout_rather_than_answering_zero() {
+        let retained = held(&[1.0, 2.0, 3.0]);
+        for query in [
+            SketchQuery::Cardinality,
+            SketchQuery::FrequencyL2,
+            SketchQuery::FrequencyEntropy,
+            SketchQuery::PointCount {
+                key: ColumnRef::Named("service".into()),
+                value: Some("a".into()),
+            },
+        ] {
+            assert!(
+                exact_answer(&retained, &query).is_err(),
+                "{query:?} answered from a column with no item keys"
+            );
+        }
+    }
+
+    #[test]
+    fn an_item_key_is_only_the_literal_that_renders_to_it() {
+        assert!(ItemKey::Str("a".into()).is_literal("a"));
+        assert!(!ItemKey::Str("a".into()).is_literal("b"));
+        assert!(ItemKey::Int(3).is_literal("3"));
+        assert!(!ItemKey::Int(3).is_literal("3.0"));
+        assert!(ItemKey::Float(3.0).is_literal("3.0"));
+        assert_ne!(
+            ItemKey::Int(3).total_cmp(&ItemKey::Float(3.0)),
+            std::cmp::Ordering::Equal,
+            "the library hashes these to different DataInputs"
+        );
+    }
+
+    #[test]
+    fn the_frequency_metrics_normalize_by_the_norms_of_the_item_stream() {
+        let retained = three_a_one_b();
+        let query = SketchQuery::PointCount {
+            key: ColumnRef::Named("service".into()),
+            value: Some("a".into()),
+        };
+
+        for (metric, expected) in [
+            (ErrorMetric::Frequency, 0.4 / 4.0),
+            (ErrorMetric::L2Frequency, 0.4 / 10.0_f64.sqrt()),
+        ] {
+            let measured = error_under_metric(&metric, &retained, &query, 3.4, 3.0)
+                .unwrap_or_else(|reason| panic!("{metric:?}: {reason:?}"));
+            assert!(
+                (measured - expected).abs() < 1e-12,
+                "{metric:?}: {measured} != {expected}"
+            );
+        }
+    }
+
     use super::*;
     use aqpbm_core::accuracy::quantile::RankErrorGT;
     use aqpbm_core::{ColumnData, GeneratedTable, GroundTruth};
@@ -852,7 +1051,7 @@ mod tests {
         let values = uniform_0_10000();
         for i in 0..=100 {
             let q = i as f64 / 100.0;
-            let answer = exact_answer_sorted(&values, &SketchQuery::Quantile { q }).unwrap();
+            let answer = exact_answer(&held(&values), &SketchQuery::Quantile { q }).unwrap();
             assert_eq!(
                 rank_error(&values, answer, q),
                 0.0,
@@ -866,12 +1065,12 @@ mod tests {
         let values: Vec<f64> = (1..=100).map(|i| i as f64).collect();
 
         // A KLL readout.
-        let median = exact_answer_sorted(&values, &SketchQuery::Quantile { q: 0.5 }).unwrap();
+        let median = exact_answer(&held(&values), &SketchQuery::Quantile { q: 0.5 }).unwrap();
         assert_eq!(median, 51.0, "value at rank floor(0.5 * 100)");
 
         // An exact accumulator read out as a bucket total.
-        let total = exact_answer_sorted(
-            &values,
+        let total = exact_answer(
+            &held(&values),
             &SketchQuery::PointCount {
                 key: ColumnRef::SampleValue,
                 value: None,
@@ -888,7 +1087,7 @@ mod tests {
             SketchQuery::TopK { k: 5 },
         ] {
             assert!(
-                exact_answer_sorted(&values, &unreachable).is_err(),
+                exact_answer(&held(&values), &unreachable).is_err(),
                 "{unreachable:?} must not produce a number"
             );
         }
@@ -897,11 +1096,11 @@ mod tests {
     #[test]
     fn exact_answer_refuses_what_it_cannot_compute() {
         let values = vec![1.0, 2.0];
-        assert!(exact_answer_sorted(&values, &SketchQuery::TopK { k: 3 }).is_err());
-        assert!(exact_answer_sorted(&values, &SketchQuery::Quantile { q: 1.5 }).is_err());
-        assert!(exact_answer_sorted(&[], &SketchQuery::Quantile { q: 0.5 }).is_err());
-        assert!(exact_answer_sorted(
-            &values,
+        assert!(exact_answer(&held(&values), &SketchQuery::TopK { k: 3 }).is_err());
+        assert!(exact_answer(&held(&values), &SketchQuery::Quantile { q: 1.5 }).is_err());
+        assert!(exact_answer(&held(&[]), &SketchQuery::Quantile { q: 0.5 }).is_err());
+        assert!(exact_answer(
+            &held(&values),
             &SketchQuery::PointCount {
                 key: ColumnRef::Named("item".into()),
                 value: Some("checkout".into()),
@@ -1102,17 +1301,41 @@ mod tests {
         let approximate = Answer::Scalar(5_100.0);
 
         assert_eq!(
-            error_under_metric(&ErrorMetric::Rank, &shuffled, &query, 5_100.0, 5_000.0),
-            error_under_metric(&ErrorMetric::Rank, &sorted, &query, 5_100.0, 5_000.0),
+            error_under_metric(
+                &ErrorMetric::Rank,
+                &held(&shuffled),
+                &query,
+                5_100.0,
+                5_000.0
+            ),
+            error_under_metric(&ErrorMetric::Rank, &held(&sorted), &query, 5_100.0, 5_000.0),
             "the metric must not read a rank off an unsorted slice"
         );
         assert_eq!(
-            error_under_metric(&ErrorMetric::Rank, &shuffled, &query, 5_100.0, 5_000.0),
+            error_under_metric(
+                &ErrorMetric::Rank,
+                &held(&shuffled),
+                &query,
+                5_100.0,
+                5_000.0
+            ),
             Ok(0.01)
         );
         assert_eq!(
-            observed_error(Some(&guarantee), &shuffled, &query, &approximate, 5_000.0),
-            observed_error(Some(&guarantee), &sorted, &query, &approximate, 5_000.0)
+            observed_error(
+                Some(&guarantee),
+                &held(&shuffled),
+                &query,
+                &approximate,
+                5_000.0
+            ),
+            observed_error(
+                Some(&guarantee),
+                &held(&sorted),
+                &query,
+                &approximate,
+                5_000.0
+            )
         );
     }
 
@@ -1120,14 +1343,14 @@ mod tests {
     fn a_relative_value_bound_is_measured_by_relative_error_not_by_rank_error() {
         let values = uniform_0_10000();
         let query = SketchQuery::Quantile { q: 0.5 };
-        let truth = exact_answer_sorted(&values, &query).unwrap();
+        let truth = exact_answer(&held(&values), &query).unwrap();
         assert_eq!(truth, 5000.0);
         let estimate = 5100.0;
 
         let rank = rank_error(&values, estimate, 0.5);
         let relative = error_under_metric(
             &ErrorMetric::RelativeValue,
-            &values,
+            &held(&values),
             &query,
             estimate,
             truth,
@@ -1238,7 +1461,7 @@ mod tests {
 
         let observed = observed_error(
             Some(&guarantee),
-            &[1.0, 2.0],
+            &held(&[1.0, 2.0]),
             &query,
             &Answer::Scalar(f64::NAN),
             3.0,
@@ -1281,9 +1504,14 @@ mod tests {
     fn an_absolute_value_bound_is_measured_in_the_values_own_units() {
         let values = uniform_0_10000();
         let query = SketchQuery::Quantile { q: 0.5 };
-        let error =
-            error_under_metric(&ErrorMetric::AbsoluteValue, &values, &query, 5100.0, 5000.0)
-                .expect("an absolute error needs nothing the column does not have");
+        let error = error_under_metric(
+            &ErrorMetric::AbsoluteValue,
+            &held(&values),
+            &query,
+            5100.0,
+            5000.0,
+        )
+        .expect("an absolute error needs nothing the column does not have");
         assert_eq!(error, 100.0);
     }
 
@@ -1295,7 +1523,7 @@ mod tests {
             value: None,
         };
         assert_eq!(
-            error_under_metric(&ErrorMetric::Rank, &values, &total, 1.0, 1.0),
+            error_under_metric(&ErrorMetric::Rank, &held(&values), &total, 1.0, 1.0),
             Err(UnevaluatableReason::NoQuantileInTheQuery)
         );
     }
@@ -1307,10 +1535,6 @@ mod tests {
         let approximate = Answer::Scalar(5100.0);
 
         for (metric, expected) in [
-            (
-                ErrorMetric::Cardinality,
-                UnevaluatableReason::TrueDistinctCount,
-            ),
             (ErrorMetric::Frequency, UnevaluatableReason::StreamL1Norm),
             (ErrorMetric::L2Frequency, UnevaluatableReason::StreamL2Norm),
             (
@@ -1319,7 +1543,13 @@ mod tests {
             ),
         ] {
             let guarantee = guarantee_with_metric(metric, 0.01);
-            match observed_error(Some(&guarantee), &values, &query, &approximate, 5000.0) {
+            match observed_error(
+                Some(&guarantee),
+                &held(&values),
+                &query,
+                &approximate,
+                5000.0,
+            ) {
                 ObservedError::Unevaluatable {
                     reason,
                     metric: name,
@@ -1331,13 +1561,27 @@ mod tests {
         }
 
         assert_eq!(
-            observed_error(None, &values, &query, &approximate, 5000.0),
+            observed_error(
+                Some(&guarantee_with_metric(ErrorMetric::Cardinality, 0.01)),
+                &held(&values),
+                &query,
+                &approximate,
+                5000.0
+            ),
+            ObservedError::Measured {
+                metric: "cardinality".to_string(),
+                error: 0.02,
+            },
+        );
+
+        assert_eq!(
+            observed_error(None, &held(&values), &query, &approximate, 5000.0),
             ObservedError::NoGuarantee
         );
         assert!(matches!(
             observed_error(
                 Some(&planner_kll_guarantee()),
-                &values,
+                &held(&values),
                 &query,
                 &approximate,
                 5000.0
@@ -1348,13 +1592,13 @@ mod tests {
 
     #[test]
     fn an_unevaluatable_metric_is_reported_as_unevaluatable_not_as_zero_violations() {
-        let guarantee = guarantee_with_metric(ErrorMetric::Cardinality, 0.0065);
+        let guarantee = guarantee_with_metric(ErrorMetric::TopKMembership, 0.0065);
 
         let mut observations = GuaranteeObservations::default();
         let mut readout = observed_readout(None, Some(guarantee.clone()));
         readout.observed_error = ObservedError::Unevaluatable {
-            metric: "cardinality".to_string(),
-            reason: UnevaluatableReason::TrueDistinctCount,
+            metric: "top_k_membership".to_string(),
+            reason: UnevaluatableReason::TrueTopKSet,
         };
         for _ in 0..4 {
             observations.observe(&readout);
@@ -1371,15 +1615,12 @@ mod tests {
             check.seeds, 0,
             "an unevaluatable error is not an observation"
         );
-        assert_eq!(
-            check.unevaluatable,
-            Some(UnevaluatableReason::TrueDistinctCount)
-        );
+        assert_eq!(check.unevaluatable, Some(UnevaluatableReason::TrueTopKSet));
         assert!(check.observed_violation_rate.is_nan());
         assert_ne!(check.observed_violation_rate, 0.0);
 
         let json = serde_json::to_value(check).unwrap();
-        assert_eq!(json["unevaluatable"], "true_distinct_count");
+        assert_eq!(json["unevaluatable"], "true_top_k_set");
         assert!(json["observed_violation_rate"].is_null());
 
         // And an error measured under some *other* rule cannot back-fill it.
@@ -1424,14 +1665,14 @@ mod tests {
                 );
             }
             assert_eq!(
-                error_under_metric(&ErrorMetric::Rank, &values, &query, estimate, 5000.0),
+                error_under_metric(&ErrorMetric::Rank, &held(&values), &query, estimate, 5000.0),
                 Err(UnevaluatableReason::ErrorIsNotANumber),
                 "{estimate}"
             );
 
             let observed = observed_error(
                 Some(&planner_kll_guarantee()),
-                &values,
+                &held(&values),
                 &query,
                 &Answer::Scalar(estimate),
                 5000.0,
@@ -1453,7 +1694,7 @@ mod tests {
         };
         let infinite = observed_error(
             Some(&guarantee_with_metric(ErrorMetric::RelativeValue, 0.01)),
-            &values,
+            &held(&values),
             &total,
             &Answer::Scalar(3.0),
             0.0,
