@@ -20,18 +20,18 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use asap_types::post_asap::{
-    ExecutableOperator, ExecutableOperatorPayload, PostAsapNodeId, ResultGuarantee, SketchQuery,
-    SummaryFamilyType,
+    EdgeRole, ExecutableDag, ExecutableDagNode, ExecutableOperator, ExecutableOperatorPayload,
+    PostAsapNodeId, ResultGuarantee, SketchQuery, SummaryFamilyType,
 };
 
 use crate::admit::{AdmittedPlan, NodeDecision, ResolvedInput};
 use crate::handle::{bind, SummaryHandle};
 use crate::plan::Plan;
 use crate::rows;
-use crate::rows::RowSource;
 use crate::score;
 use crate::score::ObservedError;
 use crate::types::{Answer, EvalError, GroupKey, ItemKey, Retained, Row, Value};
+use crate::value;
 
 pub const DEFAULT_TIMED_RUNS: usize = 3;
 pub const DEFAULT_WARMUP_RUNS: usize = 1;
@@ -101,6 +101,9 @@ pub struct ArmTiming {
 pub struct RunOutcome {
     pub rows_scanned: u64,
     pub rows_emitted: u64,
+    /// Rows the root node produced, for a plan whose answer is rows rather
+    /// than a readout. `None` when the root is not a row-producing node.
+    pub root_rows: Option<usize>,
     pub verified: bool,
     /// Values the exact arm held, summed over every `(node, group)`. Counted
     /// here rather than derived from `readouts`, which are empty for a plan
@@ -140,8 +143,6 @@ struct Probe {
 struct Drained {
     slots: Vec<Slot>,
     updates: Rc<Vec<Update>>,
-    scanned: u64,
-    emitted: u64,
 }
 
 struct AggregateSpec<'a> {
@@ -157,89 +158,71 @@ type RetainedState = Vec<Retained>;
 type Fault = Rc<RefCell<Option<EvalError>>>;
 type Kept<T> = Rc<RefCell<Vec<T>>>;
 
-/// Run one admitted plan.
+/// Run one admitted plan, dispatching every node on its own payload.
 ///
-/// v0 shape: exactly one row source, and every `SummaryAgg` consumes it
-/// directly. That covers every plan the planner produces from the corpus; a
-/// second row source is refused rather than guessed at.
+/// The row-producing nodes are materialized first, in topological order, so a
+/// `SummaryAgg` reads the rows its own producer emitted rather than the plan's
+/// row source. A payload with no arm here is an error naming the node, never a
+/// node silently skipped.
 pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let dag = admitted.dag();
-    let by_id: HashMap<PostAsapNodeId, &_> = dag.nodes.iter().map(|n| (n.id, n)).collect();
+    let by_id: HashMap<PostAsapNodeId, &ExecutableDagNode> =
+        dag.nodes.iter().map(|n| (n.id, n)).collect();
+    let mut executed: Vec<PostAsapNodeId> = Vec::new();
 
-    // ── locate the single row source ────────────────────────────────────────
-    let sources: Vec<PostAsapNodeId> = plan
-        .order
-        .iter()
-        .copied()
-        .filter(|id| matches!(admitted.decision(*id), Some(NodeDecision::RowSource)))
-        .collect();
-    let source_id = match sources.as_slice() {
-        [one] => *one,
-        [] => return Err(EvalError::RowSource("plan has no row source".into())),
-        many => {
-            return Err(EvalError::RowSource(format!(
-                "v0 runs a single row source; this plan has {}",
-                many.len()
-            )))
+    let materialized = materialize(plan, dag, &by_id, cfg, &mut executed)?;
+
+    // ── the aggregates, grouped by the rows they consume ────────────────────
+    //
+    // Row-major within a group, as one shared source used to be: the update
+    // order is what the timed insert phase replays.
+    let mut consumers: Vec<(PostAsapNodeId, Vec<AggregateSpec<'_>>)> = Vec::new();
+    for id in &plan.order {
+        let node = by_id[id];
+        if !matches!(node.payload, ExecutableOperatorPayload::SummaryAgg { .. }) {
+            continue;
         }
-    };
-    let source_node = by_id[&source_id];
-    let scan = match &source_node.payload {
-        ExecutableOperatorPayload::Fallback { expression } => expression,
-        other => {
-            return Err(EvalError::RowSource(format!(
-                "row source node carries a {other:?} payload"
-            )))
-        }
-    };
-
-    // ── the aggregates that consume it ──────────────────────────────────────
-    let aggregates: Vec<PostAsapNodeId> = plan
-        .order
-        .iter()
-        .copied()
-        .filter(|id| matches!(admitted.decision(*id), Some(NodeDecision::Aggregate { .. })))
-        .filter(|id| {
-            dag.edges
-                .iter()
-                .any(|e| e.consumer == *id && e.producer == source_id)
-        })
-        .collect();
-
-    let mut specs = Vec::with_capacity(aggregates.len());
-    for agg in &aggregates {
-        let (item, weight, group_columns) = match admitted.decision(*agg) {
+        let (item, weight, group_columns) = match admitted.decision(*id) {
             Some(NodeDecision::Aggregate {
                 item,
                 weight,
                 group_columns,
             }) => (item, weight, group_columns),
-            _ => unreachable!("filtered to Aggregate above"),
+            _ => {
+                return Err(EvalError::Validation(format!(
+                    "node {id:?} is a SummaryAgg that admission resolved no update for"
+                )))
+            }
         };
-        specs.push(AggregateSpec {
-            node: *agg,
-            family: agg_family(&by_id[agg].payload)?,
+        let producer = input_producer(dag, *id)?;
+        if !materialized.rows.contains_key(&producer) {
+            return Err(EvalError::Validation(format!(
+                "node {id:?} consumes {producer:?}, which produced no rows"
+            )));
+        }
+        let spec = AggregateSpec {
+            node: *id,
+            family: agg_family(&node.payload)?,
             item,
             weight,
             group_columns,
-        });
+        };
+        match consumers.iter_mut().find(|(held, _)| *held == producer) {
+            Some((_, specs)) => specs.push(spec),
+            None => consumers.push((producer, vec![spec])),
+        }
+        executed.push(*id);
     }
 
-    // ── one pass over the rows, resolved into what the passes replay ────────
-    let mut source = match &cfg.rows {
-        RowsFrom::Csv(path) => rows::open(scan, path, &source_node.output_schema)?,
-        RowsFrom::Generated(table) => {
-            rows::open_generated(scan, Rc::clone(table), &source_node.output_schema)?
-        }
-    };
-    let drained = drain(&specs, &mut source)?;
+    let drained = drain(&consumers, &materialized)?;
 
     let mut probes: Vec<Probe> = Vec::new();
     for id in &plan.order {
-        let query = match admitted.decision(*id) {
-            Some(NodeDecision::Readout(query)) => query.clone(),
+        let query = match &by_id[id].payload {
+            ExecutableOperatorPayload::SummaryEstimate { query } => query.clone(),
             _ => continue,
         };
+        executed.push(*id);
         let producer = dag
             .edges
             .iter()
@@ -337,26 +320,22 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
         });
     }
 
-    // An admitted node that nothing executed is a seam bug, not an empty
-    // result: without this check a `Value` between the row source and an
-    // aggregate silently drops that aggregate and `run` still returns `Ok`.
+    // A node nothing executed is a seam bug, not an empty result: without this
+    // check a payload with no arm above silently drops whatever depended on it
+    // and `run` still returns `Ok`.
     for id in &plan.order {
-        let executed = match admitted.decision(*id) {
-            Some(NodeDecision::RowSource) => *id == source_id,
-            Some(NodeDecision::Aggregate { .. }) => aggregates.contains(id),
-            Some(NodeDecision::Readout(_)) => readouts.iter().any(|r| r.node == *id),
-            Some(NodeDecision::RowOperation) | None => false,
-        };
-        if !executed {
+        if !executed.contains(id) {
             return Err(EvalError::Validation(format!(
-                "node {id:?} was admitted but never executed"
+                "node {id:?} ({:?}) was admitted but no arm executed it",
+                by_id[id].operator
             )));
         }
     }
 
     Ok(RunOutcome {
-        rows_scanned: drained.scanned,
-        rows_emitted: drained.emitted,
+        rows_scanned: materialized.scanned,
+        rows_emitted: materialized.emitted,
+        root_rows: materialized.rows.get(&dag.root).map(|rows| rows.len()),
         verified: cfg.verify,
         retained_values,
         retained_bytes: retained_bytes_held,
@@ -371,47 +350,130 @@ pub fn run(plan: &Plan, admitted: &AdmittedPlan, cfg: &RunConfig) -> Result<RunO
     })
 }
 
-fn drain(specs: &[AggregateSpec<'_>], source: &mut RowSource) -> Result<Drained, EvalError> {
+fn drain(
+    consumers: &[(PostAsapNodeId, Vec<AggregateSpec<'_>>)],
+    materialized: &Materialized,
+) -> Result<Drained, EvalError> {
     let mut slots: Vec<Slot> = Vec::new();
-    let mut index: HashMap<(usize, GroupKey), u32> = HashMap::new();
+    let mut index: HashMap<(PostAsapNodeId, GroupKey), u32> = HashMap::new();
     let mut updates: Vec<Update> = Vec::new();
 
-    for row in source.by_ref() {
-        let row = row?;
-        for (position, spec) in specs.iter().enumerate() {
-            let group = group_key(&row, spec.group_columns)?;
-            let slot = match index.entry((position, group)) {
-                Entry::Occupied(held) => *held.get(),
-                Entry::Vacant(empty) => {
-                    let id = u32::try_from(slots.len()).map_err(|_| {
-                        EvalError::RowSource("more groups than a u32 can index".into())
-                    })?;
-                    slots.push(Slot {
-                        node: spec.node,
-                        family: spec.family.clone(),
-                        group: empty.key().1.clone(),
-                        observations: 0,
-                    });
-                    empty.insert(id);
-                    id
-                }
-            };
-            let weight = resolve_weight(spec.weight, &row)?;
-            let item = match spec.item {
-                Some(input) => Some(resolve_item(input, &row)?),
-                None => None,
-            };
-            slots[slot as usize].observations += 1;
-            updates.push(Update { slot, item, weight });
+    for (producer, specs) in consumers {
+        let rows = &materialized.rows[producer];
+        for row in rows.iter() {
+            for spec in specs {
+                let group = group_key(row, spec.group_columns)?;
+                let slot = match index.entry((spec.node, group)) {
+                    Entry::Occupied(held) => *held.get(),
+                    Entry::Vacant(empty) => {
+                        let id = u32::try_from(slots.len()).map_err(|_| {
+                            EvalError::RowSource("more groups than a u32 can index".into())
+                        })?;
+                        slots.push(Slot {
+                            node: spec.node,
+                            family: spec.family.clone(),
+                            group: empty.key().1.clone(),
+                            observations: 0,
+                        });
+                        empty.insert(id);
+                        id
+                    }
+                };
+                let weight = resolve_weight(spec.weight, row)?;
+                let item = match spec.item {
+                    Some(input) => Some(resolve_item(input, row)?),
+                    None => None,
+                };
+                slots[slot as usize].observations += 1;
+                updates.push(Update { slot, item, weight });
+            }
         }
     }
 
     Ok(Drained {
         slots,
         updates: Rc::new(updates),
-        scanned: source.scanned(),
-        emitted: source.emitted(),
     })
+}
+
+struct Materialized {
+    rows: HashMap<PostAsapNodeId, Rc<Vec<Row>>>,
+    scanned: u64,
+    emitted: u64,
+}
+
+/// Every node that produces rows, in topological order.
+///
+/// `Fallback` opens the run's row set; a `Value` transforms the rows its own
+/// producer emitted. Both timings are materialized here: with the manifest's
+/// one-shot whole-input evaluation there is one pass, so a maintenance-time
+/// row operation and a read-time one see the same rows.
+fn materialize(
+    plan: &Plan,
+    dag: &ExecutableDag,
+    by_id: &HashMap<PostAsapNodeId, &ExecutableDagNode>,
+    cfg: &RunConfig,
+    executed: &mut Vec<PostAsapNodeId>,
+) -> Result<Materialized, EvalError> {
+    let mut rows: HashMap<PostAsapNodeId, Rc<Vec<Row>>> = HashMap::new();
+    let mut scanned = 0;
+    let mut emitted = 0;
+    let mut source: Option<PostAsapNodeId> = None;
+
+    for id in &plan.order {
+        let node = by_id[id];
+        match &node.payload {
+            ExecutableOperatorPayload::Fallback { expression } => {
+                if let Some(held) = source {
+                    return Err(EvalError::RowSource(format!(
+                        "the run manifest names one row set, and this plan reads two: \
+                         {held:?} and {id:?}"
+                    )));
+                }
+                source = Some(*id);
+                let mut reader = match &cfg.rows {
+                    RowsFrom::Csv(path) => rows::open(expression, path, &node.output_schema)?,
+                    RowsFrom::Generated(table) => {
+                        rows::open_generated(expression, Rc::clone(table), &node.output_schema)?
+                    }
+                };
+                let mut held = Vec::new();
+                for row in reader.by_ref() {
+                    held.push(row?);
+                }
+                scanned = reader.scanned();
+                emitted = reader.emitted();
+                rows.insert(*id, Rc::new(held));
+                executed.push(*id);
+            }
+            ExecutableOperatorPayload::Value { operation, .. } => {
+                let producer = input_producer(dag, *id)?;
+                let input = rows.get(&producer).ok_or_else(|| {
+                    EvalError::Validation(format!(
+                        "node {id:?} is a row operation over {producer:?}, which produced no rows"
+                    ))
+                })?;
+                let produced = value::apply(*id, operation, input)?;
+                rows.insert(*id, produced);
+                executed.push(*id);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Materialized {
+        rows,
+        scanned,
+        emitted,
+    })
+}
+
+fn input_producer(dag: &ExecutableDag, node: PostAsapNodeId) -> Result<PostAsapNodeId, EvalError> {
+    dag.edges
+        .iter()
+        .find(|edge| edge.consumer == node && edge.role == EdgeRole::Input)
+        .map(|edge| edge.producer)
+        .ok_or_else(|| EvalError::Validation(format!("node {node:?} has no Input edge")))
 }
 
 fn phase_config(metric: Metric, extra: MetricsMask, cfg: &RunConfig) -> (usize, MeasureConfig) {
@@ -874,6 +936,34 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn the_topk_plan_runs_as_a_row_pipeline_instead_of_being_refused() {
+        for (query, expected) in [("topk(5, cpu_cores)", 5usize), ("bottomk(3, cpu_cores)", 3)] {
+            let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).expect("plan");
+            assert_eq!(
+                plan.dag
+                    .nodes
+                    .iter()
+                    .filter(|node| node.operator == ExecutableOperator::Value)
+                    .count(),
+                2,
+                "{query} compiles to Sort + Limit"
+            );
+
+            let admitted = admit(&plan.dag).expect("admitted");
+            let values: Vec<f64> = (0..600).map(|i| (i % 97) as f64).collect();
+            let csv = csv_with(&values);
+
+            let outcome = run(&plan, &admitted, &csv_config(csv.path(), 0, true)).expect("run");
+            assert_eq!(outcome.root_rows, Some(expected), "{query}");
+            assert_eq!(outcome.rows_scanned, 600, "{query}");
+            assert!(
+                outcome.readouts.is_empty(),
+                "{query} holds no summary to read out"
+            );
+        }
     }
 
     #[test]

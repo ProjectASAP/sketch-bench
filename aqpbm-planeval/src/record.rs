@@ -27,6 +27,10 @@ pub struct PlanEvalRecord {
     pub plan: PlanIdentity,
     pub rows_scanned: u64,
     pub rows_emitted: u64,
+    /// Rows the root node produced, for a plan whose answer is rows rather
+    /// than a readout. `null` when the root holds summary state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_rows: Option<usize>,
     /// Whether the exact arm ran at all. A record with `verified: false` has
     /// no ground truth in it, and says so rather than leaving the reader to
     /// infer it from absent fields.
@@ -154,6 +158,7 @@ impl PlanEvalRecord {
             },
             rows_scanned: outcome.rows_scanned,
             rows_emitted: outcome.rows_emitted,
+            root_rows: outcome.root_rows,
             verified: outcome.verified,
             nodes,
             approximate: arm(&outcome.approximate, state_bytes, 0),

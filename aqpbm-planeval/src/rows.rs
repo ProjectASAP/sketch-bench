@@ -667,7 +667,7 @@ pub(crate) fn check_predicate(expr: &QueryExpr, columns: usize) -> Result<(), Pr
 /// Only reachable for expressions [`check_predicate`] has already accepted; the
 /// same subset is matched here so a divergence between the two is a visible
 /// error rather than a wrong answer.
-fn eval(expr: &QueryExpr, row: &Row) -> Result<Value, EvalError> {
+pub(crate) fn eval(expr: &QueryExpr, row: &Row) -> Result<Value, EvalError> {
     match expr {
         QueryExpr::Column(column) => row.0.get(*column).cloned().ok_or_else(|| {
             EvalError::RowSource(format!(
@@ -737,6 +737,22 @@ fn literal(value: &ScalarValue) -> Result<Value, EvalError> {
 /// `Bool` has no `Value` variant of its own; `Int(0)`/`Int(1)` is the encoding
 /// used for both decoded `Bool` columns and predicate results, so the two are
 /// comparable without a special case.
+pub(crate) fn passes(expr: &QueryExpr, row: &Row) -> Result<bool, EvalError> {
+    Ok(truthy(&eval(expr, row)?))
+}
+
+pub(crate) fn order(left: &Value, right: &Value) -> std::cmp::Ordering {
+    match (left.as_f64(), right.as_f64()) {
+        (Some(left), Some(right)) => left.total_cmp(&right),
+        (None, None) => match (left, right) {
+            (Value::Str(left), Value::Str(right)) => left.cmp(right),
+            _ => std::cmp::Ordering::Equal,
+        },
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+    }
+}
+
 fn bool_value(value: bool) -> Value {
     Value::Int(i64::from(value))
 }

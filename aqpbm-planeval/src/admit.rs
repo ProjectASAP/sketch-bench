@@ -281,18 +281,11 @@ fn payload_decision(
         }
         // Admitted-but-unexecuted is strictly worse than refused: a read-time
         // `Filter` that is ignored reports the unfiltered readout as the
-        // answer, and a `Value` between the row source and an aggregate makes
-        // that aggregate vanish from the run with no error. v0 refuses until
-        // `run` executes it.
+        // answer. What is admitted here is the row-operation subset `run`
+        // executes; the rest is refused by name, and a node whose arm produced
+        // nothing is caught by `run`'s own execution check.
         ExecutableOperatorPayload::Value { operation, .. } => {
-            let _ = admit_value(node, dag, operation);
-            Err(Refusal::UnsupportedValueOperation {
-                node: node.id,
-                detail: format!(
-                    "{}: v0 admits no Value node, because nothing executes one yet",
-                    debug_variant(operation)
-                ),
-            })
+            admit_value(node, dag, operation).map(|()| NodeDecision::RowOperation)
         }
         // Every other payload was refused in phase 2; a node that reaches here
         // carrying one means the phases have drifted apart.
@@ -778,7 +771,7 @@ mod tests {
         SummaryField,
     };
     use asap_types::pre_asap::{
-        CompareOpKind, DataType, GroupKeys, Predicate, ScalarValue, Source,
+        CompareOpKind, DataType, GroupKeys, Predicate, ScalarValue, SortKey, Source,
     };
 
     use crate::rows::tests::{node_of, plan};
@@ -1549,13 +1542,18 @@ mod tests {
     }
 
     #[test]
-    fn every_value_node_is_refused_in_v0_and_says_why() {
-        // Admitting a Value node without executing it is the worse failure:
-        // an ignored read-time Filter reports the unfiltered readout as the
-        // answer. These four are the ones §1.6 intends to support later.
+    fn the_row_operations_run_executes_are_admitted_and_the_rest_are_refused_by_name() {
         for operation in [
             ValueOperation::FinalizeExactAccumulator,
             ValueOperation::Limit { n: 10, offset: 0 },
+            ValueOperation::Sort {
+                keys: vec![SortKey {
+                    expr: QueryExpr::Column(0),
+                    ascending: false,
+                    nulls_first: false,
+                }],
+                partition_by: GroupKeys::default(),
+            },
             ValueOperation::Project {
                 cols: vec![ProjectItem {
                     alias: None,
@@ -1571,16 +1569,46 @@ mod tests {
                 })),
             },
         ] {
-            let refusals = admit(&with_value(&operation)).expect_err("v0 refuses every Value");
+            if let Err(refusals) = admit(&with_value(&operation)) {
+                panic!("{operation:?}: {refusals:?}");
+            }
+        }
+
+        let outside = [
+            ValueOperation::Project {
+                cols: vec![ProjectItem {
+                    alias: None,
+                    expr: QueryExpr::EvalTimestamp,
+                }],
+                qualifier: None,
+            },
+            ValueOperation::Filter {
+                pred: Predicate(Rc::new(QueryExpr::FunctionCall {
+                    name: "lower".into(),
+                    args: vec![QueryExpr::Column(0)],
+                })),
+            },
+        ];
+        for operation in outside {
+            let refusals = admit(&with_value(&operation)).expect_err("is refused");
             assert!(
                 matches!(
                     refusals.as_slice(),
-                    [Refusal::UnsupportedValueOperation { detail, .. }]
-                        if detail.contains("v0 admits no Value node")
+                    [Refusal::UnsupportedValueOperation { .. }]
                 ),
                 "{operation:?}: {refusals:?}"
             );
         }
+
+        let refusals = admit(&with_value(&ValueOperation::Extension {
+            name: "promql_histogram_quantile".into(),
+        }))
+        .expect_err("is refused");
+        assert!(
+            matches!(refusals.as_slice(), [Refusal::UnregisteredExtension { name, .. }]
+                if name == "promql_histogram_quantile"),
+            "{refusals:?}"
+        );
     }
 
     #[test]

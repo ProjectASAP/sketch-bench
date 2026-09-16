@@ -281,6 +281,9 @@ fn print_plan(record: &PlanEvalRecord) {
             "rows     {} scanned, {} emitted",
             record.rows_scanned, record.rows_emitted
         );
+        if let Some(root_rows) = record.root_rows {
+            println!("result   {root_rows} rows out of node {}", record.plan.root);
+        }
         println!();
     }
 }

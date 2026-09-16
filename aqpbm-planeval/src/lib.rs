@@ -15,5 +15,6 @@ pub mod rows;
 pub mod run;
 pub mod score;
 pub mod types;
+pub(crate) mod value;
 
 pub use types::{Answer, EvalError, GroupKey, ItemKey, PlanId, Refusal, Row, Value};
