@@ -324,7 +324,6 @@ fn hex(bytes: &PlanId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::admit::admit;
     use crate::plan::plan_promql;
     use crate::run::{run, RowsFrom, RunConfig, DEFAULT_TIMED_RUNS};
     use asap_types::types::AccuracyTarget;
@@ -342,11 +341,10 @@ mod tests {
 
     fn record_of(query: &str, values: &[f64], verify: bool) -> PlanEvalRecord {
         let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).unwrap();
-        let admitted = admit(&plan.dag).unwrap();
+
         let file = csv(values);
         let outcome = run(
             &plan,
-            &admitted,
             &RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 7, verify),
         )
         .unwrap();

@@ -569,7 +569,7 @@ pub fn resolve_column(col: &ColumnRef, schema: &SummarySchema) -> Option<usize> 
 
 /// Why a scalar expression is outside the interpreter's subset.
 ///
-/// Separate from `Refusal` so `admit` can map the same fault onto the refusal
+/// Separate from `Refusal` so the caller can map the same fault onto the refusal
 /// that fits its own position (a `Scan` predicate and a read-time `Filter`
 /// predicate are the same subset but different refusals), and so this module
 /// does not have to know which node it is being asked about.
@@ -595,7 +595,7 @@ impl PredicateFault {
 /// Walk a predicate and report the first reason it is outside the subset.
 ///
 /// Run before any data is read, so a plan that would fail on row one is refused
-/// at admission instead. `columns` is the width of the schema the positional
+/// before the run instead. `columns` is the width of the schema the positional
 /// `ColumnId`s index into.
 pub(crate) fn check_predicate(expr: &QueryExpr, columns: usize) -> Result<(), PredicateFault> {
     match expr {

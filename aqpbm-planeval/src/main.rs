@@ -13,11 +13,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use aqpbm_datagen::table::TableDescription;
-use aqpbm_planeval::admit::admit;
 use aqpbm_planeval::plan::{plan_promql, to_json};
 use aqpbm_planeval::record::{Phase, PlanEvalRecord};
 use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
 use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
+use aqpbm_planeval::EvalError;
 use asap_types::types::AccuracyTarget;
 
 #[derive(Parser, Debug)]
@@ -100,19 +100,6 @@ fn real_main() -> Result<()> {
         return Ok(());
     }
 
-    // Admission runs once: it depends on the plan, not on the seed or the data.
-    let admitted = match admit(&plan.dag) {
-        Ok(admitted) => admitted,
-        Err(refusals) => {
-            // The refusal table is a deliverable in its own right, so it goes
-            // to stdout as data rather than to stderr as a complaint.
-            for refusal in &refusals {
-                println!("REFUSED {refusal}");
-            }
-            anyhow::bail!("{} of the plan's nodes were refused", refusals.len());
-        }
-    };
-
     let mut last: Option<PlanEvalRecord> = None;
     let mut observations = GuaranteeObservations::default();
     // Built once, outside the seed loop: the rows are the same every seed, so
@@ -149,8 +136,18 @@ fn real_main() -> Result<()> {
         let mut config = RunConfig::new(rows.clone(), seed, !args.no_verify);
         config.timed_runs = args.runs;
         config.warmup_runs = args.warmup_runs;
-        let outcome =
-            run(&plan, &admitted, &config).with_context(|| format!("running seed {seed}"))?;
+        let outcome = match run(&plan, &config) {
+            Ok(outcome) => outcome,
+            // The refusal table is a deliverable in its own right, so it goes
+            // to stdout as data rather than to stderr as a complaint.
+            Err(EvalError::Refused(refusals)) => {
+                for refusal in &refusals {
+                    println!("REFUSED {refusal}");
+                }
+                anyhow::bail!("{} of the plan's nodes were refused", refusals.len());
+            }
+            Err(err) => return Err(err).with_context(|| format!("running seed {seed}")),
+        };
         for readout in &outcome.readouts {
             observations.observe(readout);
         }

@@ -7,7 +7,6 @@
 //! there, and that is the counterfactual an advantage measurement needs.
 //! `plan::to_json` exists so a run can still leave a fixture behind.
 
-pub mod admit;
 pub mod handle;
 pub mod plan;
 pub mod record;

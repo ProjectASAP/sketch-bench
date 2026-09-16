@@ -6,6 +6,68 @@ use asap_types::pre_asap::{ProjectItem, QueryExpr, SortKey};
 use crate::rows::{eval, order, variant_name};
 use crate::types::{EvalError, Refusal, Row, Value};
 
+/// Everything about a row operation that can be settled before a row is read.
+///
+/// Matched arm for arm against [`apply`], so a variant that grew one and a
+/// variant that grew the other cannot drift apart silently.
+pub(crate) fn check(
+    node: PostAsapNodeId,
+    operation: &ValueOperation,
+    columns: usize,
+) -> Result<(), Refusal> {
+    match operation {
+        ValueOperation::Filter { pred } => crate::rows::check_predicate(&pred.0, columns)
+            .map_err(|fault| refusal(node, format!("Filter: {}", fault.detail()))),
+        ValueOperation::Project { cols, .. } => project_shape(node, cols),
+        ValueOperation::Sort { keys, partition_by } => {
+            if keys.is_empty() {
+                return Err(refusal(node, "Sort carries no key".to_owned()));
+            }
+            if !partition_by.is_empty() {
+                return Err(refusal(
+                    node,
+                    format!(
+                        "Sort partitioned by {partition_by:?}: the rows carry no partition to \
+                         sort within"
+                    ),
+                ));
+            }
+            for key in keys {
+                crate::rows::check_predicate(&key.expr, columns)
+                    .map_err(|fault| refusal(node, format!("Sort key: {}", fault.detail())))?;
+            }
+            Ok(())
+        }
+        ValueOperation::Limit { .. } => Ok(()),
+        ValueOperation::FinalizeExactAccumulator => Err(refusal(
+            node,
+            "FinalizeExactAccumulator reads summary state, and a row operation is handed rows"
+                .to_owned(),
+        )),
+        ValueOperation::Exact(exact) => match exact {
+            ExactOperation::Aggregate { .. } => Err(refusal(
+                node,
+                "Exact(Aggregate) is a whole aggregation engine, not a row operation".to_owned(),
+            )),
+            other => Err(refusal(node, format!("Exact({})", debug_variant(other)))),
+        },
+        ValueOperation::MaintainPopulation { .. } | ValueOperation::ReadPopulation { .. } => {
+            Err(refusal(
+                node,
+                format!(
+                    "{}: a maintained population is state this crate holds none of",
+                    debug_variant(operation)
+                ),
+            ))
+        }
+        ValueOperation::Extension { name } => Err(Refusal::UnregisteredExtension {
+            node,
+            name: name.clone(),
+        }),
+        other => Err(refusal(node, debug_variant(other))),
+    }
+}
+
 pub(crate) fn apply(
     node: PostAsapNodeId,
     operation: &ValueOperation,
@@ -70,22 +132,27 @@ pub(crate) fn apply(
     }
 }
 
-fn project(
-    node: PostAsapNodeId,
-    cols: &[ProjectItem],
-    rows: &Rc<Vec<Row>>,
-) -> Result<Rc<Vec<Row>>, EvalError> {
+fn project_shape(node: PostAsapNodeId, cols: &[ProjectItem]) -> Result<(), Refusal> {
     for (index, item) in cols.iter().enumerate() {
         match &item.expr {
             QueryExpr::Column(_) | QueryExpr::Literal(_) => {}
             other => {
-                return Err(refused(
+                return Err(refusal(
                     node,
                     format!("Project col {index} is a {}", variant_name(other)),
                 ))
             }
         }
     }
+    Ok(())
+}
+
+fn project(
+    node: PostAsapNodeId,
+    cols: &[ProjectItem],
+    rows: &Rc<Vec<Row>>,
+) -> Result<Rc<Vec<Row>>, EvalError> {
+    project_shape(node, cols).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
     let mut projected = Vec::with_capacity(rows.len());
     for row in rows.iter() {
         let mut out = Vec::with_capacity(cols.len());
@@ -153,8 +220,12 @@ fn ranked(left: &Value, right: &Value, ascending: bool, nulls_first: bool) -> st
     }
 }
 
+fn refusal(node: PostAsapNodeId, detail: String) -> Refusal {
+    Refusal::UnsupportedValueOperation { node, detail }
+}
+
 fn refused(node: PostAsapNodeId, detail: String) -> EvalError {
-    EvalError::Refused(vec![Refusal::UnsupportedValueOperation { node, detail }])
+    EvalError::Refused(vec![refusal(node, detail)])
 }
 
 fn debug_variant<T: std::fmt::Debug>(value: &T) -> String {
@@ -261,6 +332,22 @@ mod tests {
         let projected = apply(node(), &operation, &input).expect("projects");
         assert!(projected.iter().all(|row| row.0.len() == 1));
         assert_eq!(projected[1].0[0], Value::Float(2.0));
+    }
+
+    #[test]
+    fn debug_variant_names_a_variant_from_any_shape() {
+        assert_eq!(
+            debug_variant(&ValueOperation::Limit { n: 1, offset: 0 }),
+            "Limit"
+        );
+        assert_eq!(
+            debug_variant(&ValueOperation::FinalizeExactAccumulator),
+            "FinalizeExactAccumulator"
+        );
+        assert_eq!(
+            debug_variant(&ValueOperation::Extension { name: "x".into() }),
+            "Extension"
+        );
     }
 
     #[test]
