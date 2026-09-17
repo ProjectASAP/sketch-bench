@@ -6,6 +6,7 @@ members = [
     "aqpbm-core",
     "sketch-bench",
     "aqpbm-cli",
+    "aqpbm-planeval",
 ]
 
 exclude = ["sketch-runtime"]

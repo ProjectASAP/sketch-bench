@@ -73,3 +73,5 @@ accuracy/data/generate_zipf_data
 # Throughput plotting cache
 throughput/.mplconfig
 visualization/plots/.mplconfig/
+# 本地计划文件（不入库）
+PLAN.md

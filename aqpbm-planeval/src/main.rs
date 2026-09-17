@@ -1,0 +1,556 @@
+//! `planeval` — plan a query, run it, and print what the plan bought.
+//!
+//! A thin shell over the library: everything here is argument parsing and
+//! printing. `aqpbm-cli` is bin-only, which is why `rows::binding()` and
+//! `rows::measurements()` are unreachable in-process; this crate keeps its
+//! logic in the lib so the same does not happen again.
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::rc::Rc;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+
+use aqpbm_datagen::table::TableDescription;
+use aqpbm_planeval::exact::{run_promql, Data, ExactRun};
+use aqpbm_planeval::plan::{plan_promql, to_json};
+use aqpbm_planeval::record::{NodeCost, Phase, PlanEvalRecord};
+use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
+use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
+use aqpbm_planeval::{EvalError, Value};
+use asap_types::types::AccuracyTarget;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "planeval",
+    about = "Run a post-ASAP plan over rows and score it against the exact answer"
+)]
+struct Args {
+    /// PromQL to plan, e.g. `quantile(0.5, cpu_cores)`.
+    #[arg(long)]
+    query: String,
+
+    /// Generate the rows in process from a `datagen` spec file (examples in
+    /// `configs/datagen/`). Wins over `--csv`.
+    ///
+    /// A path, not an inline description: the spec states one `data_type` per
+    /// column and the plan's schema has to agree with it, so a flag that
+    /// rewrote a field of the file would make the file a suggestion. This is
+    /// the same rule `aqpbm-cli` follows.
+    #[arg(long, conflicts_with = "csv")]
+    spec: Option<PathBuf>,
+
+    /// CSV to read. Its header names must match the leaf's schema; a PromQL
+    /// leaf carries the usage-derived `ts,value`.
+    #[arg(long, required_unless_present = "spec")]
+    csv: Option<PathBuf>,
+
+    /// End-to-end accuracy target the plan is sized against.
+    #[arg(long, default_value_t = 0.01)]
+    epsilon: f64,
+
+    /// Run once per seed. One seed cannot check a bound that carries
+    /// delta ~ 0.01: a single draw from an event designed to be true 99% of
+    /// the time neither confirms nor refutes it.
+    #[arg(long, default_value_t = 1)]
+    seeds: u64,
+
+    /// Skip the exact arm. Leaves the record with no ground truth in it, and
+    /// says so rather than reporting zero error.
+    #[arg(long)]
+    no_verify: bool,
+
+    /// Print the compiled document instead of running it.
+    #[arg(long)]
+    emit_json: bool,
+
+    #[arg(
+        long,
+        help = "Also print the answer the pre-ASAP tree computed, before the plan runs. The \
+                timed pre-ASAP arm runs either way unless --no-pre-asap turns it off"
+    )]
+    evaluate_exactly: bool,
+
+    #[arg(
+        long,
+        help = "Skip the pre-ASAP arm. Leaves the record with no baseline in it, so the time \
+                and memory ratios report nothing rather than dividing by the retained column, \
+                which is not the query anyone would have run"
+    )]
+    no_pre_asap: bool,
+
+    #[arg(
+        long,
+        help = "Time each call inside a phase and attribute it to the node it ran for. The \
+                insert phase then reads a clock per update and its total pays for them, so the \
+                per-node times and the phase total will not agree exactly"
+    )]
+    per_node_time: bool,
+
+    /// One JSONL record per seed on stdout, instead of the human summary.
+    #[arg(long)]
+    jsonl: bool,
+
+    /// Timed passes per phase, per seed. One pass is one draw, not a
+    /// distribution; the spread across them is still within one process, so no
+    /// confidence interval is derived from it.
+    #[arg(long, default_value_t = aqpbm_planeval::run::DEFAULT_TIMED_RUNS)]
+    runs: usize,
+
+    /// Passes run and discarded before the timed ones.
+    #[arg(long, default_value_t = aqpbm_planeval::run::DEFAULT_WARMUP_RUNS)]
+    warmup_runs: usize,
+}
+
+fn main() -> ExitCode {
+    match real_main() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("planeval: {err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn row_source(args: &Args) -> Result<RowsFrom> {
+    match (&args.spec, &args.csv) {
+        (Some(path), _) => {
+            let description = TableDescription::from_path(path)
+                .with_context(|| format!("loading {}", path.display()))?;
+            description
+                .validate()
+                .with_context(|| format!("validating {}", path.display()))?;
+            let table = description
+                .generate()
+                .with_context(|| format!("generating from {}", path.display()))?;
+            let line = format!(
+                "rows     generated from {} — {} columns x {} rows",
+                path.display(),
+                table.column_num,
+                table.row_num
+            );
+            if args.jsonl {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+            Ok(RowsFrom::Generated(Rc::new(table)))
+        }
+        (None, Some(path)) => Ok(RowsFrom::Csv(path.clone())),
+        // clap's `required_unless_present` already rejects this.
+        (None, None) => anyhow::bail!("one of --spec or --csv is required"),
+    }
+}
+
+fn real_main() -> Result<()> {
+    let args = Args::parse();
+    let accuracy = AccuracyTarget::Epsilon(args.epsilon);
+
+    let plan = plan_promql(&args.query, accuracy.clone())
+        .with_context(|| format!("planning `{}`", args.query))?;
+
+    if args.emit_json {
+        println!("{}", to_json(&plan)?);
+        return Ok(());
+    }
+
+    let mut last: Option<PlanEvalRecord> = None;
+    let mut worst_accuracy: Option<f64> = None;
+    let mut observations = GuaranteeObservations::default();
+    // Built once, outside the seed loop: the rows are the same every seed, so
+    // a difference between seeds is the sketch's and never the data's.
+    let rows = row_source(&args)?;
+
+    if args.evaluate_exactly {
+        let evaluated = match run_promql(&args.query, accuracy, &rows) {
+            Ok(evaluated) => evaluated,
+            Err(EvalError::Refused(refusals)) => {
+                for refusal in &refusals {
+                    println!("REFUSED {refusal}");
+                }
+                anyhow::bail!("the pre-ASAP tree of `{}` was refused", args.query);
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("evaluating `{}` exactly", args.query))
+            }
+        };
+        let block = exact_block(&args.query, &evaluated);
+        if args.jsonl {
+            eprint!("{block}");
+        } else {
+            println!("{block}");
+        }
+    }
+
+    for seed in 0..args.seeds {
+        let mut config = RunConfig::new(rows.clone(), seed, !args.no_verify);
+        config.timed_runs = args.runs;
+        config.warmup_runs = args.warmup_runs;
+        config.pre_asap = !args.no_pre_asap;
+        config.per_node_time = args.per_node_time;
+        let outcome = match run(&plan, &config) {
+            Ok(outcome) => outcome,
+            // The refusal table is a deliverable in its own right, so it goes
+            // to stdout as data rather than to stderr as a complaint.
+            Err(EvalError::Refused(refusals)) => {
+                for refusal in &refusals {
+                    println!("REFUSED {refusal}");
+                }
+                anyhow::bail!("{} of the plan's nodes were refused", refusals.len());
+            }
+            Err(err) => return Err(err).with_context(|| format!("running seed {seed}")),
+        };
+        for readout in &outcome.readouts {
+            observations.observe(readout);
+        }
+        let record = PlanEvalRecord::from_run(&args.query, &plan, &outcome);
+        if let Some(error) = record.advantage().accuracy {
+            worst_accuracy = match worst_accuracy {
+                Some(held) if held.total_cmp(&error).is_ge() => Some(held),
+                _ => Some(error),
+            };
+        }
+
+        if args.jsonl {
+            println!("{}", record.to_jsonl());
+        } else {
+            if seed == 0 {
+                print_plan(&record);
+            }
+            print_readouts(seed, &record);
+            last = Some(record);
+        }
+    }
+
+    let guarantees = observations.checks();
+    if args.jsonl {
+        for guarantee in &guarantees {
+            println!("{}", serde_json::to_string(guarantee)?);
+        }
+    } else {
+        if let Some(record) = last {
+            print_advantage(&record, worst_accuracy, args.seeds);
+        }
+        print_guarantees(&guarantees, args.seeds);
+    }
+    Ok(())
+}
+
+const PRINTED_ROWS: usize = 20;
+
+fn exact_block(query: &str, evaluated: &ExactRun) -> String {
+    let mut out = format!(
+        "query    {query}\nrows     {} scanned, {} emitted\n",
+        evaluated.rows_scanned, evaluated.rows_emitted
+    );
+    match &evaluated.answer {
+        Data::Scalar(value) => out.push_str(&format!("exact    scalar {value}\n")),
+        Data::Rows(rows) => {
+            let names: Vec<String> = match evaluated.root.output_schema() {
+                Ok(schema) => schema
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            out.push_str(&format!(
+                "exact    {} rows [{}]\n",
+                rows.len(),
+                names.join(", ")
+            ));
+            for row in rows.iter().take(PRINTED_ROWS) {
+                let rendered: Vec<String> = row.0.iter().map(render).collect();
+                out.push_str(&format!("  {}\n", rendered.join("  ")));
+            }
+            if rows.len() > PRINTED_ROWS {
+                out.push_str(&format!("  ... {} more\n", rows.len() - PRINTED_ROWS));
+            }
+        }
+    }
+    out
+}
+
+fn render(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Int(held) => held.to_string(),
+        Value::Float(held) => format!("{held:?}"),
+        Value::Str(held) => held.clone(),
+        Value::Timestamp(held) => held.to_string(),
+    }
+}
+
+fn print_guarantees(guarantees: &[ReadoutGuarantee], seeds: u64) {
+    if guarantees.is_empty() {
+        println!("\nguarantee  none \u{2014} no readout carried one");
+        return;
+    }
+    for entry in guarantees {
+        let check = &entry.check;
+        let group = if entry.group.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", entry.group)
+        };
+        println!("\nguarantee  node {}{} {}", entry.node, group, entry.query);
+        println!(
+            "  metric {}   claimed {}   delta {}",
+            check.metric,
+            opt(check.claimed_bound),
+            opt(check.failure_probability)
+        );
+        if check.observed_violation_rate.is_nan() {
+            let why = match (&check.unevaluatable, check.claimed_bound) {
+                (Some(reason), _) => format!(
+                    "the exact arm cannot measure a {} error: it would need {reason:?}",
+                    check.metric
+                ),
+                _ if check.uncomputed_errors > 0 => format!(
+                    "{} of {} observations produced no {} error at all",
+                    check.uncomputed_errors, check.seeds, check.metric
+                ),
+                (None, Some(_)) => format!(
+                    "{} observations over {seeds} seeds, bound present",
+                    check.seeds
+                ),
+                (None, None) => format!(
+                    "{} observations over {seeds} seeds, bound unevaluatable",
+                    check.seeds
+                ),
+            };
+            println!("  violation rate  not checked ({why})");
+        } else {
+            println!(
+                "  violation rate  {:.6} over {} observations ({seeds} seeds)   mean err {:.6}   max {:.6}",
+                check.observed_violation_rate, check.seeds, check.mean_error, check.max_error
+            );
+        }
+        if let Some(contract) = &check.contract {
+            println!("  contract   {contract}");
+        }
+        if let Some(fit) = &check.implied_fit {
+            let verdict = if fit.agrees_with_reference {
+                "agrees"
+            } else {
+                "DISAGREES \u{2014} the contract id is stale"
+            };
+            println!(
+                "  implied fit  k={}  coefficient {:.6} (reference {:.6})  exponent {:.6} (reference {:.6})  {verdict}",
+                fit.k,
+                fit.coefficient_at_reference_exponent,
+                fit.reference_coefficient,
+                fit.exponent_at_reference_coefficient,
+                fit.reference_exponent
+            );
+        }
+    }
+}
+
+fn opt(value: Option<f64>) -> String {
+    match value {
+        Some(v) => format!("{v:.6}"),
+        None => "unevaluatable".to_string(),
+    }
+}
+
+fn print_plan(record: &PlanEvalRecord) {
+    {
+        println!("query    {}", record.plan.query);
+        println!(
+            "plan     {}  ({} nodes, {} edges, wire v{})",
+            &record.plan.plan_id[..16],
+            record.plan.nodes,
+            record.plan.edges,
+            record.plan.document_schema_version
+        );
+        for node in &record.nodes {
+            let state = match node.state_bytes {
+                Some(bytes) => format!("{bytes} B"),
+                None => "-".to_string(),
+            };
+            println!(
+                "  node {}  {:<16} state {:>9}  {}{}",
+                node.node,
+                node.operator,
+                state,
+                node.family.as_deref().unwrap_or(""),
+                node_time(node)
+            );
+        }
+        for node in &record.pre_asap_nodes {
+            println!(
+                "  tree {}  {:<16} {} ms",
+                node.node,
+                node.operator,
+                ms(node.elapsed_ns)
+            );
+        }
+        println!(
+            "rows     {} scanned, {} emitted",
+            record.rows_scanned, record.rows_emitted
+        );
+        if let Some(root_rows) = record.root_rows {
+            println!("result   {root_rows} rows out of node {}", record.plan.root);
+        }
+        println!();
+    }
+}
+
+fn print_readouts(seed: u64, record: &PlanEvalRecord) {
+    for readout in &record.readouts {
+        let group = if readout.group.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", readout.group)
+        };
+        print!(
+            "seed {seed:<3}{group} {} => {:.6}",
+            readout.query, readout.approximate
+        );
+        match (
+            readout.exact.as_ref(),
+            &readout.observed_error,
+            readout.claimed_bound,
+        ) {
+            (Some(exact), ObservedError::Measured { metric, error }, Some(claimed)) => {
+                let verdict = if *error <= claimed {
+                    "within"
+                } else {
+                    "VIOLATED"
+                };
+                println!("   exact {exact:.6}   {metric} err {error:.6} {verdict} {claimed:.6}");
+            }
+            (Some(exact), ObservedError::Measured { metric, error }, None) => {
+                println!(
+                    "   exact {exact:.6}   {metric} err {error:.6}, no bound to check it against"
+                )
+            }
+            (Some(exact), ObservedError::Unevaluatable { metric, reason }, _) => println!(
+                "   exact {exact:.6}   {metric} err not evaluatable, it would need {reason:?}"
+            ),
+            (Some(exact), _, _) => println!("   exact {exact:.6}"),
+            // Never 0.0 here: "not computed" must not read as "exact".
+            _ => println!("   exact not computed"),
+        }
+    }
+}
+
+fn node_time(node: &NodeCost) -> String {
+    let mut out = String::new();
+    for (name, elapsed_ns) in [
+        ("bind", node.build_ns),
+        ("insert", node.update_ns),
+        ("readout", node.readout_ns),
+    ] {
+        if let Some(elapsed_ns) = elapsed_ns {
+            out.push_str(&format!("  {name} {} ms", ms(elapsed_ns)));
+        }
+    }
+    out
+}
+
+fn ms(elapsed_ns: u64) -> String {
+    format!("{:.4}", elapsed_ns as f64 / 1e6)
+}
+
+fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: u64) {
+    print_phase("bind   ", record.approximate.build.as_ref());
+    print_phase("insert ", record.approximate.update.as_ref());
+    print_phase("readout", record.approximate.readout.as_ref());
+    match record.pre_asap.evaluate.as_ref() {
+        Some(phase) => println!(
+            "pre-ASAP  {} rows: tree {}   {} B held",
+            phase.work,
+            spread(phase),
+            record.pre_asap.retained_bytes
+        ),
+        None => println!("pre-ASAP  not measured"),
+    }
+    if record.verified {
+        println!(
+            "ground truth  {} B retained, untimed",
+            record.exact.retained_bytes
+        );
+    }
+
+    let advantage = record.advantage();
+    let tree = record.pre_asap.evaluate.as_ref().map(mean);
+    println!();
+    println!(
+        "advantage over {} rows of input, {seeds} seed(s)",
+        record.rows_scanned
+    );
+    print_ratio(
+        "aggregate time",
+        advantage.aggregate_time,
+        tree.map(|ms| format!("{ms:.4} ms")),
+        record
+            .approximate
+            .build
+            .as_ref()
+            .map(mean)
+            .zip(record.approximate.update.as_ref().map(mean))
+            .map(|(build, update)| format!("{:.4} ms", build + update)),
+    );
+    print_ratio(
+        "query time    ",
+        advantage.query_time,
+        tree.map(|ms| format!("{ms:.4} ms")),
+        record
+            .approximate
+            .readout
+            .as_ref()
+            .map(mean)
+            .map(|ms| format!("{ms:.4} ms")),
+    );
+    print_ratio(
+        "memory        ",
+        advantage.memory,
+        Some(format!("{} B", record.pre_asap.retained_bytes)),
+        Some(format!("{} B", record.approximate.state_bytes)),
+    );
+    match worst_accuracy {
+        Some(error) => println!(
+            "  accuracy        worst readout error {error:.6}, in that readout's own metric"
+        ),
+        None => println!("  accuracy        not measured (nothing was verified)"),
+    }
+}
+
+fn mean(phase: &Phase) -> f64 {
+    phase.elapsed_ms.mean
+}
+
+fn print_ratio(
+    name: &str,
+    ratio: Option<f64>,
+    without_approximation: Option<String>,
+    with_approximation: Option<String>,
+) {
+    match (ratio, without_approximation, with_approximation) {
+        (Some(ratio), Some(without), Some(with)) => println!(
+            "  {name}  {without} without approximation vs {with} with approximation  =>  {ratio:.1}x"
+        ),
+        _ => println!("  {name}  not comparable (one of the two sides was not measured)"),
+    }
+}
+
+fn print_phase(name: &str, approximate: Option<&Phase>) {
+    let Some(approximate) = approximate else {
+        return;
+    };
+    println!(
+        "{name}  {} units: summary {}",
+        approximate.work,
+        spread(approximate)
+    );
+}
+
+fn spread(phase: &Phase) -> String {
+    format!(
+        "{:.4} ms +/- {:.4} (n={})",
+        phase.elapsed_ms.mean, phase.elapsed_ms.stddev, phase.elapsed_ms.n
+    )
+}

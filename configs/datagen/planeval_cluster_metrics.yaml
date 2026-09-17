@@ -1,0 +1,46 @@
+# The grouped shape, for when `Reduction::Reduce(GroupKeys::By)` is exercised.
+#
+# Mirrors the ES corpus's index (network-control-demo/generate_cluster_metrics.py):
+# a timestamp, two label columns, three metrics. It is not usable by a bare
+# `quantile(0.5, cpu_cores)` plan, whose PromQL leaf schema is `(ts, value)` —
+# see planeval_promql_leaf.yaml. It becomes usable once a query references the
+# labels, e.g. `quantile by (cluster) (0.5, cpu_cores)`.
+#
+# Each label column gets its own alphabet so the three label domains cannot
+# collide: string rendering is an injective base-|alphabet| prefix, so a shared
+# alphabet would let a `cluster` key and a `task` key render identically.
+
+column_num: 6
+column_label: [ts, cluster, task, cpu_cores, memory_gb, network_mbps]
+row_num: 200000
+
+column_spec:
+  - data_type: i64
+    special_rule: 1
+    shift: 1700000000000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 20.0, seed: 1}
+
+  # 8 clusters, flat. `cardinality` restates the uniform domain rather than
+  # overriding it — a disagreement is an error, not a coercion.
+  - data_type: string
+    cardinality: 8
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 8.0, seed: 2}
+    string: {alphabet: "abcdefgh", min_len: 4, max_len: 8}
+
+  # 50 tasks, skewed, so group sizes are not uniform and a per-group sketch
+  # meets a realistic spread of n.
+  - data_type: string
+    cardinality: 50
+    distribution: {kind: zipf, skewness: 1.1, population_size: 50, seed: 3}
+    string: {alphabet: "ijklmnop", min_len: 4, max_len: 8}
+
+  # The skewed metric. Zipf over f64 yields integral ranks 1.0..=1000.0; a
+  # continuous heavy tail would need a new DataDistribution variant.
+  - data_type: f64
+    distribution: {kind: zipf, skewness: 1.1, population_size: 1000, seed: 4}
+
+  - data_type: f64
+    distribution: {kind: normal, mean: 16.0, standard_deviation: 4.0, seed: 5}
+
+  - data_type: f64
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 1000.0, seed: 6}

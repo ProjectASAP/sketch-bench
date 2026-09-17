@@ -1,0 +1,47 @@
+# The shape a PromQL leaf actually asks for.
+#
+# A PromQL `Scan` carries a usage-derived schema, not a catalog one: the floor
+# is `(ts, value)` plus whatever labels the query references, and
+# `Schema::closed` is false because a metric's label set is open and known only
+# at runtime. `quantile(0.5, cpu_cores)` references no labels, so its leaf
+# schema is exactly these two columns — which is why this file has two and not
+# the six a `cluster_metrics` table would.
+#
+# Column names are load-bearing. `aqpbm-planeval` resolves
+# `SummaryUpdate.weight` against the node's output schema, and a PromQL plan
+# names that column with `ColumnRef::SampleValue`, which resolves to the field
+# literally called `value`.
+#
+# For the grouped shape, see planeval_cluster_metrics.yaml.
+
+column_num: 2
+column_label: [ts, value]
+row_num: 200000
+
+column_spec:
+  # special_rule 1 is RULE_MONOTONIC_INCREASE: the draws become gaps and
+  # `shift` is where the series starts. Gaps of 0..20 ms, so 200k rows span
+  # roughly 33 minutes.
+  - data_type: i64
+    special_rule: 1
+    shift: 1700000000000.0
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 20.0
+      seed: 1
+
+  # The summarized column. Zipf so the quantile estimator meets a skewed
+  # distribution rather than a flat one.
+  #
+  # Note what this does and does not stress: KLL's rank bound is
+  # distribution-free, so skew does not tighten or loosen it. Skew is the knob
+  # that matters for DDSketch's *relative value* bound and for CMS. What moves
+  # KLL's observed rank error is n, ties, and the seed — and Zipf gives ties in
+  # quantity, which a uniform draw does not.
+  - data_type: f64
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 1000
+      seed: 2
