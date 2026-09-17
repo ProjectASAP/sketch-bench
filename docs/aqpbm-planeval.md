@@ -61,7 +61,7 @@ The time of each node of the tree is computed by timing functionaliy in `aqpbm-c
 
 ### Post-ASAP evaluator
 
-The `post-asap-dag` (the `ExecutableDag`) is still processed recursively.
+The `post-asap-dag` (the `ExecutableDag`) is processed with batch of nodes that can be processed together.
 
 ### Timing
 
