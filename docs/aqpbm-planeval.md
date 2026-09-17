@@ -25,12 +25,12 @@ The other is `post-asap-dag` that represents what the query looks like if part o
 
 This is a enum that imported from `pre-asap-dag`.
 This enum is indicating how the query operates: the scan, aggregate and query.
-Thus, the enum is processed one node by one node.
+Thus, the enum is processed recursively.
 
 ### `post-asag-dag`
 
 It is chosen to use the `ExecutableDag` from `ASAPPlanner` to fully utilize approximation.
-Each node is still processed one by one.
+Each node is still processed with batch of nodes that can be processed together.
 
 ### Data
 
@@ -48,7 +48,7 @@ Thus, the output will be fixed to be the following number:
 
 - aggregate time
 - query time
-- total memory usage
+- memory usage
 - accuracy
 
 ## Evaluator Design
