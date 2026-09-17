@@ -62,7 +62,14 @@ pub struct RowSource {
     scanned: u64,
     /// Rows handed to the caller.
     emitted: u64,
+    identity: Option<Identity>,
     finished: bool,
+}
+
+struct Identity {
+    metric: String,
+    column: usize,
+    matched: bool,
 }
 
 /// Where the rows come from.
@@ -116,6 +123,15 @@ impl RowSource {
     pub fn origin(&self) -> &str {
         &self.origin
     }
+
+    pub fn metric_absent(&self) -> Option<&str> {
+        match &self.identity {
+            Some(identity) if self.finished && !identity.matched && self.scanned > 0 => {
+                Some(identity.metric.as_str())
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Open the row source described by a `Fallback` node's payload expression.
@@ -132,8 +148,8 @@ impl RowSource {
 fn scan_parts<'a>(
     scan: &'a QueryExpr,
     schema: &SummarySchema,
-) -> Result<(&'a Schema, &'a [Predicate]), EvalError> {
-    let (scan_schema, predicates) = match scan {
+) -> Result<(&'a Schema, &'a [Predicate], Option<&'a str>), EvalError> {
+    let (scan_schema, predicates, metric) = match scan {
         QueryExpr::Scan {
             source,
             predicates,
@@ -141,10 +157,11 @@ fn scan_parts<'a>(
         } => {
             // Exhaustive rather than ignored: a third source variant must not
             // reach a row reader by default.
-            match source {
-                Source::Table { .. } | Source::TimeSeries { .. } => {}
-            }
-            (scan_schema, predicates.as_slice())
+            let metric = match source {
+                Source::Table { .. } => None,
+                Source::TimeSeries { metric } => Some(metric.as_str()),
+            };
+            (scan_schema, predicates.as_slice(), metric)
         }
         other => {
             return Err(EvalError::RowSource(format!(
@@ -162,7 +179,20 @@ fn scan_parts<'a>(
         })?;
     }
 
-    Ok((scan_schema, predicates))
+    Ok((scan_schema, predicates, metric))
+}
+
+pub const METRIC_NAME_COLUMN: &str = "__name__";
+
+fn identity(metric: Option<&str>, column: Option<usize>) -> Option<Identity> {
+    match (metric, column) {
+        (Some(metric), Some(column)) => Some(Identity {
+            metric: metric.to_string(),
+            column,
+            matched: false,
+        }),
+        _ => None,
+    }
 }
 
 /// Open the row source over a CSV file.
@@ -171,7 +201,7 @@ pub fn open(
     csv_path: &Path,
     schema: &SummarySchema,
 ) -> Result<RowSource, EvalError> {
-    let (scan_schema, predicates) = scan_parts(scan, schema)?;
+    let (scan_schema, predicates, metric) = scan_parts(scan, schema)?;
 
     let file = File::open(csv_path)?;
     let mut reader = csv::ReaderBuilder::new()
@@ -180,6 +210,8 @@ pub fn open(
     let header = reader.headers().map_err(|err| {
         EvalError::RowSource(format!("{}: reading the header: {err}", csv_path.display()))
     })?;
+
+    let named = header.iter().position(|name| name == METRIC_NAME_COLUMN);
 
     let mut projection = Vec::with_capacity(scan_schema.columns.len());
     for column in &scan_schema.columns {
@@ -217,6 +249,7 @@ pub fn open(
         origin: csv_path.display().to_string(),
         scanned: 0,
         emitted: 0,
+        identity: identity(metric, named),
         finished: false,
     })
 }
@@ -231,8 +264,24 @@ pub fn open_generated(
     table: Rc<GeneratedTable>,
     schema: &SummarySchema,
 ) -> Result<RowSource, EvalError> {
-    let (scan_schema, predicates) = scan_parts(scan, schema)?;
+    let (scan_schema, predicates, metric) = scan_parts(scan, schema)?;
 
+    let named = match table
+        .column_title
+        .iter()
+        .position(|name| name == METRIC_NAME_COLUMN)
+    {
+        Some(index) => match &table.data[index] {
+            ColumnData::String(_) => Some(index),
+            _ => {
+                return Err(EvalError::RowSource(format!(
+                    "the generated table's {METRIC_NAME_COLUMN} column holds numbers, and a \
+                     series name is a string"
+                )))
+            }
+        },
+        None => None,
+    };
     let row_num = table.row_num as usize;
 
     // Resolve each schema field to a column, checking the declared type as we
@@ -283,6 +332,7 @@ pub fn open_generated(
         origin: format!("generated table, {row_num} rows"),
         scanned: 0,
         emitted: 0,
+        identity: identity(metric, named),
         finished: false,
     })
 }
@@ -353,6 +403,15 @@ impl Iterator for RowSource {
             }
             self.scanned += 1;
 
+            match self.carries_metric() {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(err) => {
+                    self.finished = true;
+                    return Some(Err(err));
+                }
+            }
+
             let row = match self.decode() {
                 Ok(row) => row,
                 Err(err) => {
@@ -377,6 +436,40 @@ impl Iterator for RowSource {
 }
 
 impl RowSource {
+    fn carries_metric(&mut self) -> Result<bool, EvalError> {
+        let (column, metric) = match &self.identity {
+            Some(identity) => (identity.column, identity.metric.clone()),
+            None => return Ok(true),
+        };
+        let held = match &self.backend {
+            Backend::Csv { record, .. } => {
+                record.get(column).map(str::to_string).ok_or_else(|| {
+                    EvalError::RowSource(format!(
+                        "{}: row {} carries no {METRIC_NAME_COLUMN} field",
+                        self.origin, self.scanned
+                    ))
+                })?
+            }
+            Backend::Generated { table, cursor, .. } => match &table.data[column] {
+                ColumnData::String(values) => values[*cursor - 1].clone(),
+                _ => {
+                    return Err(EvalError::RowSource(format!(
+                        "{}: the {METRIC_NAME_COLUMN} column holds numbers, and a series name \
+                         is a string",
+                        self.origin
+                    )))
+                }
+            },
+        };
+        if held != metric {
+            return Ok(false);
+        }
+        if let Some(identity) = self.identity.as_mut() {
+            identity.matched = true;
+        }
+        Ok(true)
+    }
+
     fn decode(&self) -> Result<Row, EvalError> {
         match &self.backend {
             Backend::Csv { record, .. } => {
@@ -443,8 +536,14 @@ impl RowSource {
             DataType::Float64 => raw
                 .trim()
                 .parse::<f64>()
-                .map(Value::Float)
-                .map_err(|_| parse_failure("a float64")),
+                .map_err(|_| parse_failure("a float64"))
+                .and_then(|held| {
+                    if held.is_finite() {
+                        Ok(Value::Float(held))
+                    } else {
+                        Err(parse_failure("a finite float64"))
+                    }
+                }),
             DataType::Utf8 => Ok(Value::Str(raw.to_string())),
             DataType::Bool => match raw.trim() {
                 "true" | "TRUE" | "True" | "1" => Ok(Value::Int(1)),
@@ -1054,6 +1153,92 @@ pub(crate) mod tests {
                 Row(vec![Value::Timestamp(3), Value::Float(30.0)]),
             ]
         );
+    }
+
+    #[test]
+    fn a_non_finite_cell_is_refused_rather_than_decoded() {
+        let (schema, node_schema) = promql_schema(&[]);
+        for spelling in ["nan", "NaN", "inf", "-inf", "infinity"] {
+            let csv = TempCsv::new(
+                "non-finite",
+                &format!("ts,value\n1,10\n2,{spelling}\n3,30\n"),
+            );
+            let scan = scan_with(Vec::new(), schema.clone());
+            let read: Vec<_> = open(&scan, csv.path(), &node_schema)
+                .expect("opens")
+                .collect();
+
+            assert!(read[0].is_ok());
+            let err = read[1].as_ref().expect_err("{spelling} is not data");
+            assert!(format!("{err}").contains("finite"), "{spelling}: {err}");
+        }
+    }
+
+    #[test]
+    fn rows_that_name_another_series_are_not_this_metrics_rows() {
+        let (schema, node_schema) = promql_schema(&[]);
+        let csv = TempCsv::new(
+            "named",
+            "__name__,ts,value\ncpu_cores,1,10\nmemory_gb,2,999\ncpu_cores,3,30\n",
+        );
+        let scan = scan_with(Vec::new(), schema);
+
+        let mut source = open(&scan, csv.path(), &node_schema).expect("opens");
+        let rows: Vec<Row> = source.by_ref().map(|row| row.expect("decodes")).collect();
+
+        assert_eq!(
+            rows,
+            vec![
+                Row(vec![Value::Timestamp(1), Value::Float(10.0)]),
+                Row(vec![Value::Timestamp(3), Value::Float(30.0)]),
+            ],
+            "the other series' row is not cpu_cores data"
+        );
+        assert_eq!(source.scanned(), 3);
+        assert_eq!(source.emitted(), 2);
+        assert_eq!(source.metric_absent(), None);
+    }
+
+    #[test]
+    fn a_metric_the_rows_never_name_is_reported_rather_than_scored_against_the_file() {
+        let (mut schema, node_schema) = promql_schema(&[]);
+        schema.closed = false;
+        let csv = TempCsv::new(
+            "absent",
+            "__name__,ts,value\nmemory_gb,1,10\nmemory_gb,2,20\n",
+        );
+        let scan = QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "totally_bogus_metric_name".into(),
+            },
+            predicates: Vec::new(),
+            schema,
+        };
+
+        let mut source = open(&scan, csv.path(), &node_schema).expect("opens");
+        let rows: Vec<Row> = source.by_ref().map(|row| row.expect("decodes")).collect();
+
+        assert!(rows.is_empty());
+        assert_eq!(source.metric_absent(), Some("totally_bogus_metric_name"));
+    }
+
+    #[test]
+    fn rows_that_carry_no_name_at_all_are_the_metrics_rows_by_manifest() {
+        let (schema, node_schema) = promql_schema(&[]);
+        let csv = TempCsv::new("unnamed", "ts,value\n1,10\n2,20\n");
+        let scan = QueryExpr::Scan {
+            source: Source::TimeSeries {
+                metric: "anything_at_all".into(),
+            },
+            predicates: Vec::new(),
+            schema,
+        };
+
+        let mut source = open(&scan, csv.path(), &node_schema).expect("opens");
+        let rows: Vec<Row> = source.by_ref().map(|row| row.expect("decodes")).collect();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(source.metric_absent(), None);
     }
 
     #[test]

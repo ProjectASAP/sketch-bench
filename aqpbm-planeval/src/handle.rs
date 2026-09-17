@@ -11,6 +11,7 @@
 //! every number still looked reasonable.
 
 use asap_sketchlib::common::heap::HHHeap;
+use asap_sketchlib::common::input::HHItem;
 use asap_sketchlib::input::{DataInput, HeapItem};
 use asap_sketchlib::sketch_framework::univmon::UnivMon;
 use asap_sketchlib::sketches::hll::HyperLogLogImpl;
@@ -773,7 +774,8 @@ impl SummaryHandle for CmsHeapHandle {
     }
 
     fn footprint_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>() + self.heap_size * 24
+        self.rows * self.cols * std::mem::size_of::<i32>()
+            + heap_bytes(self.inner.heap(), self.heap_size)
     }
 }
 
@@ -807,8 +809,49 @@ impl SummaryHandle for CsHeapHandle {
     }
 
     fn footprint_bytes(&self) -> usize {
-        self.rows * self.cols * std::mem::size_of::<i32>() + self.heap_size * 24
+        self.rows * self.cols * std::mem::size_of::<i32>()
+            + heap_bytes(self.inner.heap(), self.heap_size)
     }
+}
+
+const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
+
+const SKETCHLIB_HEAP_INDEX_ENTRY_BYTES: usize = 8 + 24 + 1;
+
+fn grown_capacity(reserved: usize, len: usize) -> usize {
+    let mut capacity = reserved.max(1);
+    while capacity < len {
+        capacity *= 2;
+    }
+    if reserved == 0 && len == 0 {
+        return 0;
+    }
+    capacity
+}
+
+fn hash_buckets(capacity: usize) -> usize {
+    if capacity == 0 {
+        return 0;
+    }
+    let wanted = capacity.div_ceil(7) * 8;
+    wanted.next_power_of_two()
+}
+
+fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
+    let residents = heap.heap();
+    let capacity = grown_capacity(heap_size.min(SKETCHLIB_PREALLOCATED_SLOTS), residents.len());
+    let keys: usize = residents
+        .iter()
+        .map(|item| match &item.key {
+            HeapItem::String(held) => held.capacity(),
+            HeapItem::Bytes(held) => held.capacity(),
+            _ => 0,
+        })
+        .sum();
+    capacity * std::mem::size_of::<HHItem>()
+        + capacity * std::mem::size_of::<u64>()
+        + hash_buckets(capacity) * SKETCHLIB_HEAP_INDEX_ENTRY_BYTES
+        + keys
 }
 
 fn heap_topk(node: PostAsapNodeId, heap: &HHHeap, k: usize) -> Result<Answer, EvalError> {
@@ -864,7 +907,11 @@ impl SummaryHandle for KmvHandle {
     }
 
     fn footprint_bytes(&self) -> usize {
-        self.k * std::mem::size_of::<u64>()
+        let capacity = grown_capacity(
+            self.k.min(SKETCHLIB_PREALLOCATED_SLOTS),
+            self.inner.k_vals.len(),
+        );
+        capacity * std::mem::size_of::<u64>()
     }
 }
 
@@ -901,8 +948,13 @@ impl SummaryHandle for UnivMonHandle {
 
     fn footprint_bytes(&self) -> usize {
         let counters = (self.rows * self.cols + self.rows) * std::mem::size_of::<i64>();
-        let heap = self.heap_size * 24;
-        self.layers * (counters + heap)
+        let heaps: usize = self
+            .inner
+            .hh_layers
+            .iter()
+            .map(|heap| heap_bytes(heap, self.heap_size))
+            .sum();
+        self.layers * counters + heaps + self.layers
     }
 }
 
@@ -1139,6 +1191,81 @@ mod tests {
                 "{algorithm:?} must report a footprint before it holds anything"
             );
         }
+    }
+
+    #[test]
+    fn a_heap_bearing_sketch_is_charged_for_the_whole_heap() {
+        let heap_size = 64;
+        let family = SummaryFamilyType::Sketch(
+            SketchKind::new(
+                SketchAlgorithm::CmsWithHeap,
+                SketchParams::CmsWithHeap {
+                    width: 272,
+                    depth: 5,
+                    heap_size,
+                },
+            ),
+            GroupingStrategy::PerSubpopulationInstance,
+        );
+
+        let counters = 5 * 272 * std::mem::size_of::<i32>();
+        let mut handle = bind(&family, NODE, 0).expect("binds");
+        let empty = handle.footprint_bytes();
+        assert!(
+            empty > counters,
+            "the heap is reserved at construction and is not free"
+        );
+
+        for i in 0..10_000u64 {
+            handle
+                .update(Some(&ItemKey::Str(format!("series-{}", i % 500))), 1.0)
+                .unwrap();
+        }
+        let held = handle.footprint_bytes() - counters;
+
+        let items = heap_size as usize * std::mem::size_of::<HHItem>();
+        let digests = heap_size as usize * std::mem::size_of::<u64>();
+        let index = hash_buckets(heap_size as usize) * SKETCHLIB_HEAP_INDEX_ENTRY_BYTES;
+        let keys: usize = (0..heap_size as usize).map(|_| "series-000".len()).sum();
+        assert!(
+            held >= items + digests + index,
+            "the array, the digest column and the position index are all held: {held}"
+        );
+        assert!(
+            held >= items + digests + index + keys / 2,
+            "the residents' own key bytes are held too: {held}"
+        );
+
+        let guessed = heap_size as usize * 24;
+        assert!(
+            held as f64 / guessed as f64 > 3.0,
+            "24 B per slot counts the array short and the index not at all, \
+             {held} against {guessed}"
+        );
+    }
+
+    #[test]
+    fn a_kmv_is_charged_for_what_it_allocated_and_not_for_the_k_it_was_asked_for() {
+        let family = SummaryFamilyType::Sketch(
+            SketchKind::new(SketchAlgorithm::Kmv, SketchParams::Kmv { k: 1_000_002 }),
+            GroupingStrategy::PerSubpopulationInstance,
+        );
+
+        let mut handle = bind(&family, NODE, 0).expect("binds");
+        for i in 0..10_000u64 {
+            handle.update(Some(&ItemKey::Int(i as i64)), 1.0).unwrap();
+        }
+
+        let held = handle.footprint_bytes();
+        assert_eq!(
+            held,
+            16_384 * std::mem::size_of::<u64>(),
+            "1024 slots reserved, doubled to hold 10k hashes"
+        );
+        assert!(
+            held < 1_000_002 * std::mem::size_of::<u64>() / 8,
+            "the requested k is 8 MB and nothing like it was allocated"
+        );
     }
 
     #[test]

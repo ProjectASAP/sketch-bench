@@ -22,11 +22,15 @@ use asap_frontend_promql::lower_promql;
 use asap_types::post_asap::{
     compile_executable_dag, ExecutableDag, PostAsapDagDocument, PostAsapNodeId,
 };
+use asap_types::pre_asap::QueryExpr;
 use asap_types::types::AccuracyTarget;
 
 use crate::types::{EvalError, PlanId};
 
-/// A decoded, validated plan plus the order its nodes must run in.
+/// A decoded, validated plan, the order its nodes must run in, and the
+/// pre-ASAP tree the same lowering produced — the plan's own baseline, which
+/// the wire document does not carry and a plan decoded from one therefore has
+/// no copy of.
 #[derive(Debug, Clone)]
 pub struct Plan {
     /// blake3 of the canonical JSON of the `PostAsapDagDocument`.
@@ -34,6 +38,7 @@ pub struct Plan {
     pub dag: ExecutableDag,
     /// Topological, producers first. Every node appears exactly once.
     pub order: Vec<PostAsapNodeId>,
+    pub pre_asap: Option<Rc<QueryExpr>>,
 }
 
 impl Plan {
@@ -53,6 +58,15 @@ pub fn plan_promql(query: &str, accuracy: AccuracyTarget) -> Result<Plan, EvalEr
         )));
     }
     Ok(planned.remove(0).1)
+}
+
+pub fn lower_promql_root(
+    query: &str,
+    accuracy: AccuracyTarget,
+) -> Result<Rc<QueryExpr>, EvalError> {
+    lower_promql(query, accuracy)
+        .map(Rc::new)
+        .map_err(|err| EvalError::Planning(format!("lower {query:?}: {err:?}")))
 }
 
 /// Same, for a whole workload planned together, so cross-root CSE has a chance.
@@ -92,7 +106,7 @@ pub fn plan_promql_workload(
         };
         let dag = compile_executable_dag(&materialized)
             .map_err(|err| EvalError::Planning(format!("compile {name:?}: {err:?}")))?;
-        planned.push((name.clone(), from_dag(dag)?));
+        planned.push((name.clone(), from_dag(dag, Some(Rc::clone(root)))?));
     }
     Ok(planned)
 }
@@ -112,7 +126,7 @@ fn canonical_json(dag: &ExecutableDag) -> Result<String, EvalError> {
 }
 
 /// Validate, order, and hash one compiled dag.
-fn from_dag(dag: ExecutableDag) -> Result<Plan, EvalError> {
+fn from_dag(dag: ExecutableDag, pre_asap: Option<Rc<QueryExpr>>) -> Result<Plan, EvalError> {
     let document = PostAsapDagDocument::new(dag);
     document
         .validate()
@@ -126,6 +140,7 @@ fn from_dag(dag: ExecutableDag) -> Result<Plan, EvalError> {
         id,
         dag: document.dag,
         order,
+        pre_asap,
     })
 }
 
@@ -193,7 +208,7 @@ mod tests {
         let document: PostAsapDagDocument = serde_json::from_slice(bytes).map_err(|err| {
             EvalError::Validation(format!("decode post-ASAP DAG document: {err}"))
         })?;
-        from_dag(document.dag)
+        from_dag(document.dag, None)
     }
 
     use super::*;

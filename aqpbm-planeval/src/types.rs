@@ -76,7 +76,7 @@ impl ItemKey {
 
     pub fn heap_bytes(&self) -> usize {
         match self {
-            ItemKey::Str(s) => s.len(),
+            ItemKey::Str(s) => s.capacity(),
             ItemKey::Int(_) | ItemKey::Float(_) => 0,
         }
     }
@@ -106,8 +106,8 @@ impl Retained {
 
     pub fn bytes(&self) -> usize {
         let keys: usize = self.keyed.iter().map(|(key, _)| key.heap_bytes()).sum();
-        self.weights.len() * std::mem::size_of::<f64>()
-            + self.keyed.len() * std::mem::size_of::<(ItemKey, f64)>()
+        self.weights.capacity() * std::mem::size_of::<f64>()
+            + self.keyed.capacity() * std::mem::size_of::<(ItemKey, f64)>()
             + keys
     }
 }
@@ -193,6 +193,12 @@ pub enum Refusal {
     #[error("node {node:?}: unsupported value operation: {detail}")]
     UnsupportedValueOperation {
         node: PostAsapNodeId,
+        detail: String,
+    },
+    #[error("node {node:?}: the rows name their series and none of them is {metric:?}: {detail}")]
+    MetricAbsentFromRows {
+        node: PostAsapNodeId,
+        metric: String,
         detail: String,
     },
 }

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use asap_types::post_asap::{ExactOperation, PostAsapNodeId, ValueOperation};
 use asap_types::pre_asap::{ProjectItem, QueryExpr, SortKey};
 
-use crate::rows::{eval, order, variant_name};
+use crate::rows::{eval, order, variant_name, PredicateFault};
 use crate::types::{EvalError, Refusal, Row, Value};
 
 /// Everything about a row operation that can be settled before a row is read.
@@ -17,7 +17,7 @@ pub(crate) fn check(
 ) -> Result<(), Refusal> {
     match operation {
         ValueOperation::Filter { pred } => crate::rows::check_predicate(&pred.0, columns)
-            .map_err(|fault| refusal(node, format!("Filter: {}", fault.detail()))),
+            .map_err(|fault| predicate_refusal(node, "Filter", &fault)),
         ValueOperation::Project { cols, .. } => project_shape(node, cols),
         ValueOperation::Sort { keys, partition_by } => {
             if keys.is_empty() {
@@ -34,7 +34,7 @@ pub(crate) fn check(
             }
             for key in keys {
                 crate::rows::check_predicate(&key.expr, columns)
-                    .map_err(|fault| refusal(node, format!("Sort key: {}", fault.detail())))?;
+                    .map_err(|fault| predicate_refusal(node, "Sort key", &fault))?;
             }
             Ok(())
         }
@@ -96,11 +96,7 @@ pub(crate) fn apply(
             }
             sort(node, keys, rows)
         }
-        ValueOperation::Limit { n, offset } => {
-            let start = (*offset).min(rows.len());
-            let end = offset.saturating_add(*n).min(rows.len());
-            Ok(Rc::new(rows[start..end].to_vec()))
-        }
+        ValueOperation::Limit { n, offset } => Ok(limit(*n, *offset, rows)),
         ValueOperation::FinalizeExactAccumulator => Err(refused(
             node,
             "FinalizeExactAccumulator reads summary state, and this node was handed rows"
@@ -132,7 +128,7 @@ pub(crate) fn apply(
     }
 }
 
-fn project_shape(node: PostAsapNodeId, cols: &[ProjectItem]) -> Result<(), Refusal> {
+pub(crate) fn project_shape(node: PostAsapNodeId, cols: &[ProjectItem]) -> Result<(), Refusal> {
     for (index, item) in cols.iter().enumerate() {
         match &item.expr {
             QueryExpr::Column(_) | QueryExpr::Literal(_) => {}
@@ -147,7 +143,7 @@ fn project_shape(node: PostAsapNodeId, cols: &[ProjectItem]) -> Result<(), Refus
     Ok(())
 }
 
-fn project(
+pub(crate) fn project(
     node: PostAsapNodeId,
     cols: &[ProjectItem],
     rows: &Rc<Vec<Row>>,
@@ -164,7 +160,13 @@ fn project(
     Ok(Rc::new(projected))
 }
 
-fn sort(
+pub(crate) fn limit(n: usize, offset: usize, rows: &Rc<Vec<Row>>) -> Rc<Vec<Row>> {
+    let start = offset.min(rows.len());
+    let end = offset.saturating_add(n).min(rows.len());
+    Rc::new(rows[start..end].to_vec())
+}
+
+pub(crate) fn sort(
     node: PostAsapNodeId,
     keys: &[SortKey],
     rows: &Rc<Vec<Row>>,
@@ -220,6 +222,24 @@ fn ranked(left: &Value, right: &Value, ascending: bool, nulls_first: bool) -> st
     }
 }
 
+pub(crate) fn predicate_refusal(
+    node: PostAsapNodeId,
+    position: &str,
+    fault: &PredicateFault,
+) -> Refusal {
+    match fault {
+        PredicateFault::ColumnOutOfRange { column, .. } => Refusal::UnresolvableColumn {
+            node,
+            column: column.to_string(),
+            detail: format!("{position}: {}", fault.detail()),
+        },
+        PredicateFault::Unsupported(_) => Refusal::UnsupportedValueOperation {
+            node,
+            detail: format!("{position}: {}", fault.detail()),
+        },
+    }
+}
+
 fn refusal(node: PostAsapNodeId, detail: String) -> Refusal {
     Refusal::UnsupportedValueOperation { node, detail }
 }
@@ -228,7 +248,7 @@ fn refused(node: PostAsapNodeId, detail: String) -> EvalError {
     EvalError::Refused(vec![refusal(node, detail)])
 }
 
-fn debug_variant<T: std::fmt::Debug>(value: &T) -> String {
+pub(crate) fn debug_variant<T: std::fmt::Debug>(value: &T) -> String {
     let rendered = format!("{value:?}");
     rendered
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))

@@ -1,11 +1,13 @@
-//! The output shape: one record per plan run, carrying both arms.
+//! The output shape: one record per plan run, carrying all three arms — the
+//! post-ASAP plan, the retained column it is scored against, and the pre-ASAP
+//! tree the ratios divide by.
 //!
 //! Not `aqpbm_core::MergedRecord`. That record's identity is one
 //! `(sketch, library, sketch_config)` triple, it has no node list, and — the
-//! reason a new shape exists at all — it has nowhere to put the exact-execution
-//! arm. The advantage this crate reports is a ratio between two measurements,
-//! so both have to live in one record or the ratio is assembled by whoever
-//! reads the file, differently each time.
+//! reason a new shape exists at all — it has nowhere to put the arms that do
+//! not use a sketch. The advantage this crate reports is a ratio between two
+//! measurements, so both have to live in one record or the ratio is assembled
+//! by whoever reads the file, differently each time.
 
 use aqpbm_core::benchmark_result::fold;
 use aqpbm_core::benchmark_result::{CpuTime, LatencySummary, RunStats};
@@ -15,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use asap_types::post_asap::{ExecutableOperator, PostAsapNodeId, SummaryFamilyType};
 
 use crate::plan::Plan;
-use crate::run::{ArmTiming, RunOutcome};
+use crate::run::{ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 5;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
@@ -33,11 +35,16 @@ pub struct PlanEvalRecord {
     pub root_rows: Option<usize>,
     /// Whether the exact arm ran at all. A record with `verified: false` has
     /// no ground truth in it, and says so rather than leaving the reader to
-    /// infer it from absent fields.
+    /// infer it from absent fields. The arm carries no timing: it recomputes
+    /// the statistic off the column the summary consumed, which is ground
+    /// truth and not a query anyone would run.
     pub verified: bool,
     pub nodes: Vec<NodeCost>,
     pub approximate: Arm,
     pub exact: Arm,
+    pub pre_asap: Arm,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pre_asap_nodes: Vec<TreeNodeCost>,
     pub readouts: Vec<ReadoutRecord>,
 }
 
@@ -63,6 +70,19 @@ pub struct NodeCost {
     /// node that holds no summary state.
     pub family: Option<String>,
     pub state_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_ns: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_ns: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readout_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TreeNodeCost {
+    pub node: u32,
+    pub operator: String,
+    pub elapsed_ns: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +93,8 @@ pub struct Arm {
     pub update: Option<Phase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readout: Option<Phase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluate: Option<Phase>,
     /// Summary state held, summed over every node and group. `0` for the exact
     /// arm, which holds the retained column instead — reported separately so a
     /// reader is not invited to compare a sketch against nothing.
@@ -170,13 +192,18 @@ pub struct ReadoutRecord {
     pub observations: u64,
 }
 
-/// What the plan bought, as ratios of exact over approximate. Each is `None`
-/// when the quantity was not measured on both arms — a ratio nothing measured
-/// is not `1.0`.
+/// What the plan bought, as ratios of the pre-ASAP arm over the approximate
+/// one, plus what it cost. Each is `None` when the quantity was not measured
+/// on both arms — a ratio nothing measured is not `1.0`. Both time ratios
+/// divide the same tree walk, because without approximation maintaining the
+/// answer and asking for it are the same work. `accuracy` is not a ratio: it
+/// is the largest error any readout showed, in that readout's own metric.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Advantage {
+    pub aggregate_time: Option<f64>,
+    pub query_time: Option<f64>,
     pub memory: Option<f64>,
-    pub readout_latency: Option<f64>,
+    pub accuracy: Option<f64>,
 }
 
 impl PlanEvalRecord {
@@ -184,6 +211,12 @@ impl PlanEvalRecord {
         let document = plan.document();
         let footprints: std::collections::HashMap<PostAsapNodeId, usize> =
             outcome.node_footprints.iter().copied().collect();
+
+        let times: std::collections::HashMap<PostAsapNodeId, &NodeTiming> = outcome
+            .node_times
+            .iter()
+            .map(|(id, timing)| (*id, timing))
+            .collect();
 
         let nodes = plan
             .dag
@@ -201,6 +234,9 @@ impl PlanEvalRecord {
                     _ => None,
                 },
                 state_bytes: footprints.get(&node.id).copied(),
+                build_ns: times.get(&node.id).and_then(|timing| timing.build_ns),
+                update_ns: times.get(&node.id).and_then(|timing| timing.update_ns),
+                readout_ns: times.get(&node.id).and_then(|timing| timing.readout_ns),
             })
             .collect();
 
@@ -224,7 +260,24 @@ impl PlanEvalRecord {
             verified: outcome.verified,
             nodes,
             approximate: arm(&outcome.approximate, state_bytes, 0),
-            exact: arm(&outcome.exact, 0, retained_bytes),
+            exact: Arm {
+                build: None,
+                update: None,
+                readout: None,
+                evaluate: None,
+                state_bytes: 0,
+                retained_bytes,
+            },
+            pre_asap: arm(&outcome.pre_asap, 0, outcome.pre_asap_bytes),
+            pre_asap_nodes: outcome
+                .pre_asap_node_times
+                .iter()
+                .map(|node| TreeNodeCost {
+                    node: node.node,
+                    operator: node.operator.to_string(),
+                    elapsed_ns: node.elapsed_ns,
+                })
+                .collect(),
             readouts: outcome
                 .readouts
                 .iter()
@@ -249,15 +302,29 @@ impl PlanEvalRecord {
     /// The headline numbers. The planner supplies none of these — see PLAN.md
     /// §1.10.1 — so they are measured, not checked.
     pub fn advantage(&self) -> Advantage {
+        let without_approximation = phase_mean(self.pre_asap.evaluate.as_ref());
         Advantage {
-            memory: ratio(
-                self.exact.retained_bytes as f64,
-                self.approximate.state_bytes as f64,
+            aggregate_time: ratio(
+                without_approximation,
+                phase_mean(self.approximate.build.as_ref())
+                    + phase_mean(self.approximate.update.as_ref()),
             ),
-            readout_latency: ratio(
-                phase_mean(self.exact.readout.as_ref()),
+            query_time: ratio(
+                without_approximation,
                 phase_mean(self.approximate.readout.as_ref()),
             ),
+            memory: ratio(
+                self.pre_asap.retained_bytes as f64,
+                self.approximate.state_bytes as f64,
+            ),
+            accuracy: self
+                .readouts
+                .iter()
+                .filter_map(|readout| readout.observed_error.measured())
+                .fold(None, |worst: Option<f64>, error| match worst {
+                    Some(held) if held.total_cmp(&error).is_ge() => Some(held),
+                    _ => Some(error),
+                }),
         }
     }
 
@@ -283,6 +350,7 @@ fn arm(timing: &ArmTiming, state_bytes: usize, retained_bytes: usize) -> Arm {
         build: phase(&timing.build),
         update: phase(&timing.update),
         readout: phase(&timing.readout),
+        evaluate: phase(&timing.evaluate),
         state_bytes,
         retained_bytes,
     }
@@ -374,7 +442,11 @@ mod tests {
         // Both arms, and the ratio between them.
         assert!(record.approximate.state_bytes > 0);
         assert_eq!(record.exact.state_bytes, 0);
-        assert_eq!(record.exact.retained_bytes, 10_000 * 8);
+        assert_eq!(
+            record.exact.retained_bytes,
+            16_384 * 8,
+            "the column's allocation, not its length: the summary side is an allocation too"
+        );
         let advantage = record.advantage();
         let memory = advantage.memory.expect("both arms measured");
         assert!(
@@ -390,13 +462,14 @@ mod tests {
     }
 
     #[test]
-    fn without_verify_there_is_no_ground_truth_and_no_advantage() {
+    fn without_verify_there_is_no_ground_truth_and_no_accuracy() {
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0, 4.0], false);
         assert!(!record.verified);
         assert_eq!(record.exact.retained_bytes, 0);
         assert!(record.readouts[0].exact.is_none());
-        // Not 1.0 — nothing was measured on the exact arm.
-        assert_eq!(record.advantage().memory, None);
+        // Not 0.0 — no error was measured, rather than none being made.
+        assert_eq!(record.advantage().accuracy, None);
+        assert!(record.advantage().memory.is_some());
     }
 
     #[test]
@@ -449,10 +522,10 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 5);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 6);
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
         assert!(
-            record.to_jsonl().contains("\"schema_version\":5"),
+            record.to_jsonl().contains("\"schema_version\":6"),
             "the stream has to say which encoding it is in"
         );
     }
@@ -582,8 +655,7 @@ mod tests {
             ("approximate.build", record.approximate.build.as_ref()),
             ("approximate.update", record.approximate.update.as_ref()),
             ("approximate.readout", record.approximate.readout.as_ref()),
-            ("exact.update", record.exact.update.as_ref()),
-            ("exact.readout", record.exact.readout.as_ref()),
+            ("pre_asap.evaluate", record.pre_asap.evaluate.as_ref()),
         ] {
             let phase = phase.unwrap_or_else(|| panic!("{name} was not measured"));
             assert!(phase.per_sec.is_some(), "{name}.per_sec");
@@ -603,8 +675,10 @@ mod tests {
             .unwrap()
             .latency_ns
             .is_some());
-        assert!(record.exact.readout.as_ref().unwrap().latency_ns.is_some());
         assert!(back.exact.build.is_none());
+        assert!(back.exact.update.is_none(), "the exact arm is not timed");
+        assert!(back.exact.readout.is_none(), "the exact arm is not timed");
+        assert_eq!(back.exact.retained_bytes, record.exact.retained_bytes);
     }
 
     #[test]
@@ -616,8 +690,7 @@ mod tests {
             ("approximate.build", record.approximate.build.as_ref()),
             ("approximate.update", record.approximate.update.as_ref()),
             ("approximate.readout", record.approximate.readout.as_ref()),
-            ("exact.update", record.exact.update.as_ref()),
-            ("exact.readout", record.exact.readout.as_ref()),
+            ("pre_asap.evaluate", record.pre_asap.evaluate.as_ref()),
         ] {
             let phase = phase.unwrap_or_else(|| panic!("{name} was not measured"));
             assert_eq!(phase.elapsed_ms.n, DEFAULT_TIMED_RUNS, "{name}");
@@ -630,6 +703,8 @@ mod tests {
         }
 
         assert!(record.exact.build.is_none());
+        assert!(record.exact.update.is_none());
+        assert!(record.exact.readout.is_none());
 
         assert_eq!(record.approximate.update.as_ref().unwrap().work, 2_000);
         assert_eq!(record.approximate.readout.as_ref().unwrap().work, 1);
@@ -658,16 +733,148 @@ mod tests {
     }
 
     #[test]
-    fn the_readout_advantage_is_a_ratio_of_two_measured_regions() {
+    fn the_time_advantages_are_ratios_over_the_pre_asap_arm() {
         let values: Vec<f64> = (0..20_000).map(|i| (i % 977) as f64).collect();
         let record = record_of("quantile(0.5, cpu_cores)", &values, true);
-        let ratio = record
-            .advantage()
-            .readout_latency
-            .expect("both arms read out");
+
+        let tree = record
+            .pre_asap
+            .evaluate
+            .as_ref()
+            .expect("the pre-ASAP arm is timed");
+        assert_eq!(tree.work, 20_000, "one unit of work per row it reads");
+        assert!(tree.elapsed_ms.mean > 0.0);
+        assert!(record.pre_asap.build.is_none(), "a tree binds nothing");
+
+        let advantage = record.advantage();
+        let query = advantage.query_time.expect("both arms answered");
         assert!(
-            ratio > 1.0,
-            "reading a quantile off a KLL should beat sorting 20k f64s, got {ratio}x"
+            query > 1.0,
+            "reading a quantile off a KLL should beat walking the tree over 20k rows, got {query}x"
         );
+        assert!(advantage.aggregate_time.expect("both arms aggregated") > 0.0);
+
+        let readout = record.approximate.readout.as_ref().unwrap();
+        let maintain = record.approximate.build.as_ref().unwrap().elapsed_ms.mean
+            + record.approximate.update.as_ref().unwrap().elapsed_ms.mean;
+        assert!((query - tree.elapsed_ms.mean / readout.elapsed_ms.mean).abs() < 1e-9);
+        assert!((advantage.aggregate_time.unwrap() - tree.elapsed_ms.mean / maintain).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_memory_advantage_is_taken_against_the_pre_asap_arm() {
+        let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
+        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+
+        assert!(
+            record.pre_asap.retained_bytes > record.exact.retained_bytes,
+            "the tree holds whole rows, the retained column holds one value each"
+        );
+        let memory = record.advantage().memory.expect("both arms held something");
+        assert!(
+            (memory
+                - record.pre_asap.retained_bytes as f64 / record.approximate.state_bytes as f64)
+                .abs()
+                < 1e-9
+        );
+        assert!(memory > 1.0, "got {memory}x");
+    }
+
+    #[test]
+    fn the_accuracy_term_is_the_worst_error_any_readout_showed() {
+        let values: Vec<f64> = (0..5_000).map(|i| (i % 313) as f64).collect();
+        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let worst = record
+            .readouts
+            .iter()
+            .filter_map(|readout| readout.observed_error.measured())
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(record.advantage().accuracy, Some(worst));
+
+        let unverified = record_of("quantile(0.5, cpu_cores)", &values, false);
+        assert_eq!(unverified.advantage().accuracy, None);
+    }
+
+    #[test]
+    fn per_node_time_is_recorded_only_when_it_is_asked_for() {
+        let values: Vec<f64> = (0..4_000).map(|i| (i % 211) as f64).collect();
+        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let file = csv(&values);
+
+        let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 3, true);
+        let quiet = PlanEvalRecord::from_run(
+            "quantile(0.5, cpu_cores)",
+            &plan,
+            &run(&plan, &config).unwrap(),
+        );
+        assert!(quiet.nodes.iter().all(|node| node.update_ns.is_none()));
+        assert!(quiet.pre_asap_nodes.is_empty());
+
+        config.per_node_time = true;
+        let timed = PlanEvalRecord::from_run(
+            "quantile(0.5, cpu_cores)",
+            &plan,
+            &run(&plan, &config).unwrap(),
+        );
+
+        let aggregate = timed
+            .nodes
+            .iter()
+            .find(|node| node.operator == "SummaryAgg")
+            .expect("the plan holds one");
+        assert!(aggregate.build_ns.unwrap() > 0, "bind is per slot");
+        assert!(aggregate.update_ns.unwrap() > 0, "insert is per update");
+        assert!(aggregate.readout_ns.unwrap() > 0, "readout is per probe");
+
+        let fallback = timed
+            .nodes
+            .iter()
+            .find(|node| node.operator == "Fallback")
+            .expect("the plan holds one");
+        assert_eq!(fallback.update_ns, None);
+
+        let operators: Vec<&str> = timed
+            .pre_asap_nodes
+            .iter()
+            .map(|node| node.operator.as_str())
+            .collect();
+        assert_eq!(
+            operators,
+            vec!["Scan", "Aggregate"],
+            "children charged first"
+        );
+        let tree_total: u64 = timed
+            .pre_asap_nodes
+            .iter()
+            .map(|node| node.elapsed_ns)
+            .sum();
+        let phase_ns = timed.pre_asap.evaluate.as_ref().unwrap().elapsed_ms.mean * 1e6;
+        assert!(
+            (tree_total as f64) <= phase_ns * 1.5,
+            "the doc allows a small mismatch, not a different measurement: \
+             {tree_total} ns of nodes against {phase_ns} ns of phase"
+        );
+    }
+
+    #[test]
+    fn a_plan_with_no_pre_asap_tree_reports_no_ratio_rather_than_one() {
+        let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
+        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let file = csv(&values);
+
+        let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 1, true);
+        config.pre_asap = false;
+        let record = PlanEvalRecord::from_run(
+            "quantile(0.5, cpu_cores)",
+            &plan,
+            &run(&plan, &config).unwrap(),
+        );
+
+        assert!(record.pre_asap.evaluate.is_none());
+        let advantage = record.advantage();
+        assert_eq!(advantage.aggregate_time, None);
+        assert_eq!(advantage.query_time, None);
+        assert_eq!(advantage.memory, None);
+        assert!(advantage.accuracy.is_some());
     }
 }

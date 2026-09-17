@@ -162,7 +162,7 @@ dependencies = [
  "asap-aware-mapping",
  "asap-frontend-promql",
  "asap-types",
- "asap_sketchlib 0.3.0",
+ "asap_sketchlib 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "blake3",
  "clap",
  "csv",
@@ -205,9 +205,10 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 [[package]]
 name = "asap-aware-mapping"
 version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
 dependencies = [
  "asap-types",
- "asap_sketchlib 0.3.0",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=da3635a80f8f854d47b772d49d5a9e5fb6927d8e)",
  "serde",
  "serde_json",
  "thiserror",
@@ -216,6 +217,7 @@ dependencies = [
 [[package]]
 name = "asap-frontend-promql"
 version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
 dependencies = [
  "asap-types",
  "promql-parser",
@@ -224,6 +226,7 @@ dependencies = [
 [[package]]
 name = "asap-types"
 version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
 dependencies = [
  "serde",
  "serde_json",
@@ -242,6 +245,24 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde-big-array",
+ "smallvec",
+ "twox-hash",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "asap_sketchlib"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bc12e89b57bf83e7148b0d71a113af0764bd1d727a594483af08eac556d2233"
+dependencies = [
+ "bytes",
+ "prost",
+ "rand 0.9.4",
+ "rmp-serde",
+ "serde",
+ "serde-big-array",
+ "serde_bytes",
  "smallvec",
  "twox-hash",
  "xxhash-rust",

@@ -1,12 +1,15 @@
 //! Executes a post-ASAP plan over rows, holding one summary per
-//! `(plan, node, group)`, and computes the exact answer from the same rows so
-//! both arms of the comparison come out of one pass.
+//! `(plan, node, group)`, and runs the other two arms over the same rows so
+//! every comparison comes out of one pass.
 //!
 //! The exact arm is not a second implementation of the query: a `Fallback`
 //! leaf is a bare `Scan`, so "execute exactly" is "keep the column the sketch
 //! was fed and compute the statistic on it". That is why no query engine is
 //! needed here, and why the two arms cannot silently disagree about which rows
-//! they saw.
+//! they saw. It is also why it is ground truth and not a baseline: it measures
+//! a push into a `Vec`, not the query anyone would have run. The baseline the
+//! ratios divide by is the third arm, the pre-ASAP tree in `exact.rs`, timed
+//! here by the same phase machinery.
 
 use aqpbm_core::measure::{
     measure, runs_for, MeasureConfig, Measurement, Pass, Report, RunOutcome as MeasuredRun,
@@ -27,6 +30,7 @@ use asap_types::post_asap::{
 };
 use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 
+use crate::exact;
 use crate::handle::{bind, SummaryHandle};
 use crate::plan::Plan;
 use crate::rows;
@@ -61,6 +65,8 @@ pub struct RunConfig {
     /// guarantee's metric can be computed. O(n) memory. The outcome records
     /// whether it ran.
     pub verify: bool,
+    pub pre_asap: bool,
+    pub per_node_time: bool,
     pub timed_runs: usize,
     pub warmup_runs: usize,
 }
@@ -71,6 +77,8 @@ impl RunConfig {
             rows,
             seed,
             verify,
+            pre_asap: true,
+            per_node_time: false,
             timed_runs: DEFAULT_TIMED_RUNS,
             warmup_runs: DEFAULT_WARMUP_RUNS,
         }
@@ -98,6 +106,14 @@ pub struct ArmTiming {
     pub build: Vec<RunMetrics>,
     pub update: Vec<RunMetrics>,
     pub readout: Vec<RunMetrics>,
+    pub evaluate: Vec<RunMetrics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeTiming {
+    pub build_ns: Option<u64>,
+    pub update_ns: Option<u64>,
+    pub readout_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,8 +133,12 @@ pub struct RunOutcome {
     pub readouts: Vec<Readout>,
     /// Summary state held per node, summed over that node's groups.
     pub node_footprints: Vec<(PostAsapNodeId, usize)>,
+    pub node_times: Vec<(PostAsapNodeId, NodeTiming)>,
     pub approximate: ArmTiming,
-    pub exact: ArmTiming,
+    pub pre_asap: ArmTiming,
+    pub pre_asap_bytes: usize,
+    pub pre_asap_node_times: Vec<exact::NodeTime>,
+    pub pre_asap_answer: Option<exact::Data>,
 }
 
 struct Slot {
@@ -152,6 +172,9 @@ type SummaryState = Vec<Box<dyn SummaryHandle>>;
 type RetainedState = Vec<Retained>;
 type Fault = Rc<RefCell<Option<EvalError>>>;
 type Kept<T> = Rc<RefCell<Vec<T>>>;
+type PerSlotNs = Vec<Vec<u64>>;
+type UpdateTiming = (Vec<RunMetrics>, Vec<SummaryState>, PerSlotNs);
+type EstimateTiming = (Vec<RunMetrics>, Vec<Answer>, PerSlotNs);
 
 /// Run one plan: resolve every node on its own payload, then execute.
 ///
@@ -218,8 +241,8 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     }
     let probes = Rc::new(probes);
 
-    let build = time_binds(&drained.slots, cfg)?;
-    let (update, mut states) = time_updates(&drained.slots, &drained.updates, cfg)?;
+    let (build, build_ns) = time_binds(&drained.slots, cfg)?;
+    let (update, mut states, update_ns) = time_updates(&drained.slots, &drained.updates, cfg)?;
 
     let mut node_footprints: HashMap<PostAsapNodeId, usize> = HashMap::new();
     if let Some(last) = states.last() {
@@ -230,25 +253,32 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let mut node_footprints: Vec<_> = node_footprints.into_iter().collect();
     node_footprints.sort_by_key(|(id, _)| id.0);
 
-    let (readout, answers) = time_estimates(&probes, std::mem::take(&mut states), cfg)?;
+    let (readout, answers, readout_ns) = time_estimates(&probes, std::mem::take(&mut states), cfg)?;
+    let node_times = node_times(&drained.slots, &build_ns, &update_ns, &readout_ns);
 
-    let mut exact = ArmTiming::default();
     let mut retained_values = 0usize;
     let mut retained_bytes_held = 0usize;
     let mut truths: Vec<Answer> = Vec::new();
     let mut retained: RetainedState = Vec::new();
     if cfg.verify {
-        let (timing, columns) = time_retains(drained.slots.len(), &drained.updates, cfg);
-        exact.update = timing;
-        retained_values = columns
-            .last()
-            .map(|set| set.iter().map(Retained::len).sum())
-            .unwrap_or(0);
-        retained_bytes_held = columns.last().map(retained_bytes).unwrap_or(0) as usize;
-        let (timing, answered, columns) = time_exact_estimates(&probes, columns, cfg)?;
-        exact.readout = timing;
+        let columns = retain(drained.slots.len(), &drained.updates);
+        retained_values = columns.iter().map(Retained::len).sum();
+        retained_bytes_held = retained_bytes(&columns) as usize;
+        let (answered, columns) = exact_answers(&probes, columns)?;
         truths = answered;
         retained = columns;
+    }
+
+    let mut pre_asap = ArmTiming::default();
+    let mut pre_asap_bytes = 0usize;
+    let mut pre_asap_node_times = Vec::new();
+    let mut pre_asap_answer = None;
+    if let (true, Some(root)) = (cfg.pre_asap, plan.pre_asap.as_ref()) {
+        let arm = exact::time_pre_asap(root, cfg)?;
+        pre_asap.evaluate = arm.evaluate;
+        pre_asap_bytes = arm.retained_bytes;
+        pre_asap_node_times = arm.node_times;
+        pre_asap_answer = Some(arm.answer);
     }
 
     // ── read every estimate out, and answer the same question exactly ───────
@@ -295,12 +325,17 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
         retained_bytes: retained_bytes_held,
         readouts,
         node_footprints,
+        node_times,
         approximate: ArmTiming {
             build,
             update,
             readout,
+            evaluate: Vec::new(),
         },
-        exact,
+        pre_asap,
+        pre_asap_bytes,
+        pre_asap_node_times,
+        pre_asap_answer,
     })
 }
 
@@ -389,6 +424,13 @@ fn materialize(resolved: &Resolved<'_>, cfg: &RunConfig) -> Result<Materialized,
                 for row in reader.by_ref() {
                     held.push(row?);
                 }
+                if let Some(metric) = reader.metric_absent() {
+                    return Err(EvalError::Refused(vec![Refusal::MetricAbsentFromRows {
+                        node: node.id,
+                        metric: metric.to_string(),
+                        detail: format!("{} names other series", reader.origin()),
+                    }]));
+                }
                 scanned = reader.scanned();
                 emitted = reader.emitted();
                 rows.insert(node.id, Rc::new(held));
@@ -416,7 +458,11 @@ fn materialize(resolved: &Resolved<'_>, cfg: &RunConfig) -> Result<Materialized,
     })
 }
 
-fn phase_config(metric: Metric, extra: MetricsMask, cfg: &RunConfig) -> (usize, MeasureConfig) {
+pub(crate) fn phase_config(
+    metric: Metric,
+    extra: MetricsMask,
+    cfg: &RunConfig,
+) -> (usize, MeasureConfig) {
     let runs = runs_for(metric, cfg.timed_runs);
     (
         cfg.warmup_runs + runs,
@@ -428,12 +474,93 @@ fn phase_config(metric: Metric, extra: MetricsMask, cfg: &RunConfig) -> (usize, 
     )
 }
 
-fn timed_calls(recorder: &mut LatencyRecorder, steps: usize, mut call: impl FnMut(usize)) {
-    for i in 0..steps {
-        let clock = WallClock::start();
-        call(i);
-        recorder.record_ns(clock.elapsed_ns());
+struct SlotClock {
+    ns: Option<Vec<u64>>,
+}
+
+impl SlotClock {
+    fn new(slots: usize, armed: bool) -> Self {
+        Self {
+            ns: armed.then(|| vec![0u64; slots]),
+        }
     }
+
+    fn armed(&self) -> bool {
+        self.ns.is_some()
+    }
+
+    fn charge(&mut self, slot: usize, elapsed_ns: u64) {
+        if let Some(held) = self.ns.as_mut() {
+            if let Some(total) = held.get_mut(slot) {
+                *total += elapsed_ns;
+            }
+        }
+    }
+
+    fn into_totals(self) -> Vec<u64> {
+        self.ns.unwrap_or_default()
+    }
+}
+
+fn timed_calls(
+    recorder: &mut LatencyRecorder,
+    clock: &mut SlotClock,
+    slot_of: impl Fn(usize) -> usize,
+    steps: usize,
+    mut call: impl FnMut(usize),
+) {
+    for i in 0..steps {
+        let watch = WallClock::start();
+        call(i);
+        let elapsed_ns = watch.elapsed_ns();
+        recorder.record_ns(elapsed_ns);
+        clock.charge(slot_of(i), elapsed_ns);
+    }
+}
+
+fn node_times(
+    slots: &[Slot],
+    build: &[Vec<u64>],
+    update: &[Vec<u64>],
+    readout: &[Vec<u64>],
+) -> Vec<(PostAsapNodeId, NodeTiming)> {
+    let build = per_node(slots, build);
+    let update = per_node(slots, update);
+    let readout = per_node(slots, readout);
+
+    let mut ids: Vec<PostAsapNodeId> = slots.iter().map(|slot| slot.node).collect();
+    ids.sort_by_key(|id| id.0);
+    ids.dedup();
+
+    ids.into_iter()
+        .map(|id| {
+            (
+                id,
+                NodeTiming {
+                    build_ns: build.get(&id).copied(),
+                    update_ns: update.get(&id).copied(),
+                    readout_ns: readout.get(&id).copied(),
+                },
+            )
+        })
+        .filter(|(_, timing)| *timing != NodeTiming::default())
+        .collect()
+}
+
+fn per_node(slots: &[Slot], passes: &[Vec<u64>]) -> HashMap<PostAsapNodeId, u64> {
+    let mut totals: HashMap<PostAsapNodeId, u64> = HashMap::new();
+    if passes.is_empty() {
+        return totals;
+    }
+    for pass in passes {
+        for (slot, elapsed_ns) in slots.iter().zip(pass) {
+            *totals.entry(slot.node).or_insert(0) += elapsed_ns;
+        }
+    }
+    for total in totals.values_mut() {
+        *total /= passes.len() as u64;
+    }
+    totals
 }
 
 fn hold(cell: &Fault, err: EvalError) {
@@ -471,12 +598,12 @@ fn bind_all(slots: &[Slot], seed: u64) -> Result<SummaryState, EvalError> {
         .collect()
 }
 
-fn time_binds(slots: &[Slot], cfg: &RunConfig) -> Result<Vec<RunMetrics>, EvalError> {
+fn time_binds(slots: &[Slot], cfg: &RunConfig) -> Result<(Vec<RunMetrics>, PerSlotNs), EvalError> {
     if slots.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let fault: Fault = Rc::new(RefCell::new(None));
-    let kept: Kept<(SummaryState, LatencyRecorder)> = Rc::new(RefCell::new(Vec::new()));
+    let kept: Kept<(SummaryState, LatencyRecorder, Vec<u64>)> = Rc::new(RefCell::new(Vec::new()));
     let recipes: Rc<Vec<(SummaryFamilyType, PostAsapNodeId)>> = Rc::new(
         slots
             .iter()
@@ -493,26 +620,33 @@ fn time_binds(slots: &[Slot], cfg: &RunConfig) -> Result<Vec<RunMetrics>, EvalEr
         let seed = cfg.seed;
         let built: SummaryState = Vec::with_capacity(recipes.len());
         let recorder = LatencyRecorder::new();
+        let clock = SlotClock::new(recipes.len(), cfg.per_node_time);
         let pass: Pass = Box::new(move || {
             let mut built = built;
             let mut recorder = recorder;
+            let mut clock = clock;
             let mut failure: Option<EvalError> = None;
-            timed_calls(&mut recorder, recipes.len(), |i| {
-                match bind(&recipes[i].0, recipes[i].1, seed) {
+            timed_calls(
+                &mut recorder,
+                &mut clock,
+                |i| i,
+                recipes.len(),
+                |i| match bind(&recipes[i].0, recipes[i].1, seed) {
                     Ok(handle) => built.push(handle),
                     Err(refusal) => {
                         if failure.is_none() {
                             failure = Some(EvalError::Refused(vec![refusal]));
                         }
                     }
-                }
-            });
+                },
+            );
             let work = recipes.len() as u64;
             let report: Report = Box::new(move || {
                 if let Some(err) = failure {
                     hold(&fault, err);
                 }
-                kept.borrow_mut().push((built, recorder));
+                kept.borrow_mut()
+                    .push((built, recorder, clock.into_totals()));
                 MeasuredRun {
                     work,
                     ..MeasuredRun::default()
@@ -527,23 +661,28 @@ fn time_binds(slots: &[Slot], cfg: &RunConfig) -> Result<Vec<RunMetrics>, EvalEr
     raise(&fault)?;
     let kept = std::mem::take(&mut *kept.borrow_mut());
     let measured = runs.len();
-    for (metrics, (built, recorder)) in runs.iter_mut().zip(measured_tail(&kept, measured)) {
+    let mut per_slot = Vec::with_capacity(measured);
+    for (metrics, (built, recorder, slot_ns)) in runs.iter_mut().zip(measured_tail(&kept, measured))
+    {
         metrics.memory_bytes = Some(state_bytes(built));
         metrics.latency_ns = Some(recorder.snapshot());
+        if !slot_ns.is_empty() {
+            per_slot.push(slot_ns.clone());
+        }
     }
-    Ok(runs)
+    Ok((runs, per_slot))
 }
 
 fn time_updates(
     slots: &[Slot],
     updates: &Rc<Vec<Update>>,
     cfg: &RunConfig,
-) -> Result<(Vec<RunMetrics>, Vec<SummaryState>), EvalError> {
+) -> Result<UpdateTiming, EvalError> {
     if slots.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
     let fault: Fault = Rc::new(RefCell::new(None));
-    let filled: Rc<RefCell<Vec<SummaryState>>> = Rc::new(RefCell::new(Vec::new()));
+    let filled: Kept<(SummaryState, Vec<u64>)> = Rc::new(RefCell::new(Vec::new()));
 
     let (total, config) = phase_config(Metric::Throughput, MetricsMask::empty(), cfg);
     let mut passes: Measurement = Vec::with_capacity(total);
@@ -552,15 +691,30 @@ fn time_updates(
         let updates = Rc::clone(updates);
         let fault = Rc::clone(&fault);
         let filled = Rc::clone(&filled);
+        let clock = SlotClock::new(slots.len(), cfg.per_node_time);
         let pass: Pass = Box::new(move || {
             let mut handles = handles;
+            let mut clock = clock;
             let mut failure: Option<EvalError> = None;
-            for update in updates.iter() {
-                if let Err(err) =
-                    handles[update.slot as usize].update(update.item.as_ref(), update.weight)
-                {
-                    failure = Some(err);
-                    break;
+            if clock.armed() {
+                for update in updates.iter() {
+                    let watch = WallClock::start();
+                    let outcome =
+                        handles[update.slot as usize].update(update.item.as_ref(), update.weight);
+                    clock.charge(update.slot as usize, watch.elapsed_ns());
+                    if let Err(err) = outcome {
+                        failure = Some(err);
+                        break;
+                    }
+                }
+            } else {
+                for update in updates.iter() {
+                    if let Err(err) =
+                        handles[update.slot as usize].update(update.item.as_ref(), update.weight)
+                    {
+                        failure = Some(err);
+                        break;
+                    }
                 }
             }
             let work = updates.len() as u64;
@@ -568,7 +722,7 @@ fn time_updates(
                 if let Some(err) = failure {
                     hold(&fault, err);
                 }
-                filled.borrow_mut().push(handles);
+                filled.borrow_mut().push((handles, clock.into_totals()));
                 MeasuredRun {
                     work,
                     ..MeasuredRun::default()
@@ -581,170 +735,72 @@ fn time_updates(
 
     let mut runs = measure(&config, passes);
     raise(&fault)?;
-    let states = std::mem::take(&mut *filled.borrow_mut());
+    let kept = std::mem::take(&mut *filled.borrow_mut());
     let measured = runs.len();
-    for (metrics, handles) in runs.iter_mut().zip(measured_tail(&states, measured)) {
+    let mut per_slot = Vec::with_capacity(measured);
+    for (metrics, (handles, slot_ns)) in runs.iter_mut().zip(measured_tail(&kept, measured)) {
         metrics.memory_bytes = Some(state_bytes(handles));
+        if !slot_ns.is_empty() {
+            per_slot.push(slot_ns.clone());
+        }
     }
-    Ok((runs, states))
+    let states = kept.into_iter().map(|(handles, _)| handles).collect();
+    Ok((runs, states, per_slot))
 }
 
 fn time_estimates(
     probes: &Rc<Vec<Probe>>,
     states: Vec<SummaryState>,
     cfg: &RunConfig,
-) -> Result<(Vec<RunMetrics>, Vec<Answer>), EvalError> {
-    if probes.is_empty() || states.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let fault: Fault = Rc::new(RefCell::new(None));
-    let kept: Kept<(Vec<Answer>, SummaryState, LatencyRecorder)> =
-        Rc::new(RefCell::new(Vec::new()));
-
-    let (_, config) = phase_config(Metric::Throughput, MetricsMask::LATENCY, cfg);
-    let mut passes: Measurement = Vec::with_capacity(states.len());
-    for state in states {
-        let probes = Rc::clone(probes);
-        let fault = Rc::clone(&fault);
-        let kept = Rc::clone(&kept);
-        let produced: Vec<Answer> = Vec::with_capacity(probes.len());
-        let recorder = LatencyRecorder::new();
-        let pass: Pass = Box::new(move || {
-            let mut handles = state;
-            let mut produced = produced;
-            let mut recorder = recorder;
-            let mut failure: Option<EvalError> = None;
-            timed_calls(&mut recorder, probes.len(), |i| {
-                let probe = &probes[i];
-                match handles[probe.slot as usize].estimate(&probe.query) {
-                    Ok(answer) => produced.push(answer),
-                    Err(err) => {
-                        if failure.is_none() {
-                            failure = Some(err);
-                        }
-                    }
-                }
-            });
-            let work = probes.len() as u64;
-            let report: Report = Box::new(move || {
-                if let Some(err) = failure {
-                    hold(&fault, err);
-                }
-                kept.borrow_mut().push((produced, handles, recorder));
-                MeasuredRun {
-                    work,
-                    ..MeasuredRun::default()
-                }
-            });
-            report
-        });
-        passes.push(pass);
-    }
-
-    let mut runs = measure(&config, passes);
-    raise(&fault)?;
-    let mut kept = std::mem::take(&mut *kept.borrow_mut());
-    let measured = runs.len();
-    for (metrics, (_, handles, recorder)) in runs.iter_mut().zip(measured_tail(&kept, measured)) {
-        metrics.memory_bytes = Some(state_bytes(handles));
-        metrics.latency_ns = Some(recorder.snapshot());
-    }
-    let answers = kept
-        .pop()
-        .map(|(answers, _, _)| answers)
-        .unwrap_or_default();
-    Ok((runs, answers))
-}
-
-fn time_retains(
-    slot_count: usize,
-    updates: &Rc<Vec<Update>>,
-    cfg: &RunConfig,
-) -> (Vec<RunMetrics>, Vec<RetainedState>) {
-    if slot_count == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    let kept: Rc<RefCell<Vec<RetainedState>>> = Rc::new(RefCell::new(Vec::new()));
-
-    let (total, config) = phase_config(Metric::Throughput, MetricsMask::empty(), cfg);
-    let mut passes: Measurement = Vec::with_capacity(total);
-    for _ in 0..total {
-        let updates = Rc::clone(updates);
-        let kept = Rc::clone(&kept);
-        let columns: RetainedState = vec![Retained::default(); slot_count];
-        let pass: Pass = Box::new(move || {
-            let mut columns = columns;
-            for update in updates.iter() {
-                columns[update.slot as usize].push(update.item.as_ref(), update.weight);
-            }
-            let work = updates.len() as u64;
-            let report: Report = Box::new(move || {
-                kept.borrow_mut().push(columns);
-                MeasuredRun {
-                    work,
-                    ..MeasuredRun::default()
-                }
-            });
-            report
-        });
-        passes.push(pass);
-    }
-
-    let mut runs = measure(&config, passes);
-    let columns = std::mem::take(&mut *kept.borrow_mut());
-    let measured = runs.len();
-    for (metrics, set) in runs.iter_mut().zip(measured_tail(&columns, measured)) {
-        metrics.memory_bytes = Some(retained_bytes(set));
-    }
-    (runs, columns)
-}
-
-fn time_exact_estimates(
-    probes: &Rc<Vec<Probe>>,
-    states: Vec<RetainedState>,
-    cfg: &RunConfig,
-) -> Result<(Vec<RunMetrics>, Vec<Answer>, RetainedState), EvalError> {
+) -> Result<EstimateTiming, EvalError> {
     if probes.is_empty() || states.is_empty() {
         return Ok((Vec::new(), Vec::new(), Vec::new()));
     }
     let fault: Fault = Rc::new(RefCell::new(None));
-    let kept: Kept<(Vec<Answer>, RetainedState, LatencyRecorder)> =
+    let kept: Kept<(Vec<Answer>, SummaryState, LatencyRecorder, Vec<u64>)> =
         Rc::new(RefCell::new(Vec::new()));
 
     let (_, config) = phase_config(Metric::Throughput, MetricsMask::LATENCY, cfg);
     let mut passes: Measurement = Vec::with_capacity(states.len());
+    let slots: Rc<Vec<usize>> = Rc::new(probes.iter().map(|probe| probe.slot as usize).collect());
     for state in states {
         let probes = Rc::clone(probes);
         let fault = Rc::clone(&fault);
         let kept = Rc::clone(&kept);
-        let answered: Vec<Answer> = Vec::with_capacity(probes.len());
+        let slots = Rc::clone(&slots);
+        let produced: Vec<Answer> = Vec::with_capacity(probes.len());
         let recorder = LatencyRecorder::new();
+        let clock = SlotClock::new(state.len(), cfg.per_node_time);
         let pass: Pass = Box::new(move || {
-            let mut columns = state;
-            let mut answered = answered;
+            let mut handles = state;
+            let mut produced = produced;
             let mut recorder = recorder;
+            let mut clock = clock;
             let mut failure: Option<EvalError> = None;
-            timed_calls(&mut recorder, probes.len(), |i| {
-                let probe = &probes[i];
-                let column = &mut columns[probe.slot as usize];
-                if score::needs_a_sorted_column(&probe.query) {
-                    column.weights.sort_by(f64::total_cmp);
-                }
-                match score::exact_answer(column, &probe.query) {
-                    Ok(truth) => answered.push(truth),
-                    Err(err) => {
-                        if failure.is_none() {
-                            failure = Some(err);
+            timed_calls(
+                &mut recorder,
+                &mut clock,
+                |i| slots[i],
+                probes.len(),
+                |i| {
+                    let probe = &probes[i];
+                    match handles[probe.slot as usize].estimate(&probe.query) {
+                        Ok(answer) => produced.push(answer),
+                        Err(err) => {
+                            if failure.is_none() {
+                                failure = Some(err);
+                            }
                         }
                     }
-                }
-            });
+                },
+            );
             let work = probes.len() as u64;
             let report: Report = Box::new(move || {
                 if let Some(err) = failure {
                     hold(&fault, err);
                 }
-                kept.borrow_mut().push((answered, columns, recorder));
+                kept.borrow_mut()
+                    .push((produced, handles, recorder, clock.into_totals()));
                 MeasuredRun {
                     work,
                     ..MeasuredRun::default()
@@ -759,15 +815,44 @@ fn time_exact_estimates(
     raise(&fault)?;
     let mut kept = std::mem::take(&mut *kept.borrow_mut());
     let measured = runs.len();
-    for (metrics, (_, columns, recorder)) in runs.iter_mut().zip(measured_tail(&kept, measured)) {
-        metrics.memory_bytes = Some(retained_bytes(columns));
+    let mut per_slot = Vec::with_capacity(measured);
+    for (metrics, (_, handles, recorder, slot_ns)) in
+        runs.iter_mut().zip(measured_tail(&kept, measured))
+    {
+        metrics.memory_bytes = Some(state_bytes(handles));
         metrics.latency_ns = Some(recorder.snapshot());
+        if !slot_ns.is_empty() {
+            per_slot.push(slot_ns.clone());
+        }
     }
-    let (answered, columns) = kept
+    let answers = kept
         .pop()
-        .map(|(answered, columns, _)| (answered, columns))
+        .map(|(answers, _, _, _)| answers)
         .unwrap_or_default();
-    Ok((runs, answered, columns))
+    Ok((runs, answers, per_slot))
+}
+
+fn retain(slot_count: usize, updates: &Rc<Vec<Update>>) -> RetainedState {
+    let mut columns: RetainedState = vec![Retained::default(); slot_count];
+    for update in updates.iter() {
+        columns[update.slot as usize].push(update.item.as_ref(), update.weight);
+    }
+    columns
+}
+
+fn exact_answers(
+    probes: &Rc<Vec<Probe>>,
+    mut columns: RetainedState,
+) -> Result<(Vec<Answer>, RetainedState), EvalError> {
+    let mut answered = Vec::with_capacity(probes.len());
+    for probe in probes.iter() {
+        let column = &mut columns[probe.slot as usize];
+        if score::needs_a_sorted_column(&probe.query) {
+            column.weights.sort_by(f64::total_cmp);
+        }
+        answered.push(score::exact_answer(column, &probe.query)?);
+    }
+    Ok((answered, columns))
 }
 
 /// `';'`-joined, matching what `aqpbm-cli` already builds and what the
@@ -1607,6 +1692,71 @@ mod tests {
         RunConfig::new(RowsFrom::Csv(path.to_path_buf()), seed, verify)
     }
 
+    #[test]
+    fn a_null_weight_is_skipped_by_the_pre_asap_arm_and_refused_by_this_one() {
+        use asap_types::pre_asap::{
+            AggIntent, Column, DataType, QueryExpr, Reduction, Schema, Source,
+        };
+        use asap_types::types::AccuracyTarget;
+
+        let rows = Rc::new(vec![
+            Row(vec![Value::Timestamp(1), Value::Float(10.0)]),
+            Row(vec![Value::Timestamp(2), Value::Null]),
+            Row(vec![Value::Timestamp(3), Value::Float(30.0)]),
+        ]);
+
+        let tree = Rc::new(QueryExpr::Aggregate {
+            reduction: Reduction::by(Vec::new()),
+            measures: vec![
+                AggIntent::Count {
+                    accuracy: AccuracyTarget::Epsilon(0.01),
+                },
+                AggIntent::Sum { col: None },
+            ],
+            output_names: Vec::new(),
+            having: None,
+            child: Rc::new(QueryExpr::Scan {
+                source: Source::TimeSeries {
+                    metric: "cpu_cores".into(),
+                },
+                predicates: Vec::new(),
+                schema: Schema {
+                    columns: vec![
+                        Column::new("ts", DataType::Timestamp, false),
+                        Column::new("value", DataType::Float64, true),
+                    ],
+                    time_index: Some(0),
+                    unique_keys: Vec::new(),
+                    closed: false,
+                },
+            }),
+        });
+
+        let (answered, _) =
+            crate::exact::evaluate(PostAsapNodeId(1), &tree, &rows).expect("evaluates");
+        match answered {
+            crate::exact::Data::Rows(emitted) => {
+                assert_eq!(
+                    emitted,
+                    Rc::new(vec![Row(vec![Value::Int(3), Value::Float(40.0)])])
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let refused = resolve_weight(&ResolvedInput::Column(1), &rows[1]).expect_err("refuses");
+        assert!(
+            refused
+                .to_string()
+                .contains("weight column 1 is not numeric"),
+            "{refused}"
+        );
+
+        for kept in [&rows[0], &rows[2]] {
+            resolve_weight(&ResolvedInput::Column(1), kept).expect("a numeric weight resolves");
+        }
+    }
+
     use super::*;
     use crate::plan::plan_promql;
     use asap_types::post_asap::{GroupingStrategy, SketchAlgorithm, SketchKind, SketchParams};
@@ -1666,7 +1816,9 @@ mod tests {
 
         let err = match time_updates(&slots, &overflowing_updates(), &config) {
             Err(err) => err,
-            Ok((runs, _)) => panic!("a discarded pass swallowed the fault, and reported {runs:?}"),
+            Ok((runs, _, _)) => {
+                panic!("a discarded pass swallowed the fault, and reported {runs:?}")
+            }
         };
         assert!(matches!(err, EvalError::Refused(_)), "{err:?}");
     }
@@ -1676,7 +1828,7 @@ mod tests {
         let slots = vec![cms_slot()];
         let err = match time_updates(&slots, &overflowing_updates(), &passes_config(0, 3)) {
             Err(err) => err,
-            Ok((runs, _)) => panic!("three timed passes faulted and reported {runs:?}"),
+            Ok((runs, _, _)) => panic!("three timed passes faulted and reported {runs:?}"),
         };
         assert!(matches!(err, EvalError::Refused(_)), "{err:?}");
     }
@@ -1687,7 +1839,7 @@ mod tests {
         let config = passes_config(1, 3);
 
         let clean = Rc::new(vec![one_update(1.0)]);
-        let (runs, states) = match time_updates(&slots, &clean, &config) {
+        let (runs, states, _) = match time_updates(&slots, &clean, &config) {
             Ok(measured) => measured,
             Err(err) => panic!("a clean pass must not fault: {err:?}"),
         };
@@ -1769,9 +1921,6 @@ mod tests {
             assert_eq!(pass.work, 1_000, "each pass replayed the same updates");
             assert!(pass.elapsed_ns > 0);
         }
-        for pass in &outcome.exact.update {
-            assert_eq!(pass.work, 1_000);
-        }
     }
 
     #[test]
@@ -1788,14 +1937,13 @@ mod tests {
             &outcome.approximate.build,
             &outcome.approximate.update,
             &outcome.approximate.readout,
-            &outcome.exact.update,
-            &outcome.exact.readout,
+            &outcome.pre_asap.evaluate,
         ] {
             assert_eq!(phase.len(), 3, "one draw is not a distribution");
         }
         assert!(
-            outcome.exact.build.is_empty(),
-            "the exact arm binds nothing, which is not the same as binding instantly"
+            outcome.approximate.evaluate.is_empty(),
+            "the post-ASAP arm walks no tree, which is not the same as walking one instantly"
         );
         let binds = outcome.approximate.build[0]
             .latency_ns
@@ -1821,9 +1969,8 @@ mod tests {
         // None, not 0.0 — "not computed" must never read as "exact".
         assert!(readout.exact.is_none());
         assert!(readout.observed_error.measured().is_none());
-        assert!(outcome.exact.update.is_empty());
-        assert!(outcome.exact.readout.is_empty());
         assert_eq!(outcome.retained_values, 0);
+        assert_eq!(outcome.retained_bytes, 0);
     }
 
     #[test]
@@ -1845,7 +1992,6 @@ mod tests {
         assert!(outcome.readouts.is_empty());
         assert_eq!(outcome.node_footprints.len(), 1);
         assert_eq!(outcome.retained_values, 100);
-        assert!(outcome.exact.readout.is_empty(), "nothing was read out");
     }
 
     /// `count(...)` is one of the most basic queries in the corpus, and the

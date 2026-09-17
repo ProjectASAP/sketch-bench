@@ -13,11 +13,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use aqpbm_datagen::table::TableDescription;
+use aqpbm_planeval::exact::{run_promql, Data, ExactRun};
 use aqpbm_planeval::plan::{plan_promql, to_json};
-use aqpbm_planeval::record::{Phase, PlanEvalRecord};
+use aqpbm_planeval::record::{NodeCost, Phase, PlanEvalRecord};
 use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
 use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
-use aqpbm_planeval::EvalError;
+use aqpbm_planeval::{EvalError, Value};
 use asap_types::types::AccuracyTarget;
 
 #[derive(Parser, Debug)]
@@ -64,6 +65,29 @@ struct Args {
     #[arg(long)]
     emit_json: bool,
 
+    #[arg(
+        long,
+        help = "Also print the answer the pre-ASAP tree computed, before the plan runs. The \
+                timed pre-ASAP arm runs either way unless --no-pre-asap turns it off"
+    )]
+    evaluate_exactly: bool,
+
+    #[arg(
+        long,
+        help = "Skip the pre-ASAP arm. Leaves the record with no baseline in it, so the time \
+                and memory ratios report nothing rather than dividing by the retained column, \
+                which is not the query anyone would have run"
+    )]
+    no_pre_asap: bool,
+
+    #[arg(
+        long,
+        help = "Time each call inside a phase and attribute it to the node it ran for. The \
+                insert phase then reads a clock per update and its total pays for them, so the \
+                per-node times and the phase total will not agree exactly"
+    )]
+    per_node_time: bool,
+
     /// One JSONL record per seed on stdout, instead of the human summary.
     #[arg(long)]
     jsonl: bool,
@@ -89,22 +113,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn real_main() -> Result<()> {
-    let args = Args::parse();
-
-    let plan = plan_promql(&args.query, AccuracyTarget::Epsilon(args.epsilon))
-        .with_context(|| format!("planning `{}`", args.query))?;
-
-    if args.emit_json {
-        println!("{}", to_json(&plan)?);
-        return Ok(());
-    }
-
-    let mut last: Option<PlanEvalRecord> = None;
-    let mut observations = GuaranteeObservations::default();
-    // Built once, outside the seed loop: the rows are the same every seed, so
-    // a difference between seeds is the sketch's and never the data's.
-    let rows = match (&args.spec, &args.csv) {
+fn row_source(args: &Args) -> Result<RowsFrom> {
+    match (&args.spec, &args.csv) {
         (Some(path), _) => {
             let description = TableDescription::from_path(path)
                 .with_context(|| format!("loading {}", path.display()))?;
@@ -125,17 +135,60 @@ fn real_main() -> Result<()> {
             } else {
                 println!("{line}");
             }
-            RowsFrom::Generated(Rc::new(table))
+            Ok(RowsFrom::Generated(Rc::new(table)))
         }
-        (None, Some(path)) => RowsFrom::Csv(path.clone()),
+        (None, Some(path)) => Ok(RowsFrom::Csv(path.clone())),
         // clap's `required_unless_present` already rejects this.
         (None, None) => anyhow::bail!("one of --spec or --csv is required"),
-    };
+    }
+}
+
+fn real_main() -> Result<()> {
+    let args = Args::parse();
+    let accuracy = AccuracyTarget::Epsilon(args.epsilon);
+
+    let plan = plan_promql(&args.query, accuracy.clone())
+        .with_context(|| format!("planning `{}`", args.query))?;
+
+    if args.emit_json {
+        println!("{}", to_json(&plan)?);
+        return Ok(());
+    }
+
+    let mut last: Option<PlanEvalRecord> = None;
+    let mut worst_accuracy: Option<f64> = None;
+    let mut observations = GuaranteeObservations::default();
+    // Built once, outside the seed loop: the rows are the same every seed, so
+    // a difference between seeds is the sketch's and never the data's.
+    let rows = row_source(&args)?;
+
+    if args.evaluate_exactly {
+        let evaluated = match run_promql(&args.query, accuracy, &rows) {
+            Ok(evaluated) => evaluated,
+            Err(EvalError::Refused(refusals)) => {
+                for refusal in &refusals {
+                    println!("REFUSED {refusal}");
+                }
+                anyhow::bail!("the pre-ASAP tree of `{}` was refused", args.query);
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("evaluating `{}` exactly", args.query))
+            }
+        };
+        let block = exact_block(&args.query, &evaluated);
+        if args.jsonl {
+            eprint!("{block}");
+        } else {
+            println!("{block}");
+        }
+    }
 
     for seed in 0..args.seeds {
         let mut config = RunConfig::new(rows.clone(), seed, !args.no_verify);
         config.timed_runs = args.runs;
         config.warmup_runs = args.warmup_runs;
+        config.pre_asap = !args.no_pre_asap;
+        config.per_node_time = args.per_node_time;
         let outcome = match run(&plan, &config) {
             Ok(outcome) => outcome,
             // The refusal table is a deliverable in its own right, so it goes
@@ -152,6 +205,12 @@ fn real_main() -> Result<()> {
             observations.observe(readout);
         }
         let record = PlanEvalRecord::from_run(&args.query, &plan, &outcome);
+        if let Some(error) = record.advantage().accuracy {
+            worst_accuracy = match worst_accuracy {
+                Some(held) if held.total_cmp(&error).is_ge() => Some(held),
+                _ => Some(error),
+            };
+        }
 
         if args.jsonl {
             println!("{}", record.to_jsonl());
@@ -171,11 +230,56 @@ fn real_main() -> Result<()> {
         }
     } else {
         if let Some(record) = last {
-            print_advantage(&record);
+            print_advantage(&record, worst_accuracy, args.seeds);
         }
         print_guarantees(&guarantees, args.seeds);
     }
     Ok(())
+}
+
+const PRINTED_ROWS: usize = 20;
+
+fn exact_block(query: &str, evaluated: &ExactRun) -> String {
+    let mut out = format!(
+        "query    {query}\nrows     {} scanned, {} emitted\n",
+        evaluated.rows_scanned, evaluated.rows_emitted
+    );
+    match &evaluated.answer {
+        Data::Scalar(value) => out.push_str(&format!("exact    scalar {value}\n")),
+        Data::Rows(rows) => {
+            let names: Vec<String> = match evaluated.root.output_schema() {
+                Ok(schema) => schema
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            out.push_str(&format!(
+                "exact    {} rows [{}]\n",
+                rows.len(),
+                names.join(", ")
+            ));
+            for row in rows.iter().take(PRINTED_ROWS) {
+                let rendered: Vec<String> = row.0.iter().map(render).collect();
+                out.push_str(&format!("  {}\n", rendered.join("  ")));
+            }
+            if rows.len() > PRINTED_ROWS {
+                out.push_str(&format!("  ... {} more\n", rows.len() - PRINTED_ROWS));
+            }
+        }
+    }
+    out
+}
+
+fn render(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_owned(),
+        Value::Int(held) => held.to_string(),
+        Value::Float(held) => format!("{held:?}"),
+        Value::Str(held) => held.clone(),
+        Value::Timestamp(held) => held.to_string(),
+    }
 }
 
 fn print_guarantees(guarantees: &[ReadoutGuarantee], seeds: u64) {
@@ -267,11 +371,20 @@ fn print_plan(record: &PlanEvalRecord) {
                 None => "-".to_string(),
             };
             println!(
-                "  node {}  {:<16} state {:>9}  {}",
+                "  node {}  {:<16} state {:>9}  {}{}",
                 node.node,
                 node.operator,
                 state,
-                node.family.as_deref().unwrap_or("")
+                node.family.as_deref().unwrap_or(""),
+                node_time(node)
+            );
+        }
+        for node in &record.pre_asap_nodes {
+            println!(
+                "  tree {}  {:<16} {} ms",
+                node.node,
+                node.operator,
+                ms(node.elapsed_ns)
             );
         }
         println!(
@@ -324,48 +437,115 @@ fn print_readouts(seed: u64, record: &PlanEvalRecord) {
     }
 }
 
-fn print_advantage(record: &PlanEvalRecord) {
-    match record.advantage().memory {
-        Some(ratio) => println!(
-            "\nmemory   {} B summary vs {} B retained exactly  =>  {ratio:.1}x",
-            record.approximate.state_bytes, record.exact.retained_bytes
-        ),
-        // Not 1.0: nothing was measured on the exact arm.
-        None => println!("\nmemory   not comparable (the exact arm did not run)"),
+fn node_time(node: &NodeCost) -> String {
+    let mut out = String::new();
+    for (name, elapsed_ns) in [
+        ("bind", node.build_ns),
+        ("insert", node.update_ns),
+        ("readout", node.readout_ns),
+    ] {
+        if let Some(elapsed_ns) = elapsed_ns {
+            out.push_str(&format!("  {name} {} ms", ms(elapsed_ns)));
+        }
     }
-    print_phase(
-        "insert ",
-        record.approximate.update.as_ref(),
-        record.exact.update.as_ref(),
-    );
-    print_phase(
-        "readout",
-        record.approximate.readout.as_ref(),
-        record.exact.readout.as_ref(),
-    );
-    print_phase(
-        "bind   ",
-        record.approximate.build.as_ref(),
-        record.exact.build.as_ref(),
-    );
+    out
 }
 
-fn print_phase(name: &str, approximate: Option<&Phase>, exact: Option<&Phase>) {
+fn ms(elapsed_ns: u64) -> String {
+    format!("{:.4}", elapsed_ns as f64 / 1e6)
+}
+
+fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: u64) {
+    print_phase("bind   ", record.approximate.build.as_ref());
+    print_phase("insert ", record.approximate.update.as_ref());
+    print_phase("readout", record.approximate.readout.as_ref());
+    match record.pre_asap.evaluate.as_ref() {
+        Some(phase) => println!(
+            "pre-ASAP  {} rows: tree {}   {} B held",
+            phase.work,
+            spread(phase),
+            record.pre_asap.retained_bytes
+        ),
+        None => println!("pre-ASAP  not measured"),
+    }
+    if record.verified {
+        println!(
+            "ground truth  {} B retained, untimed",
+            record.exact.retained_bytes
+        );
+    }
+
+    let advantage = record.advantage();
+    let tree = record.pre_asap.evaluate.as_ref().map(mean);
+    println!();
+    println!(
+        "advantage over {} rows of input, {seeds} seed(s)",
+        record.rows_scanned
+    );
+    print_ratio(
+        "aggregate time",
+        advantage.aggregate_time,
+        tree.map(|ms| format!("{ms:.4} ms")),
+        record
+            .approximate
+            .build
+            .as_ref()
+            .map(mean)
+            .zip(record.approximate.update.as_ref().map(mean))
+            .map(|(build, update)| format!("{:.4} ms", build + update)),
+    );
+    print_ratio(
+        "query time    ",
+        advantage.query_time,
+        tree.map(|ms| format!("{ms:.4} ms")),
+        record
+            .approximate
+            .readout
+            .as_ref()
+            .map(mean)
+            .map(|ms| format!("{ms:.4} ms")),
+    );
+    print_ratio(
+        "memory        ",
+        advantage.memory,
+        Some(format!("{} B", record.pre_asap.retained_bytes)),
+        Some(format!("{} B", record.approximate.state_bytes)),
+    );
+    match worst_accuracy {
+        Some(error) => println!(
+            "  accuracy        worst readout error {error:.6}, in that readout's own metric"
+        ),
+        None => println!("  accuracy        not measured (nothing was verified)"),
+    }
+}
+
+fn mean(phase: &Phase) -> f64 {
+    phase.elapsed_ms.mean
+}
+
+fn print_ratio(
+    name: &str,
+    ratio: Option<f64>,
+    without_approximation: Option<String>,
+    with_approximation: Option<String>,
+) {
+    match (ratio, without_approximation, with_approximation) {
+        (Some(ratio), Some(without), Some(with)) => println!(
+            "  {name}  {without} without approximation vs {with} with approximation  =>  {ratio:.1}x"
+        ),
+        _ => println!("  {name}  not comparable (one of the two sides was not measured)"),
+    }
+}
+
+fn print_phase(name: &str, approximate: Option<&Phase>) {
     let Some(approximate) = approximate else {
         return;
     };
-    print!(
+    println!(
         "{name}  {} units: summary {}",
         approximate.work,
         spread(approximate)
     );
-    match exact {
-        Some(exact) => {
-            let ratio = exact.elapsed_ms.mean / approximate.elapsed_ms.mean;
-            println!("   exact {}  =>  {ratio:.1}x", spread(exact));
-        }
-        None => println!("   exact not measured"),
-    }
 }
 
 fn spread(phase: &Phase) -> String {
