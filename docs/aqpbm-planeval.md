@@ -48,6 +48,7 @@ Thus, the output will be fixed to be the following number:
 - aggregate time
 - query time
 - total memory usage
+- accuracy
 
 ## Evaluator Design
 
