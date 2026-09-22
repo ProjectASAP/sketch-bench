@@ -25,9 +25,10 @@
 #   scripts/export_atomic_costs.sh             # build + run everything
 #   scripts/export_atomic_costs.sh --no-build   # skip cargo build
 #
-# Output: out/atomic_costs.json (the flat AtomicCostTable ASAPQuery loads),
-# plus out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
-# provenance / re-deriving the table without re-running the benchmark) and
+# Output: out/atomic_costs.json (the versioned AtomicCostDocument ASAPQuery
+# loads — one profile per workload, entries grouped inside it), plus
+# out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
+# provenance / re-deriving the document without re-running the benchmark) and
 # out/atomic_costs_raw.jsonl (the un-flattened Records `flatten` folds into
 # it — see below for why there are two passes per grid point).
 
@@ -80,16 +81,14 @@ KLL_KS=(200 500)
 # comparator. Both write raw (non-`--flat`) records to the same file; `flatten`
 # below folds the two passes of one grid point back into one row.
 #
-# Accuracy first, cost second — order matters. `BenchReport::from_runs` sets
-# every square's own wall_time_ms/cpu_time_ms unconditionally, not just the
-# metric that was asked for, and accuracy always runs exactly 1 sample
-# (`aqpbm_core::runs_for`) regardless of `--runs`. `flatten_record`'s merge is
-# last-square-wins per field, so whichever pass is written second decides
-# query's wall_time_ms/cpu_time_ms. Cost must win that, since query_cpu_secs
-# pairs them against query's throughput samples (`atomic_costs.rs`) — pairing
-# them against accuracy's unrelated single-sample timing instead skips the row
-# ("query rate/elapsed/cpu_time sample counts disagree"). query.accuracy
-# itself is unaffected by the order: only the accuracy square ever sets it.
+# Accuracy first, cost second. `flatten_record` gives every flattened field a
+# canonical owning pass: accuracy contributes only query_accuracy, while the
+# throughput pass contributes the timing/CPU/resource fields that atomic-costs
+# pairs with its throughput samples. The output is therefore independent of
+# this order; keeping the passes adjacent simply makes the raw provenance easy
+# to read. Accuracy always runs exactly 1 sample (`aqpbm_core::runs_for`), so
+# accepting its incidental timing would make the reducer correctly reject a
+# mixed 1-sample/5-sample row.
 point() {
     local algorithm=$1 config=$2 comparator=$3
     echo "  $algorithm ($config)" >&2
