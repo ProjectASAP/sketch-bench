@@ -457,7 +457,7 @@ fn lower_value(
                     reduction,
                     measures,
                     having.as_ref(),
-                    output_names,
+                    &crate::df::post_asap::output_names(node),
                     "Value::Exact(Aggregate)",
                 )
             }
@@ -979,6 +979,11 @@ mod tests {
             .to_string();
         assert!(text.contains("sum("), "{text}");
         assert!(text.contains("Aggregate:"), "{text}");
+        assert!(
+            text.contains(&node_alias(PostAsapNodeId(1), "total")),
+            "an exact residual names its node like every other aggregate, or its time lands in \
+             engine_overhead_ns: {text}"
+        );
     }
 
     #[test]
