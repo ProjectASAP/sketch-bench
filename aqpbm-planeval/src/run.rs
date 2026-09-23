@@ -30,6 +30,7 @@ use asap_types::post_asap::{
 };
 use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 
+use crate::df::RefusalCounts;
 use crate::exact;
 use crate::handle::{bind, SummaryHandle};
 use crate::plan::{Plan, TimeRangeOrigin};
@@ -101,12 +102,31 @@ pub struct Readout {
     pub observations: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Runtime {
+    #[default]
+    Interpreter,
+    DataFusion,
+}
+
+impl Runtime {
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Runtime::Interpreter => "interp",
+            Runtime::DataFusion => "datafusion",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ArmTiming {
     pub build: Vec<RunMetrics>,
     pub update: Vec<RunMetrics>,
     pub readout: Vec<RunMetrics>,
     pub evaluate: Vec<RunMetrics>,
+    pub maintenance: Vec<RunMetrics>,
+    pub read: Vec<RunMetrics>,
+    pub engine_overhead_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -114,10 +134,13 @@ pub struct NodeTiming {
     pub build_ns: Option<u64>,
     pub update_ns: Option<u64>,
     pub readout_ns: Option<u64>,
+    pub elapsed_compute_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunOutcome {
+    pub runtime: Runtime,
+    pub refusals: RefusalCounts,
     pub rows_scanned: u64,
     pub rows_emitted: u64,
     /// Rows the root node produced, for a plan whose answer is rows rather
@@ -139,6 +162,8 @@ pub struct RunOutcome {
     pub pre_asap_bytes: usize,
     pub pre_asap_node_times: Vec<exact::NodeTime>,
     pub pre_asap_answer: Option<exact::Data>,
+    pub approximate_peak_bytes: Option<usize>,
+    pub pre_asap_peak_bytes: Option<usize>,
 }
 
 struct Slot {
@@ -317,6 +342,8 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     }
 
     Ok(RunOutcome {
+        runtime: Runtime::Interpreter,
+        refusals: RefusalCounts::default(),
         rows_scanned: materialized.scanned,
         rows_emitted: materialized.emitted,
         root_rows: materialized.rows.get(&dag.root).map(|rows| rows.len()),
@@ -330,12 +357,14 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
             build,
             update,
             readout,
-            evaluate: Vec::new(),
+            ..ArmTiming::default()
         },
         pre_asap,
         pre_asap_bytes,
         pre_asap_node_times,
         pre_asap_answer,
+        approximate_peak_bytes: None,
+        pre_asap_peak_bytes: None,
     })
 }
 
@@ -541,6 +570,7 @@ fn node_times(
                     build_ns: build.get(&id).copied(),
                     update_ns: update.get(&id).copied(),
                     readout_ns: readout.get(&id).copied(),
+                    elapsed_compute_ns: None,
                 },
             )
         })

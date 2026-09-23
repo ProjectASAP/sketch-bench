@@ -99,12 +99,14 @@ impl From<Refusal> for datafusion::error::DataFusionError {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RefusalCounts {
     pub promql_only: usize,
     pub time_axis: usize,
     pub no_constructor: usize,
     pub deferred: usize,
+    #[serde(default)]
+    pub unclassified: usize,
 }
 
 impl RefusalCounts {
@@ -117,8 +119,12 @@ impl RefusalCounts {
         }
     }
 
+    pub fn add_unclassified(&mut self, count: usize) {
+        self.unclassified += count;
+    }
+
     pub fn total(&self) -> usize {
-        self.promql_only + self.time_axis + self.no_constructor + self.deferred
+        self.promql_only + self.time_axis + self.no_constructor + self.deferred + self.unclassified
     }
 }
 
@@ -189,6 +195,22 @@ mod tests {
         assert_eq!(counts.time_axis, 2);
         assert_eq!(counts.no_constructor, 1);
         assert_eq!(counts.deferred, 1);
+        assert_eq!(counts.unclassified, 0);
         assert_eq!(counts.total(), 5);
+    }
+
+    #[test]
+    fn an_interpreter_refusal_is_counted_without_being_given_a_class() {
+        let mut counts = RefusalCounts::default();
+        counts.add(&Refusal::time_axis("QueryExpr::TimeRange", "no instant"));
+        counts.add_unclassified(3);
+        assert_eq!(counts.time_axis, 1);
+        assert_eq!(counts.unclassified, 3);
+        assert_eq!(counts.total(), 4);
+        assert_eq!(
+            serde_json::to_string(&counts).unwrap(),
+            "{\"promql_only\":0,\"time_axis\":1,\"no_constructor\":0,\"deferred\":0,\
+             \"unclassified\":3}"
+        );
     }
 }

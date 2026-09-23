@@ -157,9 +157,9 @@ pub fn split(plan: &Plan) -> Result<DagSplit, Refusal> {
     }
 
     Ok(DagSplit {
+        no_summary_in_plan: cuts.is_empty(),
         cuts,
         read_nodes,
-        no_summary_in_plan: false,
     })
 }
 

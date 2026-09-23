@@ -47,6 +47,8 @@ pub struct PostAsapAnswer {
     pub batches: Vec<RecordBatch>,
     pub no_summary_in_plan: bool,
     pub readout_guarantees: Vec<(PostAsapNodeId, ResultGuarantee)>,
+    pub maintenance_peak_reserved_bytes: usize,
+    pub read_peak_reserved_bytes: usize,
 }
 
 impl PostAsapAnswer {
@@ -73,9 +75,11 @@ pub async fn answer(
     let parts = split(plan)?;
     let mut scans: HashMap<PostAsapNodeId, LogicalPlan> = HashMap::new();
     let mut state_tables = Vec::with_capacity(parts.cuts.len());
+    let mut maintenance_peak_reserved_bytes = 0usize;
 
     for cut in &parts.cuts {
-        let (table, held) = materialize(cut, plan, session, tables).await?;
+        let (table, held, peak) = materialize(cut, plan, session, tables).await?;
+        maintenance_peak_reserved_bytes = maintenance_peak_reserved_bytes.max(peak);
         scans.insert(cut.producer, scan_of(&table.name, held)?);
         state_tables.push(table);
     }
@@ -88,7 +92,7 @@ pub async fn answer(
         &scans,
     )?;
     let logical = read.plan(plan.dag.root)?.clone();
-    let (physical, batches) = run(&logical, session).await?;
+    let (physical, batches, read_peak_reserved_bytes) = run(&logical, session).await?;
 
     Ok(PostAsapAnswer {
         state_tables,
@@ -97,6 +101,8 @@ pub async fn answer(
         batches,
         no_summary_in_plan: parts.no_summary_in_plan,
         readout_guarantees: read.readout_guarantees().to_vec(),
+        maintenance_peak_reserved_bytes,
+        read_peak_reserved_bytes,
     })
 }
 
@@ -110,7 +116,7 @@ pub async fn answer_without_split(
     let whole: DagPlans =
         lower_nodes(&plan.dag, &order, tables, &session.state(), &HashMap::new())?;
     let logical = whole.plan(plan.dag.root)?.clone();
-    let (physical, batches) = run(&logical, session).await?;
+    let (physical, batches, peak) = run(&logical, session).await?;
 
     Ok(PostAsapAnswer {
         state_tables: Vec::new(),
@@ -119,6 +125,8 @@ pub async fn answer_without_split(
         batches,
         no_summary_in_plan: parts.no_summary_in_plan,
         readout_guarantees: whole.readout_guarantees().to_vec(),
+        maintenance_peak_reserved_bytes: 0,
+        read_peak_reserved_bytes: peak,
     })
 }
 
@@ -127,7 +135,7 @@ async fn materialize(
     plan: &Plan,
     session: &SeedSession,
     tables: &TableSources,
-) -> Result<(StateTable, Arc<MemTable>), SessionError> {
+) -> Result<(StateTable, Arc<MemTable>, usize), SessionError> {
     let built = lower_nodes(
         &plan.dag,
         &cut.maintenance_nodes,
@@ -136,7 +144,7 @@ async fn materialize(
         &HashMap::new(),
     )?;
     let logical = built.plan(cut.producer)?.clone();
-    let (physical, batches) = run(&logical, session).await?;
+    let (physical, batches, peak) = run(&logical, session).await?;
 
     let schema = Arc::new(cut.state_table_schema(physical.schema().as_ref())?);
     let retyped = batches
@@ -150,10 +158,6 @@ async fn materialize(
         Arc::clone(&schema),
         vec![retyped.clone()],
     )?);
-    session.context().register_table(
-        cut.table.as_str(),
-        Arc::clone(&held) as Arc<dyn TableProvider>,
-    )?;
 
     Ok((
         StateTable {
@@ -165,6 +169,7 @@ async fn materialize(
             batches: retyped,
         },
         held,
+        peak,
     ))
 }
 
@@ -180,10 +185,11 @@ fn scan_of(name: &str, held: Arc<MemTable>) -> Result<LogicalPlan, SessionError>
 async fn run(
     logical: &LogicalPlan,
     session: &SeedSession,
-) -> Result<(Arc<dyn ExecutionPlan>, Vec<RecordBatch>), SessionError> {
+) -> Result<(Arc<dyn ExecutionPlan>, Vec<RecordBatch>, usize), SessionError> {
     let physical = session.single_mode_physical_plan(logical).await?;
+    session.forget_peak_reserved_bytes();
     let batches = collect(Arc::clone(&physical), session.context().task_ctx()).await?;
-    Ok((physical, batches))
+    Ok((physical, batches, session.peak_reserved_bytes()))
 }
 
 pub type NamedColumnBuffers = Vec<(String, Vec<Vec<u8>>)>;

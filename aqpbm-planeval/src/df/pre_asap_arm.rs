@@ -10,7 +10,7 @@ pub struct PreAsapAnswer {
     pub logical: LogicalPlan,
     pub physical: std::sync::Arc<dyn ExecutionPlan>,
     pub batches: Vec<RecordBatch>,
-    pub reserved_bytes: usize,
+    pub peak_reserved_bytes: usize,
 }
 
 impl PreAsapAnswer {
@@ -40,15 +40,17 @@ pub async fn answer_with_tables(
 ) -> Result<PreAsapAnswer, SessionError> {
     let logical = lower(expr, tables)?;
     let physical = session.single_mode_physical_plan(&logical).await?;
+    session.forget_peak_reserved_bytes();
     let batches = collect(
         std::sync::Arc::clone(&physical),
         session.context().task_ctx(),
     )
     .await?;
+    let peak_reserved_bytes = session.peak_reserved_bytes();
     Ok(PreAsapAnswer {
         logical,
         physical,
         batches,
-        reserved_bytes: session.reserved_bytes(),
+        peak_reserved_bytes,
     })
 }
