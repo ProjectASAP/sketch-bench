@@ -1,6 +1,6 @@
 use aqpbm_datagen::table::TableDescription;
 use aqpbm_datagen::value::ColumnData;
-use asap_types::post_asap::{ExactKind, SummaryFamilyType};
+use asap_types::post_asap::{ExactKind, SummaryFamilyType, SummarySchema};
 use asap_types::pre_asap::{Column, DataType, Schema};
 use datafusion::arrow::datatypes::{
     DataType as ArrowDataType, Field, IntervalUnit, Schema as ArrowSchema, TimeUnit,
@@ -122,12 +122,16 @@ pub fn ir_schema(schema: &ArrowSchema) -> Result<Schema, Refusal> {
     Ok(Schema::new(columns))
 }
 
-pub fn summary_arrow_type(
+pub fn summary_state_arrow_type(
     family: &SummaryFamilyType,
     input: &ArrowDataType,
 ) -> Result<ArrowDataType, Refusal> {
     match family {
-        SummaryFamilyType::Plain(dtype) => arrow_type(dtype),
+        SummaryFamilyType::Plain(_) => Err(Refusal::no_constructor(
+            "SummaryFamilyType::Plain",
+            "a plain column is a value, not a summary state, and no summary constructor builds \
+             one",
+        )),
         SummaryFamilyType::Sketch(_, _) => Ok(ArrowDataType::Binary),
         SummaryFamilyType::ExactAggregate(kind, _) => match kind {
             ExactKind::Sum => arrow_type(&ir_type(input)?),
@@ -158,6 +162,54 @@ pub fn summary_arrow_type(
             "the type table gives no state encoding for a fitted model",
         )),
     }
+}
+
+pub fn summary_field_arrow_type(
+    family: &SummaryFamilyType,
+    produced: &ArrowDataType,
+) -> Result<ArrowDataType, Refusal> {
+    match family {
+        SummaryFamilyType::Plain(dtype) => arrow_type(dtype),
+        other => summary_state_arrow_type(other, produced),
+    }
+}
+
+pub fn summary_schema_fields(
+    schema: &SummarySchema,
+    produced: &ArrowSchema,
+) -> Result<Vec<Field>, Refusal> {
+    if schema.fields.len() != produced.fields().len() {
+        return Err(Refusal::no_constructor(
+            "SummarySchema",
+            format!(
+                "the edge declares {} columns and the query it cuts produces {}",
+                schema.fields.len(),
+                produced.fields().len()
+            ),
+        ));
+    }
+    schema
+        .fields
+        .iter()
+        .zip(produced.fields())
+        .map(|(declared, made)| {
+            if declared.name != *made.name() {
+                return Err(Refusal::no_constructor(
+                    "SummarySchema",
+                    format!(
+                        "the edge names this column {} and the query it cuts names it {}",
+                        declared.name,
+                        made.name()
+                    ),
+                ));
+            }
+            Ok(Field::new(
+                &declared.name,
+                summary_field_arrow_type(&declared.dtype, made.data_type())?,
+                declared.nullable || made.is_nullable(),
+            ))
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,7 +277,7 @@ mod tests {
     use super::*;
     use asap_types::post_asap::{
         ExactParams, GroupingStrategy, SamplingKind, SamplingParams, SketchAlgorithm, SketchKind,
-        SketchParams,
+        SketchParams, SummaryField,
     };
 
     fn kll() -> SummaryFamilyType {
@@ -315,11 +367,11 @@ mod tests {
     #[test]
     fn sketch_state_is_binary_and_exact_state_follows_its_input() {
         assert_eq!(
-            summary_arrow_type(&kll(), &ArrowDataType::Float64).unwrap(),
+            summary_state_arrow_type(&kll(), &ArrowDataType::Float64).unwrap(),
             ArrowDataType::Binary
         );
         assert_eq!(
-            summary_arrow_type(
+            summary_state_arrow_type(
                 &SummaryFamilyType::ExactAggregate(ExactKind::Sum, ExactParams::Sum),
                 &ArrowDataType::Int64
             )
@@ -327,7 +379,7 @@ mod tests {
             ArrowDataType::Int64
         );
         assert_eq!(
-            summary_arrow_type(
+            summary_state_arrow_type(
                 &SummaryFamilyType::ExactAggregate(ExactKind::Max, ExactParams::Max),
                 &ArrowDataType::Float64
             )
@@ -335,26 +387,78 @@ mod tests {
             ArrowDataType::Float64
         );
         assert_eq!(
-            summary_arrow_type(
+            summary_state_arrow_type(
                 &SummaryFamilyType::ExactAggregate(ExactKind::Count, ExactParams::Count),
                 &ArrowDataType::Utf8
             )
             .unwrap(),
             ArrowDataType::Int64
         );
+    }
+
+    #[test]
+    fn a_plain_family_names_no_summary_state_but_types_a_schema_field() {
+        let refused = summary_state_arrow_type(
+            &SummaryFamilyType::Plain(DataType::Utf8),
+            &ArrowDataType::Utf8,
+        )
+        .unwrap_err();
+        assert_eq!(refused.variant, "SummaryFamilyType::Plain");
+        assert_eq!(refused.tag(), "no_constructor");
+
         assert_eq!(
-            summary_arrow_type(
+            summary_field_arrow_type(
                 &SummaryFamilyType::Plain(DataType::Utf8),
                 &ArrowDataType::Utf8
             )
             .unwrap(),
             ArrowDataType::Utf8
         );
+        assert_eq!(
+            summary_field_arrow_type(&kll(), &ArrowDataType::Float64).unwrap(),
+            ArrowDataType::Binary
+        );
+    }
+
+    #[test]
+    fn a_state_table_schema_pairs_the_edge_with_what_the_cut_query_produces() {
+        let schema = SummarySchema {
+            fields: vec![
+                SummaryField {
+                    name: "service".into(),
+                    dtype: SummaryFamilyType::Plain(DataType::Utf8),
+                    nullable: false,
+                },
+                SummaryField {
+                    name: "latency".into(),
+                    dtype: kll(),
+                    nullable: false,
+                },
+            ],
+            time_index: None,
+        };
+        let produced = ArrowSchema::new(vec![
+            Field::new("service", ArrowDataType::Utf8, false),
+            Field::new("latency", ArrowDataType::Binary, true),
+        ]);
+        let fields = summary_schema_fields(&schema, &produced).unwrap();
+        assert_eq!(fields[0].data_type(), &ArrowDataType::Utf8);
+        assert_eq!(fields[1].data_type(), &ArrowDataType::Binary);
+        assert!(fields[1].is_nullable());
+
+        let renamed = ArrowSchema::new(vec![
+            Field::new("cluster", ArrowDataType::Utf8, false),
+            Field::new("latency", ArrowDataType::Binary, true),
+        ]);
+        assert_eq!(
+            summary_schema_fields(&schema, &renamed).unwrap_err().tag(),
+            "no_constructor"
+        );
     }
 
     #[test]
     fn the_families_outside_the_table_are_refused() {
-        let refused = summary_arrow_type(
+        let refused = summary_state_arrow_type(
             &SummaryFamilyType::Sample(
                 SamplingKind::Reservoir,
                 SamplingParams::Reservoir { size: 8 },
@@ -364,7 +468,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(refused.variant, "SummaryFamilyType::Sample");
 
-        let refused = summary_arrow_type(
+        let refused = summary_state_arrow_type(
             &SummaryFamilyType::ExactAggregate(ExactKind::Rate, ExactParams::Rate),
             &ArrowDataType::Float64,
         )
