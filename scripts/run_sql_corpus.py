@@ -9,11 +9,25 @@ from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CLASSIFIED_REFUSAL = re.compile(
-    r"^REFUSED (?P<variant>.+?) refused \[(?P<reason>[^\]]+)\]: (?P<detail>.*)$"
+REFUSAL_CARRYING_A_REASON = re.compile(
+    r"^(?P<variant>.+?) refused \[(?P<reason>[^\]]+)\]: (?P<detail>.*)$"
 )
-UNCLASSIFIED_REFUSAL = re.compile(r"^REFUSED (?P<detail>.*)$")
 REASON_CLASSES = ("promql_only", "time_axis", "no_constructor", "deferred", "unclassified")
+LOWERING_FAILED = "planning failed: lower "
+DIAGNOSTIC_PREFIX = "planeval:"
+
+PLAN_EVAL_RECORD_KEYS = frozenset(
+    ("schema_version", "runtime", "refusals", "plan", "nodes", "approximate", "readouts")
+)
+REFUSED_PLAN_RECORD_KEYS = frozenset(
+    ("schema_version", "runtime", "plan_id", "query", "seed", "refusals", "refused")
+)
+READOUT_GUARANTEE_KEYS = frozenset(("schema_version", "node", "group", "query", "check"))
+ARM_PHASES = ("build", "update", "readout", "evaluate", "maintenance", "read")
+
+
+class OutputNotUnderstood(Exception):
+    pass
 
 
 def statements_split_on_semicolon(text):
@@ -112,13 +126,47 @@ def invoke(binary, arguments, timeout):
         return None, "", f"timed out after {timeout}s"
 
 
-def refusals_in(stdout):
-    found = []
-    for line in stdout.splitlines():
-        matched = CLASSIFIED_REFUSAL.match(line)
+def documents_on_stdout(stdout, where):
+    documents = []
+    for number, line in enumerate(stdout.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise OutputNotUnderstood(
+                f"{where}: stdout line {number} is not JSON ({error}): {line[:200]}"
+            ) from error
+        if not isinstance(parsed, dict):
+            raise OutputNotUnderstood(
+                f"{where}: stdout line {number} is JSON but not an object: {line[:200]}"
+            )
+        documents.append(parsed)
+    return documents
+
+
+def kind_of(document, where):
+    keys = frozenset(document)
+    if PLAN_EVAL_RECORD_KEYS <= keys:
+        return "plan_eval_record"
+    if REFUSED_PLAN_RECORD_KEYS <= keys:
+        return "refused_plan_record"
+    if READOUT_GUARANTEE_KEYS <= keys:
+        return "readout_guarantee"
+    raise OutputNotUnderstood(
+        f"{where}: stdout carries a JSON object matching no known record shape; "
+        f"its keys are {sorted(keys)}"
+    )
+
+
+def refusals_listed_by(record):
+    listed = []
+    for line in record["refused"]:
+        matched = REFUSAL_CARRYING_A_REASON.match(line)
         if matched:
             reason = matched.group("reason")
-            found.append(
+            listed.append(
                 {
                     "variant": matched.group("variant"),
                     "reason": reason,
@@ -126,50 +174,52 @@ def refusals_in(stdout):
                     "detail": matched.group("detail"),
                 }
             )
-            continue
-        matched = UNCLASSIFIED_REFUSAL.match(line)
-        if matched:
-            found.append(
+        else:
+            listed.append(
                 {
-                    "variant": matched.group("detail").split(":")[0],
+                    "variant": line.split(":")[0],
                     "reason": "unclassified",
                     "reason_class": "unclassified",
-                    "detail": matched.group("detail"),
+                    "detail": line,
                 }
             )
-    return found
+    return listed
 
 
-def counts_in(stdout):
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{") or '"promql_only"' not in line:
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if set(parsed) <= set(REASON_CLASSES):
-            return parsed
-    return None
+def counts_declared_by(record, where):
+    declared = record["refusals"]
+    if not isinstance(declared, dict):
+        raise OutputNotUnderstood(f"{where}: the record's refusal counts are not an object")
+    unknown = sorted(set(declared) - set(REASON_CLASSES))
+    if unknown:
+        raise OutputNotUnderstood(
+            f"{where}: the record's refusal counts carry classes this sweep does not know: "
+            f"{unknown}"
+        )
+    return {name: int(declared.get(name, 0)) for name in REASON_CLASSES}
 
 
-def record_in(stdout):
-    for line in stdout.splitlines():
-        line = line.strip()
-        if line.startswith("{") and '"schema_version"' in line:
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                continue
-    return None
+def nonzero(counts):
+    return {name: count for name, count in counts.items() if count}
+
+
+def arm_ran(record, arm, where):
+    body = record.get(arm)
+    if not isinstance(body, dict):
+        raise OutputNotUnderstood(f"{where}: the record carries no {arm} arm")
+    return any(body.get(phase) is not None for phase in ARM_PHASES)
 
 
 def diagnostic_in(text):
-    complaints = [line.strip() for line in text.splitlines() if line.strip().startswith("planeval:")]
+    lines = text.splitlines()
+    complaints = [
+        position
+        for position, line in enumerate(lines)
+        if line.strip().startswith(DIAGNOSTIC_PREFIX)
+    ]
     if complaints:
-        return complaints[-1]
-    remaining = [line.strip() for line in text.splitlines() if line.strip()]
+        return " ".join(line.strip() for line in lines[complaints[-1] :] if line.strip())
+    remaining = [line.strip() for line in lines if line.strip()]
     return remaining[-1] if remaining else ""
 
 
@@ -215,13 +265,6 @@ def compact(value):
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
-def arm_ran(record, names):
-    if record is None:
-        return False
-    arm = record.get("approximate", {})
-    return any(arm.get(name) for name in names)
-
-
 def readout_key(readout):
     return (readout.get("node"), readout.get("group"), readout.get("query"))
 
@@ -258,12 +301,68 @@ def compare_readouts(interp, datafusion):
     return {"shared_readouts": len(shared), "agree": agree, "rows": rows}
 
 
-def evaluate(binary, spec, statement, epsilon, timeout):
+def runtime_result(code, stdout, stderr, where):
+    if code is None:
+        return {
+            "status": "timed_out",
+            "exit_code": None,
+            "refusals": [],
+            "refusal_counts": {name: 0 for name in REASON_CLASSES},
+            "error": stderr.strip(),
+        }, None
+
+    documents = documents_on_stdout(stdout, where)
+    runs = [d for d in documents if kind_of(d, where) == "plan_eval_record"]
+    refused = [d for d in documents if kind_of(d, where) == "refused_plan_record"]
+
+    listed = []
+    counts = {name: 0 for name in REASON_CLASSES}
+    for record in refused:
+        listed.extend(refusals_listed_by(record))
+        for name, count in counts_declared_by(record, where).items():
+            counts[name] += count
+    tallied = Counter(refusal["reason_class"] for refusal in listed)
+    if nonzero(counts) != nonzero(tallied):
+        raise OutputNotUnderstood(
+            f"{where}: the refusal strings tally {dict(nonzero(tallied))} but the record's "
+            f"counts say {nonzero(counts)}"
+        )
+
+    if code != 0:
+        status = "failed"
+    elif runs and refused:
+        status = "some_seeds_refused"
+    elif refused:
+        status = "refused"
+    elif runs:
+        status = "ran"
+    else:
+        raise OutputNotUnderstood(
+            f"{where}: the process exited 0 and stdout carries neither a run record nor a "
+            f"refusal record"
+        )
+
+    body = {
+        "status": status,
+        "exit_code": code,
+        "refusals": listed,
+        "refusal_counts": counts,
+        "error": diagnostic_in(stderr) if code != 0 else None,
+    }
+    return body, (runs[-1] if runs else None)
+
+
+def evaluate(binary, spec, statement, epsilon, timeout, where):
     common = ["--sql", statement, "--spec", spec, "--epsilon", str(epsilon)]
     code, stdout, stderr = invoke(binary, common + ["--emit-json"], timeout)
     entry = {}
     if code == 0:
-        document = json.loads(stdout)
+        try:
+            document = json.loads(stdout)
+        except json.JSONDecodeError as error:
+            raise OutputNotUnderstood(
+                f"{where}: --emit-json exited 0 but stdout is not one JSON document ({error})"
+            ) from error
         payloads, families = plan_shape(document)
         entry["lowers"] = True
         entry["plans"] = True
@@ -271,48 +370,43 @@ def evaluate(binary, spec, statement, epsilon, timeout):
         entry["families"] = families
         entry["plan_nodes"] = len(document.get("dag", {}).get("nodes", []))
     else:
-        entry["lowers"] = "planning failed: lower " not in stderr
+        diagnostic = diagnostic_in(stderr)
+        if code is None:
+            raise OutputNotUnderstood(f"{where}: --emit-json {stderr.strip()}")
+        if not diagnostic.startswith(DIAGNOSTIC_PREFIX):
+            raise OutputNotUnderstood(
+                f"{where}: --emit-json exited {code} without a planeval diagnostic: "
+                f"{diagnostic[:200]}"
+            )
+        entry["lowers"] = LOWERING_FAILED not in diagnostic
         entry["plans"] = False
-        entry["plan_error"] = diagnostic_in(stderr)
+        entry["plan_error"] = diagnostic
         entry["payloads"] = []
         entry["families"] = []
         return entry, None, None
 
     runtimes = {}
+    records = {}
     for runtime in ("interp", "datafusion"):
         code, stdout, stderr = invoke(
             binary,
             common + ["--runtime", runtime, "--jsonl", "--seeds", "1"],
             timeout,
         )
-        record = record_in(stdout)
-        runtimes[runtime] = {
-            "exit_code": code,
-            "ran": code == 0 and record is not None,
-            "refusals": refusals_in(stdout),
-            "refusal_counts": counts_in(stdout),
-            "error": diagnostic_in(stderr) if code != 0 else None,
-            "record": record,
-        }
-    entry["runtimes"] = {
-        name: {key: value for key, value in body.items() if key != "record"}
-        for name, body in runtimes.items()
-    }
-    interp = runtimes["interp"]["record"]
-    datafusion = runtimes["datafusion"]["record"]
+        runtimes[runtime], records[runtime] = runtime_result(
+            code, stdout, stderr, f"{where} [{runtime}]"
+        )
+    entry["runtimes"] = runtimes
+
+    interp = records["interp"]
+    datafusion = records["datafusion"]
     entry["arm_a_runs"] = {
-        "interp": arm_ran(interp, ("evaluate",)) or bool(interp and interp.get("pre_asap", {}).get("evaluate")),
-        "datafusion": bool(datafusion and datafusion.get("pre_asap", {}).get("evaluate")),
+        name: None if record is None else arm_ran(record, "pre_asap", f"{where} [{name}]")
+        for name, record in records.items()
     }
     entry["arm_b_runs"] = {
-        "interp": bool(interp and (interp.get("approximate", {}).get("update") or interp.get("approximate", {}).get("readout"))),
-        "datafusion": bool(
-            datafusion
-            and (
-                datafusion.get("approximate", {}).get("maintenance")
-                or datafusion.get("approximate", {}).get("read")
-            )
-        ),
+        name: None if record is None else arm_ran(record, "approximate", f"{where} [{name}]")
+        for name, record in records.items()
     }
     entry["cross_runtime"] = compare_readouts(interp, datafusion)
     return entry, interp, datafusion
@@ -321,9 +415,25 @@ def evaluate(binary, spec, statement, epsilon, timeout):
 def reason_classes_of(entry):
     classes = Counter()
     for runtime, body in entry.get("runtimes", {}).items():
-        for refusal in body["refusals"]:
-            classes[(runtime, refusal["reason_class"])] += 1
+        for name, count in body["refusal_counts"].items():
+            if count:
+                classes[(runtime, name)] += count
     return classes
+
+
+def outcome_of(entry):
+    if entry.get("status") == "output_not_understood":
+        return "output_not_understood"
+    if not entry["plans"]:
+        return "plan_refused"
+    ran = {name: body["status"] == "ran" for name, body in entry["runtimes"].items()}
+    if ran["interp"] and ran["datafusion"]:
+        return "both_runtimes_ran"
+    if ran["datafusion"]:
+        return "datafusion_only"
+    if ran["interp"]:
+        return "interp_only"
+    return "neither_runtime_ran"
 
 
 def main():
@@ -343,6 +453,7 @@ def main():
     by_class = Counter()
     by_outcome = Counter()
     written = 0
+    unreadable = []
     with out.open("w") as sink:
         for source in CORPUS:
             if arguments.only and arguments.only not in source["corpus"]:
@@ -352,13 +463,24 @@ def main():
             stem = Path(source["sql"]).stem
             for identifier, statement in statements:
                 name = f"{source['corpus']}/{stem}/{identifier}"
-                entry, _, _ = evaluate(
-                    arguments.binary,
-                    source["spec"],
-                    statement,
-                    arguments.epsilon,
-                    arguments.timeout,
-                )
+                try:
+                    entry, _, _ = evaluate(
+                        arguments.binary,
+                        source["spec"],
+                        statement,
+                        arguments.epsilon,
+                        arguments.timeout,
+                        name,
+                    )
+                except OutputNotUnderstood as error:
+                    entry = {
+                        "status": "output_not_understood",
+                        "complaint": str(error),
+                        "lowers": None,
+                        "plans": None,
+                    }
+                    unreadable.append(str(error))
+                    print(f"UNREADABLE {error}", file=sys.stderr)
                 entry["query_id"] = name
                 entry["corpus"] = source["corpus"]
                 entry["spec"] = source["spec"]
@@ -367,25 +489,20 @@ def main():
                 sink.flush()
                 written += 1
                 by_class.update(reason_classes_of(entry))
-                if not entry["plans"]:
-                    by_outcome["plan_refused"] += 1
-                elif entry["runtimes"]["datafusion"]["ran"] and entry["runtimes"]["interp"]["ran"]:
-                    by_outcome["both_runtimes_ran"] += 1
-                elif entry["runtimes"]["datafusion"]["ran"]:
-                    by_outcome["datafusion_only"] += 1
-                elif entry["runtimes"]["interp"]["ran"]:
-                    by_outcome["interp_only"] += 1
-                else:
-                    by_outcome["neither_runtime_ran"] += 1
-                print(f"{name}\t{'plans' if entry['plans'] else 'no-plan'}", file=sys.stderr)
+                by_outcome[outcome_of(entry)] += 1
+                print(f"{name}\t{outcome_of(entry)}", file=sys.stderr)
 
     summary = {
         "queries": written,
         "outcomes": dict(by_outcome),
-        "reason_classes": {f"{runtime}.{name}": count for (runtime, name), count in sorted(by_class.items())},
+        "reason_classes": {
+            f"{runtime}.{name}": count for (runtime, name), count in sorted(by_class.items())
+        },
+        "unreadable": unreadable,
     }
     print(json.dumps(summary, indent=2))
+    return 1 if unreadable else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
