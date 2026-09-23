@@ -92,7 +92,7 @@ pub struct Readout {
     pub node: PostAsapNodeId,
     pub producer: PostAsapNodeId,
     pub group: GroupKey,
-    pub query: SketchQuery,
+    pub query: Option<SketchQuery>,
     pub approximate: Answer,
     /// `None` when `verify` was off — never 0.0, which would read as "exact
     /// and the sketch was perfect".
@@ -142,11 +142,12 @@ pub struct RunOutcome {
     pub runtime: Runtime,
     pub refusals: RefusalCounts,
     pub rows_scanned: u64,
-    pub rows_emitted: u64,
+    pub rows_emitted: Option<u64>,
     /// Rows the root node produced, for a plan whose answer is rows rather
     /// than a readout. `None` when the root is not a row-producing node.
     pub root_rows: Option<usize>,
     pub verified: bool,
+    pub no_summary_in_plan: bool,
     /// Values the exact arm held, summed over every `(node, group)`. Counted
     /// here rather than derived from `readouts`, which are empty for a plan
     /// whose state *is* its answer (an exact accumulator has no
@@ -162,8 +163,9 @@ pub struct RunOutcome {
     pub pre_asap_bytes: usize,
     pub pre_asap_node_times: Vec<exact::NodeTime>,
     pub pre_asap_answer: Option<exact::Data>,
-    pub approximate_peak_bytes: Option<usize>,
-    pub pre_asap_peak_bytes: Option<usize>,
+    pub maintenance_peak_bytes: Option<usize>,
+    pub read_peak_bytes: Option<usize>,
+    pub pre_asap_evaluate_peak_bytes: Option<usize>,
 }
 
 struct Slot {
@@ -332,7 +334,7 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
             node: probe.node,
             producer: probe.producer,
             group: probe.group.clone(),
-            query: probe.query.clone(),
+            query: Some(probe.query.clone()),
             approximate,
             exact: exact_value,
             observed_error,
@@ -345,9 +347,10 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
         runtime: Runtime::Interpreter,
         refusals: RefusalCounts::default(),
         rows_scanned: materialized.scanned,
-        rows_emitted: materialized.emitted,
+        rows_emitted: Some(materialized.emitted),
         root_rows: materialized.rows.get(&dag.root).map(|rows| rows.len()),
         verified: cfg.verify,
+        no_summary_in_plan: crate::df::split::no_summary_in_plan(dag),
         retained_values,
         retained_bytes: retained_bytes_held,
         readouts,
@@ -363,8 +366,9 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
         pre_asap_bytes,
         pre_asap_node_times,
         pre_asap_answer,
-        approximate_peak_bytes: None,
-        pre_asap_peak_bytes: None,
+        maintenance_peak_bytes: None,
+        read_peak_bytes: None,
+        pre_asap_evaluate_peak_bytes: None,
     })
 }
 
@@ -1943,7 +1947,7 @@ mod tests {
         assert_eq!(outcome.rows_scanned, 1_000);
         assert_eq!(outcome.readouts.len(), 1);
         assert!(
-            matches!(outcome.readouts[0].query, SketchQuery::Quantile { q } if q == 0.99),
+            matches!(outcome.readouts[0].query, Some(SketchQuery::Quantile { q }) if q == 0.99),
             "{:?}",
             outcome.readouts[0].query
         );
@@ -1972,7 +1976,7 @@ mod tests {
         let outcome = run(&plan, &csv_config(csv.path(), 42, true)).expect("run");
 
         assert_eq!(outcome.rows_scanned, 10_000);
-        assert_eq!(outcome.rows_emitted, 10_000);
+        assert_eq!(outcome.rows_emitted, Some(10_000));
         assert_eq!(outcome.readouts.len(), 1, "one ungrouped readout");
 
         let readout = &outcome.readouts[0];
@@ -2008,7 +2012,7 @@ mod tests {
         let outcome = run(&plan, &config).expect("run");
 
         assert_eq!(outcome.rows_scanned, 1_000);
-        assert_eq!(outcome.rows_emitted, 1_000);
+        assert_eq!(outcome.rows_emitted, Some(1_000));
         assert_eq!(outcome.readouts[0].observations, 1_000);
         assert_eq!(outcome.retained_values, 1_000);
 
@@ -2086,7 +2090,7 @@ mod tests {
         let csv = csv_with(&values);
         let outcome = run(&plan, &csv_config(csv.path(), 0, true)).expect("run");
 
-        assert_eq!(outcome.rows_emitted, 100);
+        assert_eq!(outcome.rows_emitted, Some(100));
         // No SummaryEstimate node, so no readout — the accumulator's state is
         // the answer, reached through FinalizeExactAccumulator.
         assert!(outcome.readouts.is_empty());
@@ -2109,10 +2113,10 @@ mod tests {
         let readout = &outcome.readouts[0];
         assert_eq!(
             readout.query,
-            SketchQuery::PointCount {
+            Some(SketchQuery::PointCount {
                 key: asap_types::pre_asap::ColumnRef::SampleValue,
                 value: None,
-            }
+            })
         );
         assert_eq!(readout.approximate, Answer::Scalar(5_000.0));
         assert_eq!(readout.exact, Some(Answer::Scalar(5_000.0)));
@@ -2130,7 +2134,7 @@ mod tests {
         let csv = csv_with(&[1.0, 2.0, 3.0]);
         let outcome = run(&plan, &csv_config(csv.path(), 0, true)).expect("run");
 
-        assert_eq!(outcome.rows_emitted, 3);
+        assert_eq!(outcome.rows_emitted, Some(3));
         assert!(outcome.readouts.is_empty());
         assert!(outcome.node_footprints.is_empty(), "nothing was summarized");
         assert!(outcome.approximate.update.is_empty());

@@ -22,7 +22,23 @@ use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 7;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryColumn {
+    BytesKeptBetweenQueries,
+}
+
+impl std::fmt::Display for MemoryColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryColumn::BytesKeptBetweenQueries => {
+                write!(f, "bytes each arm keeps between queries")
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
@@ -31,7 +47,8 @@ pub struct PlanEvalRecord {
     pub refusals: RefusalCounts,
     pub plan: PlanIdentity,
     pub rows_scanned: u64,
-    pub rows_emitted: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows_emitted: Option<u64>,
     /// Rows the root node produced, for a plan whose answer is rows rather
     /// than a readout. `null` when the root holds summary state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +59,8 @@ pub struct PlanEvalRecord {
     /// the statistic off the column the summary consumed, which is ground
     /// truth and not a query anyone would run.
     pub verified: bool,
+    pub no_summary_in_plan: bool,
+    pub memory_column: MemoryColumn,
     pub nodes: Vec<NodeCost>,
     pub approximate: Arm,
     pub exact: Arm,
@@ -110,7 +129,11 @@ pub struct Arm {
     pub state_bytes: usize,
     pub retained_bytes: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub peak_reserved_bytes: Option<usize>,
+    pub maintenance_peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluate_peak_reserved_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_overhead_ns: Option<u64>,
 }
@@ -129,7 +152,7 @@ impl Arm {
     }
 
     pub fn memory_bytes(&self) -> usize {
-        self.state_bytes + self.retained_bytes + self.peak_reserved_bytes.unwrap_or(0)
+        self.state_bytes + self.retained_bytes
     }
 }
 
@@ -256,12 +279,10 @@ impl PlanEvalRecord {
             .map(|node| NodeCost {
                 node: node.id.0,
                 operator: operator_name(&node.payload).to_string(),
-                family: match node.payload {
-                    ExecutableOperatorPayload::SummaryAgg { .. } => node
-                        .output_schema
-                        .fields
-                        .first()
-                        .map(|field| family_label(&field.dtype)),
+                family: match &node.payload {
+                    ExecutableOperatorPayload::SummaryAgg { family, .. } => {
+                        Some(family_label(family))
+                    }
                     ExecutableOperatorPayload::Fallback { .. }
                     | ExecutableOperatorPayload::Binary { .. }
                     | ExecutableOperatorPayload::CandidateTopK { .. }
@@ -303,13 +324,14 @@ impl PlanEvalRecord {
             rows_emitted: outcome.rows_emitted,
             root_rows: outcome.root_rows,
             verified: outcome.verified,
+            no_summary_in_plan: outcome.no_summary_in_plan,
+            memory_column: MemoryColumn::BytesKeptBetweenQueries,
             nodes,
-            approximate: arm(
-                &outcome.approximate,
-                state_bytes,
-                0,
-                outcome.approximate_peak_bytes,
-            ),
+            approximate: Arm {
+                maintenance_peak_reserved_bytes: outcome.maintenance_peak_bytes,
+                read_peak_reserved_bytes: outcome.read_peak_bytes,
+                ..arm(&outcome.approximate, state_bytes, 0)
+            },
             exact: Arm {
                 build: None,
                 update: None,
@@ -319,15 +341,15 @@ impl PlanEvalRecord {
                 read: None,
                 state_bytes: 0,
                 retained_bytes,
-                peak_reserved_bytes: None,
+                maintenance_peak_reserved_bytes: None,
+                read_peak_reserved_bytes: None,
+                evaluate_peak_reserved_bytes: None,
                 engine_overhead_ns: None,
             },
-            pre_asap: arm(
-                &outcome.pre_asap,
-                0,
-                outcome.pre_asap_bytes,
-                outcome.pre_asap_peak_bytes,
-            ),
+            pre_asap: Arm {
+                evaluate_peak_reserved_bytes: outcome.pre_asap_evaluate_peak_bytes,
+                ..arm(&outcome.pre_asap, 0, outcome.pre_asap_bytes)
+            },
             pre_asap_nodes: outcome
                 .pre_asap_node_times
                 .iter()
@@ -343,7 +365,7 @@ impl PlanEvalRecord {
                 .map(|r| ReadoutRecord {
                     node: r.node.0,
                     group: r.group.clone(),
-                    query: format!("{:?}", r.query),
+                    query: readout_query_label(r.query.as_ref()),
                     approximate: AnswerRecord::of(&r.approximate),
                     exact: r.exact.as_ref().map(AnswerRecord::of),
                     observed_error: r.observed_error.clone(),
@@ -385,6 +407,15 @@ impl PlanEvalRecord {
     }
 }
 
+pub const EXACT_AGGREGATE_READOUT: &str = "ExactAggregateValue";
+
+pub fn readout_query_label(query: Option<&asap_types::post_asap::SketchQuery>) -> String {
+    match query {
+        Some(query) => format!("{query:?}"),
+        None => EXACT_AGGREGATE_READOUT.to_string(),
+    }
+}
+
 /// `Sketch(Kll{k:269})` rather than the whole `Debug` of a `SketchKind`, whose
 /// private fields make its derived form unreadable in a terminal.
 fn family_label(family: &SummaryFamilyType) -> String {
@@ -397,12 +428,7 @@ fn family_label(family: &SummaryFamilyType) -> String {
     }
 }
 
-fn arm(
-    timing: &ArmTiming,
-    state_bytes: usize,
-    retained_bytes: usize,
-    peak_reserved_bytes: Option<usize>,
-) -> Arm {
+fn arm(timing: &ArmTiming, state_bytes: usize, retained_bytes: usize) -> Arm {
     Arm {
         build: phase(&timing.build),
         update: phase(&timing.update),
@@ -412,7 +438,9 @@ fn arm(
         read: phase(&timing.read),
         state_bytes,
         retained_bytes,
-        peak_reserved_bytes,
+        maintenance_peak_reserved_bytes: None,
+        read_peak_reserved_bytes: None,
+        evaluate_peak_reserved_bytes: None,
         engine_overhead_ns: timing.engine_overhead_ns,
     }
 }
@@ -488,7 +516,7 @@ mod tests {
         assert_eq!(record.schema_version, PLANEVAL_SCHEMA_VERSION);
         assert_eq!(record.plan.nodes, 3);
         assert_eq!(record.plan.plan_id.len(), 64, "blake3 as hex");
-        assert_eq!(record.rows_emitted, 10_000);
+        assert_eq!(record.rows_emitted, Some(10_000));
 
         // Per-node attribution: only the SummaryAgg holds state.
         let with_state: Vec<_> = record
@@ -583,14 +611,19 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 7);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 8);
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
         let line = record.to_jsonl();
         assert!(
-            line.contains("\"schema_version\":7"),
+            line.contains("\"schema_version\":8"),
             "the stream has to say which encoding it is in"
         );
         assert!(line.contains("\"runtime\":\"interp\""), "{line}");
+        assert!(
+            line.contains("\"memory_column\":\"bytes_kept_between_queries\""),
+            "the record has to say what the memory ratio divides: {line}"
+        );
+        assert!(line.contains("\"no_summary_in_plan\":false"), "{line}");
         assert!(
             line.contains(
                 "\"refusals\":{\"promql_only\":0,\"time_axis\":0,\"no_constructor\":0,\

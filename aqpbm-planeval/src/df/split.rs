@@ -55,6 +55,18 @@ impl DagSplit {
     }
 }
 
+pub fn no_summary_in_plan(dag: &ExecutableDag) -> bool {
+    let timing: HashMap<PostAsapNodeId, ExecutionTiming> = dag
+        .nodes
+        .iter()
+        .map(|node| (node.id, node.output_state.timing))
+        .collect();
+    !dag.edges.iter().any(|edge| {
+        edge.data_state.timing == ExecutionTiming::MaintenanceTime
+            && timing.get(&edge.consumer) == Some(&ExecutionTiming::ReadTime)
+    })
+}
+
 pub fn split(plan: &Plan) -> Result<DagSplit, Refusal> {
     let dag = &plan.dag;
     let order = crate::df::post_asap::fold_order(dag)?;
@@ -516,6 +528,38 @@ mod tests {
             !schema.field(1).is_nullable(),
             "the state table follows the nullability the edge declares, which the rows are then \
              checked against"
+        );
+    }
+
+    #[test]
+    fn the_cheap_test_for_a_summary_agrees_with_the_cuts_the_splitter_makes() {
+        let source = leaf(0);
+        let built = summary_agg(1, "held");
+        let read = estimate(2, "held");
+        let edges = vec![edge(&source, &built), edge(&built, &read)];
+        let cut = planned(vec![source, built, read], edges, 2);
+        assert!(!no_summary_in_plan(&cut.dag));
+        assert_eq!(
+            no_summary_in_plan(&cut.dag),
+            split(&cut).unwrap().no_summary_in_plan
+        );
+
+        let source = leaf(0);
+        let shaped = node(
+            1,
+            ExecutableOperatorPayload::Value {
+                operation: ValueOperation::Limit { n: 5, offset: 0 },
+                timing: ExecutionTiming::MaintenanceTime,
+            },
+            ExecutionDataState::MAINTENANCE_ROWS,
+            rows(),
+        );
+        let edges = vec![edge(&source, &shaped)];
+        let whole = planned(vec![source, shaped], edges, 1);
+        assert!(no_summary_in_plan(&whole.dag));
+        assert_eq!(
+            no_summary_in_plan(&whole.dag),
+            split(&whole).unwrap().no_summary_in_plan
         );
     }
 

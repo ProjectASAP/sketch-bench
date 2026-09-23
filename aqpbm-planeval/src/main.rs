@@ -535,12 +535,24 @@ fn print_plan(record: &PlanEvalRecord) {
                 ms(node.elapsed_ns)
             );
         }
-        println!(
-            "rows     {} scanned, {} emitted",
-            record.rows_scanned, record.rows_emitted
-        );
+        match record.rows_emitted {
+            Some(emitted) => println!(
+                "rows     {} scanned, {emitted} emitted",
+                record.rows_scanned
+            ),
+            None => println!(
+                "rows     {} scanned, emitted not counted on this runtime",
+                record.rows_scanned
+            ),
+        }
         if let Some(root_rows) = record.root_rows {
             println!("result   {root_rows} rows out of node {}", record.plan.root);
+        }
+        if record.no_summary_in_plan {
+            println!(
+                "no summary in plan  the planner left the graph whole, so the approximate arm is \
+                 the pre-ASAP arm and its ratios are not an advantage"
+            );
         }
         println!();
     }
@@ -654,6 +666,7 @@ fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: 
         Some(format!("{} B", record.pre_asap.memory_bytes())),
         Some(format!("{} B", record.approximate.memory_bytes())),
     );
+    println!("  memory column   {}", record.memory_column);
     match worst_accuracy {
         Some(error) => println!(
             "  accuracy        worst readout error {error:.6}, in that readout's own metric"
@@ -672,8 +685,14 @@ fn positive(ms: f64) -> Option<f64> {
 
 fn print_engine_cost(name: &str, arm: &Arm) {
     let mut line = String::new();
-    if let Some(peak) = arm.peak_reserved_bytes {
-        line.push_str(&format!("  {peak} B peak in the memory pool"));
+    for (phase, peak) in [
+        ("maintenance", arm.maintenance_peak_reserved_bytes),
+        ("read", arm.read_peak_reserved_bytes),
+        ("evaluate", arm.evaluate_peak_reserved_bytes),
+    ] {
+        if let Some(peak) = peak {
+            line.push_str(&format!("  {peak} B {phase} peak in the memory pool"));
+        }
     }
     if let Some(overhead_ns) = arm.engine_overhead_ns {
         line.push_str(&format!(

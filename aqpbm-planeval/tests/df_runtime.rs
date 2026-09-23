@@ -29,6 +29,10 @@ const ROWS: u64 = 20_000;
 const QUANTILE_SQL: &str = "SELECT approx_percentile_cont(latency, 0.99) FROM metrics";
 const GROUPED_SUM_SQL: &str = "SELECT service, SUM(bytes) FROM metrics GROUP BY service";
 const NO_SUMMARY_SQL: &str = "SELECT latency FROM metrics WHERE latency > 1";
+const INT_KEYED_QUANTILE_SQL: &str =
+    "SELECT bytes, approx_percentile_cont(latency, 0.5) FROM metrics GROUP BY bytes";
+const TIMESTAMP_KEYED_SQL: &str =
+    "SELECT ts, approx_percentile_cont(latency, 0.5) FROM metrics GROUP BY ts";
 
 fn description() -> TableDescription {
     let mut description = TableDescription::from_path(Path::new(SPEC)).expect("the spec parses");
@@ -71,11 +75,15 @@ fn engine(
 }
 
 fn record_of(sql: &str, split: bool) -> PlanEvalRecord {
+    verified_record_of(sql, split, true)
+}
+
+fn verified_record_of(sql: &str, split: bool, verify: bool) -> PlanEvalRecord {
     let description = description();
     let rows = table(&description);
     let catalog = catalog_from_spec(TABLE, &description).expect("the spec is a catalog");
     let plan = plan_sql(sql, &catalog, ACCURACY).expect("the SQL plans");
-    let config = RunConfig::new(RowsFrom::Generated(Rc::clone(&rows)), SEED, true);
+    let config = RunConfig::new(RowsFrom::Generated(Rc::clone(&rows)), SEED, verify);
     let outcome = run_datafusion(&plan, &config, &engine(&description, &rows, split))
         .expect("both arms run on DataFusion");
     PlanEvalRecord::from_run(sql, &plan, &outcome)
@@ -207,12 +215,12 @@ fn the_quantile_query_reports_four_numbers_on_datafusion() {
     );
     assert!(record.pre_asap.retained_bytes > record.approximate.state_bytes);
     assert_eq!(
-        record.approximate.peak_reserved_bytes,
+        record.approximate.maintenance_peak_reserved_bytes,
         Some(0),
         "an ungrouped aggregate over an accumulator that does not grow reserves nothing from \
          DataFusion 43's pool; the state table is where this sketch's size shows up"
     );
-    assert!(record.pre_asap.peak_reserved_bytes.unwrap() > 0);
+    assert!(record.pre_asap.evaluate_peak_reserved_bytes.unwrap() > 0);
 
     let advantage = record.advantage();
     assert!(advantage.aggregate_time.unwrap() > 0.0);
@@ -241,14 +249,80 @@ fn the_grouped_sum_is_exact_on_both_arms() {
     assert_eq!(record.runtime, "datafusion");
     assert!(record.approximate.maintenance.is_some());
     assert!(
-        record.approximate.peak_reserved_bytes.unwrap() > 0,
+        record.approximate.maintenance_peak_reserved_bytes.unwrap() > 0,
         "a grouped aggregate resizes its reservation as the hash table grows"
     );
-    assert!(
-        record.readouts.is_empty(),
-        "a plan with no SummaryEstimate has nothing to score"
+    assert_eq!(
+        record.readouts.len(),
+        8,
+        "one sum per service, scored against the pre-ASAP arm's own sum"
     );
-    assert_eq!(record.advantage().accuracy, None);
+    for readout in &record.readouts {
+        assert!(!readout.group.is_empty(), "every row names its service");
+        assert_eq!(readout.query, "ExactAggregateValue");
+        let exact = readout.exact.as_ref().expect("the exact arm answered");
+        assert_eq!(
+            readout.approximate, *exact,
+            "an exact aggregate is the same number on both arms, group {}",
+            readout.group
+        );
+        assert_eq!(
+            readout.observed_error,
+            ObservedError::Measured {
+                metric: ANSWER_ERROR_METRIC.to_string(),
+                error: 0.0
+            }
+        );
+    }
+    assert_eq!(record.advantage().accuracy, Some(0.0));
+}
+
+#[test]
+fn an_integer_group_key_is_a_key_and_not_an_estimate() {
+    let record = record_of(INT_KEYED_QUANTILE_SQL, true);
+    let rows = record.root_rows.expect("the read query answers rows");
+    assert!(rows > 1, "the Int64 key groups the rows");
+    assert_eq!(
+        record.readouts.len(),
+        rows,
+        "one readout per group, and the group key is not one of them"
+    );
+    let groups: std::collections::BTreeSet<&str> = record
+        .readouts
+        .iter()
+        .map(|readout| readout.group.as_str())
+        .collect();
+    assert_eq!(groups.len(), rows, "every readout names its own group");
+    assert!(
+        groups.iter().all(|group| group.parse::<i64>().is_ok()),
+        "an Int64 key is spelled as the integer it is"
+    );
+    let worst = record.advantage().accuracy.expect("both arms answered");
+    assert!(
+        worst < 1.0,
+        "a k=269 KLL sized for epsilon=0.01 does not miss a median by more than its own value, \
+         got {worst}"
+    );
+}
+
+#[test]
+fn a_timestamp_group_key_is_spelled_out_rather_than_named_by_its_type() {
+    let record = record_of(TIMESTAMP_KEYED_SQL, true);
+    assert!(record.readouts.len() > 1);
+    let groups: std::collections::BTreeSet<&str> = record
+        .readouts
+        .iter()
+        .map(|readout| readout.group.as_str())
+        .collect();
+    assert_eq!(
+        groups.len(),
+        record.readouts.len(),
+        "two rows must not collapse onto one rendered key"
+    );
+    assert!(
+        groups.iter().all(|group| group.contains('T')),
+        "a timestamp renders as an instant, not as `Timestamp(Millisecond, None)`: {groups:?}"
+    );
 }
 
 #[test]
@@ -270,5 +344,70 @@ fn running_the_graph_whole_charges_everything_to_the_read_query() {
     assert_eq!(
         whole_run.readouts[0].approximate, split_run.readouts[0].approximate,
         "cutting the graph does not change the answer"
+    );
+}
+
+#[test]
+fn a_plan_the_planner_left_whole_says_so_in_the_record() {
+    let record = record_of(NO_SUMMARY_SQL, true);
+    assert!(
+        record.no_summary_in_plan,
+        "the record has to carry what the splitter found, or a reader takes its 1.0x ratios for \
+         a measured tie"
+    );
+    assert!(record.readouts.is_empty());
+    assert_eq!(record.approximate.aggregate_ms(), 0.0);
+    assert_eq!(record.advantage().aggregate_time, None);
+
+    let summarized = record_of(QUANTILE_SQL, true);
+    assert!(!summarized.no_summary_in_plan);
+}
+
+#[test]
+fn a_grouped_plan_reports_the_family_it_bound_and_not_its_group_key() {
+    for (sql, family) in [
+        (QUANTILE_SQL, "Sketch(Kll, Kll { k: 269 })"),
+        (INT_KEYED_QUANTILE_SQL, "Sketch(Kll, Kll { k: 269 })"),
+        (GROUPED_SUM_SQL, "Exact(Sum)"),
+    ] {
+        let record = record_of(sql, true);
+        let bound: Vec<&str> = record
+            .nodes
+            .iter()
+            .filter(|node| node.operator == "SummaryAgg")
+            .map(|node| node.family.as_deref().expect("a SummaryAgg binds a family"))
+            .collect();
+        assert_eq!(bound, vec![family], "{sql}");
+    }
+}
+
+#[test]
+fn no_verify_leaves_the_datafusion_record_without_ground_truth() {
+    let record = verified_record_of(QUANTILE_SQL, true, false);
+    assert!(!record.verified, "--no-verify has to reach this runtime");
+    assert!(record.readouts[0].exact.is_none());
+    assert_eq!(
+        record.readouts[0].observed_error,
+        ObservedError::NotVerified
+    );
+    assert_eq!(record.advantage().accuracy, None);
+    assert!(
+        record.pre_asap.evaluate.is_some(),
+        "the baseline arm is still timed: --no-pre-asap is the flag that drops it"
+    );
+    assert!(record.advantage().query_time.is_some());
+}
+
+#[test]
+fn the_datafusion_arm_reports_a_peak_for_each_query_it_ran() {
+    let record = record_of(GROUPED_SUM_SQL, true);
+    assert!(record.approximate.maintenance_peak_reserved_bytes.is_some());
+    assert!(record.approximate.read_peak_reserved_bytes.is_some());
+    assert!(record.pre_asap.evaluate_peak_reserved_bytes.is_some());
+    assert_eq!(
+        record.advantage().memory,
+        Some(record.pre_asap.retained_bytes as f64 / record.approximate.state_bytes as f64),
+        "the memory column divides what each arm keeps between queries, and a transient pool \
+         peak equal on both arms is not part of it"
     );
 }
