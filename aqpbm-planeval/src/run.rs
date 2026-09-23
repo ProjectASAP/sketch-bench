@@ -1418,6 +1418,12 @@ fn resolve_readout(
     match &producer.payload {
         ExecutableOperatorPayload::SummaryAgg { family, .. } => {
             crate::handle::check_readout(family, query, node.id)?;
+            if let Some(detail) = point_lookup_key_mismatch(producer, dag, query) {
+                return Err(Refusal::UnsupportedUpdate {
+                    node: node.id,
+                    detail,
+                });
+            }
             Ok(ResolvedReadout {
                 node: node.id,
                 producer: producer.id,
@@ -1439,6 +1445,35 @@ fn resolve_readout(
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
+
+pub(crate) fn point_lookup_key_mismatch(
+    producer: &ExecutableDagNode,
+    dag: &ExecutableDag,
+    query: &SketchQuery,
+) -> Option<String> {
+    let SketchQuery::PointCount {
+        value: Some(value), ..
+    } = query
+    else {
+        return None;
+    };
+    let ExecutableOperatorPayload::SummaryAgg { input, .. } = &producer.payload else {
+        return None;
+    };
+    let Some(SummaryInputExpr::Column(column)) = &input.item else {
+        return None;
+    };
+    let (_, schema) = input_edge(producer, dag).ok()?;
+    let field = &schema.fields[rows::resolve_column(column, schema)?];
+    match &field.dtype {
+        SummaryFamilyType::Plain(DataType::Utf8) => None,
+        other => Some(format!(
+            "the point lookup names its item as the string {value:?}, and the sketch hashed \
+             {} as {other:?}, so the lookup would land in another item's counters",
+            field.name
+        )),
+    }
+}
 
 /// The node feeding this one on its `Input` edge, and the schema flowing there.
 fn input_edge<'a>(
@@ -2880,6 +2915,72 @@ mod resolution_tests {
                 "q = {q}: {refusals:?}"
             );
         }
+    }
+
+    fn point_lookup_over(item: &str) -> ExecutableDag {
+        let mut dag = with_labels(plan(MEDIAN));
+        let item = ColumnRef::Named(item.to_owned());
+        for node in &mut dag.nodes {
+            match &mut node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
+                    *family = SummaryFamilyType::Sketch(
+                        SketchKind::new(
+                            SketchAlgorithm::Cms,
+                            SketchParams::Cms {
+                                width: 272,
+                                depth: 5,
+                            },
+                        ),
+                        GroupingStrategy::PerSubpopulationInstance,
+                    );
+                    input.item = Some(SummaryInputExpr::Column(item.clone()));
+                    input.weight = SummaryInputExpr::Constant(1.0);
+                }
+                ExecutableOperatorPayload::SummaryEstimate { query } => {
+                    *query = SketchQuery::PointCount {
+                        key: item.clone(),
+                        value: Some("a".to_owned()),
+                    };
+                }
+                _ => {}
+            }
+        }
+        dag
+    }
+
+    #[test]
+    fn a_string_point_lookup_into_a_numerically_keyed_sketch_is_refused_on_both_runtimes() {
+        let numeric = point_lookup_over("value");
+        let refusals = resolved(&numeric).expect_err("a Float64 item is not looked up by string");
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.to_string().contains("point lookup")),
+            "{refusals:?}"
+        );
+
+        let estimate = node_of(&numeric, "SummaryEstimate").id;
+        let agg = node_of(&numeric, "SummaryAgg").id;
+        let session = crate::df::session::SeedSession::new(
+            0,
+            crate::df::session::MemoryPoolSettings::default(),
+            &crate::df::sketch_udaf::SummaryFunctions,
+        )
+        .expect("a session needs no OS resources");
+        let stand_in = datafusion::logical_expr::LogicalPlanBuilder::empty(false)
+            .build()
+            .expect("an empty relation builds");
+        let refused = crate::df::post_asap::lower_nodes(
+            &numeric,
+            &[agg, estimate],
+            &crate::df::pre_asap::TableSources::new(),
+            &session.state(),
+            &HashMap::from([(agg, stand_in)]),
+        )
+        .expect_err("the DataFusion translator refuses it too");
+        assert_eq!(refused.variant, "SketchQuery::PointCount");
+
+        resolved(&point_lookup_over("cluster")).expect("a Utf8 item is looked up by string");
     }
 
     fn with_readout(query: &SketchQuery) -> ExecutableDag {

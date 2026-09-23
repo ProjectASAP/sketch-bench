@@ -117,7 +117,7 @@ pub fn lower_nodes(
             Refusal::no_constructor("ExecutableDag", format!("{id:?} names no node"))
         })?;
         let inputs = collect_inputs(dag, node, &nodes, &held)?;
-        let plan = lower_node(node, &inputs, tables, state)?;
+        let plan = lower_node(dag, node, &inputs, tables, state)?;
         if let (ExecutableOperatorPayload::SummaryEstimate { .. }, Some(guarantee)) =
             (&node.payload, node.guarantee.as_ref())
         {
@@ -272,6 +272,7 @@ pub fn refuse_unless_edge_composes(
 }
 
 fn lower_node(
+    dag: &ExecutableDag,
     node: &ExecutableDagNode,
     inputs: &RoleInputs<'_>,
     tables: &TableSources,
@@ -293,7 +294,7 @@ fn lower_node(
         } => lower_summary_agg(node, family, input, reduction, grouping, inputs, state),
 
         ExecutableOperatorPayload::SummaryEstimate { query } => {
-            lower_summary_estimate(node, query, inputs, state)
+            lower_summary_estimate(dag, node, query, inputs, state)
         }
 
         ExecutableOperatorPayload::SummaryMerge => Err(Refusal::no_constructor(
@@ -698,6 +699,7 @@ fn exact_accumulator(kind: &ExactKind, weight: Expr) -> Result<Expr, Refusal> {
 }
 
 fn lower_summary_estimate(
+    dag: &ExecutableDag,
     node: &ExecutableDagNode,
     query: &asap_types::post_asap::SketchQuery,
     inputs: &RoleInputs<'_>,
@@ -705,6 +707,20 @@ fn lower_summary_estimate(
 ) -> Result<LogicalPlan, Refusal> {
     let variant = "SummaryEstimate";
     let input = inputs.single(variant)?.clone();
+    let producer = dag
+        .edges
+        .iter()
+        .find(|edge| edge.consumer == node.id && edge.role == EdgeRole::Input)
+        .and_then(|edge| dag.nodes.iter().find(|held| held.id == edge.producer));
+    if let Some(detail) =
+        producer.and_then(|producer| crate::run::point_lookup_key_mismatch(producer, dag, query))
+    {
+        return Err(Refusal::deferred(
+            "SketchQuery::PointCount",
+            "point-lookup-key-type",
+            detail,
+        ));
+    }
     let produced = inputs.producer_schema(variant)?;
     let state_position = produced
         .fields
