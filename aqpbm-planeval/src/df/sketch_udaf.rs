@@ -787,7 +787,10 @@ impl SketchBinding for DdSketchBinding {
             .map_err(|error| encoding_failed(Self::FUNCTION, error))
     }
 
-    fn from_bytes(_params: &SketchParams, bytes: &[u8]) -> Result<Self, Refusal> {
+    fn from_bytes(params: &SketchParams, bytes: &[u8]) -> Result<Self, Refusal> {
+        let SketchParams::DDSketch { .. } = params else {
+            return Err(mismatched_parameters(Self::ALGORITHM, params));
+        };
         Ok(Self {
             inner: DDSketch::deserialize_from_bytes(bytes)
                 .map_err(|error| decoding_failed(Self::FUNCTION, error))?,
