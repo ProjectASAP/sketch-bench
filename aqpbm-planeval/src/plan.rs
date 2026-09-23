@@ -330,7 +330,10 @@ pub fn plan_sql(
     catalog: &SqlCatalog,
     accuracy: AccuracyTarget,
 ) -> Result<Plan, EvalError> {
-    let root = crate::sql::lower_sql_root(sql, catalog, accuracy)?;
+    plan_sql_root(sql, crate::sql::lower_sql_root(sql, catalog, accuracy)?)
+}
+
+pub fn plan_sql_root(sql: &str, root: Rc<QueryExpr>) -> Result<Plan, EvalError> {
     let mut planned = plan_roots(vec![(sql.to_string(), root)], TimeRangeOrigin::Unknown)?;
     if planned.len() != 1 {
         return Err(EvalError::Planning(format!(
@@ -426,7 +429,7 @@ fn from_dag(
 /// Ready nodes are drained smallest id first purely so the order is
 /// deterministic across runs; correctness does not depend on it, and no edge
 /// direction is inferred from the ids.
-fn topological_order(dag: &ExecutableDag) -> Result<Vec<PostAsapNodeId>, EvalError> {
+pub fn topological_order(dag: &ExecutableDag) -> Result<Vec<PostAsapNodeId>, EvalError> {
     let mut indegree: HashMap<PostAsapNodeId, usize> =
         dag.nodes.iter().map(|node| (node.id, 0usize)).collect();
     let mut consumers: HashMap<PostAsapNodeId, Vec<PostAsapNodeId>> = HashMap::new();

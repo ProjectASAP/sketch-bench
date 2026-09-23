@@ -2,8 +2,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use asap_types::post_asap::maintained_population::{
+    MaintainedPopulation, PopulationInput, PopulationReadout,
+};
+use asap_types::post_asap::{
+    BinaryOperator, CandidateCompleteness, ExactOperation, ExecutableOperatorPayload,
+    ExecutionTiming, GroupingStrategy, SketchAlgorithm, SketchKind, SketchParams, SketchQuery,
+    SummaryFamilyType, SummaryField, SummaryInputExpr, SummarySchema, SummaryUpdate,
+    ValueOperation, WeightDomain,
+};
 use asap_types::pre_asap::agg_intent::{AggIntent, MathFunc, TimeFunc};
-use asap_types::pre_asap::expr_ir::{ArithmeticOpKind, CompareOpKind, ScalarValue};
+use asap_types::pre_asap::expr_ir::{ArithmeticOpKind, ColumnRef, CompareOpKind, ScalarValue};
 use asap_types::pre_asap::query_expr::{
     BinaryOpKind, GroupKeys, InfoMatcher, JoinKind, Predicate, ProjectItem, Reduction,
     RelationalSetOpKind, SampleKind, SortKey, Source, TimeShift, VectorMatch, VectorMatchKind,
@@ -476,6 +485,189 @@ pub fn every_agg_intent() -> Vec<(&'static str, AggIntent)> {
                 ext_kind: "argMax".to_owned(),
                 payload: serde_json::Value::Null,
             },
+        ),
+    ]
+}
+
+pub fn plain_summary_schema(columns: &[(&str, DataType)]) -> SummarySchema {
+    SummarySchema {
+        fields: columns
+            .iter()
+            .map(|(name, dtype)| SummaryField {
+                name: (*name).to_owned(),
+                dtype: SummaryFamilyType::Plain(dtype.clone()),
+                nullable: false,
+            })
+            .collect(),
+        time_index: None,
+    }
+}
+
+pub fn kll_family() -> SummaryFamilyType {
+    SummaryFamilyType::Sketch(
+        SketchKind::new(SketchAlgorithm::Kll, SketchParams::Kll { k: 269 }),
+        GroupingStrategy::PerSubpopulationInstance,
+    )
+}
+
+pub fn latency_update() -> SummaryUpdate {
+    SummaryUpdate {
+        item: None,
+        weight: SummaryInputExpr::Column(ColumnRef::Named("latency".to_owned())),
+        weight_domain: WeightDomain::UnknownOrSigned,
+    }
+}
+
+pub fn every_value_operation() -> Vec<(&'static str, ValueOperation)> {
+    vec![
+        (
+            "ValueOperation::MaintainPopulation",
+            ValueOperation::MaintainPopulation {
+                population: MaintainedPopulation {
+                    input: PopulationInput::Rows {
+                        input: scan(),
+                        value_column: LATENCY,
+                        grouping: GroupKeys::none(),
+                    },
+                    max_k: 8,
+                    quantiles: true,
+                },
+            },
+        ),
+        (
+            "ValueOperation::ReadPopulation",
+            ValueOperation::ReadPopulation {
+                readout: PopulationReadout::Quantile { q: 0.99 },
+            },
+        ),
+        (
+            "ValueOperation::Exact",
+            ValueOperation::Exact(ExactOperation::Aggregate {
+                reduction: Reduction::by(vec![SERVICE]),
+                measures: vec![AggIntent::Sum { col: Some(BYTES) }],
+                output_names: vec!["service".to_owned(), "total".to_owned()],
+                having: None,
+            }),
+        ),
+        (
+            "ValueOperation::FinalizeExactAccumulator",
+            ValueOperation::FinalizeExactAccumulator,
+        ),
+        (
+            "ValueOperation::Project",
+            ValueOperation::Project {
+                cols: vec![ProjectItem {
+                    alias: None,
+                    expr: column(LATENCY),
+                }],
+                qualifier: None,
+            },
+        ),
+        (
+            "ValueOperation::Filter",
+            ValueOperation::Filter { pred: predicate() },
+        ),
+        (
+            "ValueOperation::Sort",
+            ValueOperation::Sort {
+                keys: vec![SortKey {
+                    expr: column(LATENCY),
+                    ascending: true,
+                    nulls_first: false,
+                }],
+                partition_by: GroupKeys::none(),
+            },
+        ),
+        (
+            "ValueOperation::Limit",
+            ValueOperation::Limit { n: 10, offset: 0 },
+        ),
+        (
+            "ValueOperation::Extension",
+            ValueOperation::Extension {
+                name: "argMax".to_owned(),
+            },
+        ),
+    ]
+}
+
+pub fn every_executable_payload() -> Vec<(&'static str, ExecutableOperatorPayload)> {
+    vec![
+        (
+            "ExecutableOperatorPayload::Fallback",
+            ExecutableOperatorPayload::Fallback {
+                expression: (*scan()).clone(),
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::Binary",
+            ExecutableOperatorPayload::Binary {
+                timing: ExecutionTiming::ReadTime,
+                operator: BinaryOperator {
+                    checked_relative_division: false,
+                    checked_finite_division: false,
+                    kind: BinaryOpKind::Arithmetic(ArithmeticOpKind::Div),
+                    vector_match: None,
+                },
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::CandidateTopK",
+            ExecutableOperatorPayload::CandidateTopK {
+                k: 5,
+                grouping: GroupKeys::by(vec![SERVICE]),
+                completeness: CandidateCompleteness::BestEffort { guarantee: None },
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::Value",
+            ExecutableOperatorPayload::Value {
+                operation: ValueOperation::Limit { n: 10, offset: 0 },
+                timing: ExecutionTiming::ReadTime,
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::RelationalJoin",
+            ExecutableOperatorPayload::RelationalJoin {
+                join_kind: JoinKind::Inner,
+                pred: predicate(),
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::SummaryAgg",
+            ExecutableOperatorPayload::SummaryAgg {
+                family: kll_family(),
+                input: latency_update(),
+                reduction: Reduction::by(vec![]),
+                grouping: GroupingStrategy::PerSubpopulationInstance,
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::SummaryJoin",
+            ExecutableOperatorPayload::SummaryJoin {
+                key: ColumnRef::Named("service".to_owned()),
+                family: kll_family(),
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::SummarySubtract",
+            ExecutableOperatorPayload::SummarySubtract,
+        ),
+        (
+            "ExecutableOperatorPayload::SummaryDelete",
+            ExecutableOperatorPayload::SummaryDelete {
+                key: ColumnRef::Named("service".to_owned()),
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::SummaryEstimate",
+            ExecutableOperatorPayload::SummaryEstimate {
+                query: SketchQuery::Quantile { q: 0.99 },
+            },
+        ),
+        (
+            "ExecutableOperatorPayload::SummaryMerge",
+            ExecutableOperatorPayload::SummaryMerge,
         ),
     ]
 }

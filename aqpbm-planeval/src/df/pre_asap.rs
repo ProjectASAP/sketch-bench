@@ -417,33 +417,47 @@ fn lower_aggregate(
     child: &QueryExpr,
     tables: &TableSources,
 ) -> Result<LogicalPlan, Refusal> {
+    let names: Vec<String> = output_columns(node)?
+        .into_iter()
+        .map(|column| column.name)
+        .collect();
+    let input = lower(child, tables)?;
+    reduce_measures(input, reduction, measures, having, &names, "Aggregate")
+}
+
+pub fn reduce_measures(
+    input: LogicalPlan,
+    reduction: &Reduction,
+    measures: &[asap_types::pre_asap::agg_intent::AggIntent],
+    having: Option<&asap_types::pre_asap::query_expr::Predicate>,
+    output_names: &[String],
+    variant: &str,
+) -> Result<LogicalPlan, Refusal> {
     let by =
         match reduction {
             Reduction::PerEntity => {
                 return Err(Refusal::time_axis(
-                    "QueryExpr::Aggregate",
+                    format!("QueryExpr::{variant}"),
                     "a per-entity reduction runs along each series' own time axis, and the DAG \
                  carries no evaluation instant",
                 ))
             }
             Reduction::Reduce(by) if by.is_without() => return Err(Refusal::promql_only(
-                "QueryExpr::Aggregate",
+                format!("QueryExpr::{variant}"),
                 "GROUP BY every column except these has no SQL spelling, and the SQL front end \
                  never emits it",
             )),
             Reduction::Reduce(by) => by,
         };
 
-    let input = lower(child, tables)?;
     let scope = ColumnScope::of_plan(&input);
-    let declared = output_columns(node)?;
-    if declared.len() != by.keys().len() + measures.len() {
+    if output_names.len() != by.keys().len() + measures.len() {
         return Err(Refusal::no_constructor(
-            "QueryExpr::Aggregate",
+            format!("QueryExpr::{variant}"),
             format!(
                 "the declared output schema names {} columns and this node reduces {} keys and {} \
                  measures",
-                declared.len(),
+                output_names.len(),
                 by.keys().len(),
                 measures.len()
             ),
@@ -466,20 +480,23 @@ fn lower_aggregate(
 
     let reduced = build(
         LogicalPlanBuilder::from(input).aggregate(group.clone(), aggregated),
-        "Aggregate",
+        variant,
     )?;
     let reduced_scope = ColumnScope::of_plan(&reduced);
 
-    let mut projection = Vec::with_capacity(declared.len());
-    for (position, column) in declared.iter().take(group.len()).enumerate() {
-        projection.push(reduced_scope.expr(position)?.alias(column.name.clone()));
+    let mut projection = Vec::with_capacity(output_names.len());
+    for (position, name) in output_names.iter().take(group.len()).enumerate() {
+        projection.push(reduced_scope.expr(position)?.alias(name.clone()));
     }
-    for (readout, column) in readouts.into_iter().zip(declared.iter().skip(group.len())) {
-        projection.push(readout.alias(column.name.clone()));
+    for (readout, name) in readouts
+        .into_iter()
+        .zip(output_names.iter().skip(group.len()))
+    {
+        projection.push(readout.alias(name.clone()));
     }
     let named = build(
         LogicalPlanBuilder::from(reduced).project(projection),
-        "Aggregate",
+        variant,
     )?;
 
     let Some(having) = having else {
@@ -487,7 +504,7 @@ fn lower_aggregate(
     };
     let having_scope = ColumnScope::of_plan(&named);
     let pred = lower_scalar(&having.0, &having_scope)?;
-    build(LogicalPlanBuilder::from(named).filter(pred), "Aggregate")
+    build(LogicalPlanBuilder::from(named).filter(pred), variant)
 }
 
 fn output_columns(node: &QueryExpr) -> Result<Vec<asap_types::pre_asap::schema::Column>, Refusal> {

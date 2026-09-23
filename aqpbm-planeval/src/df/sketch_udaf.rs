@@ -237,7 +237,7 @@ fn lower_item(expr: &SummaryInputExpr) -> Result<Expr, Refusal> {
     }
 }
 
-fn lower_weight(expr: &SummaryInputExpr) -> Result<Expr, Refusal> {
+pub fn lower_weight(expr: &SummaryInputExpr) -> Result<Expr, Refusal> {
     match expr {
         SummaryInputExpr::Column(column) => lower_column(column, "weight"),
         SummaryInputExpr::Constant(value) => Ok(lit(*value)),
