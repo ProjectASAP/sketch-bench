@@ -71,6 +71,42 @@ pub struct PlanEvalRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RefusedPlanRecord {
+    pub schema_version: u32,
+    pub runtime: String,
+    pub plan_id: String,
+    pub query: String,
+    pub seed: u64,
+    pub refusals: RefusalCounts,
+    pub refused: Vec<String>,
+}
+
+impl RefusedPlanRecord {
+    pub fn new(
+        runtime: &str,
+        plan: &Plan,
+        query: &str,
+        seed: u64,
+        refusals: RefusalCounts,
+        refused: Vec<String>,
+    ) -> Self {
+        Self {
+            schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: runtime.to_string(),
+            plan_id: hex(&plan.id),
+            query: query.to_string(),
+            seed,
+            refusals,
+            refused,
+        }
+    }
+
+    pub fn to_jsonl(&self) -> String {
+        serde_json::to_string(self).expect("RefusedPlanRecord is serializable")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlanIdentity {
     /// blake3 of the canonical document, lowercase hex.
     pub plan_id: String,
@@ -631,6 +667,36 @@ mod tests {
             ),
             "{line}"
         );
+    }
+
+    #[test]
+    fn a_refused_plan_names_itself_in_the_same_stream_as_a_record() {
+        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let mut counts = RefusalCounts::default();
+        counts.add_unclassified(2);
+        let refused = RefusedPlanRecord::new(
+            "datafusion",
+            &plan,
+            "quantile(0.5, cpu_cores)",
+            3,
+            counts,
+            vec!["Value::Extension".to_owned()],
+        );
+        let line = refused.to_jsonl();
+        assert!(!line.contains('\n'), "one refusal, one line");
+        assert!(line.contains("\"schema_version\":8"), "{line}");
+        assert!(line.contains("\"runtime\":\"datafusion\""), "{line}");
+        assert!(
+            line.contains(&format!("\"plan_id\":\"{}\"", hex(&plan.id))),
+            "{line}"
+        );
+        assert!(line.contains("\"seed\":3"), "{line}");
+        assert!(
+            line.contains("\"refused\":[\"Value::Extension\"]"),
+            "{line}"
+        );
+        let back: RefusedPlanRecord = serde_json::from_str(&line).expect("a refusal reads back");
+        assert_eq!(back, refused);
     }
 
     fn same_f64(read: f64, wrote: f64, field: &str) {

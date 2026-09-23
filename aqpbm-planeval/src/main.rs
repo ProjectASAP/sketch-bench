@@ -16,8 +16,8 @@ use aqpbm_datagen::table::TableDescription;
 use aqpbm_planeval::df::run::{refusal_counts, run as run_datafusion, DataFusionRunConfig};
 use aqpbm_planeval::exact::{run_promql, run_tree, Data, ExactRun};
 use aqpbm_planeval::plan::{plan_promql, plan_sql, to_json};
-use aqpbm_planeval::record::{Arm, NodeCost, Phase, PlanEvalRecord};
-use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
+use aqpbm_planeval::record::{Arm, NodeCost, Phase, PlanEvalRecord, RefusedPlanRecord};
+use aqpbm_planeval::run::{run, RowsFrom, RunConfig, Runtime};
 use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
 use aqpbm_planeval::{sql, EvalError, Value};
 use asap_types::types::AccuracyTarget;
@@ -220,23 +220,30 @@ fn datafusion_config(
     }))
 }
 
-fn print_refusals(err: &EvalError, jsonl: bool) -> Result<()> {
+fn refused_lines(err: &EvalError) -> Vec<String> {
     match err {
-        EvalError::Refused(refusals) => {
-            for refusal in refusals {
-                println!("REFUSED {refusal}");
-            }
-        }
-        EvalError::Untranslated(refusals) => {
-            for refusal in refusals {
-                println!("REFUSED {refusal}");
-            }
-        }
-        _ => {}
+        EvalError::Refused(refusals) => refusals.iter().map(|r| r.to_string()).collect(),
+        EvalError::Untranslated(refusals) => refusals.iter().map(|r| r.to_string()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn print_refusals(
+    err: &EvalError,
+    jsonl: bool,
+    runtime: &str,
+    plan: &aqpbm_planeval::plan::Plan,
+    query: &str,
+    seed: u64,
+) -> Result<()> {
+    let refused = refused_lines(err);
+    for line in &refused {
+        eprintln!("REFUSED {line}");
     }
     let counts = refusal_counts(err);
+    let record = RefusedPlanRecord::new(runtime, plan, query, seed, counts.clone(), refused);
     if jsonl {
-        println!("{}", serde_json::to_string(&counts)?);
+        println!("{}", record.to_jsonl());
     } else {
         println!(
             "refusals  promql_only {}  time_axis {}  no_constructor {}  deferred {}  \
@@ -249,6 +256,13 @@ fn print_refusals(err: &EvalError, jsonl: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn runtime_tag(args: &Args) -> &'static str {
+    match args.runtime {
+        RuntimeArg::Interp => Runtime::Interpreter.tag(),
+        RuntimeArg::Datafusion => Runtime::DataFusion.tag(),
+    }
 }
 
 fn real_main() -> Result<()> {
@@ -310,7 +324,7 @@ fn real_main() -> Result<()> {
             Ok(evaluated) => evaluated,
             Err(EvalError::Refused(refusals)) => {
                 for refusal in &refusals {
-                    println!("REFUSED {refusal}");
+                    eprintln!("REFUSED {refusal}");
                 }
                 anyhow::bail!("the pre-ASAP tree of `{query_text}` was refused");
             }
@@ -338,14 +352,19 @@ fn real_main() -> Result<()> {
         };
         let outcome = match attempted {
             Ok(outcome) => outcome,
-            // The refusal table is a deliverable in its own right, so it goes
-            // to stdout as data rather than to stderr as a complaint.
+            // The refusal record is a deliverable in its own right, so it goes
+            // to stdout as data while the prose behind it goes to stderr, and
+            // a sweep runs on to the next seed rather than dying here.
             Err(err @ (EvalError::Refused(_) | EvalError::Untranslated(_))) => {
-                print_refusals(&err, args.jsonl)?;
-                anyhow::bail!(
-                    "{} of the plan's nodes were refused",
-                    refusal_counts(&err).total()
-                );
+                print_refusals(
+                    &err,
+                    args.jsonl,
+                    runtime_tag(&args),
+                    &plan,
+                    &query_text,
+                    seed,
+                )?;
+                continue;
             }
             Err(err) => return Err(err).with_context(|| format!("running seed {seed}")),
         };
