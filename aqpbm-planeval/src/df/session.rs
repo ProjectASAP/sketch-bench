@@ -397,13 +397,53 @@ mod tests {
 
     #[tokio::test]
     async fn one_session_per_seed_and_each_keeps_its_own_pool() {
-        let sessions =
+        use crate::df::sketch_udaf::{sketch_aggregates, SummaryFunctions, KLL_FUNCTION};
+
+        let bare =
             sessions_for_seeds(0..3, MemoryPoolSettings::default(), &NoSeedBoundFunctions).unwrap();
-        let seeds: Vec<u64> = sessions.iter().map(SeedSession::seed).collect();
+        let seeds: Vec<u64> = bare.iter().map(SeedSession::seed).collect();
         assert_eq!(seeds, vec![0, 1, 2]);
-        for session in &sessions {
+        for session in &bare {
             assert_eq!(session.reserved_bytes(), 0);
-            assert!(!session.context().state().aggregate_functions().is_empty());
+            let registered = session.state().aggregate_functions().clone();
+            assert!(
+                registered.contains_key("sum"),
+                "DataFusion's own aggregates are there whether or not anything registers"
+            );
+            assert!(
+                !registered.contains_key(KLL_FUNCTION),
+                "a session bound to no functions holds none of ours"
+            );
+        }
+
+        let bound =
+            sessions_for_seeds(0..3, MemoryPoolSettings::default(), &SummaryFunctions).unwrap();
+        let built_in: Vec<String> = bare[0]
+            .state()
+            .aggregate_functions()
+            .keys()
+            .cloned()
+            .collect();
+        for session in &bound {
+            assert_eq!(session.reserved_bytes(), 0);
+            let registered = session.state().aggregate_functions().clone();
+            let ours: Vec<&String> = registered
+                .keys()
+                .filter(|name| !built_in.contains(name))
+                .collect();
+            let expected: Vec<String> = sketch_aggregates(session.seed())
+                .iter()
+                .map(|function| function.name().to_owned())
+                .collect();
+            assert_eq!(ours.len(), expected.len(), "{ours:?}");
+            for name in &expected {
+                assert!(registered.contains_key(name), "{name}");
+            }
+            let kll = registered.get(KLL_FUNCTION).expect("the KLL aggregate");
+            assert!(
+                format!("{kll:?}").contains(&format!("seed: {}", session.seed())),
+                "the registered instance carries this session's seed: {kll:?}"
+            );
         }
     }
 }
