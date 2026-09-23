@@ -14,6 +14,7 @@ pub mod plan;
 pub mod record;
 pub mod rows;
 pub mod run;
+pub mod runtimes;
 pub mod score;
 pub mod sql;
 pub mod types;
