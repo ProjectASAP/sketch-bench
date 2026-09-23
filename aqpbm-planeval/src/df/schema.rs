@@ -206,7 +206,7 @@ pub fn summary_schema_fields(
             Ok(Field::new(
                 &declared.name,
                 summary_field_arrow_type(&declared.dtype, made.data_type())?,
-                declared.nullable || made.is_nullable(),
+                declared.nullable,
             ))
         })
         .collect()
@@ -453,6 +453,24 @@ mod tests {
         let fields = summary_schema_fields(&schema, &produced).unwrap();
         assert_eq!(fields[0].data_type(), &ArrowDataType::Utf8);
         assert_eq!(fields[1].data_type(), &ArrowDataType::Binary);
+        assert!(
+            !fields[1].is_nullable(),
+            "the edge declares this column NOT NULL, and the state table keeps that declaration \
+             for RecordBatch::try_new to check the rows against"
+        );
+
+        let mut widened = schema.clone();
+        widened.fields[1].nullable = true;
+        let fields = summary_schema_fields(&widened, &produced).unwrap();
+        assert!(
+            fields[1].is_nullable(),
+            "a NULL the edge declares stays declared whatever the query it cuts produces"
+        );
+        let narrowed = ArrowSchema::new(vec![
+            Field::new("service", ArrowDataType::Utf8, false),
+            Field::new("latency", ArrowDataType::Binary, false),
+        ]);
+        let fields = summary_schema_fields(&widened, &narrowed).unwrap();
         assert!(fields[1].is_nullable());
 
         let renamed = ArrowSchema::new(vec![

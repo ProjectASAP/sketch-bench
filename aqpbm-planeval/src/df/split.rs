@@ -513,8 +513,9 @@ mod tests {
             &datafusion::arrow::datatypes::DataType::Binary
         );
         assert!(
-            schema.field(1).is_nullable(),
-            "the state table follows what the maintenance query actually produced"
+            !schema.field(1).is_nullable(),
+            "the state table follows the nullability the edge declares, which the rows are then \
+             checked against"
         );
     }
 
