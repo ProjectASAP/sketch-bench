@@ -148,7 +148,10 @@ pub fn run_promql(
     accuracy: AccuracyTarget,
     from: &RowsFrom,
 ) -> Result<ExactRun, EvalError> {
-    let root = lower_promql_root(query, accuracy)?;
+    run_tree(lower_promql_root(query, accuracy)?, from)
+}
+
+pub fn run_tree(root: Rc<QueryExpr>, from: &RowsFrom) -> Result<ExactRun, EvalError> {
     let (rows, rows_scanned) = scan(&root, from)?;
 
     let (answer, leaf_emitted) = evaluate(PRE_ASAP_ROOT, &root, &rows)?;

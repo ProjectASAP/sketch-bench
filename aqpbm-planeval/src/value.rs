@@ -128,6 +128,58 @@ pub(crate) fn apply(
     }
 }
 
+pub(crate) fn identity_over(
+    node: PostAsapNodeId,
+    operation: &ValueOperation,
+    columns: usize,
+) -> Result<(), Refusal> {
+    let ValueOperation::Project { cols, qualifier } = operation else {
+        return Err(refusal(
+            node,
+            format!(
+                "{}: its producer holds summary state, and only a projection that changes \
+                 nothing can be read off state without rows",
+                debug_variant(operation)
+            ),
+        ));
+    };
+    if let Some(qualifier) = qualifier {
+        return Err(refusal(
+            node,
+            format!("Project re-qualifies its producer's columns under {qualifier:?}"),
+        ));
+    }
+    if cols.len() != columns {
+        return Err(refusal(
+            node,
+            format!(
+                "Project emits {} of its producer's {columns} columns, and its producer holds \
+                 summary state rather than rows",
+                cols.len()
+            ),
+        ));
+    }
+    for (position, item) in cols.iter().enumerate() {
+        if item.alias.is_some() {
+            return Err(refusal(
+                node,
+                format!("Project renames column {position} of a producer that holds state"),
+            ));
+        }
+        if !matches!(&item.expr, QueryExpr::Column(held) if *held == position) {
+            return Err(refusal(
+                node,
+                format!(
+                    "Project col {position} is {}, not column {position} of a producer that \
+                     holds state",
+                    variant_name(&item.expr)
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn project_shape(node: PostAsapNodeId, cols: &[ProjectItem]) -> Result<(), Refusal> {
     for (index, item) in cols.iter().enumerate() {
         match &item.expr {

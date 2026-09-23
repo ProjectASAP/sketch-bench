@@ -14,6 +14,7 @@ pub mod record;
 pub mod rows;
 pub mod run;
 pub mod score;
+pub mod sql;
 pub mod types;
 pub(crate) mod value;
 

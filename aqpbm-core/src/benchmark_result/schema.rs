@@ -484,6 +484,7 @@ mod tests {
                 cardinality: None,
                 special_rule: aqpbm_datagen::RULE_NONE,
                 data_type: "i64".into(),
+                sql_type: None,
                 string: None,
             },
             1_000_000,

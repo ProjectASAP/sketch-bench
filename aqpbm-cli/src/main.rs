@@ -232,6 +232,7 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
             cardinality: None,
             special_rule: RULE_NONE,
             data_type: "i64".into(),
+            sql_type: None,
             string: {
                 let opts = StringOpts {
                     alphabet: args.alphabet.clone(),

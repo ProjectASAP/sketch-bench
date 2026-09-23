@@ -13,12 +13,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use aqpbm_datagen::table::TableDescription;
-use aqpbm_planeval::exact::{run_promql, Data, ExactRun};
-use aqpbm_planeval::plan::{plan_promql, to_json};
+use aqpbm_planeval::exact::{run_promql, run_tree, Data, ExactRun};
+use aqpbm_planeval::plan::{plan_promql, plan_sql, to_json};
 use aqpbm_planeval::record::{NodeCost, Phase, PlanEvalRecord};
 use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
 use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
-use aqpbm_planeval::{EvalError, Value};
+use aqpbm_planeval::{sql, EvalError, Value};
 use asap_types::types::AccuracyTarget;
 
 #[derive(Parser, Debug)]
@@ -28,8 +28,25 @@ use asap_types::types::AccuracyTarget;
 )]
 struct Args {
     /// PromQL to plan, e.g. `quantile(0.5, cpu_cores)`.
-    #[arg(long)]
-    query: String,
+    #[arg(long, conflicts_with = "sql", required_unless_present = "sql")]
+    query: Option<String>,
+
+    #[arg(
+        long,
+        requires = "spec",
+        help = "SQL to plan, e.g. `SELECT approx_percentile_cont(latency, 0.99) FROM t`. \
+                Requires --spec: a SQL query names tables, and the only catalog this binary \
+                has is the one the spec describes"
+    )]
+    sql: Option<String>,
+
+    #[arg(
+        long,
+        requires = "sql",
+        help = "The name --sql may refer to the --spec table by. Defaults to the spec file's \
+                stem"
+    )]
+    table: Option<String>,
 
     /// Generate the rows in process from a `datagen` spec file (examples in
     /// `configs/datagen/`). Wins over `--csv`.
@@ -113,14 +130,21 @@ fn main() -> ExitCode {
     }
 }
 
-fn row_source(args: &Args) -> Result<RowsFrom> {
-    match (&args.spec, &args.csv) {
-        (Some(path), _) => {
-            let description = TableDescription::from_path(path)
-                .with_context(|| format!("loading {}", path.display()))?;
-            description
-                .validate()
-                .with_context(|| format!("validating {}", path.display()))?;
+fn spec_table(args: &Args) -> Result<Option<(PathBuf, TableDescription)>> {
+    let Some(path) = args.spec.as_ref() else {
+        return Ok(None);
+    };
+    let description = TableDescription::from_path(path)
+        .with_context(|| format!("loading {}", path.display()))?;
+    description
+        .validate()
+        .with_context(|| format!("validating {}", path.display()))?;
+    Ok(Some((path.clone(), description)))
+}
+
+fn row_source(args: &Args, spec: Option<&(PathBuf, TableDescription)>) -> Result<RowsFrom> {
+    match (spec, &args.csv) {
+        (Some((path, description)), _) => {
             let table = description
                 .generate()
                 .with_context(|| format!("generating from {}", path.display()))?;
@@ -146,9 +170,32 @@ fn row_source(args: &Args) -> Result<RowsFrom> {
 fn real_main() -> Result<()> {
     let args = Args::parse();
     let accuracy = AccuracyTarget::Epsilon(args.epsilon);
+    let spec = spec_table(&args)?;
 
-    let plan = plan_promql(&args.query, accuracy.clone())
-        .with_context(|| format!("planning `{}`", args.query))?;
+    let (query_text, plan) = match (&args.query, &args.sql) {
+        (Some(query), None) => (
+            query.clone(),
+            plan_promql(query, accuracy.clone())
+                .with_context(|| format!("planning `{query}`"))?,
+        ),
+        (None, Some(sql)) => {
+            let (path, description) = spec
+                .as_ref()
+                .context("--sql needs the table catalog --spec describes")?;
+            let table = match &args.table {
+                Some(named) => named.clone(),
+                None => sql::table_name_from_path(path)?,
+            };
+            let catalog = sql::catalog_from_spec(&table, description)
+                .with_context(|| format!("deriving a catalog from {}", path.display()))?;
+            (
+                sql.clone(),
+                plan_sql(sql, &catalog, accuracy.clone())
+                    .with_context(|| format!("planning `{sql}`"))?,
+            )
+        }
+        _ => anyhow::bail!("one of --query or --sql is required"),
+    };
 
     if args.emit_json {
         println!("{}", to_json(&plan)?);
@@ -160,22 +207,26 @@ fn real_main() -> Result<()> {
     let mut observations = GuaranteeObservations::default();
     // Built once, outside the seed loop: the rows are the same every seed, so
     // a difference between seeds is the sketch's and never the data's.
-    let rows = row_source(&args)?;
+    let rows = row_source(&args, spec.as_ref())?;
 
     if args.evaluate_exactly {
-        let evaluated = match run_promql(&args.query, accuracy, &rows) {
+        let evaluated = match plan.pre_asap.as_ref() {
+            Some(root) if args.sql.is_some() => run_tree(Rc::clone(root), &rows),
+            _ => run_promql(&query_text, accuracy, &rows),
+        };
+        let evaluated = match evaluated {
             Ok(evaluated) => evaluated,
             Err(EvalError::Refused(refusals)) => {
                 for refusal in &refusals {
                     println!("REFUSED {refusal}");
                 }
-                anyhow::bail!("the pre-ASAP tree of `{}` was refused", args.query);
+                anyhow::bail!("the pre-ASAP tree of `{query_text}` was refused");
             }
             Err(err) => {
-                return Err(err).with_context(|| format!("evaluating `{}` exactly", args.query))
+                return Err(err).with_context(|| format!("evaluating `{query_text}` exactly"))
             }
         };
-        let block = exact_block(&args.query, &evaluated);
+        let block = exact_block(&query_text, &evaluated);
         if args.jsonl {
             eprint!("{block}");
         } else {
@@ -204,7 +255,7 @@ fn real_main() -> Result<()> {
         for readout in &outcome.readouts {
             observations.observe(readout);
         }
-        let record = PlanEvalRecord::from_run(&args.query, &plan, &outcome);
+        let record = PlanEvalRecord::from_run(&query_text, &plan, &outcome);
         if let Some(error) = record.advantage().accuracy {
             worst_accuracy = match worst_accuracy {
                 Some(held) if held.total_cmp(&error).is_ge() => Some(held),

@@ -172,6 +172,7 @@ mod tests {
                     cardinality: Some(1_000),
                     special_rule: 0,
                     data_type: "u64".into(),
+                    sql_type: None,
                     string: None,
                 },
                 100_000,

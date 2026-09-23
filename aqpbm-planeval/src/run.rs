@@ -438,13 +438,14 @@ fn materialize(resolved: &Resolved<'_>, cfg: &RunConfig) -> Result<Materialized,
             RowStep::Operation {
                 node,
                 producer,
+                producer_columns,
                 operation,
             } => {
-                let input = rows.get(producer).ok_or_else(|| {
-                    EvalError::Validation(format!(
-                        "node {node:?} is a row operation over {producer:?}, which produced no rows"
-                    ))
-                })?;
+                let Some(input) = rows.get(producer) else {
+                    value::identity_over(*node, operation, *producer_columns)
+                        .map_err(|refusal| EvalError::Refused(vec![refusal]))?;
+                    continue;
+                };
                 let produced = value::apply(*node, operation, input)?;
                 rows.insert(*node, produced);
             }
@@ -982,6 +983,7 @@ enum RowStep<'a> {
     Operation {
         node: PostAsapNodeId,
         producer: PostAsapNodeId,
+        producer_columns: usize,
         operation: &'a ValueOperation,
     },
 }
@@ -1042,11 +1044,13 @@ pub(crate) fn resolve<'a>(
             }
             ExecutableOperatorPayload::Value { operation, .. } => {
                 match input_edge(node, dag).and_then(|(producer, schema)| {
-                    value::check(node.id, operation, schema.fields.len()).map(|()| producer.id)
+                    value::check(node.id, operation, schema.fields.len())
+                        .map(|()| (producer.id, schema.fields.len()))
                 }) {
-                    Ok(producer) => resolved.rows.push(RowStep::Operation {
+                    Ok((producer, producer_columns)) => resolved.rows.push(RowStep::Operation {
                         node: node.id,
                         producer,
+                        producer_columns,
                         operation,
                     }),
                     Err(refusal) => refusals.push(refusal),
@@ -1866,6 +1870,49 @@ mod tests {
         assert!(runs.iter().all(|run| run.elapsed_ns > 0));
 
         assert!(time_updates(&slots, &overflowing_updates(), &config).is_err());
+    }
+
+    #[test]
+    fn a_sql_plan_runs_end_to_end_through_the_projection_its_front_end_adds() {
+        use asap_types::pre_asap::schema::{Column, Schema};
+
+        let catalog = asap_frontend_sql::SqlCatalog::new().with_table(
+            "metrics",
+            Schema::new(vec![
+                Column::new("service", DataType::Utf8, false),
+                Column::new("latency", DataType::Float64, false),
+            ]),
+        );
+        let plan = crate::plan::plan_sql(
+            "SELECT approx_percentile_cont(latency, 0.99) FROM metrics",
+            &catalog,
+            AccuracyTarget::Epsilon(0.01),
+        )
+        .expect("planning");
+        let root = plan
+            .dag
+            .nodes
+            .iter()
+            .find(|node| node.id == plan.dag.root)
+            .expect("the root is a node");
+        assert_eq!(operator_name(&root.payload), "Value");
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp file");
+        writeln!(file, "service,latency").unwrap();
+        for i in 0..1_000 {
+            writeln!(file, "s{},{}", i % 4, i as f64).unwrap();
+        }
+        file.flush().unwrap();
+
+        let outcome = run(&plan, &csv_config(file.path(), 7, true)).expect("run");
+        assert_eq!(outcome.rows_scanned, 1_000);
+        assert_eq!(outcome.readouts.len(), 1);
+        assert!(
+            matches!(outcome.readouts[0].query, SketchQuery::Quantile { q } if q == 0.99),
+            "{:?}",
+            outcome.readouts[0].query
+        );
+        assert!(outcome.readouts[0].exact.is_some());
     }
 
     /// `{ts, value}` — the usage-derived schema a PromQL leaf carries.

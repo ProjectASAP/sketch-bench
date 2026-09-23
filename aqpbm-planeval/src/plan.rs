@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use asap_aware_mapping::{search_workload, DefaultCostModel};
 use asap_frontend_promql::{lower_promql_workload, PromqlError};
+use asap_frontend_sql::SqlCatalog;
 use asap_types::post_asap::{
     compile_executable_dag_with_node_ids, ExecutableDag, ExecutableNodeIdentityMap,
     PostAsapDagDocument, PostAsapNodeId,
@@ -131,7 +132,26 @@ pub fn plan_promql_workload(
             .map_err(|err| EvalError::Planning(format!("lower {name:?} ({query:?}): {err:?}")))?;
         roots.push(((*name).to_string(), Rc::new(expr)));
     }
+    plan_roots(roots)
+}
 
+pub fn plan_sql(
+    sql: &str,
+    catalog: &SqlCatalog,
+    accuracy: AccuracyTarget,
+) -> Result<Plan, EvalError> {
+    let root = crate::sql::lower_sql_root(sql, catalog, accuracy)?;
+    let mut planned = plan_roots(vec![(sql.to_string(), root)])?;
+    if planned.len() != 1 {
+        return Err(EvalError::Planning(format!(
+            "planning {sql:?} produced {} roots, expected 1",
+            planned.len()
+        )));
+    }
+    Ok(planned.remove(0).1)
+}
+
+fn plan_roots(roots: Vec<(String, Rc<QueryExpr>)>) -> Result<Vec<(String, Plan)>, EvalError> {
     // `search_workload` runs CSE over the roots and may hand back different
     // `Rc`s than the ones passed in, so assembly targets are read back
     // off the space rather than reused from `roots`.
@@ -274,6 +294,10 @@ mod tests {
 
     use super::*;
     use crate::run::operator_name;
+    use asap_types::post_asap::{
+        ExactKind, ExactParams, ExecutableOperatorPayload, GroupingStrategy, SketchAlgorithm,
+        SketchKind, SketchParams, SummaryFamilyType,
+    };
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
 
@@ -329,6 +353,122 @@ mod tests {
         assert!(plan.dag.edges.is_empty());
         assert_eq!(ids(&plan), vec![0]);
         assert_eq!(operators(&plan), vec!["Fallback"]);
+    }
+
+    fn metrics_catalog() -> SqlCatalog {
+        use asap_types::pre_asap::schema::{Column, DataType, Schema};
+        SqlCatalog::new().with_table(
+            "metrics",
+            Schema::with_time_index(
+                vec![
+                    Column::new("ts", DataType::Timestamp, false),
+                    Column::new("service", DataType::Utf8, false),
+                    Column::new("latency", DataType::Float64, false),
+                    Column::new("bytes", DataType::Int64, false),
+                ],
+                0,
+                Vec::new(),
+            ),
+        )
+    }
+
+    fn bound_family(plan: &Plan) -> SummaryFamilyType {
+        plan.dag
+            .nodes
+            .iter()
+            .find_map(|node| match &node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, .. } => Some(family.clone()),
+                _ => None,
+            })
+            .expect("the plan binds one summary")
+    }
+
+    #[test]
+    fn sql_quantile_binds_a_kll_sketch_sized_from_epsilon() {
+        let plan = plan_sql(
+            "SELECT approx_percentile_cont(latency, 0.99) FROM metrics",
+            &metrics_catalog(),
+            ACCURACY,
+        )
+        .expect("plans");
+        assert_eq!(
+            bound_family(&plan),
+            SummaryFamilyType::Sketch(
+                SketchKind::new(SketchAlgorithm::Kll, SketchParams::Kll { k: 269 }),
+                GroupingStrategy::default()
+            )
+        );
+        assert_eq!(
+            operators(&plan),
+            vec!["Fallback", "SummaryAgg", "SummaryEstimate", "Value"]
+        );
+    }
+
+    #[test]
+    fn sql_sum_group_by_binds_an_exact_accumulator_and_no_sketch() {
+        let plan = plan_sql(
+            "SELECT service, SUM(bytes) FROM metrics GROUP BY service",
+            &metrics_catalog(),
+            AccuracyTarget::Exact,
+        )
+        .expect("plans");
+        assert_eq!(
+            bound_family(&plan),
+            SummaryFamilyType::ExactAggregate(ExactKind::Sum, ExactParams::Sum)
+        );
+        assert_eq!(operators(&plan), vec!["Fallback", "SummaryAgg", "Value"]);
+    }
+
+    #[test]
+    fn sql_count_distinct_offers_hll_first_and_the_cost_model_takes_theta() {
+        use asap_aware_mapping::{
+            Replacement, ReplacementStrategy, ReplacementSubDAG, SketchAlgorithmStrategy,
+            TargetSubDAG,
+        };
+        use asap_types::post_asap::SummaryExpr;
+
+        const SQL: &str = "SELECT COUNT(DISTINCT service) FROM metrics";
+
+        let plan = plan_sql(SQL, &metrics_catalog(), ACCURACY).expect("plans");
+        assert_eq!(
+            bound_family(&plan),
+            SummaryFamilyType::Sketch(
+                SketchKind::new(SketchAlgorithm::Theta, SketchParams::Theta { k: 1_000_002 }),
+                GroupingStrategy::default()
+            )
+        );
+
+        let root = crate::sql::lower_sql_root(SQL, &metrics_catalog(), ACCURACY).expect("lowers");
+        let aggregate = match root.as_ref() {
+            QueryExpr::Project { child, .. } => Rc::new(child.as_ref().clone()),
+            other => panic!("expected a Project over the aggregate, got {other:?}"),
+        };
+        let target = TargetSubDAG::new(&aggregate);
+        let head = SketchAlgorithmStrategy::default_cost_model()
+            .replacements(&target)
+            .into_iter()
+            .next()
+            .expect("one candidate");
+        let ReplacementSubDAG {
+            replacement: Replacement::Summary(node),
+            ..
+        } = head
+        else {
+            panic!("the head candidate is not a summary");
+        };
+        let SummaryExpr::SummaryEstimate { summary_input, .. } = &node.expr else {
+            panic!("expected a SummaryEstimate, got {:?}", node.expr);
+        };
+        let SummaryExpr::SummaryAgg { family, .. } = &summary_input.expr else {
+            panic!("expected a SummaryAgg, got {:?}", summary_input.expr);
+        };
+        assert_eq!(
+            family,
+            &SummaryFamilyType::Sketch(
+                SketchKind::new(SketchAlgorithm::Hll, SketchParams::Hll { precision: 14 }),
+                GroupingStrategy::default()
+            )
+        );
     }
 
     #[test]

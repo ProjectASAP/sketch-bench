@@ -1,0 +1,21 @@
+column_num: 4
+column_label: [ts, service, latency, bytes]
+row_num: 200000
+
+column_spec:
+  - data_type: i64
+    sql_type: timestamp_ms
+    special_rule: 1
+    shift: 1700000000000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 20.0, seed: 1}
+
+  - data_type: string
+    cardinality: 8
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 8.0, seed: 2}
+    string: {alphabet: "abcdefgh", min_len: 4, max_len: 8}
+
+  - data_type: f64
+    distribution: {kind: zipf, skewness: 1.1, population_size: 1000, seed: 3}
+
+  - data_type: i64
+    distribution: {kind: zipf, skewness: 1.2, population_size: 1000, seed: 4}
