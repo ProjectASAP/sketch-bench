@@ -1002,7 +1002,6 @@ pub(crate) mod tests {
     use asap_types::pre_asap::Column;
     use asap_types::types::AccuracyTarget;
 
-    use crate::plan::TimeRangeOrigin;
     use asap_aware_mapping::{search_workload, DefaultCostModel};
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
@@ -1013,14 +1012,32 @@ pub(crate) mod tests {
     /// uses. Nothing is written to a wire; `compile_executable_dag` is still
     /// called because the `ExecutionDataState` assignment and `validate()` only
     /// exist on the compiled dag.
-    pub(crate) fn plan(query: &str) -> asap_types::post_asap::ExecutableDag {
-        let (expr, origin) = crate::plan::lower_promql_root(query, ACCURACY).expect("lowers");
-        assert_eq!(
-            origin,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-            "{query} is a fixture whose only TimeRange is the injected horizon"
-        );
-        let space = search_workload(vec![(query.to_string(), expr)]);
+    pub(crate) const MEDIAN: &str = "SELECT approx_percentile_cont(value, 0.5) FROM cpu_cores";
+
+    pub(crate) fn cpu_cores_catalog(labels: &[&str]) -> asap_frontend_sql::SqlCatalog {
+        let mut columns = vec![
+            Column::new("ts", DataType::Timestamp, false),
+            Column::new("value", DataType::Float64, false),
+        ];
+        for label in labels {
+            columns.push(Column::new(*label, DataType::Utf8, false));
+        }
+        asap_frontend_sql::SqlCatalog::new()
+            .with_table("cpu_cores", Schema::with_time_index(columns, 0, Vec::new()))
+    }
+
+    pub(crate) fn plan_of_with_labels(sql: &str, labels: &[&str]) -> crate::plan::Plan {
+        crate::plan::plan_sql(sql, &cpu_cores_catalog(labels), ACCURACY).expect("plans")
+    }
+
+    pub(crate) fn plan_of(sql: &str) -> crate::plan::Plan {
+        plan_of_with_labels(sql, &[])
+    }
+
+    pub(crate) fn plan(sql: &str) -> asap_types::post_asap::ExecutableDag {
+        let expr =
+            crate::sql::lower_sql_root(sql, &cpu_cores_catalog(&[]), ACCURACY).expect("lowers");
+        let space = search_workload(vec![(sql.to_string(), expr)]);
         let selection = space.global_selection(&DefaultCostModel);
         let (_, root) = space.roots.first().expect("one root");
         let assembled = selection
@@ -1044,31 +1061,19 @@ pub(crate) mod tests {
     }
 
     fn fallback_expression(dag: &asap_types::post_asap::ExecutableDag) -> &QueryExpr {
-        let expression = match &node_of(dag, "Fallback").payload {
+        match &node_of(dag, "Fallback").payload {
             ExecutableOperatorPayload::Fallback { expression } => expression,
             other => panic!("the Fallback node carries {other:?}"),
-        };
-        match crate::plan::ingestion_horizon_child(
-            expression,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-        ) {
-            Some(child) => child.as_ref(),
-            None => expression,
         }
     }
 
     pub(crate) fn fallback_scan_mut(
         payload: &mut ExecutableOperatorPayload,
-        origin: TimeRangeOrigin,
     ) -> &mut asap_types::pre_asap::QueryExpr {
         let ExecutableOperatorPayload::Fallback { expression } = payload else {
             panic!("the Fallback node lost its payload");
         };
-        if crate::plan::ingestion_horizon_child_mut(expression, origin).is_none() {
-            return expression;
-        }
-        crate::plan::ingestion_horizon_child_mut(expression, origin)
-            .expect("the horizon was recognised a statement ago")
+        expression
     }
 
     struct TempCsv(std::path::PathBuf);
@@ -1162,7 +1167,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_planners_fallback_node_opens_as_a_row_source() {
-        let dag = plan("quantile(0.5, cpu_cores)");
+        let dag = plan(MEDIAN);
         let node = node_of(&dag, "Fallback");
         let csv = TempCsv::new("planner", "ts,value\n1,10\n2,20\n3,30\n");
 
@@ -1268,8 +1273,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_sample_value_weight_resolves_to_the_value_column() {
-        let dag = plan("quantile(0.5, cpu_cores)");
+    fn the_planners_weight_resolves_to_the_value_column() {
+        let dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback");
         let agg = node_of(&dag, "SummaryAgg");
 
@@ -1279,11 +1284,16 @@ pub(crate) mod tests {
         };
         let column = match &weight {
             asap_types::post_asap::SummaryInputExpr::Column(column) => column.clone(),
-            other => panic!("a PromQL SummaryAgg weights by a column, found {other:?}"),
+            other => panic!("a SummaryAgg weights by a column, found {other:?}"),
         };
 
-        // This is the shape 24 of the 33 corpus plans carry.
-        assert_eq!(column, ColumnRef::SampleValue);
+        assert_eq!(
+            column,
+            ColumnRef::Qualified {
+                table: "cpu_cores".to_owned(),
+                name: "value".to_owned(),
+            }
+        );
         let resolved = resolve_column(&column, &fallback.output_schema).expect("resolves");
         assert_eq!(fallback.output_schema.fields[resolved].name, "value");
     }
@@ -1595,7 +1605,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_summary_typed_output_field_on_a_fallback_is_refused() {
-        let dag = plan("quantile(0.5, cpu_cores)");
+        let dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg");
         let (scan_schema, mut node_schema) = promql_schema(&[]);
         node_schema.fields[1].dtype = agg.output_schema.fields[0].dtype.clone();

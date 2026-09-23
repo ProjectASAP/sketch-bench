@@ -33,7 +33,7 @@ use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 use crate::df::RefusalCounts;
 use crate::exact;
 use crate::handle::{bind, SummaryHandle};
-use crate::plan::{Plan, TimeRangeOrigin};
+use crate::plan::Plan;
 use crate::rows;
 use crate::rows::{check_predicate, resolve_column, variant_name};
 use crate::score;
@@ -210,7 +210,7 @@ type EstimateTiming = (Vec<RunMetrics>, Vec<Answer>, PerSlotNs);
 /// row source.
 pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let dag = &plan.dag;
-    let resolved = resolve(dag, &plan.order, plan.time_range_origin).map_err(EvalError::Refused)?;
+    let resolved = resolve(dag, &plan.order).map_err(EvalError::Refused)?;
     if resolved.nodes() != plan.order.len() {
         return Err(EvalError::Validation(format!(
             "{} of the plan's {} nodes resolved into something to execute",
@@ -301,7 +301,7 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let mut pre_asap_node_times = Vec::new();
     let mut pre_asap_answer = None;
     if let (true, Some(root)) = (cfg.pre_asap, plan.pre_asap.as_ref()) {
-        let arm = exact::time_pre_asap(root, cfg, plan.time_range_origin)?;
+        let arm = exact::time_pre_asap(root, cfg)?;
         pre_asap.evaluate = arm.evaluate;
         pre_asap_bytes = arm.retained_bytes;
         pre_asap_node_times = arm.node_times;
@@ -1047,7 +1047,6 @@ struct ResolvedReadout {
 pub(crate) fn resolve<'a>(
     dag: &'a ExecutableDag,
     order: &[PostAsapNodeId],
-    origin: TimeRangeOrigin,
 ) -> Result<Resolved<'a>, Vec<Refusal>> {
     let by_id: HashMap<PostAsapNodeId, &ExecutableDagNode> =
         dag.nodes.iter().map(|node| (node.id, node)).collect();
@@ -1068,10 +1067,6 @@ pub(crate) fn resolve<'a>(
         };
         match &node.payload {
             ExecutableOperatorPayload::Fallback { expression } => {
-                let expression = match crate::plan::ingestion_horizon_child(expression, origin) {
-                    Some(child) => child.as_ref(),
-                    None => expression,
-                };
                 match resolve_fallback(node, expression) {
                     Ok(()) => resolved.rows.push(RowStep::Source { node, expression }),
                     Err(refusal) => refusals.push(refusal),
@@ -1521,8 +1516,7 @@ mod tests {
         use asap_types::post_asap::SummaryInputExpr;
         use asap_types::pre_asap::ColumnRef;
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         for node in &mut plan.dag.nodes {
             match &mut node.payload {
                 ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
@@ -1585,16 +1579,25 @@ mod tests {
 
     #[test]
     fn the_topk_plan_runs_as_a_row_pipeline_instead_of_being_refused() {
-        for (query, expected) in [("topk(5, cpu_cores)", 5usize), ("bottomk(3, cpu_cores)", 3)] {
-            let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).expect("plan");
+        for (query, expected) in [
+            (
+                "SELECT ts, value FROM cpu_cores ORDER BY value DESC LIMIT 5",
+                5usize,
+            ),
+            (
+                "SELECT ts, value FROM cpu_cores ORDER BY value ASC LIMIT 3",
+                3,
+            ),
+        ] {
+            let plan = plan_of(query);
             assert_eq!(
                 plan.dag
                     .nodes
                     .iter()
                     .filter(|node| operator_name(&node.payload) == "Value")
                     .count(),
-                2,
-                "{query} compiles to Sort + Limit"
+                3,
+                "{query} compiles to Sort + Limit + Project"
             );
 
             let values: Vec<f64> = (0..600).map(|i| (i % 97) as f64).collect();
@@ -1615,8 +1618,7 @@ mod tests {
         use asap_types::post_asap::{EntityIdentity, SummaryField, SummaryInputExpr};
         use asap_types::pre_asap::{Column, ColumnRef, DataType};
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         let leaf = plan.dag.nodes[0].id;
         for node in &mut plan.dag.nodes {
             if node.id == leaf {
@@ -1626,10 +1628,7 @@ mod tests {
                     nullable: false,
                 });
                 let asap_types::pre_asap::QueryExpr::Scan { schema, .. } =
-                    crate::rows::tests::fallback_scan_mut(
-                        &mut node.payload,
-                        plan.time_range_origin,
-                    )
+                    crate::rows::tests::fallback_scan_mut(&mut node.payload)
                 else {
                     panic!("the Fallback node lost its Scan");
                 };
@@ -1680,8 +1679,7 @@ mod tests {
         use asap_types::post_asap::SummaryInputExpr;
         use asap_types::pre_asap::ColumnRef;
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         for node in &mut plan.dag.nodes {
             match &mut node.payload {
                 ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
@@ -1719,11 +1717,10 @@ mod tests {
 
     #[test]
     fn readouts_come_out_in_the_same_order_every_run() {
-        let plan = plan_promql(
-            "quantile by (cluster) (0.5, cpu_cores)",
-            AccuracyTarget::Epsilon(0.01),
-        )
-        .expect("plan");
+        let plan = plan_of_with_labels(
+            "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores GROUP BY cluster",
+            &["cluster"],
+        );
         let csv = grouped_csv(12, 600);
 
         let groups = |seed: u64| -> Vec<String> {
@@ -1793,8 +1790,7 @@ mod tests {
         });
 
         let (answered, _) =
-            crate::exact::evaluate(PostAsapNodeId(1), &tree, &rows, TimeRangeOrigin::Unknown)
-                .expect("evaluates");
+            crate::exact::evaluate(PostAsapNodeId(1), &tree, &rows).expect("evaluates");
         match answered {
             crate::exact::Data::Rows(emitted) => {
                 assert_eq!(
@@ -1819,7 +1815,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::plan::plan_promql;
+    use crate::rows::tests::{plan_of, plan_of_with_labels, MEDIAN};
     use asap_types::post_asap::{GroupingStrategy, SketchAlgorithm, SketchKind, SketchParams};
     use asap_types::types::AccuracyTarget;
     use std::io::Write;
@@ -1966,10 +1962,9 @@ mod tests {
     }
 
     #[test]
-    fn three_node_plan_runs_end_to_end_and_the_claimed_bound_holds() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01))
-            .expect("planning");
-        assert_eq!(plan.dag.nodes.len(), 3);
+    fn the_quantile_plan_runs_end_to_end_and_the_claimed_bound_holds() {
+        let plan = plan_of(MEDIAN);
+        assert_eq!(plan.dag.nodes.len(), 4);
 
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
         let csv = csv_with(&values);
@@ -2002,8 +1997,7 @@ mod tests {
 
     #[test]
     fn the_rows_are_produced_once_however_many_passes_are_timed() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..1_000).map(|i| (i % 91) as f64).collect::<Vec<_>>());
 
         let mut config = csv_config(csv.path(), 5, true);
@@ -2029,8 +2023,7 @@ mod tests {
 
     #[test]
     fn a_timed_phase_reports_a_population_and_an_untimed_one_reports_nothing() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..2_000).map(|i| (i % 313) as f64).collect::<Vec<_>>());
 
         let mut config = csv_config(csv.path(), 1, true);
@@ -2062,8 +2055,7 @@ mod tests {
 
     #[test]
     fn the_exact_arm_is_skipped_when_verify_is_off_and_says_so() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..1_000).map(|i| i as f64).collect::<Vec<_>>());
 
         let outcome = run(&plan, &csv_config(csv.path(), 0, false)).expect("run");
@@ -2079,11 +2071,11 @@ mod tests {
 
     #[test]
     fn an_exact_accumulator_plan_needs_no_sketch_and_still_reports_both_arms() {
-        let plan = plan_promql("sum(cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of("SELECT SUM(value) FROM cpu_cores");
         assert_eq!(
             plan.dag.nodes.len(),
-            2,
-            "Fallback -> SummaryAgg, no estimate"
+            3,
+            "Fallback -> SummaryAgg -> Value, no estimate"
         );
 
         let values: Vec<f64> = (1..=100).map(|i| i as f64).collect();
@@ -2098,38 +2090,11 @@ mod tests {
         assert_eq!(outcome.retained_values, 100);
     }
 
-    /// `count(...)` is one of the most basic queries in the corpus, and the
-    /// planner compiles it to a CMS read through a bare-bucket-total readout
-    /// rather than to an exact accumulator.
     #[test]
-    fn the_count_plan_resolves_runs_and_agrees_with_the_exact_arm() {
-        let plan = plan_promql("count(cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
-
-        let values: Vec<f64> = (0..5_000).map(|i| (i % 37) as f64).collect();
-        let csv = csv_with(&values);
-        let outcome = run(&plan, &csv_config(csv.path(), 7, true)).expect("run");
-
-        assert_eq!(outcome.readouts.len(), 1);
-        let readout = &outcome.readouts[0];
-        assert_eq!(
-            readout.query,
-            Some(SketchQuery::PointCount {
-                key: asap_types::pre_asap::ColumnRef::SampleValue,
-                value: None,
-            })
-        );
-        assert_eq!(readout.approximate, Answer::Scalar(5_000.0));
-        assert_eq!(readout.exact, Some(Answer::Scalar(5_000.0)));
-        // The state it cost, and that it is nothing like the retained column.
-        assert_eq!(outcome.node_footprints.len(), 1);
-        assert!(outcome.node_footprints[0].1 > 0);
-    }
-
-    #[test]
-    fn a_bare_selector_plan_has_no_summary_at_all() {
-        let plan = plan_promql("cpu_cores", AccuracyTarget::Epsilon(0.01)).expect("plan");
-        assert_eq!(plan.dag.nodes.len(), 1);
-        assert!(plan.dag.edges.is_empty());
+    fn a_bare_selection_plan_has_no_summary_at_all() {
+        let plan = plan_of("SELECT ts, value FROM cpu_cores");
+        assert_eq!(plan.dag.nodes.len(), 2);
+        assert_eq!(plan.dag.edges.len(), 1);
 
         let csv = csv_with(&[1.0, 2.0, 3.0]);
         let outcome = run(&plan, &csv_config(csv.path(), 0, true)).expect("run");
@@ -2142,8 +2107,7 @@ mod tests {
 
     #[test]
     fn the_claimed_bound_holds_across_many_seeds() {
-        let plan =
-            plan_promql("quantile(0.9, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of("SELECT approx_percentile_cont(value, 0.9) FROM cpu_cores");
         let values: Vec<f64> = (0..20_000).map(|i| (i % 997) as f64).collect();
         let csv = csv_with(&values);
 
@@ -2192,37 +2156,37 @@ mod resolution_tests {
         CompareOpKind, GroupKeys, Predicate, ProjectItem, ScalarValue, SortKey, Source,
     };
 
-    use crate::rows::tests::{node_of, plan};
+    use crate::rows::tests::{node_of, plan, MEDIAN};
 
     /// Node ids come out of the compiler producer-before-consumer, which is a
     /// property of the compiler rather than one the document carries — enough
     /// for a hand-built fixture, where the whole DAG is three nodes.
     fn resolved(dag: &ExecutableDag) -> Result<Resolved<'_>, Vec<Refusal>> {
         let order: Vec<PostAsapNodeId> = dag.nodes.iter().map(|node| node.id).collect();
-        resolve(dag, &order, TimeRangeOrigin::InjectedIngestionHorizon)
+        resolve(dag, &order)
     }
 
     // ── The planner's own plans ──────────────────────────────────────────────
 
     #[test]
-    fn the_three_node_quantile_plan_resolves_with_zero_refusals() {
-        let dag = plan("quantile(0.5, cpu_cores)");
-        assert_eq!(dag.nodes.len(), 3);
+    fn the_four_node_quantile_plan_resolves_with_zero_refusals() {
+        let dag = plan(MEDIAN);
+        assert_eq!(dag.nodes.len(), 4);
 
         let held = match resolved(&dag) {
             Ok(held) => held,
             Err(refusals) => panic!("refused: {refusals:?}"),
         };
 
-        assert_eq!(held.nodes(), 3);
-        assert_eq!(held.rows.len(), 1);
+        assert_eq!(held.nodes(), 4);
+        assert_eq!(held.rows.len(), 2);
         assert_eq!(held.aggregates.len(), 1);
         assert_eq!(held.readouts.len(), 1);
 
         let aggregate = &held.aggregates[0];
         assert_eq!(aggregate.node, node_of(&dag, "SummaryAgg").id);
         assert_eq!(aggregate.item, None);
-        // `weight: Column(SampleValue)` resolved to the `value` field, and
+        // `weight: Column(cpu_cores.value)` resolved to the `value` field, and
         // `Reduce([])` is a genuine global reduction, not "no grouping".
         assert_eq!(aggregate.weight, ResolvedInput::Column(1));
         assert!(aggregate.group_columns.is_empty());
@@ -2233,7 +2197,7 @@ mod resolution_tests {
 
     #[test]
     fn the_rows_to_summary_window_stamp_does_not_refuse_a_sketch_plan() {
-        let dag = plan("quantile(0.5, cpu_cores)");
+        let dag = plan(MEDIAN);
         // The stamp really is on the 0 -> 1 edge; if it ever stops being, this
         // test stops proving anything and should be revisited.
         assert!(dag.edges.iter().any(|edge| {
@@ -2248,7 +2212,10 @@ mod resolution_tests {
 
     #[test]
     fn the_exact_accumulator_and_fallback_only_plans_are_resolved() {
-        for query in ["cpu_cores", "sum(cpu_cores)"] {
+        for query in [
+            "SELECT ts, value FROM cpu_cores",
+            "SELECT SUM(value) FROM cpu_cores",
+        ] {
             let dag = plan(query);
             if let Err(refusals) = resolved(&dag) {
                 panic!("{query} was refused: {refusals:?}");
@@ -2260,7 +2227,7 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_subtract_node_is_refused_with_no_inverse_operation() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         // Hand-built: nothing in the planner emits one, which is the point.
         let victim = dag
@@ -2293,7 +2260,7 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_delete_node_is_refused_with_no_inverse_operation() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2319,7 +2286,7 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_merge_node_is_refused_in_v0() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2347,7 +2314,7 @@ mod resolution_tests {
     /// for a `Fallback` and the readout produces nothing at all.
     #[test]
     fn a_readout_whose_producer_builds_no_summary_is_refused_rather_than_waved_through() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let estimate = node_of(&dag, "SummaryEstimate").id;
         let edge = dag
@@ -2370,7 +2337,7 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_that_is_a_program_names_the_variant() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
@@ -2401,17 +2368,16 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_predicate_outside_the_subset_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { predicates, .. } = crate::rows::tests::fallback_scan_mut(
-            &mut victim.payload,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-        ) else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::FunctionCall {
@@ -2430,17 +2396,16 @@ mod resolution_tests {
     fn a_label_matcher_on_the_fallback_is_resolved() {
         // A `Scan` with predicates says where rows come from, not what to
         // compute: resolved, deliberately.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { predicates, .. } = crate::rows::tests::fallback_scan_mut(
-            &mut victim.payload,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-        ) else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::Compare {
@@ -2456,7 +2421,7 @@ mod resolution_tests {
 
     #[test]
     fn an_unresolvable_weight_column_names_the_column() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2477,7 +2442,7 @@ mod resolution_tests {
 
     #[test]
     fn a_wildcard_weight_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2509,7 +2474,7 @@ mod resolution_tests {
         )
         .expect("HydraCms takes Cms params");
 
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2537,7 +2502,7 @@ mod resolution_tests {
             Reduction::Reduce(GroupKeys::without(vec![1])),
             Reduction::PerEntity,
         ] {
-            let mut dag = plan("quantile(0.5, cpu_cores)");
+            let mut dag = plan(MEDIAN);
             let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
@@ -2562,7 +2527,7 @@ mod resolution_tests {
 
     #[test]
     fn a_by_column_past_the_producers_schema_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2583,7 +2548,7 @@ mod resolution_tests {
 
     #[test]
     fn an_entity_identity_over_a_schema_with_no_label_column_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2610,7 +2575,7 @@ mod resolution_tests {
             (vec![], vec![1usize, 2]),
             (vec![ColumnRef::Named("cluster".into())], vec![2usize]),
         ] {
-            let mut dag = with_labels(plan("quantile(0.5, cpu_cores)"));
+            let mut dag = with_labels(plan(MEDIAN));
             let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
@@ -2674,10 +2639,9 @@ mod resolution_tests {
                     },
                 );
             }
-            let QueryExpr::Scan { schema, .. } = crate::rows::tests::fallback_scan_mut(
-                &mut node.payload,
-                TimeRangeOrigin::InjectedIngestionHorizon,
-            ) else {
+            let QueryExpr::Scan { schema, .. } =
+                crate::rows::tests::fallback_scan_mut(&mut node.payload)
+            else {
                 panic!("the Fallback node lost its Scan");
             };
             for (offset, label) in labels.iter().enumerate() {
@@ -2710,7 +2674,7 @@ mod resolution_tests {
         )
         .expect("decodes");
 
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
@@ -2919,7 +2883,7 @@ mod resolution_tests {
     }
 
     fn with_readout(query: &SketchQuery) -> ExecutableDag {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let estimate = node_of(&dag, "SummaryEstimate").id;
         let victim = dag
             .nodes
@@ -2936,7 +2900,7 @@ mod resolution_tests {
 
     /// The 3-node plan with a `Value` node grafted above its readout.
     fn with_value(operation: &ValueOperation) -> ExecutableDag {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let estimate = node_of(&dag, "SummaryEstimate").clone();
         let id = PostAsapNodeId(dag.nodes.len() as u32);
         dag.nodes.push(ExecutableDagNode {
@@ -3035,7 +2999,7 @@ mod resolution_tests {
     #[test]
     fn a_summary_to_summary_window_obligation_is_refused() {
         // Both endpoints MAINTENANCE_SUMMARY: the only shape the gate catches.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg");
         let agg_id = agg.id;
         let agg_schema = agg.output_schema.clone();
@@ -3070,7 +3034,7 @@ mod resolution_tests {
 
     #[test]
     fn every_bad_node_is_reported_not_just_the_first() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let agg = node_of(&dag, "SummaryAgg").id;
         let estimate = node_of(&dag, "SummaryEstimate").id;
@@ -3107,7 +3071,7 @@ mod resolution_tests {
     fn one_bad_node_yields_exactly_one_refusal() {
         // A `Binary` node is catchable on both its edge role and its operator;
         // it must be reported once.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let estimate = node_of(&dag, "SummaryEstimate").id;
         for edge in &mut dag.edges {
             if edge.consumer == estimate {
@@ -3137,7 +3101,7 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_whose_output_is_summary_state_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let agg_schema = node_of(&dag, "SummaryAgg").output_schema.clone();
         let victim = dag
@@ -3162,17 +3126,16 @@ mod resolution_tests {
     fn a_source_table_scan_is_accepted_as_a_row_source() {
         // The SQL front end's leaf shape, reached here by rewriting the PromQL
         // one: `Source` carries identity only, and both identities are leaves.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { source, .. } = crate::rows::tests::fallback_scan_mut(
-            &mut victim.payload,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-        ) else {
+        let QueryExpr::Scan { source, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         *source = Source::Table {
@@ -3184,7 +3147,7 @@ mod resolution_tests {
 
     #[test]
     fn a_node_with_no_input_edge_where_one_is_required_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
+        let mut dag = plan(MEDIAN);
         let agg = node_of(&dag, "SummaryAgg").id;
         dag.edges.retain(|edge| edge.consumer != agg);
 
@@ -3203,7 +3166,7 @@ mod resolution_tests {
         // The position in `NodeDecision::Aggregate` is an index, so this pins
         // what index 1 of the producer's schema actually is: an off-by-one here
         // would weight the sketch by timestamps and never fail loudly.
-        let dag = plan("quantile(0.5, cpu_cores)");
+        let dag = plan(MEDIAN);
         let field: &SummaryField = &node_of(&dag, "Fallback").output_schema.fields[1];
         assert_eq!(field.name, "value");
         assert_eq!(field.dtype, SummaryFamilyType::Plain(DataType::Float64));

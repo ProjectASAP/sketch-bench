@@ -1,6 +1,6 @@
 //! Getting a plan into main memory and preparing it for execution.
 //!
-//! The chain is PromQL -> pre-ASAP `QueryExpr` -> plan space -> global
+//! The chain is SQL -> pre-ASAP `QueryExpr` -> plan space -> global
 //! selection -> assembled `SummaryNode` -> `ExecutableDag`, all in process.
 //! `compile_executable_dag_with_node_ids` is always called, even though nothing
 //! is written to a wire: the `ExecutionDataState` (timing + primitive)
@@ -17,10 +17,8 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::rc::Rc;
-use std::time::Duration;
 
 use asap_aware_mapping::{search_workload, DefaultCostModel};
-use asap_frontend_promql::{lower_promql_workload, PromqlError};
 use asap_frontend_sql::SqlCatalog;
 use asap_types::post_asap::{
     compile_executable_dag_with_node_ids, ExecutableDag, ExecutableNodeIdentityMap,
@@ -28,236 +26,8 @@ use asap_types::post_asap::{
 };
 use asap_types::pre_asap::QueryExpr;
 use asap_types::types::AccuracyTarget;
-use asap_types::workload::{
-    AccuracyRequirement, BatchEntry, DataWorkload, DurationMs, Evidence, PlanningWorkload,
-    Predictability, Query, QueryLanguage, QueryRequirements, QueryWorkload, TimeSelection,
-};
 
 use crate::types::{EvalError, PlanId, PlanningStage};
-
-const DATA_INGESTION_INTERVAL: DurationMs = DurationMs(1_000);
-
-const SECOND_INGESTION_INTERVAL: DurationMs = DurationMs(2_000);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TimeRangeOrigin {
-    #[default]
-    Unknown,
-    InjectedIngestionHorizon,
-}
-
-pub fn lower_promql(query: &str, accuracy: AccuracyTarget) -> Result<QueryExpr, PromqlError> {
-    lower_promql_declaring(query, accuracy, DATA_INGESTION_INTERVAL)
-}
-
-fn lower_promql_declaring(
-    query: &str,
-    accuracy: AccuracyTarget,
-    interval: DurationMs,
-) -> Result<QueryExpr, PromqlError> {
-    let workload = PlanningWorkload {
-        query_workload: QueryWorkload {
-            language: QueryLanguage::PromQL,
-            query_batch: Some(vec![BatchEntry {
-                query: Query(query.to_string()),
-                requirements: QueryRequirements {
-                    accuracy: AccuracyRequirement::Explicit(accuracy),
-                    ..Default::default()
-                },
-                predictability: Predictability::Unknown,
-                invocations: 1,
-                execute_at: None,
-                time_selection: TimeSelection::default(),
-            }]),
-            repeating_queries: None,
-        },
-        data_workload: Some(DataWorkload {
-            data_ingestion_interval: Evidence {
-                value: Some(interval),
-                ..Default::default()
-            },
-            ..Default::default()
-        }),
-    };
-    let mut lowered = lower_promql_workload(&workload, 0)?;
-    Ok(lowered.remove(0))
-}
-
-fn time_range_origin(
-    query: &str,
-    accuracy: &AccuracyTarget,
-    lowered: &QueryExpr,
-) -> Result<TimeRangeOrigin, PromqlError> {
-    if !every_range_selects(lowered, DATA_INGESTION_INTERVAL) {
-        return Ok(TimeRangeOrigin::Unknown);
-    }
-    let second = lower_promql_declaring(query, accuracy.clone(), SECOND_INGESTION_INTERVAL)?;
-    Ok(if every_range_selects(&second, SECOND_INGESTION_INTERVAL) {
-        TimeRangeOrigin::InjectedIngestionHorizon
-    } else {
-        TimeRangeOrigin::Unknown
-    })
-}
-
-fn every_range_selects(expr: &QueryExpr, interval: DurationMs) -> bool {
-    let mut selected = Vec::new();
-    selected_ranges(expr, &mut selected);
-    selected
-        .iter()
-        .all(|range| range.as_millis() == u128::from(interval.0))
-}
-
-fn selected_ranges(expr: &QueryExpr, found: &mut Vec<Duration>) {
-    match expr {
-        QueryExpr::TimeRange { range, child } => {
-            found.push(*range);
-            selected_ranges(child, found);
-        }
-        QueryExpr::Scan { predicates, .. } => {
-            for predicate in predicates {
-                selected_ranges(&predicate.0, found);
-            }
-        }
-        QueryExpr::EvalTimestamp
-        | QueryExpr::CurrentTimestamp
-        | QueryExpr::Column(_)
-        | QueryExpr::Literal(_) => {}
-        QueryExpr::PromqlScalarBridge(child)
-        | QueryExpr::PromqlVectorFromScalar(child)
-        | QueryExpr::PromqlScalarFromVector(child)
-        | QueryExpr::Not(child)
-        | QueryExpr::IsNull(child)
-        | QueryExpr::IsNotNull(child) => selected_ranges(child, found),
-        QueryExpr::PromqlRelabel { value, child, .. } => {
-            selected_ranges(value, found);
-            selected_ranges(child, found);
-        }
-        QueryExpr::PromqlInfoEnrich { child, .. }
-        | QueryExpr::PromqlSeriesSample { child, .. }
-        | QueryExpr::Dedup { child, .. }
-        | QueryExpr::Limit { child, .. }
-        | QueryExpr::PromqlSubquery { child, .. }
-        | QueryExpr::TimeShift { child, .. } => selected_ranges(child, found),
-        QueryExpr::Filter { pred, child } => {
-            selected_ranges(&pred.0, found);
-            selected_ranges(child, found);
-        }
-        QueryExpr::Project { cols, child, .. } => {
-            for item in cols {
-                selected_ranges(&item.expr, found);
-            }
-            selected_ranges(child, found);
-        }
-        QueryExpr::Aggregate { having, child, .. } => {
-            if let Some(pred) = having {
-                selected_ranges(&pred.0, found);
-            }
-            selected_ranges(child, found);
-        }
-        QueryExpr::Concat { children, .. } => {
-            for branch in children {
-                selected_ranges(branch, found);
-            }
-        }
-        QueryExpr::Join {
-            pred, left, right, ..
-        } => {
-            selected_ranges(&pred.0, found);
-            selected_ranges(left, found);
-            selected_ranges(right, found);
-        }
-        QueryExpr::SetOp { left, right, .. } => {
-            selected_ranges(left, found);
-            selected_ranges(right, found);
-        }
-        QueryExpr::Sort { keys, child, .. } => {
-            for key in keys {
-                selected_ranges(&key.expr, found);
-            }
-            selected_ranges(child, found);
-        }
-        QueryExpr::SQLWindowFunc {
-            args,
-            order_by,
-            child,
-            ..
-        } => {
-            for arg in args {
-                selected_ranges(arg, found);
-            }
-            for key in order_by {
-                selected_ranges(&key.expr, found);
-            }
-            selected_ranges(child, found);
-        }
-        QueryExpr::BinaryOp { lhs, rhs, .. } => {
-            selected_ranges(lhs, found);
-            selected_ranges(rhs, found);
-        }
-        QueryExpr::Compare { left, right, .. } | QueryExpr::Arithmetic { left, right, .. } => {
-            selected_ranges(left, found);
-            selected_ranges(right, found);
-        }
-        QueryExpr::BoolAnd(items) | QueryExpr::BoolOr(items) => {
-            for item in items {
-                selected_ranges(item, found);
-            }
-        }
-        QueryExpr::Cast { expr, .. } => selected_ranges(expr, found),
-        QueryExpr::InList { expr, list, .. } => {
-            selected_ranges(expr, found);
-            for item in list {
-                selected_ranges(item, found);
-            }
-        }
-        QueryExpr::FunctionCall { args, .. } => {
-            for arg in args {
-                selected_ranges(arg, found);
-            }
-        }
-        QueryExpr::Case {
-            operand,
-            branches,
-            else_expr,
-        } => {
-            if let Some(operand) = operand {
-                selected_ranges(operand, found);
-            }
-            for (when, then) in branches {
-                selected_ranges(when, found);
-                selected_ranges(then, found);
-            }
-            if let Some(else_expr) = else_expr {
-                selected_ranges(else_expr, found);
-            }
-        }
-    }
-}
-
-pub(crate) fn ingestion_horizon_child(
-    expr: &QueryExpr,
-    origin: TimeRangeOrigin,
-) -> Option<&Rc<QueryExpr>> {
-    match (origin, expr) {
-        (TimeRangeOrigin::InjectedIngestionHorizon, QueryExpr::TimeRange { child, .. }) => {
-            Some(child)
-        }
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn ingestion_horizon_child_mut(
-    expr: &mut QueryExpr,
-    origin: TimeRangeOrigin,
-) -> Option<&mut QueryExpr> {
-    match (origin, expr) {
-        (TimeRangeOrigin::InjectedIngestionHorizon, QueryExpr::TimeRange { child, .. }) => {
-            Some(Rc::make_mut(child))
-        }
-        _ => None,
-    }
-}
 
 /// A decoded, validated plan, the order its nodes must run in, and the
 /// pre-ASAP tree the same lowering produced — the plan's own baseline, which
@@ -272,7 +42,6 @@ pub struct Plan {
     pub order: Vec<PostAsapNodeId>,
     pub pre_asap: Option<Rc<QueryExpr>>,
     pub node_ids: Option<ExecutableNodeIdentityMap>,
-    pub time_range_origin: TimeRangeOrigin,
 }
 
 impl Plan {
@@ -280,58 +49,6 @@ impl Plan {
     pub fn document(&self) -> PostAsapDagDocument {
         PostAsapDagDocument::new(self.dag.clone())
     }
-}
-
-/// PromQL -> pre-ASAP -> post-ASAP -> `ExecutableDag`, all in memory.
-pub fn plan_promql(query: &str, accuracy: AccuracyTarget) -> Result<Plan, EvalError> {
-    let mut planned = plan_promql_workload(&[(query, query)], accuracy)?;
-    if planned.len() != 1 {
-        return Err(EvalError::Planning {
-            stage: PlanningStage::Search,
-            detail: format!(
-                "planning {query:?} produced {} roots, expected 1",
-                planned.len()
-            ),
-        });
-    }
-    Ok(planned.remove(0).1)
-}
-
-pub fn lower_promql_root(
-    query: &str,
-    accuracy: AccuracyTarget,
-) -> Result<(Rc<QueryExpr>, TimeRangeOrigin), EvalError> {
-    let planning = |err| EvalError::Planning {
-        stage: PlanningStage::Lower,
-        detail: format!("{query:?}: {err:?}"),
-    };
-    let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
-    let origin = time_range_origin(query, &accuracy, &expr).map_err(planning)?;
-    Ok((Rc::new(expr), origin))
-}
-
-/// Same, for a whole workload planned together, so cross-root CSE has a chance.
-///
-/// `queries` is `(name, query)`; the returned names are the ones passed in.
-pub fn plan_promql_workload(
-    queries: &[(&str, &str)],
-    accuracy: AccuracyTarget,
-) -> Result<Vec<(String, Plan)>, EvalError> {
-    let mut roots = Vec::with_capacity(queries.len());
-    let mut origin = TimeRangeOrigin::InjectedIngestionHorizon;
-    for (name, query) in queries {
-        let planning = |err| EvalError::Planning {
-            stage: PlanningStage::Lower,
-            detail: format!("{name:?} ({query:?}): {err:?}"),
-        };
-        let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
-        if time_range_origin(query, &accuracy, &expr).map_err(planning)? == TimeRangeOrigin::Unknown
-        {
-            origin = TimeRangeOrigin::Unknown;
-        }
-        roots.push(((*name).to_string(), Rc::new(expr)));
-    }
-    plan_roots(roots, origin)
 }
 
 pub fn plan_sql(
@@ -343,7 +60,7 @@ pub fn plan_sql(
 }
 
 pub fn plan_sql_root(sql: &str, root: Rc<QueryExpr>) -> Result<Plan, EvalError> {
-    let mut planned = plan_roots(vec![(sql.to_string(), root)], TimeRangeOrigin::Unknown)?;
+    let mut planned = plan_roots(vec![(sql.to_string(), root)])?;
     if planned.len() != 1 {
         return Err(EvalError::Planning {
             stage: PlanningStage::Search,
@@ -356,10 +73,7 @@ pub fn plan_sql_root(sql: &str, root: Rc<QueryExpr>) -> Result<Plan, EvalError> 
     Ok(planned.remove(0).1)
 }
 
-fn plan_roots(
-    roots: Vec<(String, Rc<QueryExpr>)>,
-    origin: TimeRangeOrigin,
-) -> Result<Vec<(String, Plan)>, EvalError> {
+fn plan_roots(roots: Vec<(String, Rc<QueryExpr>)>) -> Result<Vec<(String, Plan)>, EvalError> {
     // `search_workload` runs CSE over the roots and may hand back different
     // `Rc`s than the ones passed in, so assembly targets are read back
     // off the space rather than reused from `roots`.
@@ -395,7 +109,6 @@ fn plan_roots(
                 compilation.dag,
                 Some(Rc::clone(root)),
                 Some(compilation.node_ids),
-                origin,
             )?,
         ));
     }
@@ -421,7 +134,6 @@ fn from_dag(
     dag: ExecutableDag,
     pre_asap: Option<Rc<QueryExpr>>,
     node_ids: Option<ExecutableNodeIdentityMap>,
-    time_range_origin: TimeRangeOrigin,
 ) -> Result<Plan, EvalError> {
     let document = PostAsapDagDocument::new(dag);
     document
@@ -438,7 +150,6 @@ fn from_dag(
         order,
         pre_asap,
         node_ids,
-        time_range_origin,
     })
 }
 
@@ -506,11 +217,10 @@ mod tests {
         let document: PostAsapDagDocument = serde_json::from_slice(bytes).map_err(|err| {
             EvalError::Validation(format!("decode post-ASAP DAG document: {err}"))
         })?;
-        from_dag(document.dag, None, None, TimeRangeOrigin::Unknown)
+        from_dag(document.dag, None, None)
     }
 
     use super::*;
-    use crate::rows::variant_name;
     use crate::run::operator_name;
     use asap_types::post_asap::{
         ExactKind, ExactParams, ExecutableOperatorPayload, GroupingStrategy, SketchAlgorithm,
@@ -540,69 +250,40 @@ mod tests {
         plan.order.iter().map(|id| id.0).collect()
     }
 
+    const MEDIAN: &str = "SELECT approx_percentile_cont(latency, 0.5) FROM metrics";
+
+    fn plan_of(sql: &str) -> Plan {
+        plan_sql(sql, &metrics_catalog(), ACCURACY).expect("plans")
+    }
+
     #[test]
-    fn quantile_plans_three_nodes_in_producer_order() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
-        assert_eq!(plan.dag.nodes.len(), 3);
-        assert_eq!(plan.dag.edges.len(), 2);
-        assert_eq!(ids(&plan), vec![0, 1, 2]);
+    fn quantile_plans_four_nodes_in_producer_order() {
+        let plan = plan_of(MEDIAN);
+        assert_eq!(plan.dag.nodes.len(), 4);
+        assert_eq!(plan.dag.edges.len(), 3);
+        assert_eq!(ids(&plan), vec![0, 1, 2, 3]);
         assert_eq!(
             operators(&plan),
-            vec!["Fallback", "SummaryAgg", "SummaryEstimate"]
+            vec!["Fallback", "SummaryAgg", "SummaryEstimate", "Value"]
         );
-        assert_eq!(plan.dag.root, PostAsapNodeId(2));
+        assert_eq!(plan.dag.root, PostAsapNodeId(3));
     }
 
     #[test]
-    fn sum_plans_two_nodes() {
-        let plan = plan_promql("sum(cpu_cores)", ACCURACY).expect("plans");
+    fn sum_plans_an_accumulator_and_its_projection() {
+        let plan = plan_of("SELECT SUM(bytes) FROM metrics");
+        assert_eq!(plan.dag.nodes.len(), 3);
+        assert_eq!(plan.order.len(), 3);
+        assert_eq!(operators(&plan), vec!["Fallback", "SummaryAgg", "Value"]);
+    }
+
+    #[test]
+    fn a_bare_projection_plans_a_fallback_and_no_summary() {
+        let plan = plan_of("SELECT latency FROM metrics");
         assert_eq!(plan.dag.nodes.len(), 2);
-        assert_eq!(plan.order.len(), 2);
-        assert_eq!(operators(&plan), vec!["Fallback", "SummaryAgg"]);
-    }
-
-    #[test]
-    fn an_instant_selector_injects_the_horizon_and_a_range_selector_is_the_querys_own() {
-        let (instant, instant_origin) =
-            lower_promql_root("cpu_cores", ACCURACY).expect("an instant selector lowers");
-        assert_eq!(
-            instant_origin,
-            TimeRangeOrigin::InjectedIngestionHorizon,
-            "nothing in `cpu_cores` selects a range, so the TimeRange the lowering wrapped it \
-             in is the declared ingestion horizon"
-        );
-        assert_eq!(variant_name(&instant), "TimeRange");
-        assert!(ingestion_horizon_child(&instant, instant_origin).is_some());
-
-        for query in [
-            "max_over_time(cpu_cores[1s])",
-            "max_over_time(cpu_cores[5s])",
-        ] {
-            let (root, origin) = lower_promql_root(query, ACCURACY).expect("lowers");
-            assert_eq!(
-                origin,
-                TimeRangeOrigin::Unknown,
-                "{query} selects its own range, and a 1s one is the same shape the lowering \
-                 injects"
-            );
-            let QueryExpr::Aggregate { child, .. } = root.as_ref() else {
-                panic!("{root:?}");
-            };
-            assert_eq!(variant_name(child), "TimeRange");
-            assert!(
-                ingestion_horizon_child(child, origin).is_none(),
-                "{query}: peeling the range the query wrote answers over every row"
-            );
-        }
-    }
-
-    #[test]
-    fn bare_metric_plans_one_node_and_no_edges() {
-        let plan = plan_promql("cpu_cores", ACCURACY).expect("plans");
-        assert_eq!(plan.dag.nodes.len(), 1);
-        assert!(plan.dag.edges.is_empty());
-        assert_eq!(ids(&plan), vec![0]);
-        assert_eq!(operators(&plan), vec!["Fallback"]);
+        assert_eq!(plan.dag.edges.len(), 1);
+        assert_eq!(ids(&plan), vec![0, 1]);
+        assert_eq!(operators(&plan), vec!["Fallback", "Value"]);
     }
 
     fn metrics_catalog() -> SqlCatalog {
@@ -725,7 +406,7 @@ mod tests {
 
     #[test]
     fn json_round_trip_preserves_the_plan_id() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
+        let plan = plan_of(MEDIAN);
         let json = to_json(&plan).expect("encodes");
         let decoded = from_json(json.as_bytes()).expect("decodes");
 
@@ -737,7 +418,7 @@ mod tests {
 
     #[test]
     fn canonical_json_is_two_space_pretty_lf() {
-        let plan = plan_promql("sum(cpu_cores)", ACCURACY).expect("plans");
+        let plan = plan_of("SELECT SUM(bytes) FROM metrics");
         let json = to_json(&plan).expect("encodes");
         assert!(json.starts_with("{\n  \"schema_version\": 2,\n  \"dag\": {\n"));
         assert!(!json.contains('\r'));
@@ -746,48 +427,22 @@ mod tests {
 
     #[test]
     fn the_same_query_hashes_the_same_and_different_queries_do_not() {
-        let once = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
-        let twice = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
-        let other = plan_promql("quantile(0.9, cpu_cores)", ACCURACY).expect("plans");
+        let once = plan_of(MEDIAN);
+        let twice = plan_of(MEDIAN);
+        let other = plan_of("SELECT approx_percentile_cont(latency, 0.9) FROM metrics");
 
         assert_eq!(once.id, twice.id);
         assert_ne!(once.id, other.id);
     }
 
     #[test]
-    fn a_workload_plans_every_root_and_keeps_its_names() {
-        let planned = plan_promql_workload(
-            &[
-                ("bare", "cpu_cores"),
-                ("total", "sum(cpu_cores)"),
-                ("median", "quantile(0.5, cpu_cores)"),
-            ],
-            ACCURACY,
-        )
-        .expect("plans");
-
-        let mut by_name: HashMap<&str, &Plan> = HashMap::new();
-        for (name, plan) in &planned {
-            by_name.insert(name.as_str(), plan);
-        }
-        assert_eq!(planned.len(), 3);
-        assert_eq!(by_name["bare"].dag.nodes.len(), 1);
-        assert_eq!(by_name["total"].dag.nodes.len(), 2);
-        assert_eq!(by_name["median"].dag.nodes.len(), 3);
-
-        // Planned together or alone, one root compiles to the same document.
-        let alone = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
-        assert_eq!(by_name["median"].id, alone.id);
-    }
-
-    #[test]
     fn a_cycle_is_rejected_by_the_ordering_pass() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
+        let plan = plan_of(MEDIAN);
         let mut dag = plan.dag.clone();
-        // Close 0 -> 1 -> 2 into a cycle by pointing the last edge back at 0.
-        let mut back = dag.edges[1].clone();
-        back.producer = PostAsapNodeId(2);
-        back.consumer = PostAsapNodeId(0);
+        // Close the chain into a cycle by pointing an edge from the root back at the source.
+        let mut back = dag.edges[0].clone();
+        back.producer = dag.root;
+        back.consumer = plan.order[0];
         dag.edges.push(back);
 
         let err = topological_order(&dag).expect_err("a cycle has no topological order");
@@ -796,10 +451,11 @@ mod tests {
 
     #[test]
     fn ordering_does_not_depend_on_node_id_order() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", ACCURACY).expect("plans");
+        let plan = plan_of(MEDIAN);
         let mut dag = plan.dag.clone();
-        // Renumber so the producer has the largest id: 0 -> 2, 1 -> 1, 2 -> 0.
-        let flip = |id: PostAsapNodeId| PostAsapNodeId(2 - id.0);
+        // Renumber so the producer has the largest id and the root the smallest.
+        let last = dag.nodes.len() as u32 - 1;
+        let flip = |id: PostAsapNodeId| PostAsapNodeId(last - id.0);
         for node in &mut dag.nodes {
             node.id = flip(node.id);
         }
@@ -812,7 +468,7 @@ mod tests {
         let order = topological_order(&dag).expect("orders");
         assert_eq!(
             order,
-            vec![PostAsapNodeId(2), PostAsapNodeId(1), PostAsapNodeId(0)],
+            plan.order.iter().copied().map(flip).collect::<Vec<_>>(),
             "order must follow the edges, not the ids"
         );
     }

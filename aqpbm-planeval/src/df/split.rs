@@ -209,7 +209,6 @@ mod tests {
     use super::*;
 
     use crate::df::variants::{kll_family, latency_update, plain_summary_schema, scan};
-    use crate::plan::TimeRangeOrigin;
     use asap_types::post_asap::{
         EdgeRole, ExecutableDagEdge, ExecutionDataState, GroupingEdgeCompatibility,
         SummaryFamilyType, SummaryField, WindowEdgeCompatibility,
@@ -309,7 +308,6 @@ mod tests {
             order,
             pre_asap: None,
             node_ids: None,
-            time_range_origin: TimeRangeOrigin::Unknown,
         }
     }
 

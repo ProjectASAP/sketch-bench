@@ -12,10 +12,10 @@ use std::rc::Rc;
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 
-use aqpbm_datagen::table::TableDescription;
+use aqpbm_datagen::table::{GeneratedTable, TableDescription};
 use aqpbm_planeval::df::run::{refusal_counts, run as run_datafusion, DataFusionRunConfig};
-use aqpbm_planeval::exact::{run_promql, run_tree, Data, ExactRun};
-use aqpbm_planeval::plan::{plan_promql, plan_sql, to_json, Plan};
+use aqpbm_planeval::exact::{run_tree, Data, ExactRun};
+use aqpbm_planeval::plan::{plan_sql, to_json, Plan};
 use aqpbm_planeval::record::{
     AnswerCheck, AnswerRecord, Arm, NodeCost, Phase, PlanEvalRecord, ReadoutRecord,
     RefusedPlanRecord, UnplannedQueryRecord,
@@ -41,41 +41,30 @@ enum RuntimeArg {
     about = "Run a post-ASAP plan over rows and score it against the exact answer"
 )]
 struct Args {
-    /// PromQL to plan, e.g. `quantile(0.5, cpu_cores)`.
-    #[arg(long, conflicts_with = "sql", required_unless_present = "sql")]
-    query: Option<String>,
-
     #[arg(
         long,
-        requires = "spec",
         help = "SQL to plan, e.g. `SELECT approx_percentile_cont(latency, 0.99) FROM t`. \
-                Requires --spec: a SQL query names tables, and the only catalog this binary \
-                has is the one the spec describes"
+                A SQL query names tables, and the only catalog this binary has is the one \
+                --spec describes"
     )]
-    sql: Option<String>,
+    sql: String,
 
     #[arg(
         long,
-        requires = "sql",
         help = "The name --sql may refer to the --spec table by. Defaults to the spec file's \
                 stem"
     )]
     table: Option<String>,
 
     /// Generate the rows in process from a `datagen` spec file (examples in
-    /// `configs/datagen/`). Wins over `--csv`.
+    /// `configs/datagen/`).
     ///
     /// A path, not an inline description: the spec states one `data_type` per
     /// column and the plan's schema has to agree with it, so a flag that
     /// rewrote a field of the file would make the file a suggestion. This is
     /// the same rule `aqpbm-cli` follows.
-    #[arg(long, conflicts_with = "csv")]
-    spec: Option<PathBuf>,
-
-    /// CSV to read. Its header names must match the leaf's schema; a PromQL
-    /// leaf carries the usage-derived `ts,value`.
-    #[arg(long, required_unless_present = "spec")]
-    csv: Option<PathBuf>,
+    #[arg(long)]
+    spec: PathBuf,
 
     /// End-to-end accuracy target the plan is sized against.
     #[arg(long, default_value_t = 0.01)]
@@ -137,9 +126,8 @@ struct Args {
         long,
         value_enum,
         default_value_t = RuntimeArg::Interp,
-        help = "Which engine runs the two arms. `datafusion` needs --sql and --spec: it plans \
-                both arms against the catalog the spec describes and executes them over one \
-                in-memory table"
+        help = "Which engine runs the two arms. `datafusion` plans both arms against the \
+                catalog the spec describes and executes them over one in-memory table"
     )]
     runtime: RuntimeArg,
 
@@ -155,7 +143,7 @@ struct Args {
     #[arg(
         long,
         help = "Run the same plan over the same rows with the same seed on both runtimes and \
-                print them side by side. Needs --sql and --spec, and supersedes --runtime. \
+                print them side by side. Supersedes --runtime. \
                 Every readout has to carry the same approximate and the same exact answer bit \
                 for bit; a run where one does not fails. The time and memory rows say which \
                 pairs are the same measurement and which only look like one"
@@ -173,64 +161,51 @@ fn main() -> ExitCode {
     }
 }
 
-fn spec_table(args: &Args) -> Result<Option<(PathBuf, TableDescription)>> {
-    let Some(path) = args.spec.as_ref() else {
-        return Ok(None);
-    };
+fn spec_table(args: &Args) -> Result<TableDescription> {
+    let path = &args.spec;
     let description =
         TableDescription::from_path(path).with_context(|| format!("loading {}", path.display()))?;
     description
         .validate()
         .with_context(|| format!("validating {}", path.display()))?;
-    Ok(Some((path.clone(), description)))
+    Ok(description)
 }
 
-fn row_source(args: &Args, spec: Option<&(PathBuf, TableDescription)>) -> Result<RowsFrom> {
-    match (spec, &args.csv) {
-        (Some((path, description)), _) => {
-            let table = description
-                .generate()
-                .with_context(|| format!("generating from {}", path.display()))?;
-            let line = format!(
-                "rows     generated from {} — {} columns x {} rows",
-                path.display(),
-                table.column_num,
-                table.row_num
-            );
-            if args.jsonl {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
-            Ok(RowsFrom::Generated(Rc::new(table)))
-        }
-        (None, Some(path)) => Ok(RowsFrom::Csv(path.clone())),
-        // clap's `required_unless_present` already rejects this.
-        (None, None) => anyhow::bail!("one of --spec or --csv is required"),
+fn table_name(args: &Args) -> Result<String> {
+    Ok(match &args.table {
+        Some(named) => named.clone(),
+        None => sql::table_name_from_path(&args.spec)?,
+    })
+}
+
+fn generated_rows(args: &Args, description: &TableDescription) -> Result<Rc<GeneratedTable>> {
+    let table = description
+        .generate()
+        .with_context(|| format!("generating from {}", args.spec.display()))?;
+    let line = format!(
+        "rows     generated from {} — {} columns x {} rows",
+        args.spec.display(),
+        table.column_num,
+        table.row_num
+    );
+    if args.jsonl {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
     }
+    Ok(Rc::new(table))
 }
 
 fn datafusion_config(
     args: &Args,
-    spec: Option<&(PathBuf, TableDescription)>,
-    rows: &RowsFrom,
+    description: &TableDescription,
+    table: &Rc<GeneratedTable>,
 ) -> Result<Option<DataFusionRunConfig>> {
     if args.runtime != RuntimeArg::Datafusion && !args.compare_runtimes {
         return Ok(None);
     }
-    let (path, description) = spec.context(
-        "the datafusion runtime needs --spec: it registers the spec's table in the session both \
-         arms run against",
-    )?;
-    let RowsFrom::Generated(table) = rows else {
-        anyhow::bail!("the datafusion runtime reads the rows --spec generates, not a CSV");
-    };
-    let named = match &args.table {
-        Some(named) => named.clone(),
-        None => sql::table_name_from_path(path)?,
-    };
     Ok(Some(DataFusionRunConfig {
-        table: named,
+        table: table_name(args)?,
         description: description.clone(),
         rows: Rc::clone(table),
         split: !args.no_split,
@@ -305,26 +280,11 @@ fn real_main() -> Result<()> {
         );
     }
     let accuracy = AccuracyTarget::Epsilon(args.epsilon);
-    let spec = spec_table(&args)?;
+    let description = spec_table(&args)?;
 
-    let (query_text, planned) = match (&args.query, &args.sql) {
-        (Some(query), None) => (query.clone(), plan_promql(query, accuracy.clone())),
-        (None, Some(sql)) => {
-            let (path, description) = spec
-                .as_ref()
-                .context("--sql needs the table catalog --spec describes")?;
-            let table = match &args.table {
-                Some(named) => named.clone(),
-                None => sql::table_name_from_path(path)?,
-            };
-            (
-                sql.clone(),
-                sql::catalog_from_spec(&table, description)
-                    .and_then(|catalog| plan_sql(sql, &catalog, accuracy.clone())),
-            )
-        }
-        _ => anyhow::bail!("one of --query or --sql is required"),
-    };
+    let query_text = args.sql.clone();
+    let planned = sql::catalog_from_spec(&table_name(&args)?, &description)
+        .and_then(|catalog| plan_sql(&query_text, &catalog, accuracy));
     let plan = match planned {
         Ok(plan) => plan,
         Err(err) => return Err(report_unplanned(&args, &query_text, err)),
@@ -340,17 +300,16 @@ fn real_main() -> Result<()> {
     let mut observations = GuaranteeObservations::default();
     // Built once, outside the seed loop: the rows are the same every seed, so
     // a difference between seeds is the sketch's and never the data's.
-    let rows = row_source(&args, spec.as_ref())?;
-    let engine = datafusion_config(&args, spec.as_ref(), &rows)?;
+    let table = generated_rows(&args, &description)?;
+    let rows = RowsFrom::Generated(Rc::clone(&table));
+    let engine = datafusion_config(&args, &description, &table)?;
 
     if args.evaluate_exactly {
-        let evaluated = match plan.pre_asap.as_ref() {
-            Some(root) if args.sql.is_some() => {
-                run_tree(Rc::clone(root), &rows, plan.time_range_origin)
-            }
-            _ => run_promql(&query_text, accuracy, &rows),
-        };
-        let evaluated = match evaluated {
+        let root = plan
+            .pre_asap
+            .as_ref()
+            .context("a plan lowered from SQL carries its pre-ASAP tree")?;
+        let evaluated = match run_tree(Rc::clone(root), &rows) {
             Ok(evaluated) => evaluated,
             Err(EvalError::Refused(refusals)) => {
                 for refusal in &refusals {
@@ -371,7 +330,7 @@ fn real_main() -> Result<()> {
     }
 
     if args.compare_runtimes {
-        let engine = engine.context("--compare-runtimes needs --sql and --spec")?;
+        let engine = engine.context("--compare-runtimes builds a DataFusion configuration")?;
         return compare_runtimes(&args, &query_text, &plan, &rows, &engine);
     }
 

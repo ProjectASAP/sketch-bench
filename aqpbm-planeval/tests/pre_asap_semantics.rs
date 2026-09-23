@@ -8,7 +8,6 @@ use aqpbm_planeval::df::pre_asap_arm::answer_with_tables;
 use aqpbm_planeval::df::session::{MemoryPoolSettings, NoSeedBoundFunctions, SeedSession};
 use aqpbm_planeval::exact::run_tree;
 use aqpbm_planeval::exact::Data;
-use aqpbm_planeval::plan::TimeRangeOrigin;
 use aqpbm_planeval::run::RowsFrom;
 use aqpbm_planeval::Value;
 use asap_types::pre_asap::agg_intent::AggIntent;
@@ -148,12 +147,7 @@ fn interpreted_value(
     tree: Rc<QueryExpr>,
     table: &Rc<GeneratedTable>,
 ) -> Result<Option<Value>, String> {
-    let run = run_tree(
-        tree,
-        &RowsFrom::Generated(Rc::clone(table)),
-        TimeRangeOrigin::Unknown,
-    )
-    .map_err(|e| e.to_string())?;
+    let run = run_tree(tree, &RowsFrom::Generated(Rc::clone(table))).map_err(|e| e.to_string())?;
     Ok(match run.answer {
         Data::Rows(rows) => rows.first().and_then(|row| row.0.first().cloned()),
         Data::Scalar(value) => Some(Value::Float(value)),

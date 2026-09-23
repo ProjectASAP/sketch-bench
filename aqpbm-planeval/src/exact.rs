@@ -12,9 +12,7 @@ use asap_types::pre_asap::{
     AggIntent, ColumnId, ColumnRef, DataType, Predicate, QueryExpr, QueryExprError, Reduction,
     ScalarValue, Schema, Source,
 };
-use asap_types::types::AccuracyTarget;
 
-use crate::plan::{lower_promql_root, TimeRangeOrigin};
 use crate::rows::{check_predicate, order, passes, variant_name};
 use crate::run::{RowsFrom, RunConfig};
 use crate::score;
@@ -82,24 +80,12 @@ impl Shape {
     }
 }
 
-pub(crate) fn check(
-    node: PostAsapNodeId,
-    expr: &QueryExpr,
-    origin: TimeRangeOrigin,
-) -> Result<(), Refusal> {
-    admit(node, expr, origin).map(|_| ())
+pub(crate) fn check(node: PostAsapNodeId, expr: &QueryExpr) -> Result<(), Refusal> {
+    admit(node, expr).map(|_| ())
 }
 
-fn admit(
-    node: PostAsapNodeId,
-    expr: &QueryExpr,
-    origin: TimeRangeOrigin,
-) -> Result<Option<Leaf>, Refusal> {
-    let mut admission = Admission {
-        node,
-        leaf: None,
-        origin,
-    };
+fn admit(node: PostAsapNodeId, expr: &QueryExpr) -> Result<Option<Leaf>, Refusal> {
+    let mut admission = Admission { node, leaf: None };
     admission.shape_of(expr)?;
     Ok(admission.leaf)
 }
@@ -108,10 +94,9 @@ pub(crate) fn evaluate(
     node: PostAsapNodeId,
     expr: &Rc<QueryExpr>,
     rows: &Rc<Vec<Row>>,
-    origin: TimeRangeOrigin,
 ) -> Result<(Data, Option<usize>), EvalError> {
-    check(node, expr, origin).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
-    let interpreted = interpret(node, expr, rows, false, origin)?;
+    check(node, expr).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
+    let interpreted = interpret(node, expr, rows, false)?;
     Ok((interpreted.answer, interpreted.leaf_emitted))
 }
 
@@ -126,7 +111,6 @@ fn interpret(
     expr: &Rc<QueryExpr>,
     rows: &Rc<Vec<Row>>,
     per_node_time: bool,
-    origin: TimeRangeOrigin,
 ) -> Result<Interpreted, EvalError> {
     let mut interpreter = Interpreter {
         node,
@@ -135,7 +119,6 @@ fn interpret(
         leaf_emitted: None,
         node_times: per_node_time.then(Vec::new),
         children_ns: 0,
-        origin,
     };
     let answer = interpreter.eval_rc(expr)?;
     Ok(Interpreted {
@@ -156,42 +139,22 @@ pub struct ExactRun {
     pub rows_scanned: u64,
     pub rows_emitted: u64,
     pub answer: Data,
-    pub time_range_origin: TimeRangeOrigin,
 }
 
-pub fn run_promql(
-    query: &str,
-    accuracy: AccuracyTarget,
-    from: &RowsFrom,
-) -> Result<ExactRun, EvalError> {
-    let (root, origin) = lower_promql_root(query, accuracy)?;
-    run_tree(root, from, origin)
-}
+pub fn run_tree(root: Rc<QueryExpr>, from: &RowsFrom) -> Result<ExactRun, EvalError> {
+    let (rows, rows_scanned) = scan(&root, from)?;
 
-pub fn run_tree(
-    root: Rc<QueryExpr>,
-    from: &RowsFrom,
-    origin: TimeRangeOrigin,
-) -> Result<ExactRun, EvalError> {
-    let (rows, rows_scanned) = scan(&root, from, origin)?;
-
-    let (answer, leaf_emitted) = evaluate(PRE_ASAP_ROOT, &root, &rows, origin)?;
+    let (answer, leaf_emitted) = evaluate(PRE_ASAP_ROOT, &root, &rows)?;
     Ok(ExactRun {
         root,
         rows_scanned,
         rows_emitted: leaf_emitted.unwrap_or(0) as u64,
         answer,
-        time_range_origin: origin,
     })
 }
 
-fn scan(
-    root: &Rc<QueryExpr>,
-    from: &RowsFrom,
-    origin: TimeRangeOrigin,
-) -> Result<(Rc<Vec<Row>>, u64), EvalError> {
-    let leaf =
-        admit(PRE_ASAP_ROOT, root, origin).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
+fn scan(root: &Rc<QueryExpr>, from: &RowsFrom) -> Result<(Rc<Vec<Row>>, u64), EvalError> {
+    let leaf = admit(PRE_ASAP_ROOT, root).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
     let Some(leaf) = leaf else {
         return Ok((Rc::new(Vec::new()), 0));
     };
@@ -239,13 +202,9 @@ pub struct PreAsapArm {
     pub answer: Data,
 }
 
-pub fn time_pre_asap(
-    root: &Rc<QueryExpr>,
-    cfg: &RunConfig,
-    origin: TimeRangeOrigin,
-) -> Result<PreAsapArm, EvalError> {
-    check(PRE_ASAP_ROOT, root, origin).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
-    let (rows, rows_scanned) = scan(root, &cfg.rows, origin)?;
+pub fn time_pre_asap(root: &Rc<QueryExpr>, cfg: &RunConfig) -> Result<PreAsapArm, EvalError> {
+    check(PRE_ASAP_ROOT, root).map_err(|refusal| EvalError::Refused(vec![refusal]))?;
+    let (rows, rows_scanned) = scan(root, &cfg.rows)?;
     let retained_bytes = rows_bytes(&rows);
 
     let kept: Rc<RefCell<Vec<Interpreted>>> = Rc::new(RefCell::new(Vec::new()));
@@ -261,7 +220,7 @@ pub fn time_pre_asap(
         let per_node_time = cfg.per_node_time;
         let work = rows.len() as u64;
         let pass: Pass = Box::new(move || {
-            let interpreted = interpret(PRE_ASAP_ROOT, &root, &rows, per_node_time, origin);
+            let interpreted = interpret(PRE_ASAP_ROOT, &root, &rows, per_node_time);
             let report: Report = Box::new(move || {
                 match interpreted {
                     Ok(interpreted) => kept.borrow_mut().push(interpreted),
@@ -352,14 +311,10 @@ struct Leaf {
 struct Admission {
     node: PostAsapNodeId,
     leaf: Option<Leaf>,
-    origin: TimeRangeOrigin,
 }
 
 impl Admission {
     fn shape_of(&mut self, expr: &QueryExpr) -> Result<Shape, Refusal> {
-        if let Some(child) = crate::plan::ingestion_horizon_child(expr, self.origin) {
-            return self.shape_of(child);
-        }
         match expr {
             QueryExpr::Scan {
                 source,
@@ -550,7 +505,6 @@ struct Interpreter<'a> {
     leaf_emitted: Option<usize>,
     node_times: Option<Vec<NodeClock>>,
     children_ns: u64,
-    origin: TimeRangeOrigin,
 }
 
 struct NodeClock {
@@ -570,9 +524,6 @@ impl Interpreter<'_> {
     }
 
     fn eval_node(&mut self, expr: &QueryExpr) -> Result<Data, EvalError> {
-        if let Some(child) = crate::plan::ingestion_horizon_child(expr, self.origin) {
-            return self.eval_rc(child);
-        }
         if self.node_times.is_none() {
             return self.eval_body(expr);
         }
@@ -1408,16 +1359,19 @@ mod tests {
         expr: &Rc<QueryExpr>,
         rows: &Rc<Vec<Row>>,
     ) -> Result<Data, EvalError> {
-        evaluate(node, expr, rows, TimeRangeOrigin::Unknown).map(|(data, _)| data)
+        evaluate(node, expr, rows).map(|(data, _)| data)
     }
 
-    fn lowered(query: &str) -> (Rc<QueryExpr>, TimeRangeOrigin) {
-        lower_promql_root(query, ACCURACY).expect("lowers")
+    fn catalog() -> asap_frontend_sql::SqlCatalog {
+        asap_frontend_sql::SqlCatalog::new().with_table("cpu_cores", schema())
     }
 
-    fn data_of_lowered(query: &str, rows: &Rc<Vec<Row>>) -> Result<Data, EvalError> {
-        let (root, origin) = lowered(query);
-        evaluate(node(), &root, rows, origin).map(|(data, _)| data)
+    fn lowered(sql: &str) -> Rc<QueryExpr> {
+        crate::sql::lower_sql_root(sql, &catalog(), ACCURACY).expect("lowers")
+    }
+
+    fn data_of_lowered(sql: &str, rows: &Rc<Vec<Row>>) -> Result<Data, EvalError> {
+        evaluate(node(), &lowered(sql), rows).map(|(data, _)| data)
     }
 
     fn rows_of_lowered(query: &str, rows: &Rc<Vec<Row>>) -> Vec<Row> {
@@ -1506,7 +1460,6 @@ mod tests {
         });
         let supplied = fixture();
         let mut interpreter = Interpreter {
-            origin: TimeRangeOrigin::Unknown,
             node: node(),
             rows: &supplied,
             memo: HashMap::new(),
@@ -1532,13 +1485,12 @@ mod tests {
             left: scan_of("cpu_cores"),
             right: scan_of("other_metric"),
         });
-        let refusal = check(node(), &two_leaves, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &two_leaves).expect_err("refuses");
         assert!(refusal.to_string().contains("Join"), "{refusal}");
 
         let mut admission = Admission {
             node: node(),
             leaf: None,
-            origin: TimeRangeOrigin::Unknown,
         };
         admission
             .shape_of(&two_leaves)
@@ -1551,7 +1503,6 @@ mod tests {
         let mut admission = Admission {
             node: node(),
             leaf: None,
-            origin: TimeRangeOrigin::Unknown,
         };
         admission
             .shape_of(&scan_of("cpu_cores"))
@@ -1589,7 +1540,6 @@ mod tests {
         let mut admission = Admission {
             node: node(),
             leaf: None,
-            origin: TimeRangeOrigin::Unknown,
         };
         admission
             .shape_of(&scan_of("cpu_cores"))
@@ -1624,7 +1574,7 @@ mod tests {
             ScalarValue::Null,
         ] {
             let tree = Rc::new(QueryExpr::Literal(literal.clone()));
-            let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+            let refusal = check(node(), &tree).expect_err("refuses");
             assert!(
                 refusal.to_string().contains(literal_name(&literal)),
                 "{literal:?}: {refusal}"
@@ -1813,7 +1763,7 @@ mod tests {
     #[test]
     fn every_variant_outside_this_step_is_refused_by_name_before_a_row_is_read() {
         for (name, tree) in deferred_variants() {
-            let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+            let refusal = check(node(), &tree).expect_err("refuses");
             assert!(refusal.to_string().contains(name), "{name}: {refusal}");
 
             match data_of(node(), &tree, &fixture()).expect_err("refuses") {
@@ -1979,7 +1929,7 @@ mod tests {
             })),
             child: scan(Vec::new()),
         });
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         let rendered = refusal.to_string();
         assert!(rendered.contains("Filter.pred"), "{rendered}");
         assert!(rendered.contains("Scan"), "{rendered}");
@@ -1994,7 +1944,7 @@ mod tests {
             })),
             child: scan(Vec::new()),
         });
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         assert!(refusal.to_string().contains("FunctionCall"), "{refusal}");
     }
 
@@ -2008,7 +1958,7 @@ mod tests {
             qualifier: None,
             child: scan(Vec::new()),
         });
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         assert!(
             matches!(refusal, Refusal::UnresolvableColumn { .. }),
             "{refusal:?}"
@@ -2025,7 +1975,6 @@ mod tests {
                 pred: pred.clone(),
                 child: scan(Vec::new()),
             },
-            TimeRangeOrigin::Unknown,
         )
         .expect_err("refuses");
         let post_asap =
@@ -2048,64 +1997,42 @@ mod tests {
     #[test]
     fn check_admits_nothing_the_evaluator_falls_back_on() {
         for (name, tree) in admitted_variants() {
-            check(node(), &tree, TimeRangeOrigin::Unknown)
-                .unwrap_or_else(|refusal| panic!("{name}: {refusal}"));
+            check(node(), &tree).unwrap_or_else(|refusal| panic!("{name}: {refusal}"));
             data_of(node(), &tree, &fixture())
                 .unwrap_or_else(|err| panic!("{name} was admitted but not run: {err:?}"));
         }
 
         for (name, tree) in deferred_variants() {
-            assert!(
-                check(node(), &tree, TimeRangeOrigin::Unknown).is_err(),
-                "{name} was admitted"
-            );
+            assert!(check(node(), &tree).is_err(), "{name} was admitted");
         }
     }
 
     #[test]
-    fn a_lowered_promql_selector_is_a_scan_this_step_runs() {
-        let (root, origin) = lowered("cpu_cores");
-        assert_eq!(variant_name(&root), "TimeRange");
-        assert_eq!(
-            variant_name(crate::plan::ingestion_horizon_child(&root, origin).expect("is one")),
-            "Scan"
+    fn a_lowered_sql_selection_runs_over_every_row() {
+        let produced = rows_from(
+            data_of_lowered("SELECT ts, value, cluster FROM cpu_cores", &fixture())
+                .expect("evaluates"),
         );
-        let produced = rows_from(data_of_lowered("cpu_cores", &fixture()).expect("evaluates"));
         assert_eq!(produced.len(), fixture().len());
     }
 
     #[test]
-    fn a_lowered_promql_aggregation_is_an_aggregate_this_step_runs() {
-        let (root, _) = lowered("sum(cpu_cores)");
-        assert_eq!(variant_name(&root), "Aggregate");
+    fn a_lowered_sql_aggregation_is_an_aggregate_this_step_runs() {
         assert_eq!(
-            rows_of_lowered("sum(cpu_cores)", &fixture()),
+            rows_of_lowered("SELECT SUM(value) FROM cpu_cores", &fixture()),
             vec![Row(vec![Value::Float(60.0)])]
         );
 
         assert_eq!(
-            rows_of_lowered("sum by (cluster) (cpu_cores)", &fixture()),
+            rows_of_lowered(
+                "SELECT cluster, SUM(value) FROM cpu_cores GROUP BY cluster",
+                &fixture()
+            ),
             vec![
                 Row(vec![Value::Str("a".to_owned()), Value::Float(40.0)]),
                 Row(vec![Value::Str("b".to_owned()), Value::Float(20.0)]),
             ]
         );
-    }
-
-    #[test]
-    fn a_reduction_over_a_label_column_is_refused_rather_than_answered() {
-        let (root, origin) = lowered("max(sum by (cluster) (cpu_cores))");
-
-        let refusal = check(node(), &root, origin).expect_err("a label is not a maximum");
-        let spelled = format!("{refusal}");
-        assert!(
-            spelled.contains("Max") || spelled.contains("value"),
-            "the refusal must name what it could not read: {spelled}"
-        );
-
-        let err = data_of_lowered("max(sum by (cluster) (cpu_cores))", &fixture())
-            .expect_err("and it does not evaluate");
-        assert!(matches!(err, EvalError::Refused(_)), "{err:?}");
     }
 
     fn aggregate(
@@ -2615,7 +2542,7 @@ mod tests {
             ),
         ] {
             let tree = aggregate(Reduction::by(vec![2]), vec![intent.clone()], wide_scan());
-            let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+            let refusal = check(node(), &tree).expect_err("refuses");
             assert!(
                 matches!(refusal, Refusal::UnsupportedValueOperation { .. }),
                 "{intent:?}: {refusal:?}"
@@ -2749,16 +2676,10 @@ mod tests {
             vec![AggIntent::Sum { col: None }],
             scan(Vec::new()),
         );
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         let rendered = refusal.to_string();
         assert!(rendered.contains("GroupKeys::without"), "{rendered}");
         assert!(rendered.contains("open"), "{rendered}");
-
-        let (root, origin) = lowered("sum without (cluster) (cpu_cores)");
-        assert!(check(node(), &root, origin)
-            .expect_err("refuses")
-            .to_string()
-            .contains("GroupKeys::without"));
     }
 
     #[test]
@@ -2768,7 +2689,7 @@ mod tests {
             vec![AggIntent::Sum { col: None }],
             scan(Vec::new()),
         );
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         assert!(
             refusal
                 .to_string()
@@ -2790,7 +2711,7 @@ mod tests {
             ))),
             child: scan(Vec::new()),
         });
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         assert!(
             refusal.to_string().contains("Aggregate.having"),
             "{refusal}"
@@ -2846,7 +2767,7 @@ mod tests {
             ),
         ] {
             let tree = global(vec![intent.clone()]);
-            let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+            let refusal = check(node(), &tree).expect_err("refuses");
             assert!(refusal.to_string().contains(name), "{intent:?}: {refusal}");
 
             match data_of(node(), &tree, &fixture()).expect_err("refuses") {
@@ -2871,7 +2792,7 @@ mod tests {
                 scan(Vec::new()),
             ),
         ] {
-            let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+            let refusal = check(node(), &tree).expect_err("refuses");
             assert!(
                 matches!(refusal, Refusal::UnresolvableColumn { .. }),
                 "{refusal:?}"
@@ -2882,8 +2803,7 @@ mod tests {
     #[test]
     fn a_quantile_outside_zero_to_one_is_refused_before_a_row_is_read() {
         for q in [-0.5, 1.5, f64::NAN] {
-            let refusal = check(node(), &global(vec![quantile(q)]), TimeRangeOrigin::Unknown)
-                .expect_err("refuses");
+            let refusal = check(node(), &global(vec![quantile(q)])).expect_err("refuses");
             assert!(
                 matches!(refusal, Refusal::ParameterOutOfBounds { .. }),
                 "{q}: {refusal:?}"
@@ -2916,7 +2836,7 @@ mod tests {
         );
         assert!(
             matches!(
-                check(node(), &past_the_end, TimeRangeOrigin::Unknown).expect_err("refuses"),
+                check(node(), &past_the_end).expect_err("refuses"),
                 Refusal::UnresolvableColumn { .. }
             ),
             "the scan binds 3 columns, and the Project hands the Aggregate 1"
@@ -3011,7 +2931,7 @@ mod tests {
             (*scan(Vec::new())).clone(),
             narrowed,
         ]));
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         let rendered = refusal.to_string();
         assert!(rendered.contains("Concat branch 1"), "{rendered}");
         assert!(rendered.contains("union-compatible"), "{rendered}");
@@ -3036,7 +2956,6 @@ mod tests {
         ]));
         let supplied = fixture();
         let mut interpreter = Interpreter {
-            origin: TimeRangeOrigin::Unknown,
             node: node(),
             rows: &supplied,
             memo: HashMap::new(),
@@ -3146,7 +3065,7 @@ mod tests {
     #[test]
     fn a_sort_carrying_no_key_is_refused_rather_than_passed_through_unordered() {
         let tree = sorted(Vec::new(), scan(Vec::new()));
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         assert!(
             refusal.to_string().contains("Sort carries no key"),
             "{refusal}"
@@ -3161,7 +3080,7 @@ mod tests {
             child: scan(Vec::new()),
         });
 
-        let refusal = check(node(), &tree, TimeRangeOrigin::Unknown).expect_err("refuses");
+        let refusal = check(node(), &tree).expect_err("refuses");
         let rendered = refusal.to_string();
         assert!(rendered.contains("Sort partitioned by"), "{rendered}");
         assert!(
@@ -3178,33 +3097,38 @@ mod tests {
             ),
             other => panic!("{other:?}"),
         }
-
-        let (root, origin) = lowered("topk by (cluster) (3, cpu_cores)");
-        assert!(
-            check(node(), &root, origin)
-                .expect_err("refuses")
-                .to_string()
-                .contains("Sort partitioned by"),
-            "a PromQL per-group topk must reach the same refusal"
-        );
     }
 
     #[test]
-    fn a_lowered_topk_is_a_limit_over_a_sort_and_this_step_runs_it() {
-        let (root, _) = lowered("topk(2, cpu_cores)");
-        assert_eq!(variant_name(&root), "Limit");
+    fn a_lowered_order_by_limit_runs() {
+        const TOP_TWO: &str =
+            "SELECT ts, value, cluster FROM cpu_cores ORDER BY value DESC LIMIT 2";
 
         let rows = Rc::new(
             [(1i64, 10.0), (2, 30.0), (3, 20.0)]
                 .into_iter()
-                .map(|(ts, value)| Row(vec![Value::Timestamp(ts), Value::Float(value)]))
+                .map(|(ts, value)| {
+                    Row(vec![
+                        Value::Timestamp(ts),
+                        Value::Float(value),
+                        Value::Str("a".to_owned()),
+                    ])
+                })
                 .collect::<Vec<Row>>(),
         );
         assert_eq!(
-            rows_of_lowered("topk(2, cpu_cores)", &rows),
+            rows_of_lowered(TOP_TWO, &rows),
             vec![
-                Row(vec![Value::Timestamp(2), Value::Float(30.0)]),
-                Row(vec![Value::Timestamp(3), Value::Float(20.0)]),
+                Row(vec![
+                    Value::Timestamp(2),
+                    Value::Float(30.0),
+                    Value::Str("a".to_owned())
+                ]),
+                Row(vec![
+                    Value::Timestamp(3),
+                    Value::Float(20.0),
+                    Value::Str("a".to_owned())
+                ]),
             ]
         );
     }
@@ -3241,46 +3165,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_range_selector_is_refused_at_either_length_and_an_instant_selector_still_runs() {
-        let csv = labelled_csv();
-        for query in [
-            "max_over_time(cpu_cores[1s])",
-            "max_over_time(cpu_cores[5s])",
-        ] {
-            let (root, origin) = lowered(query);
-            assert_eq!(
-                origin,
-                TimeRangeOrigin::Unknown,
-                "{query} selects its own range: the 1s one is the shape the lowering injects, \
-                 and peeling it would answer over every row"
-            );
-            let refusal =
-                run_promql(query, ACCURACY, &from_csv(&csv)).expect_err("{query} is refused");
-            assert!(
-                format!("{refusal:?}").contains("TimeRange"),
-                "{query}: {refusal:?}"
-            );
-            let QueryExpr::Aggregate { child, .. } = root.as_ref() else {
-                panic!("{root:?}");
-            };
-            assert_eq!(variant_name(child), "TimeRange");
-        }
-
-        let run = run_promql("cpu_cores", ACCURACY, &from_csv(&csv))
-            .expect("an instant selector still runs");
-        assert_eq!(
-            run.time_range_origin,
-            TimeRangeOrigin::InjectedIngestionHorizon
-        );
-        assert_eq!(answered(&run).len(), 6);
+    fn run_sql(sql: &str, csv: &tempfile::NamedTempFile) -> Result<ExactRun, EvalError> {
+        run_tree(lowered(sql), &from_csv(csv))
     }
 
+    const GROUPED_SUM: &str = "SELECT cluster, SUM(value) FROM cpu_cores GROUP BY cluster";
+
     #[test]
-    fn a_promql_string_becomes_an_answer_over_rows_with_no_post_asap_plan_in_between() {
+    fn a_sql_string_becomes_an_answer_over_rows_with_no_post_asap_plan_in_between() {
         let csv = labelled_csv();
-        let run = run_promql("sum by (cluster) (cpu_cores)", ACCURACY, &from_csv(&csv))
-            .expect("lowers and evaluates");
+        let run = run_sql(GROUPED_SUM, &csv).expect("lowers and evaluates");
 
         assert_eq!((run.rows_scanned, run.rows_emitted), (6, 6));
         assert_eq!(
@@ -3293,60 +3187,40 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_predicate_is_applied_once_by_the_interpreter_and_never_by_the_row_source() {
+    fn a_where_clause_is_applied_by_the_interpreter_and_never_by_the_row_source() {
         let csv = labelled_csv();
-        let run = run_promql(
-            "sum by (cluster) (cpu_cores{cluster=\"a\"})",
-            ACCURACY,
-            &from_csv(&csv),
+        let run = run_sql(
+            "SELECT cluster, SUM(value) FROM cpu_cores WHERE cluster = 'a' GROUP BY cluster",
+            &csv,
         )
         .expect("lowers and evaluates");
 
-        let QueryExpr::Aggregate { child, .. } = run.root.as_ref() else {
-            panic!("{:?}", run.root);
-        };
-        let scan = crate::plan::ingestion_horizon_child(child, run.time_range_origin)
-            .expect("an instant selector");
-        let QueryExpr::Scan { predicates, .. } = scan.as_ref() else {
-            panic!("{scan:?}");
-        };
-        assert_eq!(predicates.len(), 1, "the label matcher is a Scan predicate");
-
-        assert_eq!(
-            (run.rows_scanned, run.rows_emitted),
-            (6, 3),
-            "the row source read all 6 and the leaf predicate admitted the 3 that reached the \
-             aggregate"
-        );
+        assert_eq!(run.rows_scanned, 6, "the row source read every row");
         assert_eq!(
             answered(&run),
             vec![Row(vec![Value::Str("a".to_owned()), Value::Float(90.0)])],
             "the interpreter applied the predicate, and applied it once"
-        );
-
-        let unfiltered = run_promql("sum by (cluster) (cpu_cores)", ACCURACY, &from_csv(&csv))
-            .expect("lowers and evaluates");
-        assert_eq!(
-            (unfiltered.rows_scanned, unfiltered.rows_emitted),
-            (6, 6),
-            "with no leaf predicate the two counts are the same, so the filtered case above is \
-             the predicate and not a constant"
         );
     }
 
     #[test]
     fn the_pre_asap_answer_equals_the_post_asap_arms_exact_side_on_the_same_rows() {
         let csv = labelled_csv();
-        for (query, groups) in [
-            ("quantile by (cluster) (0.5, cpu_cores)", 2usize),
-            ("quantile by (cluster) (0.5, cpu_cores{cluster=\"a\"})", 1),
+        for (sql, groups) in [
+            (
+                "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores GROUP BY cluster",
+                2usize,
+            ),
+            (
+                "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores \
+                 WHERE cluster = 'a' GROUP BY cluster",
+                1,
+            ),
         ] {
-            let pre_asap = answered(
-                &run_promql(query, ACCURACY, &from_csv(&csv)).expect("lowers and evaluates"),
-            );
-            assert_eq!(pre_asap.len(), groups, "{query}");
+            let pre_asap = answered(&run_sql(sql, &csv).expect("lowers and evaluates"));
+            assert_eq!(pre_asap.len(), groups, "{sql}");
 
-            let plan = crate::plan::plan_promql(query, ACCURACY).expect("plans");
+            let plan = crate::plan::plan_sql(sql, &catalog(), ACCURACY).expect("plans");
             let outcome =
                 crate::run::run(&plan, &crate::run::RunConfig::new(from_csv(&csv), 0, true))
                     .expect("runs");
@@ -3354,7 +3228,7 @@ mod tests {
             assert_eq!(
                 outcome.readouts.len(),
                 pre_asap.len(),
-                "{query}: one readout per group"
+                "{sql}: one readout per group"
             );
             for (readout, row) in outcome.readouts.iter().zip(&pre_asap) {
                 assert_eq!(
@@ -3369,7 +3243,7 @@ mod tests {
                     Some(Answer::Scalar(
                         row.0[1].as_f64().expect("a numeric measure")
                     )),
-                    "{query}: the two arms disagree on {}",
+                    "{sql}: the two arms disagree on {}",
                     readout.group
                 );
             }
@@ -3379,7 +3253,11 @@ mod tests {
     #[test]
     fn a_tree_that_reads_no_rows_still_answers_without_opening_a_row_source() {
         let csv = labelled_csv();
-        let run = run_promql("2.5", ACCURACY, &from_csv(&csv)).expect("lowers and evaluates");
+        let run = run_tree(
+            Rc::new(QueryExpr::Literal(ScalarValue::Float64(2.5))),
+            &from_csv(&csv),
+        )
+        .expect("evaluates");
         assert_eq!((run.rows_scanned, run.rows_emitted), (0, 0));
         match run.answer {
             Data::Scalar(value) => assert_eq!(value, 2.5),

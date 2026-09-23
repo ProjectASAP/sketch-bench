@@ -8,7 +8,6 @@ use aqpbm_planeval::df::pre_asap_arm::{answer_with_tables, PreAsapAnswer};
 use aqpbm_planeval::df::schema::declared_columns;
 use aqpbm_planeval::df::session::{MemoryPoolSettings, NoSeedBoundFunctions, SeedSession};
 use aqpbm_planeval::exact::{run_tree, Data};
-use aqpbm_planeval::plan::TimeRangeOrigin;
 use aqpbm_planeval::run::RowsFrom;
 use aqpbm_planeval::sql::{catalog_from_spec, lower_sql_root_async};
 use aqpbm_planeval::Value;
@@ -69,13 +68,9 @@ impl Fixture {
     }
 
     fn interpreted(&self, tree: Rc<QueryExpr>) -> Data {
-        run_tree(
-            tree,
-            &RowsFrom::Generated(Rc::clone(&self.table)),
-            TimeRangeOrigin::Unknown,
-        )
-        .expect("ver 1 answers")
-        .answer
+        run_tree(tree, &RowsFrom::Generated(Rc::clone(&self.table)))
+            .expect("ver 1 answers")
+            .answer
     }
 
     async fn text_oracle(&self, sql: &str) -> Vec<RecordBatch> {

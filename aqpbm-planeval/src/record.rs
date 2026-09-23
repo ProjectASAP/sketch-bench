@@ -594,9 +594,8 @@ fn hex(bytes: &PlanId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::plan_promql;
+    use crate::rows::tests::{plan_of, MEDIAN};
     use crate::run::{run, RowsFrom, RunConfig, DEFAULT_TIMED_RUNS};
-    use asap_types::types::AccuracyTarget;
     use std::io::Write;
 
     fn csv(values: &[f64]) -> tempfile::NamedTempFile {
@@ -610,7 +609,7 @@ mod tests {
     }
 
     fn record_of(query: &str, values: &[f64], verify: bool) -> PlanEvalRecord {
-        let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(query);
 
         let file = csv(values);
         let outcome = run(
@@ -624,10 +623,10 @@ mod tests {
     #[test]
     fn a_real_run_produces_a_record_with_both_arms_and_an_advantage() {
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         assert_eq!(record.schema_version, PLANEVAL_SCHEMA_VERSION);
-        assert_eq!(record.plan.nodes, 3);
+        assert_eq!(record.plan.nodes, 4);
         assert_eq!(record.plan.plan_id.len(), 64, "blake3 as hex");
         assert_eq!(record.rows_emitted, Some(10_000));
 
@@ -665,7 +664,7 @@ mod tests {
 
     #[test]
     fn without_verify_there_is_no_ground_truth_and_no_accuracy() {
-        let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0, 4.0], false);
+        let record = record_of(MEDIAN, &[1.0, 2.0, 3.0, 4.0], false);
         assert_eq!(record.answer_check, AnswerCheck::ExactArmDidNotRun);
         assert_eq!(record.exact.retained_bytes, 0);
         assert!(record.readouts[0].exact.is_none());
@@ -677,7 +676,7 @@ mod tests {
     #[test]
     fn a_record_carrying_non_finite_numbers_still_round_trips() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let base = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let base = record_of(MEDIAN, &values, true);
 
         for (value, spelling) in [
             (12.0_f64, "12.0"),
@@ -725,7 +724,7 @@ mod tests {
     #[test]
     fn the_encoding_change_moved_the_record_version() {
         assert_eq!(PLANEVAL_SCHEMA_VERSION, 9);
-        let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
+        let record = record_of(MEDIAN, &[1.0, 2.0, 3.0], true);
         let line = record.to_jsonl();
         assert!(
             line.contains("\"schema_version\":9"),
@@ -752,13 +751,13 @@ mod tests {
 
     #[test]
     fn a_refused_plan_names_itself_in_the_same_stream_as_a_record() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(MEDIAN);
         let mut counts = RefusalCounts::default();
         counts.add_unclassified(2);
         let refused = RefusedPlanRecord::new(
             "datafusion",
             &plan,
-            "quantile(0.5, cpu_cores)",
+            MEDIAN,
             3,
             counts,
             vec!["Value::Extension".to_owned()],
@@ -920,7 +919,11 @@ mod tests {
     #[test]
     fn the_record_round_trips_as_jsonl() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.9, cpu_cores)", &values, true);
+        let record = record_of(
+            "SELECT approx_percentile_cont(value, 0.9) FROM cpu_cores",
+            &values,
+            true,
+        );
         let line = record.to_jsonl();
         assert!(!line.contains('\n'), "one record, one line");
         let back: PlanEvalRecord = serde_json::from_str(&line).unwrap();
@@ -969,7 +972,7 @@ mod tests {
     #[test]
     fn every_timing_field_carries_a_population_and_its_samples() {
         let values: Vec<f64> = (0..2_000).map(|i| (i % 211) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         for (name, phase) in [
             ("approximate.build", record.approximate.build.as_ref()),
@@ -998,7 +1001,7 @@ mod tests {
     #[test]
     fn the_per_call_percentiles_are_real_and_not_a_counter_only_shim() {
         let values: Vec<f64> = (0..2_000).map(|i| (i % 211) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         let readout = record.approximate.readout.as_ref().unwrap();
         let latency = readout
@@ -1020,7 +1023,7 @@ mod tests {
     #[test]
     fn the_time_advantages_are_ratios_over_the_pre_asap_arm() {
         let values: Vec<f64> = (0..20_000).map(|i| (i % 977) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         let tree = record
             .pre_asap
@@ -1049,7 +1052,7 @@ mod tests {
     #[test]
     fn the_memory_advantage_is_taken_against_the_pre_asap_arm() {
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         assert!(
             record.pre_asap.retained_bytes > record.exact.retained_bytes,
@@ -1068,7 +1071,7 @@ mod tests {
     #[test]
     fn the_accuracy_term_is_the_worst_error_any_readout_showed() {
         let values: Vec<f64> = (0..5_000).map(|i| (i % 313) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
         let worst = record
             .readouts
             .iter()
@@ -1076,31 +1079,23 @@ mod tests {
             .fold(f64::NEG_INFINITY, f64::max);
         assert_eq!(record.advantage().accuracy, Some(worst));
 
-        let unverified = record_of("quantile(0.5, cpu_cores)", &values, false);
+        let unverified = record_of(MEDIAN, &values, false);
         assert_eq!(unverified.advantage().accuracy, None);
     }
 
     #[test]
     fn per_node_time_is_recorded_only_when_it_is_asked_for() {
         let values: Vec<f64> = (0..4_000).map(|i| (i % 211) as f64).collect();
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(MEDIAN);
         let file = csv(&values);
 
         let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 3, true);
-        let quiet = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let quiet = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
         assert!(quiet.nodes.iter().all(|node| node.update_ns.is_none()));
         assert!(quiet.pre_asap_nodes.is_empty());
 
         config.per_node_time = true;
-        let timed = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let timed = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
 
         let aggregate = timed
             .nodes
@@ -1125,7 +1120,7 @@ mod tests {
             .collect();
         assert_eq!(
             operators,
-            vec!["Scan", "Aggregate"],
+            vec!["Scan", "Aggregate", "Project"],
             "children charged first"
         );
         let tree_total: u64 = timed
@@ -1144,16 +1139,12 @@ mod tests {
     #[test]
     fn a_plan_with_no_pre_asap_tree_reports_no_ratio_rather_than_one() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(MEDIAN);
         let file = csv(&values);
 
         let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 1, true);
         config.pre_asap = false;
-        let record = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let record = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
 
         assert!(record.pre_asap.evaluate.is_none());
         let advantage = record.advantage();

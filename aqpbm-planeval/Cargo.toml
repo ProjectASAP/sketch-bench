@@ -17,7 +17,6 @@ path = "src/main.rs"
 [dependencies]
 asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
-asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 asap-frontend-sql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 
 # The bare git URL upstream itself depends on, not the workspace pin (0.2.2)
