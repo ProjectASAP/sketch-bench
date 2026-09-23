@@ -2211,6 +2211,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refusal_raised_inside_an_accumulator_reaches_the_caller_as_a_refusal() {
+        let session = SeedSession::new(SEED, MemoryPoolSettings::default(), &SummaryFunctions)
+            .expect("the session registers the sketch functions");
+        let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+            "latency",
+            ArrowDataType::Float64,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Float64Array::from(vec![1.0, 0.0, 2.0]))],
+        )
+        .unwrap();
+        let table = Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap());
+
+        let family = family(
+            SketchAlgorithm::DDSketch,
+            SketchParams::DDSketch { alpha: 0.01 },
+        );
+        let update = SummaryUpdate {
+            item: None,
+            weight: SummaryInputExpr::Column(ColumnRef::Named("latency".into())),
+            weight_domain: WeightDomain::UnknownOrSigned,
+        };
+        let call = sketch_aggregate_call(&family, &update, PostAsapNodeId(1)).expect("binds");
+        let udaf = session
+            .state()
+            .aggregate_functions()
+            .get(call.function)
+            .cloned()
+            .expect("registered");
+        let plan = LogicalPlanBuilder::scan("t", provider_as_source(table), None)
+            .unwrap()
+            .aggregate(Vec::<Expr>::new(), vec![udaf.call(call.arguments)])
+            .unwrap()
+            .build()
+            .unwrap();
+        let physical = session.single_mode_physical_plan(&plan).await.unwrap();
+        let error = collect(physical, session.context().task_ctx())
+            .await
+            .expect_err("DDSketch refuses a zero");
+        match crate::df::session::SessionError::from(error) {
+            crate::df::session::SessionError::Refused(refusal) => {
+                assert_eq!(refusal.variant, DDSKETCH_FUNCTION);
+                assert_eq!(refusal.tag(), "no_constructor");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_kll_readout_through_datafusion_equals_the_ver_one_readout() {
         let bound = family(SketchAlgorithm::Kll, SketchParams::Kll { k: 269 });
         let update = SummaryUpdate {

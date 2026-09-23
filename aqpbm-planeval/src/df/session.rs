@@ -118,7 +118,27 @@ pub enum SessionError {
     #[error(transparent)]
     Refused(#[from] Refusal),
     #[error(transparent)]
-    DataFusion(#[from] DataFusionError),
+    DataFusion(DataFusionError),
+}
+
+impl From<DataFusionError> for SessionError {
+    fn from(error: DataFusionError) -> Self {
+        match refusal_within(&error) {
+            Some(refusal) => SessionError::Refused(refusal),
+            None => SessionError::DataFusion(error),
+        }
+    }
+}
+
+pub fn refusal_within(error: &DataFusionError) -> Option<Refusal> {
+    let mut level: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(held) = level {
+        if let Some(refusal) = held.downcast_ref::<Refusal>() {
+            return Some(refusal.clone());
+        }
+        level = held.source();
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -463,6 +483,58 @@ mod tests {
             error.to_string().contains("no-extension-operator"),
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_raised_while_planning_comes_back_as_a_refusal() {
+        let session = session();
+        let schema = Arc::new(
+            datafusion::common::DFSchema::try_from(ArrowSchema::new(vec![Field::new(
+                "n",
+                ArrowDataType::Int64,
+                false,
+            )]))
+            .unwrap(),
+        );
+        let logical = LogicalPlan::Extension(Extension {
+            node: Arc::new(NoSuchNode { schema }),
+        });
+        match session.single_mode_physical_plan(&logical).await {
+            Err(SessionError::Refused(refusal)) => {
+                assert_eq!(
+                    refusal.reason,
+                    crate::df::RefusalReason::Deferred {
+                        issue: "no-extension-operator".to_owned()
+                    }
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refusal_is_found_under_every_layer_datafusion_wraps_it_in() {
+        let refusal = Refusal::no_constructor("Probe", "wrapped");
+        for wrapped in [
+            DataFusionError::from(refusal.clone()),
+            DataFusionError::from(refusal.clone()).context("collecting"),
+            DataFusionError::ArrowError(
+                datafusion::arrow::error::ArrowError::ExternalError(Box::new(
+                    DataFusionError::from(refusal.clone()).context("inner"),
+                )),
+                None,
+            ),
+            DataFusionError::External(Box::new(Arc::new(DataFusionError::from(refusal.clone())))),
+        ] {
+            match SessionError::from(wrapped) {
+                SessionError::Refused(found) => assert_eq!(found, refusal),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(matches!(
+            SessionError::from(DataFusionError::Execution("not a refusal".to_owned())),
+            SessionError::DataFusion(_)
+        ));
     }
 
     #[tokio::test]

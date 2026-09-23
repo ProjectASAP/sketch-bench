@@ -17,7 +17,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::physical_plan::{collect, ExecutionPlan};
 
-use crate::df::memtable::register_generated_table;
+use crate::df::memtable::{register_generated_table, IngestError};
 use crate::df::metrics::{strip_node_alias, ElapsedCompute};
 use crate::df::post_asap_arm::{answer, answer_without_split, PostAsapAnswer};
 use crate::df::pre_asap::TableSources;
@@ -131,7 +131,10 @@ async fn prepare(
         .map_err(|refusal| EvalError::Untranslated(vec![refusal]))?;
     let source =
         register_generated_table(session.context(), &engine.table, &engine.rows, &declared)
-            .map_err(|error| EvalError::RowSource(error.to_string()))?;
+            .map_err(|error| match error {
+                IngestError::Refused(refusal) => EvalError::Untranslated(vec![refusal]),
+                other => EvalError::RowSource(other.to_string()),
+            })?;
     let source_bytes = source.get_array_memory_size();
     let rows_scanned = source.num_rows() as u64;
     let tables = TableSources::of_context(session.context())
