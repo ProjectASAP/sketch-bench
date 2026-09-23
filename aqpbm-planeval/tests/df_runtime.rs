@@ -28,6 +28,8 @@ const ROWS: u64 = 20_000;
 
 const QUANTILE_SQL: &str = "SELECT approx_percentile_cont(latency, 0.99) FROM metrics";
 const GROUPED_SUM_SQL: &str = "SELECT service, SUM(bytes) FROM metrics GROUP BY service";
+const ALIASED_GROUPED_MAX_SQL: &str =
+    "SELECT service, MAX(bytes) AS peak_bytes FROM metrics GROUP BY service";
 const NO_SUMMARY_SQL: &str = "SELECT latency FROM metrics WHERE latency > 1";
 const INT_KEYED_QUANTILE_SQL: &str =
     "SELECT bytes, approx_percentile_cont(latency, 0.5) FROM metrics GROUP BY bytes";
@@ -273,6 +275,30 @@ fn the_grouped_sum_is_exact_on_both_arms() {
                 error: 0.0
             }
         );
+    }
+    assert_eq!(record.advantage().accuracy, Some(0.0));
+}
+
+#[test]
+fn an_aliased_grouped_aggregate_is_scored_against_the_node_that_produced_it() {
+    let record = record_of(ALIASED_GROUPED_MAX_SQL, true);
+    let summary = record
+        .nodes
+        .iter()
+        .find(|node| node.family.as_deref() == Some("Exact(Max)"))
+        .expect("the plan binds an exact maximum");
+    assert_eq!(
+        record.readouts.len(),
+        8,
+        "one maximum per service, under the name the SELECT list gave it"
+    );
+    for readout in &record.readouts {
+        assert_eq!(
+            readout.node, summary.node,
+            "the rename does not move the answer off the node that computed it"
+        );
+        let exact = readout.exact.as_ref().expect("the exact arm answered");
+        assert_eq!(readout.approximate, *exact, "group {}", readout.group);
     }
     assert_eq!(record.advantage().accuracy, Some(0.0));
 }

@@ -7,9 +7,10 @@ use aqpbm_core::measure::{measure, Measurement, Pass, Report, RunOutcome as Meas
 use aqpbm_core::metrics::{Metric, MetricsMask, RunMetrics};
 use aqpbm_datagen::table::{GeneratedTable, TableDescription};
 use asap_types::post_asap::{
-    ExecutableOperatorPayload, PostAsapNodeId, SketchQuery, SummaryFamilyType,
+    EdgeRole, ExecutableDagNode, ExecutableOperatorPayload, PostAsapNodeId, SketchQuery,
+    SummaryFamilyType, ValueOperation,
 };
-use asap_types::pre_asap::Reduction;
+use asap_types::pre_asap::{QueryExpr, Reduction};
 use datafusion::arrow::array::Array;
 use datafusion::arrow::datatypes::Schema as ArrowSchema;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -327,35 +328,135 @@ fn answer_shape(plan: &Plan) -> Result<PlanAnswerShape, Refusal> {
         }
     }
 
-    for node in &plan.dag.nodes {
-        let query: Option<SketchQuery> = match &node.payload {
-            ExecutableOperatorPayload::SummaryEstimate { query } => Some(query.clone()),
-            ExecutableOperatorPayload::SummaryAgg {
-                family: SummaryFamilyType::ExactAggregate(..),
-                ..
-            } => None,
-            _ => continue,
+    let nodes: BTreeMap<PostAsapNodeId, &ExecutableDagNode> =
+        plan.dag.nodes.iter().map(|node| (node.id, node)).collect();
+    let mut roles: BTreeMap<PostAsapNodeId, Vec<ColumnRole>> = BTreeMap::new();
+    for id in &plan.order {
+        let Some(node) = nodes.get(id) else {
+            continue;
         };
-        for field in &node.output_schema.fields {
-            if shape.key_names.contains(&field.name) {
-                continue;
-            }
-            if let Some((held, _)) = shape
-                .value_owners
-                .insert(field.name.clone(), (node.id, query.clone()))
-            {
-                return Err(Refusal::no_constructor(
-                    REFUSED_ANSWER,
-                    format!(
-                        "column {} is produced by both {held:?} and {:?}, so a readout taken from \
-                         it names no one node",
-                        field.name, node.id
-                    ),
-                ));
+        let produced = column_roles(plan, node, &shape.key_names, &roles);
+        for (field, role) in node.output_schema.fields.iter().zip(&produced) {
+            match role {
+                ColumnRole::Key => {
+                    shape.key_names.insert(field.name.clone());
+                }
+                ColumnRole::Owned(owner, query) => {
+                    register_value(&mut shape, &field.name, *owner, query)?;
+                }
+                ColumnRole::Unattributed => {}
             }
         }
+        roles.insert(node.id, produced);
     }
     Ok(shape)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ColumnRole {
+    Key,
+    Owned(PostAsapNodeId, Option<SketchQuery>),
+    Unattributed,
+}
+
+fn column_roles(
+    plan: &Plan,
+    node: &ExecutableDagNode,
+    key_names: &BTreeSet<String>,
+    roles: &BTreeMap<PostAsapNodeId, Vec<ColumnRole>>,
+) -> Vec<ColumnRole> {
+    let width = node.output_schema.fields.len();
+    let produced = |query: Option<SketchQuery>| -> Vec<ColumnRole> {
+        node.output_schema
+            .fields
+            .iter()
+            .map(|field| match key_names.contains(&field.name) {
+                true => ColumnRole::Key,
+                false => ColumnRole::Owned(node.id, query.clone()),
+            })
+            .collect()
+    };
+    match &node.payload {
+        ExecutableOperatorPayload::SummaryEstimate { query } => produced(Some(query.clone())),
+        ExecutableOperatorPayload::SummaryAgg {
+            family: SummaryFamilyType::ExactAggregate(..),
+            ..
+        } => produced(None),
+        ExecutableOperatorPayload::Value { operation, .. } => {
+            let read = sole_input(plan, node.id).and_then(|producer| roles.get(&producer));
+            let Some(read) = read else {
+                return vec![ColumnRole::Unattributed; width];
+            };
+            carried_through(operation, read, width)
+        }
+        _ => vec![ColumnRole::Unattributed; width],
+    }
+}
+
+fn carried_through(
+    operation: &ValueOperation,
+    read: &[ColumnRole],
+    width: usize,
+) -> Vec<ColumnRole> {
+    match operation {
+        ValueOperation::Project { cols, .. } if cols.len() == width => cols
+            .iter()
+            .map(|item| match &item.expr {
+                QueryExpr::Column(position) => read
+                    .get(*position)
+                    .cloned()
+                    .unwrap_or(ColumnRole::Unattributed),
+                _ => ColumnRole::Unattributed,
+            })
+            .collect(),
+        ValueOperation::Filter { .. }
+        | ValueOperation::Sort { .. }
+        | ValueOperation::Limit { .. }
+        | ValueOperation::FinalizeExactAccumulator
+            if read.len() == width =>
+        {
+            read.to_vec()
+        }
+        _ => vec![ColumnRole::Unattributed; width],
+    }
+}
+
+fn sole_input(plan: &Plan, consumer: PostAsapNodeId) -> Option<PostAsapNodeId> {
+    let mut producers = plan
+        .dag
+        .edges
+        .iter()
+        .filter(|edge| edge.consumer == consumer && matches!(edge.role, EdgeRole::Input))
+        .map(|edge| edge.producer);
+    let first = producers.next()?;
+    producers.next().is_none().then_some(first)
+}
+
+fn register_value(
+    shape: &mut PlanAnswerShape,
+    name: &str,
+    node: PostAsapNodeId,
+    query: &Option<SketchQuery>,
+) -> Result<(), Refusal> {
+    if shape.key_names.contains(name) {
+        return Ok(());
+    }
+    match shape.value_owners.get(name) {
+        Some(held) if held.0 == node && &held.1 == query => Ok(()),
+        Some((held, _)) => Err(Refusal::no_constructor(
+            REFUSED_ANSWER,
+            format!(
+                "column {name} is produced by both {held:?} and {node:?}, so a readout taken from \
+                 it names no one node"
+            ),
+        )),
+        None => {
+            shape
+                .value_owners
+                .insert(name.to_string(), (node, query.clone()));
+            Ok(())
+        }
+    }
 }
 
 fn answer_layout(schema: &ArrowSchema, shape: &PlanAnswerShape) -> Result<AnswerLayout, Refusal> {
