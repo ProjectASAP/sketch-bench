@@ -631,6 +631,28 @@ fn require_i32_weight(weight: f64, function: &str) -> Result<i32, Refusal> {
     ))
 }
 
+fn charge_i32_total(
+    ingested: &mut i64,
+    many: i32,
+    weight: f64,
+    function: &str,
+) -> Result<(), Refusal> {
+    let next = *ingested + i64::from(many);
+    if next > i64::from(i32::MAX) {
+        return Err(Refusal::no_constructor(
+            function,
+            format!(
+                "{} already ingested plus weight {weight} would exceed i32::MAX = {}, and a \
+                 single hot key can land the whole total in one counter",
+                *ingested,
+                i32::MAX
+            ),
+        ));
+    }
+    *ingested = next;
+    Ok(())
+}
+
 fn point_key<'a>(function: &str, query: &'a SketchQuery) -> Result<DataInput<'a>, Refusal> {
     match query {
         SketchQuery::PointCount {
@@ -947,20 +969,8 @@ impl SketchBinding for CountMinBinding {
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), Refusal> {
         let many = require_i32_weight(weight, Self::FUNCTION)?;
         let key = require_item(item, Self::FUNCTION)?;
-        let next = self.ingested + i64::from(many);
-        if next > i64::from(i32::MAX) {
-            return Err(Refusal::no_constructor(
-                Self::FUNCTION,
-                format!(
-                    "{} already ingested plus weight {weight} would exceed i32::MAX = {}, and a \
-                     single hot key can land the whole total in one counter",
-                    self.ingested,
-                    i32::MAX
-                ),
-            ));
-        }
+        charge_i32_total(&mut self.ingested, many, weight, Self::FUNCTION)?;
         self.inner.insert_many(&key, many);
-        self.ingested = next;
         Ok(())
     }
 
@@ -1006,6 +1016,7 @@ pub struct CountSketchBinding {
     inner: Count<Vector2D<i32>, FastPath>,
     rows: usize,
     cols: usize,
+    ingested: i64,
 }
 
 impl SketchBinding for CountSketchBinding {
@@ -1023,12 +1034,14 @@ impl SketchBinding for CountSketchBinding {
             inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(rows, cols),
             rows,
             cols,
+            ingested: 0,
         })
     }
 
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), Refusal> {
         let many = require_i32_weight(weight, Self::FUNCTION)?;
         let key = require_item(item, Self::FUNCTION)?;
+        charge_i32_total(&mut self.ingested, many, weight, Self::FUNCTION)?;
         self.inner.insert_many(&key, many);
         Ok(())
     }
@@ -1054,6 +1067,7 @@ impl SketchBinding for CountSketchBinding {
                 .map_err(|error| decoding_failed(Self::FUNCTION, error))?,
             rows,
             cols,
+            ingested: 0,
         })
     }
 
@@ -1072,6 +1086,7 @@ pub struct CountMinHeapBinding {
     rows: usize,
     cols: usize,
     heap_size: usize,
+    ingested: i64,
 }
 
 impl SketchBinding for CountMinHeapBinding {
@@ -1096,12 +1111,14 @@ impl SketchBinding for CountMinHeapBinding {
             rows,
             cols,
             heap_size,
+            ingested: 0,
         })
     }
 
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), Refusal> {
         require_unit_weight(weight, Self::FUNCTION)?;
         let key = require_item(item, Self::FUNCTION)?;
+        charge_i32_total(&mut self.ingested, 1, weight, Self::FUNCTION)?;
         self.inner.insert(&key);
         Ok(())
     }
@@ -1133,6 +1150,7 @@ impl SketchBinding for CountMinHeapBinding {
             rows,
             cols,
             heap_size: *heap_size as usize,
+            ingested: 0,
         })
     }
 
@@ -1155,6 +1173,7 @@ pub struct CountSketchHeapBinding {
     rows: usize,
     cols: usize,
     heap_size: usize,
+    ingested: i64,
 }
 
 impl SketchBinding for CountSketchHeapBinding {
@@ -1179,12 +1198,14 @@ impl SketchBinding for CountSketchHeapBinding {
             rows,
             cols,
             heap_size,
+            ingested: 0,
         })
     }
 
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), Refusal> {
         require_unit_weight(weight, Self::FUNCTION)?;
         let key = require_item(item, Self::FUNCTION)?;
+        charge_i32_total(&mut self.ingested, 1, weight, Self::FUNCTION)?;
         self.inner.insert(&key);
         Ok(())
     }
@@ -1216,6 +1237,7 @@ impl SketchBinding for CountSketchHeapBinding {
             rows,
             cols,
             heap_size: *heap_size as usize,
+            ingested: 0,
         })
     }
 
@@ -2208,6 +2230,52 @@ mod tests {
         }
         answers.sort_by(|left, right| left.0.cmp(&right.0));
         answers
+    }
+
+    #[test]
+    fn every_i32_counting_sketch_refuses_the_insert_that_would_wrap_its_counters() {
+        let key = ItemKey::Str("hot".to_owned());
+
+        let mut count_sketch = CountSketchBinding::bind(
+            &SketchParams::CountSketch {
+                width: 272,
+                depth: 5,
+            },
+            SEED,
+        )
+        .unwrap();
+        count_sketch
+            .update(Some(&key), 2_000_000_000.0)
+            .expect("2e9 fits in an i32 counter");
+        assert!(count_sketch.update(Some(&key), 2_000_000_000.0).is_err());
+
+        let (width, depth, heap_size) = (272, 5, 32);
+        let mut cms_heap = CountMinHeapBinding::bind(
+            &SketchParams::CmsWithHeap {
+                width,
+                depth,
+                heap_size,
+            },
+            SEED,
+        )
+        .unwrap();
+        cms_heap.ingested = i64::from(i32::MAX);
+        assert!(cms_heap.update(Some(&key), 1.0).is_err());
+
+        let mut cs_heap = CountSketchHeapBinding::bind(
+            &SketchParams::CountSketchWithHeap {
+                width,
+                depth,
+                heap_size,
+            },
+            SEED,
+        )
+        .unwrap();
+        cs_heap.ingested = i64::from(i32::MAX) - 1;
+        cs_heap
+            .update(Some(&key), 1.0)
+            .expect("the last unit that still fits");
+        assert!(cs_heap.update(Some(&key), 1.0).is_err());
     }
 
     #[tokio::test]
