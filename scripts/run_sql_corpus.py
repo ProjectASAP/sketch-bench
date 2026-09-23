@@ -24,6 +24,7 @@ REFUSED_PLAN_RECORD_KEYS = frozenset(
 )
 READOUT_GUARANTEE_KEYS = frozenset(("schema_version", "node", "group", "query", "check"))
 ARM_PHASES = ("build", "update", "readout", "evaluate", "maintenance", "read")
+ANSWER_CHECKS = ("scored_against_exact", "no_readout_compared", "exact_arm_did_not_run")
 
 
 class OutputNotUnderstood(Exception):
@@ -201,6 +202,16 @@ def counts_declared_by(record, where):
 
 def nonzero(counts):
     return {name: count for name, count in counts.items() if count}
+
+
+def answer_check_of(record, where):
+    held = record.get("answer_check")
+    if held not in ANSWER_CHECKS:
+        raise OutputNotUnderstood(
+            f"{where}: the record says its answer check is {held!r}, which names none of "
+            f"{list(ANSWER_CHECKS)}"
+        )
+    return held
 
 
 def arm_ran(record, arm, where):
@@ -406,6 +417,10 @@ def evaluate(binary, spec, statement, epsilon, timeout, where):
     }
     entry["arm_b_runs"] = {
         name: None if record is None else arm_ran(record, "approximate", f"{where} [{name}]")
+        for name, record in records.items()
+    }
+    entry["answer_check"] = {
+        name: None if record is None else answer_check_of(record, f"{where} [{name}]")
         for name, record in records.items()
     }
     entry["cross_runtime"] = compare_readouts(interp, datafusion)

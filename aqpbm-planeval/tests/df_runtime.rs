@@ -13,7 +13,7 @@ use aqpbm_planeval::df::session::{MemoryPoolSettings, SeedSession};
 use aqpbm_planeval::df::sketch_udaf::SummaryFunctions;
 use aqpbm_planeval::df::split::split;
 use aqpbm_planeval::plan::{plan_sql, plan_sql_root, Plan};
-use aqpbm_planeval::record::PlanEvalRecord;
+use aqpbm_planeval::record::{AnswerCheck, PlanEvalRecord};
 use aqpbm_planeval::run::{RowsFrom, RunConfig};
 use aqpbm_planeval::score::ObservedError;
 use aqpbm_planeval::sql::{catalog_from_spec, lower_sql_root_async};
@@ -410,7 +410,11 @@ fn a_grouped_plan_reports_the_family_it_bound_and_not_its_group_key() {
 #[test]
 fn no_verify_leaves_the_datafusion_record_without_ground_truth() {
     let record = verified_record_of(QUANTILE_SQL, true, false);
-    assert!(!record.verified, "--no-verify has to reach this runtime");
+    assert_eq!(
+        record.answer_check,
+        AnswerCheck::ExactArmDidNotRun,
+        "--no-verify has to reach this runtime"
+    );
     assert!(record.readouts[0].exact.is_none());
     assert_eq!(
         record.readouts[0].observed_error,

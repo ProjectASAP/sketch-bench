@@ -17,7 +17,8 @@ use aqpbm_planeval::df::run::{refusal_counts, run as run_datafusion, DataFusionR
 use aqpbm_planeval::exact::{run_promql, run_tree, Data, ExactRun};
 use aqpbm_planeval::plan::{plan_promql, plan_sql, to_json, Plan};
 use aqpbm_planeval::record::{
-    AnswerRecord, Arm, NodeCost, Phase, PlanEvalRecord, ReadoutRecord, RefusedPlanRecord,
+    AnswerCheck, AnswerRecord, Arm, NodeCost, Phase, PlanEvalRecord, ReadoutRecord,
+    RefusedPlanRecord,
 };
 use aqpbm_planeval::run::{run, RowsFrom, RunConfig, Runtime};
 use aqpbm_planeval::runtimes::{
@@ -837,12 +838,13 @@ fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: 
     }
     print_engine_cost("summary ", &record.approximate);
     print_engine_cost("pre-ASAP", &record.pre_asap);
-    if record.verified {
+    if record.answer_check != AnswerCheck::ExactArmDidNotRun {
         println!(
             "ground truth  {} B retained, untimed",
             record.exact.retained_bytes
         );
     }
+    println!("answer check  {}", record.answer_check);
 
     let advantage = record.advantage();
     let tree = record.pre_asap.evaluate.as_ref().map(mean);

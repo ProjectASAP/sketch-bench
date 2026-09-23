@@ -4,6 +4,7 @@ use std::rc::Rc;
 use aqpbm_datagen::table::{GeneratedTable, TableDescription};
 use aqpbm_planeval::df::run::DataFusionRunConfig;
 use aqpbm_planeval::plan::{plan_sql, Plan};
+use aqpbm_planeval::record::AnswerCheck;
 use aqpbm_planeval::run::{RowsFrom, RunConfig};
 use aqpbm_planeval::runtimes::{
     quantities, readout_differences, readout_pairs, records_per_runtime, RuntimeRecords,
@@ -89,6 +90,12 @@ fn a_plan_with_no_estimate_is_scored_on_datafusion_and_unscored_on_the_interpret
         None,
         "so the interpreter reports no accuracy at all for this plan"
     );
+    assert_eq!(
+        records.interp.answer_check,
+        AnswerCheck::NoReadoutCompared,
+        "its exact arm ran and its timings are real, and the record has to say on its face \
+         that nothing was scored against them"
+    );
 
     assert_eq!(
         records.datafusion.readouts.len(),
@@ -101,6 +108,10 @@ fn a_plan_with_no_estimate_is_scored_on_datafusion_and_unscored_on_the_interpret
         records.datafusion.advantage().accuracy,
         Some(0.0),
         "an exact accumulator has to reproduce the exact answer"
+    );
+    assert_eq!(
+        records.datafusion.answer_check,
+        AnswerCheck::ScoredAgainstExact
     );
 
     assert!(

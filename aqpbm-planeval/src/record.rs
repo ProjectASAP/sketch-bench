@@ -22,7 +22,7 @@ use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 8;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +40,50 @@ impl std::fmt::Display for MemoryColumn {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerCheck {
+    ScoredAgainstExact,
+    NoReadoutCompared,
+    ExactArmDidNotRun,
+}
+
+impl AnswerCheck {
+    pub fn of_run(outcome: &RunOutcome) -> Self {
+        match outcome.verified {
+            false => AnswerCheck::ExactArmDidNotRun,
+            true => match outcome
+                .readouts
+                .iter()
+                .any(|readout| readout.exact.is_some())
+            {
+                true => AnswerCheck::ScoredAgainstExact,
+                false => AnswerCheck::NoReadoutCompared,
+            },
+        }
+    }
+
+    pub fn scored(self) -> bool {
+        self == AnswerCheck::ScoredAgainstExact
+    }
+}
+
+impl std::fmt::Display for AnswerCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnswerCheck::ScoredAgainstExact => {
+                write!(f, "the answer was scored against the exact arm")
+            }
+            AnswerCheck::NoReadoutCompared => write!(
+                f,
+                "the exact arm ran but no readout was compared against it, so nothing here \
+                 checked the answer"
+            ),
+            AnswerCheck::ExactArmDidNotRun => write!(f, "the exact arm did not run"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
     pub schema_version: u32,
@@ -53,12 +97,15 @@ pub struct PlanEvalRecord {
     /// than a readout. `null` when the root holds summary state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_rows: Option<usize>,
-    /// Whether the exact arm ran at all. A record with `verified: false` has
-    /// no ground truth in it, and says so rather than leaving the reader to
-    /// infer it from absent fields. The arm carries no timing: it recomputes
-    /// the statistic off the column the summary consumed, which is ground
-    /// truth and not a query anyone would run.
-    pub verified: bool,
+    /// What, if anything, checked this record's answer. A record that says
+    /// `exact_arm_did_not_run` has no ground truth in it, and one that says
+    /// `no_readout_compared` has ground truth that nothing was scored
+    /// against — its timings and memory describe an answer no one checked.
+    /// Both say so rather than leaving the reader to infer it from an empty
+    /// `readouts`. The exact arm carries no timing: it recomputes the
+    /// statistic off the column the summary consumed, which is ground truth
+    /// and not a query anyone would run.
+    pub answer_check: AnswerCheck,
     pub no_summary_in_plan: bool,
     pub memory_column: MemoryColumn,
     pub nodes: Vec<NodeCost>,
@@ -359,7 +406,7 @@ impl PlanEvalRecord {
             rows_scanned: outcome.rows_scanned,
             rows_emitted: outcome.rows_emitted,
             root_rows: outcome.root_rows,
-            verified: outcome.verified,
+            answer_check: AnswerCheck::of_run(outcome),
             no_summary_in_plan: outcome.no_summary_in_plan,
             memory_column: MemoryColumn::BytesKeptBetweenQueries,
             nodes,
@@ -589,7 +636,7 @@ mod tests {
     #[test]
     fn without_verify_there_is_no_ground_truth_and_no_accuracy() {
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0, 4.0], false);
-        assert!(!record.verified);
+        assert_eq!(record.answer_check, AnswerCheck::ExactArmDidNotRun);
         assert_eq!(record.exact.retained_bytes, 0);
         assert!(record.readouts[0].exact.is_none());
         // Not 0.0 — no error was measured, rather than none being made.
@@ -647,11 +694,11 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 8);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 9);
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
         let line = record.to_jsonl();
         assert!(
-            line.contains("\"schema_version\":8"),
+            line.contains("\"schema_version\":9"),
             "the stream has to say which encoding it is in"
         );
         assert!(line.contains("\"runtime\":\"interp\""), "{line}");
@@ -660,6 +707,10 @@ mod tests {
             "the record has to say what the memory ratio divides: {line}"
         );
         assert!(line.contains("\"no_summary_in_plan\":false"), "{line}");
+        assert!(
+            line.contains("\"answer_check\":\"scored_against_exact\""),
+            "the record has to say on its face what checked its answer: {line}"
+        );
         assert!(
             line.contains(
                 "\"refusals\":{\"promql_only\":0,\"time_axis\":0,\"no_constructor\":0,\
@@ -684,7 +735,7 @@ mod tests {
         );
         let line = refused.to_jsonl();
         assert!(!line.contains('\n'), "one refusal, one line");
-        assert!(line.contains("\"schema_version\":8"), "{line}");
+        assert!(line.contains("\"schema_version\":9"), "{line}");
         assert!(line.contains("\"runtime\":\"datafusion\""), "{line}");
         assert!(
             line.contains(&format!("\"plan_id\":\"{}\"", hex(&plan.id))),
@@ -814,7 +865,7 @@ mod tests {
         assert_eq!(back.nodes, record.nodes);
         assert_eq!(back.rows_scanned, record.rows_scanned);
         assert_eq!(back.rows_emitted, record.rows_emitted);
-        assert_eq!(back.verified, record.verified);
+        assert_eq!(back.answer_check, record.answer_check);
         assert_eq!(back.readouts, record.readouts);
 
         same_arm(&back.approximate, &record.approximate, "approximate");
