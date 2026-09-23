@@ -176,10 +176,19 @@ pub fn declared_columns(description: &TableDescription) -> Result<Vec<DeclaredCo
                     Some(spelling) => DeclaredSqlType::parse(spelling)?,
                     None => DeclaredSqlType::FromRendering,
                 },
-                nullable: false,
+                nullable: generated_column_nullability(&column_rendering(&spec.data_type)?),
             })
         })
         .collect()
+}
+
+pub fn generated_column_nullability(column: &ColumnData) -> bool {
+    match column {
+        ColumnData::Int64(_)
+        | ColumnData::Float64(_)
+        | ColumnData::Unsigned64(_)
+        | ColumnData::String(_) => false,
+    }
 }
 
 pub fn column_rendering(data_type: &str) -> Result<ColumnData, Refusal> {
@@ -440,6 +449,54 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(refused.tag(), "deferred");
+    }
+
+    fn one_column_description(data_type: &str) -> TableDescription {
+        TableDescription::single(
+            "c",
+            aqpbm_datagen::column::ColumnSpec {
+                distribution: aqpbm_datagen::dist::DataDistribution::Uniform(
+                    aqpbm_datagen::dist::UniformParameter {
+                        lower_bound: 0.0,
+                        upper_bound: 8.0,
+                        seed: 1,
+                    },
+                ),
+                shift: None,
+                cardinality: None,
+                special_rule: 0,
+                data_type: data_type.to_owned(),
+                sql_type: None,
+                string: None,
+            },
+            10,
+        )
+    }
+
+    #[test]
+    fn a_declared_column_takes_its_nullability_from_the_rendering_the_spec_names() {
+        for data_type in aqpbm_datagen::DATA_TYPES {
+            let rendering = column_rendering(data_type).expect("the spelling names a rendering");
+            let declared = declared_columns(&one_column_description(data_type))
+                .expect("the spelling names a rendering");
+            assert_eq!(declared.len(), 1);
+            assert_eq!(
+                declared[0].nullable,
+                generated_column_nullability(&rendering),
+                "{data_type}"
+            );
+            assert!(
+                !declared[0].nullable,
+                "every datagen rendering fills every row: {data_type}"
+            );
+        }
+        assert_eq!(
+            declared_columns(&one_column_description("i128"))
+                .unwrap_err()
+                .tag(),
+            "deferred",
+            "a spelling datagen does not render declares nothing, not a non-nullable column"
+        );
     }
 
     #[test]

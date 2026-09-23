@@ -615,6 +615,64 @@ mod tests {
         TableSources::new().with_table(TABLE, provider_as_source(Arc::new(provider)))
     }
 
+    fn tables_of(schema: datafusion::arrow::datatypes::Schema) -> TableSources {
+        let provider =
+            MemTable::try_new(Arc::new(schema), vec![Vec::new()]).expect("an empty MemTable");
+        TableSources::new().with_table(TABLE, provider_as_source(Arc::new(provider)))
+    }
+
+    fn with_nullability(nullable: bool) -> datafusion::arrow::datatypes::Schema {
+        let fields: Vec<datafusion::arrow::datatypes::Field> = leaf_arrow_schema()
+            .fields()
+            .iter()
+            .map(|field| {
+                datafusion::arrow::datatypes::Field::new(
+                    field.name(),
+                    field.data_type().clone(),
+                    nullable,
+                )
+            })
+            .collect();
+        datafusion::arrow::datatypes::Schema::new(fields)
+    }
+
+    fn scan_declaring(nullable: bool) -> QueryExpr {
+        let mut schema = crate::df::variants::leaf_schema();
+        for column in &mut schema.columns {
+            column.nullable = nullable;
+        }
+        QueryExpr::Scan {
+            source: Source::Table {
+                table_ref: TABLE.to_owned(),
+            },
+            predicates: Vec::new(),
+            schema,
+        }
+    }
+
+    #[test]
+    fn a_nullable_leaf_lowers_when_the_registered_table_is_nullable_too() {
+        lower(&scan_declaring(true), &tables_of(with_nullability(true)))
+            .expect("a nullable leaf translates");
+        lower(&scan_declaring(false), &tables_of(with_nullability(false)))
+            .expect("a non-nullable leaf translates");
+    }
+
+    #[test]
+    fn a_leaf_whose_nullability_disagrees_with_the_registered_table_is_refused() {
+        for (declared, registered) in [(true, false), (false, true)] {
+            let refusal = lower(
+                &scan_declaring(declared),
+                &tables_of(with_nullability(registered)),
+            )
+            .expect_err("refuses");
+            assert_eq!(refusal.variant, "QueryExpr::Scan");
+            assert_eq!(refusal.reason, RefusalReason::NoConstructor);
+            assert!(refusal.detail.contains("ts"), "{refusal}");
+            assert!(refusal.detail.contains(nullability(declared)), "{refusal}");
+        }
+    }
+
     #[test]
     fn the_two_tables_name_every_variant_of_the_tree_exactly_once() {
         let mut both = sorted(ADMITTED.into_iter().chain(DEFERRED));
