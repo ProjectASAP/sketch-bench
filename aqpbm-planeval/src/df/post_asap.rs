@@ -440,6 +440,17 @@ fn lower_value(
                 having,
             } => {
                 let input = inputs.single(&variant)?.clone();
+                let declared = node.output_schema.fields.len();
+                if output_names.len() != declared {
+                    return Err(Refusal::no_constructor(
+                        "Value::Exact(Aggregate)",
+                        format!(
+                            "the payload names {} output columns and the node declares {}",
+                            output_names.len(),
+                            declared
+                        ),
+                    ));
+                }
                 reduce_measures(
                     input,
                     reduction,
@@ -967,6 +978,38 @@ mod tests {
             .to_string();
         assert!(text.contains("sum("), "{text}");
         assert!(text.contains("Aggregate:"), "{text}");
+    }
+
+    #[test]
+    fn an_exact_aggregate_that_names_more_columns_than_its_node_declares_is_refused() {
+        for declared in [
+            plain_summary_schema(&[("service", DataType::Utf8)]),
+            plain_summary_schema(&[
+                ("service", DataType::Utf8),
+                ("total", DataType::Int64),
+                ("spare", DataType::Int64),
+            ]),
+        ] {
+            let width = declared.fields.len();
+            let dag = feeding(
+                ExecutableOperatorPayload::Value {
+                    operation: ValueOperation::Exact(ExactOperation::Aggregate {
+                        reduction: Reduction::by(vec![1]),
+                        measures: vec![asap_types::pre_asap::agg_intent::AggIntent::Sum {
+                            col: Some(3),
+                        }],
+                        output_names: vec!["service".to_owned(), "total".to_owned()],
+                        having: None,
+                    }),
+                    timing: ExecutionTiming::ReadTime,
+                },
+                declared,
+                ExecutionDataState::READ_ROWS,
+            );
+            let refused = fold(&dag).unwrap_err();
+            assert_eq!(refused.variant, "Value::Exact(Aggregate)", "{refused}");
+            assert_eq!(refused.tag(), "no_constructor", "{width}: {refused}");
+        }
     }
 
     #[test]
