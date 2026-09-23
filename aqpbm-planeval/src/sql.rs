@@ -62,15 +62,23 @@ pub fn catalog_from_spec(
     Ok(SqlCatalog::new().with_table(table, schema))
 }
 
+pub async fn lower_sql_root_async(
+    sql: &str,
+    catalog: &SqlCatalog,
+    accuracy: AccuracyTarget,
+) -> Result<Rc<QueryExpr>, EvalError> {
+    lower_sql(sql, catalog, accuracy)
+        .await
+        .map(Rc::new)
+        .map_err(|err| EvalError::Planning(format!("lower {sql:?}: {err}")))
+}
+
 pub fn lower_sql_root(
     sql: &str,
     catalog: &SqlCatalog,
     accuracy: AccuracyTarget,
 ) -> Result<Rc<QueryExpr>, EvalError> {
-    runtime()
-        .block_on(lower_sql(sql, catalog, accuracy))
-        .map(Rc::new)
-        .map_err(|err| EvalError::Planning(format!("lower {sql:?}: {err}")))
+    runtime().block_on(lower_sql_root_async(sql, catalog, accuracy))
 }
 
 #[cfg(test)]
