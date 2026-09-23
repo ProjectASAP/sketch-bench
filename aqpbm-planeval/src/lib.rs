@@ -20,4 +20,4 @@ pub mod sql;
 pub mod types;
 pub(crate) mod value;
 
-pub use types::{Answer, EvalError, GroupKey, ItemKey, PlanId, Refusal, Row, Value};
+pub use types::{Answer, EvalError, GroupKey, ItemKey, PlanId, PlanningStage, Refusal, Row, Value};

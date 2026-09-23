@@ -20,7 +20,7 @@ use crate::df::RefusalCounts;
 use crate::plan::Plan;
 use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
-use crate::types::{Answer, PlanId};
+use crate::types::{Answer, EvalError, PlanId, PlanningStage};
 
 pub const PLANEVAL_SCHEMA_VERSION: u32 = 9;
 
@@ -150,6 +150,36 @@ impl RefusedPlanRecord {
 
     pub fn to_jsonl(&self) -> String {
         serde_json::to_string(self).expect("RefusedPlanRecord is serializable")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnplannedQueryRecord {
+    pub schema_version: u32,
+    pub runtime: String,
+    pub query: String,
+    pub stage: PlanningStage,
+    pub detail: String,
+}
+
+impl UnplannedQueryRecord {
+    pub fn of_error(runtime: &str, query: &str, err: &EvalError) -> Option<Self> {
+        let (stage, detail) = match err {
+            EvalError::Planning { stage, detail } => (*stage, detail.clone()),
+            EvalError::Validation(detail) => (PlanningStage::Validate, detail.clone()),
+            _ => return None,
+        };
+        Some(Self {
+            schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: runtime.to_string(),
+            query: query.to_string(),
+            stage,
+            detail,
+        })
+    }
+
+    pub fn to_jsonl(&self) -> String {
+        serde_json::to_string(self).expect("UnplannedQueryRecord is serializable")
     }
 }
 
@@ -748,6 +778,41 @@ mod tests {
         );
         let back: RefusedPlanRecord = serde_json::from_str(&line).expect("a refusal reads back");
         assert_eq!(back, refused);
+    }
+
+    #[test]
+    fn a_statement_that_never_planned_says_which_stage_stopped_it() {
+        let query = "SELECT srcport, COUNT(DISTINCT dstip, dstport) FROM packets GROUP BY srcport";
+        let record = UnplannedQueryRecord::of_error(
+            "datafusion",
+            query,
+            &EvalError::Planning {
+                stage: PlanningStage::Lower,
+                detail: "unsupported aggregate: multi-column COUNT(DISTINCT)".to_owned(),
+            },
+        )
+        .expect("a planning failure is a record of its own");
+        let line = record.to_jsonl();
+        assert!(!line.contains('\n'), "one failure, one line");
+        assert!(line.contains("\"schema_version\":9"), "{line}");
+        assert!(line.contains("\"stage\":\"lower\""), "{line}");
+        assert!(line.contains("\"runtime\":\"datafusion\""), "{line}");
+        let back: UnplannedQueryRecord = serde_json::from_str(&line).expect("it reads back");
+        assert_eq!(back, record);
+
+        let past_lowering = UnplannedQueryRecord::of_error(
+            "interp",
+            query,
+            &EvalError::Validation("edge names a node that is not in the document".to_owned()),
+        )
+        .expect("a document that does not validate is one too");
+        assert_eq!(past_lowering.stage, PlanningStage::Validate);
+
+        assert!(
+            UnplannedQueryRecord::of_error("interp", query, &EvalError::Refused(Vec::new()))
+                .is_none(),
+            "a node refusal already has RefusedPlanRecord and is not a planning failure"
+        );
     }
 
     fn same_f64(read: f64, wrote: f64, field: &str) {

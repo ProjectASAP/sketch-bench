@@ -13,8 +13,9 @@ REFUSAL_CARRYING_A_REASON = re.compile(
     r"^(?P<variant>.+?) refused \[(?P<reason>[^\]]+)\]: (?P<detail>.*)$"
 )
 REASON_CLASSES = ("promql_only", "time_axis", "no_constructor", "deferred", "unclassified")
-LOWERING_FAILED = "planning failed: lower "
 DIAGNOSTIC_PREFIX = "planeval:"
+PLANNING_STAGES = ("catalog", "lower", "search", "compile", "validate")
+STAGES_PAST_LOWERING = ("search", "compile", "validate")
 
 PLAN_EVAL_RECORD_KEYS = frozenset(
     ("schema_version", "runtime", "refusals", "plan", "nodes", "approximate", "readouts")
@@ -23,6 +24,9 @@ REFUSED_PLAN_RECORD_KEYS = frozenset(
     ("schema_version", "runtime", "plan_id", "query", "seed", "refusals", "refused")
 )
 READOUT_GUARANTEE_KEYS = frozenset(("schema_version", "node", "group", "query", "check"))
+UNPLANNED_QUERY_RECORD_KEYS = frozenset(
+    ("schema_version", "runtime", "query", "stage", "detail")
+)
 ARM_PHASES = ("build", "update", "readout", "evaluate", "maintenance", "read")
 ANSWER_CHECKS = ("scored_against_exact", "no_readout_compared", "exact_arm_did_not_run")
 
@@ -155,6 +159,8 @@ def kind_of(document, where):
         return "refused_plan_record"
     if READOUT_GUARANTEE_KEYS <= keys:
         return "readout_guarantee"
+    if UNPLANNED_QUERY_RECORD_KEYS <= keys:
+        return "unplanned_query_record"
     raise OutputNotUnderstood(
         f"{where}: stdout carries a JSON object matching no known record shape; "
         f"its keys are {sorted(keys)}"
@@ -363,6 +369,24 @@ def runtime_result(code, stdout, stderr, where):
     return body, (runs[-1] if runs else None)
 
 
+def planning_stopped_at(stdout, where):
+    documents = documents_on_stdout(stdout, where)
+    unplanned = [d for d in documents if kind_of(d, where) == "unplanned_query_record"]
+    if len(unplanned) != 1:
+        raise OutputNotUnderstood(
+            f"{where}: a statement that does not plan has to leave exactly one unplanned "
+            f"record on stdout, and this run left {len(unplanned)}"
+        )
+    record = unplanned[0]
+    stage = record["stage"]
+    if stage not in PLANNING_STAGES:
+        raise OutputNotUnderstood(
+            f"{where}: the record stopped at stage {stage!r}, which names none of "
+            f"{list(PLANNING_STAGES)}"
+        )
+    return stage, record["detail"]
+
+
 def evaluate(binary, spec, statement, epsilon, timeout, where):
     common = ["--sql", statement, "--spec", spec, "--epsilon", str(epsilon)]
     code, stdout, stderr = invoke(binary, common + ["--emit-json"], timeout)
@@ -381,17 +405,13 @@ def evaluate(binary, spec, statement, epsilon, timeout, where):
         entry["families"] = families
         entry["plan_nodes"] = len(document.get("dag", {}).get("nodes", []))
     else:
-        diagnostic = diagnostic_in(stderr)
         if code is None:
             raise OutputNotUnderstood(f"{where}: --emit-json {stderr.strip()}")
-        if not diagnostic.startswith(DIAGNOSTIC_PREFIX):
-            raise OutputNotUnderstood(
-                f"{where}: --emit-json exited {code} without a planeval diagnostic: "
-                f"{diagnostic[:200]}"
-            )
-        entry["lowers"] = LOWERING_FAILED not in diagnostic
+        stage, detail = planning_stopped_at(stdout, f"{where} [--emit-json]")
+        entry["lowers"] = stage in STAGES_PAST_LOWERING
         entry["plans"] = False
-        entry["plan_error"] = diagnostic
+        entry["plan_stage"] = stage
+        entry["plan_error"] = detail
         entry["payloads"] = []
         entry["families"] = []
         return entry, None, None

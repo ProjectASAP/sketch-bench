@@ -33,7 +33,7 @@ use asap_types::workload::{
     Predictability, Query, QueryLanguage, QueryRequirements, QueryWorkload, TimeSelection,
 };
 
-use crate::types::{EvalError, PlanId};
+use crate::types::{EvalError, PlanId, PlanningStage};
 
 const DATA_INGESTION_INTERVAL: DurationMs = DurationMs(1_000);
 
@@ -286,10 +286,13 @@ impl Plan {
 pub fn plan_promql(query: &str, accuracy: AccuracyTarget) -> Result<Plan, EvalError> {
     let mut planned = plan_promql_workload(&[(query, query)], accuracy)?;
     if planned.len() != 1 {
-        return Err(EvalError::Planning(format!(
-            "planning {query:?} produced {} roots, expected 1",
-            planned.len()
-        )));
+        return Err(EvalError::Planning {
+            stage: PlanningStage::Search,
+            detail: format!(
+                "planning {query:?} produced {} roots, expected 1",
+                planned.len()
+            ),
+        });
     }
     Ok(planned.remove(0).1)
 }
@@ -298,7 +301,10 @@ pub fn lower_promql_root(
     query: &str,
     accuracy: AccuracyTarget,
 ) -> Result<(Rc<QueryExpr>, TimeRangeOrigin), EvalError> {
-    let planning = |err| EvalError::Planning(format!("lower {query:?}: {err:?}"));
+    let planning = |err| EvalError::Planning {
+        stage: PlanningStage::Lower,
+        detail: format!("{query:?}: {err:?}"),
+    };
     let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
     let origin = time_range_origin(query, &accuracy, &expr).map_err(planning)?;
     Ok((Rc::new(expr), origin))
@@ -314,7 +320,10 @@ pub fn plan_promql_workload(
     let mut roots = Vec::with_capacity(queries.len());
     let mut origin = TimeRangeOrigin::InjectedIngestionHorizon;
     for (name, query) in queries {
-        let planning = |err| EvalError::Planning(format!("lower {name:?} ({query:?}): {err:?}"));
+        let planning = |err| EvalError::Planning {
+            stage: PlanningStage::Lower,
+            detail: format!("{name:?} ({query:?}): {err:?}"),
+        };
         let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
         if time_range_origin(query, &accuracy, &expr).map_err(planning)? == TimeRangeOrigin::Unknown
         {
@@ -336,10 +345,13 @@ pub fn plan_sql(
 pub fn plan_sql_root(sql: &str, root: Rc<QueryExpr>) -> Result<Plan, EvalError> {
     let mut planned = plan_roots(vec![(sql.to_string(), root)], TimeRangeOrigin::Unknown)?;
     if planned.len() != 1 {
-        return Err(EvalError::Planning(format!(
-            "planning {sql:?} produced {} roots, expected 1",
-            planned.len()
-        )));
+        return Err(EvalError::Planning {
+            stage: PlanningStage::Search,
+            detail: format!(
+                "planning {sql:?} produced {} roots, expected 1",
+                planned.len()
+            ),
+        });
     }
     Ok(planned.remove(0).1)
 }
@@ -359,18 +371,24 @@ fn plan_roots(
         let assembled = match selection.assemble_selected_dag(root) {
             Ok(Some(node)) => node,
             Ok(None) => {
-                return Err(EvalError::Planning(format!(
-                    "root {name:?} was not discovered by the plan space"
-                )))
+                return Err(EvalError::Planning {
+                    stage: PlanningStage::Search,
+                    detail: format!("root {name:?} was not discovered by the plan space"),
+                })
             }
             Err(err) => {
-                return Err(EvalError::Planning(format!(
-                    "assemble_selected_dag {name:?}: {err:?}"
-                )))
+                return Err(EvalError::Planning {
+                    stage: PlanningStage::Search,
+                    detail: format!("assemble_selected_dag {name:?}: {err:?}"),
+                })
             }
         };
-        let compilation = compile_executable_dag_with_node_ids(&assembled)
-            .map_err(|err| EvalError::Planning(format!("compile {name:?}: {err:?}")))?;
+        let compilation = compile_executable_dag_with_node_ids(&assembled).map_err(|err| {
+            EvalError::Planning {
+                stage: PlanningStage::Compile,
+                detail: format!("{name:?}: {err:?}"),
+            }
+        })?;
         planned.push((
             name.clone(),
             from_dag(

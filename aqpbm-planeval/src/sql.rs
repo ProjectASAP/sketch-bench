@@ -9,7 +9,7 @@ use asap_types::pre_asap::QueryExpr;
 use asap_types::types::AccuracyTarget;
 
 use crate::df::schema::{column_rendering, declared_columns, generated_column_arrow_type, ir_type};
-use crate::types::EvalError;
+use crate::types::{EvalError, PlanningStage};
 
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -24,11 +24,12 @@ pub fn table_name_from_path(path: &std::path::Path) -> Result<String, EvalError>
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map(str::to_owned)
-        .ok_or_else(|| {
-            EvalError::Planning(format!(
+        .ok_or_else(|| EvalError::Planning {
+            stage: PlanningStage::Catalog,
+            detail: format!(
                 "{} has no file stem to name a table after; pass --table",
                 path.display()
-            ))
+            ),
         })
 }
 
@@ -36,19 +37,28 @@ pub fn catalog_from_spec(
     table: &str,
     description: &TableDescription,
 ) -> Result<SqlCatalog, EvalError> {
-    let declared = declared_columns(description)
-        .map_err(|refusal| EvalError::Planning(format!("spec {table:?}: {refusal}")))?;
+    let declared = declared_columns(description).map_err(|refusal| EvalError::Planning {
+        stage: PlanningStage::Catalog,
+        detail: format!("spec {table:?}: {refusal}"),
+    })?;
     let mut columns = Vec::with_capacity(description.column_spec.len());
     let mut time_index = None;
     for (position, spec) in description.column_spec.iter().enumerate() {
-        let label = description.column_label.get(position).ok_or_else(|| {
-            EvalError::Planning(format!("column {position} has a spec but no label"))
-        })?;
+        let label = description
+            .column_label
+            .get(position)
+            .ok_or_else(|| EvalError::Planning {
+                stage: PlanningStage::Catalog,
+                detail: format!("column {position} has a spec but no label"),
+            })?;
         let declared = declared[position];
         let dtype = column_rendering(&spec.data_type)
             .and_then(|rendering| generated_column_arrow_type(&rendering, declared.sql_type))
             .and_then(|arrow| ir_type(&arrow))
-            .map_err(|refusal| EvalError::Planning(format!("column {label:?}: {refusal}")))?;
+            .map_err(|refusal| EvalError::Planning {
+                stage: PlanningStage::Catalog,
+                detail: format!("column {label:?}: {refusal}"),
+            })?;
         if dtype == DataType::Timestamp && time_index.is_none() {
             time_index = Some(position);
         }
@@ -70,7 +80,10 @@ pub async fn lower_sql_root_async(
     lower_sql(sql, catalog, accuracy)
         .await
         .map(Rc::new)
-        .map_err(|err| EvalError::Planning(format!("lower {sql:?}: {err}")))
+        .map_err(|err| EvalError::Planning {
+            stage: PlanningStage::Lower,
+            detail: format!("{sql:?}: {err}"),
+        })
 }
 
 pub fn lower_sql_root(
@@ -149,8 +162,10 @@ mod tests {
         let err = catalog_from_spec("t", &description(vec![spec("packets", "u64", None)]))
             .expect_err("u64 has no row in the type table");
         assert!(
-            matches!(err, EvalError::Planning(ref detail)
-                if detail.contains("UInt64") && detail.contains("packets")),
+            matches!(err, EvalError::Planning { stage, ref detail }
+                if stage == PlanningStage::Catalog
+                    && detail.contains("UInt64")
+                    && detail.contains("packets")),
             "{err:?}"
         );
     }
@@ -237,7 +252,7 @@ mod tests {
         )
         .expect_err("f64 is not an instant");
         assert!(
-            matches!(err, EvalError::Planning(ref detail) if detail.contains("timestamp_ms")),
+            matches!(err, EvalError::Planning { ref detail, .. } if detail.contains("timestamp_ms")),
             "{err:?}"
         );
     }

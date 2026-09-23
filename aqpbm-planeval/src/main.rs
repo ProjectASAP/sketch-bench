@@ -18,7 +18,7 @@ use aqpbm_planeval::exact::{run_promql, run_tree, Data, ExactRun};
 use aqpbm_planeval::plan::{plan_promql, plan_sql, to_json, Plan};
 use aqpbm_planeval::record::{
     AnswerCheck, AnswerRecord, Arm, NodeCost, Phase, PlanEvalRecord, ReadoutRecord,
-    RefusedPlanRecord,
+    RefusedPlanRecord, UnplannedQueryRecord,
 };
 use aqpbm_planeval::run::{run, RowsFrom, RunConfig, Runtime};
 use aqpbm_planeval::runtimes::{
@@ -282,6 +282,20 @@ fn runtime_tag(args: &Args) -> &'static str {
     }
 }
 
+fn report_unplanned(args: &Args, query: &str, err: EvalError) -> anyhow::Error {
+    if let Some(record) = UnplannedQueryRecord::of_error(runtime_tag(args), query, &err) {
+        if args.jsonl || args.emit_json {
+            println!("{}", record.to_jsonl());
+        } else {
+            println!(
+                "unplanned  `{query}` stopped at the {} stage: {}",
+                record.stage, record.detail
+            );
+        }
+    }
+    anyhow::Error::new(err).context(format!("planning `{query}`"))
+}
+
 fn real_main() -> Result<()> {
     let args = Args::parse();
     if args.no_split && args.runtime != RuntimeArg::Datafusion {
@@ -293,11 +307,8 @@ fn real_main() -> Result<()> {
     let accuracy = AccuracyTarget::Epsilon(args.epsilon);
     let spec = spec_table(&args)?;
 
-    let (query_text, plan) = match (&args.query, &args.sql) {
-        (Some(query), None) => (
-            query.clone(),
-            plan_promql(query, accuracy.clone()).with_context(|| format!("planning `{query}`"))?,
-        ),
+    let (query_text, planned) = match (&args.query, &args.sql) {
+        (Some(query), None) => (query.clone(), plan_promql(query, accuracy.clone())),
         (None, Some(sql)) => {
             let (path, description) = spec
                 .as_ref()
@@ -306,15 +317,17 @@ fn real_main() -> Result<()> {
                 Some(named) => named.clone(),
                 None => sql::table_name_from_path(path)?,
             };
-            let catalog = sql::catalog_from_spec(&table, description)
-                .with_context(|| format!("deriving a catalog from {}", path.display()))?;
             (
                 sql.clone(),
-                plan_sql(sql, &catalog, accuracy.clone())
-                    .with_context(|| format!("planning `{sql}`"))?,
+                sql::catalog_from_spec(&table, description)
+                    .and_then(|catalog| plan_sql(sql, &catalog, accuracy.clone())),
             )
         }
         _ => anyhow::bail!("one of --query or --sql is required"),
+    };
+    let plan = match planned {
+        Ok(plan) => plan,
+        Err(err) => return Err(report_unplanned(&args, &query_text, err)),
     };
 
     if args.emit_json {
