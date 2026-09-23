@@ -81,7 +81,7 @@ pub fn split(plan: &Plan) -> Result<DagSplit, Refusal> {
         return Ok(DagSplit {
             cuts: Vec::new(),
             read_nodes: order,
-            no_summary_in_plan: true,
+            no_summary_in_plan: no_summary_in_plan(dag),
         });
     }
 
@@ -169,7 +169,7 @@ pub fn split(plan: &Plan) -> Result<DagSplit, Refusal> {
     }
 
     Ok(DagSplit {
-        no_summary_in_plan: cuts.is_empty(),
+        no_summary_in_plan: no_summary_in_plan(dag),
         cuts,
         read_nodes,
     })

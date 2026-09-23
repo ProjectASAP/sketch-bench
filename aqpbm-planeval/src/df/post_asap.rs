@@ -19,22 +19,6 @@ use crate::df::refusal::Refusal;
 use crate::df::scalar::{lower_scalar, ColumnScope};
 use crate::df::sketch_udaf::{lower_weight, sketch_aggregate_call};
 
-pub fn payload_name(payload: &ExecutableOperatorPayload) -> &'static str {
-    match payload {
-        ExecutableOperatorPayload::Fallback { .. } => "Fallback",
-        ExecutableOperatorPayload::Binary { .. } => "Binary",
-        ExecutableOperatorPayload::CandidateTopK { .. } => "CandidateTopK",
-        ExecutableOperatorPayload::Value { .. } => "Value",
-        ExecutableOperatorPayload::RelationalJoin { .. } => "RelationalJoin",
-        ExecutableOperatorPayload::SummaryAgg { .. } => "SummaryAgg",
-        ExecutableOperatorPayload::SummaryJoin { .. } => "SummaryJoin",
-        ExecutableOperatorPayload::SummarySubtract => "SummarySubtract",
-        ExecutableOperatorPayload::SummaryDelete { .. } => "SummaryDelete",
-        ExecutableOperatorPayload::SummaryEstimate { .. } => "SummaryEstimate",
-        ExecutableOperatorPayload::SummaryMerge => "SummaryMerge",
-    }
-}
-
 pub fn value_operation_name(operation: &ValueOperation) -> &'static str {
     match operation {
         ValueOperation::MaintainPopulation { .. } => "MaintainPopulation",
@@ -884,7 +868,7 @@ mod tests {
     fn every_payload_is_named_by_its_own_variant() {
         let named: Vec<&'static str> = every_executable_payload()
             .iter()
-            .map(|(_, payload)| payload_name(payload))
+            .map(|(_, payload)| crate::run::operator_name(payload))
             .collect();
         assert_eq!(
             named,
