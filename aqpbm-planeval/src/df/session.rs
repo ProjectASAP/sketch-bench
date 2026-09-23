@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(seeds, vec![0, 1, 2]);
         for session in &sessions {
             assert_eq!(session.reserved_bytes(), 0);
-            assert!(session.context().state().aggregate_functions().len() > 0);
+            assert!(!session.context().state().aggregate_functions().is_empty());
         }
     }
 }
