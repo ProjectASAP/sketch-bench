@@ -231,7 +231,16 @@ impl PlanEvalRecord {
                         .fields
                         .first()
                         .map(|field| family_label(&field.dtype)),
-                    _ => None,
+                    ExecutableOperatorPayload::Fallback { .. }
+                    | ExecutableOperatorPayload::Binary { .. }
+                    | ExecutableOperatorPayload::CandidateTopK { .. }
+                    | ExecutableOperatorPayload::Value { .. }
+                    | ExecutableOperatorPayload::RelationalJoin { .. }
+                    | ExecutableOperatorPayload::SummaryJoin { .. }
+                    | ExecutableOperatorPayload::SummarySubtract
+                    | ExecutableOperatorPayload::SummaryDelete { .. }
+                    | ExecutableOperatorPayload::SummaryEstimate { .. }
+                    | ExecutableOperatorPayload::SummaryMerge => None,
                 },
                 state_bytes: footprints.get(&node.id).copied(),
                 build_ns: times.get(&node.id).and_then(|timing| timing.build_ns),
