@@ -74,15 +74,23 @@ pub fn catalog_from_spec(
     Ok(SqlCatalog::new().with_table(table, schema))
 }
 
+pub async fn lower_sql_root_async(
+    sql: &str,
+    catalog: &SqlCatalog,
+    accuracy: AccuracyTarget,
+) -> Result<Rc<QueryExpr>, EvalError> {
+    lower_sql(sql, catalog, accuracy)
+        .await
+        .map(Rc::new)
+        .map_err(|err| EvalError::Planning(format!("lower {sql:?}: {err}")))
+}
+
 pub fn lower_sql_root(
     sql: &str,
     catalog: &SqlCatalog,
     accuracy: AccuracyTarget,
 ) -> Result<Rc<QueryExpr>, EvalError> {
-    runtime()
-        .block_on(lower_sql(sql, catalog, accuracy))
-        .map(Rc::new)
-        .map_err(|err| EvalError::Planning(format!("lower {sql:?}: {err}")))
+    runtime().block_on(lower_sql_root_async(sql, catalog, accuracy))
 }
 
 #[cfg(test)]
@@ -179,7 +187,10 @@ mod tests {
     fn the_same_runtime_serves_every_lowering() {
         let catalog = catalog_from_spec(
             "metrics",
-            &description(vec![spec("latency", "f64", None), spec("bytes", "i64", None)]),
+            &description(vec![
+                spec("latency", "f64", None),
+                spec("bytes", "i64", None),
+            ]),
         )
         .expect("maps");
         let first = std::ptr::from_ref(runtime());
@@ -195,9 +206,11 @@ mod tests {
 
     #[test]
     fn a_column_the_query_does_not_name_still_has_to_have_a_type() {
-        let err =
-            catalog_from_spec("t", &description(vec![spec("v", "f64", Some("timestamp_ms"))]))
-                .expect_err("f64 is not an instant");
+        let err = catalog_from_spec(
+            "t",
+            &description(vec![spec("v", "f64", Some("timestamp_ms"))]),
+        )
+        .expect_err("f64 is not an instant");
         assert!(
             matches!(err, EvalError::Planning(ref detail) if detail.contains("timestamp_ms")),
             "{err:?}"

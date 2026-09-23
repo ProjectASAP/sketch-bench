@@ -33,6 +33,19 @@ pub fn rendering_sql_types(table: &GeneratedTable) -> Vec<DeclaredSqlType> {
     vec![DeclaredSqlType::FromRendering; table.data.len()]
 }
 
+pub fn declared_sql_types(
+    description: &aqpbm_datagen::table::TableDescription,
+) -> Result<Vec<DeclaredSqlType>, IngestError> {
+    description
+        .column_spec
+        .iter()
+        .map(|spec| match spec.sql_type.as_deref() {
+            None => Ok(DeclaredSqlType::FromRendering),
+            Some(spelling) => Ok(DeclaredSqlType::parse(spelling)?),
+        })
+        .collect()
+}
+
 pub fn generated_arrow_schema(
     table: &GeneratedTable,
     declared: &[DeclaredSqlType],
