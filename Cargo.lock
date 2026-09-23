@@ -185,7 +185,7 @@ dependencies = [
  "asap-frontend-promql",
  "asap-frontend-sql",
  "asap-types",
- "asap_sketchlib 0.3.0",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=a66fad6ca21f45b0bef4a3fb32b42d79e887c8f1)",
  "async-trait",
  "blake3",
  "clap",
@@ -451,7 +451,7 @@ version = "0.1.0"
 source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=2ec3fc80caa922c8e1f33aa05f60b7d787e73257#2ec3fc80caa922c8e1f33aa05f60b7d787e73257"
 dependencies = [
  "asap-types",
- "asap_sketchlib 0.3.0",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib)",
  "serde",
  "serde_json",
  "thiserror",
@@ -504,6 +504,23 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde-big-array",
+ "smallvec",
+ "twox-hash 2.1.2",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "asap_sketchlib"
+version = "0.3.0"
+source = "git+https://github.com/ProjectASAP/asap_sketchlib?rev=a66fad6ca21f45b0bef4a3fb32b42d79e887c8f1#a66fad6ca21f45b0bef4a3fb32b42d79e887c8f1"
+dependencies = [
+ "bytes",
+ "prost",
+ "rand 0.9.4",
+ "rmp-serde",
+ "serde",
+ "serde-big-array",
+ "serde_bytes",
  "smallvec",
  "twox-hash 2.1.2",
  "xxhash-rust",
