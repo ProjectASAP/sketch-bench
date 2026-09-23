@@ -1636,44 +1636,104 @@ mod tests {
         );
     }
 
+    fn steps_apart(left: f64, right: f64) -> i128 {
+        fn ordered(value: f64) -> i128 {
+            let bits = i128::from(value.to_bits() as i64);
+            if bits < 0 {
+                i128::from(i64::MIN) - bits
+            } else {
+                bits
+            }
+        }
+        assert!(left.is_finite() && right.is_finite(), "{left} and {right}");
+        (ordered(left) - ordered(right)).abs()
+    }
+
+    fn one_heavy_key_rows() -> Vec<(Option<ItemKey>, f64)> {
+        (0..300)
+            .map(|row: i64| {
+                let key = if row % 3 == 0 { 0 } else { row % 17 };
+                (Some(ItemKey::Str(format!("u{key}"))), 1.0)
+            })
+            .collect()
+    }
+
+    fn many_key_rows() -> Vec<(Option<ItemKey>, f64)> {
+        (0..2000)
+            .map(|row: i64| (Some(ItemKey::Str(format!("u{}", (row * row) % 211))), 1.0))
+            .collect()
+    }
+
     #[test]
-    fn univmon_entropy_loses_its_last_bit_to_the_state_round_trip() {
+    fn univmon_entropy_stays_within_one_step_of_ver_one_across_the_state_round_trip() {
         let params = univmon_params();
         let bound = family(SketchAlgorithm::UnivMon, params.clone());
-        let rows = keyed_rows();
         let query = SketchQuery::FrequencyEntropy;
+        let mut diverged = Vec::new();
 
-        let mut direct = UnivMonBinding::bind(&params, SEED).unwrap();
-        for (item, weight) in &rows {
-            direct.update(item.as_ref(), *weight).unwrap();
+        for (name, rows) in [
+            ("37 even keys", keyed_rows()),
+            ("one heavy key of 17", one_heavy_key_rows()),
+            ("211 keys, uneven", many_key_rows()),
+        ] {
+            let mut direct = UnivMonBinding::bind(&params, SEED).unwrap();
+            for (item, weight) in &rows {
+                direct.update(item.as_ref(), *weight).unwrap();
+            }
+            let in_process = direct.read(&query).unwrap();
+            let ver_one = ver_one_answer(&bound, &rows, &query);
+            assert!(
+                same_answer(&in_process, &ver_one),
+                "{name}: before serialization {in_process:?} vs ver 1 {ver_one:?}"
+            );
+
+            let bytes = direct.to_bytes().unwrap();
+            let mut restored = UnivMonBinding::from_bytes(&params, &bytes).unwrap();
+            assert_eq!(bytes, restored.to_bytes().unwrap(), "{name}");
+            let (Answer::Scalar(through_bytes), Answer::Scalar(expected)) =
+                (restored.read(&query).unwrap(), ver_one)
+            else {
+                panic!("an entropy readout is a scalar");
+            };
+            let steps = steps_apart(through_bytes, expected);
+            assert!(
+                steps <= 1,
+                "{name}: {through_bytes} and {expected} are {steps} representable values apart, \
+                 not one unit in the last place"
+            );
+            if steps == 1 {
+                diverged.push(name);
+            }
+
+            for stable in [SketchQuery::Cardinality, SketchQuery::FrequencyL2] {
+                assert!(
+                    same_answer(
+                        &restored.read(&stable).unwrap(),
+                        &direct.read(&stable).unwrap()
+                    ),
+                    "{name}: {stable:?}"
+                );
+            }
         }
-        let in_process = direct.read(&query).unwrap();
-        let ver_one = ver_one_answer(&bound, &rows, &query);
-        assert!(
-            same_answer(&in_process, &ver_one),
-            "before serialization {in_process:?} vs ver 1 {ver_one:?}"
-        );
 
-        let bytes = direct.to_bytes().unwrap();
-        let mut restored = UnivMonBinding::from_bytes(&params, &bytes).unwrap();
-        assert_eq!(bytes, restored.to_bytes().unwrap());
-        let (Answer::Scalar(through_bytes), Answer::Scalar(expected)) =
-            (restored.read(&query).unwrap(), ver_one)
-        else {
-            panic!("an entropy readout is a scalar");
-        };
-        assert_ne!(through_bytes.to_bits(), expected.to_bits());
         assert!(
-            (through_bytes - expected).abs() <= f64::EPSILON * expected.abs(),
-            "{through_bytes} and {expected} differ by more than one unit in the last place"
+            diverged.contains(&"37 even keys"),
+            "the round trip still moves the entropy of the input this bound was read off"
         );
+    }
 
-        for stable in [SketchQuery::Cardinality, SketchQuery::FrequencyL2] {
-            assert!(same_answer(
-                &restored.read(&stable).unwrap(),
-                &direct.read(&stable).unwrap()
-            ));
-        }
+    #[test]
+    fn one_step_apart_is_the_next_representable_value_and_nothing_wider() {
+        let value = 6.607_797_054_0_f64;
+        assert_eq!(steps_apart(value, value), 0);
+        assert_eq!(steps_apart(value, f64::from_bits(value.to_bits() + 1)), 1);
+        assert_eq!(steps_apart(value, f64::from_bits(value.to_bits() + 2)), 2);
+        assert_eq!(steps_apart(2.0, f64::from_bits(2.0_f64.to_bits() - 1)), 1);
+        assert_eq!(steps_apart(0.0, -0.0), 0);
+        assert_eq!(
+            steps_apart(1e300, f64::from_bits(1e300_f64.to_bits() + 1)),
+            1
+        );
     }
 
     #[test]
@@ -1920,14 +1980,89 @@ mod tests {
         );
     }
 
+    fn refuses_a_foreign_parameter_literal<S: SketchBinding>(params: SketchParams) {
+        let sketch = S::bind(&params, SEED).expect("the family binds");
+        let bytes = sketch.to_bytes().expect("the state serializes");
+        S::from_bytes(&params, &bytes).expect("its own parameters read the state back");
+        let foreign = if matches!(params, SketchParams::Kll { .. }) {
+            SketchParams::DDSketch { alpha: 0.01 }
+        } else {
+            SketchParams::Kll { k: 269 }
+        };
+        let Err(refused) = S::from_bytes(&foreign, &bytes) else {
+            panic!("{:?} read its state back under {foreign:?}", S::ALGORITHM);
+        };
+        assert_eq!(refused.tag(), "no_constructor", "{:?}", S::ALGORITHM);
+        assert!(
+            refused.detail.contains("a different algorithm"),
+            "{:?}: {refused}",
+            S::ALGORITHM
+        );
+    }
+
     #[test]
-    fn the_accumulator_reports_the_sketch_footprint_to_the_memory_ledger() {
+    fn every_binding_refuses_a_state_column_carrying_another_algorithms_parameters() {
+        refuses_a_foreign_parameter_literal::<KllBinding>(SketchParams::Kll { k: 269 });
+        refuses_a_foreign_parameter_literal::<DdSketchBinding>(SketchParams::DDSketch {
+            alpha: 0.01,
+        });
+        refuses_a_foreign_parameter_literal::<HllBinding>(SketchParams::Hll { precision: 14 });
+        refuses_a_foreign_parameter_literal::<CountMinBinding>(SketchParams::Cms {
+            width: 2048,
+            depth: 4,
+        });
+        refuses_a_foreign_parameter_literal::<CountSketchBinding>(SketchParams::CountSketch {
+            width: 2048,
+            depth: 4,
+        });
+        refuses_a_foreign_parameter_literal::<CountMinHeapBinding>(SketchParams::CmsWithHeap {
+            width: 2048,
+            depth: 4,
+            heap_size: 16,
+        });
+        refuses_a_foreign_parameter_literal::<CountSketchHeapBinding>(
+            SketchParams::CountSketchWithHeap {
+                width: 2048,
+                depth: 4,
+                heap_size: 16,
+            },
+        );
+        refuses_a_foreign_parameter_literal::<KmvBinding>(SketchParams::Kmv { k: 1024 });
+        refuses_a_foreign_parameter_literal::<UnivMonBinding>(univmon_params());
+    }
+
+    #[test]
+    fn the_accumulator_reports_the_sketch_footprint_plus_its_own_struct_to_the_ledger() {
         let params = SketchParams::Kll { k: 269 };
         let sketch = KllBinding::bind(&params, SEED).unwrap();
         let footprint = sketch.footprint();
-        let accumulator = SketchAccumulator::<KllBinding>::new(sketch, params);
         assert_eq!(footprint, 12_296);
-        assert!(accumulator.size() > footprint);
+
+        let ver_one = handle::bind(
+            &family(SketchAlgorithm::Kll, params.clone()),
+            PostAsapNodeId(1),
+            SEED,
+        )
+        .expect("ver 1 binds the same family");
+        assert_eq!(
+            ver_one.footprint_bytes(),
+            footprint,
+            "the two runtimes compute the same footprint"
+        );
+
+        let overhead = std::mem::size_of::<SketchAccumulator<KllBinding>>();
+        let mut accumulator = SketchAccumulator::<KllBinding>::new(sketch, params);
+        assert_eq!(accumulator.size(), overhead + footprint);
+        assert_eq!(accumulator.size() - ver_one.footprint_bytes(), overhead);
+
+        for (item, weight) in keyless_rows() {
+            accumulator.sketch.update(item.as_ref(), weight).unwrap();
+        }
+        assert_eq!(
+            accumulator.size() - accumulator.sketch.footprint(),
+            overhead,
+            "the gap is the accumulator struct, once per group, and does not grow with rows"
+        );
     }
 
     #[test]
