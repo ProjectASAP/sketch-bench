@@ -236,6 +236,8 @@ pub enum UnevaluatableReason {
     /// that is not a number. Distinct from `+inf`, which is the real answer
     /// "infinitely outside the bound" and stays a measurement.
     ErrorIsNotANumber,
+    GroupNotInExactAnswer,
+    GroupNotInApproximateAnswer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

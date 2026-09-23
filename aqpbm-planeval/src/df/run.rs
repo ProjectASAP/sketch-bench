@@ -294,8 +294,6 @@ fn node_times(plan: &Plan, charged: &ElapsedCompute) -> Vec<(PostAsapNodeId, Nod
 
 const REFUSED_ANSWER: &str = "PlanAnswer";
 
-const NAMED_GROUPS_IN_A_REFUSAL: usize = 8;
-
 #[derive(Debug, Clone, PartialEq)]
 struct ValueColumn {
     position: usize,
@@ -572,49 +570,6 @@ fn keyed_rows(
     Ok(rows)
 }
 
-fn refuse_unless_the_group_sets_match(
-    approximate: &BTreeMap<GroupKey, Vec<Option<f64>>>,
-    truth: &BTreeMap<GroupKey, Vec<Option<f64>>>,
-) -> Result<(), Refusal> {
-    let named = |groups: Vec<&GroupKey>| {
-        let shown: Vec<String> = groups
-            .iter()
-            .take(NAMED_GROUPS_IN_A_REFUSAL)
-            .map(|group| format!("[{group}]"))
-            .collect();
-        match groups.len() > NAMED_GROUPS_IN_A_REFUSAL {
-            true => format!(
-                "{} and {} more",
-                shown.join(", "),
-                groups.len() - NAMED_GROUPS_IN_A_REFUSAL
-            ),
-            false => shown.join(", "),
-        }
-    };
-    let only_approximate: Vec<&GroupKey> = approximate
-        .keys()
-        .filter(|group| !truth.contains_key(*group))
-        .collect();
-    let only_truth: Vec<&GroupKey> = truth
-        .keys()
-        .filter(|group| !approximate.contains_key(*group))
-        .collect();
-    if !only_approximate.is_empty() || !only_truth.is_empty() {
-        return Err(Refusal::no_constructor(
-            REFUSED_ANSWER,
-            format!(
-                "the two arms group the rows differently: {} group(s) only the approximate arm \
-                 answers ({}), {} group(s) only the exact arm answers ({})",
-                only_approximate.len(),
-                named(only_approximate),
-                only_truth.len(),
-                named(only_truth)
-            ),
-        ));
-    }
-    Ok(())
-}
-
 fn compare_answers(
     plan: &Plan,
     summary: &PostAsapAnswer,
@@ -653,42 +608,82 @@ fn compare_answers(
                     ),
                 ));
             }
-            let truth = keyed_rows(batches, &exact_layout, "exact")?;
-            refuse_unless_the_group_sets_match(&approximate, &truth)?;
-            Some(truth)
+            Some(keyed_rows(batches, &exact_layout, "exact")?)
         }
         None => None,
     };
 
-    let mut readouts = Vec::new();
-    for (group, values) in approximate {
-        let against = truth.as_ref().and_then(|held| held.get(&group));
-        for (position, column) in layout.values.iter().enumerate() {
-            let estimate = values.get(position).copied().flatten();
-            let truth = against
-                .and_then(|held| held.get(position))
-                .copied()
-                .flatten();
-            readouts.push(Readout {
-                node: column.node,
-                producer: column.node,
-                group: group.clone(),
-                query: column.query.clone(),
-                approximate: Answer::Scalar(estimate.unwrap_or(f64::NAN)),
-                exact: truth.map(Answer::Scalar),
-                observed_error: observed_error(estimate, truth, against.is_some()),
-                guarantee: None,
-                observations: 0,
-            });
-        }
-    }
-    Ok(readouts)
+    Ok(score_groups(&layout, &approximate, truth.as_ref()))
 }
 
-fn observed_error(estimate: Option<f64>, truth: Option<f64>, verified: bool) -> ObservedError {
-    if !verified {
-        return ObservedError::NotVerified;
+type KeyedRows = BTreeMap<GroupKey, Vec<Option<f64>>>;
+
+fn score_groups(
+    layout: &AnswerLayout,
+    approximate: &KeyedRows,
+    truth: Option<&KeyedRows>,
+) -> Vec<Readout> {
+    let readout =
+        |column: &ValueColumn, group: &GroupKey, estimate, exact, observed_error| Readout {
+            node: column.node,
+            producer: column.node,
+            group: group.clone(),
+            query: column.query.clone(),
+            approximate: Answer::Scalar(estimate),
+            exact,
+            observed_error,
+            guarantee: None,
+            observations: 0,
+        };
+    let unevaluatable = |reason| ObservedError::Unevaluatable {
+        metric: ANSWER_ERROR_METRIC.to_string(),
+        reason,
+    };
+
+    let mut readouts = Vec::new();
+    for (group, values) in approximate {
+        let against = truth.map(|held| held.get(group));
+        for (position, column) in layout.values.iter().enumerate() {
+            let estimate = values.get(position).copied().flatten();
+            let (exact, observed) = match against {
+                None => (None, ObservedError::NotVerified),
+                Some(None) => (
+                    None,
+                    unevaluatable(crate::score::UnevaluatableReason::GroupNotInExactAnswer),
+                ),
+                Some(Some(held)) => {
+                    let truth = held.get(position).copied().flatten();
+                    (truth.map(Answer::Scalar), observed_error(estimate, truth))
+                }
+            };
+            readouts.push(readout(
+                column,
+                group,
+                estimate.unwrap_or(f64::NAN),
+                exact,
+                observed,
+            ));
+        }
     }
+    for (group, values) in truth.into_iter().flatten() {
+        if approximate.contains_key(group) {
+            continue;
+        }
+        for (position, column) in layout.values.iter().enumerate() {
+            let truth = values.get(position).copied().flatten();
+            readouts.push(readout(
+                column,
+                group,
+                f64::NAN,
+                truth.map(Answer::Scalar),
+                unevaluatable(crate::score::UnevaluatableReason::GroupNotInApproximateAnswer),
+            ));
+        }
+    }
+    readouts
+}
+
+fn observed_error(estimate: Option<f64>, truth: Option<f64>) -> ObservedError {
     match (estimate, truth) {
         (Some(estimate), Some(truth)) => ObservedError::Measured {
             metric: ANSWER_ERROR_METRIC.to_string(),
@@ -785,15 +780,45 @@ mod tests {
     }
 
     #[test]
-    fn a_group_one_arm_answers_and_the_other_does_not_is_refused() {
+    fn a_group_only_one_arm_answers_is_kept_and_says_which_arm_left_it_out() {
+        use crate::score::UnevaluatableReason;
+
         let layout = int_keyed_layout();
         let approximate = keyed_rows(&[batch(vec![7, 11], vec![1.5, 2.5])], &layout, "a").unwrap();
-        let truth = keyed_rows(&[batch(vec![7], vec![1.5])], &layout, "b").unwrap();
-        refuse_unless_the_group_sets_match(&approximate, &approximate)
-            .expect("a group set agrees with itself");
-        let refused = refuse_unless_the_group_sets_match(&approximate, &truth).unwrap_err();
-        assert_eq!(refused.variant, REFUSED_ANSWER);
-        assert!(refused.to_string().contains("[11]"), "{refused}");
+        let truth = keyed_rows(&[batch(vec![7, 13], vec![1.0, 4.0])], &layout, "b").unwrap();
+        let readouts = score_groups(&layout, &approximate, Some(&truth));
+
+        let by_group: BTreeMap<&str, &Readout> = readouts
+            .iter()
+            .map(|readout| (readout.group.as_str(), readout))
+            .collect();
+        assert_eq!(by_group.len(), 3, "{readouts:?}");
+        assert!(matches!(
+            by_group["7"].observed_error,
+            ObservedError::Measured { error, .. } if error == 0.5
+        ));
+        assert_eq!(by_group["11"].exact, None);
+        assert_eq!(
+            by_group["11"].observed_error,
+            ObservedError::Unevaluatable {
+                metric: ANSWER_ERROR_METRIC.to_owned(),
+                reason: UnevaluatableReason::GroupNotInExactAnswer,
+            }
+        );
+        assert_eq!(by_group["13"].exact, Some(Answer::Scalar(4.0)));
+        assert_eq!(
+            by_group["13"].observed_error,
+            ObservedError::Unevaluatable {
+                metric: ANSWER_ERROR_METRIC.to_owned(),
+                reason: UnevaluatableReason::GroupNotInApproximateAnswer,
+            }
+        );
+
+        let unverified = score_groups(&layout, &approximate, None);
+        assert_eq!(unverified.len(), 2);
+        assert!(unverified
+            .iter()
+            .all(|readout| readout.observed_error == ObservedError::NotVerified));
     }
 
     #[test]

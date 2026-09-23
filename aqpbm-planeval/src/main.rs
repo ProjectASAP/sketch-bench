@@ -25,7 +25,9 @@ use aqpbm_planeval::runtimes::{
     quantities, readout_differences, readout_pairs, records_per_runtime, ReadoutDifference,
     RuntimeRecords,
 };
-use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
+use aqpbm_planeval::score::{
+    GuaranteeObservations, ObservedError, ReadoutGuarantee, UnevaluatableReason,
+};
 use aqpbm_planeval::{sql, EvalError, Value};
 use asap_types::types::AccuracyTarget;
 
@@ -752,6 +754,22 @@ fn print_readouts(seed: u64, record: &PlanEvalRecord) {
             &readout.observed_error,
             readout.claimed_bound,
         ) {
+            (
+                _,
+                ObservedError::Unevaluatable {
+                    reason: UnevaluatableReason::GroupNotInExactAnswer,
+                    ..
+                },
+                _,
+            ) => println!("   the exact arm does not answer this group"),
+            (
+                Some(exact),
+                ObservedError::Unevaluatable {
+                    reason: UnevaluatableReason::GroupNotInApproximateAnswer,
+                    ..
+                },
+                _,
+            ) => println!("   exact {exact:.6}   the approximate arm does not answer this group"),
             (Some(exact), ObservedError::Measured { metric, error }, Some(claimed)) => {
                 let verdict = if *error <= claimed {
                     "within"
