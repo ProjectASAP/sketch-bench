@@ -1,10 +1,12 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use aqpbm_datagen::column::ColumnSpec;
+use aqpbm_datagen::dist::{DataDistribution, UniformParameter};
 use aqpbm_datagen::table::{GeneratedTable, TableDescription};
 use aqpbm_planeval::df::memtable::register_generated_table;
 use aqpbm_planeval::df::post_asap_arm::{
-    answer, answer_without_split, column_bytes, PostAsapAnswer,
+    answer, answer_without_split, refuse_unless_answers_are_identical, PostAsapAnswer,
 };
 use aqpbm_planeval::df::pre_asap::TableSources;
 use aqpbm_planeval::df::schema::declared_columns;
@@ -35,6 +37,11 @@ const QUANTILE_SQL: &str = "SELECT approx_percentile_cont(latency, 0.99) FROM me
 
 const GROUPED_SUM_SQL: &str = "SELECT service, SUM(bytes) FROM metrics GROUP BY service";
 
+const LARGE_COUNT: &str = "large_count";
+
+const LARGE_GROUPED_SUM_SQL: &str =
+    "SELECT service, SUM(large_count) FROM metrics GROUP BY service";
+
 struct Fixture {
     description: TableDescription,
     table: Rc<GeneratedTable>,
@@ -45,6 +52,31 @@ struct Fixture {
 async fn fixture(rows: u64) -> Fixture {
     let mut description = TableDescription::from_path(Path::new(SPEC)).expect("the spec parses");
     description.row_num = rows;
+    fixture_of(description).await
+}
+
+async fn fixture_that_sums_past_exactly_representable_floats(rows: u64) -> Fixture {
+    let mut description = TableDescription::from_path(Path::new(SPEC)).expect("the spec parses");
+    description.row_num = rows;
+    description.column_num += 1;
+    description.column_label.push(LARGE_COUNT.to_owned());
+    description.column_spec.push(ColumnSpec {
+        distribution: DataDistribution::Uniform(UniformParameter {
+            lower_bound: 0.0,
+            upper_bound: 1000.0,
+            seed: 5,
+        }),
+        shift: Some(1.0e14),
+        cardinality: None,
+        special_rule: 0,
+        data_type: "i64".to_owned(),
+        sql_type: None,
+        string: None,
+    });
+    fixture_of(description).await
+}
+
+async fn fixture_of(description: TableDescription) -> Fixture {
     let table = Rc::new(description.generate().expect("the spec generates"));
     let session = SeedSession::new(SEED, MemoryPoolSettings::default(), &SummaryFunctions)
         .expect("the session registers the summary functions");
@@ -108,17 +140,25 @@ impl Fixture {
     }
 }
 
-fn scalars(batches: &[RecordBatch], column: usize) -> Vec<f64> {
+fn scalars(batches: &[RecordBatch], column: usize) -> Vec<Value> {
     let mut held = Vec::new();
     for batch in batches {
         let array = batch.column(column);
         if let Some(floats) = array.as_any().downcast_ref::<Float64Array>() {
             for row in 0..floats.len() {
-                held.push(floats.value(row));
+                held.push(if floats.is_null(row) {
+                    Value::Null
+                } else {
+                    Value::Float(floats.value(row))
+                });
             }
         } else if let Some(integers) = array.as_any().downcast_ref::<Int64Array>() {
             for row in 0..integers.len() {
-                held.push(integers.value(row) as f64);
+                held.push(if integers.is_null(row) {
+                    Value::Null
+                } else {
+                    Value::Int(integers.value(row))
+                });
             }
         } else {
             panic!("column {column} is {:?}, not a number", array.data_type());
@@ -127,7 +167,7 @@ fn scalars(batches: &[RecordBatch], column: usize) -> Vec<f64> {
     held
 }
 
-fn keys(batches: &[RecordBatch], column: usize) -> Vec<String> {
+fn keys(batches: &[RecordBatch], column: usize) -> Vec<Value> {
     let mut held = Vec::new();
     for batch in batches {
         let array = batch
@@ -136,10 +176,73 @@ fn keys(batches: &[RecordBatch], column: usize) -> Vec<String> {
             .downcast_ref::<StringArray>()
             .expect("a Utf8 column");
         for row in 0..array.len() {
-            held.push(array.value(row).to_owned());
+            held.push(if array.is_null(row) {
+                Value::Null
+            } else {
+                Value::Str(array.value(row).to_owned())
+            });
         }
     }
     held
+}
+
+fn same_number(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Null, Value::Null) => true,
+        (Value::Int(left), Value::Int(right)) => left == right,
+        (Value::Float(left), Value::Float(right)) => left.total_cmp(right).is_eq(),
+        (Value::Int(left), Value::Float(right)) | (Value::Float(right), Value::Int(left)) => {
+            whole_equals_float(*left, *right)
+        }
+        _ => false,
+    }
+}
+
+fn whole_equals_float(whole: i64, float: f64) -> bool {
+    if !float.is_finite() || float.fract() != 0.0 {
+        return false;
+    }
+    let exact = float as i128;
+    exact as f64 == float && exact == i128::from(whole)
+}
+
+fn key_text(value: &Value) -> Option<&str> {
+    match value {
+        Value::Str(held) => Some(held.as_str()),
+        Value::Null => None,
+        other => panic!("the group key is a string or a null: {other:?}"),
+    }
+}
+
+fn by_key(rows: Vec<(Value, Value)>) -> Vec<(Value, Value)> {
+    let mut held = rows;
+    held.sort_by(|left, right| key_text(&left.0).cmp(&key_text(&right.0)));
+    held
+}
+
+fn assert_same_groups(mine: Vec<(Value, Value)>, theirs: Vec<(Value, Value)>, what: &str) {
+    let mine = by_key(mine);
+    let theirs = by_key(theirs);
+    assert_eq!(
+        mine.len(),
+        theirs.len(),
+        "{what}: arm B answered {} groups and the oracle answered {}",
+        mine.len(),
+        theirs.len()
+    );
+    for (position, (mine, theirs)) in mine.iter().zip(&theirs).enumerate() {
+        assert_eq!(
+            mine.0, theirs.0,
+            "{what}: group {position} is a different key"
+        );
+        assert!(
+            same_number(&mine.1, &theirs.1),
+            "{what}: group {position} ({:?}) is {:?} from arm B and {:?} from the oracle",
+            mine.0,
+            mine.1,
+            theirs.1
+        );
+    }
 }
 
 #[tokio::test]
@@ -206,7 +309,12 @@ async fn the_quantile_readout_is_the_one_ver_one_computes_under_the_same_seed() 
     let Answer::Scalar(expected) = interpreted[0] else {
         panic!("a quantile reads out as a scalar");
     };
-    assert_eq!(read, vec![expected], "arm B and ver 1 read the same bits");
+    assert_eq!(read.len(), 1, "one row");
+    assert!(
+        same_number(&read[0], &Value::Float(expected)),
+        "arm B read {:?} and ver 1 read {expected}",
+        read[0]
+    );
 }
 
 #[tokio::test]
@@ -215,11 +323,8 @@ async fn the_quantile_query_answers_the_same_split_and_whole() {
     let plan = fixture.plan(QUANTILE_SQL).await;
     let split_run = fixture.split_answer(&plan).await;
     let whole_run = fixture.whole_answer(&plan).await;
-    assert_eq!(
-        column_bytes(&split_run.batches).unwrap(),
-        column_bytes(&whole_run.batches).unwrap(),
-        "the splitter's own correctness test"
-    );
+    refuse_unless_answers_are_identical(&split_run, &whole_run)
+        .expect("the splitter's own correctness test");
 }
 
 #[tokio::test]
@@ -246,11 +351,8 @@ async fn the_grouped_sum_cuts_one_state_table_that_keeps_the_summarized_column_t
     assert_eq!(state.rows(), 8, "the spec draws eight service names");
 
     let whole_run = fixture.whole_answer(&plan).await;
-    assert_eq!(
-        column_bytes(&split_run.batches).unwrap(),
-        column_bytes(&whole_run.batches).unwrap(),
-        "the splitter's own correctness test"
-    );
+    refuse_unless_answers_are_identical(&split_run, &whole_run)
+        .expect("the splitter's own correctness test");
 
     let services = keys(&split_run.batches, 0);
     let sums = scalars(&split_run.batches, 1);
@@ -274,15 +376,12 @@ async fn the_grouped_sum_matches_what_datafusion_computes_from_the_text() {
         .await
         .expect("DataFusion runs the text");
 
-    let mut mine: Vec<(String, f64)> = keys(&split_run.batches, 0)
+    let mine: Vec<(Value, Value)> = keys(&split_run.batches, 0)
         .into_iter()
         .zip(scalars(&split_run.batches, 1))
         .collect();
-    let mut theirs: Vec<(String, f64)> =
-        keys(&text, 0).into_iter().zip(scalars(&text, 1)).collect();
-    mine.sort_by(|left, right| left.0.cmp(&right.0));
-    theirs.sort_by(|left, right| left.0.cmp(&right.0));
-    assert_eq!(mine, theirs);
+    let theirs: Vec<(Value, Value)> = keys(&text, 0).into_iter().zip(scalars(&text, 1)).collect();
+    assert_same_groups(mine, theirs, GROUPED_SUM_SQL);
 }
 
 #[tokio::test]
@@ -291,24 +390,60 @@ async fn the_grouped_sum_is_the_one_ver_one_computes_under_the_same_seed() {
     let plan = fixture.plan(GROUPED_SUM_SQL).await;
     let split_run = fixture.split_answer(&plan).await;
 
-    let mut mine: Vec<(String, f64)> = keys(&split_run.batches, 0)
+    let mine: Vec<(Value, Value)> = keys(&split_run.batches, 0)
         .into_iter()
         .zip(scalars(&split_run.batches, 1))
         .collect();
-    let mut theirs: Vec<(String, f64)> = fixture
+    let theirs: Vec<(Value, Value)> = fixture
         .interpreted_rows(&plan)
         .into_iter()
-        .map(|Row(values)| {
-            let Value::Str(service) = &values[0] else {
-                panic!("the group key is a string: {values:?}");
-            };
-            (
-                service.clone(),
-                values[1].as_f64().expect("the sum is a number"),
-            )
-        })
+        .map(|Row(values)| (values[0].clone(), values[1].clone()))
         .collect();
-    mine.sort_by(|left, right| left.0.cmp(&right.0));
-    theirs.sort_by(|left, right| left.0.cmp(&right.0));
-    assert_eq!(mine, theirs, "arm B and ver 1 read the same bits");
+    assert_same_groups(mine, theirs, GROUPED_SUM_SQL);
+}
+
+#[test]
+fn two_sums_that_differ_above_two_to_the_fifty_third_are_not_the_same_number() {
+    let held = 1_i64 << 53;
+    let past = held + 1;
+    assert_eq!(
+        held as f64, past as f64,
+        "the two sums are one f64 once either side is cast"
+    );
+    assert!(!same_number(&Value::Int(held), &Value::Int(past)));
+    assert!(!same_number(&Value::Int(past), &Value::Float(past as f64)));
+    assert!(same_number(&Value::Int(held), &Value::Float(held as f64)));
+    assert!(same_number(&Value::Int(past), &Value::Int(past)));
+    assert!(!same_number(&Value::Null, &Value::Int(0)));
+    assert!(!same_number(&Value::Null, &Value::Float(0.0)));
+}
+
+#[tokio::test]
+async fn a_grouped_sum_above_two_to_the_fifty_third_is_the_one_ver_one_computes() {
+    let fixture = fixture_that_sums_past_exactly_representable_floats(20_000).await;
+    let plan = fixture.plan(LARGE_GROUPED_SUM_SQL).await;
+    let split_run = fixture.split_answer(&plan).await;
+
+    let sums = scalars(&split_run.batches, 1);
+    assert_eq!(sums.len(), 8, "the spec draws eight service names");
+    let past_exact = sums.iter().filter(|sum| match sum {
+        Value::Int(held) => *held > (1_i64 << 53) && *held as f64 as i64 != *held,
+        other => panic!("an exact Sum of an i64 column reads out as an integer: {other:?}"),
+    });
+    assert!(
+        past_exact.count() > 0,
+        "at least one group sums to an integer no f64 holds: {sums:?}"
+    );
+
+    let mine: Vec<(Value, Value)> = keys(&split_run.batches, 0).into_iter().zip(sums).collect();
+    let theirs: Vec<(Value, Value)> = fixture
+        .interpreted_rows(&plan)
+        .into_iter()
+        .map(|Row(values)| (values[0].clone(), values[1].clone()))
+        .collect();
+    assert_same_groups(mine, theirs, LARGE_GROUPED_SUM_SQL);
+
+    let whole_run = fixture.whole_answer(&plan).await;
+    refuse_unless_answers_are_identical(&split_run, &whole_run)
+        .expect("the splitter's own correctness test");
 }
