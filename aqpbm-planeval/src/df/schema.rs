@@ -207,7 +207,9 @@ pub fn summary_schema_fields(
             Ok(Field::new(
                 &declared.name,
                 summary_field_arrow_type(&declared.dtype, made.data_type())?,
-                declared.nullable,
+                declared.nullable
+                    || (made.is_nullable()
+                        && matches!(declared.dtype, SummaryFamilyType::ExactAggregate(..))),
             ))
         })
         .collect()
@@ -473,6 +475,20 @@ mod tests {
         ]);
         let fields = summary_schema_fields(&widened, &narrowed).unwrap();
         assert!(fields[1].is_nullable());
+
+        let mut summed = schema.clone();
+        summed.fields[1].dtype =
+            SummaryFamilyType::ExactAggregate(ExactKind::Sum, ExactParams::Sum);
+        let produced_sum = ArrowSchema::new(vec![
+            Field::new("service", ArrowDataType::Utf8, false),
+            Field::new("latency", ArrowDataType::Int64, true),
+        ]);
+        let fields = summary_schema_fields(&summed, &produced_sum).unwrap();
+        assert!(
+            fields[1].is_nullable(),
+            "SUM over no rows is NULL, so an exact accumulator the query can leave NULL stays \
+             nullable whatever the edge declares"
+        );
 
         let renamed = ArrowSchema::new(vec![
             Field::new("cluster", ArrowDataType::Utf8, false),
