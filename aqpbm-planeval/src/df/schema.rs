@@ -1,3 +1,4 @@
+use aqpbm_datagen::table::TableDescription;
 use aqpbm_datagen::value::ColumnData;
 use asap_types::post_asap::{ExactKind, SummaryFamilyType};
 use asap_types::pre_asap::{Column, DataType, Schema};
@@ -129,7 +130,11 @@ pub fn summary_arrow_type(
         SummaryFamilyType::Plain(dtype) => arrow_type(dtype),
         SummaryFamilyType::Sketch(_, _) => Ok(ArrowDataType::Binary),
         SummaryFamilyType::ExactAggregate(kind, _) => match kind {
-            ExactKind::Sum | ExactKind::Min | ExactKind::Max => Ok(input.clone()),
+            ExactKind::Sum => arrow_type(&ir_type(input)?),
+            ExactKind::Min | ExactKind::Max => {
+                ir_type(input)?;
+                Ok(input.clone())
+            }
             ExactKind::Count => Ok(ArrowDataType::Int64),
             ExactKind::Increase | ExactKind::Rate | ExactKind::IRate => Err(Refusal::deferred(
                 format!("SummaryFamilyType::ExactAggregate({kind:?})"),
@@ -151,6 +156,42 @@ pub fn summary_arrow_type(
             "SummaryFamilyType::StatModel",
             "family-outside-the-table",
             "the type table gives no state encoding for a fitted model",
+        )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeclaredColumn {
+    pub sql_type: DeclaredSqlType,
+    pub nullable: bool,
+}
+
+pub fn declared_columns(description: &TableDescription) -> Result<Vec<DeclaredColumn>, Refusal> {
+    description
+        .column_spec
+        .iter()
+        .map(|spec| {
+            Ok(DeclaredColumn {
+                sql_type: match &spec.sql_type {
+                    Some(spelling) => DeclaredSqlType::parse(spelling)?,
+                    None => DeclaredSqlType::FromRendering,
+                },
+                nullable: false,
+            })
+        })
+        .collect()
+}
+
+pub fn column_rendering(data_type: &str) -> Result<ColumnData, Refusal> {
+    match data_type {
+        "i64" => Ok(ColumnData::Int64(Vec::new())),
+        "f64" => Ok(ColumnData::Float64(Vec::new())),
+        "u64" => Ok(ColumnData::Unsigned64(Vec::new())),
+        "string" => Ok(ColumnData::String(Vec::new())),
+        other => Err(Refusal::deferred(
+            format!("data_type: {other}"),
+            "datagen-rendering",
+            "this spec spelling names no column rendering datagen produces",
         )),
     }
 }
@@ -333,6 +374,28 @@ mod tests {
             crate::df::refusal::RefusalReason::Deferred {
                 issue: "order-sensitive".into()
             }
+        );
+    }
+
+    #[test]
+    fn every_rendering_is_named_by_the_spelling_that_selects_it() {
+        for column in [
+            ColumnData::Int64(Vec::new()),
+            ColumnData::Float64(Vec::new()),
+            ColumnData::Unsigned64(Vec::new()),
+            ColumnData::String(Vec::new()),
+        ] {
+            assert_eq!(
+                column_rendering(column.kind()).expect("the kind names a rendering"),
+                column,
+                "{}",
+                column.kind()
+            );
+        }
+        assert_eq!(
+            column_rendering("i128").unwrap_err().tag(),
+            "deferred",
+            "a spelling datagen does not render is refused, not guessed"
         );
     }
 

@@ -15,7 +15,7 @@ use datafusion::error::DataFusionError;
 use datafusion::prelude::SessionContext;
 
 use crate::df::refusal::Refusal;
-use crate::df::schema::{generated_column_arrow_type, DeclaredSqlType};
+use crate::df::schema::{generated_column_arrow_type, DeclaredColumn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IngestError {
@@ -29,13 +29,9 @@ pub enum IngestError {
     DataFusion(#[from] DataFusionError),
 }
 
-pub fn rendering_sql_types(table: &GeneratedTable) -> Vec<DeclaredSqlType> {
-    vec![DeclaredSqlType::FromRendering; table.data.len()]
-}
-
 pub fn generated_arrow_schema(
     table: &GeneratedTable,
-    declared: &[DeclaredSqlType],
+    declared: &[DeclaredColumn],
 ) -> Result<SchemaRef, IngestError> {
     check_declaration_count(table, declared)?;
     let fields = table
@@ -46,8 +42,8 @@ pub fn generated_arrow_schema(
         .map(|((column, declared), title)| {
             Ok(Field::new(
                 title,
-                generated_column_arrow_type(column, *declared)?,
-                false,
+                generated_column_arrow_type(column, declared.sql_type)?,
+                declared.nullable,
             ))
         })
         .collect::<Result<Vec<_>, IngestError>>()?;
@@ -56,7 +52,7 @@ pub fn generated_arrow_schema(
 
 pub fn generated_record_batch(
     table: &GeneratedTable,
-    declared: &[DeclaredSqlType],
+    declared: &[DeclaredColumn],
 ) -> Result<RecordBatch, IngestError> {
     let schema = generated_arrow_schema(table, declared)?;
     let arrays = table
@@ -72,7 +68,7 @@ pub fn register_generated_table(
     context: &SessionContext,
     name: &str,
     table: &GeneratedTable,
-    declared: &[DeclaredSqlType],
+    declared: &[DeclaredColumn],
 ) -> Result<RecordBatch, IngestError> {
     let batch = generated_record_batch(table, declared)?;
     let provider = MemTable::try_new(batch.schema(), vec![vec![batch.clone()]])?;
@@ -108,7 +104,7 @@ fn arrow_array(column: &ColumnData, target: &ArrowDataType) -> Result<ArrayRef, 
 
 fn check_declaration_count(
     table: &GeneratedTable,
-    declared: &[DeclaredSqlType],
+    declared: &[DeclaredColumn],
 ) -> Result<(), IngestError> {
     if table.data.len() != declared.len() {
         return Err(IngestError::DeclarationCount {
@@ -122,6 +118,7 @@ fn check_declaration_count(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::df::schema::{declared_columns, DeclaredSqlType};
     use crate::df::session::{MemoryPoolSettings, NoSeedBoundFunctions, SeedSession};
     use aqpbm_datagen::table::TableDescription;
     use datafusion::arrow::array::{AsArray, StringArray};
@@ -168,8 +165,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 20_000);
         let table = description.generate().unwrap();
         let session = session();
-        register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-            .unwrap();
+        register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             one_number(&session, "SELECT count(*) FROM t").await,
             description.row_num as f64
@@ -181,8 +183,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 20_000);
         let table = description.generate().unwrap();
         let session = session();
-        register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-            .unwrap();
+        register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
 
         for (index, title) in table.column_title.iter().enumerate() {
             let column = &description.column_spec[index];
@@ -219,9 +226,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 200_000);
         let table = description.generate().unwrap();
         let session = session();
-        let batch =
-            register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-                .unwrap();
+        let batch = register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         let counted = one_number(&session, "SELECT count(*) FROM t").await;
         println!("spec     configs/datagen/planeval_cluster_metrics.yaml");
         println!(
@@ -272,8 +283,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 20_000);
         let table = description.generate().unwrap();
         let session = session();
-        register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-            .unwrap();
+        register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         let shift = description.column_spec[0].shift.unwrap();
         let low = one_number(&session, "SELECT min(ts) FROM t").await;
         let high = one_number(&session, "SELECT max(ts) FROM t").await;
@@ -287,9 +303,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 1_000);
         let table = description.generate().unwrap();
         let session = session();
-        let batch =
-            register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-                .unwrap();
+        let batch = register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         let schema = batch.schema();
         let names: Vec<&str> = schema
             .fields()
@@ -307,8 +327,8 @@ mod tests {
     async fn a_declared_timestamp_column_registers_as_a_timestamp() {
         let description = spec("planeval_cluster_metrics.yaml", 1_000);
         let table = description.generate().unwrap();
-        let mut declared = rendering_sql_types(&table);
-        declared[0] = DeclaredSqlType::TimestampMillis;
+        let mut declared = declared_columns(&description).unwrap();
+        declared[0].sql_type = DeclaredSqlType::TimestampMillis;
         let session = session();
         let batch = register_generated_table(session.context(), "t", &table, &declared).unwrap();
         assert_eq!(
@@ -334,9 +354,13 @@ mod tests {
         let description = spec("hydra_columns_u64.yaml", 1_000);
         let table = description.generate().unwrap();
         let session = session();
-        let batch =
-            register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-                .unwrap();
+        let batch = register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         assert_eq!(batch.schema().field(0).data_type(), &ArrowDataType::Utf8);
         assert_eq!(batch.schema().field(2).data_type(), &ArrowDataType::UInt64);
         assert_eq!(
@@ -349,7 +373,14 @@ mod tests {
     async fn a_declaration_for_the_wrong_column_count_is_an_error() {
         let description = spec("planeval_cluster_metrics.yaml", 10);
         let table = description.generate().unwrap();
-        let error = generated_record_batch(&table, &[DeclaredSqlType::FromRendering]).unwrap_err();
+        let error = generated_record_batch(
+            &table,
+            &[DeclaredColumn {
+                sql_type: DeclaredSqlType::FromRendering,
+                nullable: false,
+            }],
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 error,
@@ -367,8 +398,13 @@ mod tests {
         let description = spec("planeval_cluster_metrics.yaml", 5_000);
         let table = description.generate().unwrap();
         let session = session();
-        register_generated_table(session.context(), "t", &table, &rendering_sql_types(&table))
-            .unwrap();
+        register_generated_table(
+            session.context(),
+            "t",
+            &table,
+            &declared_columns(&description).unwrap(),
+        )
+        .unwrap();
         let batches = session
             .context()
             .sql("SELECT cluster, count(*) AS n FROM t GROUP BY cluster ORDER BY cluster")
