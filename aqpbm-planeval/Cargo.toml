@@ -20,15 +20,11 @@ asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev =
 asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 asap-frontend-sql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 
-# The git source upstream itself depends on, not the workspace pin (0.2.2) and
-# not the 0.3.0 registry release: cdf_cached/quantile_cached do not exist
-# before 0.3.0 and a 101-point probe grid re-sorts on every call there.
-# Pinned by rev because this is the crate whose code decides the numbers ver 1
-# is the oracle for. `asap-aware-mapping` at 2ec3fc8 still names the same
-# repository with no rev, so the graph now carries this version from two
-# sources and links two copies of every sketch; cargo rejects a [patch] that
-# points at the same URL, so unifying them needs upstream to pin its own.
-asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", rev = "a66fad6ca21f45b0bef4a3fb32b42d79e887c8f1", features = ["experimental"] }
+# The bare git URL upstream itself depends on, not the workspace pin (0.2.2)
+# and not the 0.3.0 registry release: cdf_cached/quantile_cached do not exist
+# before 0.3.0 and a 101-point probe grid re-sorts on every call there, and a
+# second source for the same version links two copies of every sketch.
+asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", features = ["experimental"] }
 
 datafusion = "43"
 async-trait = "0.1"
