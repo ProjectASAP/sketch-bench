@@ -26,6 +26,10 @@ asap-frontend-sql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = 
 # second source for the same version links two copies of every sketch.
 asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", features = ["experimental"] }
 
+datafusion = "43"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
 aqpbm-core = { workspace = true, features = ["hdrhist"] }
 aqpbm-datagen.workspace = true
 csv.workspace = true

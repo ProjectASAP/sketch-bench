@@ -186,13 +186,16 @@ dependencies = [
  "asap-frontend-sql",
  "asap-types",
  "asap_sketchlib 0.3.0",
+ "async-trait",
  "blake3",
  "clap",
  "csv",
+ "datafusion",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
