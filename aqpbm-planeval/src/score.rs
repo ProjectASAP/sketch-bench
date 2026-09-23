@@ -289,7 +289,10 @@ pub fn error_under_metric(
     }
 }
 
-fn topk_membership_error(estimate: &Answer, truth: &Answer) -> Result<f64, UnevaluatableReason> {
+pub(crate) fn topk_membership_error(
+    estimate: &Answer,
+    truth: &Answer,
+) -> Result<f64, UnevaluatableReason> {
     let (Answer::Ranked(estimate), Answer::Ranked(truth)) = (estimate, truth) else {
         return Err(UnevaluatableReason::TrueTopKSet);
     };

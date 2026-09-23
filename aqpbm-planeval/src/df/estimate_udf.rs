@@ -314,7 +314,7 @@ fn scalar_answers(answers: Vec<Answer>, function: &str) -> DataFusionResult<Arra
     Ok(Arc::new(Float64Array::from(values)))
 }
 
-fn ranked_answers(answers: Vec<Answer>, function: &str) -> DataFusionResult<ArrayRef> {
+pub(crate) fn ranked_answers(answers: Vec<Answer>, function: &str) -> DataFusionResult<ArrayRef> {
     let entries = StructBuilder::new(
         ranked_entry_fields(),
         vec![

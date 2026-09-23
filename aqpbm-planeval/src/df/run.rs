@@ -11,7 +11,10 @@ use asap_types::post_asap::{
     SummaryFamilyType, ValueOperation,
 };
 use asap_types::pre_asap::{QueryExpr, Reduction};
-use datafusion::arrow::array::Array;
+use datafusion::arrow::array::{
+    Array, ArrayRef, Float64Array, Int64Array, ListArray, StringArray, StructArray,
+};
+use datafusion::arrow::datatypes::DataType as ArrowDataType;
 use datafusion::arrow::datatypes::Schema as ArrowSchema;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
@@ -30,7 +33,7 @@ use crate::df::RefusalCounts;
 use crate::plan::Plan;
 use crate::run::{phase_config, ArmTiming, NodeTiming, Readout, RunConfig, RunOutcome, Runtime};
 use crate::score::ObservedError;
-use crate::types::{Answer, EvalError, GroupKey};
+use crate::types::{Answer, EvalError, GroupKey, ItemKey};
 
 pub struct DataFusionRunConfig {
     pub table: String,
@@ -40,6 +43,8 @@ pub struct DataFusionRunConfig {
 }
 
 pub const ANSWER_ERROR_METRIC: &str = "relative_to_pre_asap";
+
+pub const RANKED_ANSWER_ERROR_METRIC: &str = "topk_membership_against_pre_asap";
 
 struct Prepared {
     session: SeedSession,
@@ -496,9 +501,9 @@ fn keyed_rows(
     batches: &[RecordBatch],
     layout: &AnswerLayout,
     arm: &str,
-) -> Result<BTreeMap<GroupKey, Vec<Option<f64>>>, Refusal> {
+) -> Result<KeyedRows, Refusal> {
     let options = FormatOptions::default().with_null("null");
-    let mut rows: BTreeMap<GroupKey, Vec<Option<f64>>> = BTreeMap::new();
+    let mut rows: KeyedRows = BTreeMap::new();
     for batch in batches {
         let mut keys = Vec::with_capacity(layout.keys.len());
         for position in &layout.keys {
@@ -518,33 +523,8 @@ fn keyed_rows(
         }
         let mut values = Vec::with_capacity(layout.values.len());
         for value in &layout.values {
-            let column = batch.column(value.position);
-            values.push(
-                datafusion::arrow::compute::cast(
-                    column.as_ref(),
-                    &datafusion::arrow::datatypes::DataType::Float64,
-                )
-                .map_err(|error| {
-                    Refusal::no_constructor(
-                        REFUSED_ANSWER,
-                        format!(
-                            "{} is a {} and this comparison scores numbers: {error}",
-                            value.name,
-                            column.data_type()
-                        ),
-                    )
-                })?,
-            );
+            values.push(answers_of(batch.column(value.position), &value.name)?);
         }
-        let read: Vec<&datafusion::arrow::array::Float64Array> = values
-            .iter()
-            .map(|column| {
-                column
-                    .as_any()
-                    .downcast_ref::<datafusion::arrow::array::Float64Array>()
-                    .expect("a cast to Float64 produces a Float64Array")
-            })
-            .collect();
 
         for row in 0..batch.num_rows() {
             let key: GroupKey = keys
@@ -552,10 +532,8 @@ fn keyed_rows(
                 .map(|formatter| formatter.value(row).to_string())
                 .collect::<Vec<String>>()
                 .join("|");
-            let held: Vec<Option<f64>> = read
-                .iter()
-                .map(|column| (!column.is_null(row)).then(|| column.value(row)))
-                .collect();
+            let held: Vec<Option<Answer>> =
+                values.iter().map(|column| column[row].clone()).collect();
             if rows.insert(key.clone(), held).is_some() {
                 return Err(Refusal::no_constructor(
                     REFUSED_ANSWER,
@@ -568,6 +546,80 @@ fn keyed_rows(
         }
     }
     Ok(rows)
+}
+
+fn answers_of(column: &ArrayRef, name: &str) -> Result<Vec<Option<Answer>>, Refusal> {
+    if let ArrowDataType::List(_) = column.data_type() {
+        return ranked_answers_of(column, name);
+    }
+    let numbers = datafusion::arrow::compute::cast(column.as_ref(), &ArrowDataType::Float64)
+        .map_err(|error| {
+            Refusal::no_constructor(
+                REFUSED_ANSWER,
+                format!(
+                    "{name} is a {} and this comparison scores numbers or ranked lists: {error}",
+                    column.data_type()
+                ),
+            )
+        })?;
+    let numbers = numbers
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .expect("a cast to Float64 produces a Float64Array");
+    Ok((0..numbers.len())
+        .map(|row| (!numbers.is_null(row)).then(|| Answer::Scalar(numbers.value(row))))
+        .collect())
+}
+
+fn ranked_answers_of(column: &ArrayRef, name: &str) -> Result<Vec<Option<Answer>>, Refusal> {
+    let not_ranked = || {
+        Refusal::no_constructor(
+            REFUSED_ANSWER,
+            format!(
+                "{name} is a {} and a ranked readout is a list of (Utf8 key, Int64 count)",
+                column.data_type()
+            ),
+        )
+    };
+    let lists = column
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .ok_or_else(not_ranked)?;
+    let mut answers = Vec::with_capacity(lists.len());
+    for row in 0..lists.len() {
+        if lists.is_null(row) {
+            answers.push(None);
+            continue;
+        }
+        let entries = lists.value(row);
+        let entries = entries
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(not_ranked)?;
+        if entries.num_columns() != 2 {
+            return Err(not_ranked());
+        }
+        let keys = entries
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(not_ranked)?;
+        let counts = entries
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .ok_or_else(not_ranked)?;
+        let ranked = (0..entries.len())
+            .map(|entry| {
+                (
+                    ItemKey::Str(keys.value(entry).to_owned()),
+                    counts.value(entry).max(0) as u64,
+                )
+            })
+            .collect();
+        answers.push(Some(Answer::Ranked(ranked)));
+    }
+    Ok(answers)
 }
 
 fn compare_answers(
@@ -616,7 +668,7 @@ fn compare_answers(
     Ok(score_groups(&layout, &approximate, truth.as_ref()))
 }
 
-type KeyedRows = BTreeMap<GroupKey, Vec<Option<f64>>>;
+type KeyedRows = BTreeMap<GroupKey, Vec<Option<Answer>>>;
 
 fn score_groups(
     layout: &AnswerLayout,
@@ -629,7 +681,7 @@ fn score_groups(
             producer: column.node,
             group: group.clone(),
             query: column.query.clone(),
-            approximate: Answer::Scalar(estimate),
+            approximate: estimate,
             exact,
             observed_error,
             guarantee: None,
@@ -644,7 +696,7 @@ fn score_groups(
     for (group, values) in approximate {
         let against = truth.map(|held| held.get(group));
         for (position, column) in layout.values.iter().enumerate() {
-            let estimate = values.get(position).copied().flatten();
+            let estimate = values.get(position).cloned().flatten();
             let (exact, observed) = match against {
                 None => (None, ObservedError::NotVerified),
                 Some(None) => (
@@ -652,14 +704,15 @@ fn score_groups(
                     unevaluatable(crate::score::UnevaluatableReason::GroupNotInExactAnswer),
                 ),
                 Some(Some(held)) => {
-                    let truth = held.get(position).copied().flatten();
-                    (truth.map(Answer::Scalar), observed_error(estimate, truth))
+                    let truth = held.get(position).cloned().flatten();
+                    let observed = observed_error(estimate.as_ref(), truth.as_ref());
+                    (truth, observed)
                 }
             };
             readouts.push(readout(
                 column,
                 group,
-                estimate.unwrap_or(f64::NAN),
+                estimate.unwrap_or(Answer::Scalar(f64::NAN)),
                 exact,
                 observed,
             ));
@@ -670,12 +723,11 @@ fn score_groups(
             continue;
         }
         for (position, column) in layout.values.iter().enumerate() {
-            let truth = values.get(position).copied().flatten();
             readouts.push(readout(
                 column,
                 group,
-                f64::NAN,
-                truth.map(Answer::Scalar),
+                Answer::Scalar(f64::NAN),
+                values.get(position).cloned().flatten(),
                 unevaluatable(crate::score::UnevaluatableReason::GroupNotInApproximateAnswer),
             ));
         }
@@ -683,12 +735,30 @@ fn score_groups(
     readouts
 }
 
-fn observed_error(estimate: Option<f64>, truth: Option<f64>) -> ObservedError {
+fn observed_error(estimate: Option<&Answer>, truth: Option<&Answer>) -> ObservedError {
     match (estimate, truth) {
-        (Some(estimate), Some(truth)) => ObservedError::Measured {
+        (Some(Answer::Scalar(estimate)), Some(Answer::Scalar(truth))) => ObservedError::Measured {
             metric: ANSWER_ERROR_METRIC.to_string(),
-            error: relative_error(estimate, truth),
+            error: relative_error(*estimate, *truth),
         },
+        (Some(estimate @ Answer::Ranked(_)), Some(truth @ Answer::Ranked(_))) => {
+            match crate::score::topk_membership_error(estimate, truth) {
+                Ok(error) => ObservedError::Measured {
+                    metric: RANKED_ANSWER_ERROR_METRIC.to_string(),
+                    error,
+                },
+                Err(reason) => ObservedError::Unevaluatable {
+                    metric: RANKED_ANSWER_ERROR_METRIC.to_string(),
+                    reason,
+                },
+            }
+        }
+        (Some(Answer::Ranked(_)), _) | (_, Some(Answer::Ranked(_))) => {
+            ObservedError::Unevaluatable {
+                metric: ANSWER_ERROR_METRIC.to_string(),
+                reason: crate::score::UnevaluatableReason::AnswerIsNotAScalar,
+            }
+        }
         _ => ObservedError::Unevaluatable {
             metric: ANSWER_ERROR_METRIC.to_string(),
             reason: crate::score::UnevaluatableReason::ErrorIsNotANumber,
@@ -722,8 +792,7 @@ pub fn refusal_counts(error: &EvalError) -> RefusalCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
-    use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field};
+    use datafusion::arrow::datatypes::Field;
 
     fn batch(keys: Vec<i64>, values: Vec<f64>) -> RecordBatch {
         let schema = Arc::new(ArrowSchema::new(vec![
@@ -764,7 +833,7 @@ mod tests {
             rows.keys().cloned().collect::<Vec<GroupKey>>(),
             vec!["11".to_owned(), "7".to_owned()]
         );
-        assert_eq!(rows["7"], vec![Some(1.5)]);
+        assert_eq!(rows["7"], vec![Some(Answer::Scalar(1.5))]);
     }
 
     #[test]
@@ -819,6 +888,60 @@ mod tests {
         assert!(unverified
             .iter()
             .all(|readout| readout.observed_error == ObservedError::NotVerified));
+    }
+
+    #[test]
+    fn a_ranked_readout_is_read_as_a_ranking_and_scored_by_membership() {
+        let ranked = |entries: &[(&str, u64)]| {
+            Answer::Ranked(
+                entries
+                    .iter()
+                    .map(|(key, count)| (ItemKey::Str((*key).to_owned()), *count))
+                    .collect(),
+            )
+        };
+        let batch_of = |answer: Answer| {
+            let column = crate::df::estimate_udf::ranked_answers(vec![answer], "probe").unwrap();
+            let schema = Arc::new(ArrowSchema::new(vec![
+                Field::new("bytes", ArrowDataType::Int64, false),
+                Field::new("held", column.data_type().clone(), true),
+            ]));
+            RecordBatch::try_new(
+                schema,
+                vec![Arc::new(Int64Array::from(vec![7])) as ArrayRef, column],
+            )
+            .unwrap()
+        };
+        let layout = AnswerLayout {
+            keys: vec![0],
+            values: vec![ValueColumn {
+                position: 1,
+                name: "held".to_owned(),
+                node: PostAsapNodeId(2),
+                query: Some(SketchQuery::TopK { k: 2 }),
+            }],
+        };
+
+        let approximate = keyed_rows(
+            &[batch_of(ranked(&[("x", 5), ("y", 3)]))],
+            &layout,
+            "approximate",
+        )
+        .expect("a ranked column is read, not cast");
+        let truth = keyed_rows(&[batch_of(ranked(&[("x", 6), ("z", 4)]))], &layout, "exact")
+            .expect("reads");
+        let readouts = score_groups(&layout, &approximate, Some(&truth));
+
+        assert_eq!(readouts.len(), 1);
+        assert_eq!(readouts[0].approximate, ranked(&[("x", 5), ("y", 3)]));
+        assert_eq!(
+            readouts[0].observed_error,
+            ObservedError::Measured {
+                metric: RANKED_ANSWER_ERROR_METRIC.to_owned(),
+                error: 0.5,
+            },
+            "z is in the true top 2 and missing from the estimate"
+        );
     }
 
     #[test]
