@@ -17,6 +17,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::rc::Rc;
+use std::time::Duration;
 
 use asap_aware_mapping::{search_workload, DefaultCostModel};
 use asap_frontend_promql::{lower_promql_workload, PromqlError};
@@ -36,7 +37,24 @@ use crate::types::{EvalError, PlanId};
 
 const DATA_INGESTION_INTERVAL: DurationMs = DurationMs(1_000);
 
+const SECOND_INGESTION_INTERVAL: DurationMs = DurationMs(2_000);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeRangeOrigin {
+    #[default]
+    Unknown,
+    InjectedIngestionHorizon,
+}
+
 pub fn lower_promql(query: &str, accuracy: AccuracyTarget) -> Result<QueryExpr, PromqlError> {
+    lower_promql_declaring(query, accuracy, DATA_INGESTION_INTERVAL)
+}
+
+fn lower_promql_declaring(
+    query: &str,
+    accuracy: AccuracyTarget,
+    interval: DurationMs,
+) -> Result<QueryExpr, PromqlError> {
     let workload = PlanningWorkload {
         query_workload: QueryWorkload {
             language: QueryLanguage::PromQL,
@@ -55,7 +73,7 @@ pub fn lower_promql(query: &str, accuracy: AccuracyTarget) -> Result<QueryExpr, 
         },
         data_workload: Some(DataWorkload {
             data_ingestion_interval: Evidence {
-                value: Some(DATA_INGESTION_INTERVAL),
+                value: Some(interval),
                 ..Default::default()
             },
             ..Default::default()
@@ -65,12 +83,177 @@ pub fn lower_promql(query: &str, accuracy: AccuracyTarget) -> Result<QueryExpr, 
     Ok(lowered.remove(0))
 }
 
-pub(crate) fn ingestion_horizon_child(expr: &QueryExpr) -> Option<&Rc<QueryExpr>> {
+fn time_range_origin(
+    query: &str,
+    accuracy: &AccuracyTarget,
+    lowered: &QueryExpr,
+) -> Result<TimeRangeOrigin, PromqlError> {
+    if !every_range_selects(lowered, DATA_INGESTION_INTERVAL) {
+        return Ok(TimeRangeOrigin::Unknown);
+    }
+    let second = lower_promql_declaring(query, accuracy.clone(), SECOND_INGESTION_INTERVAL)?;
+    Ok(if every_range_selects(&second, SECOND_INGESTION_INTERVAL) {
+        TimeRangeOrigin::InjectedIngestionHorizon
+    } else {
+        TimeRangeOrigin::Unknown
+    })
+}
+
+fn every_range_selects(expr: &QueryExpr, interval: DurationMs) -> bool {
+    let mut selected = Vec::new();
+    selected_ranges(expr, &mut selected);
+    selected
+        .iter()
+        .all(|range| range.as_millis() == u128::from(interval.0))
+}
+
+fn selected_ranges(expr: &QueryExpr, found: &mut Vec<Duration>) {
     match expr {
-        QueryExpr::TimeRange { range, child }
-            if range.as_millis() == u128::from(DATA_INGESTION_INTERVAL.0) =>
-        {
+        QueryExpr::TimeRange { range, child } => {
+            found.push(*range);
+            selected_ranges(child, found);
+        }
+        QueryExpr::Scan { predicates, .. } => {
+            for predicate in predicates {
+                selected_ranges(&predicate.0, found);
+            }
+        }
+        QueryExpr::EvalTimestamp
+        | QueryExpr::CurrentTimestamp
+        | QueryExpr::Column(_)
+        | QueryExpr::Literal(_) => {}
+        QueryExpr::PromqlScalarBridge(child)
+        | QueryExpr::PromqlVectorFromScalar(child)
+        | QueryExpr::PromqlScalarFromVector(child)
+        | QueryExpr::Not(child)
+        | QueryExpr::IsNull(child)
+        | QueryExpr::IsNotNull(child) => selected_ranges(child, found),
+        QueryExpr::PromqlRelabel { value, child, .. } => {
+            selected_ranges(value, found);
+            selected_ranges(child, found);
+        }
+        QueryExpr::PromqlInfoEnrich { child, .. }
+        | QueryExpr::PromqlSeriesSample { child, .. }
+        | QueryExpr::Dedup { child, .. }
+        | QueryExpr::Limit { child, .. }
+        | QueryExpr::PromqlSubquery { child, .. }
+        | QueryExpr::TimeShift { child, .. } => selected_ranges(child, found),
+        QueryExpr::Filter { pred, child } => {
+            selected_ranges(&pred.0, found);
+            selected_ranges(child, found);
+        }
+        QueryExpr::Project { cols, child, .. } => {
+            for item in cols {
+                selected_ranges(&item.expr, found);
+            }
+            selected_ranges(child, found);
+        }
+        QueryExpr::Aggregate { having, child, .. } => {
+            if let Some(pred) = having {
+                selected_ranges(&pred.0, found);
+            }
+            selected_ranges(child, found);
+        }
+        QueryExpr::Concat { children, .. } => {
+            for branch in children {
+                selected_ranges(branch, found);
+            }
+        }
+        QueryExpr::Join {
+            pred, left, right, ..
+        } => {
+            selected_ranges(&pred.0, found);
+            selected_ranges(left, found);
+            selected_ranges(right, found);
+        }
+        QueryExpr::SetOp { left, right, .. } => {
+            selected_ranges(left, found);
+            selected_ranges(right, found);
+        }
+        QueryExpr::Sort { keys, child, .. } => {
+            for key in keys {
+                selected_ranges(&key.expr, found);
+            }
+            selected_ranges(child, found);
+        }
+        QueryExpr::SQLWindowFunc {
+            args,
+            order_by,
+            child,
+            ..
+        } => {
+            for arg in args {
+                selected_ranges(arg, found);
+            }
+            for key in order_by {
+                selected_ranges(&key.expr, found);
+            }
+            selected_ranges(child, found);
+        }
+        QueryExpr::BinaryOp { lhs, rhs, .. } => {
+            selected_ranges(lhs, found);
+            selected_ranges(rhs, found);
+        }
+        QueryExpr::Compare { left, right, .. } | QueryExpr::Arithmetic { left, right, .. } => {
+            selected_ranges(left, found);
+            selected_ranges(right, found);
+        }
+        QueryExpr::BoolAnd(items) | QueryExpr::BoolOr(items) => {
+            for item in items {
+                selected_ranges(item, found);
+            }
+        }
+        QueryExpr::Cast { expr, .. } => selected_ranges(expr, found),
+        QueryExpr::InList { expr, list, .. } => {
+            selected_ranges(expr, found);
+            for item in list {
+                selected_ranges(item, found);
+            }
+        }
+        QueryExpr::FunctionCall { args, .. } => {
+            for arg in args {
+                selected_ranges(arg, found);
+            }
+        }
+        QueryExpr::Case {
+            operand,
+            branches,
+            else_expr,
+        } => {
+            if let Some(operand) = operand {
+                selected_ranges(operand, found);
+            }
+            for (when, then) in branches {
+                selected_ranges(when, found);
+                selected_ranges(then, found);
+            }
+            if let Some(else_expr) = else_expr {
+                selected_ranges(else_expr, found);
+            }
+        }
+    }
+}
+
+pub(crate) fn ingestion_horizon_child(
+    expr: &QueryExpr,
+    origin: TimeRangeOrigin,
+) -> Option<&Rc<QueryExpr>> {
+    match (origin, expr) {
+        (TimeRangeOrigin::InjectedIngestionHorizon, QueryExpr::TimeRange { child, .. }) => {
             Some(child)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn ingestion_horizon_child_mut(
+    expr: &mut QueryExpr,
+    origin: TimeRangeOrigin,
+) -> Option<&mut QueryExpr> {
+    match (origin, expr) {
+        (TimeRangeOrigin::InjectedIngestionHorizon, QueryExpr::TimeRange { child, .. }) => {
+            Some(Rc::make_mut(child))
         }
         _ => None,
     }
@@ -89,6 +272,7 @@ pub struct Plan {
     pub order: Vec<PostAsapNodeId>,
     pub pre_asap: Option<Rc<QueryExpr>>,
     pub node_ids: Option<ExecutableNodeIdentityMap>,
+    pub time_range_origin: TimeRangeOrigin,
 }
 
 impl Plan {
@@ -113,10 +297,11 @@ pub fn plan_promql(query: &str, accuracy: AccuracyTarget) -> Result<Plan, EvalEr
 pub fn lower_promql_root(
     query: &str,
     accuracy: AccuracyTarget,
-) -> Result<Rc<QueryExpr>, EvalError> {
-    lower_promql(query, accuracy)
-        .map(Rc::new)
-        .map_err(|err| EvalError::Planning(format!("lower {query:?}: {err:?}")))
+) -> Result<(Rc<QueryExpr>, TimeRangeOrigin), EvalError> {
+    let planning = |err| EvalError::Planning(format!("lower {query:?}: {err:?}"));
+    let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
+    let origin = time_range_origin(query, &accuracy, &expr).map_err(planning)?;
+    Ok((Rc::new(expr), origin))
 }
 
 /// Same, for a whole workload planned together, so cross-root CSE has a chance.
@@ -127,12 +312,17 @@ pub fn plan_promql_workload(
     accuracy: AccuracyTarget,
 ) -> Result<Vec<(String, Plan)>, EvalError> {
     let mut roots = Vec::with_capacity(queries.len());
+    let mut origin = TimeRangeOrigin::InjectedIngestionHorizon;
     for (name, query) in queries {
-        let expr = lower_promql(query, accuracy.clone())
-            .map_err(|err| EvalError::Planning(format!("lower {name:?} ({query:?}): {err:?}")))?;
+        let planning = |err| EvalError::Planning(format!("lower {name:?} ({query:?}): {err:?}"));
+        let expr = lower_promql(query, accuracy.clone()).map_err(planning)?;
+        if time_range_origin(query, &accuracy, &expr).map_err(planning)? == TimeRangeOrigin::Unknown
+        {
+            origin = TimeRangeOrigin::Unknown;
+        }
         roots.push(((*name).to_string(), Rc::new(expr)));
     }
-    plan_roots(roots)
+    plan_roots(roots, origin)
 }
 
 pub fn plan_sql(
@@ -141,7 +331,7 @@ pub fn plan_sql(
     accuracy: AccuracyTarget,
 ) -> Result<Plan, EvalError> {
     let root = crate::sql::lower_sql_root(sql, catalog, accuracy)?;
-    let mut planned = plan_roots(vec![(sql.to_string(), root)])?;
+    let mut planned = plan_roots(vec![(sql.to_string(), root)], TimeRangeOrigin::Unknown)?;
     if planned.len() != 1 {
         return Err(EvalError::Planning(format!(
             "planning {sql:?} produced {} roots, expected 1",
@@ -151,7 +341,10 @@ pub fn plan_sql(
     Ok(planned.remove(0).1)
 }
 
-fn plan_roots(roots: Vec<(String, Rc<QueryExpr>)>) -> Result<Vec<(String, Plan)>, EvalError> {
+fn plan_roots(
+    roots: Vec<(String, Rc<QueryExpr>)>,
+    origin: TimeRangeOrigin,
+) -> Result<Vec<(String, Plan)>, EvalError> {
     // `search_workload` runs CSE over the roots and may hand back different
     // `Rc`s than the ones passed in, so assembly targets are read back
     // off the space rather than reused from `roots`.
@@ -181,6 +374,7 @@ fn plan_roots(roots: Vec<(String, Rc<QueryExpr>)>) -> Result<Vec<(String, Plan)>
                 compilation.dag,
                 Some(Rc::clone(root)),
                 Some(compilation.node_ids),
+                origin,
             )?,
         ));
     }
@@ -206,6 +400,7 @@ fn from_dag(
     dag: ExecutableDag,
     pre_asap: Option<Rc<QueryExpr>>,
     node_ids: Option<ExecutableNodeIdentityMap>,
+    time_range_origin: TimeRangeOrigin,
 ) -> Result<Plan, EvalError> {
     let document = PostAsapDagDocument::new(dag);
     document
@@ -222,6 +417,7 @@ fn from_dag(
         order,
         pre_asap,
         node_ids,
+        time_range_origin,
     })
 }
 
@@ -289,10 +485,11 @@ mod tests {
         let document: PostAsapDagDocument = serde_json::from_slice(bytes).map_err(|err| {
             EvalError::Validation(format!("decode post-ASAP DAG document: {err}"))
         })?;
-        from_dag(document.dag, None, None)
+        from_dag(document.dag, None, None, TimeRangeOrigin::Unknown)
     }
 
     use super::*;
+    use crate::rows::variant_name;
     use crate::run::operator_name;
     use asap_types::post_asap::{
         ExactKind, ExactParams, ExecutableOperatorPayload, GroupingStrategy, SketchAlgorithm,
@@ -340,10 +537,42 @@ mod tests {
         let plan = plan_promql("sum(cpu_cores)", ACCURACY).expect("plans");
         assert_eq!(plan.dag.nodes.len(), 2);
         assert_eq!(plan.order.len(), 2);
+        assert_eq!(operators(&plan), vec!["Fallback", "SummaryAgg"]);
+    }
+
+    #[test]
+    fn an_instant_selector_injects_the_horizon_and_a_range_selector_is_the_querys_own() {
+        let (instant, instant_origin) =
+            lower_promql_root("cpu_cores", ACCURACY).expect("an instant selector lowers");
         assert_eq!(
-            operators(&plan),
-            vec!["Fallback", "SummaryAgg"]
+            instant_origin,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+            "nothing in `cpu_cores` selects a range, so the TimeRange the lowering wrapped it \
+             in is the declared ingestion horizon"
         );
+        assert_eq!(variant_name(&instant), "TimeRange");
+        assert!(ingestion_horizon_child(&instant, instant_origin).is_some());
+
+        for query in [
+            "max_over_time(cpu_cores[1s])",
+            "max_over_time(cpu_cores[5s])",
+        ] {
+            let (root, origin) = lower_promql_root(query, ACCURACY).expect("lowers");
+            assert_eq!(
+                origin,
+                TimeRangeOrigin::Unknown,
+                "{query} selects its own range, and a 1s one is the same shape the lowering \
+                 injects"
+            );
+            let QueryExpr::Aggregate { child, .. } = root.as_ref() else {
+                panic!("{root:?}");
+            };
+            assert_eq!(variant_name(child), "TimeRange");
+            assert!(
+                ingestion_horizon_child(child, origin).is_none(),
+                "{query}: peeling the range the query wrote answers over every row"
+            );
+        }
     }
 
     #[test]
@@ -420,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn sql_count_distinct_offers_hll_first_and_the_cost_model_takes_theta() {
+    fn sql_count_distinct_heads_with_hll_and_an_unranked_selection_lands_on_theta() {
         use asap_aware_mapping::{
             Replacement, ReplacementStrategy, ReplacementSubDAG, SketchAlgorithmStrategy,
             TargetSubDAG,
@@ -435,7 +664,8 @@ mod tests {
             SummaryFamilyType::Sketch(
                 SketchKind::new(SketchAlgorithm::Theta, SketchParams::Theta { k: 1_000_002 }),
                 GroupingStrategy::default()
-            )
+            ),
+            "`DefaultCostModel::rank_candidates` is the identity and every Sketch family costs              the same, so nothing prefers Theta over the Hll the candidate list heads with:              this pins which one today's unranked selection happens to leave selected"
         );
 
         let root = crate::sql::lower_sql_root(SQL, &metrics_catalog(), ACCURACY).expect("lowers");
@@ -467,7 +697,8 @@ mod tests {
             &SummaryFamilyType::Sketch(
                 SketchKind::new(SketchAlgorithm::Hll, SketchParams::Hll { precision: 14 }),
                 GroupingStrategy::default()
-            )
+            ),
+            "the head of the candidate list is Hll, and the cost model leaves that order alone"
         );
     }
 

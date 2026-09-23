@@ -32,7 +32,7 @@ use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 
 use crate::exact;
 use crate::handle::{bind, SummaryHandle};
-use crate::plan::Plan;
+use crate::plan::{Plan, TimeRangeOrigin};
 use crate::rows;
 use crate::rows::{check_predicate, resolve_column, variant_name};
 use crate::score;
@@ -183,7 +183,7 @@ type EstimateTiming = (Vec<RunMetrics>, Vec<Answer>, PerSlotNs);
 /// row source.
 pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let dag = &plan.dag;
-    let resolved = resolve(dag, &plan.order).map_err(EvalError::Refused)?;
+    let resolved = resolve(dag, &plan.order, plan.time_range_origin).map_err(EvalError::Refused)?;
     if resolved.nodes() != plan.order.len() {
         return Err(EvalError::Validation(format!(
             "{} of the plan's {} nodes resolved into something to execute",
@@ -274,7 +274,7 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     let mut pre_asap_node_times = Vec::new();
     let mut pre_asap_answer = None;
     if let (true, Some(root)) = (cfg.pre_asap, plan.pre_asap.as_ref()) {
-        let arm = exact::time_pre_asap(root, cfg)?;
+        let arm = exact::time_pre_asap(root, cfg, plan.time_range_origin)?;
         pre_asap.evaluate = arm.evaluate;
         pre_asap_bytes = arm.retained_bytes;
         pre_asap_node_times = arm.node_times;
@@ -1013,6 +1013,7 @@ struct ResolvedReadout {
 pub(crate) fn resolve<'a>(
     dag: &'a ExecutableDag,
     order: &[PostAsapNodeId],
+    origin: TimeRangeOrigin,
 ) -> Result<Resolved<'a>, Vec<Refusal>> {
     let by_id: HashMap<PostAsapNodeId, &ExecutableDagNode> =
         dag.nodes.iter().map(|node| (node.id, node)).collect();
@@ -1033,7 +1034,7 @@ pub(crate) fn resolve<'a>(
         };
         match &node.payload {
             ExecutableOperatorPayload::Fallback { expression } => {
-                let expression = match crate::plan::ingestion_horizon_child(expression) {
+                let expression = match crate::plan::ingestion_horizon_child(expression, origin) {
                     Some(child) => child.as_ref(),
                     None => expression,
                 };
@@ -1591,7 +1592,10 @@ mod tests {
                     nullable: false,
                 });
                 let asap_types::pre_asap::QueryExpr::Scan { schema, .. } =
-                    crate::rows::tests::fallback_scan_mut(&mut node.payload)
+                    crate::rows::tests::fallback_scan_mut(
+                        &mut node.payload,
+                        plan.time_range_origin,
+                    )
                 else {
                     panic!("the Fallback node lost its Scan");
                 };
@@ -1755,7 +1759,8 @@ mod tests {
         });
 
         let (answered, _) =
-            crate::exact::evaluate(PostAsapNodeId(1), &tree, &rows).expect("evaluates");
+            crate::exact::evaluate(PostAsapNodeId(1), &tree, &rows, TimeRangeOrigin::Unknown)
+                .expect("evaluates");
         match answered {
             crate::exact::Data::Rows(emitted) => {
                 assert_eq!(
@@ -2146,8 +2151,8 @@ mod resolution_tests {
     use std::rc::Rc;
 
     use asap_types::post_asap::{
-        ExactKind, ExactParams, ExecutionTiming, GroupingEdgeCompatibility,
-        SketchAlgorithm, SketchKind, SketchParams, SummaryField,
+        ExactKind, ExactParams, ExecutionTiming, GroupingEdgeCompatibility, SketchAlgorithm,
+        SketchKind, SketchParams, SummaryField,
     };
     use asap_types::pre_asap::{
         CompareOpKind, GroupKeys, Predicate, ProjectItem, ScalarValue, SortKey, Source,
@@ -2160,7 +2165,7 @@ mod resolution_tests {
     /// for a hand-built fixture, where the whole DAG is three nodes.
     fn resolved(dag: &ExecutableDag) -> Result<Resolved<'_>, Vec<Refusal>> {
         let order: Vec<PostAsapNodeId> = dag.nodes.iter().map(|node| node.id).collect();
-        resolve(dag, &order)
+        resolve(dag, &order, TimeRangeOrigin::InjectedIngestionHorizon)
     }
 
     // ── The planner's own plans ──────────────────────────────────────────────
@@ -2181,10 +2186,7 @@ mod resolution_tests {
         assert_eq!(held.readouts.len(), 1);
 
         let aggregate = &held.aggregates[0];
-        assert_eq!(
-            aggregate.node,
-            node_of(&dag, "SummaryAgg").id
-        );
+        assert_eq!(aggregate.node, node_of(&dag, "SummaryAgg").id);
         assert_eq!(aggregate.item, None);
         // `weight: Column(SampleValue)` resolved to the `value` field, and
         // `Reduce([])` is a genuine global reduction, not "no grouping".
@@ -2192,10 +2194,7 @@ mod resolution_tests {
         assert!(aggregate.group_columns.is_empty());
 
         assert_eq!(held.readouts[0].query, SketchQuery::Quantile { q: 0.5 });
-        assert_eq!(
-            held.readouts[0].producer,
-            node_of(&dag, "SummaryAgg").id
-        );
+        assert_eq!(held.readouts[0].producer, node_of(&dag, "SummaryAgg").id);
     }
 
     #[test]
@@ -2204,7 +2203,8 @@ mod resolution_tests {
         // The stamp really is on the 0 -> 1 edge; if it ever stops being, this
         // test stops proving anything and should be revisited.
         assert!(dag.edges.iter().any(|edge| {
-            edge.window == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual
+            edge.window
+                == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual
         }));
         assert!(
             resolved(&dag).is_ok(),
@@ -2374,9 +2374,10 @@ mod resolution_tests {
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { predicates, .. } =
-            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
-        else {
+        let QueryExpr::Scan { predicates, .. } = crate::rows::tests::fallback_scan_mut(
+            &mut victim.payload,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+        ) else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::FunctionCall {
@@ -2402,9 +2403,10 @@ mod resolution_tests {
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { predicates, .. } =
-            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
-        else {
+        let QueryExpr::Scan { predicates, .. } = crate::rows::tests::fallback_scan_mut(
+            &mut victim.payload,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+        ) else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::Compare {
@@ -2638,9 +2640,10 @@ mod resolution_tests {
                     },
                 );
             }
-            let QueryExpr::Scan { schema, .. } =
-                crate::rows::tests::fallback_scan_mut(&mut node.payload)
-            else {
+            let QueryExpr::Scan { schema, .. } = crate::rows::tests::fallback_scan_mut(
+                &mut node.payload,
+                TimeRangeOrigin::InjectedIngestionHorizon,
+            ) else {
                 panic!("the Fallback node lost its Scan");
             };
             for (offset, label) in labels.iter().enumerate() {
@@ -2655,9 +2658,7 @@ mod resolution_tests {
                 );
             }
         }
-        let schema = node_of(&dag, "Fallback")
-            .output_schema
-            .clone();
+        let schema = node_of(&dag, "Fallback").output_schema.clone();
         for edge in &mut dag.edges {
             if edge.producer == fallback {
                 edge.intermediate_schema = schema.clone();
@@ -3104,9 +3105,7 @@ mod resolution_tests {
     fn a_fallback_whose_output_is_summary_state_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
         let fallback = node_of(&dag, "Fallback").id;
-        let agg_schema = node_of(&dag, "SummaryAgg")
-            .output_schema
-            .clone();
+        let agg_schema = node_of(&dag, "SummaryAgg").output_schema.clone();
         let victim = dag
             .nodes
             .iter_mut()
@@ -3136,9 +3135,10 @@ mod resolution_tests {
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let QueryExpr::Scan { source, .. } =
-            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
-        else {
+        let QueryExpr::Scan { source, .. } = crate::rows::tests::fallback_scan_mut(
+            &mut victim.payload,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+        ) else {
             panic!("the Fallback node lost its Scan");
         };
         *source = Source::Table {
@@ -3170,9 +3170,7 @@ mod resolution_tests {
         // what index 1 of the producer's schema actually is: an off-by-one here
         // would weight the sketch by timestamps and never fail loudly.
         let dag = plan("quantile(0.5, cpu_cores)");
-        let field: &SummaryField = &node_of(&dag, "Fallback")
-            .output_schema
-            .fields[1];
+        let field: &SummaryField = &node_of(&dag, "Fallback").output_schema.fields[1];
         assert_eq!(field.name, "value");
         assert_eq!(field.dtype, SummaryFamilyType::Plain(DataType::Float64));
     }

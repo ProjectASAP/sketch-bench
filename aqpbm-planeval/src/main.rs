@@ -134,8 +134,8 @@ fn spec_table(args: &Args) -> Result<Option<(PathBuf, TableDescription)>> {
     let Some(path) = args.spec.as_ref() else {
         return Ok(None);
     };
-    let description = TableDescription::from_path(path)
-        .with_context(|| format!("loading {}", path.display()))?;
+    let description =
+        TableDescription::from_path(path).with_context(|| format!("loading {}", path.display()))?;
     description
         .validate()
         .with_context(|| format!("validating {}", path.display()))?;
@@ -175,8 +175,7 @@ fn real_main() -> Result<()> {
     let (query_text, plan) = match (&args.query, &args.sql) {
         (Some(query), None) => (
             query.clone(),
-            plan_promql(query, accuracy.clone())
-                .with_context(|| format!("planning `{query}`"))?,
+            plan_promql(query, accuracy.clone()).with_context(|| format!("planning `{query}`"))?,
         ),
         (None, Some(sql)) => {
             let (path, description) = spec
@@ -211,7 +210,9 @@ fn real_main() -> Result<()> {
 
     if args.evaluate_exactly {
         let evaluated = match plan.pre_asap.as_ref() {
-            Some(root) if args.sql.is_some() => run_tree(Rc::clone(root), &rows),
+            Some(root) if args.sql.is_some() => {
+                run_tree(Rc::clone(root), &rows, plan.time_range_origin)
+            }
             _ => run_promql(&query_text, accuracy, &rows),
         };
         let evaluated = match evaluated {

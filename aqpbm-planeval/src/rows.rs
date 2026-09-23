@@ -1002,8 +1002,8 @@ pub(crate) mod tests {
     use asap_types::pre_asap::Column;
     use asap_types::types::AccuracyTarget;
 
+    use crate::plan::TimeRangeOrigin;
     use asap_aware_mapping::{search_workload, DefaultCostModel};
-    use crate::plan::lower_promql;
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
 
@@ -1014,8 +1014,13 @@ pub(crate) mod tests {
     /// called because the `ExecutionDataState` assignment and `validate()` only
     /// exist on the compiled dag.
     pub(crate) fn plan(query: &str) -> asap_types::post_asap::ExecutableDag {
-        let expr = lower_promql(query, ACCURACY).expect("lowers");
-        let space = search_workload(vec![(query.to_string(), Rc::new(expr))]);
+        let (expr, origin) = crate::plan::lower_promql_root(query, ACCURACY).expect("lowers");
+        assert_eq!(
+            origin,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+            "{query} is a fixture whose only TimeRange is the injected horizon"
+        );
+        let space = search_workload(vec![(query.to_string(), expr)]);
         let selection = space.global_selection(&DefaultCostModel);
         let (_, root) = space.roots.first().expect("one root");
         let assembled = selection
@@ -1043,7 +1048,10 @@ pub(crate) mod tests {
             ExecutableOperatorPayload::Fallback { expression } => expression,
             other => panic!("the Fallback node carries {other:?}"),
         };
-        match crate::plan::ingestion_horizon_child(expression) {
+        match crate::plan::ingestion_horizon_child(
+            expression,
+            TimeRangeOrigin::InjectedIngestionHorizon,
+        ) {
             Some(child) => child.as_ref(),
             None => expression,
         }
@@ -1051,14 +1059,16 @@ pub(crate) mod tests {
 
     pub(crate) fn fallback_scan_mut(
         payload: &mut ExecutableOperatorPayload,
+        origin: TimeRangeOrigin,
     ) -> &mut asap_types::pre_asap::QueryExpr {
         let ExecutableOperatorPayload::Fallback { expression } = payload else {
             panic!("the Fallback node lost its payload");
         };
-        match expression {
-            QueryExpr::TimeRange { child, .. } => Rc::make_mut(child),
-            other => other,
+        if crate::plan::ingestion_horizon_child_mut(expression, origin).is_none() {
+            return expression;
         }
+        crate::plan::ingestion_horizon_child_mut(expression, origin)
+            .expect("the horizon was recognised a statement ago")
     }
 
     struct TempCsv(std::path::PathBuf);
