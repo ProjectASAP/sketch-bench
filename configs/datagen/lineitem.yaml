@@ -1,0 +1,82 @@
+column_num: 16
+column_label:
+  - l_orderkey
+  - l_partkey
+  - l_suppkey
+  - l_linenumber
+  - l_quantity
+  - l_extendedprice
+  - l_discount
+  - l_tax
+  - l_returnflag
+  - l_linestatus
+  - l_shipdate
+  - l_commitdate
+  - l_receiptdate
+  - l_shipinstruct
+  - l_shipmode
+  - l_comment
+row_num: 20000
+
+column_spec:
+  - data_type: i64
+    distribution: {kind: uniform, lower_bound: 1.0, upper_bound: 6000.0, seed: 1}
+
+  - data_type: i64
+    distribution: {kind: uniform, lower_bound: 1.0, upper_bound: 2000.0, seed: 2}
+
+  - data_type: i64
+    distribution: {kind: uniform, lower_bound: 1.0, upper_bound: 100.0, seed: 3}
+
+  - data_type: i64
+    distribution: {kind: uniform, lower_bound: 1.0, upper_bound: 8.0, seed: 4}
+
+  - data_type: f64
+    distribution: {kind: uniform, lower_bound: 1.0, upper_bound: 51.0, seed: 5}
+
+  - data_type: f64
+    distribution: {kind: uniform, lower_bound: 900.0, upper_bound: 104950.0, seed: 6}
+
+  - data_type: f64
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 0.11, seed: 7}
+
+  - data_type: f64
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 0.09, seed: 8}
+
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 3.0, seed: 9}
+    string: {alphabet: "ANR", min_len: 1, max_len: 1}
+
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 2.0, seed: 10}
+    string: {alphabet: "OF", min_len: 1, max_len: 1}
+
+  - data_type: i64
+    sql_type: timestamp_ms
+    special_rule: 1
+    shift: 694224000000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 22083840.0, seed: 11}
+
+  - data_type: i64
+    sql_type: timestamp_ms
+    special_rule: 1
+    shift: 694224000000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 22083840.0, seed: 12}
+
+  - data_type: i64
+    sql_type: timestamp_ms
+    special_rule: 1
+    shift: 694224000000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 22083840.0, seed: 13}
+
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 4.0, seed: 14}
+    string: {alphabet: "bcde", min_len: 4, max_len: 4}
+
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 7.0, seed: 15}
+    string: {alphabet: "fghijkl", min_len: 3, max_len: 3}
+
+  - data_type: string
+    distribution: {kind: zipf, skewness: 1.1, population_size: 1000, seed: 16}
+    string: {alphabet: "mnopqrstuv", min_len: 6, max_len: 12}
