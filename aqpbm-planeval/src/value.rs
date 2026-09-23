@@ -160,12 +160,6 @@ pub(crate) fn identity_over(
         ));
     }
     for (position, item) in cols.iter().enumerate() {
-        if item.alias.is_some() {
-            return Err(refusal(
-                node,
-                format!("Project renames column {position} of a producer that holds state"),
-            ));
-        }
         if !matches!(&item.expr, QueryExpr::Column(held) if *held == position) {
             return Err(refusal(
                 node,
@@ -445,5 +439,51 @@ mod tests {
                 "{operation:?}: {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_aliased_identity_projection_over_state_is_accepted_and_a_reorder_is_not() {
+        let named = |alias: Option<&str>, columns: Vec<usize>| ValueOperation::Project {
+            cols: columns
+                .into_iter()
+                .map(|column| ProjectItem {
+                    alias: alias.map(str::to_owned),
+                    expr: QueryExpr::Column(column),
+                })
+                .collect(),
+            qualifier: None,
+        };
+
+        identity_over(node(), &named(None, vec![0, 1]), 2).expect("a bare identity is accepted");
+        identity_over(node(), &named(Some("p99"), vec![0, 1]), 2)
+            .expect("an alias renames the output and moves no data");
+
+        let reordered =
+            identity_over(node(), &named(None, vec![1, 0]), 2).expect_err("a reorder is refused");
+        assert!(reordered.to_string().contains("col 0"), "{reordered}");
+
+        let dropped =
+            identity_over(node(), &named(None, vec![0]), 2).expect_err("a drop is refused");
+        assert!(
+            dropped.to_string().contains("1 of its producer's 2"),
+            "{dropped}"
+        );
+
+        let qualified = identity_over(
+            node(),
+            &ValueOperation::Project {
+                cols: vec![ProjectItem {
+                    alias: None,
+                    expr: QueryExpr::Column(0),
+                }],
+                qualifier: Some("t".to_owned()),
+            },
+            1,
+        )
+        .expect_err("a re-qualification is refused");
+        assert!(
+            qualified.to_string().contains("re-qualifies"),
+            "{qualified}"
+        );
     }
 }
