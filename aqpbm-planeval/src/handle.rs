@@ -39,16 +39,16 @@ pub const KLL_K_MAX: u32 = 26_602;
 
 /// `MAX_LEVELS` (`kll.rs:26`) — the compactor-level count `compute_max_capacity`
 /// sums over.
-const KLL_MAX_LEVELS: usize = 61;
+pub const KLL_MAX_LEVELS: usize = 61;
 /// `CAPACITY_DECAY` (`kll.rs:30`).
 const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
 /// The `m` that `init_kll_with_seed` passes to `init` (`kll.rs:291-298`).
-const KLL_M: usize = 8;
+pub const KLL_M: usize = 8;
 
 /// Replica of the private `compute_max_capacity` (`kll.rs:119-127`). A replica
 /// rather than a `k * 4` approximation because the reported footprint is the
 /// denominator of this crate's headline ratio.
-fn kll_max_capacity(k: usize, m: usize) -> usize {
+pub fn kll_max_capacity(k: usize, m: usize) -> usize {
     let mut total = 0usize;
     let mut scale = 1.0_f64;
     for _ in 0..KLL_MAX_LEVELS {
@@ -489,7 +489,7 @@ pub fn bind(
 }
 
 /// IR `width` is the library's `cols` and IR `depth` is its `rows`.
-fn transposed(width: u32, depth: u32) -> (usize, usize) {
+pub fn transposed(width: u32, depth: u32) -> (usize, usize) {
     (depth as usize, width as usize)
 }
 
@@ -814,11 +814,11 @@ impl SummaryHandle for CsHeapHandle {
     }
 }
 
-const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
+pub const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
 
 const SKETCHLIB_HEAP_INDEX_ENTRY_BYTES: usize = 8 + 24 + 1;
 
-fn grown_capacity(reserved: usize, len: usize) -> usize {
+pub fn grown_capacity(reserved: usize, len: usize) -> usize {
     let mut capacity = reserved.max(1);
     while capacity < len {
         capacity *= 2;
@@ -837,7 +837,7 @@ fn hash_buckets(capacity: usize) -> usize {
     wanted.next_power_of_two()
 }
 
-fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
+pub fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
     let residents = heap.heap();
     let capacity = grown_capacity(heap_size.min(SKETCHLIB_PREALLOCATED_SLOTS), residents.len());
     let keys: usize = residents
