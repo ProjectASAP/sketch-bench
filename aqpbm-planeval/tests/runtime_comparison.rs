@@ -121,6 +121,11 @@ fn a_plan_with_no_estimate_is_scored_on_datafusion_and_unscored_on_the_interpret
         "the pairing is one-sided, so this plan has no cross-runtime accuracy comparison \
          even though one arm scores it"
     );
+    assert!(
+        readout_differences(&records).is_empty(),
+        "a column only DataFusion scores is not a disagreement between the runtimes: {:?}",
+        readout_differences(&records)
+    );
 }
 
 #[test]

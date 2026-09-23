@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::df::run::{run as run_datafusion, DataFusionRunConfig};
 use crate::plan::Plan;
-use crate::record::{AnswerRecord, Arm, PlanEvalRecord, ReadoutRecord};
+use crate::record::{AnswerRecord, Arm, PlanEvalRecord, ReadoutRecord, EXACT_AGGREGATE_READOUT};
 use crate::run::{run as run_interpreter, RunConfig};
 use crate::types::EvalError;
 
@@ -103,7 +103,18 @@ impl std::fmt::Display for ReadoutDifference {
 }
 
 impl ReadoutPair {
+    pub fn only_datafusion_scores_it(&self) -> bool {
+        self.interp.is_empty()
+            && self
+                .datafusion
+                .iter()
+                .all(|readout| readout.query == EXACT_AGGREGATE_READOUT)
+    }
+
     pub fn differences(&self) -> Vec<ReadoutDifference> {
+        if self.only_datafusion_scores_it() {
+            return Vec::new();
+        }
         if self.interp.len() != self.datafusion.len() {
             return vec![ReadoutDifference::ReadoutCount {
                 readout: self.readout.clone(),

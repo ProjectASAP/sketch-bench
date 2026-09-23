@@ -489,7 +489,9 @@ fn print_runtime_comparison(
         println!("  {}", pair.readout);
         print_readout_side("interp     ", &pair.interp);
         print_readout_side("datafusion ", &pair.datafusion);
-        let verdict = if pair.differences().is_empty() {
+        let verdict = if pair.only_datafusion_scores_it() {
+            "only datafusion scores an exact accumulator's column, so there is nothing to compare"
+        } else if pair.differences().is_empty() {
             "identical, bit for bit"
         } else {
             "DIFFERENT"
