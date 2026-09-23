@@ -16,16 +16,19 @@ use serde::{Deserialize, Serialize};
 
 use asap_types::post_asap::{ExecutableOperatorPayload, PostAsapNodeId, SummaryFamilyType};
 
+use crate::df::RefusalCounts;
 use crate::plan::Plan;
 use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 6;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
     pub schema_version: u32,
+    pub runtime: String,
+    pub refusals: RefusalCounts,
     pub plan: PlanIdentity,
     pub rows_scanned: u64,
     pub rows_emitted: u64,
@@ -76,6 +79,8 @@ pub struct NodeCost {
     pub update_ns: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readout_ns: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_compute_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -95,11 +100,37 @@ pub struct Arm {
     pub readout: Option<Phase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluate: Option<Phase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance: Option<Phase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<Phase>,
     /// Summary state held, summed over every node and group. `0` for the exact
     /// arm, which holds the retained column instead — reported separately so a
     /// reader is not invited to compare a sketch against nothing.
     pub state_bytes: usize,
     pub retained_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_overhead_ns: Option<u64>,
+}
+
+impl Arm {
+    pub fn aggregate_ms(&self) -> f64 {
+        phase_mean(self.build.as_ref())
+            + phase_mean(self.update.as_ref())
+            + phase_mean(self.maintenance.as_ref())
+    }
+
+    pub fn query_ms(&self) -> f64 {
+        phase_mean(self.readout.as_ref())
+            + phase_mean(self.read.as_ref())
+            + phase_mean(self.evaluate.as_ref())
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        self.state_bytes + self.retained_bytes + self.peak_reserved_bytes.unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +277,9 @@ impl PlanEvalRecord {
                 build_ns: times.get(&node.id).and_then(|timing| timing.build_ns),
                 update_ns: times.get(&node.id).and_then(|timing| timing.update_ns),
                 readout_ns: times.get(&node.id).and_then(|timing| timing.readout_ns),
+                elapsed_compute_ns: times
+                    .get(&node.id)
+                    .and_then(|timing| timing.elapsed_compute_ns),
             })
             .collect();
 
@@ -255,6 +289,8 @@ impl PlanEvalRecord {
 
         Self {
             schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: outcome.runtime.tag().to_string(),
+            refusals: outcome.refusals.clone(),
             plan: PlanIdentity {
                 plan_id: hex(&plan.id),
                 query: query.to_string(),
@@ -268,16 +304,30 @@ impl PlanEvalRecord {
             root_rows: outcome.root_rows,
             verified: outcome.verified,
             nodes,
-            approximate: arm(&outcome.approximate, state_bytes, 0),
+            approximate: arm(
+                &outcome.approximate,
+                state_bytes,
+                0,
+                outcome.approximate_peak_bytes,
+            ),
             exact: Arm {
                 build: None,
                 update: None,
                 readout: None,
                 evaluate: None,
+                maintenance: None,
+                read: None,
                 state_bytes: 0,
                 retained_bytes,
+                peak_reserved_bytes: None,
+                engine_overhead_ns: None,
             },
-            pre_asap: arm(&outcome.pre_asap, 0, outcome.pre_asap_bytes),
+            pre_asap: arm(
+                &outcome.pre_asap,
+                0,
+                outcome.pre_asap_bytes,
+                outcome.pre_asap_peak_bytes,
+            ),
             pre_asap_nodes: outcome
                 .pre_asap_node_times
                 .iter()
@@ -311,20 +361,13 @@ impl PlanEvalRecord {
     /// The headline numbers. The planner supplies none of these — see PLAN.md
     /// §1.10.1 — so they are measured, not checked.
     pub fn advantage(&self) -> Advantage {
-        let without_approximation = phase_mean(self.pre_asap.evaluate.as_ref());
+        let without_approximation = self.pre_asap.query_ms();
         Advantage {
-            aggregate_time: ratio(
-                without_approximation,
-                phase_mean(self.approximate.build.as_ref())
-                    + phase_mean(self.approximate.update.as_ref()),
-            ),
-            query_time: ratio(
-                without_approximation,
-                phase_mean(self.approximate.readout.as_ref()),
-            ),
+            aggregate_time: ratio(without_approximation, self.approximate.aggregate_ms()),
+            query_time: ratio(without_approximation, self.approximate.query_ms()),
             memory: ratio(
-                self.pre_asap.retained_bytes as f64,
-                self.approximate.state_bytes as f64,
+                self.pre_asap.memory_bytes() as f64,
+                self.approximate.memory_bytes() as f64,
             ),
             accuracy: self
                 .readouts
@@ -354,14 +397,23 @@ fn family_label(family: &SummaryFamilyType) -> String {
     }
 }
 
-fn arm(timing: &ArmTiming, state_bytes: usize, retained_bytes: usize) -> Arm {
+fn arm(
+    timing: &ArmTiming,
+    state_bytes: usize,
+    retained_bytes: usize,
+    peak_reserved_bytes: Option<usize>,
+) -> Arm {
     Arm {
         build: phase(&timing.build),
         update: phase(&timing.update),
         readout: phase(&timing.readout),
         evaluate: phase(&timing.evaluate),
+        maintenance: phase(&timing.maintenance),
+        read: phase(&timing.read),
         state_bytes,
         retained_bytes,
+        peak_reserved_bytes,
+        engine_overhead_ns: timing.engine_overhead_ns,
     }
 }
 
@@ -531,11 +583,20 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 6);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 7);
         let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
+        let line = record.to_jsonl();
         assert!(
-            record.to_jsonl().contains("\"schema_version\":6"),
+            line.contains("\"schema_version\":7"),
             "the stream has to say which encoding it is in"
+        );
+        assert!(line.contains("\"runtime\":\"interp\""), "{line}");
+        assert!(
+            line.contains(
+                "\"refusals\":{\"promql_only\":0,\"time_axis\":0,\"no_constructor\":0,\
+                 \"deferred\":0,\"unclassified\":0}"
+            ),
+            "{line}"
         );
     }
 

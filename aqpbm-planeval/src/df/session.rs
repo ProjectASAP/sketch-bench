@@ -1,10 +1,13 @@
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::{QueryPlanner, SessionState};
-use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool, TrackConsumersPool};
+use datafusion::execution::memory_pool::{
+    GreedyMemoryPool, MemoryConsumer, MemoryPool, MemoryReservation, TrackConsumersPool,
+};
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::logical_expr::{AggregateUDF, LogicalPlan, ScalarUDF, UserDefinedLogicalNode};
@@ -32,6 +35,64 @@ impl Default for MemoryPoolSettings {
             tracked_consumers: NonZeroUsize::new(DEFAULT_TRACKED_CONSUMERS)
                 .expect("DEFAULT_TRACKED_CONSUMERS is not zero"),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct PeakReservationPool {
+    inner: Arc<dyn MemoryPool>,
+    peak_bytes: AtomicUsize,
+}
+
+impl PeakReservationPool {
+    pub fn wrapping(inner: Arc<dyn MemoryPool>) -> Self {
+        Self {
+            inner,
+            peak_bytes: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn peak_bytes(&self) -> usize {
+        self.peak_bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn forget_peak(&self) {
+        self.peak_bytes
+            .store(self.inner.reserved(), Ordering::Relaxed);
+    }
+
+    fn sample(&self) {
+        let held = self.inner.reserved();
+        self.peak_bytes.fetch_max(held, Ordering::Relaxed);
+    }
+}
+
+impl MemoryPool for PeakReservationPool {
+    fn register(&self, consumer: &MemoryConsumer) {
+        self.inner.register(consumer);
+    }
+
+    fn unregister(&self, consumer: &MemoryConsumer) {
+        self.inner.unregister(consumer);
+    }
+
+    fn grow(&self, reservation: &MemoryReservation, additional: usize) {
+        self.inner.grow(reservation, additional);
+        self.sample();
+    }
+
+    fn shrink(&self, reservation: &MemoryReservation, shrink: usize) {
+        self.inner.shrink(reservation, shrink);
+    }
+
+    fn try_grow(&self, reservation: &MemoryReservation, additional: usize) -> DataFusionResult<()> {
+        self.inner.try_grow(reservation, additional)?;
+        self.sample();
+        Ok(())
+    }
+
+    fn reserved(&self) -> usize {
+        self.inner.reserved()
     }
 }
 
@@ -120,7 +181,7 @@ impl QueryPlanner for ExtensionQueryPlanner {
 pub struct SeedSession {
     seed: u64,
     context: SessionContext,
-    memory_pool: Arc<dyn MemoryPool>,
+    memory_pool: Arc<PeakReservationPool>,
 }
 
 impl SeedSession {
@@ -129,12 +190,13 @@ impl SeedSession {
         settings: MemoryPoolSettings,
         functions: &dyn SeedBoundFunctions,
     ) -> Result<Self, SessionError> {
-        let memory_pool: Arc<dyn MemoryPool> = Arc::new(TrackConsumersPool::new(
+        let tracked: Arc<dyn MemoryPool> = Arc::new(TrackConsumersPool::new(
             GreedyMemoryPool::new(settings.limit_bytes),
             settings.tracked_consumers,
         ));
+        let memory_pool = Arc::new(PeakReservationPool::wrapping(tracked));
         let runtime = RuntimeEnvBuilder::new()
-            .with_memory_pool(Arc::clone(&memory_pool))
+            .with_memory_pool(Arc::clone(&memory_pool) as Arc<dyn MemoryPool>)
             .build_arc()?;
         let config = SessionConfig::new().with_target_partitions(TARGET_PARTITIONS);
         let state = SessionStateBuilder::new()
@@ -173,6 +235,14 @@ impl SeedSession {
 
     pub fn reserved_bytes(&self) -> usize {
         self.memory_pool.reserved()
+    }
+
+    pub fn peak_reserved_bytes(&self) -> usize {
+        self.memory_pool.peak_bytes()
+    }
+
+    pub fn forget_peak_reserved_bytes(&self) {
+        self.memory_pool.forget_peak();
     }
 
     pub async fn single_mode_physical_plan(

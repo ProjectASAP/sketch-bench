@@ -11,7 +11,7 @@ use asap_types::types::AccuracyTarget;
 use crate::df::schema::{column_rendering, declared_columns, generated_column_arrow_type, ir_type};
 use crate::types::EvalError;
 
-fn runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()

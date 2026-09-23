@@ -6,6 +6,7 @@ use datafusion::arrow::datatypes::{
     DataType as ArrowDataType, Field, IntervalUnit, Schema as ArrowSchema, TimeUnit,
 };
 
+use crate::df::metrics::strip_node_alias;
 use crate::df::refusal::Refusal;
 
 pub const TIMESTAMP_UNIT: TimeUnit = TimeUnit::Millisecond;
@@ -193,7 +194,7 @@ pub fn summary_schema_fields(
         .iter()
         .zip(produced.fields())
         .map(|(declared, made)| {
-            if declared.name != *made.name() {
+            if declared.name != strip_node_alias(made.name()) {
                 return Err(Refusal::no_constructor(
                     "SummarySchema",
                     format!(

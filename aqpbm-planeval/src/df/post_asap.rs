@@ -13,6 +13,7 @@ use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, SortExpr};
 
 use crate::df::estimate_udf::readout_call;
+use crate::df::metrics::node_alias;
 use crate::df::pre_asap::{lower as lower_pre_asap, reduce_measures, TableSources};
 use crate::df::refusal::Refusal;
 use crate::df::scalar::{lower_scalar, ColumnScope};
@@ -603,7 +604,7 @@ fn lower_summary_agg(
             ),
         ));
     }
-    let state_name = node.output_schema.fields[state_position].name.clone();
+    let state_name = node_alias(node.id, &node.output_schema.fields[state_position].name);
 
     let aggregated =
         match family {
@@ -646,8 +647,8 @@ fn lower_summary_agg(
 
     let reduced_scope = ColumnScope::of_plan(&reduced);
     let mut projection = Vec::with_capacity(node.output_schema.fields.len());
-    for (position, field) in node.output_schema.fields.iter().enumerate() {
-        projection.push(reduced_scope.expr(position)?.alias(field.name.clone()));
+    for (position, name) in output_names(node).into_iter().enumerate() {
+        projection.push(reduced_scope.expr(position)?.alias(name));
     }
     build(
         LogicalPlanBuilder::from(reduced).project(projection),
@@ -731,13 +732,13 @@ fn lower_summary_estimate(
 
     let scope = ColumnScope::of_plan(&input);
     let mut projection = Vec::with_capacity(node.output_schema.fields.len());
-    for (position, field) in node.output_schema.fields.iter().enumerate() {
+    for (position, name) in output_names(node).into_iter().enumerate() {
         let value = if position == state_position {
             udf.call(readout.arguments(scope.expr(position)?))
         } else {
             scope.expr(position)?
         };
-        projection.push(value.alias(field.name.clone()));
+        projection.push(value.alias(name));
     }
     build(LogicalPlanBuilder::from(input).project(projection), variant)
 }
@@ -746,7 +747,7 @@ fn output_names(node: &ExecutableDagNode) -> Vec<String> {
     node.output_schema
         .fields
         .iter()
-        .map(|field| field.name.clone())
+        .map(|field| node_alias(node.id, &field.name))
         .collect()
 }
 

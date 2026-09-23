@@ -207,6 +207,8 @@ pub enum Refusal {
 pub enum EvalError {
     #[error("plan was refused: {0:?}")]
     Refused(Vec<Refusal>),
+    #[error("plan does not translate: {0:?}")]
+    Untranslated(Vec<crate::df::Refusal>),
     #[error("dag validation failed: {0}")]
     Validation(String),
     #[error("planning failed: {0}")]
