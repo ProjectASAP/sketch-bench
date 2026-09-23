@@ -164,11 +164,21 @@ fn same(left: &Option<Value>, right: &Option<Value>) -> bool {
     match (left, right) {
         (Some(Value::Float(left)), Some(Value::Float(right))) => left.total_cmp(right).is_eq(),
         (Some(Value::Int(left)), Some(Value::Float(right)))
-        | (Some(Value::Float(right)), Some(Value::Int(left))) => {
-            (*left as f64).total_cmp(right).is_eq()
-        }
+        | (Some(Value::Float(right)), Some(Value::Int(left))) => whole_equals_float(*left, *right),
         (left, right) => left == right,
     }
+}
+
+fn whole_equals_float(whole: i64, float: f64) -> bool {
+    if !float.is_finite() || float.fract() != 0.0 {
+        return false;
+    }
+    let exact = float as i128;
+    exact as f64 == float && exact == i128::from(whole)
+}
+
+fn close(answered: f64, wanted: f64) -> bool {
+    (answered - wanted).abs() <= 1e-12 * wanted.abs().max(1.0)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -182,21 +192,32 @@ async fn a_nan_in_the_reduced_column_reads_the_same_on_both_arms() {
         false,
     ));
 
-    for (name, measure) in [
-        ("sum", AggIntent::Sum { col: Some(VALUE) }),
-        ("min", AggIntent::Min { col: Some(VALUE) }),
-        ("max", AggIntent::Max { col: Some(VALUE) }),
-        ("avg", AggIntent::Avg { col: Some(VALUE) }),
+    let mut measures: Vec<(String, AggIntent)> = vec![
+        ("sum".to_owned(), AggIntent::Sum { col: Some(VALUE) }),
+        ("min".to_owned(), AggIntent::Min { col: Some(VALUE) }),
+        ("max".to_owned(), AggIntent::Max { col: Some(VALUE) }),
+        ("avg".to_owned(), AggIntent::Avg { col: Some(VALUE) }),
         (
-            "quantile",
-            AggIntent::Quantile {
+            "cardinality".to_owned(),
+            AggIntent::Cardinality {
                 col: Some(VALUE),
-                q: 0.5,
                 accuracy: ACCURACY,
             },
         ),
-    ] {
-        let tree = global(measure, name, false, Vec::new());
+    ];
+    for q in [0.0_f64, 0.25, 0.5, 0.74, 0.75, 1.0] {
+        measures.push((
+            format!("quantile at q = {q}"),
+            AggIntent::Quantile {
+                col: Some(VALUE),
+                q,
+                accuracy: ACCURACY,
+            },
+        ));
+    }
+
+    for (name, measure) in measures {
+        let tree = global(measure, &name, false, Vec::new());
         let arm = arm_value(&tree, &session, &tables).await;
         let interpreted = interpreted_value(Rc::clone(&tree), &table);
         assert!(
@@ -207,6 +228,250 @@ async fn a_nan_in_the_reduced_column_reads_the_same_on_both_arms() {
             "{name}: arm A {arm:?} and ver 1 {interpreted:?}"
         );
     }
+
+    let last = global(
+        AggIntent::Quantile {
+            col: Some(VALUE),
+            q: 1.0,
+            accuracy: ACCURACY,
+        },
+        "top",
+        false,
+        Vec::new(),
+    );
+    let Some(Value::Float(top)) = arm_value(&last, &session, &tables).await.expect("answers")
+    else {
+        panic!("a quantile over a float column answers a float");
+    };
+    assert!(
+        top.is_nan(),
+        "both arms sort the NaN to the end of the column, so q = 1 reads it: {top}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_spread_measures_answer_what_the_same_rows_give_by_hand() {
+    let values = [1.0_f64, 2.0, 4.0, 8.0];
+    let wholes = [1_i64, 2, 3, 4];
+    let (session, tables) = session_over(batch(
+        values.iter().copied().map(Some).collect(),
+        wholes.iter().copied().map(Some).collect(),
+        false,
+    ));
+
+    let rows = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / rows;
+    let squares: f64 = values.iter().map(|value| (value - mean).powi(2)).sum();
+    let sample = squares / (rows - 1.0);
+    let population = squares / rows;
+
+    for (name, measure, wanted) in [
+        (
+            "variance, sample",
+            AggIntent::Variance {
+                col: Some(VALUE),
+                population: false,
+            },
+            sample,
+        ),
+        (
+            "variance, population",
+            AggIntent::Variance {
+                col: Some(VALUE),
+                population: true,
+            },
+            population,
+        ),
+        (
+            "stddev, sample",
+            AggIntent::StdDev {
+                col: Some(VALUE),
+                population: false,
+            },
+            sample.sqrt(),
+        ),
+        (
+            "stddev, population",
+            AggIntent::StdDev {
+                col: Some(VALUE),
+                population: true,
+            },
+            population.sqrt(),
+        ),
+    ] {
+        let tree = global(measure, "spread", false, Vec::new());
+        let Some(Value::Float(answered)) = arm_value(&tree, &session, &tables)
+            .await
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
+        else {
+            panic!("{name} answers a float");
+        };
+        assert!(
+            close(answered, wanted),
+            "{name}: arm A answered {answered} and these rows give {wanted}"
+        );
+    }
+
+    assert!(
+        !close(sample, population),
+        "the two estimators differ on these rows ({sample} and {population}), so a swapped \
+         population flag cannot read as agreement"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pearson_correlation_answers_what_the_same_two_columns_give_by_hand() {
+    let values = [1.0_f64, 2.0, 4.0, 8.0];
+    let wholes = [1_i64, 2, 3, 4];
+    let (session, tables) = session_over(batch(
+        values.iter().copied().map(Some).collect(),
+        wholes.iter().copied().map(Some).collect(),
+        false,
+    ));
+
+    let left: Vec<f64> = values.to_vec();
+    let right: Vec<f64> = wholes.iter().map(|whole| *whole as f64).collect();
+    let rows = left.len() as f64;
+    let mean_left = left.iter().sum::<f64>() / rows;
+    let mean_right = right.iter().sum::<f64>() / rows;
+    let covariance: f64 = left
+        .iter()
+        .zip(&right)
+        .map(|(x, y)| (x - mean_left) * (y - mean_right))
+        .sum();
+    let spread_left: f64 = left.iter().map(|x| (x - mean_left).powi(2)).sum();
+    let spread_right: f64 = right.iter().map(|y| (y - mean_right).powi(2)).sum();
+    let wanted = covariance / (spread_left.sqrt() * spread_right.sqrt());
+
+    let tree = global(
+        AggIntent::PearsonCorr {
+            left: VALUE,
+            right: WHOLE,
+        },
+        "r",
+        false,
+        Vec::new(),
+    );
+    let Some(Value::Float(answered)) = arm_value(&tree, &session, &tables)
+        .await
+        .expect("a correlation answers")
+    else {
+        panic!("a correlation answers a float");
+    };
+    assert!(
+        close(answered, wanted),
+        "arm A answered {answered} and these two columns give {wanted}"
+    );
+    assert!(
+        (0.0..1.0).contains(&wanted),
+        "the two columns rise together without being the same column: {wanted}"
+    );
+
+    let itself = global(
+        AggIntent::PearsonCorr {
+            left: VALUE,
+            right: VALUE,
+        },
+        "r",
+        false,
+        Vec::new(),
+    );
+    let Some(Value::Float(perfect)) = arm_value(&itself, &session, &tables)
+        .await
+        .expect("a correlation answers")
+    else {
+        panic!("a correlation answers a float");
+    };
+    assert!(
+        close(perfect, 1.0),
+        "a column against itself correlates at 1, not {perfect}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_integer_quantile_past_two_to_the_fifty_third_parts_from_the_float_ver_one_answers() {
+    let big = (1_i64 << 53) + 1;
+    let values = [1.0_f64, 2.0, 3.0, 4.0];
+    let wholes = [big, 1, 2, 3];
+    let table = generated(&values, &wholes);
+    let (session, tables) = session_over(batch(
+        values.iter().copied().map(Some).collect(),
+        wholes.iter().copied().map(Some).collect(),
+        false,
+    ));
+
+    let tree = global(
+        AggIntent::Quantile {
+            col: Some(WHOLE),
+            q: 1.0,
+            accuracy: ACCURACY,
+        },
+        "top",
+        false,
+        Vec::new(),
+    );
+    let arm = arm_value(&tree, &session, &tables).await.expect("answers");
+    let interpreted = interpreted_value(Rc::clone(&tree), &table).expect("answers");
+    assert_eq!(arm, Some(Value::Int(big)));
+    assert_eq!(interpreted, Some(Value::Float(9_007_199_254_740_992.0)));
+    assert!(
+        (big as f64).total_cmp(&9_007_199_254_740_992.0).is_eq(),
+        "a comparison that casts the integer through an f64 cannot tell these two apart"
+    );
+    assert!(
+        !same(&arm, &interpreted),
+        "above 2^53 the two arms answer different numbers and the comparison says so"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_integer_quantile_below_two_to_the_fifty_third_still_matches_the_interpreted_arm() {
+    let big = (1_i64 << 53) - 1;
+    let values = [1.0_f64, 2.0, 3.0, 4.0];
+    let wholes = [big, 1, 2, 3];
+    let table = generated(&values, &wholes);
+    let (session, tables) = session_over(batch(
+        values.iter().copied().map(Some).collect(),
+        wholes.iter().copied().map(Some).collect(),
+        false,
+    ));
+
+    let tree = global(
+        AggIntent::Quantile {
+            col: Some(WHOLE),
+            q: 1.0,
+            accuracy: ACCURACY,
+        },
+        "top",
+        false,
+        Vec::new(),
+    );
+    let arm = arm_value(&tree, &session, &tables).await.expect("answers");
+    let interpreted = interpreted_value(Rc::clone(&tree), &table).expect("answers");
+    assert_eq!(arm, Some(Value::Int(big)));
+    assert_eq!(interpreted, Some(Value::Float(9_007_199_254_740_991.0)));
+    assert!(same(&arm, &interpreted));
+}
+
+#[test]
+fn an_integer_and_a_float_agree_only_when_the_float_holds_that_exact_integer() {
+    assert!(whole_equals_float(
+        9_007_199_254_740_992,
+        9_007_199_254_740_992.0
+    ));
+    assert!(!whole_equals_float(
+        9_007_199_254_740_993,
+        9_007_199_254_740_992.0
+    ));
+    assert!(whole_equals_float(
+        9_007_199_254_740_994,
+        9_007_199_254_740_994.0
+    ));
+    assert!(!whole_equals_float(1, 1.5));
+    assert!(!whole_equals_float(1, f64::NAN));
+    assert!(!whole_equals_float(1, f64::INFINITY));
+    assert!(!whole_equals_float(i64::MAX, 9.223_372_036_854_776e18));
+    assert!(whole_equals_float(0, -0.0));
 }
 
 #[tokio::test(flavor = "multi_thread")]

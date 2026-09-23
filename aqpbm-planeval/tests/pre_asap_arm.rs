@@ -203,10 +203,18 @@ fn same_number(left: &Value, right: &Value) -> bool {
         (Value::Int(left), Value::Int(right)) => left == right,
         (Value::Float(left), Value::Float(right)) => left.total_cmp(right).is_eq(),
         (Value::Int(left), Value::Float(right)) | (Value::Float(right), Value::Int(left)) => {
-            (*left as f64).total_cmp(right).is_eq()
+            whole_equals_float(*left, *right)
         }
         (left, right) => compare_value(left, right).is_eq(),
     }
+}
+
+fn whole_equals_float(whole: i64, float: f64) -> bool {
+    if !float.is_finite() || float.fract() != 0.0 {
+        return false;
+    }
+    let exact = float as i128;
+    exact as f64 == float && exact == i128::from(whole)
 }
 
 fn assert_same_rows(arm: &[Vec<Value>], interpreted: &[Vec<Value>], sql: &str) {
@@ -344,7 +352,7 @@ async fn every_corpus_query_reads_the_same_on_both_arms() {
 }
 
 #[tokio::test]
-async fn an_exact_quantile_keeps_its_input_type_where_the_interpreted_arm_widens_to_a_float() {
+async fn an_exact_quantile_keeps_its_input_type_and_agrees_in_value_below_two_to_the_fifty_third() {
     let fixture = fixture(5_000).await;
     let sql = "SELECT approx_percentile_cont(bytes, 0.9) FROM metrics";
     let (arm, interpreted) = both_arms(&fixture, sql).await;
@@ -358,7 +366,44 @@ async fn an_exact_quantile_keeps_its_input_type_where_the_interpreted_arm_widens
         "ver 1 retains the column as f64 weights: {:?}",
         interpreted[0][0]
     );
+    let Value::Int(answered) = arm[0][0] else {
+        panic!("the arm A answer is an integer")
+    };
+    assert!(
+        answered.unsigned_abs() < (1_u64 << 53),
+        "the two arms are numerically equal only where an f64 holds the integer exactly, and \
+         this column stays inside that range: {answered}"
+    );
     assert!(same_number(&arm[0][0], &interpreted[0][0]));
+}
+
+#[test]
+fn an_integer_and_a_float_agree_only_when_the_float_holds_that_exact_integer() {
+    let just_past = (1_i64 << 53) + 1;
+    assert!(same_number(
+        &Value::Int(1_i64 << 53),
+        &Value::Float(9_007_199_254_740_992.0)
+    ));
+    assert!(
+        !same_number(
+            &Value::Int(just_past),
+            &Value::Float(9_007_199_254_740_992.0)
+        ),
+        "an f64 cannot hold {just_past}, so it cannot be reported as equal to it"
+    );
+    assert!(
+        (just_past as f64)
+            .total_cmp(&9_007_199_254_740_992.0)
+            .is_eq(),
+        "a comparison that casts the integer through an f64 cannot tell these two apart"
+    );
+    assert!(same_number(
+        &Value::Int((1_i64 << 53) + 2),
+        &Value::Float(9_007_199_254_740_994.0)
+    ));
+    assert!(!same_number(&Value::Int(1), &Value::Float(1.5)));
+    assert!(!same_number(&Value::Int(1), &Value::Float(f64::NAN)));
+    assert!(!same_number(&Value::Int(1), &Value::Float(f64::INFINITY)));
 }
 
 #[tokio::test]
