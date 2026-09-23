@@ -14,10 +14,10 @@ use aqpbm_core::benchmark_result::{CpuTime, LatencySummary, RunStats};
 use aqpbm_core::metrics::RunMetrics;
 use serde::{Deserialize, Serialize};
 
-use asap_types::post_asap::{ExecutableOperator, PostAsapNodeId, SummaryFamilyType};
+use asap_types::post_asap::{ExecutableOperatorPayload, PostAsapNodeId, SummaryFamilyType};
 
 use crate::plan::Plan;
-use crate::run::{ArmTiming, NodeTiming, RunOutcome};
+use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
 use crate::types::{Answer, PlanId};
 
@@ -224,9 +224,9 @@ impl PlanEvalRecord {
             .iter()
             .map(|node| NodeCost {
                 node: node.id.0,
-                operator: format!("{:?}", node.operator),
-                family: match node.operator {
-                    ExecutableOperator::SummaryAgg => node
+                operator: operator_name(&node.payload).to_string(),
+                family: match node.payload {
+                    ExecutableOperatorPayload::SummaryAgg { .. } => node
                         .output_schema
                         .fields
                         .first()

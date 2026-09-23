@@ -24,9 +24,9 @@ use std::rc::Rc;
 
 use asap_types::post_asap::{
     DataPrimitive, EdgeRole, EntityIdentity, ExecutableDag, ExecutableDagEdge, ExecutableDagNode,
-    ExecutableOperator, ExecutableOperatorPayload, ExecutionDataState, GroupingStrategy,
-    PostAsapNodeId, ResultGuarantee, SketchQuery, SummaryFamilyType, SummaryInputExpr,
-    SummarySchema, SummaryUpdate, ValueOperation, WindowEdgeCompatibility,
+    ExecutableOperatorPayload, ExecutionDataState, GroupingStrategy, PostAsapNodeId,
+    ResultGuarantee, SketchQuery, SummaryFamilyType, SummaryInputExpr, SummarySchema,
+    SummaryUpdate, ValueOperation, WindowEdgeCompatibility,
 };
 use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 
@@ -921,11 +921,27 @@ fn resolve_item(input: &ResolvedInput, row: &Row) -> Result<ItemKey, EvalError> 
 
 /// The operators a v0 run can encounter, for a caller that wants to report
 /// coverage without re-deriving it from the payloads.
-pub fn operators(dag: &ExecutableDag) -> Vec<(PostAsapNodeId, ExecutableOperator)> {
+pub fn operators(dag: &ExecutableDag) -> Vec<(PostAsapNodeId, &'static str)> {
     dag.nodes
         .iter()
-        .map(|node| (node.id, node.operator))
+        .map(|node| (node.id, operator_name(&node.payload)))
         .collect()
+}
+
+pub fn operator_name(payload: &ExecutableOperatorPayload) -> &'static str {
+    match payload {
+        ExecutableOperatorPayload::Fallback { .. } => "Fallback",
+        ExecutableOperatorPayload::Binary { .. } => "Binary",
+        ExecutableOperatorPayload::CandidateTopK { .. } => "CandidateTopK",
+        ExecutableOperatorPayload::Value { .. } => "Value",
+        ExecutableOperatorPayload::RelationalJoin { .. } => "RelationalJoin",
+        ExecutableOperatorPayload::SummaryAgg { .. } => "SummaryAgg",
+        ExecutableOperatorPayload::SummaryJoin { .. } => "SummaryJoin",
+        ExecutableOperatorPayload::SummarySubtract => "SummarySubtract",
+        ExecutableOperatorPayload::SummaryDelete { .. } => "SummaryDelete",
+        ExecutableOperatorPayload::SummaryEstimate { .. } => "SummaryEstimate",
+        ExecutableOperatorPayload::SummaryMerge => "SummaryMerge",
+    }
 }
 
 // ── Resolution ───────────────────────────────────────────────────────────────
@@ -1015,6 +1031,10 @@ pub(crate) fn resolve<'a>(
         };
         match &node.payload {
             ExecutableOperatorPayload::Fallback { expression } => {
+                let expression = match crate::plan::ingestion_horizon_child(expression) {
+                    Some(child) => child.as_ref(),
+                    None => expression,
+                };
                 match resolve_fallback(node, expression) {
                     Ok(()) => resolved.rows.push(RowStep::Source { node, expression }),
                     Err(refusal) => refusals.push(refusal),
@@ -1060,9 +1080,8 @@ pub(crate) fn resolve<'a>(
 
 /// The payloads with no execution arm, refused by name.
 ///
-/// Driven off the payload rather than `node.operator`: the two agreeing is one
-/// of `ExecutableDag::validate`'s checks, and a payload is what would actually
-/// be executed.
+/// Driven off the payload, which upstream made the sole operator identity: a
+/// payload is what would actually be executed.
 fn operator_refusal(node: PostAsapNodeId, payload: &ExecutableOperatorPayload) -> Refusal {
     let operator = match payload {
         ExecutableOperatorPayload::Fallback { .. }
@@ -1378,8 +1397,8 @@ fn resolve_readout(
         other => Err(Refusal::UnsupportedOperator {
             node: node.id,
             operator: format!(
-                "SummaryEstimate reading from a {:?}, which builds no summary",
-                other.operator()
+                "SummaryEstimate reading from a {}, which builds no summary",
+                operator_name(other)
             ),
         }),
     }
@@ -1398,7 +1417,7 @@ fn input_edge<'a>(
         .find(|edge| edge.consumer == node.id && edge.role == EdgeRole::Input)
         .ok_or_else(|| Refusal::UnsupportedUpdate {
             node: node.id,
-            detail: format!("{:?} has no Input edge", node.operator),
+            detail: format!("{} has no Input edge", operator_name(&node.payload)),
         })?;
     let producer = dag
         .nodes
@@ -1422,7 +1441,7 @@ fn window_refusal(
     producer: &ExecutableDagNode,
     consumer: &ExecutableDagNode,
 ) -> Option<Refusal> {
-    if edge.window != WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual {
+    if edge.window != WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual {
         return None;
     }
     // SUMMARY -> SUMMARY only. On a ROWS -> SUMMARY edge the same stamp is
@@ -1533,7 +1552,7 @@ mod tests {
                 plan.dag
                     .nodes
                     .iter()
-                    .filter(|node| node.operator == ExecutableOperator::Value)
+                    .filter(|node| operator_name(&node.payload) == "Value")
                     .count(),
                 2,
                 "{query} compiles to Sort + Limit"
@@ -1567,10 +1586,9 @@ mod tests {
                     dtype: SummaryFamilyType::Plain(DataType::Utf8),
                     nullable: false,
                 });
-                let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
-                    panic!("the Fallback node lost its payload");
-                };
-                let asap_types::pre_asap::QueryExpr::Scan { schema, .. } = expression else {
+                let asap_types::pre_asap::QueryExpr::Scan { schema, .. } =
+                    crate::rows::tests::fallback_scan_mut(&mut node.payload)
+                else {
                     panic!("the Fallback node lost its Scan");
                 };
                 schema.columns.push(Column {
@@ -2081,7 +2099,7 @@ mod resolution_tests {
     use std::rc::Rc;
 
     use asap_types::post_asap::{
-        ExactKind, ExactParams, ExecutableOperator, ExecutionTiming, GroupingEdgeCompatibility,
+        ExactKind, ExactParams, ExecutionTiming, GroupingEdgeCompatibility,
         SketchAlgorithm, SketchKind, SketchParams, SummaryField,
     };
     use asap_types::pre_asap::{
@@ -2118,7 +2136,7 @@ mod resolution_tests {
         let aggregate = &held.aggregates[0];
         assert_eq!(
             aggregate.node,
-            node_of(&dag, ExecutableOperator::SummaryAgg).id
+            node_of(&dag, "SummaryAgg").id
         );
         assert_eq!(aggregate.item, None);
         // `weight: Column(SampleValue)` resolved to the `value` field, and
@@ -2129,7 +2147,7 @@ mod resolution_tests {
         assert_eq!(held.readouts[0].query, SketchQuery::Quantile { q: 0.5 });
         assert_eq!(
             held.readouts[0].producer,
-            node_of(&dag, ExecutableOperator::SummaryAgg).id
+            node_of(&dag, "SummaryAgg").id
         );
     }
 
@@ -2139,7 +2157,7 @@ mod resolution_tests {
         // The stamp really is on the 0 -> 1 edge; if it ever stops being, this
         // test stops proving anything and should be revisited.
         assert!(dag.edges.iter().any(|edge| {
-            edge.window == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual
+            edge.window == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual
         }));
         assert!(
             resolved(&dag).is_ok(),
@@ -2162,17 +2180,16 @@ mod resolution_tests {
     #[test]
     fn a_summary_subtract_node_is_refused_with_no_inverse_operation() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         // Hand-built: nothing in the planner emits one, which is the point.
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummarySubtract;
         victim.payload = ExecutableOperatorPayload::SummarySubtract;
 
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let refusals = resolved(&dag).expect_err("is refused");
         assert_eq!(
             refusals,
@@ -2196,13 +2213,12 @@ mod resolution_tests {
     #[test]
     fn a_summary_delete_node_is_refused_with_no_inverse_operation() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummaryDelete;
         victim.payload = ExecutableOperatorPayload::SummaryDelete {
             key: ColumnRef::Named("cluster".into()),
         };
@@ -2223,13 +2239,12 @@ mod resolution_tests {
     #[test]
     fn a_summary_merge_node_is_refused_in_v0() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummaryMerge;
         victim.payload = ExecutableOperatorPayload::SummaryMerge;
 
         let refusals = resolved(&dag).expect_err("is refused");
@@ -2252,8 +2267,8 @@ mod resolution_tests {
     #[test]
     fn a_readout_whose_producer_builds_no_summary_is_refused_rather_than_waved_through() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let fallback = node_of(&dag, "Fallback").id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let edge = dag
             .edges
             .iter_mut()
@@ -2275,7 +2290,7 @@ mod resolution_tests {
     #[test]
     fn a_fallback_that_is_a_program_names_the_variant() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2306,16 +2321,15 @@ mod resolution_tests {
     #[test]
     fn a_fallback_predicate_outside_the_subset_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { predicates, .. } = expression else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::FunctionCall {
@@ -2335,16 +2349,15 @@ mod resolution_tests {
         // A `Scan` with predicates says where rows come from, not what to
         // compute: resolved, deliberately.
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { predicates, .. } = expression else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::Compare {
@@ -2361,7 +2374,7 @@ mod resolution_tests {
     #[test]
     fn an_unresolvable_weight_column_names_the_column() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2382,7 +2395,7 @@ mod resolution_tests {
     #[test]
     fn a_wildcard_weight_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2414,7 +2427,7 @@ mod resolution_tests {
         .expect("HydraCms takes Cms params");
 
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2442,7 +2455,7 @@ mod resolution_tests {
             Reduction::PerEntity,
         ] {
             let mut dag = plan("quantile(0.5, cpu_cores)");
-            let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+            let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
                 .iter_mut()
@@ -2467,7 +2480,7 @@ mod resolution_tests {
     #[test]
     fn a_by_column_past_the_producers_schema_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2488,7 +2501,7 @@ mod resolution_tests {
     #[test]
     fn an_entity_identity_over_a_schema_with_no_label_column_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2515,7 +2528,7 @@ mod resolution_tests {
             (vec![ColumnRef::Named("cluster".into())], vec![2usize]),
         ] {
             let mut dag = with_labels(plan("quantile(0.5, cpu_cores)"));
-            let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+            let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
                 .iter_mut()
@@ -2562,7 +2575,7 @@ mod resolution_tests {
     fn with_labels(mut dag: ExecutableDag) -> ExecutableDag {
         use asap_types::pre_asap::Column;
 
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let labels = ["cluster", "task"];
         for node in &mut dag.nodes {
             if node.id != fallback {
@@ -2578,10 +2591,9 @@ mod resolution_tests {
                     },
                 );
             }
-            let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
-                panic!("the Fallback node lost its payload");
-            };
-            let QueryExpr::Scan { schema, .. } = expression else {
+            let QueryExpr::Scan { schema, .. } =
+                crate::rows::tests::fallback_scan_mut(&mut node.payload)
+            else {
                 panic!("the Fallback node lost its Scan");
             };
             for (offset, label) in labels.iter().enumerate() {
@@ -2596,7 +2608,7 @@ mod resolution_tests {
                 );
             }
         }
-        let schema = node_of(&dag, ExecutableOperator::Fallback)
+        let schema = node_of(&dag, "Fallback")
             .output_schema
             .clone();
         for edge in &mut dag.edges {
@@ -2617,7 +2629,7 @@ mod resolution_tests {
         .expect("decodes");
 
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2799,7 +2811,7 @@ mod resolution_tests {
     }
 
     fn with_family(mut dag: ExecutableDag, family: SummaryFamilyType) -> ExecutableDag {
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2826,7 +2838,7 @@ mod resolution_tests {
 
     fn with_readout(query: &SketchQuery) -> ExecutableDag {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2843,11 +2855,10 @@ mod resolution_tests {
     /// The 3-node plan with a `Value` node grafted above its readout.
     fn with_value(operation: &ValueOperation) -> ExecutableDag {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).clone();
+        let estimate = node_of(&dag, "SummaryEstimate").clone();
         let id = PostAsapNodeId(dag.nodes.len() as u32);
         dag.nodes.push(ExecutableDagNode {
             id,
-            operator: ExecutableOperator::Value,
             payload: ExecutableOperatorPayload::Value {
                 operation: operation.clone(),
                 timing: ExecutionTiming::ReadTime,
@@ -2943,10 +2954,10 @@ mod resolution_tests {
     fn a_summary_to_summary_window_obligation_is_refused() {
         // Both endpoints MAINTENANCE_SUMMARY: the only shape the gate catches.
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg);
+        let agg = node_of(&dag, "SummaryAgg");
         let agg_id = agg.id;
         let agg_schema = agg.output_schema.clone();
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
 
         dag.nodes
             .iter_mut()
@@ -2956,7 +2967,7 @@ mod resolution_tests {
         for edge in &mut dag.edges {
             if edge.producer == agg_id && edge.consumer == estimate {
                 edge.window =
-                    WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual;
+                    WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual;
                 edge.intermediate_schema = agg_schema.clone();
                 edge.data_state = ExecutionDataState::MAINTENANCE_SUMMARY;
                 edge.grouping = GroupingEdgeCompatibility::NotApplicable;
@@ -2978,9 +2989,9 @@ mod resolution_tests {
     #[test]
     fn every_bad_node_is_reported_not_just_the_first() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let fallback = node_of(&dag, "Fallback").id;
+        let agg = node_of(&dag, "SummaryAgg").id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
 
         for node in &mut dag.nodes {
             if node.id == fallback {
@@ -2988,7 +2999,6 @@ mod resolution_tests {
                     expression: QueryExpr::EvalTimestamp,
                 };
             } else if node.id == agg {
-                node.operator = ExecutableOperator::SummarySubtract;
                 node.payload = ExecutableOperatorPayload::SummarySubtract;
             } else if node.id == estimate {
                 node.payload = ExecutableOperatorPayload::SummaryEstimate {
@@ -3016,7 +3026,7 @@ mod resolution_tests {
         // A `Binary` node is catchable on both its edge role and its operator;
         // it must be reported once.
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         for edge in &mut dag.edges {
             if edge.consumer == estimate {
                 edge.role = EdgeRole::Left;
@@ -3027,7 +3037,6 @@ mod resolution_tests {
             .iter_mut()
             .find(|node| node.id == estimate)
             .expect("the SummaryEstimate node");
-        victim.operator = ExecutableOperator::Binary;
         victim.payload = ExecutableOperatorPayload::Binary {
             timing: ExecutionTiming::ReadTime,
             operator: asap_types::post_asap::BinaryOperator {
@@ -3047,8 +3056,8 @@ mod resolution_tests {
     #[test]
     fn a_fallback_whose_output_is_summary_state_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let agg_schema = node_of(&dag, ExecutableOperator::SummaryAgg)
+        let fallback = node_of(&dag, "Fallback").id;
+        let agg_schema = node_of(&dag, "SummaryAgg")
             .output_schema
             .clone();
         let victim = dag
@@ -3074,16 +3083,15 @@ mod resolution_tests {
         // The SQL front end's leaf shape, reached here by rewriting the PromQL
         // one: `Source` carries identity only, and both identities are leaves.
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { source, .. } = expression else {
+        let QueryExpr::Scan { source, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         *source = Source::Table {
@@ -3096,7 +3104,7 @@ mod resolution_tests {
     #[test]
     fn a_node_with_no_input_edge_where_one_is_required_is_refused() {
         let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         dag.edges.retain(|edge| edge.consumer != agg);
 
         let refusals = resolved(&dag).expect_err("is refused");
@@ -3115,7 +3123,7 @@ mod resolution_tests {
         // what index 1 of the producer's schema actually is: an off-by-one here
         // would weight the sketch by timestamps and never fail loudly.
         let dag = plan("quantile(0.5, cpu_cores)");
-        let field: &SummaryField = &node_of(&dag, ExecutableOperator::Fallback)
+        let field: &SummaryField = &node_of(&dag, "Fallback")
             .output_schema
             .fields[1];
         assert_eq!(field.name, "value");

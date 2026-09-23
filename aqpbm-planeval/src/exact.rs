@@ -322,6 +322,9 @@ struct Admission {
 
 impl Admission {
     fn shape_of(&mut self, expr: &QueryExpr) -> Result<Shape, Refusal> {
+        if let Some(child) = crate::plan::ingestion_horizon_child(expr) {
+            return self.shape_of(child);
+        }
         match expr {
             QueryExpr::Scan {
                 source,
@@ -531,6 +534,9 @@ impl Interpreter<'_> {
     }
 
     fn eval_node(&mut self, expr: &QueryExpr) -> Result<Data, EvalError> {
+        if let Some(child) = crate::plan::ingestion_horizon_child(expr) {
+            return self.eval_rc(child);
+        }
         if self.node_times.is_none() {
             return self.eval_body(expr);
         }
@@ -1288,7 +1294,7 @@ mod tests {
     };
     use asap_types::types::AccuracyTarget;
 
-    use asap_frontend_promql::lower_promql;
+    use crate::plan::lower_promql;
 
     use crate::types::Value;
 
@@ -2001,7 +2007,11 @@ mod tests {
     #[test]
     fn a_lowered_promql_selector_is_a_scan_this_step_runs() {
         let lowered = Rc::new(lower_promql("cpu_cores", ACCURACY).expect("lowers"));
-        assert_eq!(variant_name(&lowered), "Scan");
+        assert_eq!(variant_name(&lowered), "TimeRange");
+        assert_eq!(
+            variant_name(crate::plan::ingestion_horizon_child(&lowered).expect("is one")),
+            "Scan"
+        );
         let produced = rows_from(data_of(node(), &lowered, &fixture()).expect("evaluates"));
         assert_eq!(produced.len(), fixture().len());
     }
@@ -3204,8 +3214,9 @@ mod tests {
         let QueryExpr::Aggregate { child, .. } = run.root.as_ref() else {
             panic!("{:?}", run.root);
         };
-        let QueryExpr::Scan { predicates, .. } = child.as_ref() else {
-            panic!("{child:?}");
+        let scan = crate::plan::ingestion_horizon_child(child).expect("an instant selector");
+        let QueryExpr::Scan { predicates, .. } = scan.as_ref() else {
+            panic!("{scan:?}");
         };
         assert_eq!(predicates.len(), 1, "the label matcher is a Scan predicate");
 

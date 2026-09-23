@@ -1003,7 +1003,7 @@ pub(crate) mod tests {
     use asap_types::types::AccuracyTarget;
 
     use asap_aware_mapping::{search_workload, DefaultCostModel};
-    use asap_frontend_promql::lower_promql;
+    use crate::plan::lower_promql;
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
 
@@ -1018,30 +1018,46 @@ pub(crate) mod tests {
         let space = search_workload(vec![(query.to_string(), Rc::new(expr))]);
         let selection = space.global_selection(&DefaultCostModel);
         let (_, root) = space.roots.first().expect("one root");
-        let materialized = selection
-            .materialize(root)
-            .expect("materializes")
+        let assembled = selection
+            .assemble_selected_dag(root)
+            .expect("assembles")
             .expect("is discovered");
-        let dag = compile_executable_dag(&materialized).expect("compiles");
+        let dag = compile_executable_dag(&assembled).expect("compiles");
         let document = PostAsapDagDocument::new(dag);
         document.validate().expect("validates");
         document.dag
     }
 
-    pub(crate) fn node_of(
-        dag: &asap_types::post_asap::ExecutableDag,
-        operator: asap_types::post_asap::ExecutableOperator,
-    ) -> &ExecutableDagNode {
+    pub(crate) fn node_of<'a>(
+        dag: &'a asap_types::post_asap::ExecutableDag,
+        operator: &str,
+    ) -> &'a ExecutableDagNode {
         dag.nodes
             .iter()
-            .find(|node| node.operator == operator)
+            .find(|node| crate::run::operator_name(&node.payload) == operator)
             .expect("the plan has this operator")
     }
 
     fn fallback_expression(dag: &asap_types::post_asap::ExecutableDag) -> &QueryExpr {
-        match &node_of(dag, asap_types::post_asap::ExecutableOperator::Fallback).payload {
+        let expression = match &node_of(dag, "Fallback").payload {
             ExecutableOperatorPayload::Fallback { expression } => expression,
             other => panic!("the Fallback node carries {other:?}"),
+        };
+        match crate::plan::ingestion_horizon_child(expression) {
+            Some(child) => child.as_ref(),
+            None => expression,
+        }
+    }
+
+    pub(crate) fn fallback_scan_mut(
+        payload: &mut ExecutableOperatorPayload,
+    ) -> &mut asap_types::pre_asap::QueryExpr {
+        let ExecutableOperatorPayload::Fallback { expression } = payload else {
+            panic!("the Fallback node lost its payload");
+        };
+        match expression {
+            QueryExpr::TimeRange { child, .. } => Rc::make_mut(child),
+            other => other,
         }
     }
 
@@ -1137,7 +1153,7 @@ pub(crate) mod tests {
     #[test]
     fn the_planners_fallback_node_opens_as_a_row_source() {
         let dag = plan("quantile(0.5, cpu_cores)");
-        let node = node_of(&dag, asap_types::post_asap::ExecutableOperator::Fallback);
+        let node = node_of(&dag, "Fallback");
         let csv = TempCsv::new("planner", "ts,value\n1,10\n2,20\n3,30\n");
 
         let rows: Vec<Row> = open(fallback_expression(&dag), csv.path(), &node.output_schema)
@@ -1244,8 +1260,8 @@ pub(crate) mod tests {
     #[test]
     fn a_sample_value_weight_resolves_to_the_value_column() {
         let dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, asap_types::post_asap::ExecutableOperator::Fallback);
-        let agg = node_of(&dag, asap_types::post_asap::ExecutableOperator::SummaryAgg);
+        let fallback = node_of(&dag, "Fallback");
+        let agg = node_of(&dag, "SummaryAgg");
 
         let weight = match &agg.payload {
             ExecutableOperatorPayload::SummaryAgg { input, .. } => input.weight.clone(),
@@ -1570,7 +1586,7 @@ pub(crate) mod tests {
     #[test]
     fn a_summary_typed_output_field_on_a_fallback_is_refused() {
         let dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, asap_types::post_asap::ExecutableOperator::SummaryAgg);
+        let agg = node_of(&dag, "SummaryAgg");
         let (scan_schema, mut node_schema) = promql_schema(&[]);
         node_schema.fields[1].dtype = agg.output_schema.fields[0].dtype.clone();
         let csv = TempCsv::new("sketchy", "ts,value\n1,10\n");

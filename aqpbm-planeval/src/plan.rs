@@ -1,11 +1,12 @@
 //! Getting a plan into main memory and preparing it for execution.
 //!
 //! The chain is PromQL -> pre-ASAP `QueryExpr` -> plan space -> global
-//! selection -> materialized `SummaryNode` -> `ExecutableDag`, all in process.
-//! `compile_executable_dag` is always called, even though nothing is written to
-//! a wire: the `ExecutionDataState` (timing + primitive) assignment is computed
-//! during compilation and does not exist on the `SummaryNode` tree, and the ten
-//! checks in `validate()` only exist on `ExecutableDag`.
+//! selection -> assembled `SummaryNode` -> `ExecutableDag`, all in process.
+//! `compile_executable_dag_with_node_ids` is always called, even though nothing
+//! is written to a wire: the `ExecutionDataState` (timing + primitive)
+//! assignment is computed during compilation and does not exist on the
+//! `SummaryNode` tree, and the ten checks in `validate()` only exist on
+//! `ExecutableDag`.
 //!
 //! The execution order is computed here by Kahn's algorithm over `dag.edges`.
 //! Node ids happen to come out of the compiler in producer-before-consumer
@@ -18,14 +19,61 @@ use std::collections::{BinaryHeap, HashMap};
 use std::rc::Rc;
 
 use asap_aware_mapping::{search_workload, DefaultCostModel};
-use asap_frontend_promql::lower_promql;
+use asap_frontend_promql::{lower_promql_workload, PromqlError};
 use asap_types::post_asap::{
-    compile_executable_dag, ExecutableDag, PostAsapDagDocument, PostAsapNodeId,
+    compile_executable_dag_with_node_ids, ExecutableDag, ExecutableNodeIdentityMap,
+    PostAsapDagDocument, PostAsapNodeId,
 };
 use asap_types::pre_asap::QueryExpr;
 use asap_types::types::AccuracyTarget;
+use asap_types::workload::{
+    AccuracyRequirement, BatchEntry, DataWorkload, DurationMs, Evidence, PlanningWorkload,
+    Predictability, Query, QueryLanguage, QueryRequirements, QueryWorkload, TimeSelection,
+};
 
 use crate::types::{EvalError, PlanId};
+
+const DATA_INGESTION_INTERVAL: DurationMs = DurationMs(1_000);
+
+pub fn lower_promql(query: &str, accuracy: AccuracyTarget) -> Result<QueryExpr, PromqlError> {
+    let workload = PlanningWorkload {
+        query_workload: QueryWorkload {
+            language: QueryLanguage::PromQL,
+            query_batch: Some(vec![BatchEntry {
+                query: Query(query.to_string()),
+                requirements: QueryRequirements {
+                    accuracy: AccuracyRequirement::Explicit(accuracy),
+                    ..Default::default()
+                },
+                predictability: Predictability::Unknown,
+                invocations: 1,
+                execute_at: None,
+                time_selection: TimeSelection::default(),
+            }]),
+            repeating_queries: None,
+        },
+        data_workload: Some(DataWorkload {
+            data_ingestion_interval: Evidence {
+                value: Some(DATA_INGESTION_INTERVAL),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+    };
+    let mut lowered = lower_promql_workload(&workload, 0)?;
+    Ok(lowered.remove(0))
+}
+
+pub(crate) fn ingestion_horizon_child(expr: &QueryExpr) -> Option<&Rc<QueryExpr>> {
+    match expr {
+        QueryExpr::TimeRange { range, child }
+            if range.as_millis() == u128::from(DATA_INGESTION_INTERVAL.0) =>
+        {
+            Some(child)
+        }
+        _ => None,
+    }
+}
 
 /// A decoded, validated plan, the order its nodes must run in, and the
 /// pre-ASAP tree the same lowering produced — the plan's own baseline, which
@@ -39,6 +87,7 @@ pub struct Plan {
     /// Topological, producers first. Every node appears exactly once.
     pub order: Vec<PostAsapNodeId>,
     pub pre_asap: Option<Rc<QueryExpr>>,
+    pub node_ids: Option<ExecutableNodeIdentityMap>,
 }
 
 impl Plan {
@@ -84,14 +133,14 @@ pub fn plan_promql_workload(
     }
 
     // `search_workload` runs CSE over the roots and may hand back different
-    // `Rc`s than the ones passed in, so materialization targets are read back
+    // `Rc`s than the ones passed in, so assembly targets are read back
     // off the space rather than reused from `roots`.
     let space = search_workload(roots);
     let selection = space.global_selection(&DefaultCostModel);
 
     let mut planned = Vec::with_capacity(space.roots.len());
     for (name, root) in &space.roots {
-        let materialized = match selection.materialize(root) {
+        let assembled = match selection.assemble_selected_dag(root) {
             Ok(Some(node)) => node,
             Ok(None) => {
                 return Err(EvalError::Planning(format!(
@@ -100,13 +149,20 @@ pub fn plan_promql_workload(
             }
             Err(err) => {
                 return Err(EvalError::Planning(format!(
-                    "materialize {name:?}: {err:?}"
+                    "assemble_selected_dag {name:?}: {err:?}"
                 )))
             }
         };
-        let dag = compile_executable_dag(&materialized)
+        let compilation = compile_executable_dag_with_node_ids(&assembled)
             .map_err(|err| EvalError::Planning(format!("compile {name:?}: {err:?}")))?;
-        planned.push((name.clone(), from_dag(dag, Some(Rc::clone(root)))?));
+        planned.push((
+            name.clone(),
+            from_dag(
+                compilation.dag,
+                Some(Rc::clone(root)),
+                Some(compilation.node_ids),
+            )?,
+        ));
     }
     Ok(planned)
 }
@@ -126,7 +182,11 @@ fn canonical_json(dag: &ExecutableDag) -> Result<String, EvalError> {
 }
 
 /// Validate, order, and hash one compiled dag.
-fn from_dag(dag: ExecutableDag, pre_asap: Option<Rc<QueryExpr>>) -> Result<Plan, EvalError> {
+fn from_dag(
+    dag: ExecutableDag,
+    pre_asap: Option<Rc<QueryExpr>>,
+    node_ids: Option<ExecutableNodeIdentityMap>,
+) -> Result<Plan, EvalError> {
     let document = PostAsapDagDocument::new(dag);
     document
         .validate()
@@ -141,6 +201,7 @@ fn from_dag(dag: ExecutableDag, pre_asap: Option<Rc<QueryExpr>>) -> Result<Plan,
         dag: document.dag,
         order,
         pre_asap,
+        node_ids,
     })
 }
 
@@ -208,24 +269,27 @@ mod tests {
         let document: PostAsapDagDocument = serde_json::from_slice(bytes).map_err(|err| {
             EvalError::Validation(format!("decode post-ASAP DAG document: {err}"))
         })?;
-        from_dag(document.dag, None)
+        from_dag(document.dag, None, None)
     }
 
     use super::*;
-    use asap_types::post_asap::ExecutableOperator;
+    use crate::run::operator_name;
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
 
-    fn operators(plan: &Plan) -> Vec<ExecutableOperator> {
+    fn operators(plan: &Plan) -> Vec<&'static str> {
         plan.order
             .iter()
             .map(|id| {
-                plan.dag
-                    .nodes
-                    .iter()
-                    .find(|node| node.id == *id)
-                    .expect("ordered id names a node")
-                    .operator
+                operator_name(
+                    &plan
+                        .dag
+                        .nodes
+                        .iter()
+                        .find(|node| node.id == *id)
+                        .expect("ordered id names a node")
+                        .payload,
+                )
             })
             .collect()
     }
@@ -242,11 +306,7 @@ mod tests {
         assert_eq!(ids(&plan), vec![0, 1, 2]);
         assert_eq!(
             operators(&plan),
-            vec![
-                ExecutableOperator::Fallback,
-                ExecutableOperator::SummaryAgg,
-                ExecutableOperator::SummaryEstimate,
-            ]
+            vec!["Fallback", "SummaryAgg", "SummaryEstimate"]
         );
         assert_eq!(plan.dag.root, PostAsapNodeId(2));
     }
@@ -258,7 +318,7 @@ mod tests {
         assert_eq!(plan.order.len(), 2);
         assert_eq!(
             operators(&plan),
-            vec![ExecutableOperator::Fallback, ExecutableOperator::SummaryAgg]
+            vec!["Fallback", "SummaryAgg"]
         );
     }
 
@@ -268,7 +328,7 @@ mod tests {
         assert_eq!(plan.dag.nodes.len(), 1);
         assert!(plan.dag.edges.is_empty());
         assert_eq!(ids(&plan), vec![0]);
-        assert_eq!(operators(&plan), vec![ExecutableOperator::Fallback]);
+        assert_eq!(operators(&plan), vec!["Fallback"]);
     }
 
     #[test]
@@ -287,7 +347,7 @@ mod tests {
     fn canonical_json_is_two_space_pretty_lf() {
         let plan = plan_promql("sum(cpu_cores)", ACCURACY).expect("plans");
         let json = to_json(&plan).expect("encodes");
-        assert!(json.starts_with("{\n  \"schema_version\": 1,\n  \"dag\": {\n"));
+        assert!(json.starts_with("{\n  \"schema_version\": 2,\n  \"dag\": {\n"));
         assert!(!json.contains('\r'));
         assert!(!json.ends_with('\n'));
     }
