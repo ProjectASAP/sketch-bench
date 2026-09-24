@@ -20,7 +20,7 @@ Let `R = {r_1, ..., r_n}` be the RQE workload. Each RQE `r_i` provides:
 | `S_i` | Query-window size. This is the current `lookback` field. |
 | `T_i` | Query slide: how often the RQE runs. This is the current `interval` field. |
 | `labels_i` | Group-by label set. |
-| `metric_i` | Accuracy metric to check. |
+| `accuracy_metric_i` | Accuracy measurement to check. |
 | `tol_i` | Accuracy threshold. |
 | `direction_i` | Whether lower or higher values are better. |
 
@@ -112,7 +112,7 @@ An RQE `r_i` is eligible for a candidate `D` when:
 
 1. `cap_i = D.capability` and `labels_i = D.labels`.
 2. `D.x % D.y = 0`, `S_i % D.x = 0`, and `T_i % D.y = 0`.
-3. `D.configuration` contains a measured value for `metric_i` that clears
+3. `D.configuration` contains a measured value for `accuracy_metric_i` that clears
    `tol_i` in `direction_i`.
 
 For lower-is-better metrics, passing means `measured <= tol_i`. For
