@@ -2,6 +2,7 @@
 //! files, no workspace deps. Four separable axes: distribution ([`dist`]), rule
 //! ([`rule`]), rendering ([`value`]), relation ([`table`]).
 
+pub mod burst;
 pub mod column;
 pub mod dist;
 pub mod error;
@@ -9,6 +10,7 @@ pub mod rule;
 pub mod table;
 pub mod value;
 
+pub use burst::{inject_interval_bursts, BurstSpec};
 pub use column::{ColumnSpec, DATA_TYPES};
 pub use dist::{
     DataDistribution, Domain, NormalParameter, Sampler, UniformParameter, ZipfParameter,

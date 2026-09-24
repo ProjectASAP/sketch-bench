@@ -1,0 +1,37 @@
+[package]
+name = "aqpbm-planeval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Decodes a post-ASAP DAG, runs it over rows holding one summary per (plan, node, group), and scores each readout against the exact answer."
+
+# A thin bin over a real lib. `aqpbm-cli` is bin-only, which is why its
+# `rows::binding()` and `rows::measurements()` cannot be called in-process.
+[[bin]]
+name = "planeval"
+path = "src/main.rs"
+
+# Pinned to a rev rather than a path: CI checks out sketch-bench alone, and a
+# missing path dep fails manifest resolution for every member of the workspace.
+[dependencies]
+asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
+asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
+asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
+
+# 0.3.0, not the workspace pin (0.2.2): cdf_cached/quantile_cached do not
+# exist before 0.3.0 and a 101-point probe grid re-sorts on every call there.
+asap_sketchlib = { version = "0.3.0", features = ["experimental"] }
+
+aqpbm-core = { workspace = true, features = ["hdrhist"] }
+aqpbm-datagen.workspace = true
+csv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+blake3 = "1"
+
+[dev-dependencies]
+tempfile = "3"

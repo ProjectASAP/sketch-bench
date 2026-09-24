@@ -5,6 +5,7 @@
 pub mod accuracy;
 pub mod atomic_costs;
 pub mod benchmark_result;
+pub mod erp;
 pub mod error;
 pub mod measure;
 pub mod metrics;
@@ -23,6 +24,9 @@ pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
     MergeMetrics, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
     WorkloadDescription, SCHEMA_VERSION,
+};
+pub use erp::{
+    erp_artifact, erp_record, ErpArtifact, ErpRecord, ErpResourceProfile, ERP_SCHEMA_VERSION,
 };
 pub use error::RunError;
 pub use measure::{
