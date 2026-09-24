@@ -84,8 +84,7 @@ does not merge them.
 non-overlapping two-minute instances.
 
 v1 assumes all RQEs share a common time origin. Query phase offsets are not
-modeled. It also enumerates every valid divisor pair; there are no heuristic
-candidate bounds yet.
+modeled.
 
 ## Candidate deployments
 
@@ -99,14 +98,24 @@ Candidates may be generated from individual RQEs, then deduplicated. This is
 only a way to construct the candidate set: when solving a workload, one
 selected deployment may serve multiple compatible RQEs.
 
-For each RQE `r_i`, generate candidates as follows:
+For each capability/label-set group, generate candidates as follows:
 
 ```text
-for each measured configuration that serves cap_i:
-    for each x that divides S_i:
-        for each y that divides gcd(x, T_i):
-            add (cap_i, configuration, labels_i, x, y)
+for each x that divides S_i for at least one RQE i in the group:
+    let g_i = gcd(x, T_i) for every RQE i whose S_i is divisible by x
+    let slides = every gcd reachable from a non-empty subset of {g_i}
+    for each measured configuration that serves the group's capability:
+        for each y in slides:
+            add (capability, configuration, labels, x, y)
 ```
+
+For an RQE considered alone, its only useful slide for a fixed `x` is its
+largest legal slide, `gcd(x, T_i)`. A smaller slide adds ingest fan-out without
+improving that RQE's query cost or memory. A shared deployment may need a
+smaller slide: for example, two RQEs with `gcd(x, T)` values of 20 and 30 need
+`y = 10` to share. Subset gcds include that slide without enumerating every
+divisor. Any still-finer slide is useful only if it aligns an additional RQE,
+in which case it appears as another subset gcd.
 
 An RQE `r_i` is eligible for a candidate `D` when:
 
