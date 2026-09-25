@@ -14,31 +14,100 @@ use aqpbm_core::benchmark_result::{CpuTime, LatencySummary, RunStats};
 use aqpbm_core::metrics::RunMetrics;
 use serde::{Deserialize, Serialize};
 
-use asap_types::post_asap::{ExecutableOperator, PostAsapNodeId, SummaryFamilyType};
+use asap_types::post_asap::{ExecutableOperatorPayload, PostAsapNodeId, SummaryFamilyType};
 
+use crate::df::RefusalCounts;
 use crate::plan::Plan;
-use crate::run::{ArmTiming, NodeTiming, RunOutcome};
+use crate::run::{operator_name, ArmTiming, NodeTiming, RunOutcome};
 use crate::score::ObservedError;
-use crate::types::{Answer, PlanId};
+use crate::types::{Answer, EvalError, PlanId, PlanningStage};
 
-pub const PLANEVAL_SCHEMA_VERSION: u32 = 6;
+pub const PLANEVAL_SCHEMA_VERSION: u32 = 9;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryColumn {
+    BytesKeptBetweenQueries,
+}
+
+impl std::fmt::Display for MemoryColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryColumn::BytesKeptBetweenQueries => {
+                write!(f, "bytes each arm keeps between queries")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerCheck {
+    ScoredAgainstExact,
+    NoReadoutCompared,
+    ExactArmDidNotRun,
+}
+
+impl AnswerCheck {
+    pub fn of_run(outcome: &RunOutcome) -> Self {
+        match outcome.verified {
+            false => AnswerCheck::ExactArmDidNotRun,
+            true => match outcome
+                .readouts
+                .iter()
+                .any(|readout| readout.exact.is_some())
+            {
+                true => AnswerCheck::ScoredAgainstExact,
+                false => AnswerCheck::NoReadoutCompared,
+            },
+        }
+    }
+
+    pub fn scored(self) -> bool {
+        self == AnswerCheck::ScoredAgainstExact
+    }
+}
+
+impl std::fmt::Display for AnswerCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnswerCheck::ScoredAgainstExact => {
+                write!(f, "the answer was scored against the exact arm")
+            }
+            AnswerCheck::NoReadoutCompared => write!(
+                f,
+                "the exact arm ran but no readout was compared against it, so nothing here \
+                 checked the answer"
+            ),
+            AnswerCheck::ExactArmDidNotRun => write!(f, "the exact arm did not run"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanEvalRecord {
     pub schema_version: u32,
+    pub runtime: String,
+    pub refusals: RefusalCounts,
     pub plan: PlanIdentity,
     pub rows_scanned: u64,
-    pub rows_emitted: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows_emitted: Option<u64>,
     /// Rows the root node produced, for a plan whose answer is rows rather
     /// than a readout. `null` when the root holds summary state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_rows: Option<usize>,
-    /// Whether the exact arm ran at all. A record with `verified: false` has
-    /// no ground truth in it, and says so rather than leaving the reader to
-    /// infer it from absent fields. The arm carries no timing: it recomputes
-    /// the statistic off the column the summary consumed, which is ground
-    /// truth and not a query anyone would run.
-    pub verified: bool,
+    /// What, if anything, checked this record's answer. A record that says
+    /// `exact_arm_did_not_run` has no ground truth in it, and one that says
+    /// `no_readout_compared` has ground truth that nothing was scored
+    /// against — its timings and memory describe an answer no one checked.
+    /// Both say so rather than leaving the reader to infer it from an empty
+    /// `readouts`. The exact arm carries no timing: it recomputes the
+    /// statistic off the column the summary consumed, which is ground truth
+    /// and not a query anyone would run.
+    pub answer_check: AnswerCheck,
+    pub no_summary_in_plan: bool,
+    pub memory_column: MemoryColumn,
     pub nodes: Vec<NodeCost>,
     pub approximate: Arm,
     pub exact: Arm,
@@ -46,6 +115,72 @@ pub struct PlanEvalRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pre_asap_nodes: Vec<TreeNodeCost>,
     pub readouts: Vec<ReadoutRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RefusedPlanRecord {
+    pub schema_version: u32,
+    pub runtime: String,
+    pub plan_id: String,
+    pub query: String,
+    pub seed: u64,
+    pub refusals: RefusalCounts,
+    pub refused: Vec<String>,
+}
+
+impl RefusedPlanRecord {
+    pub fn new(
+        runtime: &str,
+        plan: &Plan,
+        query: &str,
+        seed: u64,
+        refusals: RefusalCounts,
+        refused: Vec<String>,
+    ) -> Self {
+        Self {
+            schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: runtime.to_string(),
+            plan_id: hex(&plan.id),
+            query: query.to_string(),
+            seed,
+            refusals,
+            refused,
+        }
+    }
+
+    pub fn to_jsonl(&self) -> String {
+        serde_json::to_string(self).expect("RefusedPlanRecord is serializable")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnplannedQueryRecord {
+    pub schema_version: u32,
+    pub runtime: String,
+    pub query: String,
+    pub stage: PlanningStage,
+    pub detail: String,
+}
+
+impl UnplannedQueryRecord {
+    pub fn of_error(runtime: &str, query: &str, err: &EvalError) -> Option<Self> {
+        let (stage, detail) = match err {
+            EvalError::Planning { stage, detail } => (*stage, detail.clone()),
+            EvalError::Validation(detail) => (PlanningStage::Validate, detail.clone()),
+            _ => return None,
+        };
+        Some(Self {
+            schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: runtime.to_string(),
+            query: query.to_string(),
+            stage,
+            detail,
+        })
+    }
+
+    pub fn to_jsonl(&self) -> String {
+        serde_json::to_string(self).expect("UnplannedQueryRecord is serializable")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -76,6 +211,8 @@ pub struct NodeCost {
     pub update_ns: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readout_ns: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_compute_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -95,11 +232,41 @@ pub struct Arm {
     pub readout: Option<Phase>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluate: Option<Phase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance: Option<Phase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<Phase>,
     /// Summary state held, summed over every node and group. `0` for the exact
     /// arm, which holds the retained column instead — reported separately so a
     /// reader is not invited to compare a sketch against nothing.
     pub state_bytes: usize,
     pub retained_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluate_peak_reserved_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_overhead_ns: Option<u64>,
+}
+
+impl Arm {
+    pub fn aggregate_ms(&self) -> f64 {
+        phase_mean(self.build.as_ref())
+            + phase_mean(self.update.as_ref())
+            + phase_mean(self.maintenance.as_ref())
+    }
+
+    pub fn query_ms(&self) -> f64 {
+        phase_mean(self.readout.as_ref())
+            + phase_mean(self.read.as_ref())
+            + phase_mean(self.evaluate.as_ref())
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        self.state_bytes + self.retained_bytes
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,19 +391,29 @@ impl PlanEvalRecord {
             .iter()
             .map(|node| NodeCost {
                 node: node.id.0,
-                operator: format!("{:?}", node.operator),
-                family: match node.operator {
-                    ExecutableOperator::SummaryAgg => node
-                        .output_schema
-                        .fields
-                        .first()
-                        .map(|field| family_label(&field.dtype)),
-                    _ => None,
+                operator: operator_name(&node.payload).to_string(),
+                family: match &node.payload {
+                    ExecutableOperatorPayload::SummaryAgg { family, .. } => {
+                        Some(family_label(family))
+                    }
+                    ExecutableOperatorPayload::Fallback { .. }
+                    | ExecutableOperatorPayload::Binary { .. }
+                    | ExecutableOperatorPayload::CandidateTopK { .. }
+                    | ExecutableOperatorPayload::Value { .. }
+                    | ExecutableOperatorPayload::RelationalJoin { .. }
+                    | ExecutableOperatorPayload::SummaryJoin { .. }
+                    | ExecutableOperatorPayload::SummarySubtract
+                    | ExecutableOperatorPayload::SummaryDelete { .. }
+                    | ExecutableOperatorPayload::SummaryEstimate { .. }
+                    | ExecutableOperatorPayload::SummaryMerge => None,
                 },
                 state_bytes: footprints.get(&node.id).copied(),
                 build_ns: times.get(&node.id).and_then(|timing| timing.build_ns),
                 update_ns: times.get(&node.id).and_then(|timing| timing.update_ns),
                 readout_ns: times.get(&node.id).and_then(|timing| timing.readout_ns),
+                elapsed_compute_ns: times
+                    .get(&node.id)
+                    .and_then(|timing| timing.elapsed_compute_ns),
             })
             .collect();
 
@@ -246,6 +423,8 @@ impl PlanEvalRecord {
 
         Self {
             schema_version: PLANEVAL_SCHEMA_VERSION,
+            runtime: outcome.runtime.tag().to_string(),
+            refusals: outcome.refusals.clone(),
             plan: PlanIdentity {
                 plan_id: hex(&plan.id),
                 query: query.to_string(),
@@ -257,18 +436,33 @@ impl PlanEvalRecord {
             rows_scanned: outcome.rows_scanned,
             rows_emitted: outcome.rows_emitted,
             root_rows: outcome.root_rows,
-            verified: outcome.verified,
+            answer_check: AnswerCheck::of_run(outcome),
+            no_summary_in_plan: outcome.no_summary_in_plan,
+            memory_column: MemoryColumn::BytesKeptBetweenQueries,
             nodes,
-            approximate: arm(&outcome.approximate, state_bytes, 0),
+            approximate: Arm {
+                maintenance_peak_reserved_bytes: outcome.maintenance_peak_bytes,
+                read_peak_reserved_bytes: outcome.read_peak_bytes,
+                ..arm(&outcome.approximate, state_bytes, 0)
+            },
             exact: Arm {
                 build: None,
                 update: None,
                 readout: None,
                 evaluate: None,
+                maintenance: None,
+                read: None,
                 state_bytes: 0,
                 retained_bytes,
+                maintenance_peak_reserved_bytes: None,
+                read_peak_reserved_bytes: None,
+                evaluate_peak_reserved_bytes: None,
+                engine_overhead_ns: None,
             },
-            pre_asap: arm(&outcome.pre_asap, 0, outcome.pre_asap_bytes),
+            pre_asap: Arm {
+                evaluate_peak_reserved_bytes: outcome.pre_asap_evaluate_peak_bytes,
+                ..arm(&outcome.pre_asap, 0, outcome.pre_asap_bytes)
+            },
             pre_asap_nodes: outcome
                 .pre_asap_node_times
                 .iter()
@@ -284,7 +478,7 @@ impl PlanEvalRecord {
                 .map(|r| ReadoutRecord {
                     node: r.node.0,
                     group: r.group.clone(),
-                    query: format!("{:?}", r.query),
+                    query: readout_query_label(r.query.as_ref()),
                     approximate: AnswerRecord::of(&r.approximate),
                     exact: r.exact.as_ref().map(AnswerRecord::of),
                     observed_error: r.observed_error.clone(),
@@ -302,20 +496,13 @@ impl PlanEvalRecord {
     /// The headline numbers. The planner supplies none of these — see PLAN.md
     /// §1.10.1 — so they are measured, not checked.
     pub fn advantage(&self) -> Advantage {
-        let without_approximation = phase_mean(self.pre_asap.evaluate.as_ref());
+        let without_approximation = self.pre_asap.query_ms();
         Advantage {
-            aggregate_time: ratio(
-                without_approximation,
-                phase_mean(self.approximate.build.as_ref())
-                    + phase_mean(self.approximate.update.as_ref()),
-            ),
-            query_time: ratio(
-                without_approximation,
-                phase_mean(self.approximate.readout.as_ref()),
-            ),
+            aggregate_time: ratio(without_approximation, self.approximate.aggregate_ms()),
+            query_time: ratio(without_approximation, self.approximate.query_ms()),
             memory: ratio(
-                self.pre_asap.retained_bytes as f64,
-                self.approximate.state_bytes as f64,
+                self.pre_asap.memory_bytes() as f64,
+                self.approximate.memory_bytes() as f64,
             ),
             accuracy: self
                 .readouts
@@ -330,6 +517,15 @@ impl PlanEvalRecord {
 
     pub fn to_jsonl(&self) -> String {
         serde_json::to_string(self).expect("PlanEvalRecord is serializable")
+    }
+}
+
+pub const EXACT_AGGREGATE_READOUT: &str = "ExactAggregateValue";
+
+pub fn readout_query_label(query: Option<&asap_types::post_asap::SketchQuery>) -> String {
+    match query {
+        Some(query) => format!("{query:?}"),
+        None => EXACT_AGGREGATE_READOUT.to_string(),
     }
 }
 
@@ -351,8 +547,14 @@ fn arm(timing: &ArmTiming, state_bytes: usize, retained_bytes: usize) -> Arm {
         update: phase(&timing.update),
         readout: phase(&timing.readout),
         evaluate: phase(&timing.evaluate),
+        maintenance: phase(&timing.maintenance),
+        read: phase(&timing.read),
         state_bytes,
         retained_bytes,
+        maintenance_peak_reserved_bytes: None,
+        read_peak_reserved_bytes: None,
+        evaluate_peak_reserved_bytes: None,
+        engine_overhead_ns: timing.engine_overhead_ns,
     }
 }
 
@@ -392,9 +594,8 @@ fn hex(bytes: &PlanId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::plan_promql;
+    use crate::rows::tests::{plan_of, MEDIAN};
     use crate::run::{run, RowsFrom, RunConfig, DEFAULT_TIMED_RUNS};
-    use asap_types::types::AccuracyTarget;
     use std::io::Write;
 
     fn csv(values: &[f64]) -> tempfile::NamedTempFile {
@@ -408,7 +609,7 @@ mod tests {
     }
 
     fn record_of(query: &str, values: &[f64], verify: bool) -> PlanEvalRecord {
-        let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(query);
 
         let file = csv(values);
         let outcome = run(
@@ -422,12 +623,12 @@ mod tests {
     #[test]
     fn a_real_run_produces_a_record_with_both_arms_and_an_advantage() {
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         assert_eq!(record.schema_version, PLANEVAL_SCHEMA_VERSION);
-        assert_eq!(record.plan.nodes, 3);
+        assert_eq!(record.plan.nodes, 4);
         assert_eq!(record.plan.plan_id.len(), 64, "blake3 as hex");
-        assert_eq!(record.rows_emitted, 10_000);
+        assert_eq!(record.rows_emitted, Some(10_000));
 
         // Per-node attribution: only the SummaryAgg holds state.
         let with_state: Vec<_> = record
@@ -463,8 +664,8 @@ mod tests {
 
     #[test]
     fn without_verify_there_is_no_ground_truth_and_no_accuracy() {
-        let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0, 4.0], false);
-        assert!(!record.verified);
+        let record = record_of(MEDIAN, &[1.0, 2.0, 3.0, 4.0], false);
+        assert_eq!(record.answer_check, AnswerCheck::ExactArmDidNotRun);
         assert_eq!(record.exact.retained_bytes, 0);
         assert!(record.readouts[0].exact.is_none());
         // Not 0.0 — no error was measured, rather than none being made.
@@ -475,7 +676,7 @@ mod tests {
     #[test]
     fn a_record_carrying_non_finite_numbers_still_round_trips() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let base = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let base = record_of(MEDIAN, &values, true);
 
         for (value, spelling) in [
             (12.0_f64, "12.0"),
@@ -522,11 +723,94 @@ mod tests {
 
     #[test]
     fn the_encoding_change_moved_the_record_version() {
-        assert_eq!(PLANEVAL_SCHEMA_VERSION, 6);
-        let record = record_of("quantile(0.5, cpu_cores)", &[1.0, 2.0, 3.0], true);
+        assert_eq!(PLANEVAL_SCHEMA_VERSION, 9);
+        let record = record_of(MEDIAN, &[1.0, 2.0, 3.0], true);
+        let line = record.to_jsonl();
         assert!(
-            record.to_jsonl().contains("\"schema_version\":6"),
+            line.contains("\"schema_version\":9"),
             "the stream has to say which encoding it is in"
+        );
+        assert!(line.contains("\"runtime\":\"interp\""), "{line}");
+        assert!(
+            line.contains("\"memory_column\":\"bytes_kept_between_queries\""),
+            "the record has to say what the memory ratio divides: {line}"
+        );
+        assert!(line.contains("\"no_summary_in_plan\":false"), "{line}");
+        assert!(
+            line.contains("\"answer_check\":\"scored_against_exact\""),
+            "the record has to say on its face what checked its answer: {line}"
+        );
+        assert!(
+            line.contains(
+                "\"refusals\":{\"promql_only\":0,\"time_axis\":0,\"no_constructor\":0,\
+                 \"deferred\":0,\"unclassified\":0}"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_refused_plan_names_itself_in_the_same_stream_as_a_record() {
+        let plan = plan_of(MEDIAN);
+        let mut counts = RefusalCounts::default();
+        counts.add_unclassified(2);
+        let refused = RefusedPlanRecord::new(
+            "datafusion",
+            &plan,
+            MEDIAN,
+            3,
+            counts,
+            vec!["Value::Extension".to_owned()],
+        );
+        let line = refused.to_jsonl();
+        assert!(!line.contains('\n'), "one refusal, one line");
+        assert!(line.contains("\"schema_version\":9"), "{line}");
+        assert!(line.contains("\"runtime\":\"datafusion\""), "{line}");
+        assert!(
+            line.contains(&format!("\"plan_id\":\"{}\"", hex(&plan.id))),
+            "{line}"
+        );
+        assert!(line.contains("\"seed\":3"), "{line}");
+        assert!(
+            line.contains("\"refused\":[\"Value::Extension\"]"),
+            "{line}"
+        );
+        let back: RefusedPlanRecord = serde_json::from_str(&line).expect("a refusal reads back");
+        assert_eq!(back, refused);
+    }
+
+    #[test]
+    fn a_statement_that_never_planned_says_which_stage_stopped_it() {
+        let query = "SELECT srcport, COUNT(DISTINCT dstip, dstport) FROM packets GROUP BY srcport";
+        let record = UnplannedQueryRecord::of_error(
+            "datafusion",
+            query,
+            &EvalError::Planning {
+                stage: PlanningStage::Lower,
+                detail: "unsupported aggregate: multi-column COUNT(DISTINCT)".to_owned(),
+            },
+        )
+        .expect("a planning failure is a record of its own");
+        let line = record.to_jsonl();
+        assert!(!line.contains('\n'), "one failure, one line");
+        assert!(line.contains("\"schema_version\":9"), "{line}");
+        assert!(line.contains("\"stage\":\"lower\""), "{line}");
+        assert!(line.contains("\"runtime\":\"datafusion\""), "{line}");
+        let back: UnplannedQueryRecord = serde_json::from_str(&line).expect("it reads back");
+        assert_eq!(back, record);
+
+        let past_lowering = UnplannedQueryRecord::of_error(
+            "interp",
+            query,
+            &EvalError::Validation("edge names a node that is not in the document".to_owned()),
+        )
+        .expect("a document that does not validate is one too");
+        assert_eq!(past_lowering.stage, PlanningStage::Validate);
+
+        assert!(
+            UnplannedQueryRecord::of_error("interp", query, &EvalError::Refused(Vec::new()))
+                .is_none(),
+            "a node refusal already has RefusedPlanRecord and is not a planning failure"
         );
     }
 
@@ -635,7 +919,11 @@ mod tests {
     #[test]
     fn the_record_round_trips_as_jsonl() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.9, cpu_cores)", &values, true);
+        let record = record_of(
+            "SELECT approx_percentile_cont(value, 0.9) FROM cpu_cores",
+            &values,
+            true,
+        );
         let line = record.to_jsonl();
         assert!(!line.contains('\n'), "one record, one line");
         let back: PlanEvalRecord = serde_json::from_str(&line).unwrap();
@@ -645,7 +933,7 @@ mod tests {
         assert_eq!(back.nodes, record.nodes);
         assert_eq!(back.rows_scanned, record.rows_scanned);
         assert_eq!(back.rows_emitted, record.rows_emitted);
-        assert_eq!(back.verified, record.verified);
+        assert_eq!(back.answer_check, record.answer_check);
         assert_eq!(back.readouts, record.readouts);
 
         same_arm(&back.approximate, &record.approximate, "approximate");
@@ -684,7 +972,7 @@ mod tests {
     #[test]
     fn every_timing_field_carries_a_population_and_its_samples() {
         let values: Vec<f64> = (0..2_000).map(|i| (i % 211) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         for (name, phase) in [
             ("approximate.build", record.approximate.build.as_ref()),
@@ -713,7 +1001,7 @@ mod tests {
     #[test]
     fn the_per_call_percentiles_are_real_and_not_a_counter_only_shim() {
         let values: Vec<f64> = (0..2_000).map(|i| (i % 211) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         let readout = record.approximate.readout.as_ref().unwrap();
         let latency = readout
@@ -735,7 +1023,7 @@ mod tests {
     #[test]
     fn the_time_advantages_are_ratios_over_the_pre_asap_arm() {
         let values: Vec<f64> = (0..20_000).map(|i| (i % 977) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         let tree = record
             .pre_asap
@@ -764,7 +1052,7 @@ mod tests {
     #[test]
     fn the_memory_advantage_is_taken_against_the_pre_asap_arm() {
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
 
         assert!(
             record.pre_asap.retained_bytes > record.exact.retained_bytes,
@@ -783,7 +1071,7 @@ mod tests {
     #[test]
     fn the_accuracy_term_is_the_worst_error_any_readout_showed() {
         let values: Vec<f64> = (0..5_000).map(|i| (i % 313) as f64).collect();
-        let record = record_of("quantile(0.5, cpu_cores)", &values, true);
+        let record = record_of(MEDIAN, &values, true);
         let worst = record
             .readouts
             .iter()
@@ -791,31 +1079,23 @@ mod tests {
             .fold(f64::NEG_INFINITY, f64::max);
         assert_eq!(record.advantage().accuracy, Some(worst));
 
-        let unverified = record_of("quantile(0.5, cpu_cores)", &values, false);
+        let unverified = record_of(MEDIAN, &values, false);
         assert_eq!(unverified.advantage().accuracy, None);
     }
 
     #[test]
     fn per_node_time_is_recorded_only_when_it_is_asked_for() {
         let values: Vec<f64> = (0..4_000).map(|i| (i % 211) as f64).collect();
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(MEDIAN);
         let file = csv(&values);
 
         let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 3, true);
-        let quiet = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let quiet = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
         assert!(quiet.nodes.iter().all(|node| node.update_ns.is_none()));
         assert!(quiet.pre_asap_nodes.is_empty());
 
         config.per_node_time = true;
-        let timed = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let timed = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
 
         let aggregate = timed
             .nodes
@@ -840,7 +1120,7 @@ mod tests {
             .collect();
         assert_eq!(
             operators,
-            vec!["Scan", "Aggregate"],
+            vec!["Scan", "Aggregate", "Project"],
             "children charged first"
         );
         let tree_total: u64 = timed
@@ -859,16 +1139,12 @@ mod tests {
     #[test]
     fn a_plan_with_no_pre_asap_tree_reports_no_ratio_rather_than_one() {
         let values: Vec<f64> = (0..500).map(|i| i as f64).collect();
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).unwrap();
+        let plan = plan_of(MEDIAN);
         let file = csv(&values);
 
         let mut config = RunConfig::new(RowsFrom::Csv(file.path().to_path_buf()), 1, true);
         config.pre_asap = false;
-        let record = PlanEvalRecord::from_run(
-            "quantile(0.5, cpu_cores)",
-            &plan,
-            &run(&plan, &config).unwrap(),
-        );
+        let record = PlanEvalRecord::from_run(MEDIAN, &plan, &run(&plan, &config).unwrap());
 
         assert!(record.pre_asap.evaluate.is_none());
         let advantage = record.advantage();

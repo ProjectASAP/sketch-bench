@@ -1,0 +1,21 @@
+column_num: 4
+column_label: [time, srcip, dstip, pkt_len]
+row_num: 20000
+
+column_spec:
+  - data_type: i64
+    sql_type: timestamp_ms
+    special_rule: 1
+    shift: 1526562600000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 2.0, seed: 1}
+
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 256.0, seed: 2}
+    string: {alphabet: "abcdefgh", min_len: 3, max_len: 3}
+
+  - data_type: string
+    distribution: {kind: zipf, skewness: 1.1, population_size: 512, seed: 3}
+    string: {alphabet: "ijklmnop", min_len: 3, max_len: 3}
+
+  - data_type: i64
+    distribution: {kind: uniform, lower_bound: 40.0, upper_bound: 1500.0, seed: 4}

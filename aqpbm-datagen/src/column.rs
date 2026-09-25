@@ -13,6 +13,8 @@ use crate::value::{ColumnData, StrCfg, StringOpts};
 /// The `data_type` spellings this build renders.
 pub const DATA_TYPES: [&str; 4] = ["i64", "u64", "f64", "string"];
 
+pub const SQL_TYPES: [&str; 1] = ["timestamp_ms"];
+
 /// One column of a [`crate::TableDescription`].
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub struct ColumnSpec {
     pub special_rule: u32,
     /// Which [`ColumnData`] variant this column renders into.
     pub data_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_type: Option<String>,
     /// Rendering options for `data_type: string`. Absent means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub string: Option<StringOpts>,
@@ -51,6 +55,23 @@ impl ColumnSpec {
                 self.data_type,
                 DATA_TYPES.join(", "),
             )));
+        }
+
+        match self.sql_type.as_deref() {
+            None => {}
+            Some(declared) if !SQL_TYPES.contains(&declared) => {
+                return Err(DataGenError::BadParam(format!(
+                    "sql_type: unknown type '{declared}'; expected one of {}",
+                    SQL_TYPES.join(", "),
+                )))
+            }
+            Some("timestamp_ms") if self.data_type != "i64" => {
+                return Err(DataGenError::BadParam(format!(
+                    "sql_type: timestamp_ms needs data_type i64, not '{}'",
+                    self.data_type,
+                )))
+            }
+            Some(_) => {}
         }
 
         // `cardinality` restates the domain. Silently preferring one over the

@@ -11,7 +11,7 @@ pub mod table;
 pub mod value;
 
 pub use burst::{inject_interval_bursts, BurstSpec};
-pub use column::{ColumnSpec, DATA_TYPES};
+pub use column::{ColumnSpec, DATA_TYPES, SQL_TYPES};
 pub use dist::{
     DataDistribution, Domain, NormalParameter, Sampler, UniformParameter, ZipfParameter,
 };
@@ -55,6 +55,7 @@ mod tests {
             cardinality: None,
             special_rule: RULE_NONE,
             data_type: data_type.into(),
+            sql_type: None,
             string: None,
         }
     }

@@ -203,14 +203,47 @@ pub enum Refusal {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanningStage {
+    Catalog,
+    Lower,
+    Search,
+    Compile,
+    Validate,
+}
+
+impl PlanningStage {
+    pub fn tag(self) -> &'static str {
+        match self {
+            PlanningStage::Catalog => "catalog",
+            PlanningStage::Lower => "lower",
+            PlanningStage::Search => "search",
+            PlanningStage::Compile => "compile",
+            PlanningStage::Validate => "validate",
+        }
+    }
+}
+
+impl std::fmt::Display for PlanningStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.tag())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
     #[error("plan was refused: {0:?}")]
     Refused(Vec<Refusal>),
+    #[error("plan does not translate: {0:?}")]
+    Untranslated(Vec<crate::df::Refusal>),
     #[error("dag validation failed: {0}")]
     Validation(String),
-    #[error("planning failed: {0}")]
-    Planning(String),
+    #[error("planning failed at the {stage} stage: {detail}")]
+    Planning {
+        stage: PlanningStage,
+        detail: String,
+    },
     #[error("row source: {0}")]
     RowSource(String),
     #[error("summary handle: {0}")]

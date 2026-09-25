@@ -268,6 +268,7 @@ fn shape_column(data_type: &str) -> ColumnSpec {
         cardinality: None,
         special_rule: RULE_NONE,
         data_type: data_type.to_string(),
+        sql_type: None,
         string: None,
     }
 }

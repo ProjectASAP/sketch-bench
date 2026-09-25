@@ -39,16 +39,16 @@ pub const KLL_K_MAX: u32 = 26_602;
 
 /// `MAX_LEVELS` (`kll.rs:26`) — the compactor-level count `compute_max_capacity`
 /// sums over.
-const KLL_MAX_LEVELS: usize = 61;
+pub const KLL_MAX_LEVELS: usize = 61;
 /// `CAPACITY_DECAY` (`kll.rs:30`).
 const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
 /// The `m` that `init_kll_with_seed` passes to `init` (`kll.rs:291-298`).
-const KLL_M: usize = 8;
+pub const KLL_M: usize = 8;
 
 /// Replica of the private `compute_max_capacity` (`kll.rs:119-127`). A replica
 /// rather than a `k * 4` approximation because the reported footprint is the
 /// denominator of this crate's headline ratio.
-fn kll_max_capacity(k: usize, m: usize) -> usize {
+pub fn kll_max_capacity(k: usize, m: usize) -> usize {
     let mut total = 0usize;
     let mut scale = 1.0_f64;
     for _ in 0..KLL_MAX_LEVELS {
@@ -412,6 +412,7 @@ pub fn bind(
                     inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(rows, cols),
                     rows,
                     cols,
+                    ingested: 0,
                 }))
             }
             SketchParams::CmsWithHeap {
@@ -428,6 +429,7 @@ pub fn bind(
                     rows,
                     cols,
                     heap_size,
+                    ingested: 0,
                 }))
             }
             SketchParams::CountSketchWithHeap {
@@ -444,6 +446,7 @@ pub fn bind(
                     rows,
                     cols,
                     heap_size,
+                    ingested: 0,
                 }))
             }
             SketchParams::Kmv { k } => {
@@ -489,7 +492,7 @@ pub fn bind(
 }
 
 /// IR `width` is the library's `cols` and IR `depth` is its `rows`.
-fn transposed(width: u32, depth: u32) -> (usize, usize) {
+pub fn transposed(width: u32, depth: u32) -> (usize, usize) {
     (depth as usize, width as usize)
 }
 
@@ -532,6 +535,29 @@ fn require_unit_weight(node: PostAsapNodeId, weight: f64, family: &str) -> Resul
             "{family} has no weighted insert in asap_sketchlib; weight {weight} would be dropped"
         ),
     }]))
+}
+
+fn charge_i32_total(
+    node: PostAsapNodeId,
+    ingested: &mut i64,
+    many: i32,
+    weight: f64,
+    family: &str,
+) -> Result<(), EvalError> {
+    let next = *ingested + i64::from(many);
+    if next > i64::from(i32::MAX) {
+        return Err(EvalError::Refused(vec![Refusal::UnsupportedUpdate {
+            node,
+            detail: format!(
+                "{family} counts in i32; {} already ingested plus weight {weight} would exceed \
+                 i32::MAX = {}, and a single hot key can land the whole total in one counter",
+                *ingested,
+                i32::MAX
+            ),
+        }]));
+    }
+    *ingested = next;
+    Ok(())
 }
 
 fn require_i32_weight(node: PostAsapNodeId, weight: f64, family: &str) -> Result<i32, EvalError> {
@@ -676,20 +702,8 @@ impl SummaryHandle for CmsHandle {
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), EvalError> {
         let many = require_i32_weight(self.node, weight, "Cms")?;
         let key = require_item(self.node, item, "Cms")?;
-        let next = self.ingested + i64::from(many);
-        if next > i64::from(i32::MAX) {
-            return Err(EvalError::Refused(vec![Refusal::UnsupportedUpdate {
-                node: self.node,
-                detail: format!(
-                    "Cms counts in i32; {} already ingested plus weight {weight} would exceed \
-                     i32::MAX = {}, and a single hot key can land the whole total in one counter",
-                    self.ingested,
-                    i32::MAX
-                ),
-            }]));
-        }
+        charge_i32_total(self.node, &mut self.ingested, many, weight, "Cms")?;
         self.inner.insert_many(&key, many);
-        self.ingested = next;
         Ok(())
     }
 
@@ -720,12 +734,14 @@ struct CsHandle {
     inner: Count<Vector2D<i32>, FastPath>,
     rows: usize,
     cols: usize,
+    ingested: i64,
 }
 
 impl SummaryHandle for CsHandle {
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), EvalError> {
         let many = require_i32_weight(self.node, weight, "CountSketch")?;
         let key = require_item(self.node, item, "CountSketch")?;
+        charge_i32_total(self.node, &mut self.ingested, many, weight, "CountSketch")?;
         self.inner.insert_many(&key, many);
         Ok(())
     }
@@ -751,12 +767,14 @@ struct CmsHeapHandle {
     rows: usize,
     cols: usize,
     heap_size: usize,
+    ingested: i64,
 }
 
 impl SummaryHandle for CmsHeapHandle {
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), EvalError> {
         require_unit_weight(self.node, weight, "CmsWithHeap")?;
         let key = require_item(self.node, item, "CmsWithHeap")?;
+        charge_i32_total(self.node, &mut self.ingested, 1, weight, "CmsWithHeap")?;
         self.inner.insert(&key);
         Ok(())
     }
@@ -786,12 +804,20 @@ struct CsHeapHandle {
     rows: usize,
     cols: usize,
     heap_size: usize,
+    ingested: i64,
 }
 
 impl SummaryHandle for CsHeapHandle {
     fn update(&mut self, item: Option<&ItemKey>, weight: f64) -> Result<(), EvalError> {
         require_unit_weight(self.node, weight, "CountSketchWithHeap")?;
         let key = require_item(self.node, item, "CountSketchWithHeap")?;
+        charge_i32_total(
+            self.node,
+            &mut self.ingested,
+            1,
+            weight,
+            "CountSketchWithHeap",
+        )?;
         self.inner.insert(&key);
         Ok(())
     }
@@ -814,11 +840,11 @@ impl SummaryHandle for CsHeapHandle {
     }
 }
 
-const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
+pub const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
 
 const SKETCHLIB_HEAP_INDEX_ENTRY_BYTES: usize = 8 + 24 + 1;
 
-fn grown_capacity(reserved: usize, len: usize) -> usize {
+pub fn grown_capacity(reserved: usize, len: usize) -> usize {
     let mut capacity = reserved.max(1);
     while capacity < len {
         capacity *= 2;
@@ -837,7 +863,7 @@ fn hash_buckets(capacity: usize) -> usize {
     wanted.next_power_of_two()
 }
 
-fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
+pub fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
     let residents = heap.heap();
     let capacity = grown_capacity(heap_size.min(SKETCHLIB_PREALLOCATED_SLOTS), residents.len());
     let keys: usize = residents
@@ -1643,6 +1669,30 @@ mod tests {
         handle.update(Some(&ItemKey::Int(0)), 7.0).unwrap();
 
         assert_eq!(handle.estimate(&total).unwrap(), Answer::Scalar(5_007.0));
+    }
+
+    #[test]
+    fn a_count_sketch_refuses_the_insert_that_would_wrap_its_i32_counters() {
+        let family = SummaryFamilyType::Sketch(
+            SketchKind::new(
+                SketchAlgorithm::CountSketch,
+                SketchParams::CountSketch {
+                    width: 272,
+                    depth: 5,
+                },
+            ),
+            GroupingStrategy::PerSubpopulationInstance,
+        );
+        let mut handle = bind(&family, NODE, 0).unwrap();
+        handle
+            .update(Some(&ItemKey::Int(0)), 2_000_000_000.0)
+            .expect("2e9 fits in an i32 counter");
+        assert!(
+            handle
+                .update(Some(&ItemKey::Int(0)), 2_000_000_000.0)
+                .is_err(),
+            "one hot key at 4e9 wraps its counters"
+        );
     }
 
     #[test]

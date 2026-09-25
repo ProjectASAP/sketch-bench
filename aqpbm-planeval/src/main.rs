@@ -10,16 +10,32 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
-use aqpbm_datagen::table::TableDescription;
-use aqpbm_planeval::exact::{run_promql, Data, ExactRun};
-use aqpbm_planeval::plan::{plan_promql, to_json};
-use aqpbm_planeval::record::{NodeCost, Phase, PlanEvalRecord};
-use aqpbm_planeval::run::{run, RowsFrom, RunConfig};
-use aqpbm_planeval::score::{GuaranteeObservations, ObservedError, ReadoutGuarantee};
-use aqpbm_planeval::{EvalError, Value};
+use aqpbm_datagen::table::{GeneratedTable, TableDescription};
+use aqpbm_planeval::df::run::{refusal_counts, run as run_datafusion, DataFusionRunConfig};
+use aqpbm_planeval::exact::{run_tree, Data, ExactRun};
+use aqpbm_planeval::plan::{plan_sql, to_json, Plan};
+use aqpbm_planeval::record::{
+    AnswerCheck, AnswerRecord, Arm, NodeCost, Phase, PlanEvalRecord, ReadoutRecord,
+    RefusedPlanRecord, UnplannedQueryRecord,
+};
+use aqpbm_planeval::run::{run, RowsFrom, RunConfig, Runtime};
+use aqpbm_planeval::runtimes::{
+    quantities, readout_differences, readout_pairs, records_per_runtime, ReadoutDifference,
+    RuntimeRecords,
+};
+use aqpbm_planeval::score::{
+    GuaranteeObservations, ObservedError, ReadoutGuarantee, UnevaluatableReason,
+};
+use aqpbm_planeval::{sql, EvalError, Value};
 use asap_types::types::AccuracyTarget;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RuntimeArg {
+    Interp,
+    Datafusion,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -27,24 +43,30 @@ use asap_types::types::AccuracyTarget;
     about = "Run a post-ASAP plan over rows and score it against the exact answer"
 )]
 struct Args {
-    /// PromQL to plan, e.g. `quantile(0.5, cpu_cores)`.
-    #[arg(long)]
-    query: String,
+    #[arg(
+        long,
+        help = "SQL to plan, e.g. `SELECT approx_percentile_cont(latency, 0.99) FROM t`. \
+                A SQL query names tables, and the only catalog this binary has is the one \
+                --spec describes"
+    )]
+    sql: String,
+
+    #[arg(
+        long,
+        help = "The name --sql may refer to the --spec table by. Defaults to the spec file's \
+                stem"
+    )]
+    table: Option<String>,
 
     /// Generate the rows in process from a `datagen` spec file (examples in
-    /// `configs/datagen/`). Wins over `--csv`.
+    /// `configs/datagen/`).
     ///
     /// A path, not an inline description: the spec states one `data_type` per
     /// column and the plan's schema has to agree with it, so a flag that
     /// rewrote a field of the file would make the file a suggestion. This is
     /// the same rule `aqpbm-cli` follows.
-    #[arg(long, conflicts_with = "csv")]
-    spec: Option<PathBuf>,
-
-    /// CSV to read. Its header names must match the leaf's schema; a PromQL
-    /// leaf carries the usage-derived `ts,value`.
-    #[arg(long, required_unless_present = "spec")]
-    csv: Option<PathBuf>,
+    #[arg(long)]
+    spec: PathBuf,
 
     /// End-to-end accuracy target the plan is sized against.
     #[arg(long, default_value_t = 0.01)]
@@ -101,6 +123,34 @@ struct Args {
     /// Passes run and discarded before the timed ones.
     #[arg(long, default_value_t = aqpbm_planeval::run::DEFAULT_WARMUP_RUNS)]
     warmup_runs: usize,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = RuntimeArg::Interp,
+        help = "Which engine runs the two arms. `datafusion` plans both arms against the \
+                catalog the spec describes and executes them over one in-memory table"
+    )]
+    runtime: RuntimeArg,
+
+    #[arg(
+        long,
+        help = "Run the whole post-ASAP graph as one query instead of cutting it into a \
+                maintenance query and a read query. The answer is the same bits either way; the \
+                aggregate and query times are then one number and reported under the read phase. \
+                DataFusion only"
+    )]
+    no_split: bool,
+
+    #[arg(
+        long,
+        help = "Run the same plan over the same rows with the same seed on both runtimes and \
+                print them side by side. Supersedes --runtime. \
+                Every readout has to carry the same approximate and the same exact answer bit \
+                for bit; a run where one does not fails. The time and memory rows say which \
+                pairs are the same measurement and which only look like one"
+    )]
+    compare_runtimes: bool,
 }
 
 fn main() -> ExitCode {
@@ -113,42 +163,134 @@ fn main() -> ExitCode {
     }
 }
 
-fn row_source(args: &Args) -> Result<RowsFrom> {
-    match (&args.spec, &args.csv) {
-        (Some(path), _) => {
-            let description = TableDescription::from_path(path)
-                .with_context(|| format!("loading {}", path.display()))?;
-            description
-                .validate()
-                .with_context(|| format!("validating {}", path.display()))?;
-            let table = description
-                .generate()
-                .with_context(|| format!("generating from {}", path.display()))?;
-            let line = format!(
-                "rows     generated from {} — {} columns x {} rows",
-                path.display(),
-                table.column_num,
-                table.row_num
-            );
-            if args.jsonl {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
-            Ok(RowsFrom::Generated(Rc::new(table)))
-        }
-        (None, Some(path)) => Ok(RowsFrom::Csv(path.clone())),
-        // clap's `required_unless_present` already rejects this.
-        (None, None) => anyhow::bail!("one of --spec or --csv is required"),
+fn spec_table(args: &Args) -> Result<TableDescription> {
+    let path = &args.spec;
+    let description =
+        TableDescription::from_path(path).with_context(|| format!("loading {}", path.display()))?;
+    description
+        .validate()
+        .with_context(|| format!("validating {}", path.display()))?;
+    Ok(description)
+}
+
+fn table_name(args: &Args) -> Result<String> {
+    Ok(match &args.table {
+        Some(named) => named.clone(),
+        None => sql::table_name_from_path(&args.spec)?,
+    })
+}
+
+fn generated_rows(args: &Args, description: &TableDescription) -> Result<Rc<GeneratedTable>> {
+    let table = description
+        .generate()
+        .with_context(|| format!("generating from {}", args.spec.display()))?;
+    let line = format!(
+        "rows     generated from {} — {} columns x {} rows",
+        args.spec.display(),
+        table.column_num,
+        table.row_num
+    );
+    if args.jsonl {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
     }
+    Ok(Rc::new(table))
+}
+
+fn datafusion_config(
+    args: &Args,
+    description: &TableDescription,
+    table: &Rc<GeneratedTable>,
+) -> Result<Option<DataFusionRunConfig>> {
+    if args.runtime != RuntimeArg::Datafusion && !args.compare_runtimes {
+        return Ok(None);
+    }
+    Ok(Some(DataFusionRunConfig {
+        table: table_name(args)?,
+        description: description.clone(),
+        rows: Rc::clone(table),
+        split: !args.no_split,
+    }))
+}
+
+fn refused_lines(err: &EvalError) -> Vec<String> {
+    match err {
+        EvalError::Refused(refusals) => refusals.iter().map(|r| r.to_string()).collect(),
+        EvalError::Untranslated(refusals) => refusals.iter().map(|r| r.to_string()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn print_refusals(
+    err: &EvalError,
+    jsonl: bool,
+    runtime: &str,
+    plan: &aqpbm_planeval::plan::Plan,
+    query: &str,
+    seed: u64,
+) -> Result<()> {
+    let refused = refused_lines(err);
+    for line in &refused {
+        eprintln!("REFUSED {line}");
+    }
+    let counts = refusal_counts(err);
+    let record = RefusedPlanRecord::new(runtime, plan, query, seed, counts.clone(), refused);
+    if jsonl {
+        println!("{}", record.to_jsonl());
+    } else {
+        println!(
+            "refusals  promql_only {}  time_axis {}  no_constructor {}  deferred {}  \
+             unclassified {}",
+            counts.promql_only,
+            counts.time_axis,
+            counts.no_constructor,
+            counts.deferred,
+            counts.unclassified
+        );
+    }
+    Ok(())
+}
+
+fn runtime_tag(args: &Args) -> &'static str {
+    match args.runtime {
+        RuntimeArg::Interp => Runtime::Interpreter.tag(),
+        RuntimeArg::Datafusion => Runtime::DataFusion.tag(),
+    }
+}
+
+fn report_unplanned(args: &Args, query: &str, err: EvalError) -> anyhow::Error {
+    if let Some(record) = UnplannedQueryRecord::of_error(runtime_tag(args), query, &err) {
+        if args.jsonl || args.emit_json {
+            println!("{}", record.to_jsonl());
+        } else {
+            println!(
+                "unplanned  `{query}` stopped at the {} stage: {}",
+                record.stage, record.detail
+            );
+        }
+    }
+    anyhow::Error::new(err).context(format!("planning `{query}`"))
 }
 
 fn real_main() -> Result<()> {
     let args = Args::parse();
+    if args.no_split && args.runtime != RuntimeArg::Datafusion {
+        anyhow::bail!(
+            "--no-split describes a post-ASAP graph cut in two, which only the datafusion \
+             runtime does; pass --runtime datafusion"
+        );
+    }
     let accuracy = AccuracyTarget::Epsilon(args.epsilon);
+    let description = spec_table(&args)?;
 
-    let plan = plan_promql(&args.query, accuracy.clone())
-        .with_context(|| format!("planning `{}`", args.query))?;
+    let query_text = args.sql.clone();
+    let planned = sql::catalog_from_spec(&table_name(&args)?, &description)
+        .and_then(|catalog| plan_sql(&query_text, &catalog, accuracy));
+    let plan = match planned {
+        Ok(plan) => plan,
+        Err(err) => return Err(report_unplanned(&args, &query_text, err)),
+    };
 
     if args.emit_json {
         println!("{}", to_json(&plan)?);
@@ -160,22 +302,28 @@ fn real_main() -> Result<()> {
     let mut observations = GuaranteeObservations::default();
     // Built once, outside the seed loop: the rows are the same every seed, so
     // a difference between seeds is the sketch's and never the data's.
-    let rows = row_source(&args)?;
+    let table = generated_rows(&args, &description)?;
+    let rows = RowsFrom::Generated(Rc::clone(&table));
+    let engine = datafusion_config(&args, &description, &table)?;
 
     if args.evaluate_exactly {
-        let evaluated = match run_promql(&args.query, accuracy, &rows) {
+        let root = plan
+            .pre_asap
+            .as_ref()
+            .context("a plan lowered from SQL carries its pre-ASAP tree")?;
+        let evaluated = match run_tree(Rc::clone(root), &rows) {
             Ok(evaluated) => evaluated,
             Err(EvalError::Refused(refusals)) => {
                 for refusal in &refusals {
-                    println!("REFUSED {refusal}");
+                    eprintln!("REFUSED {refusal}");
                 }
-                anyhow::bail!("the pre-ASAP tree of `{}` was refused", args.query);
+                anyhow::bail!("the pre-ASAP tree of `{query_text}` was refused");
             }
             Err(err) => {
-                return Err(err).with_context(|| format!("evaluating `{}` exactly", args.query))
+                return Err(err).with_context(|| format!("evaluating `{query_text}` exactly"))
             }
         };
-        let block = exact_block(&args.query, &evaluated);
+        let block = exact_block(&query_text, &evaluated);
         if args.jsonl {
             eprint!("{block}");
         } else {
@@ -183,28 +331,39 @@ fn real_main() -> Result<()> {
         }
     }
 
+    if args.compare_runtimes {
+        let engine = engine.context("--compare-runtimes builds a DataFusion configuration")?;
+        return compare_runtimes(&args, &query_text, &plan, &rows, &engine);
+    }
+
     for seed in 0..args.seeds {
-        let mut config = RunConfig::new(rows.clone(), seed, !args.no_verify);
-        config.timed_runs = args.runs;
-        config.warmup_runs = args.warmup_runs;
-        config.pre_asap = !args.no_pre_asap;
-        config.per_node_time = args.per_node_time;
-        let outcome = match run(&plan, &config) {
+        let config = run_config_of(&args, &rows, seed);
+        let attempted = match engine.as_ref() {
+            Some(engine) => run_datafusion(&plan, &config, engine),
+            None => run(&plan, &config),
+        };
+        let outcome = match attempted {
             Ok(outcome) => outcome,
-            // The refusal table is a deliverable in its own right, so it goes
-            // to stdout as data rather than to stderr as a complaint.
-            Err(EvalError::Refused(refusals)) => {
-                for refusal in &refusals {
-                    println!("REFUSED {refusal}");
-                }
-                anyhow::bail!("{} of the plan's nodes were refused", refusals.len());
+            // The refusal record is a deliverable in its own right, so it goes
+            // to stdout as data while the prose behind it goes to stderr, and
+            // a sweep runs on to the next seed rather than dying here.
+            Err(err @ (EvalError::Refused(_) | EvalError::Untranslated(_))) => {
+                print_refusals(
+                    &err,
+                    args.jsonl,
+                    runtime_tag(&args),
+                    &plan,
+                    &query_text,
+                    seed,
+                )?;
+                continue;
             }
             Err(err) => return Err(err).with_context(|| format!("running seed {seed}")),
         };
         for readout in &outcome.readouts {
             observations.observe(readout);
         }
-        let record = PlanEvalRecord::from_run(&args.query, &plan, &outcome);
+        let record = PlanEvalRecord::from_run(&query_text, &plan, &outcome);
         if let Some(error) = record.advantage().accuracy {
             worst_accuracy = match worst_accuracy {
                 Some(held) if held.total_cmp(&error).is_ge() => Some(held),
@@ -235,6 +394,175 @@ fn real_main() -> Result<()> {
         print_guarantees(&guarantees, args.seeds);
     }
     Ok(())
+}
+
+fn run_config_of(args: &Args, rows: &RowsFrom, seed: u64) -> RunConfig {
+    let mut config = RunConfig::new(rows.clone(), seed, !args.no_verify);
+    config.timed_runs = args.runs;
+    config.warmup_runs = args.warmup_runs;
+    config.pre_asap = !args.no_pre_asap;
+    config.per_node_time = args.per_node_time;
+    config
+}
+
+fn compare_runtimes(
+    args: &Args,
+    query_text: &str,
+    plan: &Plan,
+    rows: &RowsFrom,
+    engine: &DataFusionRunConfig,
+) -> Result<()> {
+    let mut disagreeing_seeds: Vec<u64> = Vec::new();
+    for seed in 0..args.seeds {
+        let config = run_config_of(args, rows, seed);
+        let records = match records_per_runtime(query_text, plan, &config, engine) {
+            Ok(records) => records,
+            Err(err @ (EvalError::Refused(_) | EvalError::Untranslated(_))) => {
+                print_refusals(&err, args.jsonl, "compare-runtimes", plan, query_text, seed)?;
+                continue;
+            }
+            Err(err) => return Err(err).with_context(|| format!("running seed {seed}")),
+        };
+        let differences = readout_differences(&records);
+        if !differences.is_empty() {
+            disagreeing_seeds.push(seed);
+        }
+        if args.jsonl {
+            println!("{}", records.interp.to_jsonl());
+            println!("{}", records.datafusion.to_jsonl());
+            for quantity in quantities(&records) {
+                println!("{}", serde_json::to_string(&quantity)?);
+            }
+            for difference in &differences {
+                println!("{}", serde_json::to_string(difference)?);
+            }
+        } else {
+            print_runtime_comparison(seed, &records, &differences);
+        }
+    }
+    if disagreeing_seeds.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "the two runtimes read different answers out of the same plan on seed(s) {}",
+            disagreeing_seeds
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn print_runtime_comparison(
+    seed: u64,
+    records: &RuntimeRecords,
+    differences: &[ReadoutDifference],
+) {
+    println!("query    {}", records.interp.plan.query);
+    println!(
+        "plan     {}  ({} nodes, {} edges)",
+        &records.interp.plan.plan_id[..16],
+        records.interp.plan.nodes,
+        records.interp.plan.edges
+    );
+    println!(
+        "rows     {} scanned, seed {seed}",
+        records.interp.rows_scanned
+    );
+    println!(
+        "plan id  {}",
+        if records.interp.plan.plan_id == records.datafusion.plan.plan_id {
+            "the same document on both runtimes"
+        } else {
+            "DIFFERENT documents — the two runtimes did not run the same plan"
+        }
+    );
+
+    println!("\naccuracy");
+    let pairs = readout_pairs(records);
+    if pairs.is_empty() {
+        println!(
+            "  no readout on either runtime: this plan carries no SummaryEstimate, so there is \
+             no approximate answer to compare"
+        );
+    }
+    for pair in &pairs {
+        println!("  {}", pair.readout);
+        print_readout_side("interp     ", &pair.interp);
+        print_readout_side("datafusion ", &pair.datafusion);
+        let verdict = if pair.only_datafusion_scores_it() {
+            "only datafusion scores an exact accumulator's column, so there is nothing to compare"
+        } else if pair.differences().is_empty() {
+            "identical, bit for bit"
+        } else {
+            "DIFFERENT"
+        };
+        println!("    {verdict}");
+    }
+    if differences.is_empty() {
+        println!("  every readout agreed");
+    } else {
+        for difference in differences {
+            println!("  DIFFERENT {difference}");
+        }
+    }
+
+    println!("\ntime and memory");
+    println!(
+        "  the three memory rows are separate quantities and are not summed into one number; \
+         a ratio between two rows marked NO has no meaning"
+    );
+    println!(
+        "  {:<12} {:<18} {:>14} {:>14}  same measurement",
+        "arm", "quantity", "interp", "datafusion"
+    );
+    for quantity in quantities(records) {
+        println!(
+            "  {:<12} {:<18} {:>14} {:>14}  {}",
+            quantity.arm,
+            quantity.name,
+            quantity.interp.as_deref().unwrap_or("-"),
+            quantity.datafusion.as_deref().unwrap_or("-"),
+            if quantity.same_measurement {
+                "yes"
+            } else {
+                "NO"
+            }
+        );
+        println!("               {}", quantity.reason);
+    }
+}
+
+fn print_readout_side(runtime: &str, held: &[ReadoutRecord]) {
+    match held {
+        [] => println!("    {runtime} produced no readout of this name"),
+        [only] => println!(
+            "    {runtime} approximate {}   exact {}",
+            answer_column(Some(&only.approximate)),
+            answer_column(only.exact.as_ref())
+        ),
+        many => {
+            println!(
+                "    {runtime} produced {} readouts of this name",
+                many.len()
+            );
+            for one in many {
+                println!(
+                    "      approximate {}   exact {}",
+                    answer_column(Some(&one.approximate)),
+                    answer_column(one.exact.as_ref())
+                );
+            }
+        }
+    }
+}
+
+fn answer_column(answer: Option<&AnswerRecord>) -> String {
+    match answer {
+        Some(answer) => format!("{answer:.6}"),
+        None => "not computed".to_string(),
+    }
 }
 
 const PRINTED_ROWS: usize = 20;
@@ -387,12 +715,24 @@ fn print_plan(record: &PlanEvalRecord) {
                 ms(node.elapsed_ns)
             );
         }
-        println!(
-            "rows     {} scanned, {} emitted",
-            record.rows_scanned, record.rows_emitted
-        );
+        match record.rows_emitted {
+            Some(emitted) => println!(
+                "rows     {} scanned, {emitted} emitted",
+                record.rows_scanned
+            ),
+            None => println!(
+                "rows     {} scanned, emitted not counted on this runtime",
+                record.rows_scanned
+            ),
+        }
         if let Some(root_rows) = record.root_rows {
             println!("result   {root_rows} rows out of node {}", record.plan.root);
+        }
+        if record.no_summary_in_plan {
+            println!(
+                "no summary in plan  the planner left the graph whole, so the approximate arm is \
+                 the pre-ASAP arm and its ratios are not an advantage"
+            );
         }
         println!();
     }
@@ -414,6 +754,22 @@ fn print_readouts(seed: u64, record: &PlanEvalRecord) {
             &readout.observed_error,
             readout.claimed_bound,
         ) {
+            (
+                _,
+                ObservedError::Unevaluatable {
+                    reason: UnevaluatableReason::GroupNotInExactAnswer,
+                    ..
+                },
+                _,
+            ) => println!("   the exact arm does not answer this group"),
+            (
+                Some(exact),
+                ObservedError::Unevaluatable {
+                    reason: UnevaluatableReason::GroupNotInApproximateAnswer,
+                    ..
+                },
+                _,
+            ) => println!("   exact {exact:.6}   the approximate arm does not answer this group"),
             (Some(exact), ObservedError::Measured { metric, error }, Some(claimed)) => {
                 let verdict = if *error <= claimed {
                     "within"
@@ -443,6 +799,7 @@ fn node_time(node: &NodeCost) -> String {
         ("bind", node.build_ns),
         ("insert", node.update_ns),
         ("readout", node.readout_ns),
+        ("compute", node.elapsed_compute_ns),
     ] {
         if let Some(elapsed_ns) = elapsed_ns {
             out.push_str(&format!("  {name} {} ms", ms(elapsed_ns)));
@@ -456,24 +813,30 @@ fn ms(elapsed_ns: u64) -> String {
 }
 
 fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: u64) {
-    print_phase("bind   ", record.approximate.build.as_ref());
-    print_phase("insert ", record.approximate.update.as_ref());
-    print_phase("readout", record.approximate.readout.as_ref());
+    println!("runtime  {}", record.runtime);
+    print_phase("bind       ", record.approximate.build.as_ref());
+    print_phase("insert     ", record.approximate.update.as_ref());
+    print_phase("readout    ", record.approximate.readout.as_ref());
+    print_phase("maintenance", record.approximate.maintenance.as_ref());
+    print_phase("read       ", record.approximate.read.as_ref());
     match record.pre_asap.evaluate.as_ref() {
         Some(phase) => println!(
-            "pre-ASAP  {} rows: tree {}   {} B held",
+            "pre-ASAP  {} rows: query {}   {} B held",
             phase.work,
             spread(phase),
             record.pre_asap.retained_bytes
         ),
         None => println!("pre-ASAP  not measured"),
     }
-    if record.verified {
+    print_engine_cost("summary ", &record.approximate);
+    print_engine_cost("pre-ASAP", &record.pre_asap);
+    if record.answer_check != AnswerCheck::ExactArmDidNotRun {
         println!(
             "ground truth  {} B retained, untimed",
             record.exact.retained_bytes
         );
     }
+    println!("answer check  {}", record.answer_check);
 
     let advantage = record.advantage();
     let tree = record.pre_asap.evaluate.as_ref().map(mean);
@@ -486,31 +849,21 @@ fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: 
         "aggregate time",
         advantage.aggregate_time,
         tree.map(|ms| format!("{ms:.4} ms")),
-        record
-            .approximate
-            .build
-            .as_ref()
-            .map(mean)
-            .zip(record.approximate.update.as_ref().map(mean))
-            .map(|(build, update)| format!("{:.4} ms", build + update)),
+        positive(record.approximate.aggregate_ms()).map(|ms| format!("{ms:.4} ms")),
     );
     print_ratio(
         "query time    ",
         advantage.query_time,
         tree.map(|ms| format!("{ms:.4} ms")),
-        record
-            .approximate
-            .readout
-            .as_ref()
-            .map(mean)
-            .map(|ms| format!("{ms:.4} ms")),
+        positive(record.approximate.query_ms()).map(|ms| format!("{ms:.4} ms")),
     );
     print_ratio(
         "memory        ",
         advantage.memory,
-        Some(format!("{} B", record.pre_asap.retained_bytes)),
-        Some(format!("{} B", record.approximate.state_bytes)),
+        Some(format!("{} B", record.pre_asap.memory_bytes())),
+        Some(format!("{} B", record.approximate.memory_bytes())),
     );
+    println!("  memory column   {}", record.memory_column);
     match worst_accuracy {
         Some(error) => println!(
             "  accuracy        worst readout error {error:.6}, in that readout's own metric"
@@ -521,6 +874,32 @@ fn print_advantage(record: &PlanEvalRecord, worst_accuracy: Option<f64>, seeds: 
 
 fn mean(phase: &Phase) -> f64 {
     phase.elapsed_ms.mean
+}
+
+fn positive(ms: f64) -> Option<f64> {
+    (ms > 0.0).then_some(ms)
+}
+
+fn print_engine_cost(name: &str, arm: &Arm) {
+    let mut line = String::new();
+    for (phase, peak) in [
+        ("maintenance", arm.maintenance_peak_reserved_bytes),
+        ("read", arm.read_peak_reserved_bytes),
+        ("evaluate", arm.evaluate_peak_reserved_bytes),
+    ] {
+        if let Some(peak) = peak {
+            line.push_str(&format!("  {peak} B {phase} peak in the memory pool"));
+        }
+    }
+    if let Some(overhead_ns) = arm.engine_overhead_ns {
+        line.push_str(&format!(
+            "  {} ms in operators carrying no node's alias",
+            ms(overhead_ns)
+        ));
+    }
+    if !line.is_empty() {
+        println!("{name} {line}");
+    }
 }
 
 fn print_ratio(

@@ -1,0 +1,16 @@
+column_num: 3
+column_label: [metric, ts_ms, value]
+row_num: 20000
+
+column_spec:
+  - data_type: string
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 8.0, seed: 1}
+    string: {alphabet: "abcdefgh", min_len: 2, max_len: 2}
+
+  - data_type: i64
+    special_rule: 1
+    shift: 1788869696000.0
+    distribution: {kind: uniform, lower_bound: 0.0, upper_bound: 2160.0, seed: 2}
+
+  - data_type: f64
+    distribution: {kind: zipf, skewness: 1.1, population_size: 1000, seed: 3}

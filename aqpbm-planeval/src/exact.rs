@@ -12,9 +12,7 @@ use asap_types::pre_asap::{
     AggIntent, ColumnId, ColumnRef, DataType, Predicate, QueryExpr, QueryExprError, Reduction,
     ScalarValue, Schema, Source,
 };
-use asap_types::types::AccuracyTarget;
 
-use crate::plan::lower_promql_root;
 use crate::rows::{check_predicate, order, passes, variant_name};
 use crate::run::{RowsFrom, RunConfig};
 use crate::score;
@@ -143,12 +141,7 @@ pub struct ExactRun {
     pub answer: Data,
 }
 
-pub fn run_promql(
-    query: &str,
-    accuracy: AccuracyTarget,
-    from: &RowsFrom,
-) -> Result<ExactRun, EvalError> {
-    let root = lower_promql_root(query, accuracy)?;
+pub fn run_tree(root: Rc<QueryExpr>, from: &RowsFrom) -> Result<ExactRun, EvalError> {
     let (rows, rows_scanned) = scan(&root, from)?;
 
     let (answer, leaf_emitted) = evaluate(PRE_ASAP_ROOT, &root, &rows)?;
@@ -1288,8 +1281,6 @@ mod tests {
     };
     use asap_types::types::AccuracyTarget;
 
-    use asap_frontend_promql::lower_promql;
-
     use crate::types::Value;
 
     const ACCURACY: AccuracyTarget = AccuracyTarget::Epsilon(0.01);
@@ -1369,6 +1360,24 @@ mod tests {
         rows: &Rc<Vec<Row>>,
     ) -> Result<Data, EvalError> {
         evaluate(node, expr, rows).map(|(data, _)| data)
+    }
+
+    fn catalog() -> asap_frontend_sql::SqlCatalog {
+        asap_frontend_sql::SqlCatalog::new().with_table("cpu_cores", schema())
+    }
+
+    fn lowered(sql: &str) -> Rc<QueryExpr> {
+        crate::sql::lower_sql_root(sql, &catalog(), ACCURACY).expect("lowers")
+    }
+
+    fn data_of_lowered(sql: &str, rows: &Rc<Vec<Row>>) -> Result<Data, EvalError> {
+        evaluate(node(), &lowered(sql), rows).map(|(data, _)| data)
+    }
+
+    fn rows_of_lowered(query: &str, rows: &Rc<Vec<Row>>) -> Vec<Row> {
+        rows_from(data_of_lowered(query, rows).expect("evaluates"))
+            .as_ref()
+            .clone()
     }
 
     fn rows_from(data: Data) -> Rc<Vec<Row>> {
@@ -1999,47 +2008,31 @@ mod tests {
     }
 
     #[test]
-    fn a_lowered_promql_selector_is_a_scan_this_step_runs() {
-        let lowered = Rc::new(lower_promql("cpu_cores", ACCURACY).expect("lowers"));
-        assert_eq!(variant_name(&lowered), "Scan");
-        let produced = rows_from(data_of(node(), &lowered, &fixture()).expect("evaluates"));
+    fn a_lowered_sql_selection_runs_over_every_row() {
+        let produced = rows_from(
+            data_of_lowered("SELECT ts, value, cluster FROM cpu_cores", &fixture())
+                .expect("evaluates"),
+        );
         assert_eq!(produced.len(), fixture().len());
     }
 
     #[test]
-    fn a_lowered_promql_aggregation_is_an_aggregate_this_step_runs() {
-        let lowered = Rc::new(lower_promql("sum(cpu_cores)", ACCURACY).expect("lowers"));
-        assert_eq!(variant_name(&lowered), "Aggregate");
+    fn a_lowered_sql_aggregation_is_an_aggregate_this_step_runs() {
         assert_eq!(
-            rows_of(&lowered, &fixture()),
+            rows_of_lowered("SELECT SUM(value) FROM cpu_cores", &fixture()),
             vec![Row(vec![Value::Float(60.0)])]
         );
 
-        let grouped =
-            Rc::new(lower_promql("sum by (cluster) (cpu_cores)", ACCURACY).expect("lowers"));
         assert_eq!(
-            rows_of(&grouped, &fixture()),
+            rows_of_lowered(
+                "SELECT cluster, SUM(value) FROM cpu_cores GROUP BY cluster",
+                &fixture()
+            ),
             vec![
                 Row(vec![Value::Str("a".to_owned()), Value::Float(40.0)]),
                 Row(vec![Value::Str("b".to_owned()), Value::Float(20.0)]),
             ]
         );
-    }
-
-    #[test]
-    fn a_reduction_over_a_label_column_is_refused_rather_than_answered() {
-        let lowered =
-            Rc::new(lower_promql("max(sum by (cluster) (cpu_cores))", ACCURACY).expect("lowers"));
-
-        let refusal = check(node(), &lowered).expect_err("a label is not a maximum");
-        let spelled = format!("{refusal}");
-        assert!(
-            spelled.contains("Max") || spelled.contains("value"),
-            "the refusal must name what it could not read: {spelled}"
-        );
-
-        let err = data_of(node(), &lowered, &fixture()).expect_err("and it does not evaluate");
-        assert!(matches!(err, EvalError::Refused(_)), "{err:?}");
     }
 
     fn aggregate(
@@ -2687,13 +2680,6 @@ mod tests {
         let rendered = refusal.to_string();
         assert!(rendered.contains("GroupKeys::without"), "{rendered}");
         assert!(rendered.contains("open"), "{rendered}");
-
-        let lowered =
-            Rc::new(lower_promql("sum without (cluster) (cpu_cores)", ACCURACY).expect("lowers"));
-        assert!(check(node(), &lowered)
-            .expect_err("refuses")
-            .to_string()
-            .contains("GroupKeys::without"));
     }
 
     #[test]
@@ -3111,34 +3097,38 @@ mod tests {
             ),
             other => panic!("{other:?}"),
         }
-
-        let lowered =
-            Rc::new(lower_promql("topk by (cluster) (3, cpu_cores)", ACCURACY).expect("lowers"));
-        assert!(
-            check(node(), &lowered)
-                .expect_err("refuses")
-                .to_string()
-                .contains("Sort partitioned by"),
-            "a PromQL per-group topk must reach the same refusal"
-        );
     }
 
     #[test]
-    fn a_lowered_topk_is_a_limit_over_a_sort_and_this_step_runs_it() {
-        let lowered = Rc::new(lower_promql("topk(2, cpu_cores)", ACCURACY).expect("lowers"));
-        assert_eq!(variant_name(&lowered), "Limit");
+    fn a_lowered_order_by_limit_runs() {
+        const TOP_TWO: &str =
+            "SELECT ts, value, cluster FROM cpu_cores ORDER BY value DESC LIMIT 2";
 
         let rows = Rc::new(
             [(1i64, 10.0), (2, 30.0), (3, 20.0)]
                 .into_iter()
-                .map(|(ts, value)| Row(vec![Value::Timestamp(ts), Value::Float(value)]))
+                .map(|(ts, value)| {
+                    Row(vec![
+                        Value::Timestamp(ts),
+                        Value::Float(value),
+                        Value::Str("a".to_owned()),
+                    ])
+                })
                 .collect::<Vec<Row>>(),
         );
         assert_eq!(
-            rows_of(&lowered, &rows),
+            rows_of_lowered(TOP_TWO, &rows),
             vec![
-                Row(vec![Value::Timestamp(2), Value::Float(30.0)]),
-                Row(vec![Value::Timestamp(3), Value::Float(20.0)]),
+                Row(vec![
+                    Value::Timestamp(2),
+                    Value::Float(30.0),
+                    Value::Str("a".to_owned())
+                ]),
+                Row(vec![
+                    Value::Timestamp(3),
+                    Value::Float(20.0),
+                    Value::Str("a".to_owned())
+                ]),
             ]
         );
     }
@@ -3175,11 +3165,16 @@ mod tests {
         }
     }
 
+    fn run_sql(sql: &str, csv: &tempfile::NamedTempFile) -> Result<ExactRun, EvalError> {
+        run_tree(lowered(sql), &from_csv(csv))
+    }
+
+    const GROUPED_SUM: &str = "SELECT cluster, SUM(value) FROM cpu_cores GROUP BY cluster";
+
     #[test]
-    fn a_promql_string_becomes_an_answer_over_rows_with_no_post_asap_plan_in_between() {
+    fn a_sql_string_becomes_an_answer_over_rows_with_no_post_asap_plan_in_between() {
         let csv = labelled_csv();
-        let run = run_promql("sum by (cluster) (cpu_cores)", ACCURACY, &from_csv(&csv))
-            .expect("lowers and evaluates");
+        let run = run_sql(GROUPED_SUM, &csv).expect("lowers and evaluates");
 
         assert_eq!((run.rows_scanned, run.rows_emitted), (6, 6));
         assert_eq!(
@@ -3192,58 +3187,40 @@ mod tests {
     }
 
     #[test]
-    fn a_scan_predicate_is_applied_once_by_the_interpreter_and_never_by_the_row_source() {
+    fn a_where_clause_is_applied_by_the_interpreter_and_never_by_the_row_source() {
         let csv = labelled_csv();
-        let run = run_promql(
-            "sum by (cluster) (cpu_cores{cluster=\"a\"})",
-            ACCURACY,
-            &from_csv(&csv),
+        let run = run_sql(
+            "SELECT cluster, SUM(value) FROM cpu_cores WHERE cluster = 'a' GROUP BY cluster",
+            &csv,
         )
         .expect("lowers and evaluates");
 
-        let QueryExpr::Aggregate { child, .. } = run.root.as_ref() else {
-            panic!("{:?}", run.root);
-        };
-        let QueryExpr::Scan { predicates, .. } = child.as_ref() else {
-            panic!("{child:?}");
-        };
-        assert_eq!(predicates.len(), 1, "the label matcher is a Scan predicate");
-
-        assert_eq!(
-            (run.rows_scanned, run.rows_emitted),
-            (6, 3),
-            "the row source read all 6 and the leaf predicate admitted the 3 that reached the \
-             aggregate"
-        );
+        assert_eq!(run.rows_scanned, 6, "the row source read every row");
         assert_eq!(
             answered(&run),
             vec![Row(vec![Value::Str("a".to_owned()), Value::Float(90.0)])],
             "the interpreter applied the predicate, and applied it once"
-        );
-
-        let unfiltered = run_promql("sum by (cluster) (cpu_cores)", ACCURACY, &from_csv(&csv))
-            .expect("lowers and evaluates");
-        assert_eq!(
-            (unfiltered.rows_scanned, unfiltered.rows_emitted),
-            (6, 6),
-            "with no leaf predicate the two counts are the same, so the filtered case above is \
-             the predicate and not a constant"
         );
     }
 
     #[test]
     fn the_pre_asap_answer_equals_the_post_asap_arms_exact_side_on_the_same_rows() {
         let csv = labelled_csv();
-        for (query, groups) in [
-            ("quantile by (cluster) (0.5, cpu_cores)", 2usize),
-            ("quantile by (cluster) (0.5, cpu_cores{cluster=\"a\"})", 1),
+        for (sql, groups) in [
+            (
+                "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores GROUP BY cluster",
+                2usize,
+            ),
+            (
+                "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores \
+                 WHERE cluster = 'a' GROUP BY cluster",
+                1,
+            ),
         ] {
-            let pre_asap = answered(
-                &run_promql(query, ACCURACY, &from_csv(&csv)).expect("lowers and evaluates"),
-            );
-            assert_eq!(pre_asap.len(), groups, "{query}");
+            let pre_asap = answered(&run_sql(sql, &csv).expect("lowers and evaluates"));
+            assert_eq!(pre_asap.len(), groups, "{sql}");
 
-            let plan = crate::plan::plan_promql(query, ACCURACY).expect("plans");
+            let plan = crate::plan::plan_sql(sql, &catalog(), ACCURACY).expect("plans");
             let outcome =
                 crate::run::run(&plan, &crate::run::RunConfig::new(from_csv(&csv), 0, true))
                     .expect("runs");
@@ -3251,7 +3228,7 @@ mod tests {
             assert_eq!(
                 outcome.readouts.len(),
                 pre_asap.len(),
-                "{query}: one readout per group"
+                "{sql}: one readout per group"
             );
             for (readout, row) in outcome.readouts.iter().zip(&pre_asap) {
                 assert_eq!(
@@ -3266,7 +3243,7 @@ mod tests {
                     Some(Answer::Scalar(
                         row.0[1].as_f64().expect("a numeric measure")
                     )),
-                    "{query}: the two arms disagree on {}",
+                    "{sql}: the two arms disagree on {}",
                     readout.group
                 );
             }
@@ -3276,7 +3253,11 @@ mod tests {
     #[test]
     fn a_tree_that_reads_no_rows_still_answers_without_opening_a_row_source() {
         let csv = labelled_csv();
-        let run = run_promql("2.5", ACCURACY, &from_csv(&csv)).expect("lowers and evaluates");
+        let run = run_tree(
+            Rc::new(QueryExpr::Literal(ScalarValue::Float64(2.5))),
+            &from_csv(&csv),
+        )
+        .expect("evaluates");
         assert_eq!((run.rows_scanned, run.rows_emitted), (0, 0));
         match run.answer {
             Data::Scalar(value) => assert_eq!(value, 2.5),

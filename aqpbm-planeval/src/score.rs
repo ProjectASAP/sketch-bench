@@ -178,13 +178,13 @@ impl GuaranteeObservations {
         let Some(guarantee) = readout.guarantee.as_ref() else {
             return;
         };
-        let query = format!("{:?}", readout.query);
+        let query = crate::record::readout_query_label(readout.query.as_ref());
         let entry = self
             .by_readout
             .entry((readout.node.0, readout.group.clone(), query))
             .or_insert_with(|| ObservedReadout {
                 q: match readout.query {
-                    SketchQuery::Quantile { q } => q,
+                    Some(SketchQuery::Quantile { q }) => q,
                     _ => f64::NAN,
                 },
                 guarantee: guarantee.clone(),
@@ -236,6 +236,8 @@ pub enum UnevaluatableReason {
     /// that is not a number. Distinct from `+inf`, which is the real answer
     /// "infinitely outside the bound" and stays a measurement.
     ErrorIsNotANumber,
+    GroupNotInExactAnswer,
+    GroupNotInApproximateAnswer,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -287,7 +289,10 @@ pub fn error_under_metric(
     }
 }
 
-fn topk_membership_error(estimate: &Answer, truth: &Answer) -> Result<f64, UnevaluatableReason> {
+pub(crate) fn topk_membership_error(
+    estimate: &Answer,
+    truth: &Answer,
+) -> Result<f64, UnevaluatableReason> {
     let (Answer::Ranked(estimate), Answer::Ranked(truth)) = (estimate, truth) else {
         return Err(UnevaluatableReason::TrueTopKSet);
     };
@@ -1047,7 +1052,7 @@ mod tests {
             node: asap_types::post_asap::PostAsapNodeId(2),
             producer: asap_types::post_asap::PostAsapNodeId(1),
             group: String::new(),
-            query: SketchQuery::Quantile { q: 0.5 },
+            query: Some(SketchQuery::Quantile { q: 0.5 }),
             approximate: Answer::Scalar(12.0),
             exact: Some(Answer::Scalar(12.0)),
             observed_error,
@@ -1742,7 +1747,7 @@ mod tests {
 
         let mut observations = GuaranteeObservations::default();
         let mut readout = observed_readout(None, Some(guarantee.clone()));
-        readout.query = SketchQuery::Cardinality;
+        readout.query = Some(SketchQuery::Cardinality);
         readout.observed_error = ObservedError::Unevaluatable {
             metric: "rank".to_string(),
             reason: UnevaluatableReason::NoQuantileInTheQuery,

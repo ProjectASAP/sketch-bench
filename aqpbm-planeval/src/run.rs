@@ -24,12 +24,13 @@ use std::rc::Rc;
 
 use asap_types::post_asap::{
     DataPrimitive, EdgeRole, EntityIdentity, ExecutableDag, ExecutableDagEdge, ExecutableDagNode,
-    ExecutableOperator, ExecutableOperatorPayload, ExecutionDataState, GroupingStrategy,
-    PostAsapNodeId, ResultGuarantee, SketchQuery, SummaryFamilyType, SummaryInputExpr,
-    SummarySchema, SummaryUpdate, ValueOperation, WindowEdgeCompatibility,
+    ExecutableOperatorPayload, ExecutionDataState, GroupingStrategy, PostAsapNodeId,
+    ResultGuarantee, SketchQuery, SummaryFamilyType, SummaryInputExpr, SummarySchema,
+    SummaryUpdate, ValueOperation, WindowEdgeCompatibility,
 };
 use asap_types::pre_asap::{ColumnRef, DataType, QueryExpr, Reduction};
 
+use crate::df::RefusalCounts;
 use crate::exact;
 use crate::handle::{bind, SummaryHandle};
 use crate::plan::Plan;
@@ -91,7 +92,7 @@ pub struct Readout {
     pub node: PostAsapNodeId,
     pub producer: PostAsapNodeId,
     pub group: GroupKey,
-    pub query: SketchQuery,
+    pub query: Option<SketchQuery>,
     pub approximate: Answer,
     /// `None` when `verify` was off — never 0.0, which would read as "exact
     /// and the sketch was perfect".
@@ -101,12 +102,31 @@ pub struct Readout {
     pub observations: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Runtime {
+    #[default]
+    Interpreter,
+    DataFusion,
+}
+
+impl Runtime {
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Runtime::Interpreter => "interp",
+            Runtime::DataFusion => "datafusion",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ArmTiming {
     pub build: Vec<RunMetrics>,
     pub update: Vec<RunMetrics>,
     pub readout: Vec<RunMetrics>,
     pub evaluate: Vec<RunMetrics>,
+    pub maintenance: Vec<RunMetrics>,
+    pub read: Vec<RunMetrics>,
+    pub engine_overhead_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -114,16 +134,20 @@ pub struct NodeTiming {
     pub build_ns: Option<u64>,
     pub update_ns: Option<u64>,
     pub readout_ns: Option<u64>,
+    pub elapsed_compute_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RunOutcome {
+    pub runtime: Runtime,
+    pub refusals: RefusalCounts,
     pub rows_scanned: u64,
-    pub rows_emitted: u64,
+    pub rows_emitted: Option<u64>,
     /// Rows the root node produced, for a plan whose answer is rows rather
     /// than a readout. `None` when the root is not a row-producing node.
     pub root_rows: Option<usize>,
     pub verified: bool,
+    pub no_summary_in_plan: bool,
     /// Values the exact arm held, summed over every `(node, group)`. Counted
     /// here rather than derived from `readouts`, which are empty for a plan
     /// whose state *is* its answer (an exact accumulator has no
@@ -139,6 +163,9 @@ pub struct RunOutcome {
     pub pre_asap_bytes: usize,
     pub pre_asap_node_times: Vec<exact::NodeTime>,
     pub pre_asap_answer: Option<exact::Data>,
+    pub maintenance_peak_bytes: Option<usize>,
+    pub read_peak_bytes: Option<usize>,
+    pub pre_asap_evaluate_peak_bytes: Option<usize>,
 }
 
 struct Slot {
@@ -307,7 +334,7 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
             node: probe.node,
             producer: probe.producer,
             group: probe.group.clone(),
-            query: probe.query.clone(),
+            query: Some(probe.query.clone()),
             approximate,
             exact: exact_value,
             observed_error,
@@ -317,10 +344,13 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
     }
 
     Ok(RunOutcome {
+        runtime: Runtime::Interpreter,
+        refusals: RefusalCounts::default(),
         rows_scanned: materialized.scanned,
-        rows_emitted: materialized.emitted,
+        rows_emitted: Some(materialized.emitted),
         root_rows: materialized.rows.get(&dag.root).map(|rows| rows.len()),
         verified: cfg.verify,
+        no_summary_in_plan: crate::df::split::no_summary_in_plan(dag),
         retained_values,
         retained_bytes: retained_bytes_held,
         readouts,
@@ -330,12 +360,15 @@ pub fn run(plan: &Plan, cfg: &RunConfig) -> Result<RunOutcome, EvalError> {
             build,
             update,
             readout,
-            evaluate: Vec::new(),
+            ..ArmTiming::default()
         },
         pre_asap,
         pre_asap_bytes,
         pre_asap_node_times,
         pre_asap_answer,
+        maintenance_peak_bytes: None,
+        read_peak_bytes: None,
+        pre_asap_evaluate_peak_bytes: None,
     })
 }
 
@@ -438,13 +471,14 @@ fn materialize(resolved: &Resolved<'_>, cfg: &RunConfig) -> Result<Materialized,
             RowStep::Operation {
                 node,
                 producer,
+                producer_columns,
                 operation,
             } => {
-                let input = rows.get(producer).ok_or_else(|| {
-                    EvalError::Validation(format!(
-                        "node {node:?} is a row operation over {producer:?}, which produced no rows"
-                    ))
-                })?;
+                let Some(input) = rows.get(producer) else {
+                    value::identity_over(*node, operation, *producer_columns)
+                        .map_err(|refusal| EvalError::Refused(vec![refusal]))?;
+                    continue;
+                };
                 let produced = value::apply(*node, operation, input)?;
                 rows.insert(*node, produced);
             }
@@ -540,6 +574,7 @@ fn node_times(
                     build_ns: build.get(&id).copied(),
                     update_ns: update.get(&id).copied(),
                     readout_ns: readout.get(&id).copied(),
+                    elapsed_compute_ns: None,
                 },
             )
         })
@@ -921,11 +956,27 @@ fn resolve_item(input: &ResolvedInput, row: &Row) -> Result<ItemKey, EvalError> 
 
 /// The operators a v0 run can encounter, for a caller that wants to report
 /// coverage without re-deriving it from the payloads.
-pub fn operators(dag: &ExecutableDag) -> Vec<(PostAsapNodeId, ExecutableOperator)> {
+pub fn operators(dag: &ExecutableDag) -> Vec<(PostAsapNodeId, &'static str)> {
     dag.nodes
         .iter()
-        .map(|node| (node.id, node.operator))
+        .map(|node| (node.id, operator_name(&node.payload)))
         .collect()
+}
+
+pub fn operator_name(payload: &ExecutableOperatorPayload) -> &'static str {
+    match payload {
+        ExecutableOperatorPayload::Fallback { .. } => "Fallback",
+        ExecutableOperatorPayload::Binary { .. } => "Binary",
+        ExecutableOperatorPayload::CandidateTopK { .. } => "CandidateTopK",
+        ExecutableOperatorPayload::Value { .. } => "Value",
+        ExecutableOperatorPayload::RelationalJoin { .. } => "RelationalJoin",
+        ExecutableOperatorPayload::SummaryAgg { .. } => "SummaryAgg",
+        ExecutableOperatorPayload::SummaryJoin { .. } => "SummaryJoin",
+        ExecutableOperatorPayload::SummarySubtract => "SummarySubtract",
+        ExecutableOperatorPayload::SummaryDelete { .. } => "SummaryDelete",
+        ExecutableOperatorPayload::SummaryEstimate { .. } => "SummaryEstimate",
+        ExecutableOperatorPayload::SummaryMerge => "SummaryMerge",
+    }
 }
 
 // ── Resolution ───────────────────────────────────────────────────────────────
@@ -966,6 +1017,7 @@ enum RowStep<'a> {
     Operation {
         node: PostAsapNodeId,
         producer: PostAsapNodeId,
+        producer_columns: usize,
         operation: &'a ValueOperation,
     },
 }
@@ -1022,11 +1074,13 @@ pub(crate) fn resolve<'a>(
             }
             ExecutableOperatorPayload::Value { operation, .. } => {
                 match input_edge(node, dag).and_then(|(producer, schema)| {
-                    value::check(node.id, operation, schema.fields.len()).map(|()| producer.id)
+                    value::check(node.id, operation, schema.fields.len())
+                        .map(|()| (producer.id, schema.fields.len()))
                 }) {
-                    Ok(producer) => resolved.rows.push(RowStep::Operation {
+                    Ok((producer, producer_columns)) => resolved.rows.push(RowStep::Operation {
                         node: node.id,
                         producer,
+                        producer_columns,
                         operation,
                     }),
                     Err(refusal) => refusals.push(refusal),
@@ -1060,9 +1114,8 @@ pub(crate) fn resolve<'a>(
 
 /// The payloads with no execution arm, refused by name.
 ///
-/// Driven off the payload rather than `node.operator`: the two agreeing is one
-/// of `ExecutableDag::validate`'s checks, and a payload is what would actually
-/// be executed.
+/// Driven off the payload, which upstream made the sole operator identity: a
+/// payload is what would actually be executed.
 fn operator_refusal(node: PostAsapNodeId, payload: &ExecutableOperatorPayload) -> Refusal {
     let operator = match payload {
         ExecutableOperatorPayload::Fallback { .. }
@@ -1365,6 +1418,12 @@ fn resolve_readout(
     match &producer.payload {
         ExecutableOperatorPayload::SummaryAgg { family, .. } => {
             crate::handle::check_readout(family, query, node.id)?;
+            if let Some(detail) = point_lookup_key_mismatch(producer, dag, query) {
+                return Err(Refusal::UnsupportedUpdate {
+                    node: node.id,
+                    detail,
+                });
+            }
             Ok(ResolvedReadout {
                 node: node.id,
                 producer: producer.id,
@@ -1378,14 +1437,43 @@ fn resolve_readout(
         other => Err(Refusal::UnsupportedOperator {
             node: node.id,
             operator: format!(
-                "SummaryEstimate reading from a {:?}, which builds no summary",
-                other.operator()
+                "SummaryEstimate reading from a {}, which builds no summary",
+                operator_name(other)
             ),
         }),
     }
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
+
+pub(crate) fn point_lookup_key_mismatch(
+    producer: &ExecutableDagNode,
+    dag: &ExecutableDag,
+    query: &SketchQuery,
+) -> Option<String> {
+    let SketchQuery::PointCount {
+        value: Some(value), ..
+    } = query
+    else {
+        return None;
+    };
+    let ExecutableOperatorPayload::SummaryAgg { input, .. } = &producer.payload else {
+        return None;
+    };
+    let Some(SummaryInputExpr::Column(column)) = &input.item else {
+        return None;
+    };
+    let (_, schema) = input_edge(producer, dag).ok()?;
+    let field = &schema.fields[rows::resolve_column(column, schema)?];
+    match &field.dtype {
+        SummaryFamilyType::Plain(DataType::Utf8) => None,
+        other => Some(format!(
+            "the point lookup names its item as the string {value:?}, and the sketch hashed \
+             {} as {other:?}, so the lookup would land in another item's counters",
+            field.name
+        )),
+    }
+}
 
 /// The node feeding this one on its `Input` edge, and the schema flowing there.
 fn input_edge<'a>(
@@ -1398,7 +1486,7 @@ fn input_edge<'a>(
         .find(|edge| edge.consumer == node.id && edge.role == EdgeRole::Input)
         .ok_or_else(|| Refusal::UnsupportedUpdate {
             node: node.id,
-            detail: format!("{:?} has no Input edge", node.operator),
+            detail: format!("{} has no Input edge", operator_name(&node.payload)),
         })?;
     let producer = dag
         .nodes
@@ -1422,7 +1510,7 @@ fn window_refusal(
     producer: &ExecutableDagNode,
     consumer: &ExecutableDagNode,
 ) -> Option<Refusal> {
-    if edge.window != WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual {
+    if edge.window != WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual {
         return None;
     }
     // SUMMARY -> SUMMARY only. On a ROWS -> SUMMARY edge the same stamp is
@@ -1463,8 +1551,7 @@ mod tests {
         use asap_types::post_asap::SummaryInputExpr;
         use asap_types::pre_asap::ColumnRef;
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         for node in &mut plan.dag.nodes {
             match &mut node.payload {
                 ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
@@ -1527,16 +1614,25 @@ mod tests {
 
     #[test]
     fn the_topk_plan_runs_as_a_row_pipeline_instead_of_being_refused() {
-        for (query, expected) in [("topk(5, cpu_cores)", 5usize), ("bottomk(3, cpu_cores)", 3)] {
-            let plan = plan_promql(query, AccuracyTarget::Epsilon(0.01)).expect("plan");
+        for (query, expected) in [
+            (
+                "SELECT ts, value FROM cpu_cores ORDER BY value DESC LIMIT 5",
+                5usize,
+            ),
+            (
+                "SELECT ts, value FROM cpu_cores ORDER BY value ASC LIMIT 3",
+                3,
+            ),
+        ] {
+            let plan = plan_of(query);
             assert_eq!(
                 plan.dag
                     .nodes
                     .iter()
-                    .filter(|node| node.operator == ExecutableOperator::Value)
+                    .filter(|node| operator_name(&node.payload) == "Value")
                     .count(),
-                2,
-                "{query} compiles to Sort + Limit"
+                3,
+                "{query} compiles to Sort + Limit + Project"
             );
 
             let values: Vec<f64> = (0..600).map(|i| (i % 97) as f64).collect();
@@ -1557,8 +1653,7 @@ mod tests {
         use asap_types::post_asap::{EntityIdentity, SummaryField, SummaryInputExpr};
         use asap_types::pre_asap::{Column, ColumnRef, DataType};
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         let leaf = plan.dag.nodes[0].id;
         for node in &mut plan.dag.nodes {
             if node.id == leaf {
@@ -1567,10 +1662,9 @@ mod tests {
                     dtype: SummaryFamilyType::Plain(DataType::Utf8),
                     nullable: false,
                 });
-                let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
-                    panic!("the Fallback node lost its payload");
-                };
-                let asap_types::pre_asap::QueryExpr::Scan { schema, .. } = expression else {
+                let asap_types::pre_asap::QueryExpr::Scan { schema, .. } =
+                    crate::rows::tests::fallback_scan_mut(&mut node.payload)
+                else {
                     panic!("the Fallback node lost its Scan");
                 };
                 schema.columns.push(Column {
@@ -1620,8 +1714,7 @@ mod tests {
         use asap_types::post_asap::SummaryInputExpr;
         use asap_types::pre_asap::ColumnRef;
 
-        let mut plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let mut plan = plan_of(MEDIAN);
         for node in &mut plan.dag.nodes {
             match &mut node.payload {
                 ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
@@ -1659,11 +1752,10 @@ mod tests {
 
     #[test]
     fn readouts_come_out_in_the_same_order_every_run() {
-        let plan = plan_promql(
-            "quantile by (cluster) (0.5, cpu_cores)",
-            AccuracyTarget::Epsilon(0.01),
-        )
-        .expect("plan");
+        let plan = plan_of_with_labels(
+            "SELECT cluster, approx_percentile_cont(value, 0.5) FROM cpu_cores GROUP BY cluster",
+            &["cluster"],
+        );
         let csv = grouped_csv(12, 600);
 
         let groups = |seed: u64| -> Vec<String> {
@@ -1758,7 +1850,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::plan::plan_promql;
+    use crate::rows::tests::{plan_of, plan_of_with_labels, MEDIAN};
     use asap_types::post_asap::{GroupingStrategy, SketchAlgorithm, SketchKind, SketchParams};
     use asap_types::types::AccuracyTarget;
     use std::io::Write;
@@ -1850,6 +1942,49 @@ mod tests {
         assert!(time_updates(&slots, &overflowing_updates(), &config).is_err());
     }
 
+    #[test]
+    fn a_sql_plan_runs_end_to_end_through_the_projection_its_front_end_adds() {
+        use asap_types::pre_asap::schema::{Column, Schema};
+
+        let catalog = asap_frontend_sql::SqlCatalog::new().with_table(
+            "metrics",
+            Schema::new(vec![
+                Column::new("service", DataType::Utf8, false),
+                Column::new("latency", DataType::Float64, false),
+            ]),
+        );
+        let plan = crate::plan::plan_sql(
+            "SELECT approx_percentile_cont(latency, 0.99) FROM metrics",
+            &catalog,
+            AccuracyTarget::Epsilon(0.01),
+        )
+        .expect("planning");
+        let root = plan
+            .dag
+            .nodes
+            .iter()
+            .find(|node| node.id == plan.dag.root)
+            .expect("the root is a node");
+        assert_eq!(operator_name(&root.payload), "Value");
+
+        let mut file = tempfile::NamedTempFile::new().expect("temp file");
+        writeln!(file, "service,latency").unwrap();
+        for i in 0..1_000 {
+            writeln!(file, "s{},{}", i % 4, i as f64).unwrap();
+        }
+        file.flush().unwrap();
+
+        let outcome = run(&plan, &csv_config(file.path(), 7, true)).expect("run");
+        assert_eq!(outcome.rows_scanned, 1_000);
+        assert_eq!(outcome.readouts.len(), 1);
+        assert!(
+            matches!(outcome.readouts[0].query, Some(SketchQuery::Quantile { q }) if q == 0.99),
+            "{:?}",
+            outcome.readouts[0].query
+        );
+        assert!(outcome.readouts[0].exact.is_some());
+    }
+
     /// `{ts, value}` — the usage-derived schema a PromQL leaf carries.
     fn csv_with(values: &[f64]) -> tempfile::NamedTempFile {
         let mut file = tempfile::NamedTempFile::new().expect("temp file");
@@ -1862,17 +1997,16 @@ mod tests {
     }
 
     #[test]
-    fn three_node_plan_runs_end_to_end_and_the_claimed_bound_holds() {
-        let plan = plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01))
-            .expect("planning");
-        assert_eq!(plan.dag.nodes.len(), 3);
+    fn the_quantile_plan_runs_end_to_end_and_the_claimed_bound_holds() {
+        let plan = plan_of(MEDIAN);
+        assert_eq!(plan.dag.nodes.len(), 4);
 
         let values: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
         let csv = csv_with(&values);
         let outcome = run(&plan, &csv_config(csv.path(), 42, true)).expect("run");
 
         assert_eq!(outcome.rows_scanned, 10_000);
-        assert_eq!(outcome.rows_emitted, 10_000);
+        assert_eq!(outcome.rows_emitted, Some(10_000));
         assert_eq!(outcome.readouts.len(), 1, "one ungrouped readout");
 
         let readout = &outcome.readouts[0];
@@ -1898,8 +2032,7 @@ mod tests {
 
     #[test]
     fn the_rows_are_produced_once_however_many_passes_are_timed() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..1_000).map(|i| (i % 91) as f64).collect::<Vec<_>>());
 
         let mut config = csv_config(csv.path(), 5, true);
@@ -1908,7 +2041,7 @@ mod tests {
         let outcome = run(&plan, &config).expect("run");
 
         assert_eq!(outcome.rows_scanned, 1_000);
-        assert_eq!(outcome.rows_emitted, 1_000);
+        assert_eq!(outcome.rows_emitted, Some(1_000));
         assert_eq!(outcome.readouts[0].observations, 1_000);
         assert_eq!(outcome.retained_values, 1_000);
 
@@ -1925,8 +2058,7 @@ mod tests {
 
     #[test]
     fn a_timed_phase_reports_a_population_and_an_untimed_one_reports_nothing() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..2_000).map(|i| (i % 313) as f64).collect::<Vec<_>>());
 
         let mut config = csv_config(csv.path(), 1, true);
@@ -1958,8 +2090,7 @@ mod tests {
 
     #[test]
     fn the_exact_arm_is_skipped_when_verify_is_off_and_says_so() {
-        let plan =
-            plan_promql("quantile(0.5, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of(MEDIAN);
         let csv = csv_with(&(0..1_000).map(|i| i as f64).collect::<Vec<_>>());
 
         let outcome = run(&plan, &csv_config(csv.path(), 0, false)).expect("run");
@@ -1975,18 +2106,18 @@ mod tests {
 
     #[test]
     fn an_exact_accumulator_plan_needs_no_sketch_and_still_reports_both_arms() {
-        let plan = plan_promql("sum(cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of("SELECT SUM(value) FROM cpu_cores");
         assert_eq!(
             plan.dag.nodes.len(),
-            2,
-            "Fallback -> SummaryAgg, no estimate"
+            3,
+            "Fallback -> SummaryAgg -> Value, no estimate"
         );
 
         let values: Vec<f64> = (1..=100).map(|i| i as f64).collect();
         let csv = csv_with(&values);
         let outcome = run(&plan, &csv_config(csv.path(), 0, true)).expect("run");
 
-        assert_eq!(outcome.rows_emitted, 100);
+        assert_eq!(outcome.rows_emitted, Some(100));
         // No SummaryEstimate node, so no readout — the accumulator's state is
         // the answer, reached through FinalizeExactAccumulator.
         assert!(outcome.readouts.is_empty());
@@ -1994,43 +2125,16 @@ mod tests {
         assert_eq!(outcome.retained_values, 100);
     }
 
-    /// `count(...)` is one of the most basic queries in the corpus, and the
-    /// planner compiles it to a CMS read through a bare-bucket-total readout
-    /// rather than to an exact accumulator.
     #[test]
-    fn the_count_plan_resolves_runs_and_agrees_with_the_exact_arm() {
-        let plan = plan_promql("count(cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
-
-        let values: Vec<f64> = (0..5_000).map(|i| (i % 37) as f64).collect();
-        let csv = csv_with(&values);
-        let outcome = run(&plan, &csv_config(csv.path(), 7, true)).expect("run");
-
-        assert_eq!(outcome.readouts.len(), 1);
-        let readout = &outcome.readouts[0];
-        assert_eq!(
-            readout.query,
-            SketchQuery::PointCount {
-                key: asap_types::pre_asap::ColumnRef::SampleValue,
-                value: None,
-            }
-        );
-        assert_eq!(readout.approximate, Answer::Scalar(5_000.0));
-        assert_eq!(readout.exact, Some(Answer::Scalar(5_000.0)));
-        // The state it cost, and that it is nothing like the retained column.
-        assert_eq!(outcome.node_footprints.len(), 1);
-        assert!(outcome.node_footprints[0].1 > 0);
-    }
-
-    #[test]
-    fn a_bare_selector_plan_has_no_summary_at_all() {
-        let plan = plan_promql("cpu_cores", AccuracyTarget::Epsilon(0.01)).expect("plan");
-        assert_eq!(plan.dag.nodes.len(), 1);
-        assert!(plan.dag.edges.is_empty());
+    fn a_bare_selection_plan_has_no_summary_at_all() {
+        let plan = plan_of("SELECT ts, value FROM cpu_cores");
+        assert_eq!(plan.dag.nodes.len(), 2);
+        assert_eq!(plan.dag.edges.len(), 1);
 
         let csv = csv_with(&[1.0, 2.0, 3.0]);
         let outcome = run(&plan, &csv_config(csv.path(), 0, true)).expect("run");
 
-        assert_eq!(outcome.rows_emitted, 3);
+        assert_eq!(outcome.rows_emitted, Some(3));
         assert!(outcome.readouts.is_empty());
         assert!(outcome.node_footprints.is_empty(), "nothing was summarized");
         assert!(outcome.approximate.update.is_empty());
@@ -2038,8 +2142,7 @@ mod tests {
 
     #[test]
     fn the_claimed_bound_holds_across_many_seeds() {
-        let plan =
-            plan_promql("quantile(0.9, cpu_cores)", AccuracyTarget::Epsilon(0.01)).expect("plan");
+        let plan = plan_of("SELECT approx_percentile_cont(value, 0.9) FROM cpu_cores");
         let values: Vec<f64> = (0..20_000).map(|i| (i % 997) as f64).collect();
         let csv = csv_with(&values);
 
@@ -2081,14 +2184,14 @@ mod resolution_tests {
     use std::rc::Rc;
 
     use asap_types::post_asap::{
-        ExactKind, ExactParams, ExecutableOperator, ExecutionTiming, GroupingEdgeCompatibility,
-        SketchAlgorithm, SketchKind, SketchParams, SummaryField,
+        ExactKind, ExactParams, ExecutionTiming, GroupingEdgeCompatibility, SketchAlgorithm,
+        SketchKind, SketchParams, SummaryField,
     };
     use asap_types::pre_asap::{
         CompareOpKind, GroupKeys, Predicate, ProjectItem, ScalarValue, SortKey, Source,
     };
 
-    use crate::rows::tests::{node_of, plan};
+    use crate::rows::tests::{node_of, plan, MEDIAN};
 
     /// Node ids come out of the compiler producer-before-consumer, which is a
     /// property of the compiler rather than one the document carries — enough
@@ -2101,45 +2204,40 @@ mod resolution_tests {
     // ── The planner's own plans ──────────────────────────────────────────────
 
     #[test]
-    fn the_three_node_quantile_plan_resolves_with_zero_refusals() {
-        let dag = plan("quantile(0.5, cpu_cores)");
-        assert_eq!(dag.nodes.len(), 3);
+    fn the_four_node_quantile_plan_resolves_with_zero_refusals() {
+        let dag = plan(MEDIAN);
+        assert_eq!(dag.nodes.len(), 4);
 
         let held = match resolved(&dag) {
             Ok(held) => held,
             Err(refusals) => panic!("refused: {refusals:?}"),
         };
 
-        assert_eq!(held.nodes(), 3);
-        assert_eq!(held.rows.len(), 1);
+        assert_eq!(held.nodes(), 4);
+        assert_eq!(held.rows.len(), 2);
         assert_eq!(held.aggregates.len(), 1);
         assert_eq!(held.readouts.len(), 1);
 
         let aggregate = &held.aggregates[0];
-        assert_eq!(
-            aggregate.node,
-            node_of(&dag, ExecutableOperator::SummaryAgg).id
-        );
+        assert_eq!(aggregate.node, node_of(&dag, "SummaryAgg").id);
         assert_eq!(aggregate.item, None);
-        // `weight: Column(SampleValue)` resolved to the `value` field, and
+        // `weight: Column(cpu_cores.value)` resolved to the `value` field, and
         // `Reduce([])` is a genuine global reduction, not "no grouping".
         assert_eq!(aggregate.weight, ResolvedInput::Column(1));
         assert!(aggregate.group_columns.is_empty());
 
         assert_eq!(held.readouts[0].query, SketchQuery::Quantile { q: 0.5 });
-        assert_eq!(
-            held.readouts[0].producer,
-            node_of(&dag, ExecutableOperator::SummaryAgg).id
-        );
+        assert_eq!(held.readouts[0].producer, node_of(&dag, "SummaryAgg").id);
     }
 
     #[test]
     fn the_rows_to_summary_window_stamp_does_not_refuse_a_sketch_plan() {
-        let dag = plan("quantile(0.5, cpu_cores)");
+        let dag = plan(MEDIAN);
         // The stamp really is on the 0 -> 1 edge; if it ever stops being, this
         // test stops proving anything and should be revisited.
         assert!(dag.edges.iter().any(|edge| {
-            edge.window == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual
+            edge.window
+                == WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual
         }));
         assert!(
             resolved(&dag).is_ok(),
@@ -2149,7 +2247,10 @@ mod resolution_tests {
 
     #[test]
     fn the_exact_accumulator_and_fallback_only_plans_are_resolved() {
-        for query in ["cpu_cores", "sum(cpu_cores)"] {
+        for query in [
+            "SELECT ts, value FROM cpu_cores",
+            "SELECT SUM(value) FROM cpu_cores",
+        ] {
             let dag = plan(query);
             if let Err(refusals) = resolved(&dag) {
                 panic!("{query} was refused: {refusals:?}");
@@ -2161,18 +2262,17 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_subtract_node_is_refused_with_no_inverse_operation() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         // Hand-built: nothing in the planner emits one, which is the point.
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummarySubtract;
         victim.payload = ExecutableOperatorPayload::SummarySubtract;
 
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let refusals = resolved(&dag).expect_err("is refused");
         assert_eq!(
             refusals,
@@ -2195,14 +2295,13 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_delete_node_is_refused_with_no_inverse_operation() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummaryDelete;
         victim.payload = ExecutableOperatorPayload::SummaryDelete {
             key: ColumnRef::Named("cluster".into()),
         };
@@ -2222,14 +2321,13 @@ mod resolution_tests {
 
     #[test]
     fn a_summary_merge_node_is_refused_in_v0() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == agg)
             .expect("the SummaryAgg node");
-        victim.operator = ExecutableOperator::SummaryMerge;
         victim.payload = ExecutableOperatorPayload::SummaryMerge;
 
         let refusals = resolved(&dag).expect_err("is refused");
@@ -2251,9 +2349,9 @@ mod resolution_tests {
     /// for a `Fallback` and the readout produces nothing at all.
     #[test]
     fn a_readout_whose_producer_builds_no_summary_is_refused_rather_than_waved_through() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let edge = dag
             .edges
             .iter_mut()
@@ -2274,8 +2372,8 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_that_is_a_program_names_the_variant() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2305,17 +2403,16 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_predicate_outside_the_subset_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { predicates, .. } = expression else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::FunctionCall {
@@ -2334,17 +2431,16 @@ mod resolution_tests {
     fn a_label_matcher_on_the_fallback_is_resolved() {
         // A `Scan` with predicates says where rows come from, not what to
         // compute: resolved, deliberately.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { predicates, .. } = expression else {
+        let QueryExpr::Scan { predicates, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         predicates.push(Predicate(Rc::new(QueryExpr::Compare {
@@ -2360,8 +2456,8 @@ mod resolution_tests {
 
     #[test]
     fn an_unresolvable_weight_column_names_the_column() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2381,8 +2477,8 @@ mod resolution_tests {
 
     #[test]
     fn a_wildcard_weight_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2413,8 +2509,8 @@ mod resolution_tests {
         )
         .expect("HydraCms takes Cms params");
 
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2441,8 +2537,8 @@ mod resolution_tests {
             Reduction::Reduce(GroupKeys::without(vec![1])),
             Reduction::PerEntity,
         ] {
-            let mut dag = plan("quantile(0.5, cpu_cores)");
-            let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+            let mut dag = plan(MEDIAN);
+            let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
                 .iter_mut()
@@ -2466,8 +2562,8 @@ mod resolution_tests {
 
     #[test]
     fn a_by_column_past_the_producers_schema_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2487,8 +2583,8 @@ mod resolution_tests {
 
     #[test]
     fn an_entity_identity_over_a_schema_with_no_label_column_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2514,8 +2610,8 @@ mod resolution_tests {
             (vec![], vec![1usize, 2]),
             (vec![ColumnRef::Named("cluster".into())], vec![2usize]),
         ] {
-            let mut dag = with_labels(plan("quantile(0.5, cpu_cores)"));
-            let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+            let mut dag = with_labels(plan(MEDIAN));
+            let agg = node_of(&dag, "SummaryAgg").id;
             let victim = dag
                 .nodes
                 .iter_mut()
@@ -2562,7 +2658,7 @@ mod resolution_tests {
     fn with_labels(mut dag: ExecutableDag) -> ExecutableDag {
         use asap_types::pre_asap::Column;
 
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let fallback = node_of(&dag, "Fallback").id;
         let labels = ["cluster", "task"];
         for node in &mut dag.nodes {
             if node.id != fallback {
@@ -2578,10 +2674,9 @@ mod resolution_tests {
                     },
                 );
             }
-            let ExecutableOperatorPayload::Fallback { expression } = &mut node.payload else {
-                panic!("the Fallback node lost its payload");
-            };
-            let QueryExpr::Scan { schema, .. } = expression else {
+            let QueryExpr::Scan { schema, .. } =
+                crate::rows::tests::fallback_scan_mut(&mut node.payload)
+            else {
                 panic!("the Fallback node lost its Scan");
             };
             for (offset, label) in labels.iter().enumerate() {
@@ -2596,9 +2691,7 @@ mod resolution_tests {
                 );
             }
         }
-        let schema = node_of(&dag, ExecutableOperator::Fallback)
-            .output_schema
-            .clone();
+        let schema = node_of(&dag, "Fallback").output_schema.clone();
         for edge in &mut dag.edges {
             if edge.producer == fallback {
                 edge.intermediate_schema = schema.clone();
@@ -2616,8 +2709,8 @@ mod resolution_tests {
         )
         .expect("decodes");
 
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2799,7 +2892,7 @@ mod resolution_tests {
     }
 
     fn with_family(mut dag: ExecutableDag, family: SummaryFamilyType) -> ExecutableDag {
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let agg = node_of(&dag, "SummaryAgg").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2824,9 +2917,75 @@ mod resolution_tests {
         }
     }
 
+    fn point_lookup_over(item: &str) -> ExecutableDag {
+        let mut dag = with_labels(plan(MEDIAN));
+        let item = ColumnRef::Named(item.to_owned());
+        for node in &mut dag.nodes {
+            match &mut node.payload {
+                ExecutableOperatorPayload::SummaryAgg { family, input, .. } => {
+                    *family = SummaryFamilyType::Sketch(
+                        SketchKind::new(
+                            SketchAlgorithm::Cms,
+                            SketchParams::Cms {
+                                width: 272,
+                                depth: 5,
+                            },
+                        ),
+                        GroupingStrategy::PerSubpopulationInstance,
+                    );
+                    input.item = Some(SummaryInputExpr::Column(item.clone()));
+                    input.weight = SummaryInputExpr::Constant(1.0);
+                }
+                ExecutableOperatorPayload::SummaryEstimate { query } => {
+                    *query = SketchQuery::PointCount {
+                        key: item.clone(),
+                        value: Some("a".to_owned()),
+                    };
+                }
+                _ => {}
+            }
+        }
+        dag
+    }
+
+    #[test]
+    fn a_string_point_lookup_into_a_numerically_keyed_sketch_is_refused_on_both_runtimes() {
+        let numeric = point_lookup_over("value");
+        let refusals = resolved(&numeric).expect_err("a Float64 item is not looked up by string");
+        assert!(
+            refusals
+                .iter()
+                .any(|refusal| refusal.to_string().contains("point lookup")),
+            "{refusals:?}"
+        );
+
+        let estimate = node_of(&numeric, "SummaryEstimate").id;
+        let agg = node_of(&numeric, "SummaryAgg").id;
+        let session = crate::df::session::SeedSession::new(
+            0,
+            crate::df::session::MemoryPoolSettings::default(),
+            &crate::df::sketch_udaf::SummaryFunctions,
+        )
+        .expect("a session needs no OS resources");
+        let stand_in = datafusion::logical_expr::LogicalPlanBuilder::empty(false)
+            .build()
+            .expect("an empty relation builds");
+        let refused = crate::df::post_asap::lower_nodes(
+            &numeric,
+            &[agg, estimate],
+            &crate::df::pre_asap::TableSources::new(),
+            &session.state(),
+            &HashMap::from([(agg, stand_in)]),
+        )
+        .expect_err("the DataFusion translator refuses it too");
+        assert_eq!(refused.variant, "SketchQuery::PointCount");
+
+        resolved(&point_lookup_over("cluster")).expect("a Utf8 item is looked up by string");
+    }
+
     fn with_readout(query: &SketchQuery) -> ExecutableDag {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let mut dag = plan(MEDIAN);
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         let victim = dag
             .nodes
             .iter_mut()
@@ -2842,12 +3001,11 @@ mod resolution_tests {
 
     /// The 3-node plan with a `Value` node grafted above its readout.
     fn with_value(operation: &ValueOperation) -> ExecutableDag {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).clone();
+        let mut dag = plan(MEDIAN);
+        let estimate = node_of(&dag, "SummaryEstimate").clone();
         let id = PostAsapNodeId(dag.nodes.len() as u32);
         dag.nodes.push(ExecutableDagNode {
             id,
-            operator: ExecutableOperator::Value,
             payload: ExecutableOperatorPayload::Value {
                 operation: operation.clone(),
                 timing: ExecutionTiming::ReadTime,
@@ -2942,11 +3100,11 @@ mod resolution_tests {
     #[test]
     fn a_summary_to_summary_window_obligation_is_refused() {
         // Both endpoints MAINTENANCE_SUMMARY: the only shape the gate catches.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg);
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg");
         let agg_id = agg.id;
         let agg_schema = agg.output_schema.clone();
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
 
         dag.nodes
             .iter_mut()
@@ -2956,7 +3114,7 @@ mod resolution_tests {
         for edge in &mut dag.edges {
             if edge.producer == agg_id && edge.consumer == estimate {
                 edge.window =
-                    WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactBoundaryResidual;
+                    WindowEdgeCompatibility::RequiresAlignedPanePhaseOrExactWindowEdgeResidual;
                 edge.intermediate_schema = agg_schema.clone();
                 edge.data_state = ExecutionDataState::MAINTENANCE_SUMMARY;
                 edge.grouping = GroupingEdgeCompatibility::NotApplicable;
@@ -2977,10 +3135,10 @@ mod resolution_tests {
 
     #[test]
     fn every_bad_node_is_reported_not_just_the_first() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
+        let agg = node_of(&dag, "SummaryAgg").id;
+        let estimate = node_of(&dag, "SummaryEstimate").id;
 
         for node in &mut dag.nodes {
             if node.id == fallback {
@@ -2988,7 +3146,6 @@ mod resolution_tests {
                     expression: QueryExpr::EvalTimestamp,
                 };
             } else if node.id == agg {
-                node.operator = ExecutableOperator::SummarySubtract;
                 node.payload = ExecutableOperatorPayload::SummarySubtract;
             } else if node.id == estimate {
                 node.payload = ExecutableOperatorPayload::SummaryEstimate {
@@ -3015,8 +3172,8 @@ mod resolution_tests {
     fn one_bad_node_yields_exactly_one_refusal() {
         // A `Binary` node is catchable on both its edge role and its operator;
         // it must be reported once.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let estimate = node_of(&dag, ExecutableOperator::SummaryEstimate).id;
+        let mut dag = plan(MEDIAN);
+        let estimate = node_of(&dag, "SummaryEstimate").id;
         for edge in &mut dag.edges {
             if edge.consumer == estimate {
                 edge.role = EdgeRole::Left;
@@ -3027,7 +3184,6 @@ mod resolution_tests {
             .iter_mut()
             .find(|node| node.id == estimate)
             .expect("the SummaryEstimate node");
-        victim.operator = ExecutableOperator::Binary;
         victim.payload = ExecutableOperatorPayload::Binary {
             timing: ExecutionTiming::ReadTime,
             operator: asap_types::post_asap::BinaryOperator {
@@ -3046,11 +3202,9 @@ mod resolution_tests {
 
     #[test]
     fn a_fallback_whose_output_is_summary_state_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
-        let agg_schema = node_of(&dag, ExecutableOperator::SummaryAgg)
-            .output_schema
-            .clone();
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
+        let agg_schema = node_of(&dag, "SummaryAgg").output_schema.clone();
         let victim = dag
             .nodes
             .iter_mut()
@@ -3073,17 +3227,16 @@ mod resolution_tests {
     fn a_source_table_scan_is_accepted_as_a_row_source() {
         // The SQL front end's leaf shape, reached here by rewriting the PromQL
         // one: `Source` carries identity only, and both identities are leaves.
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let fallback = node_of(&dag, ExecutableOperator::Fallback).id;
+        let mut dag = plan(MEDIAN);
+        let fallback = node_of(&dag, "Fallback").id;
         let victim = dag
             .nodes
             .iter_mut()
             .find(|node| node.id == fallback)
             .expect("the Fallback node");
-        let ExecutableOperatorPayload::Fallback { expression } = &mut victim.payload else {
-            panic!("the Fallback node lost its payload");
-        };
-        let QueryExpr::Scan { source, .. } = expression else {
+        let QueryExpr::Scan { source, .. } =
+            crate::rows::tests::fallback_scan_mut(&mut victim.payload)
+        else {
             panic!("the Fallback node lost its Scan");
         };
         *source = Source::Table {
@@ -3095,8 +3248,8 @@ mod resolution_tests {
 
     #[test]
     fn a_node_with_no_input_edge_where_one_is_required_is_refused() {
-        let mut dag = plan("quantile(0.5, cpu_cores)");
-        let agg = node_of(&dag, ExecutableOperator::SummaryAgg).id;
+        let mut dag = plan(MEDIAN);
+        let agg = node_of(&dag, "SummaryAgg").id;
         dag.edges.retain(|edge| edge.consumer != agg);
 
         let refusals = resolved(&dag).expect_err("is refused");
@@ -3114,10 +3267,8 @@ mod resolution_tests {
         // The position in `NodeDecision::Aggregate` is an index, so this pins
         // what index 1 of the producer's schema actually is: an off-by-one here
         // would weight the sketch by timestamps and never fail loudly.
-        let dag = plan("quantile(0.5, cpu_cores)");
-        let field: &SummaryField = &node_of(&dag, ExecutableOperator::Fallback)
-            .output_schema
-            .fields[1];
+        let dag = plan(MEDIAN);
+        let field: &SummaryField = &node_of(&dag, "Fallback").output_schema.fields[1];
         assert_eq!(field.name, "value");
         assert_eq!(field.dtype, SummaryFamilyType::Plain(DataType::Float64));
     }

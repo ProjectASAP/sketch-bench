@@ -15,13 +15,19 @@ path = "src/main.rs"
 # Pinned to a rev rather than a path: CI checks out sketch-bench alone, and a
 # missing path dep fails manifest resolution for every member of the workspace.
 [dependencies]
-asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
-asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
-asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
+asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
+asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
+asap-frontend-sql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "2ec3fc80caa922c8e1f33aa05f60b7d787e73257" }
 
-# 0.3.0, not the workspace pin (0.2.2): cdf_cached/quantile_cached do not
-# exist before 0.3.0 and a 101-point probe grid re-sorts on every call there.
-asap_sketchlib = { version = "0.3.0", features = ["experimental"] }
+# The bare git URL upstream itself depends on, not the workspace pin (0.2.2)
+# and not the 0.3.0 registry release: cdf_cached/quantile_cached do not exist
+# before 0.3.0 and a 101-point probe grid re-sorts on every call there, and a
+# second source for the same version links two copies of every sketch.
+asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", features = ["experimental"] }
+
+datafusion = "43"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 aqpbm-core = { workspace = true, features = ["hdrhist"] }
 aqpbm-datagen.workspace = true
@@ -32,6 +38,7 @@ anyhow.workspace = true
 clap.workspace = true
 thiserror.workspace = true
 blake3 = "1"
+
 
 [dev-dependencies]
 tempfile = "3"
