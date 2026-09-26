@@ -25,28 +25,49 @@ pub fn unservable(rqes: &[Rqe], deployments: &[Deployment]) -> Vec<String> {
 /// Every feasible full mapping. Empty if any RQE is unservable -- check
 /// [`unservable`] to tell the two cases apart.
 pub fn brute_force(rqes: &[Rqe], deployments: &[Deployment]) -> Vec<Mapping> {
+    let mut mappings = Vec::new();
+    for_each_mapping(rqes, deployments, |mapping| mappings.push(mapping.to_vec()));
+    mappings
+}
+
+/// Visit each feasible mapping without retaining the complete Cartesian
+/// product. The visitor receives a borrowed, index-aligned mapping that is
+/// valid only for the duration of the call. Returns the number visited.
+pub fn for_each_mapping(
+    rqes: &[Rqe],
+    deployments: &[Deployment],
+    mut visit: impl FnMut(&Mapping),
+) -> u64 {
     let choices: Vec<Vec<usize>> = rqes
         .iter()
         .map(|r| eligible_deployments_for(r, deployments))
         .collect();
 
     if choices.iter().any(|c| c.is_empty()) {
-        return Vec::new();
+        return 0;
     }
 
-    let mut mappings = vec![Vec::with_capacity(rqes.len())];
-    for choice in &choices {
-        let mut next = Vec::with_capacity(mappings.len() * choice.len());
-        for partial in &mappings {
-            for &d in choice {
-                let mut extended = partial.clone();
-                extended.push(d);
-                next.push(extended);
-            }
+    fn visit_depth_first(
+        choices: &[Vec<usize>],
+        mapping: &mut Mapping,
+        visit: &mut impl FnMut(&Mapping),
+    ) -> u64 {
+        if mapping.len() == choices.len() {
+            visit(mapping);
+            return 1;
         }
-        mappings = next;
+        choices[mapping.len()]
+            .iter()
+            .map(|&deployment| {
+                mapping.push(deployment);
+                let count = visit_depth_first(choices, mapping, visit);
+                mapping.pop();
+                count
+            })
+            .sum()
     }
-    mappings
+
+    visit_depth_first(&choices, &mut Vec::with_capacity(rqes.len()), &mut visit)
 }
 
 #[cfg(test)]
@@ -105,5 +126,18 @@ mod tests {
 
         assert_eq!(unservable(&rqes, &deployments), vec!["a".to_string()]);
         assert!(brute_force(&rqes, &deployments).is_empty());
+    }
+
+    #[test]
+    fn streaming_visits_the_same_mappings_as_eager_enumeration() {
+        let rqes = vec![rqe("a", 60, 3_600), rqe("b", 60, 3_600)];
+        let deployments = build_all_candidates(&rqes, &[cost("cms-fastpath-vector2d")]);
+        let eager = brute_force(&rqes, &deployments);
+        let mut streamed = Vec::new();
+        let count = for_each_mapping(&rqes, &deployments, |mapping| {
+            streamed.push(mapping.clone())
+        });
+        assert_eq!(count as usize, eager.len());
+        assert_eq!(streamed, eager);
     }
 }

@@ -74,6 +74,14 @@ fn candidate_deployments(group: &[&Rqe], costs: &[AtomicCostEntry]) -> Vec<Deplo
 }
 
 pub fn build_all_candidates(rqes: &[Rqe], costs: &[AtomicCostEntry]) -> Vec<Deployment> {
+    prune_dominated_candidates(rqes, build_all_candidates_unpruned(rqes, costs))
+}
+
+/// Generate the complete v1 candidate set before dominance pruning.
+///
+/// The public optimizer entry point is [`build_all_candidates`]. This helper
+/// exists so diagnostics can report exactly how much safe pruning removed.
+pub fn build_all_candidates_unpruned(rqes: &[Rqe], costs: &[AtomicCostEntry]) -> Vec<Deployment> {
     let mut groups: BTreeMap<(Capability, LabelSet), Vec<&Rqe>> = BTreeMap::new();
     for rqe in rqes {
         groups
@@ -85,6 +93,117 @@ pub fn build_all_candidates(rqes: &[Rqe], costs: &[AtomicCostEntry]) -> Vec<Depl
         .values()
         .flat_map(|group| candidate_deployments(group, costs))
         .collect()
+}
+
+/// Remove a candidate only when another candidate can replace it in every
+/// mapping without making any modeled objective worse.
+///
+/// This comparison is deliberately local to a capability/label-set group.
+/// Within such a group, label cardinality and arrival rate are common
+/// multipliers, so comparing per-instance query memory and
+/// `active_instances * insert_cost` is sufficient.  Query latency is checked
+/// for each RQE the dominated candidate can serve.
+pub fn prune_dominated_candidates(rqes: &[Rqe], candidates: Vec<Deployment>) -> Vec<Deployment> {
+    let eligibility: Vec<Vec<bool>> = candidates
+        .iter()
+        .map(|candidate| rqes.iter().map(|rqe| is_eligible(rqe, candidate)).collect())
+        .collect();
+
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(candidate_index, candidate)| {
+            let dominated = eligibility
+                .iter()
+                .enumerate()
+                .any(|(other_index, other_coverage)| {
+                    other_index != candidate_index
+                    && candidate_dominates(
+                        &candidates[other_index],
+                        other_coverage,
+                        candidate,
+                        &eligibility[candidate_index],
+                        rqes,
+                    )
+                    // Identical candidates dominate only in a stable direction,
+                    // so a tie never removes both candidates.
+                    && (strictly_better(
+                        &candidates[other_index],
+                        other_coverage,
+                        candidate,
+                        &eligibility[candidate_index],
+                        rqes,
+                    ) || other_index < candidate_index)
+                });
+            (!dominated).then(|| candidate.clone())
+        })
+        .collect()
+}
+
+fn candidate_dominates(
+    replacement: &Deployment,
+    replacement_coverage: &[bool],
+    original: &Deployment,
+    original_coverage: &[bool],
+    rqes: &[Rqe],
+) -> bool {
+    if replacement.capability != original.capability || replacement.labels != original.labels {
+        return false;
+    }
+
+    let replacement_ingest = replacement.active_instance_count().unwrap_or(u64::MAX) as f64
+        * replacement.config.insert_cpu_secs;
+    let original_ingest = original.active_instance_count().unwrap_or(u64::MAX) as f64
+        * original.config.insert_cpu_secs;
+    replacement.config.mem_bytes_per_instance <= original.config.mem_bytes_per_instance
+        && replacement_ingest <= original_ingest
+        && original_coverage
+            .iter()
+            .zip(replacement_coverage)
+            .all(|(&original_serves, &replacement_serves)| !original_serves || replacement_serves)
+        && original_coverage
+            .iter()
+            .enumerate()
+            .all(|(rqe_index, &serves)| {
+                !serves
+                    || query_latency(replacement, &rqes[rqe_index])
+                        <= query_latency(original, &rqes[rqe_index])
+            })
+}
+
+fn strictly_better(
+    replacement: &Deployment,
+    replacement_coverage: &[bool],
+    original: &Deployment,
+    original_coverage: &[bool],
+    rqes: &[Rqe],
+) -> bool {
+    let replacement_ingest = replacement.active_instance_count().unwrap_or(u64::MAX) as f64
+        * replacement.config.insert_cpu_secs;
+    let original_ingest = original.active_instance_count().unwrap_or(u64::MAX) as f64
+        * original.config.insert_cpu_secs;
+    replacement.config.mem_bytes_per_instance < original.config.mem_bytes_per_instance
+        || replacement_ingest < original_ingest
+        || original_coverage
+            .iter()
+            .zip(replacement_coverage)
+            .any(|(&original_serves, &replacement_serves)| !original_serves && replacement_serves)
+        || original_coverage
+            .iter()
+            .enumerate()
+            .any(|(rqe_index, &serves)| {
+                serves
+                    && query_latency(replacement, &rqes[rqe_index])
+                        < query_latency(original, &rqes[rqe_index])
+            })
+}
+
+fn query_latency(deployment: &Deployment, rqe: &Rqe) -> f64 {
+    let instances = deployment
+        .query_instance_count(rqe.lookback_secs)
+        .expect("candidate coverage only contains exactly tiled RQEs");
+    deployment.config.query_cpu_secs
+        + instances.saturating_sub(1) as f64 * deployment.config.merge_cpu_secs
 }
 
 pub fn eligible_deployments_for(r: &Rqe, deployments: &[Deployment]) -> Vec<usize> {
@@ -171,5 +290,48 @@ mod tests {
                 ..d
             }
         ));
+    }
+
+    #[test]
+    fn prunes_finer_slide_when_the_coarser_slide_serves_the_same_rqe() {
+        let r = rqe("r", 60, 60);
+        let coarse = Deployment {
+            capability: Capability::Freq,
+            labels: LabelSet::new(),
+            config: cost(),
+            window_secs: 60,
+            slide_secs: 60,
+        };
+        let fine = Deployment {
+            slide_secs: 30,
+            ..coarse.clone()
+        };
+
+        let retained = prune_dominated_candidates(&[r], vec![fine, coarse.clone()]);
+
+        assert_eq!(retained, vec![coarse]);
+    }
+
+    #[test]
+    fn retains_candidate_with_lower_query_latency() {
+        let r = rqe("r", 60, 60);
+        let cost = cost();
+        let large_window = Deployment {
+            capability: Capability::Freq,
+            labels: LabelSet::new(),
+            config: cost.clone(),
+            window_secs: 60,
+            slide_secs: 60,
+        };
+        let small_window = Deployment {
+            window_secs: 30,
+            slide_secs: 30,
+            ..large_window.clone()
+        };
+
+        let retained =
+            prune_dominated_candidates(&[r], vec![small_window.clone(), large_window.clone()]);
+
+        assert_eq!(retained, vec![large_window]);
     }
 }

@@ -129,6 +129,11 @@ higher-is-better metrics, passing means `measured >= tol_i`. Direction is
 explicit on the RQE; it is never inferred from a metric name. A missing metric
 does not pass.
 
+Before mapping, prune a candidate only if another candidate can serve every
+RQE it can and is no worse in query memory, ingest CPU, and latency for each
+such RQE. This is safe because any mapping using the removed candidate can
+substitute the remaining one without weakening a modeled objective.
+
 Historical instances must be retained long enough to answer the RQEs assigned
 to a deployment. Retention is an execution/storage detail in v1, not a
 candidate parameter or a scored objective. After selecting a mapping, retain
@@ -215,7 +220,9 @@ TCO_cpu = ingest_cpu + merge_cpu + query_cpu
 2. Build the eligible candidate–RQE pairs. Reject pairs that fail capability,
    labels, window alignment, or empirical accuracy.
 3. Enumerate feasible workload mappings. Every RQE must select one eligible
-   candidate; a single selected candidate may serve multiple RQEs.
+   candidate; a single selected candidate may serve multiple RQEs. Small
+   instances may retain every mapping eagerly; larger ones stream mappings
+   through incremental Pareto filtering, retaining only the current frontier.
 4. Score every complete mapping with the analytical cost model.
 5. Compute and report the Pareto frontier.
 
@@ -248,14 +255,11 @@ breakdown of `TCO_cpu`, together with the selected deployment mapping.
 
 ## Implementation status
 
-`rqe-optimizer/` currently implements the earlier tumbling-only model with a
-single base-slide parameter. It does not yet implement the `(x, y)` sliding
-instance model in this document.
-
-To implement this v1 design, update the deployment type, candidate generation,
-eligibility checks, analytical objective calculations, examples, and tests.
-The existing separation between candidate generation, enumeration, objectives,
-and Pareto filtering remains the intended implementation boundary.
+`rqe-optimizer/` implements the `(x, y)` sliding-instance model, candidate
+generation and pruning, eligibility checks, analytical objectives, and
+streaming Pareto filtering. The separation between candidate generation,
+enumeration, objectives, and Pareto filtering remains the intended boundary
+for future solver work.
 
 Exporter bugs, benchmark-dataset choices, and historic run counts belong in
 `rqe_optimizer_TODO.md` or issue tracking, not in this problem statement.

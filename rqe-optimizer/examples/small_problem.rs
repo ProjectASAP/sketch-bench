@@ -14,14 +14,18 @@
 //! `rqes`) and nowhere else in this file.
 //!
 //! Run: `scripts/export_rqe_optimizer_costs.sh` once, then
-//! `cargo run -p rqe-optimizer --example small_problem`.
+//! `cargo run -p rqe-optimizer --example small_problem`. Add
+//! `--candidates-only` to inspect candidate pruning safely, without starting
+//! mapping enumeration.
 
 use std::collections::BTreeSet;
 
-use rqe_optimizer::candidates::build_all_candidates;
-use rqe_optimizer::enumerate::{brute_force, unservable};
+use rqe_optimizer::candidates::{
+    build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
+};
+use rqe_optimizer::enumerate::{brute_force, for_each_mapping, unservable};
 use rqe_optimizer::objectives::score;
-use rqe_optimizer::pareto::pareto_front;
+use rqe_optimizer::pareto::{pareto_front, ParetoFront};
 use rqe_optimizer::{
     AccuracyDirection, AtomicCostTable, Capability, LabelSet, LabelSetInfo, LabelSetTable, Rqe,
 };
@@ -156,10 +160,13 @@ fn rqes() -> Vec<Rqe> {
 }
 
 fn main() {
+    let candidates_only = std::env::args().any(|arg| arg == "--candidates-only");
     let rqes = rqes();
     let cost_table = load_cost_table();
     let label_sets = label_sets();
 
+    let unpruned_count =
+        candidates_only.then(|| build_all_candidates_unpruned(&rqes, &cost_table).len());
     let deployments = build_all_candidates(&rqes, &cost_table);
     println!(
         "{} RQEs, {} candidate deployments (from {} real cost-table rows)",
@@ -168,9 +175,42 @@ fn main() {
         cost_table.len(),
     );
 
+    if let Some(unpruned_count) = unpruned_count {
+        println!(
+            "candidate dominance: {unpruned_count} generated -> {} retained ({} removed)",
+            deployments.len(),
+            unpruned_count - deployments.len(),
+        );
+        let mut possible_mappings = Some(1_u64);
+        for rqe in &rqes {
+            let eligible = eligible_deployments_for(rqe, &deployments);
+            println!("  {}: {} eligible deployments", rqe.id, eligible.len());
+            possible_mappings = possible_mappings.and_then(|count| {
+                count.checked_mul(eligible.len().try_into().expect("usize fits in u64"))
+            });
+        }
+        match possible_mappings {
+            Some(count) => println!("Cartesian mapping space: {count}"),
+            None => println!("Cartesian mapping space: exceeds u64"),
+        }
+        return;
+    }
+
     let missing = unservable(&rqes, &deployments);
     if !missing.is_empty() {
         println!("unservable (no eligible deployment): {missing:?}");
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--streaming") {
+        let mut front = ParetoFront::new();
+        let mapping_count = for_each_mapping(&rqes, &deployments, |mapping| {
+            front.consider(mapping, score(&rqes, &deployments, mapping, &label_sets));
+        });
+        println!(
+            "streamed {mapping_count} feasible mappings; {} remain on the Pareto front",
+            front.entries().len()
+        );
         return;
     }
 
