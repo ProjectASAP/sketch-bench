@@ -1,45 +1,47 @@
-# rqe-optimizer TODO
+# RQE optimizer status
 
-The v1 problem statement lives in `rqe_sketch_deployment_v1.md`. This file
-tracks work that is intentionally outside the current implementation.
+The v1 design is in `rqe_sketch_deployment_v1.md`. This file tracks what is
+implemented, what is next, and what is intentionally deferred.
 
-## Implement the v1 sliding-instance model
+## Done in v1
 
-The current crate still implements the earlier tumbling-only model. Replace it
-with the v1 deployment `(capability, configuration, labels, x, y)` and:
+- Sliding deployments use `(capability, configuration, labels, x, y)`, where
+  `x` is window size and `y` is slide.
+- Eligibility enforces capability and labels, exact window tiling, slide
+  alignment, and the RQE's measured `accuracy_metric` constraint.
+- Candidate generation uses legal windows and subset gcds of query intervals.
+  A deployment may serve multiple compatible RQEs.
+- Candidate dominance safely removes a deployment only when another covers all
+  of its RQEs with no worse query memory, ingest CPU, or per-RQE latency.
+- The analytical model combines measured per-operation costs with label-set
+  cardinality and arrival rate to score ingest CPU, query CPU, merge CPU,
+  total CPU, query memory, and per-RQE latency.
+- The Pareto vector is `(peak_query_memory, TCO_cpu, {latency_i})`.
+- Eager enumeration remains available for small inputs. Streaming enumeration
+  retains only the incremental Pareto frontier.
+- `small_problem --candidates-only` reports generated and retained candidate
+  counts, per-RQE eligibility, and the Cartesian mapping-space size.
+- Streaming mode reports periodic throughput and frontier-size progress, and
+  can print initial example mappings.
+- `scripts/export_rqe_optimizer_costs.sh` exports the 18-row measured cost
+  table used by `small_problem`, without changing ASAPQuery's exporter.
+- The MILP uses HiGHS to minimize TCO without enumerating mappings. It accepts
+  optional peak-memory and per-RQE latency bounds and returns a normal mapping.
 
-- generate candidates per RQE for every legal `(x, y)` divisor pair;
-- make capability, labels, window alignment, and measured accuracy hard
-  eligibility constraints;
-- allow one selected deployment to serve multiple eligible RQEs;
-- use the analytical model for peak query working memory, ingest CPU, merge
-  CPU, query CPU, total CPU, and per-RQE latency; and
-- use `(peak_query_memory, TCO_cpu, {latency_i})` for the Pareto frontier.
+## Next
 
-Keep latency index-aligned with the input RQEs rather than keyed by the display
-ID. Duplicate IDs must not collapse an objective dimension.
+- Add a hard `--max-mappings` limit to streaming experiments.
+- Validate accuracy after merging `S / x` sketch instances. V1 currently uses
+  single-instance measurements, which do not establish final query accuracy.
+- Add repeated MILP solves for Pareto exploration across memory and latency
+  budgets, or through normalized weighted objectives.
 
-## Validate accuracy after merging
+## Explicitly deferred
 
-v1 uses each configuration's measured single-instance accuracy. A query may
-merge `S / x` instances, so this is not evidence that the final result meets
-the RQE's tolerance.
-
-Prefer measuring accuracy at representative merge depths. An analytic
-composition rule is acceptable only after validation against measured data.
-
-## Future model extensions
-
-- Query-result sharing when RQE semantics and execution timing make reuse safe.
-- Per-RQE latency SLAs as hard eligibility constraints.
+- Query-result sharing across RQEs.
+- Per-RQE latency SLAs as hard constraints.
 - Merge buffers, retained-storage capacity, and concurrent-query memory.
-- Additional capabilities such as keyed L1 norm, L2 norm, and entropy.
-- A policy for selecting one mapping from the Pareto frontier.
-- An ILP solver when exhaustive enumeration no longer fits the workload size.
-
-## External measurement pipeline
-
-`scripts/export_atomic_costs.sh` may have a pass-order problem: its record
-merge keeps first values, while the script runs accuracy before cost. That can
-misalign timing and throughput sample counts. This pipeline is outside the
-optimizer's scope and needs an owner decision before changing it.
+- RQE churn, replanning, and migration cost.
+- Precomputed rollups; v1 merges selected base instances at query time.
+- A policy for choosing one mapping from the reported Pareto frontier.
+- Additional capabilities beyond frequency, quantile, cardinality, and top-k.

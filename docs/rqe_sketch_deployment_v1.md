@@ -154,6 +154,42 @@ the same deployment and therefore share its ingest work. A query may merge
 multiple instances from its selected deployment, but v1 does not combine
 results from several deployments to satisfy one RQE.
 
+### MILP formulation
+
+Let `E` be the eligible `(i, D)` pairs. The solver has one binary `z_{i,D}`
+for each pair in `E`, one binary `u_D` for each candidate, and a continuous
+variable `M` for peak query memory. It minimizes a chosen scalarization or
+solves under supplied budgets.
+
+```text
+z_{i,D} ∈ {0, 1}     for (i, D) ∈ E
+u_D     ∈ {0, 1}     for D ∈ candidates
+M       ≥ 0
+
+Σ_{D: (i,D) ∈ E} z_{i,D} = 1                    for every RQE i
+z_{i,D} ≤ u_D                                    for (i, D) ∈ E
+u_D ≤ Σ_{i: (i,D) ∈ E} z_{i,D}                   for every candidate D
+M ≥ query_memory_{i,D} × z_{i,D}                 for (i, D) ∈ E
+```
+
+The final `u_D` constraint prevents a deployment from becoming active when no
+RQE selected it. It is not required for feasibility, but makes ingest cost
+unambiguous.
+
+All CPU and latency terms are constants for an eligible pair. The solver uses:
+
+```text
+TCO_cpu = Σ_D ingest_cpu_D × u_D
+        + Σ_(i,D)∈E (query_cpu_{i,D} + merge_cpu_{i,D}) / T_i × z_{i,D}
+
+latency_i = Σ_{D: (i,D)∈E} latency_{i,D} × z_{i,D}
+```
+
+One solve needs a scalar objective, such as minimum `TCO_cpu` subject to
+`M ≤ memory_budget` and optional `latency_i ≤ latency_budget_i`. To sample the
+Pareto frontier, repeat solves over memory and latency budgets, or use a
+normalized weighted objective. The solver never enumerates full mappings.
+
 ## Analytical cost model
 
 The analytical model combines the empirical per-operation Sketch Bench

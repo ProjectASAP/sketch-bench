@@ -16,14 +16,20 @@
 //! Run: `scripts/export_rqe_optimizer_costs.sh` once, then
 //! `cargo run -p rqe-optimizer --example small_problem`. Add
 //! `--candidates-only` to inspect candidate pruning safely, without starting
-//! mapping enumeration.
+//! mapping enumeration. Streaming mode logs progress every one million
+//! mappings by default; pass `--progress-every N` to change that interval or
+//! `--print-first N` to display example mappings. `--milp` solves the
+//! minimum-TCO model without enumerating mappings. Repeat
+//! `--latency-limit RQE_ID=SECONDS` to impose MILP latency bounds.
 
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use rqe_optimizer::candidates::{
     build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
 };
 use rqe_optimizer::enumerate::{brute_force, for_each_mapping, unservable};
+use rqe_optimizer::milp::{minimize_tco, MilpBounds};
 use rqe_optimizer::objectives::score;
 use rqe_optimizer::pareto::{pareto_front, ParetoFront};
 use rqe_optimizer::{
@@ -133,6 +139,26 @@ fn rqes() -> Vec<Rqe> {
             accuracy_direction: AccuracyDirection::LowerIsBetter,
         },
         Rqe {
+            id: "latency_p99_6h_tick".to_string(),
+            capability: Capability::Quantile,
+            lookback_secs: 21_600,
+            interval_secs: 300,
+            labels: se.clone(),
+            accuracy_metric: RANK_ERR.to_string(),
+            accuracy_tolerance: 0.05,
+            accuracy_direction: AccuracyDirection::LowerIsBetter,
+        },
+        Rqe {
+            id: "latency_p99_1d".to_string(),
+            capability: Capability::Quantile,
+            lookback_secs: 86_400,
+            interval_secs: 60,
+            labels: se.clone(),
+            accuracy_metric: RANK_ERR.to_string(),
+            accuracy_tolerance: 0.05,
+            accuracy_direction: AccuracyDirection::LowerIsBetter,
+        },
+        Rqe {
             id: "distinct_services_1h".to_string(),
             capability: Capability::Cardinality,
             lookback_secs: 3_600,
@@ -157,6 +183,64 @@ fn rqes() -> Vec<Rqe> {
             accuracy_direction: AccuracyDirection::HigherIsBetter,
         },
     ]
+}
+
+fn positive_integer_flag(name: &str, default: u64) -> u64 {
+    let args: Vec<_> = std::env::args().collect();
+    match args.iter().position(|arg| arg == name) {
+        Some(index) => args
+            .get(index + 1)
+            .unwrap_or_else(|| panic!("{name} requires a positive integer"))
+            .parse::<u64>()
+            .ok()
+            .filter(|&value| value > 0)
+            .unwrap_or_else(|| panic!("{name} requires a positive integer")),
+        None => default,
+    }
+}
+
+fn print_mapping(
+    mapping_number: u64,
+    mapping: &[usize],
+    rqes: &[Rqe],
+    deployments: &[rqe_optimizer::Deployment],
+) {
+    println!("mapping {mapping_number}:");
+    for (rqe, &deployment_index) in rqes.iter().zip(mapping) {
+        let deployment = &deployments[deployment_index];
+        println!(
+            "  {} -> {} {} (x={}s, y={}s)",
+            rqe.id,
+            deployment.config.sketch,
+            deployment.config.sketch_config,
+            deployment.window_secs,
+            deployment.slide_secs,
+        );
+    }
+}
+
+fn latency_bounds(rqes: &[Rqe]) -> Vec<Option<f64>> {
+    let args: Vec<_> = std::env::args().collect();
+    let mut bounds = vec![None; rqes.len()];
+    for pair in args.windows(2).filter(|pair| pair[0] == "--latency-limit") {
+        let (id, seconds) = pair[1]
+            .split_once('=')
+            .unwrap_or_else(|| panic!("--latency-limit expects RQE_ID=SECONDS"));
+        let seconds = seconds
+            .parse::<f64>()
+            .ok()
+            .filter(|value| *value > 0.0)
+            .unwrap_or_else(|| panic!("latency limit must be a positive number of seconds"));
+        let index = rqes
+            .iter()
+            .position(|rqe| rqe.id == id)
+            .unwrap_or_else(|| panic!("unknown RQE in --latency-limit: {id}"));
+        assert!(
+            bounds[index].replace(seconds).is_none(),
+            "duplicate latency limit for {id}"
+        );
+    }
+    bounds
 }
 
 fn main() {
@@ -202,14 +286,59 @@ fn main() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--milp") {
+        let latency_bounds = latency_bounds(&rqes);
+        let solution = minimize_tco(
+            &rqes,
+            &deployments,
+            &label_sets,
+            &MilpBounds {
+                max_peak_query_memory_bytes: None,
+                max_query_latency_secs: latency_bounds,
+            },
+        )
+        .expect("small_problem MILP should be feasible");
+        println!(
+            "MILP minimum-TCO solution: peak_query_mem={:.0}MB, ingest={:.3e}, \
+             merge={:.3e}, query={:.3e}, total={:.3e} cpu-sec/sec",
+            solution.objectives.peak_query_memory_bytes / 1e6,
+            solution.objectives.ingest_cpu_secs_per_sec,
+            solution.objectives.merge_cpu_secs_per_sec,
+            solution.objectives.query_cpu_secs_per_sec,
+            solution.objectives.tco_cpu_secs_per_sec,
+        );
+        print_mapping(1, &solution.mapping, &rqes, &deployments);
+        for (rqe, latency) in rqes.iter().zip(&solution.objectives.query_latency_secs) {
+            println!("  {}: query_latency={latency:.3e} sec", rqe.id);
+        }
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--streaming") {
         let mut front = ParetoFront::new();
+        let progress_every = positive_integer_flag("--progress-every", 1_000_000);
+        let print_first = positive_integer_flag("--print-first", 0);
+        let started = Instant::now();
+        let mut processed = 0_u64;
         let mapping_count = for_each_mapping(&rqes, &deployments, |mapping| {
             front.consider(mapping, score(&rqes, &deployments, mapping, &label_sets));
+            processed += 1;
+            if processed <= print_first {
+                print_mapping(processed, mapping, &rqes, &deployments);
+            }
+            if processed.is_multiple_of(progress_every) {
+                let elapsed_secs = started.elapsed().as_secs_f64();
+                eprintln!(
+                    "progress: {processed} mappings in {elapsed_secs:.1}s ({:.0}/sec), {} on frontier",
+                    processed as f64 / elapsed_secs.max(f64::MIN_POSITIVE),
+                    front.entries().len(),
+                );
+            }
         });
         println!(
-            "streamed {mapping_count} feasible mappings; {} remain on the Pareto front",
-            front.entries().len()
+            "streamed {mapping_count} feasible mappings in {:.1}s; {} remain on the Pareto front",
+            started.elapsed().as_secs_f64(),
+            front.entries().len(),
         );
         return;
     }

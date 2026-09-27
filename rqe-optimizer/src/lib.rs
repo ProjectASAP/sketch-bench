@@ -10,6 +10,7 @@
 
 pub mod candidates;
 pub mod enumerate;
+pub mod milp;
 pub mod objectives;
 pub mod pareto;
 
