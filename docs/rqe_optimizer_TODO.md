@@ -27,6 +27,10 @@ implemented, what is next, and what is intentionally deferred.
   table used by `small_problem`, without changing ASAPQuery's exporter.
 - The MILP uses HiGHS to minimize TCO without enumerating mappings. It accepts
   optional peak-memory and per-RQE latency bounds and returns a normal mapping.
+- `small_problem --milp` accepts repeatable per-RQE latency limits and includes
+  1-hour, 6-hour, and 1-day quantile RQEs to exercise those constraints.
+- A regression test confirms the MILP matches exhaustive minimum-TCO search on
+  a tiny workload with shared deployment activation costs.
 
 ## Next
 
@@ -39,7 +43,6 @@ implemented, what is next, and what is intentionally deferred.
 ## Explicitly deferred
 
 - Query-result sharing across RQEs.
-- Per-RQE latency SLAs as hard constraints.
 - Merge buffers, retained-storage capacity, and concurrent-query memory.
 - RQE churn, replanning, and migration cost.
 - Precomputed rollups; v1 merges selected base instances at query time.

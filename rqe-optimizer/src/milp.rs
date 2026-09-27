@@ -168,10 +168,11 @@ fn query_latency_secs(rqe: &Rqe, deployment: &Deployment, label_sets: &LabelSetT
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enumerate::brute_force;
     use crate::{AccuracyDirection, AtomicCostEntry, Capability, LabelSet, LabelSetInfo};
     use std::collections::BTreeMap;
 
-    fn deployment(insert_cpu_secs: f64, memory: f64) -> Deployment {
+    fn deployment(insert_cpu_secs: f64, memory: f64, query_cpu_secs: f64) -> Deployment {
         Deployment {
             capability: Capability::Freq,
             labels: LabelSet::new(),
@@ -181,7 +182,7 @@ mod tests {
                 mem_bytes_per_instance: memory,
                 insert_cpu_secs,
                 merge_cpu_secs: 1.0,
-                query_cpu_secs: 1.0,
+                query_cpu_secs,
                 query_accuracy: BTreeMap::from([("err".into(), 0.0)]),
             },
             window_secs: 60,
@@ -205,7 +206,7 @@ mod tests {
     #[test]
     fn minimizes_cpu_and_respects_a_memory_bound() {
         let rqes = vec![rqe()];
-        let deployments = vec![deployment(1.0, 20.0), deployment(2.0, 10.0)];
+        let deployments = vec![deployment(1.0, 20.0, 1.0), deployment(2.0, 10.0, 1.0)];
         let label_sets = BTreeMap::from([(
             LabelSet::new(),
             LabelSetInfo {
@@ -229,5 +230,41 @@ mod tests {
         )
         .expect("feasible MILP under memory bound");
         assert_eq!(constrained.mapping, vec![1]);
+    }
+
+    #[test]
+    fn matches_brute_force_minimum_with_shared_deployment_costs() {
+        let mut frequent = rqe();
+        frequent.id = "frequent".into();
+        frequent.interval_secs = 60;
+        let mut infrequent = rqe();
+        infrequent.id = "infrequent".into();
+        let rqes = vec![frequent, infrequent];
+        let deployments = vec![deployment(1.0, 10.0, 400.0), deployment(3.0, 10.0, 1.0)];
+        let label_sets = BTreeMap::from([(
+            LabelSet::new(),
+            LabelSetInfo {
+                cardinality: 1,
+                arrival_rate_per_sec: 1.0,
+            },
+        )]);
+
+        let brute_force_best = brute_force(&rqes, &deployments)
+            .into_iter()
+            .min_by(|left, right| {
+                score(&rqes, &deployments, left, &label_sets)
+                    .tco_cpu_secs_per_sec
+                    .total_cmp(&score(&rqes, &deployments, right, &label_sets).tco_cpu_secs_per_sec)
+            })
+            .expect("test workload is servable");
+        let expected = score(&rqes, &deployments, &brute_force_best, &label_sets);
+
+        let milp = minimize_tco(&rqes, &deployments, &label_sets, &MilpBounds::default())
+            .expect("feasible MILP");
+
+        assert_eq!(milp.mapping, brute_force_best);
+        assert!(
+            (milp.objectives.tco_cpu_secs_per_sec - expected.tco_cpu_secs_per_sec).abs() < 1e-12
+        );
     }
 }
