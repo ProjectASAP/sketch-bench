@@ -13,8 +13,10 @@
 //! cardinality/arrival-rate) lives in the two tables below (`label_sets`,
 //! `rqes`) and nowhere else in this file.
 //!
-//! Run: `scripts/export_rqe_optimizer_costs.sh` once, then
-//! `cargo run -p rqe-optimizer --example small_problem`. Add
+//! Run: `scripts/export_rqe_optimizer_costs.sh` once. Do not run this example
+//! with no mode flag on a large workload: eager mode retains every feasible
+//! mapping and can exhaust memory. Use `--milp`, `--candidates-only`, or
+//! `--sample-mappings N` instead. Add
 //! `--candidates-only` to inspect candidate pruning safely, without starting
 //! mapping enumeration. Streaming mode logs progress every one million
 //! mappings by default; pass `--progress-every N` to change that interval or
@@ -383,6 +385,10 @@ fn main() {
         return;
     }
 
+    eprintln!(
+        "WARNING: eager mode will retain every feasible mapping. For larger workloads, use --milp, \
+         --candidates-only, or --sample-mappings N instead."
+    );
     let mappings = brute_force(&rqes, &deployments);
     println!("{} feasible full mappings", mappings.len());
 
