@@ -7,8 +7,8 @@ implemented, what is next, and what is intentionally deferred.
 
 - Sliding deployments use `(capability, configuration, labels, x, y)`, where
   `x` is window size and `y` is slide.
-- Eligibility enforces capability and labels, exact window tiling, slide
-  alignment, and the RQE's measured `accuracy_metric` constraint.
+- Eligibility enforces capability, labels, alignment, and the RQE's measured
+  `accuracy_metric` constraint.
 - Candidate generation uses legal windows and subset gcds of query intervals.
   A deployment may serve multiple compatible RQEs.
 - Candidate dominance safely removes a deployment only when another covers all
