@@ -21,6 +21,7 @@
 //! `--print-first N` to display example mappings. `--milp` solves the
 //! minimum-TCO model without enumerating mappings. Repeat
 //! `--latency-limit RQE_ID=SECONDS` to impose MILP latency bounds.
+//! `--sample-mappings N` prints N feasible mappings and exits.
 
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -28,7 +29,7 @@ use std::time::Instant;
 use rqe_optimizer::candidates::{
     build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
 };
-use rqe_optimizer::enumerate::{brute_force, for_each_mapping, unservable};
+use rqe_optimizer::enumerate::{brute_force, for_each_mapping, for_each_mapping_while, unservable};
 use rqe_optimizer::milp::{minimize_tco, MilpBounds};
 use rqe_optimizer::objectives::score;
 use rqe_optimizer::pareto::{pareto_front, ParetoFront};
@@ -219,6 +220,17 @@ fn print_mapping(
     }
 }
 
+fn print_candidate(candidate_number: usize, deployment: &rqe_optimizer::Deployment) {
+    println!(
+        "candidate {candidate_number}: {} {} labels={:?} (x={}s, y={}s)",
+        deployment.config.sketch,
+        deployment.config.sketch_config,
+        deployment.labels,
+        deployment.window_secs,
+        deployment.slide_secs,
+    );
+}
+
 fn latency_bounds(rqes: &[Rqe]) -> Vec<Option<f64>> {
     let args: Vec<_> = std::env::args().collect();
     let mut bounds = vec![None; rqes.len()];
@@ -277,12 +289,40 @@ fn main() {
             Some(count) => println!("Cartesian mapping space: {count}"),
             None => println!("Cartesian mapping space: exceeds u64"),
         }
+        let print_candidates = positive_integer_flag("--print-candidates", 0);
+        for (index, deployment) in deployments
+            .iter()
+            .take(usize::try_from(print_candidates).expect("u64 fits in usize"))
+            .enumerate()
+        {
+            print_candidate(index, deployment);
+        }
         return;
     }
 
     let missing = unservable(&rqes, &deployments);
     if !missing.is_empty() {
         println!("unservable (no eligible deployment): {missing:?}");
+        return;
+    }
+
+    let sample_mappings = positive_integer_flag("--sample-mappings", 0);
+    if sample_mappings > 0 {
+        let mut printed = 0;
+        let result = for_each_mapping_while(&rqes, &deployments, |mapping| {
+            printed += 1;
+            print_mapping(printed, mapping, &rqes, &deployments);
+            printed < sample_mappings
+        });
+        println!(
+            "printed {} feasible mapping sample(s); enumeration {}",
+            result.visited,
+            if result.completed {
+                "completed"
+            } else {
+                "stopped early"
+            },
+        );
         return;
     }
 

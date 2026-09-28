@@ -38,36 +38,70 @@ pub fn for_each_mapping(
     deployments: &[Deployment],
     mut visit: impl FnMut(&Mapping),
 ) -> u64 {
+    for_each_mapping_while(rqes, deployments, |mapping| {
+        visit(mapping);
+        true
+    })
+    .visited
+}
+
+/// Result of a streaming enumeration. `completed` is false when the visitor
+/// stopped enumeration early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnumerationResult {
+    pub visited: u64,
+    pub completed: bool,
+}
+
+/// Visit feasible mappings until the visitor returns false. This makes sample
+/// and bounded inspection modes safe: they never need to enumerate the rest
+/// of the Cartesian product after collecting enough examples.
+pub fn for_each_mapping_while(
+    rqes: &[Rqe],
+    deployments: &[Deployment],
+    mut visit: impl FnMut(&Mapping) -> bool,
+) -> EnumerationResult {
     let choices: Vec<Vec<usize>> = rqes
         .iter()
         .map(|r| eligible_deployments_for(r, deployments))
         .collect();
 
     if choices.iter().any(|c| c.is_empty()) {
-        return 0;
+        return EnumerationResult {
+            visited: 0,
+            completed: true,
+        };
     }
 
     fn visit_depth_first(
         choices: &[Vec<usize>],
         mapping: &mut Mapping,
-        visit: &mut impl FnMut(&Mapping),
-    ) -> u64 {
+        visit: &mut impl FnMut(&Mapping) -> bool,
+        visited: &mut u64,
+    ) -> bool {
         if mapping.len() == choices.len() {
-            visit(mapping);
-            return 1;
+            *visited += 1;
+            return visit(mapping);
         }
-        choices[mapping.len()]
-            .iter()
-            .map(|&deployment| {
-                mapping.push(deployment);
-                let count = visit_depth_first(choices, mapping, visit);
-                mapping.pop();
-                count
-            })
-            .sum()
+        for &deployment in &choices[mapping.len()] {
+            mapping.push(deployment);
+            let should_continue = visit_depth_first(choices, mapping, visit, visited);
+            mapping.pop();
+            if !should_continue {
+                return false;
+            }
+        }
+        true
     }
 
-    visit_depth_first(&choices, &mut Vec::with_capacity(rqes.len()), &mut visit)
+    let mut visited = 0;
+    let completed = visit_depth_first(
+        &choices,
+        &mut Vec::with_capacity(rqes.len()),
+        &mut visit,
+        &mut visited,
+    );
+    EnumerationResult { visited, completed }
 }
 
 #[cfg(test)]
@@ -139,5 +173,20 @@ mod tests {
         });
         assert_eq!(count as usize, eager.len());
         assert_eq!(streamed, eager);
+    }
+
+    #[test]
+    fn streaming_can_stop_after_a_fixed_number_of_mappings() {
+        let rqes = vec![rqe("a", 60, 3_600), rqe("b", 60, 3_600)];
+        let deployments = build_all_candidates(&rqes, &[cost("cms-fastpath-vector2d")]);
+        let mut sampled = Vec::new();
+        let result = for_each_mapping_while(&rqes, &deployments, |mapping| {
+            sampled.push(mapping.clone());
+            sampled.len() < 2
+        });
+
+        assert_eq!(result.visited, 2);
+        assert!(!result.completed);
+        assert_eq!(sampled.len(), 2);
     }
 }
