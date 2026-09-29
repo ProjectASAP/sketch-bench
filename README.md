@@ -122,6 +122,9 @@ In this case, `hll` takes a `lg_k` which describes the size of register list.
 
 **`--zipf-s`:** Some distribution requires parameter, like `zipf-s`.
 `zipf-s` means skewness, a parameter for zipf distribution.
+`--dataset pareto` instead takes `--pareto-alpha` (shape) and `--pareto-scale`
+(minimum value, default 1.0); it is unbounded, so it needs `--dtype f64` and
+ignores `--cardinality`.
 
 **`--cardinality`:** Another parameter required by zipf distribution.
 `cardinality` means the size of key-space of this synthesized zipf dataset.

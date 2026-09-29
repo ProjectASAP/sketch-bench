@@ -344,6 +344,38 @@
   ],
   "x-schema-version": 5,
   "$defs": {
+    "BurstSpec": {
+      "type": "object",
+      "properties": {
+        "burst_intervals": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "extra_fraction": {
+          "description": "Additional rows per selected interval, relative to its base size.",
+          "type": "number",
+          "format": "double"
+        },
+        "interval_rows": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "interval_rows",
+        "burst_intervals",
+        "extra_fraction",
+        "seed"
+      ]
+    },
     "ColumnSpec": {
       "description": "One column of a [`crate::TableDescription`].",
       "type": "object",
@@ -450,6 +482,19 @@
             }
           },
           "$ref": "#/$defs/NormalParameter",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pareto"
+            }
+          },
+          "$ref": "#/$defs/ParetoParameter",
           "required": [
             "kind"
           ]
@@ -604,6 +649,30 @@
       "required": [
         "mean",
         "standard_deviation",
+        "seed"
+      ]
+    },
+    "ParetoParameter": {
+      "description": "Pareto: heavy-tailed, `P(X > x) = (scale / x)^alpha` for `x >= scale`.\nUnbounded above, so like Normal it has no domain.",
+      "type": "object",
+      "properties": {
+        "alpha": {
+          "type": "number",
+          "format": "double"
+        },
+        "scale": {
+          "type": "number",
+          "format": "double"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "alpha",
+        "scale",
         "seed"
       ]
     },
@@ -781,6 +850,16 @@
             "synthetic": {
               "type": "object",
               "properties": {
+                "burst": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/BurstSpec"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "description": {
                   "$ref": "#/$defs/TableDescription"
                 }

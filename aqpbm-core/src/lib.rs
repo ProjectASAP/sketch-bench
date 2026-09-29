@@ -16,8 +16,8 @@ pub mod metrics;
 pub use accuracy::GroundTruth;
 pub use aqpbm_datagen::{
     ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
-    NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
-    RULE_MONOTONIC_INCREASE, RULE_NONE,
+    NormalParameter, ParetoParameter, StringOpts, TableDescription, UniformParameter,
+    ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
 pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
 pub use benchmark_result::{
