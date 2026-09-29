@@ -205,11 +205,13 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
             population_size: cardinality,
             seed: args.seed,
         }),
-        // Unbounded and continuous, so `--cardinality` has nothing to name and
-        // only an f64 column keeps the draws as drawn.
+        // Unbounded and continuous, so `--cardinality` has nothing to name. An
+        // f64 column keeps the draws as drawn; an i64 column floors them (every
+        // draw is >= scale > 0, so the renderer's truncation is a floor), which
+        // is what the i64-only exact quantile baseline needs.
         "pareto" => {
-            if args.dtype.as_deref() != Some("f64") {
-                bail!("--dataset pareto needs --dtype f64 (it is continuous and unbounded)");
+            if !matches!(args.dtype.as_deref(), Some("f64" | "i64")) {
+                bail!("--dataset pareto needs --dtype f64 or i64 (i64 floors each draw)");
             }
             DataDistribution::Pareto(ParetoParameter {
                 alpha: args

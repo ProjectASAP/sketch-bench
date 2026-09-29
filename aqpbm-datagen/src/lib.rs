@@ -149,6 +149,27 @@ mod tests {
         );
     }
 
+    /// An i64 column is the f64 draws floored: every draw is >= scale > 0, so
+    /// the renderer's `as` truncation is a floor. The i64-only exact quantile
+    /// baseline scores a Pareto stream through this.
+    #[test]
+    fn pareto_i64_floors_the_f64_draws() {
+        let draw = |data_type| {
+            one(column(pareto(1.1, 1000.0, 7), data_type), 50_000)
+                .generate()
+                .unwrap()
+                .into_column(0)
+                .unwrap()
+        };
+        let floats = draw("f64").into_f64().unwrap();
+        let ints = draw("i64").into_i64().unwrap();
+        assert!(ints.iter().all(|&v| v >= 1000));
+        assert!(ints
+            .iter()
+            .zip(&floats)
+            .all(|(&i, f)| i == f.floor() as i64));
+    }
+
     // ---------- rendering ----------
 
     /// `data_type` picks the variant, and nothing else about the description
