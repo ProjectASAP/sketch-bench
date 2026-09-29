@@ -16,6 +16,14 @@ NS = [10, 20, 30, 40, 50, 60]
 
 
 class NSaturationTest(unittest.TestCase):
+    def test_seed_noise_widens_the_band(self):
+        # A small plateau with seed noise wider than 10% of it: without the
+        # standard-error term this never saturates.
+        errors = [0.05, 0.019, 0.013, 0.018, 0.013, 0.017]
+        self.assertIsNone(n_saturation(NS, errors, 0.10, 3))
+        ses = [0.004, 0.002, 0.002, 0.002, 0.002, 0.002]
+        self.assertEqual(n_saturation(NS, errors, 0.10, 3, ses), 20)
+
     def test_falling_error_saturates_where_it_enters_the_band(self):
         errors = [1.0, 0.5, 0.21, 0.2, 0.2, 0.19]
         self.assertEqual(n_saturation(NS, errors, 0.10, 3), 30)

@@ -49,7 +49,7 @@ SUMMARY_COLUMNS = [
 ]
 CURVE_COLUMNS = [
     "family", "sketch", "config", "dist", "param", "cardinality", "n",
-    "seed_mean_error",
+    "seed_mean_error", "seed_se",
 ]
 
 
@@ -61,11 +61,13 @@ def checkpoints(n_min, n_max, per_decade):
     return sorted(set(ns))
 
 
-def n_saturation(ns, errors, tolerance, tail, abs_tol=1e-9):
+def n_saturation(ns, errors, tolerance, tail, ses=None, abs_tol=1e-9):
     """Smallest checkpoint from which the error stays on its plateau.
 
     The plateau is the mean of the last `tail` seed-mean errors. A checkpoint
-    is in band when |error - plateau| <= max(tolerance * |plateau|, abs_tol);
+    is in band when |error - plateau| <= max(tolerance * |plateau|, 2 * se,
+    abs_tol), where se is that checkpoint's standard error across seeds
+    (`ses`, 0 when omitted), so seed noise alone never breaks the plateau;
     abs_tol only matters when the plateau is (near) zero. N_sat is ns[i] for
     the smallest i such that every checkpoint i..end is in band. Comparing
     magnitudes makes direction irrelevant (precision_at_k rises, errors fall).
@@ -78,9 +80,10 @@ def n_saturation(ns, errors, tolerance, tail, abs_tol=1e-9):
     if len(errors) < tail:
         return None
     plateau = sum(errors[-tail:]) / tail
-    band = max(tolerance * abs(plateau), abs_tol)
+    ses = ses or [0.0] * len(errors)
     first = len(errors)
     for i in range(len(errors) - 1, -1, -1):
+        band = max(tolerance * abs(plateau), 2 * ses[i], abs_tol)
         if abs(errors[i] - plateau) > band:
             break
         first = i
@@ -89,10 +92,20 @@ def n_saturation(ns, errors, tolerance, tail, abs_tol=1e-9):
     return ns[first]
 
 
+def mean_and_se(values):
+    """Mean and standard error of the mean (0 for a single value)."""
+    mean = sum(values) / len(values)
+    if len(values) < 2:
+        return mean, 0.0
+    var = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    return mean, math.sqrt(var / len(values))
+
+
 def run(binary, args):
     """Run approxbench sketchbench and return the last JSONL record it prints."""
     out = subprocess.run(
-        [binary, "sketchbench"] + args, check=True, capture_output=True, text=True
+        [binary, "sketchbench"] + args,
+        check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL,
     ).stdout
     return json.loads(out.strip().splitlines()[-1])
 
@@ -188,16 +201,17 @@ def main():
         results = []
         for point, per_n in zip(points, futures):
             family, variant, config, _, metric, _, dist, param, k = point
-            means = []
+            means, ses = [], []
             for n, per_seed in zip(ns, per_n):
                 records = [f.result() for f in per_seed]
                 for r in records:
                     raw.write(json.dumps(r) + "\n")
-                mean = sum(error(r, metric) for r in records) / len(records)
+                mean, se = mean_and_se([error(r, metric) for r in records])
                 means.append(mean)
-                curve.writerow([family, variant, config, dist, param, k, n, mean])
+                ses.append(se)
+                curve.writerow([family, variant, config, dist, param, k, n, mean, se])
             curve_file.flush()
-            n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail)
+            n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail, ses)
             results.append((point, n_sat, means[-1]))
             print(f"  {variant} ({config}) {dist}={param} K={k}: n_sat={n_sat}",
                   file=sys.stderr)
