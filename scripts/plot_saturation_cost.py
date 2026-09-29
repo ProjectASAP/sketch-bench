@@ -21,6 +21,15 @@ SKETCHES = [
     ("kll-percall", "KLL (k=200)"),
     ("dd", "DDSketch (alpha=0.01)"),
 ]
+# The config each column shows; the JSONL may hold the whole config grid.
+PARAMS = {
+    "cms-fastpath-vector2d": {"rows": 3, "cols": 1024},
+    "countsketch-fastpath-vector2d": {"rows": 3, "cols": 1024},
+    "cms-heap-topk-fastpath-vector2d": {"rows": 3, "cols": 1024},
+    "hll": {"lg_k": 12},
+    "kll-percall": {"k": 200},
+    "dd": {"alpha": 0.01},
+}
 plt.rcParams.update({
     "font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK2,
     "xtick.color": MUTED, "ytick.color": MUTED, "axes.titlecolor": INK,
@@ -43,6 +52,8 @@ recs = {}
 for path in sys.argv[2:]:
     for line in open(path):
         r = json.loads(line)
+        if r["sketch_config"]["params"] != PARAMS.get(r["sketch"]):
+            continue
         d = r["workload"]["synthetic"]["description"]["column_spec"][0]["distribution"]
         if d["kind"] == "zipf":
             key = (r["sketch"], d["skewness"], d["population_size"])

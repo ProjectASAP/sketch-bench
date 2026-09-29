@@ -33,6 +33,16 @@ NAMES = {
     "kll-percall": "KLL (k=200) · mean rank error",
     "dd": "DDSketch (alpha=0.01) · mean rank error",
 }
+# The config each figure shows (the bounds below are for these); the curve
+# may hold the whole config grid.
+CONFIG = {
+    "cms-fastpath-vector2d": "rows=3 cols=1024",
+    "countsketch-fastpath-vector2d": "rows=3 cols=1024",
+    "cms-heap-topk-fastpath-vector2d": "rows=3 cols=1024",
+    "hll": "lg_k=12",
+    "kll-percall": "k=200",
+    "dd": "alpha=0.01",
+}
 KLAB = {1000: "1K", 100000: "100K", 10000000: "10M"}
 BOUND = "#52514e"
 
@@ -81,7 +91,7 @@ BOUND_TEXT = {
 }
 
 for sk, name in NAMES.items():
-    c = curve[curve.sketch == sk]
+    c = curve[(curve.sketch == sk) & (curve.config == CONFIG[sk])]
     if c.empty:
         continue
     pareto = (c.dist == "pareto").all()
@@ -127,7 +137,7 @@ for sk, name in NAMES.items():
                 ax.set_ylabel("empirical error")
     import textwrap
     note = (f"{BOUND_TEXT[sk]}   (dotted gray = theoretical bound). Each panel has its own "
-            f"y-scale (log when all errors > 0); line = mean of {10 if pareto else 3} seeds, band = ±2 SE, dashed = "
+            f"y-scale (log when all errors > 0); line = seed mean, band = ±2 SE, dashed = "
             "N_saturation (within max(10% of plateau, 2 SE) of the last-3 mean)")
     fig.suptitle(name + "\n" + "\n".join(textwrap.wrap(note, 34 * nc)),
                  x=0.01, ha="left", color=INK, fontsize=11)
