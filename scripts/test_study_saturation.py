@@ -141,7 +141,10 @@ FAKE_APPROXBENCH = textwrap.dedent("""\
     lib = a[a.index("--library") + 1]
     ops = a[a.index("--operations") + 1]
     cpu = lambda s: {"user_ms": {"mean": s * 1000}, "sys_ms": {"mean": 0}}
-    if "accuracy" in a:
+    if "accuracy" in a and ops == "merge":
+        e = 0.01 * int(a[a.index("--merge-shards") + 1])
+        r = {"bench": {"accuracy": {"relative_error": e, "are_top100": e}}}
+    elif "accuracy" in a:
         r = {"bench": {"accuracy": {"relative_error": 0.01, "are_top100": 0.01}}}
     elif lib == "lib":
         r = {"memory_bytes": 1000, "insert_cpu_time_ms": cpu(1.0),
@@ -191,6 +194,33 @@ class AccuracyPhaseTest(unittest.TestCase):
             write_csv(points, ["sketch", "config", "dist", "param", "cardinality"],
                       [["hll", "lg_k=12", "zipf", "2.0", "1000"]])
             self.assertNotEqual(self.run_study(d, points).returncode, 0)
+
+
+class MergeCurveTest(unittest.TestCase):
+    def test_one_row_per_shard_count_and_one_is_the_plain_query(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
+                "--per-decade", "1", "--seeds", "2", "--merge-shards-list", "4,1",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation_merge_curve.csv"), newline="") as f:
+                rows = list(csv.DictReader(f))
+        self.assertEqual(
+            [(r["n"], r["shards"], float(r["seed_mean_error"])) for r in rows],
+            [("1000", "4", 0.04), ("1000", "1", 0.01),
+             ("10000", "4", 0.04), ("10000", "1", 0.01)])
+
+    def test_without_the_flag_there_is_no_merge_curve(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
+                "--per-decade", "1", "--seeds", "1",
+            ], check=True, capture_output=True)
+            self.assertFalse(os.path.exists(os.path.join(d, "saturation_merge_curve.csv")))
 
 
 class ResumeTest(unittest.TestCase):

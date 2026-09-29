@@ -29,6 +29,9 @@ Writes, under --out:
                                                      columns blank after
                                                      --phase accuracy)
   crossover.csv                                      N* per point
+  saturation_merge_curve.csv                         with --merge-shards-list:
+      seed-mean error per N of the sketch merged from m contiguous shards
+      (m=1 is the plain single-sketch query; --resume appends to it)
 """
 
 import argparse
@@ -80,6 +83,7 @@ CURVE_COLUMNS = [
     "family", "sketch", "config", "dist", "param", "cardinality", "n",
     "seed_mean_error", "seed_se",
 ]
+MERGE_CURVE_COLUMNS = CURVE_COLUMNS[:-2] + ["shards", "seed_mean_error", "seed_se"]
 
 
 def checkpoints(n_min, n_max, per_decade):
@@ -265,6 +269,9 @@ def main():
     parser.add_argument("--cost-rows", type=int,
                         help="cost: measure only this rows= value of the Vector2D sketches "
                              "(other rows get blank cost columns and no crossover row)")
+    parser.add_argument("--merge-shards-list", default="",
+                        help="accuracy: e.g. 1,4,16,64: also score the sketch merged from "
+                             "m shards, for each m>1, into saturation_merge_curve.csv")
     args = parser.parse_args()
 
     families = args.families.split(",")
@@ -273,6 +280,7 @@ def main():
     alphas = [float(a) for a in args.alphas.split(",")]
     ns = checkpoints(args.n_min, args.n_max, args.per_decade)
     seeds = list(range(1, args.seeds + 1))
+    shard_list = [int(m) for m in args.merge_shards_list.split(",") if m]
     os.environ.setdefault("BENCH_WARMUP_SECS", "0")
     os.makedirs(args.out, exist_ok=True)
 
@@ -308,11 +316,13 @@ def main():
                      "are in the grid; widen --families/--thetas/--cardinalities/--alphas")
     print(f"{len(points)} points x {len(ns)} sizes x {len(seeds)} seeds", file=sys.stderr)
 
-    def accuracy(point, n, seed):
+    def accuracy(point, n, seed, shards=1):
         _, variant, config, comparator, metric, dataset, *_ = point
+        # One shard is the plain query; more score the sketch merged from them.
+        operation = ["query"] if shards == 1 else ["merge", "--merge-shards", str(shards)]
         return run(args.binary, [
             "--variant", variant, "--library", "lib", "--config", config,
-            "--operations", "query", "--metrics", "accuracy",
+            "--operations", *operation, "--metrics", "accuracy",
             "--comparator", comparator, "--runs", "1", "--warmup-runs", "0",
             "--size", str(n), "--seed", str(seed),
         ] + dataset)
@@ -345,6 +355,13 @@ def main():
         curve.writerow(CURVE_COLUMNS)
         curve.writerows(kept_rows)
         curve_file.flush()
+        if shard_list:
+            merge_path = os.path.join(args.out, "saturation_merge_curve.csv")
+            append = args.resume and os.path.exists(merge_path)
+            merge_file = open(merge_path, "a" if append else "w", newline="")
+            merge_curve = csv.writer(merge_file)
+            if not append:
+                merge_curve.writerow(MERGE_CURVE_COLUMNS)
         # Submit everything up front so the pool stays full; results are consumed
         # in point order, so the curve CSV fills point by point.
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -352,11 +369,17 @@ def main():
                 None if point_key(p[1], p[2], *p[6:]) in done else
                 [[pool.submit(accuracy, p, n, s) for s in seeds] for n in ns] for p in points
             ]
+            merge_futures = [
+                None if per_n is None else
+                [{m: [pool.submit(accuracy, p, n, s, m) for s in seeds]
+                  for m in shard_list if m > 1} for n in ns]
+                for p, per_n in zip(points, futures)
+            ]
             print(f"{len(done)} points kept, {sum(f is not None for f in futures)} to run",
                   file=sys.stderr)
             results = []
             try:
-                for point, per_n in zip(points, futures):
+                for point, per_n, merge_per_n in zip(points, futures, merge_futures):
                     family, variant, config, _, metric, _, dist, param, k = point
                     if per_n is None:
                         kept = done[point_key(variant, config, dist, param, k)]
@@ -366,7 +389,7 @@ def main():
                         results.append((point, n_sat, means[-1]))
                         continue
                     means, ses = [], []
-                    for n, per_seed in zip(ns, per_n):
+                    for n, per_seed, per_shards in zip(ns, per_n, merge_per_n):
                         records = [f.result() for f in per_seed]
                         for r in records:
                             raw.write(json.dumps(r) + "\n")
@@ -374,7 +397,19 @@ def main():
                         means.append(mean)
                         ses.append(se)
                         curve.writerow([family, variant, config, dist, param, k, n, mean, se])
+                        for m in shard_list:
+                            if m == 1:
+                                mean, se = means[-1], ses[-1]
+                            else:
+                                merged = [f.result() for f in per_shards[m]]
+                                for r in merged:
+                                    raw.write(json.dumps(r) + "\n")
+                                mean, se = mean_and_se([error(r, metric) for r in merged])
+                            merge_curve.writerow(
+                                [family, variant, config, dist, param, k, n, m, mean, se])
                     curve_file.flush()
+                    if shard_list:
+                        merge_file.flush()
                     n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail, ses)
                     results.append((point, n_sat, means[-1]))
                     print(f"  {variant} ({config}) {dist}={param} K={k}: n_sat={n_sat}",
@@ -383,9 +418,14 @@ def main():
                 # A failed run (or Ctrl-C) should surface now, not after the queue drains.
                 for f in (f for per_n in futures if per_n for fs in per_n for f in fs):
                     f.cancel()
+                for f in (f for per_n in merge_futures if per_n
+                          for by_m in per_n for fs in by_m.values() for f in fs):
+                    f.cancel()
                 raise
         raw.close()
         curve_file.close()
+        if shard_list:
+            merge_file.close()
 
     # Cost at the final N, one serial run per point with the merge setup of
     # export_rqe_optimizer_costs.sh. --phase accuracy leaves these blank.
