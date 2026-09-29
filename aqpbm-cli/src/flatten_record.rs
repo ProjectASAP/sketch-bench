@@ -172,6 +172,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                     *merge_supported,
                     "merge_supported"
                 );
+                keep_owned!(out.merge.accuracy, accuracy.clone(), "accuracy");
                 keep_shared!(out.merge.cpu_time_ms, cpu_time_ms);
                 keep_shared!(out.merge.wall_time_ms, wall_time_ms);
                 keep_shared!(out.merge.rss_peak_kb, rss_peak_kb);

@@ -228,7 +228,9 @@ pub struct SketchbenchArgs {
     )]
     pub operations: Option<String>,
     /// How many shards the merge operation folds. A knob, never a selector:
-    /// measuring merge is asked for with `--operations merge`. Linear sketches
+    /// measuring merge is asked for with `--operations merge`. With
+    /// `--metrics accuracy` the folded sketch is asked the query's questions and
+    /// scored against the whole stream, as `merge_accuracy`. Linear sketches
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,

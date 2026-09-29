@@ -134,12 +134,27 @@ pub fn query_kll_lib_per_call<T>(
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
+    merge_query_kll_lib_per_call::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_kll_lib_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_kll_lib_per_call::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.update(v);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = kll_lib_per_call_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -287,12 +302,29 @@ pub fn query_kll_lib_cdf<T>(
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
 {
+    merge_query_kll_lib_cdf::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_kll_lib_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_kll_lib_cdf::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.update(v);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = kll_lib_cdf_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
+            // A merged sketch invalidates any CDF cached from the pre-merge state.
+            sketch.cdf = None;
         }
         let cdf = sketch.inner.cdf();
         let probes = probes.clone();

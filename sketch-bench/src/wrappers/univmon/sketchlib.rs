@@ -99,14 +99,16 @@ fn asked_univmon_lib<K: UnivMonKey>(
     params: &ParamSet,
     items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
     estimate: fn(&UnivMonLib) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_univmon_lib(params)?;
-        for record in items.iter() {
-            sketch.feed(record);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = univmon_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -128,6 +130,26 @@ pub fn query_univmon_lib_cardinality<K: UnivMonKey>(
         params,
         items,
         probes,
+        1,
+        passes,
+        UnivMonLib::estimate_cardinality,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_lib_cardinality<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         UnivMonLib::estimate_cardinality,
     )
@@ -139,7 +161,33 @@ pub fn query_univmon_lib_l1_norm<K: UnivMonKey>(
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
-    asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_l1_norm)
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        1,
+        passes,
+        UnivMonLib::estimate_l1_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_lib_l1_norm<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        UnivMonLib::estimate_l1_norm,
+    )
 }
 
 pub fn query_univmon_lib_l2_norm<K: UnivMonKey>(
@@ -148,7 +196,33 @@ pub fn query_univmon_lib_l2_norm<K: UnivMonKey>(
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
-    asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_l2_norm)
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        1,
+        passes,
+        UnivMonLib::estimate_l2_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_lib_l2_norm<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        UnivMonLib::estimate_l2_norm,
+    )
 }
 
 pub fn query_univmon_lib_entropy<K: UnivMonKey>(
@@ -157,7 +231,33 @@ pub fn query_univmon_lib_entropy<K: UnivMonKey>(
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
-    asked_univmon_lib(params, items, probes, passes, UnivMonLib::estimate_entropy)
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        1,
+        passes,
+        UnivMonLib::estimate_entropy,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_lib_entropy<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_lib(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        UnivMonLib::estimate_entropy,
+    )
 }
 
 pub fn merge_univmon_lib<K: UnivMonKey>(

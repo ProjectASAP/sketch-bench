@@ -142,15 +142,20 @@ fn asked_univmon_oxide<K: UnivMonKey>(
     params: &ParamSet,
     items: Rc<Vec<Record<K>>>,
     probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
     estimate: fn(&UnivMonOxide) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     require_non_negative(&items)?;
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_univmon_oxide(params)?;
-        for record in items.iter() {
-            sketch.feed(record);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = univmon_oxide_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so their layers match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -172,6 +177,26 @@ pub fn query_univmon_oxide_l1_norm<K: UnivMonKey>(
         params,
         items,
         probes,
+        1,
+        passes,
+        UnivMonOxide::estimate_l1_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_oxide_l1_norm<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_oxide(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         UnivMonOxide::estimate_l1_norm,
     )
@@ -187,6 +212,26 @@ pub fn query_univmon_oxide_l2_norm<K: UnivMonKey>(
         params,
         items,
         probes,
+        1,
+        passes,
+        UnivMonOxide::estimate_l2_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_oxide_l2_norm<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_oxide(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         UnivMonOxide::estimate_l2_norm,
     )
@@ -202,6 +247,26 @@ pub fn query_univmon_oxide_entropy<K: UnivMonKey>(
         params,
         items,
         probes,
+        1,
+        passes,
+        UnivMonOxide::estimate_entropy,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_univmon_oxide_entropy<K: UnivMonKey>(
+    params: &ParamSet,
+    items: Rc<Vec<Record<K>>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_univmon_oxide(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         UnivMonOxide::estimate_entropy,
     )

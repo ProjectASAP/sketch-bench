@@ -84,12 +84,27 @@ pub fn query_hll_oxide<T: CardinalityValue>(
     probes: Rc<Vec<()>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hll_oxide::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hll_oxide<T: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hll_oxide(params)?;
-        for v in items.iter() {
-            sketch.inner.update(&v.hash_key());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = hll_oxide_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so lg_k matches");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {

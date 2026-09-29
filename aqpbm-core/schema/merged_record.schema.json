@@ -99,6 +99,9 @@
       "format": "uint64",
       "minimum": 0
     },
+    "merge_accuracy": {
+      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` contiguous\nshards. A linear sketch should match `query_accuracy` exactly."
+    },
     "merge_cpu_time_ms": {
       "anyOf": [
         {
@@ -214,7 +217,7 @@
       ]
     },
     "query_accuracy": {
-      "description": "The comparator's scores. Only this operation has them: accuracy is\nwhat an answer can be scored for, and query is what produces one."
+      "description": "The comparator's scores for the sketch fed the whole stream. Merge\ncarries the same scores for a folded sketch in `merge_accuracy`."
     },
     "query_cpu_time_ms": {
       "anyOf": [
@@ -314,6 +317,7 @@
     "insert_wall_time_ms",
     "language",
     "memory_bytes",
+    "merge_accuracy",
     "merge_cpu_time_ms",
     "merge_heap_allocated_kb",
     "merge_rss_peak_kb",

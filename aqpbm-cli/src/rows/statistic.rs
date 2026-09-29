@@ -30,7 +30,7 @@ pub(super) fn frequency_row<T: CountedValue>(
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, T, u64>,
-    merge: Option<Folds<T>>,
+    merge: Option<Folds<T, T, u64>>,
     prepare: Option<PrepareBody<T>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -59,7 +59,7 @@ pub(super) fn cardinality_row<T: ColumnItem>(
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, (), f64>,
-    merge: Option<Folds<T>>,
+    merge: Option<Folds<T, (), f64>>,
     prepare: Option<PrepareBody<T>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -93,7 +93,7 @@ pub(super) fn topk_row<T: CountedValue>(
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, (), chl::TopkAnswer<T>>,
-    merge: Option<Folds<T>>,
+    merge: Option<Folds<T, (), chl::TopkAnswer<T>>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
@@ -112,7 +112,7 @@ pub(super) fn topk_row<T: CountedValue>(
 
 /// A row answering **subpopulation frequency**: how often a value occurs inside
 /// a group.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
     req: &Requirement,
     description: &TableDescription,
@@ -121,7 +121,7 @@ pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
     query: QueryBody<(String, V), (Vec<String>, V), f64>,
-    merge: Option<Folds<(String, V)>>,
+    merge: Option<Folds<(String, V), (Vec<String>, V), f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -150,7 +150,7 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
     query: QueryBody<(String, V), Vec<String>, f64>,
-    merge: Option<Folds<(String, V)>>,
+    merge: Option<Folds<(String, V), Vec<String>, f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -183,7 +183,7 @@ pub(super) fn subpop_vector_row<V: ColumnItem + 'static, G>(
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
     query: QueryBody<(String, V), Vec<String>, f64>,
-    merge: Option<Folds<(String, V)>>,
+    merge: Option<Folds<(String, V), Vec<String>, f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError>
 where
@@ -205,7 +205,7 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     req: &Requirement,
     description: &TableDescription,
@@ -214,7 +214,7 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
     query: QueryBody<(String, V), (Vec<String>, f64), f64>,
-    merge: Option<Folds<(String, V)>>,
+    merge: Option<Folds<(String, V), (Vec<String>, f64), f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -245,7 +245,7 @@ pub(super) fn keyed_row<K: ColumnItem, G>(
     insert: InsertBody<(K, i64)>,
     insert_step: InsertStepBody<(K, i64)>,
     query: QueryBody<(K, i64), (), f64>,
-    merge: Option<Folds<(K, i64)>>,
+    merge: Option<Folds<(K, i64), (), f64>>,
     prepare: Option<PrepareBody<(K, i64)>>,
 ) -> Result<Measurements, RunError>
 where
@@ -278,7 +278,7 @@ pub(super) fn quantile_row<T: ColumnItem>(
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, f64, f64>,
-    merge: Option<Folds<T>>,
+    merge: Option<Folds<T, f64, f64>>,
     prepare: Option<PrepareBody<T>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -309,7 +309,7 @@ pub(super) fn scored_row<G, I>(
     insert: InsertBody<I>,
     insert_step: InsertStepBody<I>,
     query: QueryBody<I, G::Probe, G::Answer>,
-    merge: Option<Folds<I>>,
+    merge: Option<Folds<I, G::Probe, G::Answer>>,
     prepare: Option<PrepareBody<I>>,
 ) -> Result<Measurements, RunError>
 where
@@ -333,6 +333,20 @@ where
             ),
             (Operation::Query, _) => answered(
                 query(&req.params, items.clone(), probes.clone(), n).map_err(cannot_build)?,
+                score.clone(),
+                metric,
+            ),
+            // Scored exactly as the query is: same probes, same comparator, and
+            // the truth is still the whole stream, split across the shards.
+            (Operation::Merge, Metric::Accuracy) => answered(
+                merge.expect(SUPPORTED).2(
+                    &req.params,
+                    items.clone(),
+                    probes.clone(),
+                    shards(req),
+                    n,
+                )
+                .map_err(cannot_build)?,
                 score.clone(),
                 metric,
             ),

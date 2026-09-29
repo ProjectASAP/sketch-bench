@@ -103,9 +103,14 @@ pub type MergeBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<Pa
 pub type MergeStepBody<I> =
     fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<StepPass>, BuildError>;
 
-/// Both forms of a row's fold: as one pass, and one shard at a time. A row
-/// either supplies both or has no merge at all.
-pub type Folds<I> = (MergeBody<I>, MergeStepBody<I>);
+/// Prime `passes` runs of the row's query, asked of the sketch a fold over
+/// `shards` sketches leaves, so its answers can be scored like the query's.
+pub type MergeQueryBody<I, P, A> =
+    fn(&ParamSet, Rc<Vec<I>>, Rc<Vec<P>>, usize, usize) -> Result<Vec<QueryPass<A>>, BuildError>;
+
+/// Every form of a row's fold: as one pass, one shard at a time, and asked
+/// afterwards. A row either supplies all three or has no merge at all.
+pub type Folds<I, P, A> = (MergeBody<I>, MergeStepBody<I>, MergeQueryBody<I, P, A>);
 
 /// Prime `passes` runs of the step that makes a fed sketch ready to answer.
 pub type PrepareBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
