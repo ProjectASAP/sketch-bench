@@ -135,7 +135,7 @@ FAKE_APPROXBENCH = textwrap.dedent("""\
     ops = a[a.index("--operations") + 1]
     cpu = lambda s: {"user_ms": {"mean": s * 1000}, "sys_ms": {"mean": 0}}
     if "accuracy" in a:
-        r = {"bench": {"accuracy": {"relative_error": 0.01}}}
+        r = {"bench": {"accuracy": {"relative_error": 0.01, "are_top100": 0.01}}}
     elif lib == "lib":
         r = {"memory_bytes": 1000, "insert_cpu_time_ms": cpu(1.0),
              "query_cpu_time_ms": cpu(0.5), "merge_cpu_time_ms": cpu(0.1)}
@@ -186,7 +186,64 @@ class AccuracyPhaseTest(unittest.TestCase):
             self.assertNotEqual(self.run_study(d, points).returncode, 0)
 
 
+class ResumeTest(unittest.TestCase):
+    def test_keeps_complete_curves_and_reruns_the_rest(self):
+        with tempfile.TemporaryDirectory() as d:
+            ns = checkpoints(1e3, 1e6, 1)
+            curve = os.path.join(d, "saturation_curve.csv")
+            # theta 0 is complete (error 0.5, which the fake would not give);
+            # theta 1 was cut off after two sizes.
+            write_csv(curve, CURVE_HEADER,
+                      [["cardinality", "hll", "lg_k=12", "zipf", 0.0, 1000, n, 0.5, 0]
+                       for n in ns]
+                      + [["cardinality", "hll", "lg_k=12", "zipf", 1.0, 1000, n, 0.9, 0]
+                         for n in ns[:2]])
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "0,1.0", "--cardinalities", "1000", "--n-max", "1e6",
+                "--per-decade", "1", "--seeds", "2", "--resume",
+            ], check=True, capture_output=True)
+            with open(curve, newline="") as f:
+                rows = list(csv.DictReader(f))
+            with open(os.path.join(d, "saturation.csv"), newline="") as f:
+                summary = list(csv.DictReader(f))
+            with open(os.path.join(d, "saturation_accuracy.jsonl")) as f:
+                raw = f.readlines()
+        errors = {}
+        for r in rows:
+            errors.setdefault(r["param"], []).append(float(r["seed_mean_error"]))
+        self.assertEqual(errors, {"0.0": [0.5] * 4, "1.0": [0.01] * 4})
+        self.assertEqual([r["final_error"] for r in summary], ["0.5", "0.01"])
+        # Only the rerun point was measured: 4 sizes x 2 seeds.
+        self.assertEqual(len(raw), 8)
+
+
 class CostPhaseTest(unittest.TestCase):
+    def test_cost_rows_measures_only_that_rows_value(self):
+        with tempfile.TemporaryDirectory() as d:
+            ns = checkpoints(1e3, 1e6, 1)
+            configs = ["rows=3 cols=256", "rows=5 cols=256"]
+            write_csv(os.path.join(d, "saturation_curve.csv"), CURVE_HEADER,
+                      [["frequency", "cms-fastpath-vector2d", c, "zipf", 1.0, 1000, n, 0.01, 0]
+                       for c in configs for n in ns])
+            points = os.path.join(d, "points.csv")
+            write_csv(points, ["sketch", "config", "dist", "param", "cardinality"],
+                      [["cms-fastpath-vector2d", c, "zipf", 1.0, 1000] for c in configs])
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "cost", "--families", "frequency", "--thetas", "1.0",
+                "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1",
+                "--points-from", points, "--cost-rows", "3",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation.csv"), newline="") as f:
+                summary = list(csv.DictReader(f))
+            with open(os.path.join(d, "crossover.csv"), newline="") as f:
+                crossover = list(csv.DictReader(f))
+        self.assertEqual([(r["config"], r["memory_bytes"]) for r in summary],
+                         [("rows=3 cols=256", "1000"), ("rows=5 cols=256", "")])
+        self.assertEqual([r["config"] for r in crossover], ["rows=3 cols=256"])
+
     def test_cost_phase_writes_crossover_from_an_existing_curve(self):
         with tempfile.TemporaryDirectory() as d:
             binary = fake_binary(d)

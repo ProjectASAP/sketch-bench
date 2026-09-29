@@ -17,6 +17,8 @@ scripts/export_rqe_optimizer_costs.sh stays the source of optimizer costs.
 --phase accuracy runs only the (parallel) accuracy runs; --phase cost reads
 saturation_curve.csv from --out and runs only the serial cost runs, so CPU
 can be timed later on a quiet machine. Both take the same grid arguments.
+--resume keeps the complete curves of an interrupted accuracy run;
+--cost-rows 3 times only the rows=3 Vector2D configs.
 
 Writes, under --out:
   saturation_accuracy.jsonl, saturation_cost.jsonl,
@@ -131,21 +133,27 @@ def point_key(sketch, config, dist, param, cardinality):
     return (sketch, config, dist, float(param), str(cardinality))
 
 
-def read_curve(path, points, ns, tolerance, tail):
-    """(point, n_sat, final error) per point, from an earlier accuracy phase.
-
-    Exits when a point's curve is missing or was measured over other sizes
-    than `ns`, i.e. the grid arguments differ from the accuracy run's.
-    """
+def load_curves(path):
+    """{point key: sorted [(n, seed-mean error, se)]} from a saturation_curve.csv."""
     curves = {}
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             key = point_key(r["sketch"], r["config"], r["dist"], r["param"], r["cardinality"])
             curves.setdefault(key, []).append(
                 (int(r["n"]), float(r["seed_mean_error"]), float(r["seed_se"])))
+    return {key: sorted(curve) for key, curve in curves.items()}
+
+
+def read_curve(path, points, ns, tolerance, tail):
+    """(point, n_sat, final error) per point, from an earlier accuracy phase.
+
+    Exits when a point's curve is missing or was measured over other sizes
+    than `ns`, i.e. the grid arguments differ from the accuracy run's.
+    """
+    curves = load_curves(path)
     results = []
     for p in points:
-        curve = sorted(curves.get(point_key(p[1], p[2], *p[6:]), []))
+        curve = curves.get(point_key(p[1], p[2], *p[6:]), [])
         if [n for n, _, _ in curve] != ns:
             sys.exit(f"{path} has no curve over these sizes for {p[1]} ({p[2]}) "
                      f"{p[6]}={p[7]} K={p[8]}; pass the accuracy run's grid arguments")
@@ -213,6 +221,12 @@ def main():
     parser.add_argument("--points-from",
                         help="CSV with sketch,config,dist,param,cardinality columns "
                              "(e.g. a filtered saturation.csv): run only those points")
+    parser.add_argument("--resume", action="store_true",
+                        help="accuracy: keep the points whose curve over these sizes is "
+                             "already in --out's saturation_curve.csv, run the rest")
+    parser.add_argument("--cost-rows", type=int,
+                        help="cost: measure only this rows= value of the Vector2D sketches "
+                             "(other rows get blank cost columns and no crossover row)")
     args = parser.parse_args()
 
     families = args.families.split(",")
@@ -269,19 +283,42 @@ def main():
         results = read_curve(os.path.join(args.out, "saturation_curve.csv"), points, ns,
                              args.tolerance, args.plateau_tail)
     else:
-        raw = open(os.path.join(args.out, "saturation_accuracy.jsonl"), "w")
-        curve_file = open(os.path.join(args.out, "saturation_curve.csv"), "w", newline="")
+        curve_path = os.path.join(args.out, "saturation_curve.csv")
+        # --resume keeps complete curves and writes them back first, so a
+        # point cut off mid-write is dropped and rerun, and a second
+        # interruption loses nothing that was kept.
+        done = {}
+        if args.resume and os.path.exists(curve_path):
+            done = {key: c for key, c in load_curves(curve_path).items()
+                    if [n for n, _, _ in c] == ns}
+        raw = open(os.path.join(args.out, "saturation_accuracy.jsonl"),
+                   "a" if args.resume else "w")
+        curve_file = open(curve_path, "w", newline="")
         curve = csv.writer(curve_file)
         curve.writerow(CURVE_COLUMNS)
+        for p in points:
+            for n, mean, se in done.get(point_key(p[1], p[2], *p[6:]), []):
+                curve.writerow([p[0], p[1], p[2], p[6], p[7], p[8], n, mean, se])
+        curve_file.flush()
         # Submit everything up front so the pool stays full; results are consumed
         # in point order, so the curve CSV fills point by point.
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             futures = [
+                None if point_key(p[1], p[2], *p[6:]) in done else
                 [[pool.submit(accuracy, p, n, s) for s in seeds] for n in ns] for p in points
             ]
+            print(f"{len(done)} points kept, {sum(f is not None for f in futures)} to run",
+                  file=sys.stderr)
             results = []
             for point, per_n in zip(points, futures):
                 family, variant, config, _, metric, _, dist, param, k = point
+                if per_n is None:
+                    kept = done[point_key(variant, config, dist, param, k)]
+                    means = [mean for _, mean, _ in kept]
+                    n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail,
+                                         [se for _, _, se in kept])
+                    results.append((point, n_sat, means[-1]))
+                    continue
                 means, ses = [], []
                 for n, per_seed in zip(ns, per_n):
                     records = [f.result() for f in per_seed]
@@ -307,7 +344,10 @@ def main():
     for point, n_sat, final_error in results:
         family, variant, config, _, metric, dataset, dist, param, k = point
         record = {}
-        if cost:
+        # rows=5 costs ~5/3 of rows=3 (insert, query and memory are per row).
+        skip = args.cost_rows is not None and config.startswith("rows=") \
+            and not config.startswith(f"rows={args.cost_rows} ")
+        if cost and not skip:
             record = run(args.binary, [
                 "--variant", variant, "--library", "lib", "--config", config,
                 "--operations", "insert,query,merge",
@@ -340,8 +380,9 @@ def main():
     # plus any count table), the same self-reported formula as the sketch's;
     # CPU is insert + prepare (the polars pass) + query.
     exact = {}
+    measured = [(r, record) for r, record in zip(results, records) if record]
     with open(os.path.join(args.out, "exact_cost.jsonl"), "w") as exact_raw:
-        for point in points:
+        for (point, _, _), _ in measured:
             variant, config = EXACT[point[0]]
             for n in ns:
                 key = (variant, tuple(point[5]), n)
@@ -363,7 +404,7 @@ def main():
     with open(os.path.join(args.out, "crossover.csv"), "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(CROSSOVER_COLUMNS)
-        for (point, n_sat, _), record in zip(results, records):
+        for (point, n_sat, _), record in measured:
             family, variant, config, _, _, dataset, dist, param, k = point
             per_n = [exact[(EXACT[family][0], tuple(dataset), n)] for n in ns]
             insert, query = cpu_secs(record, "insert"), cpu_secs(record, "query")
