@@ -135,6 +135,59 @@ state with retained state. It leaves out polars' transient working memory, so
 exact memory is a lower bound and N\*_mem is conservative (the exact answer
 really gets expensive a bit sooner).
 
+## From data parameters to a configuration
+
+`scripts/recommend_config.py` turns the worst case each query's data shows
+into a recommended config per sketch family, writing `out/recommendations.csv`
+(`dataset, query_id, range, family, config, est_error, target, meets_target,
+n_sat, flags`, the cost columns `memory_bytes, insert_ns_per_item,
+merge_us_per_fold, query_us`, and the grid point used: `grid_param, grid_K, N,
+shards`).
+
+Inputs:
+
+- ASAPQuery `asap-tools/dataset-analysis/results/skew_summary.csv`: per
+  (dataset, query, range) `worst_theta_cms` (lowest θ of the weight a per-key
+  counter sees), `worst_K`, `min_N`/`max_N` (items per evaluation),
+  `worst_alpha_rank`/`worst_alpha_memory`, `tail_class` and `target_*`
+  (defaults: `are_top100` ≤ 0.05, precision@k ≥ 0.95, rank error ≤ 0.01).
+  The older per-window schema is read too (`lower`/`upper`, `K_win_max`,
+  `rows_win_*`, default targets, finest window as the step).
+- `out_grid_1e7/saturation_curve.csv` (error per N) and, for N above 1e7,
+  `out_1e9/saturation_curve.csv` where it has the point; the two
+  `saturation.csv` files for n_sat (the 1e9 one wins) and, once the cost
+  phase has run, cost. Without cost the cost columns stay empty and configs
+  are ordered by nominal size (rows·cols, k, 1/α); rows=5 without cost takes
+  5/3 of rows=3.
+- Optional `--merge-curves saturation_merge_curve.csv` (branch
+  `merged-accuracy`).
+
+Families: key queries → CMS, CountSketch, CMS-heap top-k; value queries →
+KLL, DDSketch. No query is a count-distinct, so HLL is not a candidate.
+
+Rounding (always toward the harder side, so estimates are conservative): θ
+down to the grid, K up, α for rank error (`worst_alpha_rank`, steepest tail)
+up, α for DDSketch cost (`worst_alpha_memory`) down. The error is read at
+N = `max_N`, linear in log N between checkpoints; a merged window of a
+CMS/CountSketch/DDSketch has the same error as one sketch over it. For top-k
+and KLL, with `--merge-curves` the error comes from the merged curve at the
+shard count nearest (in log scale) to m = range / step; without it the
+single-sketch curve is optimistic. The smallest config meeting the target is
+recommended; if none does, the best one.
+
+Flags: `θ/K/alpha ... beyond grid` or `below grid` (clamped to the grid edge),
+`extrapolated beyond N=...` (N above the largest measured N; the last error is
+used), `N below grid`, `not saturated` (never saturated in the grid),
+`not saturated at min_N` (min_N < n_sat), `light tail` (α not meaningful),
+`single-sketch curve optimistic` / `merged curve at m=...`, `cost scaled from
+rows=3`, `target not met`.
+
+```bash
+python3 scripts/recommend_config.py \
+  --merge-curves ../sketch-bench-merged/out_merge/saturation_merge_curve.csv
+python3 scripts/test_recommend_config.py
+```
+
 ## Running
 
 `--phase accuracy|cost|all` (default all) splits the study. `accuracy` runs
