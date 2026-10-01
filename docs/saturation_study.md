@@ -452,6 +452,12 @@ an otherwise idle 56-core machine. Each cell is `N_sat (error at N = 1e7)`.
 | kll-percall (k=200) | mean_rank_err | 1.8e6 (0.00318) | 1.8e5 (0.00345) | 1.8e6 (0.00321) | 1e6 (0.00338) |
 | dd (alpha=0.01) | mean_rank_err | 3162 (0.00257) | 1000 (0.00378) | 1000 (0.00485) | 1000 (0.00721) |
 
+### Figures
+
+Committed under `docs/figures/saturation/`: `reduced_run/` (error vs N per
+sketch with theoretical bounds, the serial cost figure, and a README that
+explains every figure) and `grid_1e9/` (the same plots from the 1e9 subset).
+
 ### Reading the curves
 
 `plot_saturation_curves.py` draws one panel per distribution with the
