@@ -51,7 +51,9 @@ is by memory_bytes when every config of the family has it, else by the
 nominal size (rows*cols, k, 1/alpha). Cost columns: insert_ns_per_item =
 insert_cpu_secs / N_cost, where N_cost is the point's last curve N (the cost
 run's --size); merge_us_per_fold = merge_cpu_secs / (MERGE_SHARDS - 1)
-(folding MERGE_SHARDS shard sketches into one); query_us = query_cpu_secs.
+(folding MERGE_SHARDS shard sketches into one); query_phase_us = query_cpu_secs: the
+benchmark's whole query phase (every probe: keys seen, 101 quantiles, or a
+repeated estimate), not one query.
 They are empty until the cost phase has filled saturation.csv. rows=5 configs
 without cost (--cost-rows 3) take 5/3 of the rows=3 cost with the same cols
 (flagged "cost scaled from rows=3").
@@ -90,7 +92,7 @@ DEFAULT_TARGETS = {
 OUTPUT_COLUMNS = [
     "dataset", "query_id", "range", "family", "config", "est_error", "target",
     "meets_target", "n_sat", "flags", "memory_bytes", "insert_ns_per_item",
-    "merge_us_per_fold", "query_us", "grid_param", "grid_K", "N", "shards",
+    "merge_us_per_fold", "query_phase_us", "grid_param", "grid_K", "N", "shards",
 ]
 
 
@@ -217,7 +219,7 @@ def load_merge_curves(path):
 
 
 def cost_of(sat, key, n_cost):
-    """(memory_bytes, insert_ns_per_item, merge_us_per_fold, query_us, flag),
+    """(memory_bytes, insert_ns_per_item, merge_us_per_fold, query_phase_us, flag),
     '' where the cost phase has not filled saturation.csv; a rows=5 config
     without cost takes 5/3 of the rows=3 one with the same cols."""
     row, scale, flag = sat.get(key), 1.0, ""
@@ -304,7 +306,7 @@ def recommend(q, curves, curves_big, sat, sat_big, merge):
                 "meets_target": meets, "n_sat": n_sat,
                 "flags": "; ".join(x for x in flags if x),
                 "memory_bytes": cost[0], "insert_ns_per_item": cost[1],
-                "merge_us_per_fold": cost[2], "query_us": cost[3],
+                "merge_us_per_fold": cost[2], "query_phase_us": cost[3],
                 "grid_param": param, "grid_K": card, "N": int(n), "shards": shards,
             })
         if not candidates:

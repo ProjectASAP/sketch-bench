@@ -117,7 +117,7 @@ class RecommendTest(unittest.TestCase):
     def test_missing_cost_leaves_columns_empty_and_orders_by_nominal_size(self):
         row = self.run_cms(key_query(0.5, 1000, 5000, 5000, target="0.5"))
         self.assertEqual(row["config"], SMALL)
-        for col in ("memory_bytes", "insert_ns_per_item", "merge_us_per_fold", "query_us"):
+        for col in ("memory_bytes", "insert_ns_per_item", "merge_us_per_fold", "query_phase_us"):
             self.assertEqual(row[col], "")
 
     def test_present_cost_orders_by_memory_and_converts_units(self):
@@ -128,7 +128,7 @@ class RecommendTest(unittest.TestCase):
         self.assertEqual(float(row["memory_bytes"]), 5000)
         self.assertAlmostEqual(float(row["insert_ns_per_item"]), 0.5 * 1e9 / 100000)
         self.assertAlmostEqual(float(row["merge_us_per_fold"]), 0.15 * 1e6 / 15)
-        self.assertAlmostEqual(float(row["query_us"]), 1000)
+        self.assertAlmostEqual(float(row["query_phase_us"]), 1000)
 
     def test_min_N_below_n_sat_is_flagged(self):
         self.write_saturation(n_sat=100000, memory="")

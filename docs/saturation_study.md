@@ -100,19 +100,30 @@ Two serial runs per (baseline, distribution, N), 3 runs + 1 warmup each:
 `--operations insert,query --metrics throughput,cpu,memory` and
 `--operations prepare --metrics latency,cpu,memory` (prepare is the polars
 pass and is only measurable under latency, where it is one timed call).
-Exact CPU = insert + prepare + query CPU seconds (user + sys, all polars
-threads); exact memory = `memory_bytes` of the prepare record.
+Exact CPU = insert + prepare + one query's CPU seconds (user + sys, all
+polars threads); exact memory = `memory_bytes` of the prepare record.
+
+Both sides are charged **one** query: the benchmark's query phase repeats the
+query over a probe set (every key seen, 101 quantiles, or a repeated HLL
+estimate) whose size differs between sketch and exact, so the per-query CPU
+(phase CPU / operations) is used. This is "ingest N items, answer one query".
 
 For each sketch point, with its cost run at the final N:
 
 - sketch memory = its `memory_bytes`, taken as constant in N (it is fixed
   by the config except for KLL's log-N levels and DDSketch's bucket range);
-- sketch CPU at N = insert CPU x N / N_final + query CPU (insert is a
-  per-item cost, measured N-independent in the earlier run; query is not a
+- sketch CPU at N = insert CPU x N / N_final + one query's CPU (insert is a
+  per-item cost, measured N-independent in the earlier run; a query is not a
   function of N);
-- **N\*_mem(f)** = smallest checkpoint N with exact memory >= f x sketch
-  memory, and **N\*_cpu(f)** likewise for CPU, for f = 10 and 100;
-  `not_reached` when no checkpoint up to `--n-max` qualifies.
+- **N\*_mem(f)** = smallest checkpoint N **from which** exact memory stays
+  >= f x sketch memory at every larger checkpoint, and **N\*_cpu(f)**
+  likewise for CPU, for f = 10 and 100; `not_reached` when even the last
+  checkpoint does not qualify. "From which it stays" rather than "first time":
+  polars' fixed start-up cost (~30–50 ms) makes exact CPU look high at the
+  smallest N and comparatively cheap further up.
+
+`--phase crossover` recomputes `crossover.csv` from the cost phase's
+`saturation_cost.jsonl` and `exact_cost.jsonl` without running anything.
 
 `crossover.csv` has one row per point: `n_sat`, `sketch_memory_bytes`,
 `sketch_cpu_secs` (insert + query at N_final) and the four N\* columns. Since
@@ -141,7 +152,7 @@ really gets expensive a bit sooner).
 into a recommended config per sketch family, writing `out/recommendations.csv`
 (`dataset, query_id, range, family, config, est_error, target, meets_target,
 n_sat, flags`, the cost columns `memory_bytes, insert_ns_per_item,
-merge_us_per_fold, query_us`, and the grid point used: `grid_param, grid_K, N,
+merge_us_per_fold, query_phase_us`, and the grid point used: `grid_param, grid_K, N,
 shards`).
 
 Inputs:
@@ -480,6 +491,46 @@ for every sketch (CMS 27 ns, CountSketch 31 ns, HLL 4 ns, KLL 32 ns, DDSketch
 to ≈ 2,100 ns at theta = 2. DDSketch memory falls from 6.3 KB (alpha = 1.1) to
 2.3 KB (alpha = 3); the others are fixed by their config.
 
+### Grid cost and crossover N*
+
+`--phase cost --n-max 1e7 --seeds 3 --cost-rows 3` ran serially on a
+separate idle 56-core machine (load 1.0, ≈ 3 h; 343 sketch points plus the
+exact baselines). Figures and CSVs: `docs/figures/saturation/grid_cost/`.
+
+Per-item insert CPU is flat in N and in the distribution for every sketch
+(CMS ≈ 22 ns, CountSketch ≈ 26 ns, HLL ≈ 3.4 ns, KLL ≈ 25 ns, DDSketch
+≈ 16 ns) except CMS-heap top-k, which rises from ≈ 100 ns at theta 0 to
+≈ 1,750 ns at theta 2. DDSketch memory falls with the Pareto index (6.3 KB at
+alpha 1.1 to 2.3 KB at alpha 3, alpha_dd = 0.01).
+
+Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
+(quantile):
+
+| sketch (config) | memory | N\*_mem 10x | N\*_mem 100x | N\*_cpu 10x | N\*_cpu 100x |
+|---|---|---|---|---|---|
+| CMS / CountSketch 3x256 | 3 KB | 1.8e3 | 1.8e4 | 1e3 | not reached |
+| CMS / CountSketch 3x1024 | 12 KB | 5.6e3 | 1e5 | 1e3 | not reached |
+| CMS / CountSketch 3x16384 | 192 KB | 1.8e5 | 3.2e6 | 1e3 | not reached |
+| CMS-heap top-k (any cols) | 3–192 KB | as CMS | as CMS | not reached | not reached |
+| HLL lg_k 12 / 14 / 16 | 4 / 16 / 64 KB | 5.6e3 / 1.8e4 / 1e5 | 5.6e4 / 1.8e5 / 5.6e5 | 3.2e3 / 1e4 / 3.2e4 | not reached |
+| KLL k 50 / 200 / 800 | 1.6 / 6.4 / 26 KB | 1.8e3 / 5.6e3 / 1.8e4 | 1.8e4 / 1e5 / 3.2e5 | 1e3 | 1e6 |
+| DDSketch alpha 0.01 | 4.6 KB | 5.6e3 | 5.6e4 | 1e3 | 1.8e5 |
+
+- **Memory**: the exact baseline buffers the stream (~13 bytes/item at 1e7,
+  independent of K), so a sketch saves 10x after a few thousand items and
+  100x after 1e4–1e6, scaling with its own size.
+- **CPU**: exact frequency cost (buffer + polars group-by) is ≈ 300 ns/item
+  and exact cardinality (buffer + n_unique) ≈ 145 ns/item at 1e7, so
+  CMS/CountSketch (≈ 25 ns) stay ≈ 13x cheaper at every N and HLL (≈ 3.4 ns)
+  ≈ 40x once its O(m) estimate is amortised, but neither reaches 100x; quantile exact (sort) is superlinear, so
+  KLL and DDSketch pass 100x at 1e6 and 1.8e5. CMS-heap top-k at theta >= 1 is
+  slower per item than the exact baseline (≈ 650 ns vs ≈ 300 ns), so its
+  benefit is memory only.
+- The exact baseline here is "store the samples, compute at query time"
+  (what a TSDB holding raw samples does); a streaming exact counter (hash map,
+  O(K) memory) would move the frequency memory crossover to N where the
+  table of K keys outgrows the sketch.
+
 ### Not covered yet
 
 - **Accuracy after merging.** Every curve is one sketch fed N items. For CMS,
@@ -487,12 +538,6 @@ to ≈ 2,100 ns at theta = 2. DDSketch memory falls from 6.3 KB (alpha = 1.1) to
   the union, so the curves apply to merged windows. For KLL (merge depth) and
   the top-k heap (a globally heavy key can miss every shard's heap) they are
   only a lower bound on merged error; measuring that is the next PR.
-- **Cost of the config grid and N\*.** The cost phase (sketch cost at
-  rows=3 and every HLL/KLL/DDSketch config, and the exact baselines) has not
-  been run for the grid yet; it needs a quiet machine:
-  `python3 scripts/study_saturation.py --phase cost --n-max 1e7 --seeds 3
-  --cost-rows 3 --out out_grid_1e7` (needs `saturation_curve.csv` from the
-  accuracy run in `out_grid_1e7/`).
 - **HLL lg_k 10.** asap_sketchlib has register types for lg_k 12, 14, 16
   (and 18 for the bucket list) only, so the HLL grid starts at 12.
 

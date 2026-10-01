@@ -82,6 +82,12 @@ class NStarTest(unittest.TestCase):
     def test_equal_counts_as_reached(self):
         self.assertEqual(n_star([10], [50], [5], 10), 10)
 
+    def test_must_stay_reached_to_the_largest_size(self):
+        # A fixed exact-side overhead makes the ratio high at the smallest N,
+        # dip below the factor, then grow again: N* is where it stays.
+        ns = [10, 100, 1000, 10000]
+        self.assertEqual(n_star(ns, [50, 20, 80, 900], [1, 10, 10, 10], 10), 10000)
+
     def test_never_reached_is_none(self):
         # Exact and sketch both linear in N: the ratio never grows.
         self.assertIsNone(n_star([10, 100], [20, 200], [10, 100], 10))
@@ -265,10 +271,33 @@ class CostPhaseTest(unittest.TestCase):
         # 8N >= 10 * 1000 bytes first at N = 1e4; >= 100 * 1000 at N = 1e5.
         self.assertEqual(row["memory_n_star_10x"], "10000")
         self.assertEqual(row["memory_n_star_100x"], "100000")
-        # Sketch CPU at N is 1 * N / 1e6 + 0.5; exact is 1e-6 * N, so it never
-        # reaches 10x.
+        # Sketch CPU at N is 1 * N / 1e6 plus one query; the fake reports no
+        # query throughput, so one query costs 0. Exact is 1e-6 * N, so it
+        # never reaches 10x.
         self.assertEqual(row["cpu_n_star_10x"], "not_reached")
-        self.assertEqual(row["sketch_cpu_secs"], "1.5")
+        self.assertEqual(row["sketch_cpu_secs"], "1.0")
+
+    def test_crossover_phase_rebuilds_from_saved_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            binary = fake_binary(d)
+            ns = checkpoints(1e3, 1e6, 1)
+            write_csv(os.path.join(d, "saturation_curve.csv"), CURVE_HEADER,
+                      [["cardinality", "hll", "lg_k=12", "zipf", 1.0, 1000, n, 0.01, 0]
+                       for n in ns])
+            args = [sys.executable, SCRIPT, "--binary", binary, "--out", d,
+                    "--families", "cardinality", "--one-config", "--thetas", "1.0",
+                    "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1"]
+            subprocess.run(args + ["--phase", "cost"], check=True, capture_output=True)
+            path = os.path.join(d, "crossover.csv")
+            with open(path) as f:
+                measured = f.read()
+            os.remove(path)
+            # No binary needed: the rebuild reads only the saved JSONL.
+            subprocess.run(args[:3] + ["/nonexistent"] + args[4:] + ["--phase", "crossover"],
+                           check=True, capture_output=True)
+            with open(path) as f:
+                rebuilt = f.read()
+        self.assertEqual(rebuilt, measured)
 
 
 if __name__ == "__main__":

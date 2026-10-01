@@ -121,11 +121,16 @@ def n_saturation(ns, errors, tolerance, tail, ses=None, abs_tol=1e-9):
 
 
 def n_star(ns, exact, sketch, factor):
-    """Smallest ns[i] with exact[i] >= factor * sketch[i], or None."""
-    for n, e, s in zip(ns, exact, sketch):
-        if e >= factor * s:
-            return n
-    return None
+    """Smallest ns[i] from which exact >= factor * sketch holds at every later
+    checkpoint, or None. "From which it stays" rather than "first time":
+    fixed per-run overheads (polars start-up) can make the exact side look
+    expensive at the smallest N and cheap again further up."""
+    star = None
+    for n, e, s in zip(reversed(ns), reversed(exact), reversed(sketch)):
+        if e < factor * s:
+            break
+        star = n
+    return star
 
 
 def point_key(sketch, config, dist, param, cardinality):
@@ -189,6 +194,19 @@ def error(record, metric):
     return acc[metric]
 
 
+def query_secs(record):
+    """CPU seconds of one query: the query phase repeats the query over its
+    probes (all keys seen, 101 quantiles, or a fixed repeat count), and the
+    exact baseline uses a different probe count, so both sides are compared
+    per query."""
+    cpu, wall = record.get("query_cpu_time_ms"), record.get("query_wall_time_ms")
+    rate = record.get("query_throughput_items_per_sec")
+    if not (cpu and wall and rate):
+        return 0.0
+    ops = rate["mean"] * wall["mean"] / 1000.0
+    return cpu_secs(record, "query") / ops if ops else 0.0
+
+
 def cpu_secs(record, op):
     cpu = record.get(f"{op}_cpu_time_ms")
     if not cpu:
@@ -216,8 +234,10 @@ def main():
     parser.add_argument("--plateau-tail", type=int, default=3)
     parser.add_argument("--jobs", type=int, default=1,
                         help="parallel accuracy runs (cost runs are always serial)")
-    parser.add_argument("--phase", choices=["accuracy", "cost", "all"], default="all",
-                        help="cost reads saturation_curve.csv from --out")
+    parser.add_argument("--phase", choices=["accuracy", "cost", "crossover", "all"],
+                        default="all",
+                        help="cost reads saturation_curve.csv from --out; crossover "
+                             "recomputes crossover.csv from the cost phase's JSONL in --out")
     parser.add_argument("--points-from",
                         help="CSV with sketch,config,dist,param,cardinality columns "
                              "(e.g. a filtered saturation.csv): run only those points")
@@ -279,7 +299,7 @@ def main():
             "--size", str(n), "--seed", str(seed),
         ] + dataset)
 
-    if args.phase == "cost":
+    if args.phase in ("cost", "crossover"):
         results = read_curve(os.path.join(args.out, "saturation_curve.csv"), points, ns,
                              args.tolerance, args.plateau_tail)
     else:
@@ -340,14 +360,19 @@ def main():
     # export_rqe_optimizer_costs.sh. --phase accuracy leaves these blank.
     rows, records = [], []
     cost = args.phase != "accuracy"
-    cost_raw = open(os.path.join(args.out, "saturation_cost.jsonl"), "w") if cost else None
+    rebuild = args.phase == "crossover"
+    cost_path = os.path.join(args.out, "saturation_cost.jsonl")
+    saved = iter(json.loads(line) for line in open(cost_path)) if rebuild else None
+    cost_raw = open(cost_path, "w") if cost and not rebuild else None
     for point, n_sat, final_error in results:
         family, variant, config, _, metric, dataset, dist, param, k = point
         record = {}
         # rows=5 costs ~5/3 of rows=3 (insert, query and memory are per row).
         skip = args.cost_rows is not None and config.startswith("rows=") \
             and not config.startswith(f"rows={args.cost_rows} ")
-        if cost and not skip:
+        if rebuild and not skip:
+            record = next(saved)
+        elif cost and not skip:
             record = run(args.binary, [
                 "--variant", variant, "--library", "lib", "--config", config,
                 "--operations", "insert,query,merge",
@@ -367,21 +392,24 @@ def main():
     if cost_raw:
         cost_raw.close()
 
-    with open(os.path.join(args.out, "saturation.csv"), "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(SUMMARY_COLUMNS)
-        writer.writerows(rows)
-    print(f"Done. {os.path.join(args.out, 'saturation.csv')}", file=sys.stderr)
+    if not rebuild:
+        with open(os.path.join(args.out, "saturation.csv"), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(SUMMARY_COLUMNS)
+            writer.writerows(rows)
+        print(f"Done. {os.path.join(args.out, 'saturation.csv')}", file=sys.stderr)
     if not cost:
         return 0
 
     # The family's exact baseline at every checkpoint, once per (baseline,
     # dataset). Memory is its memory_bytes after prepare (the buffered stream
     # plus any count table), the same self-reported formula as the sketch's;
-    # CPU is insert + prepare (the polars pass) + query.
+    # CPU is insert + prepare (the polars pass) + one query.
     exact = {}
     measured = [(r, record) for r, record in zip(results, records) if record]
-    with open(os.path.join(args.out, "exact_cost.jsonl"), "w") as exact_raw:
+    exact_path = os.path.join(args.out, "exact_cost.jsonl")
+    saved_exact = iter(json.loads(line) for line in open(exact_path)) if rebuild else None
+    with open(exact_path, "a" if rebuild else "w") as exact_raw:
         for (point, _, _), _ in measured:
             variant, config = EXACT[point[0]]
             for n in ns:
@@ -393,13 +421,16 @@ def main():
                     "--runs", "3", "--warmup-runs", "1", "--size", str(n),
                     "--seed", str(seeds[0]), "--flat",
                 ] + point[5]
-                timed = run(args.binary, base + [
-                    "--operations", "insert,query", "--metrics", "throughput,cpu,memory"])
-                prepared = run(args.binary, base + [
-                    "--operations", "prepare", "--metrics", "latency,cpu,memory"])
-                exact_raw.write(json.dumps(timed) + "\n" + json.dumps(prepared) + "\n")
+                if rebuild:
+                    timed, prepared = next(saved_exact), next(saved_exact)
+                else:
+                    timed = run(args.binary, base + [
+                        "--operations", "insert,query", "--metrics", "throughput,cpu,memory"])
+                    prepared = run(args.binary, base + [
+                        "--operations", "prepare", "--metrics", "latency,cpu,memory"])
+                    exact_raw.write(json.dumps(timed) + "\n" + json.dumps(prepared) + "\n")
                 exact[key] = (prepared["memory_bytes"], cpu_secs(timed, "insert")
-                              + cpu_secs(timed, "query") + cpu_secs(prepared, "prepare"))
+                              + query_secs(timed) + cpu_secs(prepared, "prepare"))
 
     with open(os.path.join(args.out, "crossover.csv"), "w", newline="") as f:
         writer = csv.writer(f)
@@ -407,10 +438,10 @@ def main():
         for (point, n_sat, _), record in measured:
             family, variant, config, _, _, dataset, dist, param, k = point
             per_n = [exact[(EXACT[family][0], tuple(dataset), n)] for n in ns]
-            insert, query = cpu_secs(record, "insert"), cpu_secs(record, "query")
+            insert, query = cpu_secs(record, "insert"), query_secs(record)
             memory = record["memory_bytes"]
             # Measured at the final N only: insert CPU is a per-item cost, so it
-            # scales with N; query CPU and memory are taken as constant.
+            # scales with N; one query's CPU and memory are taken as constant.
             sketch_cpu = [insert * n / ns[-1] + query for n in ns]
             stars = [n_star(ns, [m for m, _ in per_n], [memory] * len(ns), x)
                      for x in CROSSOVER_FACTORS]
