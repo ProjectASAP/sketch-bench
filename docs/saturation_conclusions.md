@@ -64,8 +64,8 @@ Notation:
    - DDSketch's rank error grows with a while its memory shrinks with a. Size the error from the upper a bound and the memory from the lower a bound (why: section 2 below).
 10. **Merging (#131):**
     - CMS, CountSketch, HLL and DDSketch merge exactly.
-    - KLL's error rises 5–16% at 64 shards.
-    - Top-k loses 8–25% precision at large K.
+    - KLL's error rises after merging, more for larger k: about 1.0–1.1× at k = 50/200 and 1.12–1.32× at k = 800 at N = 1e7, and up to 3–4× at N = 1e4–1e5 for k = 800 merged from 4 shards.
+    - Top-k is unchanged in the median, but loses up to 40% precision at large K, for every width.
 
     So single-sketch curves are optimistic for top-k and KLL on merged windows (why: section 3 below).
 11. **Cost:**
@@ -90,7 +90,7 @@ Notation:
 
 **Limits:**
 - Some recommendations extrapolate beyond N = 1e7.
-- Merged accuracy for top-k and KLL covered one config; a full-grid rerun is in progress.
+- Merged accuracy covers every top-k and KLL config, but only up to N = 1e7 and m = 64 shards.
 - The exact baseline buffers the stream. A streaming hash-map counter would shrink the frequency sketches' memory advantage.
 
 ## Why: the math
@@ -185,11 +185,11 @@ What merging adds:
 1. Each shard ran its own compactions while it held only N/m items, and all of those stay in the result. A single stream might have done them later, at a lower level, or not at all.
 2. Concatenating the shards' compactors overfills the levels, especially the top ones, so the merged sketch must compact again there. Those extra compactions carry the largest weights 2^h.
 
-So the merged C_h is larger at the top levels, and the variance Σ C_h·4^h grows by a constant factor. The order of the error does not change: KLL's ε guarantee holds under any merge order, with a somewhat larger constant. More shards (larger m = S/x) mean more extra high-level compactions. That matches the data: within noise up to m = 16, 5–16% higher at m = 64.
+So the merged C_h is larger at the top levels, and the variance Σ C_h·4^h grows by a constant factor. The order of the error does not change: KLL's ε guarantee holds under any merge order, with a somewhat larger constant. More shards (larger m = S/x) mean more extra high-level compactions. The full grid (10 seeds) matches this and adds a dependence on k: about 1.0–1.1× at k = 50/200 but 1.12–1.32× at k = 800 at N = 1e7. With a large k, each shard stays exact (uncompacted) longer, so merging introduces compactions the single stream would have done at lower levels or not at all. That shows up most at intermediate N: up to 3–4× at N = 1e4–1e5 for k = 800 with m = 4, converging by 1e6–1e7.
 
-**Top-k: a different and larger effect.** Each shard's heap keeps only that shard's top 32 keys. A key that is heavy globally but never in any one shard's top 32 is lost at merge time. That is lost information, not added noise, and it costs 8–25% precision at large K.
+**Top-k: a different and larger effect.** Each shard's heap keeps only that shard's top 32 keys. A key that is heavy globally but never in any one shard's top 32 is lost at merge time. That is lost information, not added noise. Across all 8 configs the median precision is unchanged, but at large K it drops by up to 40%, and widening the sketch does not remove the loss.
 
 **What this means for configuration:**
-- For KLL with many merged windows (m ≳ 64), raise k slightly to absorb the extra variance.
+- For KLL on merged windows, use the merged curves. The recommender now does this: p99 latency over 5m windows moves from k = 50 to k = 200 to stay under the 1% target.
 - For top-k, use the merged curves (#131), not the single-sketch ones.
-- KLL's compaction randomness is unseeded, so its measured differences are noisy. The full-grid merge rerun uses 10 seeds.
+- KLL's compaction randomness is unseeded. The merge grid uses 10 seeds for that reason.
