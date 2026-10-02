@@ -553,6 +553,13 @@ Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
     0.03-0.09 (8-25% relative), e.g. theta 1.5, K=1e5: 0.60 -> 0.55/0.51/0.52
     for m=4/16/64 (theta 0.5 is at low precision and within seed noise), so
     the single-sketch curve overstates merged top-k quality.
+  - Full grids (all top-k configs, KLL k 50/200/800 and DDSketch with 10
+    seeds; `docs/figures/saturation/merge_grid/`): DDSketch stays exact;
+    top-k's median merged/single precision is 1.00 but drops to 0.60 at large
+    K for every width; KLL's merged error grows with k (≈ 1.0–1.1x at
+    k = 50/200, 1.12–1.32x at k = 800 at N = 1e7, and up to 3–4x at
+    N = 1e4–1e5 for k = 800, m = 4). `recommend_config.py --merge-curves`
+    now covers every top-k and KLL config.
 - **HLL lg_k 10.** asap_sketchlib has register types for lg_k 12, 14, 16
   (and 18 for the bucket list) only, so the HLL grid starts at 12.
 
