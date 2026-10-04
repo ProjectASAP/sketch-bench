@@ -240,6 +240,26 @@ def cost_of(sat, key, n_cost):
             scaled("query_cpu_secs", 1e6), flag)
 
 
+def grid_point(q, points):
+    """(param, cost_param, card, flags): q's worst case rounded to the grid of
+    one sketch's measured points, toward the harder side."""
+    common = []
+    if q["kind"] == "keys":
+        param, f1 = round_down(q["theta"], {k[3] for k in points})
+        card, f2 = round_up(q["K"], {int(k[4]) for k in points})
+        cost_param, card = param, str(card)
+        common += [f"theta {f1}" if f1 else "", f"K {f2}" if f2 else ""]
+    else:
+        param, f1 = round_up(q["alpha_rank"], {k[3] for k in points})
+        cost_param = q["alpha_memory"] if q["alpha_memory"] is not None else q["alpha_rank"]
+        cost_param, _ = round_down(cost_param, {k[3] for k in points})
+        card = ""
+        common += [f"alpha {f1}" if f1 else ""]
+        if q["tail_class"] == "light":
+            common.append("light tail")
+    return param, cost_param, card, common
+
+
 def recommend(q, curves, curves_big, sat, sat_big, merge):
     """One output row per candidate family of query-range q."""
     out = []
@@ -250,20 +270,7 @@ def recommend(q, curves, curves_big, sat, sat_big, merge):
         if not points:
             continue
         configs = sorted({k[1] for k in points}, key=nominal_size)
-        common = []
-        if q["kind"] == "keys":
-            param, f1 = round_down(q["theta"], {k[3] for k in points})
-            card, f2 = round_up(q["K"], {int(k[4]) for k in points})
-            cost_param, card = param, str(card)
-            common += [f"theta {f1}" if f1 else "", f"K {f2}" if f2 else ""]
-        else:
-            param, f1 = round_up(q["alpha_rank"], {k[3] for k in points})
-            cost_param = q["alpha_memory"] if q["alpha_memory"] is not None else q["alpha_rank"]
-            cost_param, _ = round_down(cost_param, {k[3] for k in points})
-            card = ""
-            common += [f"alpha {f1}" if f1 else ""]
-            if q["tail_class"] == "light":
-                common.append("light tail")
+        param, cost_param, card, common = grid_point(q, points)
         n = q["max_N"]
         shards = 1
         if q["range_s"] and q["step_s"]:
