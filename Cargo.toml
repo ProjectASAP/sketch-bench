@@ -7,6 +7,7 @@ members = [
     "sketch-bench",
     "aqpbm-cli",
     "aqpbm-planeval",
+    "rqe-optimizer",
 ]
 
 exclude = ["sketch-runtime"]
@@ -45,6 +46,7 @@ clap = { version = "4", features = ["derive", "wrap_help"] }
 # Errors.
 thiserror = "2"
 anyhow = "1"
+good_lp = { version = "1.15", default-features = false, features = ["highs"] }
 
 # Bitflags for MetricsMask.
 bitflags = "2"
@@ -59,6 +61,7 @@ asap_sketchlib = { version = "0.2.2", features = ["experimental"] }
 aqpbm-datagen = { path = "aqpbm-datagen" }
 aqpbm-core = { path = "aqpbm-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
+rqe-optimizer = { path = "rqe-optimizer" }
 # sketch-runtime = { path = "sketch-runtime" }  # parked;
 
 [profile.release]
