@@ -6,6 +6,7 @@ Run: python3 scripts/test_study_saturation.py
 """
 
 import csv
+import json
 import os
 import subprocess
 import sys
@@ -203,7 +204,10 @@ class ResumeTest(unittest.TestCase):
                       [["cardinality", "hll", "lg_k=12", "zipf", 0.0, 1000, n, 0.5, 0]
                        for n in ns]
                       + [["cardinality", "hll", "lg_k=12", "zipf", 1.0, 1000, n, 0.9, 0]
-                         for n in ns[:2]])
+                         for n in ns[:2]]
+                      # theta 2 is outside this resume's grid and must survive.
+                      + [["cardinality", "hll", "lg_k=12", "zipf", 2.0, 1000, n, 0.7, 0]
+                         for n in ns])
             subprocess.run([
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "accuracy", "--families", "cardinality", "--one-config",
@@ -219,7 +223,7 @@ class ResumeTest(unittest.TestCase):
         errors = {}
         for r in rows:
             errors.setdefault(r["param"], []).append(float(r["seed_mean_error"]))
-        self.assertEqual(errors, {"0.0": [0.5] * 4, "1.0": [0.01] * 4})
+        self.assertEqual(errors, {"0.0": [0.5] * 4, "1.0": [0.01] * 4, "2.0": [0.7] * 4})
         self.assertEqual([r["final_error"] for r in summary], ["0.5", "0.01"])
         # Only the rerun point was measured: 4 sizes x 2 seeds.
         self.assertEqual(len(raw), 8)
@@ -298,6 +302,39 @@ class CostPhaseTest(unittest.TestCase):
             with open(path) as f:
                 rebuilt = f.read()
         self.assertEqual(rebuilt, measured)
+
+    def test_crossover_phase_matches_saved_records_by_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            ns = checkpoints(1e3, 1e6, 1)
+            configs = ["rows=3 cols=256", "rows=5 cols=256"]
+            write_csv(os.path.join(d, "saturation_curve.csv"), CURVE_HEADER,
+                      [["frequency", "cms-fastpath-vector2d", c, "zipf", 1.0, 1000, n, 0.01, 0]
+                       for c in configs for n in ns])
+            points = os.path.join(d, "points.csv")
+            write_csv(points, ["sketch", "config", "dist", "param", "cardinality"],
+                      [["cms-fastpath-vector2d", c, "zipf", 1.0, 1000] for c in configs])
+            args = [sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                    "--families", "frequency", "--thetas", "1.0", "--cardinalities",
+                    "1000", "--n-max", "1e6", "--per-decade", "1", "--points-from", points]
+            subprocess.run(args + ["--phase", "cost"], check=True, capture_output=True)
+            # Tell the rows=5 record apart, and store it first.
+            cost = os.path.join(d, "saturation_cost.jsonl")
+            with open(cost) as f:
+                records = [json.loads(line) for line in f]
+            records[1]["memory_bytes"] = 5000
+            with open(cost, "w") as f:
+                f.writelines(json.dumps(r) + "\n" for r in reversed(records))
+            subprocess.run(args + ["--phase", "crossover", "--cost-rows", "3"],
+                           check=True, capture_output=True)
+            with open(os.path.join(d, "crossover.csv"), newline="") as f:
+                [row] = list(csv.DictReader(f))
+            # A point the cost phase never measured exits.
+            with open(cost, "w") as f:
+                f.write(json.dumps(records[0]) + "\n")
+            missing = subprocess.run(args + ["--phase", "crossover"], capture_output=True)
+        self.assertEqual((row["config"], row["sketch_memory_bytes"]), ("rows=3 cols=256", "1000"))
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn(b"has no record", missing.stderr)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ can be timed later on a quiet machine. Both take the same grid arguments.
 Writes, under --out:
   saturation_accuracy.jsonl, saturation_cost.jsonl,
   exact_cost.jsonl                                   raw approxbench records
+                                                     (cost ones keyed by point)
   saturation_curve.csv                               seed-mean error per N
   saturation.csv                                     one row per point (cost
                                                      columns blank after
@@ -147,6 +148,21 @@ def load_curves(path):
             curves.setdefault(key, []).append(
                 (int(r["n"]), float(r["seed_mean_error"]), float(r["seed_se"])))
     return {key: sorted(curve) for key, curve in curves.items()}
+
+
+def load_saved(path, key):
+    """{key(*record["key"]): record} from a cost JSONL of keyed records."""
+    with open(path) as f:
+        records = [json.loads(line) for line in f]
+    return {key(*r.pop("key")): r for r in records}
+
+
+def saved_record(saved, key, path):
+    """The saved record for `key`, or exit when the cost phase never ran it."""
+    if key not in saved:
+        sys.exit(f"{path} has no record for {key}; rerun --phase cost with this "
+                 "grid and --cost-rows")
+    return saved[key]
 
 
 def read_curve(path, points, ns, tolerance, tail):
@@ -306,19 +322,26 @@ def main():
         curve_path = os.path.join(args.out, "saturation_curve.csv")
         # --resume keeps complete curves and writes them back first, so a
         # point cut off mid-write is dropped and rerun, and a second
-        # interruption loses nothing that was kept.
-        done = {}
+        # interruption loses nothing that was kept. Rows of points outside
+        # this grid are written back as they are, so a narrower resume
+        # deletes nothing.
+        done, kept_rows = {}, []
         if args.resume and os.path.exists(curve_path):
+            grid = {point_key(p[1], p[2], *p[6:]) for p in points}
             done = {key: c for key, c in load_curves(curve_path).items()
-                    if [n for n, _, _ in c] == ns}
+                    if key in grid and [n for n, _, _ in c] == ns}
+            with open(curve_path, newline="") as f:
+                for r in csv.DictReader(f):
+                    key = point_key(r["sketch"], r["config"], r["dist"], r["param"],
+                                    r["cardinality"])
+                    if key not in grid or key in done:
+                        kept_rows.append([r[c] for c in CURVE_COLUMNS])
         raw = open(os.path.join(args.out, "saturation_accuracy.jsonl"),
                    "a" if args.resume else "w")
         curve_file = open(curve_path, "w", newline="")
         curve = csv.writer(curve_file)
         curve.writerow(CURVE_COLUMNS)
-        for p in points:
-            for n, mean, se in done.get(point_key(p[1], p[2], *p[6:]), []):
-                curve.writerow([p[0], p[1], p[2], p[6], p[7], p[8], n, mean, se])
+        curve.writerows(kept_rows)
         curve_file.flush()
         # Submit everything up front so the pool stays full; results are consumed
         # in point order, so the curve CSV fills point by point.
@@ -362,7 +385,7 @@ def main():
     cost = args.phase != "accuracy"
     rebuild = args.phase == "crossover"
     cost_path = os.path.join(args.out, "saturation_cost.jsonl")
-    saved = iter(json.loads(line) for line in open(cost_path)) if rebuild else None
+    saved = load_saved(cost_path, point_key) if rebuild else None
     cost_raw = open(cost_path, "w") if cost and not rebuild else None
     for point, n_sat, final_error in results:
         family, variant, config, _, metric, dataset, dist, param, k = point
@@ -371,7 +394,8 @@ def main():
         skip = args.cost_rows is not None and config.startswith("rows=") \
             and not config.startswith(f"rows={args.cost_rows} ")
         if rebuild and not skip:
-            record = next(saved)
+            record = saved_record(saved, point_key(variant, config, dist, param, k),
+                                  cost_path)
         elif cost and not skip:
             record = run(args.binary, [
                 "--variant", variant, "--library", "lib", "--config", config,
@@ -380,7 +404,8 @@ def main():
                 "--merge-shards", str(MERGE_SHARDS), "--runs", "3", "--warmup-runs", "1",
                 "--size", str(ns[-1]), "--seed", str(seeds[0]), "--flat",
             ] + dataset)
-            cost_raw.write(json.dumps(record) + "\n")
+            cost_raw.write(json.dumps(
+                {"key": [variant, config, dist, param, k], **record}) + "\n")
         records.append(record)
         rows.append([
             family, variant, config, dist, param, k,
@@ -408,7 +433,8 @@ def main():
     exact = {}
     measured = [(r, record) for r, record in zip(results, records) if record]
     exact_path = os.path.join(args.out, "exact_cost.jsonl")
-    saved_exact = iter(json.loads(line) for line in open(exact_path)) if rebuild else None
+    saved_exact = load_saved(exact_path, lambda v, ds, n, op: (v, tuple(ds), n, op)) \
+        if rebuild else None
     with open(exact_path, "a" if rebuild else "w") as exact_raw:
         for (point, _, _), _ in measured:
             variant, config = EXACT[point[0]]
@@ -422,13 +448,16 @@ def main():
                     "--seed", str(seeds[0]), "--flat",
                 ] + point[5]
                 if rebuild:
-                    timed, prepared = next(saved_exact), next(saved_exact)
+                    timed, prepared = (saved_record(saved_exact, key + (op,), exact_path)
+                                       for op in ("timed", "prepared"))
                 else:
                     timed = run(args.binary, base + [
                         "--operations", "insert,query", "--metrics", "throughput,cpu,memory"])
                     prepared = run(args.binary, base + [
                         "--operations", "prepare", "--metrics", "latency,cpu,memory"])
-                    exact_raw.write(json.dumps(timed) + "\n" + json.dumps(prepared) + "\n")
+                    for op, r in (("timed", timed), ("prepared", prepared)):
+                        exact_raw.write(json.dumps(
+                            {"key": [variant, point[5], n, op], **r}) + "\n")
                 exact[key] = (prepared["memory_bytes"], cpu_secs(timed, "insert")
                               + query_secs(timed) + cpu_secs(prepared, "prepare"))
 
