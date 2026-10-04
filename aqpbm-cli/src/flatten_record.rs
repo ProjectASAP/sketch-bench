@@ -113,8 +113,24 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 }
             };
         }
-        // `throughput_items_per_sec`, `latency_ns`, `accuracy` and the
-        // `merge_*` fields are each owned by exactly one metric-pass per
+        // `merge_shards`/`merge_supported` describe the merge setup, which
+        // every merge square of one invocation stamps — equal values agree,
+        // different ones mean two setups were folded together.
+        macro_rules! keep_same {
+            ($slot:expr, $v:expr, $field:literal) => {
+                if let Some(v) = $v {
+                    if $slot.is_some_and(|s| s != v) {
+                        return Err(format!(
+                            "flatten_record: {}/{} {operation} has two different values for {}",
+                            record.sketch, record.library, $field
+                        ));
+                    }
+                    $slot = Some(v);
+                }
+            };
+        }
+        // `throughput_items_per_sec`, `latency_ns`, `accuracy` and
+        // `merge_folds_per_sec` are each owned by exactly one metric-pass per
         // operation — nothing legitimately produces a second value for one
         // of these within a slot. A second value is a genuine duplicate, so
         // it is refused by field name rather than silently resolved.
@@ -166,8 +182,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                     *merge_folds_per_sec,
                     "merge_folds_per_sec"
                 );
-                keep_owned!(out.merge.merge_shards, *merge_shards, "merge_shards");
-                keep_owned!(
+                keep_same!(out.merge.merge_shards, *merge_shards, "merge_shards");
+                keep_same!(
                     out.merge.merge_supported,
                     *merge_supported,
                     "merge_supported"
@@ -381,6 +397,29 @@ mod tests {
         ];
         let out = flatten_record(&rows).expect("shared fields never collide");
         assert_eq!(out.insert.wall_time_ms.unwrap().mean, 1.0);
+    }
+
+    /// A cost pass and an accuracy pass over one merge both stamp the merge
+    /// setup. The same setup twice is one setup; two different ones are not.
+    #[test]
+    fn merge_setup_on_two_squares_must_agree() {
+        let merge = |metric, shards| {
+            record(
+                "merge",
+                metric,
+                BenchSection {
+                    merge_shards: Some(shards),
+                    merge_supported: Some(true),
+                    ..Default::default()
+                },
+            )
+        };
+        let out = flatten_record(&[merge("throughput", 4), merge("accuracy", 4)])
+            .expect("the same setup agrees");
+        assert_eq!(out.merge.merge_shards, Some(4));
+        let err = flatten_record(&[merge("throughput", 4), merge("accuracy", 16)])
+            .expect_err("two setups in one row");
+        assert!(err.contains("merge_shards"), "{err}");
     }
 
     /// `throughput_items_per_sec` is owned by exactly one metric-pass per

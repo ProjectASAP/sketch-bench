@@ -31,7 +31,7 @@ Writes, under --out:
   crossover.csv                                      N* per point
   saturation_merge_curve.csv                         with --merge-shards-list:
       seed-mean error per N of the sketch merged from m contiguous shards
-      (m=1 is the plain single-sketch query; --resume appends to it)
+      (m=1 is the plain single-sketch query)
 """
 
 import argparse
@@ -145,12 +145,15 @@ def point_key(sketch, config, dist, param, cardinality):
     return (sketch, config, dist, float(param), card)
 
 
-def load_curves(path):
-    """{point key: sorted [(n, seed-mean error, se)]} from a saturation_curve.csv."""
+def load_curves(path, shards=False):
+    """{point key: sorted [(n, seed-mean error, se)]} from a saturation_curve.csv,
+    or {point key + (m,): ...} from a saturation_merge_curve.csv with `shards`."""
     curves = {}
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             key = point_key(r["sketch"], r["config"], r["dist"], r["param"], r["cardinality"])
+            if shards:
+                key += (int(r["shards"]),)
             curves.setdefault(key, []).append(
                 (int(r["n"]), float(r["seed_mean_error"]), float(r["seed_se"])))
     return {key: sorted(curve) for key, curve in curves.items()}
@@ -336,12 +339,27 @@ def main():
         # point cut off mid-write is dropped and rerun, and a second
         # interruption loses nothing that was kept. Rows of points outside
         # this grid are written back as they are, so a narrower resume
-        # deletes nothing.
-        done, kept_rows = {}, []
+        # deletes nothing. With --merge-shards-list a point is complete only
+        # once its merge curve is too.
+        merge_path = os.path.join(args.out, "saturation_merge_curve.csv")
+        done, kept_rows, kept_merge_rows = {}, [], []
         if args.resume and os.path.exists(curve_path):
             grid = {point_key(p[1], p[2], *p[6:]) for p in points}
             done = {key: c for key, c in load_curves(curve_path).items()
                     if key in grid and [n for n, _, _ in c] == ns}
+            if shard_list:
+                merge_done = (load_curves(merge_path, shards=True)
+                              if os.path.exists(merge_path) else {})
+                done = {key: c for key, c in done.items()
+                        if all([n for n, _, _ in merge_done.get(key + (m,), [])] == ns
+                               for m in shard_list)}
+                if os.path.exists(merge_path):
+                    with open(merge_path, newline="") as f:
+                        for r in csv.DictReader(f):
+                            key = point_key(r["sketch"], r["config"], r["dist"], r["param"],
+                                            r["cardinality"])
+                            if key not in grid or (key in done and int(r["shards"]) in shard_list):
+                                kept_merge_rows.append([r[c] for c in MERGE_CURVE_COLUMNS])
             with open(curve_path, newline="") as f:
                 for r in csv.DictReader(f):
                     key = point_key(r["sketch"], r["config"], r["dist"], r["param"],
@@ -356,12 +374,11 @@ def main():
         curve.writerows(kept_rows)
         curve_file.flush()
         if shard_list:
-            merge_path = os.path.join(args.out, "saturation_merge_curve.csv")
-            append = args.resume and os.path.exists(merge_path)
-            merge_file = open(merge_path, "a" if append else "w", newline="")
+            merge_file = open(merge_path, "w", newline="")
             merge_curve = csv.writer(merge_file)
-            if not append:
-                merge_curve.writerow(MERGE_CURVE_COLUMNS)
+            merge_curve.writerow(MERGE_CURVE_COLUMNS)
+            merge_curve.writerows(kept_merge_rows)
+            merge_file.flush()
         # Submit everything up front so the pool stays full; results are consumed
         # in point order, so the curve CSV fills point by point.
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:

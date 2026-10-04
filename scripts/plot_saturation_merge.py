@@ -33,6 +33,14 @@ for r in rows:
     key = (r["sketch"], r["config"], r["dist"], r["param"], r["cardinality"])
     curves.setdefault(key, {}).setdefault(r["shards"], []).append(
         (int(r["n"]), float(r["seed_mean_error"]), float(r["seed_se"])))
+SHARDS = sorted({int(r["shards"]) for r in rows})
+if 1 not in SHARDS:
+    sys.exit(f"{sys.argv[1]} has no m=1 rows, the single-sketch baseline every ratio needs")
+MERGED = [m for m in SHARDS if m != 1]
+# ponytail: shard counts beyond the four fixed colours cycle tab10, which repeats past 10 more.
+extra = plt.get_cmap("tab10").colors
+for i, m in enumerate(m for m in MERGED if str(m) not in SHARD_COLORS):
+    SHARD_COLORS[str(m)] = extra[i % len(extra)]
 
 ratio = {}
 for sk, cfg in dict.fromkeys((k[0], k[1]) for k in curves):
@@ -75,10 +83,11 @@ for sk, cfg in dict.fromkeys((k[0], k[1]) for k in curves):
 # Summary: merged / single error at the largest N, per sketch and shard count.
 fig, ax = plt.subplots(figsize=(max(9, 1.1 * len(ratio)), 4.6), constrained_layout=True)
 sks = list(ratio)
-for j, m in enumerate((4, 16, 64)):
+width = 0.66 / len(MERGED)
+for j, m in enumerate(MERGED):
     for i, sk in enumerate(sks):
         vals = [v for (_, mm, v) in ratio[sk] if mm == m]
-        xs = [i + (j - 1) * 0.22] * len(vals)
+        xs = [i + (j - (len(MERGED) - 1) / 2) * width] * len(vals)
         ax.plot(xs, vals, "o", ms=6, color=SHARD_COLORS[str(m)], mec=SURF, mew=1.5,
                 label=f"m={m}" if i == 0 else None)
 ax.axhline(1.0, color=MUTED, lw=1, ls=":")

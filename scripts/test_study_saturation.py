@@ -258,6 +258,33 @@ class ResumeTest(unittest.TestCase):
         # Only the rerun point was measured: 4 sizes x 2 seeds.
         self.assertEqual(len(raw), 8)
 
+    def test_a_point_without_its_merge_curve_is_rerun_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as d:
+            ns = checkpoints(1e3, 1e6, 1)
+            row = ["cardinality", "hll", "lg_k=12", "zipf"]
+            # Both curves are complete, but theta 1's merge rows were cut off
+            # after one size and that size was written twice.
+            write_csv(os.path.join(d, "saturation_curve.csv"), CURVE_HEADER,
+                      [row + [t, 1000, n, 0.5, 0] for t in (0.0, 1.0) for n in ns])
+            write_csv(os.path.join(d, "saturation_merge_curve.csv"),
+                      CURVE_HEADER[:-2] + ["shards", "seed_mean_error", "seed_se"],
+                      [row + [0.0, 1000, n, m, 0.5, 0] for n in ns for m in (1, 4)]
+                      + [row + [1.0, 1000, ns[0], 4, 0.9, 0]] * 2)
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "0,1.0", "--cardinalities", "1000", "--n-max", "1e6",
+                "--per-decade", "1", "--seeds", "2", "--merge-shards-list", "1,4",
+                "--resume",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation_merge_curve.csv"), newline="") as f:
+                rows = list(csv.DictReader(f))
+        errors = {}
+        for r in rows:
+            errors.setdefault((r["param"], r["shards"]), []).append(float(r["seed_mean_error"]))
+        self.assertEqual(errors, {("0.0", "1"): [0.5] * 4, ("0.0", "4"): [0.5] * 4,
+                                  ("1.0", "1"): [0.01] * 4, ("1.0", "4"): [0.04] * 4})
+
 
 class CostPhaseTest(unittest.TestCase):
     def test_cost_rows_measures_only_that_rows_value(self):
