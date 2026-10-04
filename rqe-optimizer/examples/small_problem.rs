@@ -368,7 +368,7 @@ fn main() {
             );
         }
         println!(
-            "MILP minimum-TCO solution: peak_query_mem={:.0}MB, ingest={:.3e}, \
+            "MILP solution: peak_query_mem={:.0}MB, ingest={:.3e}, \
              merge={:.3e}, query={:.3e}, total={:.3e} cpu-sec/sec",
             solution.objectives.peak_query_memory_bytes / 1e6,
             solution.objectives.ingest_cpu_secs_per_sec,
