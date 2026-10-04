@@ -353,29 +353,35 @@ def main():
             print(f"{len(done)} points kept, {sum(f is not None for f in futures)} to run",
                   file=sys.stderr)
             results = []
-            for point, per_n in zip(points, futures):
-                family, variant, config, _, metric, _, dist, param, k = point
-                if per_n is None:
-                    kept = done[point_key(variant, config, dist, param, k)]
-                    means = [mean for _, mean, _ in kept]
-                    n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail,
-                                         [se for _, _, se in kept])
+            try:
+                for point, per_n in zip(points, futures):
+                    family, variant, config, _, metric, _, dist, param, k = point
+                    if per_n is None:
+                        kept = done[point_key(variant, config, dist, param, k)]
+                        means = [mean for _, mean, _ in kept]
+                        n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail,
+                                             [se for _, _, se in kept])
+                        results.append((point, n_sat, means[-1]))
+                        continue
+                    means, ses = [], []
+                    for n, per_seed in zip(ns, per_n):
+                        records = [f.result() for f in per_seed]
+                        for r in records:
+                            raw.write(json.dumps(r) + "\n")
+                        mean, se = mean_and_se([error(r, metric) for r in records])
+                        means.append(mean)
+                        ses.append(se)
+                        curve.writerow([family, variant, config, dist, param, k, n, mean, se])
+                    curve_file.flush()
+                    n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail, ses)
                     results.append((point, n_sat, means[-1]))
-                    continue
-                means, ses = [], []
-                for n, per_seed in zip(ns, per_n):
-                    records = [f.result() for f in per_seed]
-                    for r in records:
-                        raw.write(json.dumps(r) + "\n")
-                    mean, se = mean_and_se([error(r, metric) for r in records])
-                    means.append(mean)
-                    ses.append(se)
-                    curve.writerow([family, variant, config, dist, param, k, n, mean, se])
-                curve_file.flush()
-                n_sat = n_saturation(ns, means, args.tolerance, args.plateau_tail, ses)
-                results.append((point, n_sat, means[-1]))
-                print(f"  {variant} ({config}) {dist}={param} K={k}: n_sat={n_sat}",
-                      file=sys.stderr)
+                    print(f"  {variant} ({config}) {dist}={param} K={k}: n_sat={n_sat}",
+                          file=sys.stderr)
+            except BaseException:
+                # A failed run (or Ctrl-C) should surface now, not after the queue drains.
+                for f in (f for per_n in futures if per_n for fs in per_n for f in fs):
+                    f.cancel()
+                raise
         raw.close()
         curve_file.close()
 
