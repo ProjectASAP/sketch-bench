@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::column::ColumnSpec;
 use crate::error::DataGenError;
+use crate::splitmix64;
 
 /// One generated column, tagged with the type it holds. The output side of
 /// `data_type`: a caller peels the variant it asked for and takes ownership of
@@ -271,16 +272,6 @@ impl StrCfg {
         })
     }
 
-    /// Deterministic per-rank scramble. Not an RNG: the length and the filler of
-    /// a key must depend on the key alone, so the same rank renders to the same
-    /// string every time it is drawn.
-    fn mix(mut x: u64) -> u64 {
-        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        x ^ (x >> 31)
-    }
-
     /// Build the rendering config for a column, validating it eagerly so a bad
     /// `string:` block fails before any value is drawn.
     pub(crate) fn for_column(spec: &ColumnSpec) -> Result<Self, DataGenError> {
@@ -306,7 +297,10 @@ impl StrCfg {
 
     fn render(&self, rank: u64) -> String {
         let base = self.alphabet.len() as u64;
-        let h = Self::mix(rank);
+        // Deterministic per-rank scramble. Not an RNG: the length and the
+        // filler of a key must depend on the key alone, so the same rank
+        // renders to the same string every time it is drawn.
+        let h = splitmix64::finalize(rank);
         // Length varies with the rank, never below the prefix the encoding
         // needs, so a short `min_len` narrows the spread instead of breaking
         // injectivity.
@@ -323,9 +317,67 @@ impl StrCfg {
         // prefix has not already fixed and cannot make two ranks collide.
         let mut f = h;
         for _ in self.prefix..len {
-            f = Self::mix(f);
+            f = splitmix64::finalize(f);
             out.push(self.alphabet[(f % base) as usize]);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{column, normal, one, zipf};
+
+    #[test]
+    fn peeling_the_wrong_variant_names_both_types() {
+        let t = one(column(zipf(64, 1.0, 9), "i64"), 10).generate().unwrap();
+        let err = t
+            .into_column(0)
+            .unwrap()
+            .into_f64()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("i64") && err.contains("f64"), "{err}");
+    }
+
+    #[test]
+    fn a_string_column_renders_distinct_ranks_to_distinct_keys() {
+        let mut spec = column(zipf(200, 0.0, 11), "string");
+        spec.string = Some(StringOpts {
+            alphabet: "abcdef".into(),
+            min_len: 4,
+            max_len: 8,
+        });
+        let t = one(spec, 4000).generate().unwrap();
+        let values = t.into_column(0).unwrap().into_string().unwrap();
+        for s in &values {
+            assert!(s.len() >= 4 && s.len() <= 8, "{s} outside 4..=8");
+            assert!(s.chars().all(|c| "abcdef".contains(c)), "{s}");
+        }
+        // Injective rendering: no more distinct keys than there are ranks.
+        let mut distinct: Vec<&String> = values.iter().collect();
+        distinct.sort();
+        distinct.dedup();
+        assert!(distinct.len() > 1 && distinct.len() <= 200);
+    }
+
+    /// Normal has no bounded domain, so there is no prefix width that can
+    /// address its values injectively. Refused rather than approximated.
+    #[test]
+    fn a_normal_string_column_is_refused() {
+        let err = one(column(normal(0.0, 1.0, 1), "string"), 10)
+            .generate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("bounded domain"), "{err}");
+    }
+
+    #[test]
+    fn a_string_column_comes_back_the_length_it_claims() {
+        let t = one(column(zipf(64, 1.0, 9), "string"), 50)
+            .generate()
+            .unwrap();
+        assert_eq!(t.data[0].len(), 50);
     }
 }

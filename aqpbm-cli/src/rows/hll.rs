@@ -219,7 +219,7 @@ fn lg_k(req: &Requirement) -> Result<u8, RunError> {
     let p: sketch_bench::params::HllParams = req
         .params
         .parse()
-        .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;
+        .map_err(|e: aqpbm_datagen::DataGenError| RunError::Sketch(e.to_string()))?;
     Ok(p.lg_k)
 }
 

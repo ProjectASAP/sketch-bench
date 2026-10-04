@@ -33,8 +33,8 @@ impl From<anyhow::Error> for RunError {
 
 /// A config that does not parse into an impl's params type is the sketch
 /// refusing to be built, reported before a dataset is generated.
-impl From<crate::DataGenError> for RunError {
-    fn from(e: crate::DataGenError) -> Self {
+impl From<aqpbm_datagen::DataGenError> for RunError {
+    fn from(e: aqpbm_datagen::DataGenError) -> Self {
         RunError::Sketch(e.to_string())
     }
 }

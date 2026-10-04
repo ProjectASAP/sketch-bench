@@ -15,7 +15,7 @@ use aqpbm_core::measure::{
     measure, runs_for, MeasureConfig, Measurement, Pass, Report, RunOutcome as MeasuredRun,
 };
 use aqpbm_core::metrics::{LatencyRecorder, Metric, MetricsMask, RunMetrics, WallClock};
-use aqpbm_datagen::table::GeneratedTable;
+use aqpbm_datagen::GeneratedTable;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

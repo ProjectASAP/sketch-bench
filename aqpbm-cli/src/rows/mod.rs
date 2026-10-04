@@ -34,7 +34,7 @@ use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
 };
 use aqpbm_core::metrics::{Metric, Operation};
-use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
+use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 use sketch_bench::wrappers::frequency_value::FrequencyValue;
 
 /// The label column every subpopulation comparator scores over.

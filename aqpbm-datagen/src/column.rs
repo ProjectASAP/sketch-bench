@@ -13,7 +13,7 @@ use crate::value::{ColumnData, StrCfg, StringOpts};
 /// The `data_type` spellings this build renders.
 pub const DATA_TYPES: [&str; 4] = ["i64", "u64", "f64", "string"];
 
-/// One column of a [`crate::TableDescription`].
+/// One column of a [`crate::table::TableDescription`].
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnSpec {
@@ -162,5 +162,110 @@ impl ColumnSpec {
                 "data_type: unknown type '{other}'"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{column, normal, one, uniform, zipf};
+
+    /// The example the design doc gives for `shift`: a Zipf column that should
+    /// live in the 15000s rather than starting at its natural rank 1.
+    #[test]
+    fn shift_moves_a_column_off_its_natural_base() {
+        let mut spec = column(zipf(5000, 1.1, 4), "i64");
+        spec.shift = Some(15000.0);
+        let t = one(spec, 2000).generate().unwrap();
+        for v in t.into_column(0).unwrap().into_i64().unwrap() {
+            assert!((15001..=20000).contains(&v), "{v} outside 15001..=20000");
+        }
+    }
+
+    #[test]
+    fn shift_applies_to_normal_too() {
+        let mut spec = column(normal(0.0, 1.0, 5), "f64");
+        spec.shift = Some(1000.0);
+        let t = one(spec, 2000).generate().unwrap();
+        let values = t.into_column(0).unwrap().into_f64().unwrap();
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        assert!((mean - 1000.0).abs() < 0.2, "mean {mean} not near 1000");
+    }
+
+    /// `data_type` picks the variant, and nothing else about the description
+    /// changes — the same draws land in a different container.
+    #[test]
+    fn data_type_selects_the_variant() {
+        for (ty, kind) in [("i64", "i64"), ("u64", "u64"), ("f64", "f64")] {
+            let t = one(column(zipf(64, 1.0, 9), ty), 100).generate().unwrap();
+            assert_eq!(t.data[0].kind(), kind);
+        }
+    }
+
+    #[test]
+    fn an_unknown_data_type_is_refused_by_name() {
+        let err = one(column(zipf(64, 1.0, 9), "i32"), 10)
+            .generate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("i32"), "{err}");
+    }
+
+    // ---------- the special_rule mask ----------
+
+    #[test]
+    fn the_monotonic_rule_never_decreases_and_starts_at_shift() {
+        let mut spec = column(uniform(0.0, 10.0, 21), "i64");
+        spec.special_rule = RULE_MONOTONIC_INCREASE;
+        spec.shift = Some(1_700_000_000_000.0);
+        let t = one(spec, 5000).generate().unwrap();
+        let values = t.into_column(0).unwrap().into_i64().unwrap();
+        assert_eq!(values[0], 1_700_000_000_000);
+        assert!(values.windows(2).all(|w| w[1] >= w[0]));
+        assert!(values[4999] > values[0], "the series never advanced");
+    }
+
+    #[test]
+    fn an_unknown_rule_bit_is_refused() {
+        let mut spec = column(zipf(64, 1.0, 9), "i64");
+        spec.special_rule = 0b1010;
+        let err = one(spec, 10).generate().unwrap_err().to_string();
+        assert!(err.contains("unknown bit"), "{err}");
+    }
+
+    #[test]
+    fn a_string_column_refuses_shift_and_rules() {
+        let mut spec = column(zipf(64, 1.0, 9), "string");
+        spec.shift = Some(1.0);
+        assert!(one(spec.clone(), 10).generate().is_err());
+
+        spec.shift = None;
+        spec.special_rule = RULE_MONOTONIC_INCREASE;
+        assert!(one(spec, 10).generate().is_err());
+    }
+
+    // ---------- cardinality as a restatement ----------
+
+    #[test]
+    fn a_cardinality_that_agrees_with_the_domain_is_accepted() {
+        let mut spec = column(zipf(256, 1.1, 9), "i64");
+        spec.cardinality = Some(256);
+        assert!(one(spec, 100).generate().is_ok());
+    }
+
+    #[test]
+    fn a_cardinality_that_disagrees_names_both_numbers() {
+        let mut spec = column(zipf(256, 1.1, 9), "i64");
+        spec.cardinality = Some(1000);
+        let err = one(spec, 100).generate().unwrap_err().to_string();
+        assert!(err.contains("1000") && err.contains("256"), "{err}");
+    }
+
+    #[test]
+    fn a_cardinality_over_an_unbounded_distribution_is_refused() {
+        let mut spec = column(normal(0.0, 1.0, 9), "f64");
+        spec.cardinality = Some(100);
+        let err = one(spec, 100).generate().unwrap_err().to_string();
+        assert!(err.contains("unbounded"), "{err}");
     }
 }

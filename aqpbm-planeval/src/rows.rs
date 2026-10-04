@@ -30,8 +30,7 @@ use std::fs::File;
 use std::path::Path;
 use std::rc::Rc;
 
-use aqpbm_datagen::table::GeneratedTable;
-use aqpbm_datagen::value::ColumnData;
+use aqpbm_datagen::{ColumnData, GeneratedTable};
 
 use asap_types::post_asap::{SummaryFamilyType, SummarySchema};
 use asap_types::pre_asap::{
@@ -1648,7 +1647,7 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod generated_tests {
     use super::*;
-    use aqpbm_datagen::table::TableDescription;
+    use aqpbm_datagen::TableDescription;
     use asap_types::post_asap::{SummaryFamilyType, SummaryField};
     use asap_types::pre_asap::schema::{Column, Schema};
     use asap_types::pre_asap::Source;

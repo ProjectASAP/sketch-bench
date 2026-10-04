@@ -999,7 +999,8 @@ mod tests {
 
     use super::*;
     use aqpbm_core::accuracy::quantile::RankErrorGT;
-    use aqpbm_core::{ColumnData, GeneratedTable, GroundTruth};
+    use aqpbm_core::GroundTruth;
+    use aqpbm_datagen::{ColumnData, GeneratedTable};
     use asap_types::post_asap::guarantee::{BoundExpr, ProbabilityExpr};
 
     /// `0, 1, … 9999` — the dataset every hand-computed number below is taken

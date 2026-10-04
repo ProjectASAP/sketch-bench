@@ -161,3 +161,41 @@ impl Sampler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::{column, one, uniform, zipf};
+
+    /// The seed lives inside the distribution, so changing it is the one edit
+    /// that redraws a column without changing what the column *is*.
+    #[test]
+    fn the_seed_is_what_separates_two_draws() {
+        let a = one(column(zipf(1000, 1.1, 1), "i64"), 500)
+            .generate()
+            .unwrap();
+        let b = one(column(zipf(1000, 1.1, 2), "i64"), 500)
+            .generate()
+            .unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn zipf_ranks_stay_in_the_population() {
+        let t = one(column(zipf(100, 1.2, 3), "i64"), 2000)
+            .generate()
+            .unwrap();
+        for v in t.into_column(0).unwrap().into_i64().unwrap() {
+            assert!((1..=100).contains(&v), "{v} outside 1..=100");
+        }
+    }
+
+    #[test]
+    fn uniform_stays_between_its_bounds() {
+        let t = one(column(uniform(-5.0, 5.0, 3), "f64"), 2000)
+            .generate()
+            .unwrap();
+        for v in t.into_column(0).unwrap().into_f64().unwrap() {
+            assert!((-5.0..5.0).contains(&v), "{v} outside -5..5");
+        }
+    }
+}

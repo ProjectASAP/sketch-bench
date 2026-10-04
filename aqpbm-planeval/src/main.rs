@@ -12,7 +12,7 @@ use std::rc::Rc;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use aqpbm_datagen::table::TableDescription;
+use aqpbm_datagen::TableDescription;
 use aqpbm_planeval::exact::{run_promql, Data, ExactRun};
 use aqpbm_planeval::plan::{plan_promql, to_json};
 use aqpbm_planeval::record::{NodeCost, Phase, PlanEvalRecord};

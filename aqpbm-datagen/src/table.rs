@@ -9,21 +9,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::burst::{inject_interval_bursts, BurstSpec};
 use crate::column::ColumnSpec;
 use crate::error::DataGenError;
+use crate::splitmix64;
 use crate::value::ColumnData;
-use crate::{inject_interval_bursts, BurstSpec};
-
-/// Scramble a latent rank before dividing it among connected columns. This
-/// SplitMix64 finalizer spreads nearby ranks across the word while keeping the
-/// mapping deterministic.
-#[inline]
-fn mix_connected_bits(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
 
 /// Take one equal-width chunk from a mixed 64-bit draw. Member zero receives
 /// the least-significant chunk; any high remainder bits are unused.
@@ -209,10 +199,13 @@ impl TableDescription {
                 .distribution
                 .domain()
                 .expect("connected domains were validated above");
+            // Scramble a latent rank before dividing it among connected columns.
+            // This SplitMix64 finalizer spreads nearby ranks across the word
+            // while keeping the mapping deterministic.
             let bits = self.column_spec[head]
                 .draw(row_num)?
                 .into_iter()
-                .map(|draw| mix_connected_bits((draw - domain.lower) as u64))
+                .map(|draw| splitmix64::finalize((draw - domain.lower) as u64))
                 .collect();
             group_bits.insert(g, bits);
         }
@@ -362,5 +355,258 @@ impl GeneratedTable {
     /// Take every column, in order.
     pub fn into_columns(self) -> Vec<ColumnData> {
         self.data
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{column, normal, one, uniform, zipf};
+
+    #[test]
+    fn the_same_description_produces_the_same_table() {
+        let d = one(column(zipf(1000, 1.1, 7), "i64"), 500);
+        assert_eq!(d.generate().unwrap(), d.generate().unwrap());
+    }
+
+    // ---------- table shape ----------
+
+    #[test]
+    fn column_num_must_match_the_column_count() {
+        let mut d = one(column(zipf(64, 1.0, 9), "i64"), 10);
+        d.column_num = 2;
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("column_num"), "{err}");
+    }
+
+    #[test]
+    fn every_column_comes_back_the_same_length() {
+        let d = TableDescription {
+            column_num: 3,
+            column_label: vec!["a".into(), "b".into(), "c".into()],
+            column_spec: vec![
+                column(zipf(64, 1.0, 1), "i64"),
+                column(uniform(0.0, 8.0, 2), "f64"),
+                column(zipf(16, 1.2, 3), "u64"),
+            ],
+            column_connected: Vec::new(),
+            row_num: 777,
+        };
+        let t = d.generate().unwrap();
+        assert_eq!(t.row_num, 777);
+        for c in &t.data {
+            assert_eq!(c.len(), 777);
+        }
+        t.validate().unwrap();
+    }
+
+    #[test]
+    fn a_zero_row_table_is_refused() {
+        assert!(one(column(zipf(64, 1.0, 9), "i64"), 0).generate().is_err());
+    }
+
+    // ---------- column_connected ----------
+
+    fn flow_table(seed_b: u64, shift_b: Option<f64>) -> TableDescription {
+        let mut src = column(zipf(500, 1.1, 42), "i64");
+        let mut dst = column(zipf(500, 1.1, seed_b), "i64");
+        src.shift = Some(10_000.0);
+        dst.shift = shift_b;
+        TableDescription {
+            column_num: 2,
+            column_label: vec!["src_ip".into(), "dst_ip".into()],
+            column_spec: vec![src, dst],
+            column_connected: vec![vec!["src_ip".into(), "dst_ip".into()]],
+            row_num: 1000,
+        }
+    }
+
+    /// Each repeated latent rank maps to one stable tuple rather than being
+    /// copied into both columns.
+    #[test]
+    fn connected_columns_derive_a_stable_tuple() {
+        let d = flow_table(42, Some(20_000.0));
+        let latent = d.column_spec[0].draw(d.row_num as usize).unwrap();
+        let t = d.generate().unwrap();
+        let mut cols = t.into_columns();
+        let dst = cols.pop().unwrap().into_i64().unwrap();
+        let src = cols.pop().unwrap().into_i64().unwrap();
+        assert_eq!(src.len(), 1000);
+
+        let mut tuple_of = std::collections::HashMap::new();
+        let mut repeated = 0;
+        for ((draw, s), d) in latent.iter().zip(&src).zip(&dst) {
+            let tuple = (*s, *d);
+            let latent_rank = (*draw - 1.0) as u64;
+            if let Some(previous) = tuple_of.insert(latent_rank, tuple) {
+                repeated += 1;
+                assert_eq!(tuple, previous, "one latent rank mapped to two tuples");
+            }
+        }
+        assert!(repeated > 0, "the test needs repeated latent ranks");
+        assert!(src.iter().zip(&dst).any(|(s, d)| d - s != 10_000));
+    }
+
+    fn mixed_bits_for_test(mut x: u64) -> u64 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^ (x >> 31)
+    }
+
+    #[test]
+    fn three_connected_columns_receive_low_to_high_chunks() {
+        let distribution = zipf(2_000_000, 1.1, 42);
+        let mut specs = vec![
+            column(distribution.clone(), "u64"),
+            column(distribution.clone(), "u64"),
+            column(distribution, "u64"),
+        ];
+        specs[1].shift = Some(2_000_000.0);
+        specs[2].shift = Some(4_000_000.0);
+        let d = TableDescription {
+            column_num: 3,
+            column_label: vec!["a".into(), "b".into(), "c".into()],
+            column_spec: specs,
+            column_connected: vec![vec!["a".into(), "b".into(), "c".into()]],
+            row_num: 64,
+        };
+        let latent = d.column_spec[0].draw(d.row_num as usize).unwrap();
+        let columns = d
+            .generate()
+            .unwrap()
+            .into_columns()
+            .into_iter()
+            .map(|column| column.into_u64().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(mixed_bits_for_test(0), 0xe220_a839_7b1d_cdaf);
+        let width = 64 / 3;
+        let mask = (1u64 << width) - 1;
+        for (row, draw) in latent.iter().enumerate() {
+            let bits = mixed_bits_for_test((*draw - 1.0) as u64);
+            for (member, column) in columns.iter().enumerate() {
+                let rank = ((bits >> (member * width)) & mask) % 2_000_000;
+                let expected = 1 + rank + member as u64 * 2_000_000;
+                assert_eq!(column[row], expected);
+            }
+        }
+    }
+
+    #[test]
+    fn connected_columns_that_draw_differently_are_refused() {
+        let err = flow_table(43, None).generate().unwrap_err().to_string();
+        assert!(err.contains("draw differently"), "{err}");
+    }
+
+    #[test]
+    fn a_connection_naming_an_unknown_column_is_refused() {
+        let mut d = flow_table(42, None);
+        d.column_connected = vec![vec!["src_ip".into(), "nowhere".into()]];
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("nowhere"), "{err}");
+    }
+
+    #[test]
+    fn a_column_in_two_groups_is_refused() {
+        let mut d = flow_table(42, None);
+        d.column_connected = vec![
+            vec!["src_ip".into(), "dst_ip".into()],
+            vec!["src_ip".into(), "dst_ip".into()],
+        ];
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("groups 0 and 1"), "{err}");
+    }
+
+    #[test]
+    fn a_one_column_group_is_refused() {
+        let mut d = flow_table(42, None);
+        d.column_connected = vec![vec!["src_ip".into()]];
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("at least 2"), "{err}");
+    }
+
+    #[test]
+    fn a_group_larger_than_the_source_word_is_refused() {
+        let labels = (0..65).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        let spec = column(zipf(64, 1.0, 9), "i64");
+        let d = TableDescription {
+            column_num: 65,
+            column_label: labels.clone(),
+            column_spec: vec![spec; 65],
+            column_connected: vec![labels],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("at most 64"), "{err}");
+    }
+
+    #[test]
+    fn a_connected_unbounded_distribution_is_refused() {
+        let spec = column(normal(0.0, 1.0, 9), "f64");
+        let d = TableDescription {
+            column_num: 2,
+            column_label: vec!["a".into(), "b".into()],
+            column_spec: vec![spec.clone(), spec],
+            column_connected: vec![vec!["a".into(), "b".into()]],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("bounded integer domain"), "{err}");
+    }
+
+    #[test]
+    fn a_connected_zero_sized_domain_is_refused() {
+        let spec = column(uniform(0.0, 0.5, 9), "f64");
+        let d = TableDescription {
+            column_num: 2,
+            column_label: vec!["a".into(), "b".into()],
+            column_spec: vec![spec.clone(), spec],
+            column_connected: vec![vec!["a".into(), "b".into()]],
+            row_num: 10,
+        };
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("positive integer domain"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_labels_are_refused() {
+        let mut d = flow_table(42, None);
+        d.column_label = vec!["same".into(), "same".into()];
+        d.column_connected = Vec::new();
+        let err = d.generate().unwrap_err().to_string();
+        assert!(err.contains("used twice"), "{err}");
+    }
+
+    // ---------- serde ----------
+
+    #[test]
+    fn a_description_round_trips_through_yaml() {
+        let d = flow_table(42, Some(20_000.0));
+        let text = serde_norway::to_string(&d).unwrap();
+        let back: TableDescription = serde_norway::from_str(&text).unwrap();
+        assert_eq!(d, back);
+        assert_eq!(d.generate().unwrap(), back.generate().unwrap());
+    }
+
+    #[test]
+    fn a_description_deserializes_from_the_documented_yaml_shape() {
+        let yaml = "
+column_num: 1
+column_label: [key]
+row_num: 100
+column_spec:
+  - data_type: i64
+    cardinality: 200
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 200
+      seed: 1
+";
+        let d: TableDescription = serde_norway::from_str(yaml).unwrap();
+        assert_eq!(d.column_spec[0].cardinality, Some(200));
+        assert_eq!(d.column_spec[0].distribution.seed(), 1);
+        assert_eq!(d.generate().unwrap().data[0].len(), 100);
     }
 }

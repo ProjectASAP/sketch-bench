@@ -23,7 +23,7 @@ macro_rules! fixed_matrix_row {
             let p: $params = req
                 .params
                 .parse()
-                .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;
+                .map_err(|e: aqpbm_datagen::DataGenError| RunError::Sketch(e.to_string()))?;
 
             // Two runtime values, two type choices: the shape selects `M`
             // through the visitor below, and `--dtype` selects `T` in the match
