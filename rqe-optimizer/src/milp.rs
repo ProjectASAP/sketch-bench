@@ -4,7 +4,7 @@
 //! enumerating the Cartesian product of eligible deployment choices.
 
 use crate::candidates::eligible_deployments_for;
-use crate::objectives::{score, Objectives};
+use crate::objectives::{score, MachineFamily, Objectives, BYTES_PER_GIB};
 use crate::{Deployment, LabelSetTable, Mapping, Rqe};
 use good_lp::{
     default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution, SolverModel,
@@ -33,6 +33,29 @@ pub fn minimize_tco(
     deployments: &[Deployment],
     label_sets: &LabelSetTable,
     bounds: &MilpBounds,
+) -> Result<MilpSolution, ResolutionError> {
+    solve(rqes, deployments, label_sets, bounds, None)
+}
+
+/// Minimize the hourly price of running the plan on `family`, in fractional
+/// instances: `n ≥ CPU / vCPU` and `n ≥ retained memory / GiB`. Same inputs
+/// and bounds as [`minimize_tco`].
+pub fn minimize_cost(
+    rqes: &[Rqe],
+    deployments: &[Deployment],
+    label_sets: &LabelSetTable,
+    bounds: &MilpBounds,
+    family: &MachineFamily,
+) -> Result<MilpSolution, ResolutionError> {
+    solve(rqes, deployments, label_sets, bounds, Some(family))
+}
+
+fn solve(
+    rqes: &[Rqe],
+    deployments: &[Deployment],
+    label_sets: &LabelSetTable,
+    bounds: &MilpBounds,
+    family: Option<&MachineFamily>,
 ) -> Result<MilpSolution, ResolutionError> {
     assert!(
         bounds.max_query_latency_secs.is_empty()
@@ -89,7 +112,27 @@ pub fn minimize_tco(
         }
     }
 
-    let mut model = variables.minimise(objective).using(default_solver);
+    // Retained GiB per deployment, and fractional instances, priced only when
+    // a machine family is given.
+    let retained_gib: Vec<Variable> = match family {
+        Some(_) => deployments
+            .iter()
+            .map(|_| variables.add(variable().min(0)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let instances = variables.add(variable().min(0));
+    let goal = match family {
+        Some(f) => f.usd_per_hour * instances,
+        None => objective.clone(),
+    };
+
+    let mut model = variables.minimise(goal).using(default_solver);
+    if let Some(f) = family {
+        model.add_constraint((objective - f.vcpu * instances).leq(0));
+        let total_gib: Expression = retained_gib.iter().sum();
+        model.add_constraint((total_gib - f.memory_gib * instances).leq(0));
+    }
     if let Some(memory_limit) = bounds.max_peak_query_memory_bytes {
         model.add_constraint(Expression::from(peak_memory).leq(memory_limit));
     }
@@ -104,6 +147,18 @@ pub fn minimize_tco(
             let memory = label_sets[&deployment.labels].cardinality as f64
                 * deployment.config.mem_bytes_per_instance;
             model.add_constraint((memory * assignment - peak_memory).leq(0));
+            if family.is_some() {
+                // Linearized max over the RQEs a deployment serves.
+                let retained = memory
+                    * deployment
+                        .retained_instance_count(rqes[rqe_index].lookback_secs)
+                        .expect("assignment only contains eligible deployments")
+                        as f64
+                    / BYTES_PER_GIB;
+                model.add_constraint(
+                    (retained * assignment - retained_gib[deployment_index]).leq(0),
+                );
+            }
         }
 
         if let Some(Some(latency_limit)) = bounds.max_query_latency_secs.get(rqe_index) {
@@ -266,5 +321,86 @@ mod tests {
         assert!(
             (milp.objectives.tco_cpu_secs_per_sec - expected.tco_cpu_secs_per_sec).abs() < 1e-12
         );
+    }
+
+    fn family(memory_gib: f64) -> MachineFamily {
+        MachineFamily {
+            family: format!("{memory_gib} GiB"),
+            vcpu: 4.0,
+            memory_gib,
+            usd_per_hour: 1.0,
+        }
+    }
+
+    #[test]
+    fn minimize_cost_matches_brute_force_minimum() {
+        let mut frequent = rqe();
+        frequent.id = "frequent".into();
+        let mut long = rqe();
+        long.id = "long".into();
+        long.lookback_secs = 600;
+        let rqes = vec![frequent, long];
+        let deployments = vec![
+            deployment(1.0, 0.5 * BYTES_PER_GIB, 400.0),
+            deployment(3.0, 0.1 * BYTES_PER_GIB, 1.0),
+            deployment(0.2, 2.0 * BYTES_PER_GIB, 1.0),
+        ];
+        let label_sets = BTreeMap::from([(
+            LabelSet::new(),
+            LabelSetInfo {
+                cardinality: 1,
+                arrival_rate_per_sec: 1.0,
+            },
+        )]);
+
+        for family in [family(8.0), family(32.0)] {
+            let best = brute_force(&rqes, &deployments)
+                .iter()
+                .map(|mapping| {
+                    family.usd_per_hour(&score(&rqes, &deployments, mapping, &label_sets))
+                })
+                .min_by(f64::total_cmp)
+                .expect("test workload is servable");
+            let milp = minimize_cost(
+                &rqes,
+                &deployments,
+                &label_sets,
+                &MilpBounds::default(),
+                &family,
+            )
+            .expect("feasible MILP");
+            assert!((family.usd_per_hour(&milp.objectives) - best).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn binding_resource_decides_the_plan_per_family() {
+        let rqes = vec![rqe()];
+        // Holds 2 instances: CPU-heavy with 2 GiB, or CPU-light with 4 GiB.
+        let deployments = vec![
+            deployment(1.0, 1.0 * BYTES_PER_GIB, 0.0),
+            deployment(0.05, 2.0 * BYTES_PER_GIB, 0.0),
+        ];
+        let label_sets = BTreeMap::from([(
+            LabelSet::new(),
+            LabelSetInfo {
+                cardinality: 1,
+                arrival_rate_per_sec: 1.0,
+            },
+        )]);
+        let solve = |memory_gib| {
+            minimize_cost(
+                &rqes,
+                &deployments,
+                &label_sets,
+                &MilpBounds::default(),
+                &family(memory_gib),
+            )
+            .expect("feasible MILP")
+            .mapping
+        };
+
+        assert_eq!(solve(8.0), vec![0]); // memory is scarce: 0.25 vs 0.5 instances
+        assert_eq!(solve(32.0), vec![1]); // CPU is scarce: 0.25 vs 0.125 instances
     }
 }
