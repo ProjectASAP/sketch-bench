@@ -135,8 +135,10 @@ def n_star(ns, exact, sketch, factor):
 
 
 def point_key(sketch, config, dist, param, cardinality):
-    """How a point is matched across CSVs: param compared as a number."""
-    return (sketch, config, dist, float(param), str(cardinality))
+    """How a point is matched across CSVs: param and cardinality compared as
+    numbers, so a CSV round-tripped through pandas ("1000.0") still matches."""
+    card = str(int(float(cardinality))) if str(cardinality) != "" else ""
+    return (sketch, config, dist, float(param), card)
 
 
 def load_curves(path):
