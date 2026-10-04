@@ -79,6 +79,13 @@ fn distribution_descriptor(workload: &WorkloadDescription) -> serde_json::Value 
                             ("standard_deviation".into(), value.standard_deviation),
                         ]),
                     ),
+                    DataDistribution::Pareto(value) => (
+                        "pareto",
+                        BTreeMap::from([
+                            ("alpha".into(), value.alpha),
+                            ("scale".into(), value.scale),
+                        ]),
+                    ),
                 };
                 Some(ErpDataShape {
                     cardinality,

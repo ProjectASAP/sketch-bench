@@ -41,6 +41,7 @@ enum DataDistribution {
     Zipf(ZipfParameter),
     Uniform(UniformParameter),
     Normal(NormalParameter),
+    Pareto(ParetoParameter),
 }
 
 struct ZipfParameter {
@@ -58,6 +59,12 @@ struct UniformParameter {
 struct NormalParameter {
     pub mean: f64,
     pub standard_deviation: f64,
+    pub seed: u64,
+}
+
+struct ParetoParameter {
+    pub alpha: f64, // shape
+    pub scale: f64, // minimum value
     pub seed: u64,
 }
 ```

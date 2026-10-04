@@ -1,0 +1,344 @@
+family,sketch,config,dist,param,cardinality,n_sat,sketch_memory_bytes,sketch_cpu_secs,memory_n_star_10x,memory_n_star_100x,cpu_n_star_10x,cpu_n_star_100x
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.0,1000,177828,3072,0.22340969499760074,1778,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.0,100000,not_saturated,3072,0.22373268887992448,1000,10000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.0,10000000,not_saturated,3072,0.22520769471268345,1000,10000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.5,1000,5623,3072,0.2238116926655127,1778,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.5,100000,56234,3072,0.2250510222398812,1000,10000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.5,10000000,562341,3072,0.2248930281867483,1000,10000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.8,1000,5623,3072,0.2238306933306062,1778,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.8,100000,17783,3072,0.22362368900131566,1778,17783,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,0.8,10000000,56234,3072,0.22475736151948988,1000,10000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.0,1000,5623,3072,0.22361635926550827,1778,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.0,100000,10000,3072,0.22364402222058133,1778,17783,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.0,10000000,17783,3072,0.2238143610591677,1778,17783,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.2,1000,5623,3072,0.22370002632005415,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.2,100000,17783,3072,0.2237063555407867,1778,17783,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.2,10000000,10000,3072,0.22518068986540568,1778,17783,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.5,1000,17783,3072,0.22407102599862078,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.5,100000,10000,3072,0.22405468898572214,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,1.5,10000000,17783,3072,0.22385335566214257,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,2.0,1000,31623,3072,0.22363169266040483,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,2.0,100000,100000,3072,0.22318469119412043,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=256,zipf,2.0,10000000,31623,3072,0.22374502536719193,3162,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,1000,316228,12288,0.22440869999826352,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,100000,not_saturated,12288,0.2248110222498946,5623,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,10000000,not_saturated,12288,0.22600702778837548,5623,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,1000,5623,12288,0.22383069599611638,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,100000,100000,12288,0.2241316888865772,5623,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,10000000,562341,12288,0.2239013612452328,5623,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,1000,100000,12288,0.2236493623324249,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,100000,31623,12288,0.22366368891327537,5623,100000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,10000000,100000,12288,0.22511136148660513,5623,56234,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,1000,17783,12288,0.22398602832320008,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,100000,56234,12288,0.2233003555806129,5623,100000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,10000000,31623,12288,0.2248363623884641,5623,100000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,1000,5623,12288,0.22423802966296452,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,100000,56234,12288,0.22369168890504568,10000,100000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,10000000,56234,12288,0.22391135657295652,10000,100000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,1000,56234,12288,0.22374202999514878,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,100000,177828,12288,0.2241053559760855,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,10000000,177828,12288,0.2237756891269328,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,1000,316228,12288,0.2233940312087956,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,100000,1778279,12288,0.2234553582519393,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,10000000,1778279,12288,0.22325735814005834,10000,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,1000,1000000,49152,0.22336470633090913,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,100000,not_saturated,49152,0.22394502234988445,17783,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,10000000,not_saturated,49152,0.22304702778376206,17783,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,1000,17783,49152,0.22427370689286863,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,100000,177828,49152,0.22346168906645886,17783,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,10000000,1000000,49152,0.22352536140566617,17783,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,1000,31623,49152,0.22433370599332297,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,100000,56234,49152,0.22361802233993638,17783,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,10000000,177828,49152,0.22508936133532748,17783,177828,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,1000,17783,49152,0.22466070763901597,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,100000,177828,49152,0.22334835566395841,31623,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,10000000,100000,49152,0.2234593610764241,17783,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,1000,56234,49152,0.22354737366124314,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,100000,316228,49152,0.2237556889982697,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,10000000,316228,49152,0.22419168999930847,56234,316228,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,1000,not_saturated,49152,0.22360504066179496,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,100000,1000000,49152,0.22326635598719127,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,10000000,1000000,49152,0.22369468912769871,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,1000,1778279,49152,0.2237907062348167,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,100000,1778279,49152,0.2235463608308551,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,10000000,not_saturated,49152,0.2239116940249524,56234,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,1000,1000,196608,0.22474374498828734,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,100000,not_saturated,196608,0.22800002542207062,100000,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,10000000,not_saturated,196608,0.22506836282630457,100000,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,1000,1000,196608,0.22516474599838818,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,100000,177828,196608,0.22619135776469781,100000,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,10000000,1000000,196608,0.22942936287405655,100000,562341,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,1000,1000,196608,0.22427207866444906,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,100000,316228,196608,0.22540835752689076,100000,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,10000000,316228,196608,0.2261180292164598,100000,1000000,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,1000,1000,196608,0.2232494106643059,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,100000,316228,196608,0.22613069151061632,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,10000000,562341,196608,0.2253713623601004,100000,1778279,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,1000,1000,196608,0.22381307733124917,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,100000,1000000,196608,0.22423502407344412,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,10000000,1000000,196608,0.22422869075806906,177828,1778279,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,1000,1000,196608,0.22388674332112432,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,100000,1000000,196608,0.2235990262802503,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,10000000,1778279,196608,0.22451035822079143,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,1000,1000,196608,0.22315541132680905,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,100000,not_saturated,196608,0.2236373815961558,177828,3162278,1000,not_reached
+frequency,cms-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,10000000,not_saturated,196608,0.2244497144220971,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.0,1000,100000,3072,0.2630963889929759,1778,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.0,100000,not_saturated,3072,0.26194138429663744,1000,10000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.0,10000000,not_saturated,3072,0.2629817238276065,1000,10000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.5,1000,1000,3072,0.2623910591622642,1778,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.5,100000,177828,3072,0.26252471765659796,1000,10000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.5,10000000,not_saturated,3072,0.26434672637638895,1000,10000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.8,1000,56234,3072,0.26284905499673195,1778,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.8,100000,100000,3072,0.26103305066301663,1778,17783,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,0.8,10000000,1000000,3072,0.26404605740931947,1000,10000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.0,1000,31623,3072,0.2628327213326638,1778,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.0,100000,316228,3072,0.2629950510747098,1778,17783,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.0,10000000,316228,3072,0.2630210569644152,1778,17783,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.2,1000,316228,3072,0.26239139393904165,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.2,100000,316228,3072,0.26269971768389516,1778,17783,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.2,10000000,177828,3072,0.2649173861505078,1778,17783,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.5,1000,31623,3072,0.26301638799031685,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.5,100000,316228,3072,0.26246638451657434,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,1.5,10000000,100000,3072,0.26320905110839704,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,2.0,1000,562341,3072,0.2616700553298029,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,2.0,100000,17783,3072,0.262511387544216,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=256,zipf,2.0,10000000,177828,3072,0.2628727209208812,3162,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,1000,not_saturated,12288,0.2628790593313301,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,100000,not_saturated,12288,0.2638793844866524,5623,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,10000000,not_saturated,12288,0.2645120566238367,5623,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,1000,31623,12288,0.26313072842850177,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,100000,100000,12288,0.2636910512260784,5623,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,10000000,not_saturated,12288,0.2652090571475893,5623,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,1000,1778,12288,0.2626233923309551,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,100000,100000,12288,0.26228571786596855,5623,100000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,10000000,1000000,12288,0.2652060571443927,5623,56234,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,1000,3162,12288,0.2620523896657587,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,100000,56234,12288,0.26301605081148943,5623,100000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,10000000,56234,12288,0.263090723246495,5623,100000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,1000,1000,12288,0.26283639166112716,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,100000,100000,12288,0.2628140510516626,10000,100000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,10000000,100000,12288,0.26342838546429465,10000,100000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,1000,177828,12288,0.26213639266505684,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,100000,316228,12288,0.2630830522291848,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,10000000,562341,12288,0.2625907178857184,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,1000,3162,12288,0.26140872773270357,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,100000,100000,12288,0.26275872095595565,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,10000000,1778279,12288,0.26220138961384065,10000,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,1000,not_saturated,49152,0.2638607372398125,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,100000,not_saturated,49152,0.26293838455301394,17783,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,10000000,not_saturated,49152,0.26519805664656954,17783,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,1000,100000,49152,0.26315473857848143,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,100000,100000,49152,0.2632927177596056,17783,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,10000000,not_saturated,49152,0.2627207234541104,17783,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,1000,56234,49152,0.2633450715498726,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,100000,562341,49152,0.2637130511166468,17783,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,10000000,not_saturated,49152,0.2651627238004014,17783,177828,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,1000,1778279,49152,0.26360907453710497,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,100000,316228,49152,0.2639867177515303,31623,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,10000000,1000000,49152,0.26381105673124394,17783,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,1000,1000000,49152,0.26369007188632465,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,100000,1000000,49152,0.26329838453566273,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,10000000,1000000,49152,0.2627937203169069,56234,316228,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,1000,1778279,49152,0.26292173699656707,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,100000,1000000,49152,0.2628760513990628,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,10000000,1778279,49152,0.26300471799580616,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,1000,1000000,49152,0.2622694128799939,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,100000,not_saturated,49152,0.2625573907409045,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,10000000,not_saturated,49152,0.2634627247080246,56234,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,1000,562341,196608,0.263394797664844,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,100000,not_saturated,196608,0.26570005311664596,100000,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,10000000,not_saturated,196608,0.2670623911332022,100000,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,1000,not_saturated,196608,0.26460980205308393,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,100000,56234,196608,0.2656713873506246,100000,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,10000000,not_saturated,196608,0.2653547244441192,100000,562341,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,1000,17783,196608,0.26436446599556535,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,100000,10000,196608,0.26727138743624296,100000,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,10000000,1778279,196608,0.2655683913114466,100000,1000000,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,1000,10000,196608,0.2645151341779694,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,100000,10000,196608,0.2671177212581169,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,10000000,1000000,196608,0.2653050576272487,100000,1778279,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,1000,5623,196608,0.2646288013327755,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,100000,177828,196608,0.26411905305178207,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,10000000,1778279,196608,0.26396071985145647,177828,1778279,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,1000,562341,196608,0.2639141323331722,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,100000,177828,196608,0.2633730560147171,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,10000000,56234,196608,0.2636520547284122,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,1000,100000,196608,0.26294146833238985,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,100000,31623,196608,0.26287608999041817,177828,3162278,1000,not_reached
+frequency,countsketch-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,10000000,100000,196608,0.26311375930378644,177828,3162278,1000,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.0,1000,5623,3072,1.3908710729618186,1778,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.0,100000,3162,3072,0.8581848496117855,1000,10000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.0,10000000,1000,3072,0.9197436019652696,1000,10000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.5,1000,177828,3072,2.901321585075735,1778,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.5,100000,1778279,3072,0.9362224008322528,1000,10000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.5,10000000,1000000,3072,0.9000285705428639,1000,10000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.8,1000,1000,3072,6.831607389892326,1778,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.8,100000,1778279,3072,2.3020159632392865,1778,17783,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,0.8,10000000,not_saturated,3072,1.4753418403196508,1000,10000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.0,1000,1000,3072,10.152391065234832,1778,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.0,100000,not_saturated,3072,5.45679485119314,1778,17783,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.0,10000000,not_saturated,3072,3.823714284027799,1778,17783,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.2,1000,1000,3072,12.964425921548308,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.2,100000,not_saturated,3072,10.077077106781065,1778,17783,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.2,10000000,not_saturated,3072,9.273247797332388,1778,17783,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.5,1000,1000,3072,16.286239836288328,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.5,100000,not_saturated,3072,15.160266795740975,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,1.5,10000000,not_saturated,3072,15.981890712149053,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,2.0,1000,1000,3072,17.522831428652495,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,2.0,100000,562341,3072,17.604389271599544,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=256,zipf,2.0,10000000,177828,3072,17.509910150044313,3162,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,1000,not_saturated,12288,1.3984460705613642,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,100000,17783,12288,0.8416608240343245,5623,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.0,10000000,1000,12288,0.87050581781694,5623,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,1000,1000,12288,3.561902436267761,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,100000,56234,12288,1.0299201546892602,5623,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.5,10000000,not_saturated,12288,0.8678293110348151,5623,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,1000,1000,12288,7.088884837287234,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,100000,5623,12288,2.897371218463476,5623,100000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,0.8,10000000,not_saturated,12288,1.584556917411267,5623,56234,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,1000,1000,12288,10.337386151036176,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,100000,1778,12288,6.601278270774769,5623,100000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.0,10000000,not_saturated,12288,4.777097557506799,5623,100000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,1000,1000,12288,13.579583280284282,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,100000,1000,12288,11.171082245585954,10000,100000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.2,10000000,316228,12288,10.609070529699103,10000,100000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,1000,1000,12288,16.17468818099226,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,100000,1000,12288,16.203072609966558,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,1.5,10000000,1000,12288,15.559546283366998,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,1000,1778,12288,17.583894310123544,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,100000,3162,12288,17.824266860049406,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=1024,zipf,2.0,10000000,3162,12288,17.47469618882686,10000,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,1000,17783,49152,1.3898649547009194,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,100000,not_saturated,49152,0.8329409696090867,17783,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.0,10000000,1000,49152,0.8448663840159043,17783,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,1000,1778,49152,3.5924358868884845,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,100000,56234,49152,1.1089910152108626,17783,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.5,10000000,not_saturated,49152,0.8527334519215907,17783,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,1000,1000,49152,7.041857260899079,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,100000,3162,49152,2.9812884265553987,17783,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,0.8,10000000,5623,49152,1.6260888728131888,17783,177828,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,1000,1000,49152,10.230336236054946,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,100000,1778,49152,6.556363376616289,31623,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.0,10000000,1778,49152,5.072269888384958,17783,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,1000,1000,49152,13.073194419210184,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,100000,1000,49152,11.345731439423396,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.2,10000000,1000,49152,11.011504851682217,56234,316228,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,1000,1000,49152,16.368706457356293,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,100000,1000,49152,15.635576388221573,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,1.5,10000000,1000,49152,15.587351452428258,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,1000,1778,49152,17.465140020979874,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,100000,3162,49152,17.678481575469192,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=4096,zipf,2.0,10000000,3162,49152,17.745061224664084,56234,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,1000,5623,196608,1.4309840830656757,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,100000,316228,196608,0.9522807894518874,100000,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.0,10000000,not_saturated,196608,0.8396358492695036,100000,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,1000,1778,196608,3.5730175450160186,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,100000,56234,196608,1.0967535980202776,100000,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.5,10000000,1778279,196608,0.8599335460372204,100000,562341,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,1000,1000,196608,7.0450818659026915,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,100000,3162,196608,2.959008925467571,100000,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,0.8,10000000,5623,196608,1.6653930316789975,100000,1000000,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,1000,1000,196608,10.269664220193304,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,100000,1778,196608,6.612525669218897,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.0,10000000,1778,196608,6.439837430930308,100000,1778279,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,1000,1000,196608,13.02341303750842,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,100000,1000,196608,11.413335099402278,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.2,10000000,1000,196608,10.792642957285858,177828,1778279,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,1000,1000,196608,16.042167013724516,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,100000,1000,196608,15.715061826003915,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,1.5,10000000,1000,196608,15.610345718124718,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,1000,1778,196608,17.634805645942286,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,100000,3162,196608,17.497365478324117,177828,3162278,not_reached,not_reached
+topk,cms-heap-topk-fastpath-vector2d,rows=3 cols=16384,zipf,2.0,10000000,3162,196608,17.43076592188998,177828,3162278,not_reached,not_reached
+cardinality,hll,lg_k=12,zipf,0.0,1000,1000,4096,0.03456938778384721,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,0.0,100000,316228,4096,0.0341625228133254,5623,56234,1778,not_reached
+cardinality,hll,lg_k=12,zipf,0.0,10000000,316228,4096,0.0341353125138905,5623,56234,1778,not_reached
+cardinality,hll,lg_k=12,zipf,0.5,1000,1000,4096,0.03405811532007991,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,0.5,100000,100000,4096,0.03417279131474886,5623,56234,1778,not_reached
+cardinality,hll,lg_k=12,zipf,0.5,10000000,1000000,4096,0.03429672592737485,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,0.8,1000,1778,4096,0.0339885227823519,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,0.8,100000,17783,4096,0.034779403627594026,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,0.8,10000000,1000000,4096,0.03412204152450459,5623,56234,1778,not_reached
+cardinality,hll,lg_k=12,zipf,1.0,1000,31623,4096,0.03407380663136848,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,1.0,100000,1000000,4096,0.034334335110593646,5623,56234,3162,not_reached
+cardinality,hll,lg_k=12,zipf,1.0,10000000,3162,4096,0.034559230793605754,5623,56234,3162,not_reached
+cardinality,hll,lg_k=12,zipf,1.2,1000,1778,4096,0.03420807889342874,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,1.2,100000,1000000,4096,0.03485466218829547,5623,56234,1778,not_reached
+cardinality,hll,lg_k=12,zipf,1.2,10000000,not_saturated,4096,0.03409009101151759,5623,56234,3162,not_reached
+cardinality,hll,lg_k=12,zipf,1.5,1000,31623,4096,0.03396446693607941,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,1.5,100000,177828,4096,0.03407142597798571,5623,56234,3162,not_reached
+cardinality,hll,lg_k=12,zipf,1.5,10000000,562341,4096,0.034059463408834714,5623,56234,5623,not_reached
+cardinality,hll,lg_k=12,zipf,2.0,1000,1778279,4096,0.033971117702591744,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,2.0,100000,56234,4096,0.03394672236606599,5623,56234,1000,not_reached
+cardinality,hll,lg_k=12,zipf,2.0,10000000,not_saturated,4096,0.034655868142839365,5623,56234,3162,not_reached
+cardinality,hll,lg_k=14,zipf,0.0,1000,1000,16384,0.05013098343447049,17783,177828,1778,not_reached
+cardinality,hll,lg_k=14,zipf,0.0,100000,10000,16384,0.034897253519359656,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,0.0,10000000,not_saturated,16384,0.03521189888687531,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,0.5,1000,3162,16384,0.034062081217746606,17783,177828,3162,not_reached
+cardinality,hll,lg_k=14,zipf,0.5,100000,177828,16384,0.03476551575044991,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,0.5,10000000,not_saturated,16384,0.03530568442038534,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,0.8,1000,5623,16384,0.034311704940267355,17783,177828,1778,not_reached
+cardinality,hll,lg_k=14,zipf,0.8,100000,562341,16384,0.03457527927720129,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,0.8,10000000,1000000,16384,0.03503941522290749,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,1.0,1000,1000,16384,0.03430626066209151,17783,177828,3162,not_reached
+cardinality,hll,lg_k=14,zipf,1.0,100000,not_saturated,16384,0.034708000416694425,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,1.0,10000000,not_saturated,16384,0.035024137076020756,17783,177828,17783,not_reached
+cardinality,hll,lg_k=14,zipf,1.2,1000,1000,16384,0.034575996920892485,17783,177828,3162,not_reached
+cardinality,hll,lg_k=14,zipf,1.2,100000,not_saturated,16384,0.03551601813159453,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,1.2,10000000,1778279,16384,0.03489353958718226,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,1.5,1000,100000,16384,0.03461038560301957,17783,177828,3162,not_reached
+cardinality,hll,lg_k=14,zipf,1.5,100000,not_saturated,16384,0.034387001090355716,17783,177828,17783,not_reached
+cardinality,hll,lg_k=14,zipf,1.5,10000000,not_saturated,16384,0.034508124475354854,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,2.0,1000,not_saturated,16384,0.034075440850246594,17783,177828,10000,not_reached
+cardinality,hll,lg_k=14,zipf,2.0,100000,not_saturated,16384,0.05016551754501836,17783,177828,not_reached,not_reached
+cardinality,hll,lg_k=14,zipf,2.0,10000000,not_saturated,16384,0.05002259054038068,17783,177828,1000000,not_reached
+cardinality,hll,lg_k=16,zipf,0.0,1000,1000,65536,0.03529006625748267,100000,562341,10000,not_reached
+cardinality,hll,lg_k=16,zipf,0.0,100000,1000000,65536,0.037201888485096826,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,0.0,10000000,562341,65536,0.038623352613449735,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,0.5,1000,1000,65536,0.035162186978054615,100000,562341,5623,not_reached
+cardinality,hll,lg_k=16,zipf,0.5,100000,not_saturated,65536,0.037292552894140185,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,0.5,10000000,562341,65536,0.03938997056662186,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,0.8,1000,17783,65536,0.03556487690624495,100000,562341,10000,not_reached
+cardinality,hll,lg_k=16,zipf,0.8,100000,1778279,65536,0.03694726520104524,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,0.8,10000000,1778279,65536,0.03839993014024537,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,1.0,1000,17783,65536,0.03503348767012128,100000,562341,17783,not_reached
+cardinality,hll,lg_k=16,zipf,1.0,100000,not_saturated,65536,0.036528352204811924,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,1.0,10000000,1778279,65536,0.03824793121731535,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,1.2,1000,56234,65536,0.03500634788378672,100000,562341,10000,not_reached
+cardinality,hll,lg_k=16,zipf,1.2,100000,not_saturated,65536,0.03676501732212499,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,1.2,10000000,not_saturated,65536,0.037311812953937984,100000,562341,56234,not_reached
+cardinality,hll,lg_k=16,zipf,1.5,1000,31623,65536,0.03511086155248576,100000,562341,10000,not_reached
+cardinality,hll,lg_k=16,zipf,1.5,100000,56234,65536,0.03578702850740185,100000,562341,31623,not_reached
+cardinality,hll,lg_k=16,zipf,1.5,10000000,not_saturated,65536,0.035947640660649434,100000,562341,56234,not_reached
+cardinality,hll,lg_k=16,zipf,2.0,1000,562341,65536,0.048007797275532935,100000,562341,10000000,not_reached
+cardinality,hll,lg_k=16,zipf,2.0,100000,100000,65536,0.0504008686356227,100000,562341,not_reached,not_reached
+cardinality,hll,lg_k=16,zipf,2.0,10000000,1778279,65536,0.03521706956654299,100000,562341,100000,not_reached
+quantile,kll-percall,k=50,pareto,1.1,,31623,1600,0.25120694644911995,1778,17783,1000,562341
+quantile,kll-percall,k=50,pareto,1.5,,177828,1600,0.2523282559031779,1778,17783,1000,1000000
+quantile,kll-percall,k=50,pareto,2.0,,not_saturated,1600,0.2509616206341706,1778,17783,1000,562341
+quantile,kll-percall,k=50,pareto,3.0,,not_saturated,1600,0.25306907070983614,1778,17783,1000,562341
+quantile,kll-percall,k=200,pareto,1.1,,not_saturated,6400,0.25188603719336483,5623,100000,1000,562341
+quantile,kll-percall,k=200,pareto,1.5,,not_saturated,6400,0.2527151931260529,5623,100000,1000,1000000
+quantile,kll-percall,k=200,pareto,2.0,,not_saturated,6400,0.2564858164966189,5623,100000,1000,562341
+quantile,kll-percall,k=200,pareto,3.0,,177828,6400,0.2540536676941532,5623,100000,1000,562341
+quantile,kll-percall,k=800,pareto,1.1,,17783,25600,0.25917003822774515,17783,316228,1000,562341
+quantile,kll-percall,k=800,pareto,1.5,,not_saturated,25600,0.2584970124403127,17783,316228,1000,1000000
+quantile,kll-percall,k=800,pareto,2.0,,not_saturated,25600,0.2595164289340731,17783,316228,1000,562341
+quantile,kll-percall,k=800,pareto,3.0,,not_saturated,25600,0.2590892433356333,17783,316228,1000,562341
+quantile,dd,alpha=0.005,pareto,1.1,,316228,12576,0.15707980289951745,10000,177828,1000,177828
+quantile,dd,alpha=0.005,pareto,1.5,,10000,9224,0.15634895596013362,10000,100000,1000,177828
+quantile,dd,alpha=0.005,pareto,2.0,,17783,6920,0.1561266624256427,10000,100000,1000,177828
+quantile,dd,alpha=0.005,pareto,3.0,,1778,4616,0.16422183538878807,5623,56234,1000,177828
+quantile,dd,alpha=0.01,pareto,1.1,,3162,6288,0.15615399163253602,5623,100000,1000,177828
+quantile,dd,alpha=0.01,pareto,1.5,,3162,4616,0.1561373406885192,5623,56234,1000,177828
+quantile,dd,alpha=0.01,pareto,2.0,,1000,3464,0.15696688446237103,5623,56234,1000,177828
+quantile,dd,alpha=0.01,pareto,3.0,,1000,2312,0.15586612509807116,3162,17783,1000,177828
+quantile,dd,alpha=0.02,pareto,1.1,,1000,3144,0.15642865338737158,3162,56234,1000,177828
+quantile,dd,alpha=0.02,pareto,1.5,,1000,2312,0.15747882214517062,3162,17783,1000,177828
+quantile,dd,alpha=0.02,pareto,2.0,,1000,1736,0.1561453971307622,3162,17783,1000,177828
+quantile,dd,alpha=0.02,pareto,3.0,,1000,1160,0.1571013136097804,1778,10000,1000,177828
+quantile,dd,alpha=0.05,pareto,1.1,,1000,1264,0.15710788030143372,1778,10000,1000,177828
+quantile,dd,alpha=0.05,pareto,1.5,,1000,928,0.15605780221731944,1778,10000,1000,177828
+quantile,dd,alpha=0.05,pareto,2.0,,1000,696,0.15621183059928348,1000,10000,1000,177828
+quantile,dd,alpha=0.05,pareto,3.0,,1000,464,0.15620341759628867,1000,5623,1000,177828
