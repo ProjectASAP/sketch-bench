@@ -89,7 +89,7 @@ pub struct SketchbenchArgs {
     /// A *list* of specs is a multi-column stream, which only `hydra-*` targets take.
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
-    /// Inline shape: "uniform" or "zipf". Ignored when `--spec` is
+    /// Inline shape: "uniform", "zipf" or "pareto". Ignored when `--spec` is
     /// set. Required unless `--spec` or `--list-impls` is given: a run either
     /// names its shape or names its file, never falls back to one unasked.
     #[arg(
@@ -106,7 +106,8 @@ pub struct SketchbenchArgs {
         help_heading = "Dataset"
     )]
     pub size: Option<usize>,
-    /// Cardinality (uniform: max key; zipf: key-space size). Required unless
+    /// Cardinality (uniform: max key; zipf: key-space size; pareto: ignored,
+    /// it is unbounded). Required unless
     /// `--spec` or `--list-impls` is given.
     #[arg(
         long,
@@ -118,6 +119,13 @@ pub struct SketchbenchArgs {
     /// otherwise.
     #[arg(long, required_if_eq("dataset", "zipf"), help_heading = "Dataset")]
     pub zipf_s: Option<f64>,
+    /// Pareto shape `alpha`. Required when `--dataset pareto` is given;
+    /// ignored otherwise.
+    #[arg(long, required_if_eq("dataset", "pareto"), help_heading = "Dataset")]
+    pub pareto_alpha: Option<f64>,
+    /// Pareto scale (the minimum value). Only read by `--dataset pareto`.
+    #[arg(long, default_value_t = 1.0, help_heading = "Dataset")]
+    pub pareto_scale: f64,
     /// Item type the value column is generated at: `i64`, `u64`, `f64` or
     /// `string`
     /// Required unless `--list-impls` is given: read regardless of `--spec`.

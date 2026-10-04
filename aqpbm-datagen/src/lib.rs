@@ -13,7 +13,8 @@ pub mod value;
 pub use burst::{inject_interval_bursts, BurstSpec};
 pub use column::{ColumnSpec, DATA_TYPES};
 pub use dist::{
-    DataDistribution, Domain, NormalParameter, Sampler, UniformParameter, ZipfParameter,
+    DataDistribution, Domain, NormalParameter, ParetoParameter, Sampler, UniformParameter,
+    ZipfParameter,
 };
 pub use error::DataGenError;
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
@@ -46,6 +47,10 @@ mod tests {
             standard_deviation,
             seed,
         })
+    }
+
+    fn pareto(alpha: f64, scale: f64, seed: u64) -> DataDistribution {
+        DataDistribution::Pareto(ParetoParameter { alpha, scale, seed })
     }
 
     fn column(distribution: DataDistribution, data_type: &str) -> ColumnSpec {
@@ -124,6 +129,45 @@ mod tests {
         let values = t.into_column(0).unwrap().into_f64().unwrap();
         let mean = values.iter().sum::<f64>() / values.len() as f64;
         assert!((mean - 1000.0).abs() < 0.2, "mean {mean} not near 1000");
+    }
+
+    /// The MLE of the shape, `n / sum(ln(x / scale))`, recovers `alpha` from a
+    /// large fixed-seed sample.
+    #[test]
+    fn pareto_mle_recovers_alpha() {
+        let (alpha, scale) = (1.5, 2.0);
+        let t = one(column(pareto(alpha, scale, 13), "f64"), 200_000)
+            .generate()
+            .unwrap();
+        let values = t.into_column(0).unwrap().into_f64().unwrap();
+        assert!(values.iter().all(|&x| x >= scale));
+        let log_sum: f64 = values.iter().map(|x| (x / scale).ln()).sum();
+        let alpha_hat = values.len() as f64 / log_sum;
+        assert!(
+            (alpha_hat - alpha).abs() / alpha < 0.05,
+            "alpha_hat {alpha_hat} not within 5% of {alpha}"
+        );
+    }
+
+    /// An i64 column is the f64 draws floored: every draw is >= scale > 0, so
+    /// the renderer's `as` truncation is a floor. The i64-only exact quantile
+    /// baseline scores a Pareto stream through this.
+    #[test]
+    fn pareto_i64_floors_the_f64_draws() {
+        let draw = |data_type| {
+            one(column(pareto(1.1, 1000.0, 7), data_type), 50_000)
+                .generate()
+                .unwrap()
+                .into_column(0)
+                .unwrap()
+        };
+        let floats = draw("f64").into_f64().unwrap();
+        let ints = draw("i64").into_i64().unwrap();
+        assert!(ints.iter().all(|&v| v >= 1000));
+        assert!(ints
+            .iter()
+            .zip(&floats)
+            .all(|(&i, f)| i == f.floor() as i64));
     }
 
     // ---------- rendering ----------

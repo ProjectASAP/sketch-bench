@@ -36,8 +36,8 @@ use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::measure::MIN_MERGE_SHARDS;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_datagen::{
-    ColumnSpec, DataDistribution, GeneratedTable, StringOpts, TableDescription, UniformParameter,
-    ZipfParameter, RULE_NONE,
+    ColumnSpec, DataDistribution, GeneratedTable, ParetoParameter, StringOpts, TableDescription,
+    UniformParameter, ZipfParameter, RULE_NONE,
 };
 use clap::Parser;
 use sketch_bench::params::ParamSet;
@@ -205,7 +205,25 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
             population_size: cardinality,
             seed: args.seed,
         }),
-        other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
+        // Unbounded and continuous, so `--cardinality` has nothing to name. An
+        // f64 column keeps the draws as drawn; an i64 column floors them (every
+        // draw is >= scale > 0, so the renderer's truncation is a floor), which
+        // is what the i64-only exact quantile baseline needs.
+        "pareto" => {
+            if !matches!(args.dtype.as_deref(), Some("f64" | "i64")) {
+                bail!("--dataset pareto needs --dtype f64 or i64 (i64 floors each draw)");
+            }
+            DataDistribution::Pareto(ParetoParameter {
+                alpha: args
+                    .pareto_alpha
+                    .expect("clap requires --pareto-alpha when --dataset pareto"),
+                scale: args.pareto_scale,
+                seed: args.seed,
+            })
+        }
+        other => {
+            bail!("unknown dataset shape: {other} (expected uniform|zipf|pareto, or use --spec)")
+        }
     };
     // Only the rows that ingest text read this. Left `None` at the defaults
     // so a run that did not ask for the axis keeps the descriptor — and so
