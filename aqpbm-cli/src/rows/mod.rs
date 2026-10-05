@@ -150,6 +150,7 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
             row_countsketch_heap_topk_fastpath_vector2d_lib
         }
         ("exact-sum", "exact") => row_exact_sum,
+        ("exact-min", "exact") => row_exact_min,
         ("exact-max", "exact") => row_exact_max,
         ("exact-increase", "exact") => row_exact_increase,
         _ => return None,

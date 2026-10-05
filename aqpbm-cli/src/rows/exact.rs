@@ -1,7 +1,7 @@
 use super::*;
 use aqpbm_core::accuracy::aggregate::{Aggregate, AggregateGT};
 use sketch_bench::wrappers::cs_heap as csh;
-use sketch_bench::wrappers::exact::{self as ex, Cell, Increase, Max, Sum};
+use sketch_bench::wrappers::exact::{self as ex, Cell, Increase, Max, Min, Sum};
 use sketch_bench::wrappers::quantile_value::ToF64;
 use sketch_bench::wrappers::univmon::sketchlib as ul;
 
@@ -63,6 +63,15 @@ pub(crate) fn row_exact_sum(
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
     exact_row::<Sum>(req, description, table, want, Aggregate::Sum)
+}
+
+pub(crate) fn row_exact_min(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    exact_row::<Min>(req, description, table, want, Aggregate::Min)
 }
 
 pub(crate) fn row_exact_max(

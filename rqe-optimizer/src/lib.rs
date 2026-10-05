@@ -31,7 +31,8 @@ pub type LabelSet = BTreeSet<String>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
     SumOrCount,
-    MinOrMax,
+    Min,
+    Max,
     RateOrIncrease,
     Quantile,
     Cardinality,
@@ -47,9 +48,11 @@ impl Capability {
     pub fn families(self) -> &'static [&'static str] {
         match self {
             // Exact multi-subpopulation accumulators, not sketches. Sum also
-            // serves count (sum of 1s); max also serves min (same cost).
+            // serves count (sum of 1s). Min and max are separate, so a min
+            // query never lands on, or shares, a max accumulator.
             Capability::SumOrCount => &["exact-sum"],
-            Capability::MinOrMax => &["exact-max"],
+            Capability::Min => &["exact-min"],
+            Capability::Max => &["exact-max"],
             Capability::RateOrIncrease => &["exact-increase"],
             Capability::Quantile => &["kll-percall", "dd"],
             // univmon-cardinality is registered under KeyedCardinality in

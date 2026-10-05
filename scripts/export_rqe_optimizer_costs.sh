@@ -106,9 +106,10 @@ point_univmon() {
         --report "$RAW_JSONL"
 }
 
-echo "==> Exact accumulators: sum, max, increase" >&2
+echo "==> Exact accumulators: sum, min, max, increase" >&2
 point_exact exact-sum sum-or-count configs/datagen/hydra_columns.yaml
-point_exact exact-max min-or-max configs/datagen/hydra_columns.yaml
+point_exact exact-min min configs/datagen/hydra_columns.yaml
+point_exact exact-max max configs/datagen/hydra_columns.yaml
 point_exact exact-increase rate-or-increase configs/datagen/counter_columns.yaml
 
 echo "==> Quantiles: KLL and DDSketch" >&2
@@ -139,7 +140,7 @@ point univmon-topk "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6" top
 echo "==> Flattening cost + accuracy passes..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
-echo "==> Reducing to atomic-cost table (expect 17 row(s), 0 skipped)..." >&2
+echo "==> Reducing to atomic-cost table (expect 18 row(s), 0 skipped)..." >&2
 "$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
 
 echo "Done. $TABLE_JSON" >&2

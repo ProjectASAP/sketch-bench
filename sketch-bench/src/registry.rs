@@ -936,7 +936,8 @@ pub const REGISTRY: &[SketchId] = &[
     },
     // -------- exact multi-subpopulation accumulators (as ASAPQuery's) --------
     // Grouped input: every column before the value is a label. `exact-sum`
-    // also serves count (fed 1 per sample), `exact-max` also min (same cost).
+    // also serves count (fed 1 per sample). Min and max are separate rows, as
+    // ASAPQuery's MinMax sub-types, so neither can answer for the other.
     SketchId {
         algorithm: "exact",
         variant: "exact-sum",
@@ -955,11 +956,27 @@ pub const REGISTRY: &[SketchId] = &[
     },
     SketchId {
         algorithm: "exact",
+        variant: "exact-min",
+        library: "exact",
+        description: "per-group min (ASAPQuery MinMax, sub_type min)",
+        capability: Capability::Min,
+        comparator: Some("min"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
         variant: "exact-max",
         library: "exact",
-        description: "per-group max (min: same cell, flipped)",
-        capability: Capability::MinOrMax,
-        comparator: Some("min-or-max"),
+        description: "per-group max (ASAPQuery MinMax, sub_type max)",
+        capability: Capability::Max,
+        comparator: Some("max"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -1333,7 +1350,8 @@ mod tests {
             "keyed-l2-norm",
             "keyed-entropy",
             "sum-or-count",
-            "min-or-max",
+            "min",
+            "max",
             "rate-or-increase",
         ];
         for e in REGISTRY {

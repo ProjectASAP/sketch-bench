@@ -279,6 +279,21 @@ mod tests {
         assert_eq!(slides, BTreeSet::from([10, 20, 30]));
     }
     #[test]
+    fn a_min_query_is_only_offered_the_min_accumulator() {
+        let r = Rqe {
+            capability: Capability::Min,
+            ..rqe("r", 60, 60)
+        };
+        let named = |sketch: &str| AtomicCostEntry {
+            sketch: sketch.into(),
+            ..cost()
+        };
+        let candidates = build_all_candidates(&[r], &[named("exact-min"), named("exact-max")]);
+        assert!(!candidates.is_empty());
+        assert!(candidates.iter().all(|d| d.config.sketch == "exact-min"));
+    }
+
+    #[test]
     fn eligibility_requires_exact_non_overlapping_tiling() {
         let r = rqe("r", 600, 180);
         let d = Deployment {

@@ -48,8 +48,27 @@ impl Cell for Sum {
     }
 }
 
-/// `MultipleMinMaxAccumulator` with `sub_type = "max"`. ASAPQuery picks min
-/// or max with a flag on one type; min is the same cell flipped, same cost.
+/// `MultipleMinMaxAccumulator` with `sub_type = "min"`. ASAPQuery picks min
+/// or max with a flag on one type; here each sub-type is its own cell.
+#[derive(Clone)]
+pub struct Min(f64);
+
+impl Cell for Min {
+    fn first(v: f64, _ts: i64) -> Self {
+        Min(v)
+    }
+    fn insert(&mut self, v: f64, _ts: i64) {
+        self.0 = self.0.min(v);
+    }
+    fn merge(&mut self, other: &Self) {
+        self.0 = self.0.min(other.0);
+    }
+    fn value(&self) -> f64 {
+        self.0
+    }
+}
+
+/// `MultipleMinMaxAccumulator` with `sub_type = "max"`.
 #[derive(Clone)]
 pub struct Max(f64);
 
