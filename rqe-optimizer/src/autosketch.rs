@@ -7,10 +7,15 @@
 //! AutoSketch plans one query at a time, never shares state across queries,
 //! and constrains accuracy only. So every RQE is searched independently,
 //! gets its own deployment, and latency is not considered.
+//!
+//! One extension over the paper: AutoSketch's compiler maps an operator to one
+//! sketch algorithm and tunes its parameters, while this search covers every
+//! variant serving the RQE's capability and keeps the cheapest, so it chooses
+//! from the same sketches as the MILP.
 
 use crate::candidates::gcd;
 use crate::{AtomicCostEntry, Deployment, Mapping, Rqe, Seconds};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
 /// One RQE's search. `selected` and `probes` index into the cost table.
@@ -100,39 +105,35 @@ pub fn search(
 
     let mut pending = VecDeque::new();
     for grid in &grids {
-        for index in grid.lhs(seed) {
-            pending.push_back((index, None));
+        let seeds = grid.lhs(seed);
+        if seeds.is_empty() {
+            // A sparse table can leave no LHS point measured. Seed the
+            // cheapest configuration so the variant is still searched.
+            if let Some(&cheapest) = grid
+                .points
+                .values()
+                .min_by(|&&a, &&b| compare_resources(&costs[a], &costs[b]))
+            {
+                pending.push_back((cheapest, None));
+            }
         }
-        // A sparse table can leave no LHS point measured. Keep the cheapest
-        // configuration as a seed so the variant is still searched.
-        if let Some(&cheapest) = grid
-            .points
-            .values()
-            .min_by(|&&a, &&b| resource_key(&costs[a]).total_cmp(&resource_key(&costs[b])))
-        {
-            pending.push_back((cheapest, None));
-        }
+        pending.extend(seeds.into_iter().map(|index| (index, None)));
     }
 
-    let mut expanded = BTreeSet::new();
     let mut evaluated: BTreeMap<usize, bool> = BTreeMap::new();
     let mut probes = Vec::new();
     let mut best: Option<usize> = None;
-    let cheaper = |a: usize, b: usize| {
-        resource_key(&costs[a])
-            .total_cmp(&resource_key(&costs[b]))
-            .is_lt()
-    };
+    let cheaper = |a: usize, b: usize| compare_resources(&costs[a], &costs[b]).is_lt();
 
     while let Some((index, initial_feasible)) = pending.pop_front() {
-        if !expanded.insert((index, initial_feasible)) {
+        // EXAMINE rule (1): a configuration is evaluated, and expanded, once.
+        if evaluated.contains_key(&index) {
             continue;
         }
-        let feasible = *evaluated.entry(index).or_insert_with(|| {
-            probes.push(index);
-            accuracy(rqe, &costs[index])
-                .is_some_and(|value| value.is_finite() && rqe.accuracy_ok(value))
-        });
+        probes.push(index);
+        let feasible = accuracy(rqe, &costs[index])
+            .is_some_and(|value| value.is_finite() && rqe.accuracy_ok(value));
+        evaluated.insert(index, feasible);
         if feasible && best.is_none_or(|b| cheaper(index, b)) {
             best = Some(index);
         }
@@ -155,7 +156,7 @@ pub fn search(
             // Prune anything no cheaper than a configuration already known to
             // satisfy the intent.
             let useful = best.is_none_or(|b| cheaper(neighbor, b));
-            if toward && useful {
+            if toward && useful && !evaluated.contains_key(&neighbor) {
                 pending.push_back((neighbor, Some(feasible)));
             }
         }
@@ -169,11 +170,12 @@ pub fn search(
     }
 }
 
-/// AutoSketch's resource score with no ALUs: memory, then insert CPU.
-/// Insert CPU is orders of magnitude below memory bytes, so adding it only
-/// breaks ties.
-fn resource_key(config: &AtomicCostEntry) -> f64 {
-    config.mem_bytes_per_instance + config.insert_cpu_secs
+/// AutoSketch's resource score with no ALUs: memory, with insert CPU only
+/// breaking ties.
+fn compare_resources(a: &AtomicCostEntry, b: &AtomicCostEntry) -> std::cmp::Ordering {
+    a.mem_bytes_per_instance
+        .total_cmp(&b.mem_bytes_per_instance)
+        .then(a.insert_cpu_secs.total_cmp(&b.insert_cpu_secs))
 }
 
 /// One sketch variant's measured configurations, indexed by their numeric
@@ -321,6 +323,7 @@ mod tests {
     use crate::candidates::is_eligible;
     use crate::objectives::score;
     use crate::{AccuracyDirection, Capability, LabelSet, LabelSetInfo, LabelSetTable};
+    use std::collections::BTreeSet;
 
     const ERR: &str = "err";
 
@@ -366,7 +369,7 @@ mod tests {
     fn cheapest_feasible(rqe: &Rqe, costs: &[AtomicCostEntry]) -> usize {
         (0..costs.len())
             .filter(|&i| rqe.accuracy_ok_for(&costs[i]))
-            .min_by(|&a, &b| resource_key(&costs[a]).total_cmp(&resource_key(&costs[b])))
+            .min_by(|&a, &b| compare_resources(&costs[a], &costs[b]))
             .unwrap()
     }
 
@@ -454,5 +457,89 @@ mod tests {
         let found = search(&r, &costs, 1, |_, _| None);
         assert_eq!(found.selected, None);
         assert_eq!(found.probes.len(), costs.len());
+    }
+
+    fn kll(k: u64) -> AtomicCostEntry {
+        AtomicCostEntry {
+            sketch: "kll-percall".into(),
+            sketch_config: serde_json::json!({"algorithm": "kll-percall", "params": {"k": k}}),
+            mem_bytes_per_instance: (k * 8) as f64,
+            insert_cpu_secs: 1e-8,
+            merge_cpu_secs: 1e-6,
+            query_cpu_secs: 1e-6,
+            query_accuracy: BTreeMap::from([(ERR.into(), 1.0 / k as f64)]),
+        }
+    }
+
+    fn quantile_rqe(tolerance: f64) -> Rqe {
+        Rqe {
+            capability: Capability::Quantile,
+            ..rqe("q", 3_600, 60, tolerance)
+        }
+    }
+
+    #[test]
+    fn single_axis_path_stops_at_the_feasibility_boundary() {
+        // Feasible iff k >= 6. One LHS seed s, and no extra cheapest seed
+        // because the seed is measured. A feasible seed shrinks to k = 5 and
+        // stops; an infeasible one grows to k = 6 and stops.
+        let costs: Vec<_> = (1..=10).map(kll).collect();
+        let r = quantile_rqe(1.0 / 6.0);
+        for seed in 0..20 {
+            let found = search(&r, &costs, seed, table_accuracy);
+            let ks: Vec<u64> = found.probes.iter().map(|&i| i as u64 + 1).collect();
+            assert_eq!(found.selected, Some(5), "seed {seed}: {ks:?}");
+            let s = ks[0];
+            let (lo, hi) = (s.min(5), s.max(6));
+            assert_eq!(ks.len() as u64, hi - lo + 1, "seed {seed}: {ks:?}");
+            assert!(
+                ks.iter().all(|&k| (lo..=hi).contains(&k)),
+                "seed {seed}: {ks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn chooses_the_cheaper_variant() {
+        let mut costs = grid(&[2, 3], &[256, 512]);
+        let mut cs = cms(2, 256);
+        cs.sketch = "countsketch-fastpath-vector2d".into();
+        cs.mem_bytes_per_instance = 100.0;
+        costs.push(cs);
+        let r = rqe("r", 3_600, 60, 0.01);
+        let found = search(&r, &costs, 3, table_accuracy);
+        assert_eq!(found.selected, Some(costs.len() - 1));
+    }
+
+    #[test]
+    fn higher_is_better_metric_is_a_floor() {
+        // Precision rises with k; the target is a floor of 0.95.
+        let costs: Vec<_> = (1..=10)
+            .map(|k| {
+                let mut c = kll(k);
+                c.query_accuracy = BTreeMap::from([(ERR.into(), 0.9 + 0.01 * k as f64)]);
+                c
+            })
+            .collect();
+        let r = Rqe {
+            accuracy_direction: AccuracyDirection::HigherIsBetter,
+            ..quantile_rqe(0.95)
+        };
+        let found = search(&r, &costs, 11, table_accuracy);
+        assert_eq!(found.selected, Some(4)); // k = 5: 0.95
+    }
+
+    #[test]
+    fn lhs_samples_take_distinct_values_on_every_axis() {
+        let costs = grid(&[1, 2, 3, 4], &[64, 128, 256, 512, 1024]);
+        let g = Grid::new("cms-fastpath-vector2d", &costs).unwrap();
+        for seed in 0..10 {
+            let samples = g.lhs(seed);
+            assert_eq!(samples.len(), 4);
+            for axis in 0..2 {
+                let values: BTreeSet<u64> = samples.iter().map(|&i| g.key_of(i)[axis]).collect();
+                assert_eq!(values.len(), samples.len(), "seed {seed} axis {axis}");
+            }
+        }
     }
 }
