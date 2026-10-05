@@ -533,11 +533,33 @@ Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
 
 ### Not covered yet
 
-- **Accuracy after merging.** Every curve is one sketch fed N items. For CMS,
-  CountSketch, HLL and DDSketch a merge of m shards equals one sketch over
-  the union, so the curves apply to merged windows. For KLL (merge depth) and
-  the top-k heap (a globally heavy key can miss every shard's heap) they are
-  only a lower bound on merged error; measuring that is the next PR.
+- **Accuracy after merging** is now measured (`--operations merge --metrics
+  accuracy --merge-shards m`, or `--merge-shards-list 1,4,16,64` here, into
+  `saturation_merge_curve.csv`): the N-item stream is split into m contiguous
+  shards, one sketch per shard is folded into one, and it is scored with the
+  query's comparator against the whole-stream truth. A bounded run (first
+  config per sketch, N up to 1e7, 3 seeds, theta 0.5/1.0/1.5, K 1e3/1e5/1e7,
+  alpha 1.1/2) found:
+  - CMS, CountSketch, HLL and DDSketch: merged error is identical to the
+    single sketch at every N, point and shard count (0 of 1479 cells
+    differ), so their saturation curves apply unchanged to merged windows.
+  - KLL (k=50): merged mean rank error drifts but stays within about 2 seed
+    SE of the single sketch; at N=1e7 it is 0.0115/0.0115/0.0104/0.0121
+    (alpha 1.1) and 0.0121/0.0124/0.0119/0.0141 (alpha 2) for m=1/4/16/64,
+    so only 64 shards shows a (5-16%) increase.
+  - Top-k heap (rows=3 cols=256): with few keys (K=1000) every heavy key
+    survives in every shard's heap and precision@k is unchanged; with
+    K=1e5 or 1e7 and theta 1.0/1.5, merged precision@k at N=1e7 drops by
+    0.03-0.09 (8-25% relative), e.g. theta 1.5, K=1e5: 0.60 -> 0.55/0.51/0.52
+    for m=4/16/64 (theta 0.5 is at low precision and within seed noise), so
+    the single-sketch curve overstates merged top-k quality.
+  - Full grids (all top-k configs, KLL k 50/200/800 and DDSketch with 10
+    seeds; `docs/figures/saturation/merge_grid/`): DDSketch stays exact;
+    top-k's median merged/single precision is 1.00 but drops to 0.60 at large
+    K for every width; KLL's merged error grows with k (≈ 1.0–1.1x at
+    k = 50/200, 1.12–1.32x at k = 800 at N = 1e7, and up to 3–4x at
+    N = 1e4–1e5 for k = 800, m = 4). `recommend_config.py --merge-curves`
+    now covers every top-k and KLL config.
 - **HLL lg_k 10.** asap_sketchlib has register types for lg_k 12, 14, 16
   (and 18 for the bucket list) only, so the HLL grid starts at 12.
 

@@ -22,7 +22,11 @@ pub(crate) fn row_hydra_cms_lib(
                 hs::insert_hydra_cms::<$t>,
                 hs::insert_step_hydra_cms::<$t>,
                 hs::query_hydra_cms::<$t>,
-                Some((hs::merge_hydra_cms::<$t>, hs::merge_step_hydra_cms::<$t>)),
+                Some((
+                    hs::merge_hydra_cms::<$t>,
+                    hs::merge_step_hydra_cms::<$t>,
+                    hs::merge_query_hydra_cms::<$t>,
+                )),
                 None,
             )
         };
@@ -80,7 +84,11 @@ pub(crate) fn row_hydra_cs_lib(
                 hcs::insert_hydra_cs::<$t>,
                 hcs::insert_step_hydra_cs::<$t>,
                 hcs::query_hydra_cs::<$t>,
-                Some((hcs::merge_hydra_cs::<$t>, hcs::merge_step_hydra_cs::<$t>)),
+                Some((
+                    hcs::merge_hydra_cs::<$t>,
+                    hcs::merge_step_hydra_cs::<$t>,
+                    hcs::merge_query_hydra_cs::<$t>,
+                )),
                 None,
             )
         };
@@ -138,7 +146,11 @@ pub(crate) fn row_hydra_hll_lib(
                 hhs::insert_hydra_hll::<$t>,
                 hhs::insert_step_hydra_hll::<$t>,
                 hhs::query_hydra_hll::<$t>,
-                Some((hhs::merge_hydra_hll::<$t>, hhs::merge_step_hydra_hll::<$t>)),
+                Some((
+                    hhs::merge_hydra_hll::<$t>,
+                    hhs::merge_step_hydra_hll::<$t>,
+                    hhs::merge_query_hydra_hll::<$t>,
+                )),
                 None,
             )
         };
@@ -196,7 +208,11 @@ pub(crate) fn row_hydra_kll_lib(
                 hks::insert_hydra_kll::<$t>,
                 hks::insert_step_hydra_kll::<$t>,
                 hks::query_hydra_kll::<$t>,
-                Some((hks::merge_hydra_kll::<$t>, hks::merge_step_hydra_kll::<$t>)),
+                Some((
+                    hks::merge_hydra_kll::<$t>,
+                    hks::merge_step_hydra_kll::<$t>,
+                    hks::merge_query_hydra_kll::<$t>,
+                )),
                 None,
             )
         };

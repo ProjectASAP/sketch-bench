@@ -96,12 +96,27 @@ pub fn query_hydra_hll<V: CardinalityValue>(
     probes: Rc<Vec<Vec<String>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hydra_hll(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_hll<V: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hydra_hll(params)?;
-        for v in items.iter() {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = hydra_hll_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so grid and cell shapes match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {

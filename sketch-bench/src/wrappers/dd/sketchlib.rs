@@ -93,11 +93,27 @@ pub fn query_dd_lib<T>(
 where
     T: asap_sketchlib::common::numerical::NumericalValue + 'static,
 {
+    merge_query_dd_lib::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_dd_lib<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_dd_lib::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.add(v);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = dd_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {

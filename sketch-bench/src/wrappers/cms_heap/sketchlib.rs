@@ -174,11 +174,24 @@ pub fn query_cms_heap_lib_vector2d_fast_estimate<T: FrequencyValue>(
     probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_fast_estimate(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_fast_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_fast_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -199,11 +212,24 @@ pub fn query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
     probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_regular_estimate(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_regular_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -228,14 +254,27 @@ pub fn query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
 pub fn query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_fast_topk(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
     _probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_fast_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         out.push(Box::new(move || {
             let ranked: TopkAnswer<T> = sketch
@@ -260,14 +299,27 @@ pub fn query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
 pub fn query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_regular_topk(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
     _probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_regular_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         out.push(Box::new(move || {
             let ranked: TopkAnswer<T> = sketch

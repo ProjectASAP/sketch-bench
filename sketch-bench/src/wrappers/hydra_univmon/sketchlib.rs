@@ -121,15 +121,19 @@ fn asked_hydra_univmon<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
     probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
     passes: usize,
     estimate: fn(&HydraUnivmon, &[&str]) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hydra_univmon(params)?;
-        for v in items.iter() {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = hydra_univmon_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so grid and cell shapes match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -154,6 +158,26 @@ pub fn query_hydra_univmon_cardinality<V: CardinalityValue>(
         params,
         items,
         probes,
+        1,
+        passes,
+        HydraUnivmon::estimate_subpop_cardinality,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_univmon_cardinality<V: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_univmon(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         HydraUnivmon::estimate_subpop_cardinality,
     )
@@ -169,6 +193,26 @@ pub fn query_hydra_univmon_l1_norm<V: CardinalityValue>(
         params,
         items,
         probes,
+        1,
+        passes,
+        HydraUnivmon::estimate_subpop_l1_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_univmon_l1_norm<V: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_univmon(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         HydraUnivmon::estimate_subpop_l1_norm,
     )
@@ -184,6 +228,26 @@ pub fn query_hydra_univmon_l2_norm<V: CardinalityValue>(
         params,
         items,
         probes,
+        1,
+        passes,
+        HydraUnivmon::estimate_subpop_l2_norm,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_univmon_l2_norm<V: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_univmon(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         HydraUnivmon::estimate_subpop_l2_norm,
     )
@@ -199,6 +263,26 @@ pub fn query_hydra_univmon_entropy<V: CardinalityValue>(
         params,
         items,
         probes,
+        1,
+        passes,
+        HydraUnivmon::estimate_subpop_entropy,
+    )
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_univmon_entropy<V: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<Vec<String>>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_univmon(
+        params,
+        items,
+        probes,
+        shards,
         passes,
         HydraUnivmon::estimate_subpop_entropy,
     )

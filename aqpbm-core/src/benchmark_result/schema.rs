@@ -300,8 +300,8 @@ pub struct QueryMetrics {
     pub throughput_items_per_sec: Option<RunStats>,
     #[serde(rename = "query_latency_ns")]
     pub latency_ns: Option<LatencySummary>,
-    /// The comparator's scores. Only this operation has them: accuracy is
-    /// what an answer can be scored for, and query is what produces one.
+    /// The comparator's scores for the sketch fed the whole stream. Merge
+    /// carries the same scores for a folded sketch in `merge_accuracy`.
     #[serde(rename = "query_accuracy")]
     pub accuracy: Option<serde_json::Value>,
     #[serde(rename = "query_cpu_time_ms")]
@@ -324,6 +324,11 @@ pub struct MergeMetrics {
     pub merge_folds_per_sec: Option<RunStats>,
     pub merge_shards: Option<usize>,
     pub merge_supported: Option<bool>,
+    /// The same comparator as `query_accuracy`, against the same whole-stream
+    /// truth, scoring the sketch left by folding `merge_shards` contiguous
+    /// shards. A linear sketch should match `query_accuracy` exactly.
+    #[serde(rename = "merge_accuracy")]
+    pub accuracy: Option<serde_json::Value>,
     #[serde(rename = "merge_cpu_time_ms")]
     pub cpu_time_ms: Option<CpuTime>,
     #[serde(rename = "merge_wall_time_ms")]

@@ -20,6 +20,7 @@ pub(crate) fn row_hydra_univmon_cardinality_lib(
                 Some((
                     hus::merge_hydra_univmon::<$t>,
                     hus::merge_step_hydra_univmon::<$t>,
+                    hus::merge_query_hydra_univmon_cardinality::<$t>,
                 )),
                 None,
             )
@@ -85,6 +86,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_lib(
                 Some((
                     hus::merge_hydra_univmon::<$t>,
                     hus::merge_step_hydra_univmon::<$t>,
+                    hus::merge_query_hydra_univmon_l1_norm::<$t>,
                 )),
                 None,
             )
@@ -154,6 +156,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_lib(
                 Some((
                     hus::merge_hydra_univmon::<$t>,
                     hus::merge_step_hydra_univmon::<$t>,
+                    hus::merge_query_hydra_univmon_l2_norm::<$t>,
                 )),
                 None,
             )
@@ -223,6 +226,7 @@ pub(crate) fn row_hydra_univmon_entropy_lib(
                 Some((
                     hus::merge_hydra_univmon::<$t>,
                     hus::merge_step_hydra_univmon::<$t>,
+                    hus::merge_query_hydra_univmon_entropy::<$t>,
                 )),
                 None,
             )
