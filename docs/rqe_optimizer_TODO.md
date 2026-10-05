@@ -25,14 +25,14 @@ implemented, what is next, and what is intentionally deferred.
   can print initial example mappings.
 - `scripts/export_rqe_optimizer_costs.sh` exports the 18-row measured cost
   table used by `small_problem`, without changing ASAPQuery's exporter.
-- The MILP uses HiGHS to minimize TCO without enumerating mappings. It accepts
+- The MILP uses HiGHS to minimize hourly price without enumerating mappings. It accepts
   optional peak-memory and per-RQE latency bounds and returns a normal mapping.
 - `small_problem --milp` accepts repeatable per-RQE latency limits and includes
   1-hour, 6-hour, and 1-day quantile RQEs to exercise those constraints.
-- A regression test confirms the MILP matches exhaustive minimum-TCO search on
+- A regression test confirms the MILP matches exhaustive minimum-price search on
   a tiny workload with shared deployment activation costs.
 - Retained memory (`(x + max S) / y` instances per active deployment) is
-  scored, and `milp::minimize` with `Objective::Cost` minimizes the hourly price on one EC2
+  scored, and `Objective::AUCCost` minimizes the hourly price on one EC2
   machine family in fractional instances. Prices are a committed snapshot from
   `scripts/fetch_ec2_pricing.py`; `small_problem --milp --machine-family NAME`
   uses it.

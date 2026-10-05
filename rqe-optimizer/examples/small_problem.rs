@@ -20,11 +20,10 @@
 //! `--candidates-only` to inspect candidate pruning safely, without starting
 //! mapping enumeration. Streaming mode logs progress every one million
 //! mappings by default; pass `--progress-every N` to change that interval or
-//! `--print-first N` to display example mappings. `--milp` solves the
-//! minimum-TCO model without enumerating mappings. Repeat
-//! `--latency-limit RQE_ID=SECONDS` to impose MILP latency bounds. Add
-//! `--machine-family NAME` (`compute_optimized`, `general_purpose`,
-//! `memory_optimized`) to minimize that EC2 family's hourly price instead.
+//! `--print-first N` to display example mappings. `--milp --machine-family
+//! NAME` (`compute_optimized`, `general_purpose`, `memory_optimized`) minimizes
+//! that EC2 family's hourly price without enumerating mappings. Repeat
+//! `--latency-limit RQE_ID=SECONDS` to impose MILP latency bounds.
 //! `--sample-mappings N` prints N feasible mappings and exits.
 
 use std::collections::BTreeSet;
@@ -345,23 +344,23 @@ fn main() {
             max_peak_query_memory_bytes: None,
             max_query_latency_secs: latency_bounds(&rqes),
         };
-        let family = machine_family();
-        let objective = match &family {
-            Some(family) => Objective::Cost(family),
-            None => Objective::Tco,
-        };
-        let solution = minimize(&rqes, &deployments, &label_sets, &bounds, objective)
-            .expect("small_problem MILP should be feasible");
-        if let Some(family) = &family {
-            println!(
-                "MILP minimum-cost solution on {}: ${:.4}/hour, {:.4} instances, \
-                 retained_mem={:.0}MB",
-                family.family,
-                family.usd_per_hour(&solution.objectives),
-                family.instances(&solution.objectives),
-                solution.objectives.retained_memory_bytes / 1e6,
-            );
-        }
+        let family = machine_family().expect("--milp needs --machine-family NAME");
+        let solution = minimize(
+            &rqes,
+            &deployments,
+            &label_sets,
+            &bounds,
+            Objective::AUCCost(&family),
+        )
+        .expect("small_problem MILP should be feasible");
+        println!(
+            "MILP minimum-cost solution on {}: ${:.4}/hour, {:.4} instances, \
+             retained_mem={:.0}MB",
+            family.family,
+            family.usd_per_hour(&solution.objectives),
+            family.instances(&solution.objectives),
+            solution.objectives.retained_memory_bytes / 1e6,
+        );
         println!(
             "MILP solution: peak_query_mem={:.0}MB, ingest={:.3e}, \
              merge={:.3e}, query={:.3e}, total={:.3e} cpu-sec/sec",

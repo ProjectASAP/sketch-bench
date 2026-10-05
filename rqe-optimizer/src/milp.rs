@@ -15,20 +15,18 @@ use good_lp::{
 /// rows, and bounds are the same for every objective.
 #[derive(Debug, Clone, Copy)]
 pub enum Objective<'a> {
-    /// Total steady-state CPU, `tco_cpu_secs_per_sec`.
-    Tco,
     /// Hourly price of running the plan on one machine family, in fractional
-    /// instances: `n ≥ CPU / vCPU` and `n ≥ retained memory / GiB`.
-    Cost(&'a MachineFamily),
+    /// instances: `n ≥ CPU / vCPU` and `n ≥ retained memory / GiB`. CPU is the
+    /// area under the load curve (mean CPU-sec/sec), so bursts are not priced.
+    AUCCost(&'a MachineFamily),
 }
 
 impl Objective<'_> {
-    /// Per resource, the units the goal is measured in: CPU for TCO, and for a
-    /// family the vCPU and GiB of one instance. Memory is free under TCO.
+    /// Per resource, the units the goal is measured in: the vCPU and GiB of
+    /// one instance.
     fn units(self) -> (f64, f64) {
         match self {
-            Objective::Tco => (1.0, f64::INFINITY),
-            Objective::Cost(family) => (family.vcpu, family.memory_gib),
+            Objective::AUCCost(family) => (family.vcpu, family.memory_gib),
         }
     }
 }
@@ -149,8 +147,7 @@ pub fn minimize(
 
     // The objective's own variables and rows, in units of `reference`.
     let (goal, objective_rows): (Expression, Vec<Constraint>) = match objective {
-        Objective::Tco => (cpu, Vec::new()),
-        Objective::Cost(family) => {
+        Objective::AUCCost(family) => {
             // The price per instance is a positive constant, so minimizing
             // fractional instances minimizes the price.
             let instances = variables.add(variable().min(0));
@@ -294,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn minimizes_cpu_and_respects_a_memory_bound() {
+    fn minimizes_cost_and_respects_a_memory_bound() {
         let rqes = vec![rqe()];
         let deployments = vec![deployment(1.0, 20.0, 1.0), deployment(2.0, 10.0, 1.0)];
         let label_sets = BTreeMap::from([(
@@ -310,7 +307,7 @@ mod tests {
             &deployments,
             &label_sets,
             &MilpBounds::default(),
-            Objective::Tco,
+            Objective::AUCCost(&family(8.0)),
         )
         .expect("feasible MILP");
         assert_eq!(unconstrained.mapping, vec![0]);
@@ -323,7 +320,7 @@ mod tests {
                 max_peak_query_memory_bytes: Some(10.0),
                 max_query_latency_secs: Vec::new(),
             },
-            Objective::Tco,
+            Objective::AUCCost(&family(8.0)),
         )
         .expect("feasible MILP under memory bound");
         assert_eq!(constrained.mapping, vec![1]);
@@ -346,29 +343,25 @@ mod tests {
             },
         )]);
 
+        let price = |mapping: &Mapping| {
+            family(8.0).usd_per_hour(&score(&rqes, &deployments, mapping, &label_sets))
+        };
         let brute_force_best = brute_force(&rqes, &deployments)
             .into_iter()
-            .min_by(|left, right| {
-                score(&rqes, &deployments, left, &label_sets)
-                    .tco_cpu_secs_per_sec
-                    .total_cmp(&score(&rqes, &deployments, right, &label_sets).tco_cpu_secs_per_sec)
-            })
+            .min_by(|left, right| price(left).total_cmp(&price(right)))
             .expect("test workload is servable");
-        let expected = score(&rqes, &deployments, &brute_force_best, &label_sets);
 
         let milp = minimize(
             &rqes,
             &deployments,
             &label_sets,
             &MilpBounds::default(),
-            Objective::Tco,
+            Objective::AUCCost(&family(8.0)),
         )
         .expect("feasible MILP");
 
         assert_eq!(milp.mapping, brute_force_best);
-        assert!(
-            (milp.objectives.tco_cpu_secs_per_sec - expected.tco_cpu_secs_per_sec).abs() < 1e-12
-        );
+        assert!((price(&milp.mapping) - price(&brute_force_best)).abs() < 1e-12);
     }
 
     fn family(memory_gib: f64) -> MachineFamily {
@@ -381,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn minimize_cost_matches_brute_force_minimum() {
+    fn minimize_cost_matches_brute_force_minimum_across_families() {
         let mut frequent = rqe();
         frequent.id = "frequent".into();
         let mut long = rqe();
@@ -414,7 +407,7 @@ mod tests {
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                Objective::Cost(&family),
+                Objective::AUCCost(&family),
             )
             .expect("feasible MILP");
             assert!((family.usd_per_hour(&milp.objectives) - best).abs() < 1e-9);
@@ -442,7 +435,7 @@ mod tests {
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                Objective::Cost(&family(memory_gib)),
+                Objective::AUCCost(&family(memory_gib)),
             )
             .expect("feasible MILP")
             .mapping
@@ -494,7 +487,7 @@ mod tests {
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                Objective::Cost(&family),
+                Objective::AUCCost(&family),
             )
             .expect("feasible MILP");
             let got = family.usd_per_hour(&milp.objectives);
@@ -516,7 +509,7 @@ mod tests {
                 max_peak_query_memory_bytes: None,
                 max_query_latency_secs: vec![Some(1e-7)],
             },
-            Objective::Cost(&family(8.0)),
+            Objective::AUCCost(&family(8.0)),
         )
         .expect("feasible MILP");
         assert_eq!(milp.mapping, vec![1]);
