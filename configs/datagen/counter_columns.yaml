@@ -1,0 +1,36 @@
+# Grouped counter samples for `exact-increase`: the hydra label columns, and a
+# value that only goes up (special_rule 1: each draw is a gap, the value is the
+# running sum), so the stream reads like Prometheus counters with no resets.
+# The rule runs over the whole column, so every group's own samples are
+# non-decreasing too.
+#
+#   approxbench sketchbench --variant exact-increase --library exact \
+#     --spec configs/datagen/counter_columns.yaml --dtype i64 \
+#     --operations query --metrics accuracy
+
+column_num: 3
+column_label: [key1, key2, value]
+row_num: 200000
+
+column_spec:
+  - data_type: string
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 200.0
+      seed: 1
+
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 50
+      seed: 2
+
+  - data_type: i64
+    special_rule: 1
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 10.0
+      seed: 3

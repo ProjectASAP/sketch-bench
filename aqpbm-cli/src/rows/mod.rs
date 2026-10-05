@@ -145,6 +145,13 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("univmon-l2-norm", "oxide") => row_univmon_l2_norm_oxide,
         ("univmon-entropy", "lib") => row_univmon_entropy_lib,
         ("univmon-entropy", "oxide") => row_univmon_entropy_oxide,
+        ("univmon-topk", "lib") => row_univmon_topk_lib,
+        ("countsketch-heap-topk-fastpath-vector2d", "lib") => {
+            row_countsketch_heap_topk_fastpath_vector2d_lib
+        }
+        ("exact-sum", "exact") => row_exact_sum,
+        ("exact-max", "exact") => row_exact_max,
+        ("exact-increase", "exact") => row_exact_increase,
         _ => return None,
     })
 }
@@ -153,6 +160,7 @@ mod cms;
 mod cms_heap;
 mod cs;
 mod dd;
+mod exact;
 mod fixed_matrix;
 mod hll;
 mod hydra;
@@ -167,6 +175,7 @@ use cms::*;
 use cms_heap::*;
 use cs::*;
 use dd::*;
+use exact::*;
 use fixed_matrix::*;
 use hll::*;
 use hydra::*;

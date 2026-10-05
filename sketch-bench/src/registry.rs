@@ -312,6 +312,23 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
     },
+    // -------- CountSketch + heap (top-k) --------
+    SketchId {
+        algorithm: "countsketch-heap",
+        variant: "countsketch-heap-topk-fastpath-vector2d",
+        library: "lib",
+        description: "asap CSHeap, Vector2D, FastPath — heap dump, top-k query",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
     // -------- HLL (cardinality) --------
     // The three `lib` precisions are one entry: one variant at one library, with
     // `lg_k` the knob that moves between them.
@@ -900,6 +917,75 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    SketchId {
+        algorithm: "univmon",
+        variant: "univmon-topk",
+        library: "lib",
+        description:
+            "asap_sketchlib::UnivMon: layer-0 heap, top-k over a one-column stream (weight 1)",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    // -------- exact multi-subpopulation accumulators (as ASAPQuery's) --------
+    // Grouped input: every column before the value is a label. `exact-sum`
+    // also serves count (fed 1 per sample), `exact-max` also min (same cost).
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-sum",
+        library: "exact",
+        description: "per-group sum (count: sum of 1s)",
+        capability: Capability::SumOrCount,
+        comparator: Some("sum-or-count"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-max",
+        library: "exact",
+        description: "per-group max (min: same cell, flipped)",
+        capability: Capability::MinOrMax,
+        comparator: Some("min-or-max"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-increase",
+        library: "exact",
+        description:
+            "per-group counter increase, ASAPQuery IncreaseAccumulator (resets, timestamps)",
+        capability: Capability::RateOrIncrease,
+        comparator: Some("rate-or-increase"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
 ];
 
 // ---------- what the frontend asks ----------
@@ -1246,6 +1332,9 @@ mod tests {
             "keyed-l1-norm",
             "keyed-l2-norm",
             "keyed-entropy",
+            "sum-or-count",
+            "min-or-max",
+            "rate-or-increase",
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {

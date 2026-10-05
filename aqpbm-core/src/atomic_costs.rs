@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::accuracy::aggregate::GROUPS_PER_INSTANCE;
 use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
 
 /// One row: measured atomic costs for one (sketch algorithm, construction
@@ -163,6 +164,19 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
 
     let query_accuracy = query_accuracy(record.query.accuracy.as_ref())?;
 
+    // A multi-subpopulation accumulator holds every group in one instance, so
+    // its footprint and fold were measured at the bench spec's group count.
+    // Priced per group here, so the optimizer's `card(group-by) ×` counts each
+    // group once. Query is already per group (one probe per group); insert is
+    // per item.
+    let groups = query_accuracy
+        .get(GROUPS_PER_INSTANCE)
+        .copied()
+        .unwrap_or(1.0)
+        .max(1.0);
+    let mem_bytes_per_instance = mem_bytes_per_instance / groups;
+    let merge_cpu_secs = merge_cpu_secs / groups;
+
     Ok(AtomicCostEntry {
         sketch: record.sketch.clone(),
         sketch_config: record
@@ -306,6 +320,20 @@ mod tests {
             },
             prepare: PrepareMetrics::default(),
         }
+    }
+
+    /// A grouped accumulator's memory and fold are priced per group; insert
+    /// and query are not touched.
+    #[test]
+    fn grouped_records_are_priced_per_group() {
+        let mut record = full_record();
+        record.query.accuracy =
+            Some(serde_json::json!({"relative_error": 0.0, "groups_per_instance": 4.0}));
+        let entry = reduce_one(&record).expect("fully populated record");
+        assert_eq!(entry.mem_bytes_per_instance, 12_288.0 / 4.0);
+        assert!((entry.merge_cpu_secs - 10e-3 / 4.0).abs() < 1e-12);
+        assert!((entry.insert_cpu_secs - 0.5e-6).abs() < 1e-12);
+        assert!((entry.query_cpu_secs - 4e-6).abs() < 1e-12);
     }
 
     #[test]

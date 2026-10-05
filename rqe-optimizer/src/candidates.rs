@@ -247,7 +247,7 @@ mod tests {
     fn rqe(id: &str, lookback: Seconds, interval: Seconds) -> Rqe {
         Rqe {
             id: id.into(),
-            capability: Capability::Freq,
+            capability: Capability::TopK,
             lookback_secs: lookback,
             interval_secs: interval,
             labels: LabelSet::new(),
@@ -258,7 +258,7 @@ mod tests {
     }
     fn cost() -> AtomicCostEntry {
         AtomicCostEntry {
-            sketch: "cms-fastpath-vector2d".into(),
+            sketch: "cms-heap-topk-fastpath-vector2d".into(),
             sketch_config: serde_json::json!(null),
             mem_bytes_per_instance: 1.0,
             insert_cpu_secs: 1.0,
@@ -282,7 +282,7 @@ mod tests {
     fn eligibility_requires_exact_non_overlapping_tiling() {
         let r = rqe("r", 600, 180);
         let d = Deployment {
-            capability: Capability::Freq,
+            capability: Capability::TopK,
             labels: LabelSet::new(),
             config: cost(),
             window_secs: 120,
@@ -309,7 +309,7 @@ mod tests {
     fn prunes_finer_slide_when_the_coarser_slide_serves_the_same_rqe() {
         let r = rqe("r", 60, 60);
         let coarse = Deployment {
-            capability: Capability::Freq,
+            capability: Capability::TopK,
             labels: LabelSet::new(),
             config: cost(),
             window_secs: 60,
@@ -330,7 +330,7 @@ mod tests {
         let r = rqe("r", 60, 60);
         let cost = cost();
         let large_window = Deployment {
-            capability: Capability::Freq,
+            capability: Capability::TopK,
             labels: LabelSet::new(),
             config: cost.clone(),
             window_secs: 60,
@@ -353,7 +353,7 @@ mod tests {
         let r = rqe("r", 60, 60);
         // Holds (60 + 60) / 60 = 2 instances of 10 bytes.
         let whole_window = Deployment {
-            capability: Capability::Freq,
+            capability: Capability::TopK,
             labels: LabelSet::new(),
             config: AtomicCostEntry {
                 mem_bytes_per_instance: 10.0,

@@ -9,7 +9,9 @@
 pub mod cms;
 pub mod cms_heap;
 pub mod cs;
+pub mod cs_heap;
 pub mod dd;
+pub mod exact;
 pub mod hll;
 pub mod hydra_cms;
 pub mod hydra_cs;

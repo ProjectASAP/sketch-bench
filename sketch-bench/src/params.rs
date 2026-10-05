@@ -559,6 +559,13 @@ sketch_params!(
     }
 );
 
+/// The exact accumulators have no knobs; an empty vocabulary still refuses a
+/// stray `--config` key by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactParams {}
+sketch_params!(ExactParams, "exact", ExactParams {});
+
 #[cfg(test)]
 mod tests {
     use super::*;

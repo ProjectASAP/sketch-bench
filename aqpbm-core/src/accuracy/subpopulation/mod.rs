@@ -21,7 +21,7 @@ use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
 pub type Group = Vec<String>;
 
-fn group_labels<'a>(
+pub(crate) fn group_labels<'a>(
     table: &'a GeneratedTable,
     columns: &[usize],
 ) -> Result<Vec<&'a str>, DataGenError> {
