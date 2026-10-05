@@ -8,8 +8,14 @@ approxbench command as the cost phase, --jobs at a time), appends them, and
 fills the cost columns of saturation.csv from every record. It does not run
 the exact-baseline crossover.
 
+--n-max is the stream length of the new measurements. Readers of
+saturation.csv divide insert CPU by the point's last curve N, so each
+record's insert CPU is written scaled to --normalize-n (default: --n-max),
+keeping insert CPU per item equal to the record's own CPU / its own N.
+
 Usage: complete_saturation_costs.py GRID_DIR [--jobs 12] [--cost-rows 3]
-           [--n-max 1e8] [--seed 1] [--binary ./target/release/approxbench]
+           [--n-max 1e8] [--normalize-n 1e8] [--seed 1]
+           [--binary ./target/release/approxbench]
 """
 
 import argparse
@@ -40,8 +46,11 @@ def main():
     parser.add_argument("--jobs", type=int, default=12)
     parser.add_argument("--cost-rows", type=int, default=3)
     parser.add_argument("--n-max", type=float, default=1e8)
+    parser.add_argument("--normalize-n", type=float,
+                        help="N the insert CPU is scaled to (default: --n-max)")
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
+    normalize_n = args.normalize_n or args.n_max
 
     csv_path = os.path.join(args.grid_dir, "saturation.csv")
     cost_path = os.path.join(args.grid_dir, "saturation_cost.jsonl")
@@ -82,7 +91,9 @@ def main():
 
     for row in rows:
         record = saved.get(key(row), {}) if measured(row) else {}
-        row["insert_cpu_secs"] = cpu_secs(record, "insert")
+        insert = cpu_secs(record, "insert")
+        size = record.get("workload", {}).get("synthetic", {}).get("description", {}).get("row_num")
+        row["insert_cpu_secs"] = insert * normalize_n / size if insert != "" and size else insert
         row["merge_cpu_secs"] = cpu_secs(record, "merge")
         row["query_cpu_secs"] = cpu_secs(record, "query")
         row["memory_bytes"] = record.get("memory_bytes", "")
