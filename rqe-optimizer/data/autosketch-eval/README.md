@@ -78,6 +78,10 @@ python3 scripts/export_autosketch_eval_table.py \
   --out rqe-optimizer/data/autosketch-eval/table.json
 ```
 
+The merge curves were produced on #131's branch at a0b8b42. #131 has since
+merged into main as bd644fe with identical content, so the recorded revision
+string above still describes the inputs.
+
 `table.json` records the SHA-256 of every input under `inputs`:
 
 | Input | SHA-256 |
@@ -97,4 +101,3 @@ python3 scripts/export_autosketch_eval_table.py \
 - 530 config rows extrapolate beyond the largest measured N, and 56 rows
   sit below the grid's smallest N; both are flagged.
 - 720 rows=5 configs take 5/3 of the rows=3 cost (flagged).
-- The merge-curve inputs come from sketch-bench #131, which is not merged yet.
