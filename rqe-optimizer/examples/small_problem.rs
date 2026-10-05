@@ -34,7 +34,7 @@ use rqe_optimizer::candidates::{
     build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
 };
 use rqe_optimizer::enumerate::{brute_force, for_each_mapping, for_each_mapping_while, unservable};
-use rqe_optimizer::milp::{minimize_cost, minimize_tco, MilpBounds};
+use rqe_optimizer::milp::{minimize, MilpBounds, Objective};
 use rqe_optimizer::objectives::{score, MachineFamily};
 use rqe_optimizer::pareto::{pareto_front, ParetoFront};
 use rqe_optimizer::{
@@ -346,11 +346,12 @@ fn main() {
             max_query_latency_secs: latency_bounds(&rqes),
         };
         let family = machine_family();
-        let solution = match &family {
-            Some(family) => minimize_cost(&rqes, &deployments, &label_sets, &bounds, family),
-            None => minimize_tco(&rqes, &deployments, &label_sets, &bounds),
-        }
-        .expect("small_problem MILP should be feasible");
+        let objective = match &family {
+            Some(family) => Objective::Cost(family),
+            None => Objective::Tco,
+        };
+        let solution = minimize(&rqes, &deployments, &label_sets, &bounds, objective)
+            .expect("small_problem MILP should be feasible");
         if let Some(family) = &family {
             println!(
                 "MILP minimum-cost solution on {}: ${:.4}/hour, {:.4} instances, \

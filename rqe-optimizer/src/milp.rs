@@ -7,12 +7,34 @@ use crate::candidates::eligible_deployments_for;
 use crate::objectives::{score, MachineFamily, Objectives, BYTES_PER_GIB};
 use crate::{Deployment, LabelSetTable, Mapping, Rqe};
 use good_lp::{
-    default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution, SolverModel,
-    Variable,
+    default_solver, variable, Constraint, Expression, ProblemVariables, ResolutionError, Solution,
+    SolverModel, Variable,
 };
 
-/// Optional hard bounds for a minimum-TCO solve. An empty latency vector means
-/// no RQE has a latency bound; otherwise it is index-aligned with `rqes`.
+/// What a [`minimize`] solve minimizes. Eligibility, assignment and activation
+/// rows, and bounds are the same for every objective.
+#[derive(Debug, Clone, Copy)]
+pub enum Objective<'a> {
+    /// Total steady-state CPU, `tco_cpu_secs_per_sec`.
+    Tco,
+    /// Hourly price of running the plan on one machine family, in fractional
+    /// instances: `n ≥ CPU / vCPU` and `n ≥ retained memory / GiB`.
+    Cost(&'a MachineFamily),
+}
+
+impl Objective<'_> {
+    /// Per resource, the units the goal is measured in: CPU for TCO, and for a
+    /// family the vCPU and GiB of one instance. Memory is free under TCO.
+    fn units(self) -> (f64, f64) {
+        match self {
+            Objective::Tco => (1.0, f64::INFINITY),
+            Objective::Cost(family) => (family.vcpu, family.memory_gib),
+        }
+    }
+}
+
+/// Optional hard bounds for a solve. An empty latency vector means no RQE has
+/// a latency bound; otherwise it is index-aligned with `rqes`.
 #[derive(Debug, Clone, Default)]
 pub struct MilpBounds {
     pub max_peak_query_memory_bytes: Option<f64>,
@@ -25,37 +47,15 @@ pub struct MilpSolution {
     pub objectives: Objectives,
 }
 
-/// Minimize total steady-state CPU subject to optional memory and latency
-/// bounds. Missing eligible deployments are a caller input error; use
-/// `enumerate::unservable` to report them before calling this function.
-pub fn minimize_tco(
+/// Minimize `objective` subject to optional memory and latency bounds. Missing
+/// eligible deployments are a caller input error; use `enumerate::unservable`
+/// to report them before calling this function.
+pub fn minimize(
     rqes: &[Rqe],
     deployments: &[Deployment],
     label_sets: &LabelSetTable,
     bounds: &MilpBounds,
-) -> Result<MilpSolution, ResolutionError> {
-    solve(rqes, deployments, label_sets, bounds, None)
-}
-
-/// Minimize the hourly price of running the plan on `family`, in fractional
-/// instances: `n ≥ CPU / vCPU` and `n ≥ retained memory / GiB`. Same inputs
-/// and bounds as [`minimize_tco`].
-pub fn minimize_cost(
-    rqes: &[Rqe],
-    deployments: &[Deployment],
-    label_sets: &LabelSetTable,
-    bounds: &MilpBounds,
-    family: &MachineFamily,
-) -> Result<MilpSolution, ResolutionError> {
-    solve(rqes, deployments, label_sets, bounds, Some(family))
-}
-
-fn solve(
-    rqes: &[Rqe],
-    deployments: &[Deployment],
-    label_sets: &LabelSetTable,
-    bounds: &MilpBounds,
-    family: Option<&MachineFamily>,
+    objective: Objective,
 ) -> Result<MilpSolution, ResolutionError> {
     assert!(
         bounds.max_query_latency_secs.is_empty()
@@ -108,12 +108,7 @@ fn solve(
                 .expect("assignment only contains eligible deployments") as f64
             / BYTES_PER_GIB
     };
-    // Per resource, in the units the solve minimizes: CPU for TCO, and for a
-    // family the vCPU and GiB fractions of one instance.
-    let (cpu_unit, gib_unit) = match family {
-        Some(f) => (f.vcpu, f.memory_gib),
-        None => (1.0, f64::INFINITY),
-    };
+    let (cpu_unit, gib_unit) = objective.units();
     let reference: f64 = rqes
         .iter()
         .zip(&eligible)
@@ -152,28 +147,37 @@ fn solve(
         }
     }
 
-    // Retained GiB per deployment, and fractional instances, priced only when
-    // a machine family is given. Both are in units of `reference`.
-    let retained_gib: Vec<Variable> = match family {
-        Some(_) => deployments
-            .iter()
-            .map(|_| variables.add(variable().min(0)))
-            .collect(),
-        None => Vec::new(),
-    };
-    let instances = variables.add(variable().min(0));
-    // The price per instance is a positive constant, so minimizing instances
-    // minimizes the price.
-    let goal = match family {
-        Some(_) => Expression::from(instances),
-        None => cpu.clone(),
+    // The objective's own variables and rows, in units of `reference`.
+    let (goal, objective_rows): (Expression, Vec<Constraint>) = match objective {
+        Objective::Tco => (cpu, Vec::new()),
+        Objective::Cost(family) => {
+            // The price per instance is a positive constant, so minimizing
+            // fractional instances minimizes the price.
+            let instances = variables.add(variable().min(0));
+            let retained_gib: Vec<Variable> = deployments
+                .iter()
+                .map(|_| variables.add(variable().min(0)))
+                .collect();
+            let total_gib: Expression = retained_gib.iter().sum();
+            let mut rows = vec![
+                (cpu / family.vcpu - instances).leq(0),
+                (total_gib / family.memory_gib - instances).leq(0),
+            ];
+            // Linearized max over the RQEs a deployment serves.
+            for (rqe_index, choices) in assignments.iter().enumerate() {
+                for &(deployment_index, assignment) in choices {
+                    let retained =
+                        retained(&rqes[rqe_index], &deployments[deployment_index]) / reference;
+                    rows.push((retained * assignment - retained_gib[deployment_index]).leq(0));
+                }
+            }
+            (Expression::from(instances), rows)
+        }
     };
 
     let mut model = variables.minimise(goal).using(default_solver);
-    if let Some(f) = family {
-        model.add_constraint((cpu / f.vcpu - instances).leq(0));
-        let total_gib: Expression = retained_gib.iter().sum();
-        model.add_constraint((total_gib / f.memory_gib - instances).leq(0));
+    for row in objective_rows {
+        model.add_constraint(row);
     }
 
     for (rqe_index, choices) in assignments.iter().enumerate() {
@@ -200,13 +204,6 @@ fn solve(
                     .is_some_and(|limit| latency > limit)
             {
                 model.add_constraint(Expression::from(assignment).leq(0));
-            }
-            if family.is_some() {
-                // Linearized max over the RQEs a deployment serves.
-                let retained = retained(&rqes[rqe_index], deployment) / reference;
-                model.add_constraint(
-                    (retained * assignment - retained_gib[deployment_index]).leq(0),
-                );
             }
         }
     }
@@ -308,11 +305,17 @@ mod tests {
             },
         )]);
 
-        let unconstrained = minimize_tco(&rqes, &deployments, &label_sets, &MilpBounds::default())
-            .expect("feasible MILP");
+        let unconstrained = minimize(
+            &rqes,
+            &deployments,
+            &label_sets,
+            &MilpBounds::default(),
+            Objective::Tco,
+        )
+        .expect("feasible MILP");
         assert_eq!(unconstrained.mapping, vec![0]);
 
-        let constrained = minimize_tco(
+        let constrained = minimize(
             &rqes,
             &deployments,
             &label_sets,
@@ -320,6 +323,7 @@ mod tests {
                 max_peak_query_memory_bytes: Some(10.0),
                 max_query_latency_secs: Vec::new(),
             },
+            Objective::Tco,
         )
         .expect("feasible MILP under memory bound");
         assert_eq!(constrained.mapping, vec![1]);
@@ -352,8 +356,14 @@ mod tests {
             .expect("test workload is servable");
         let expected = score(&rqes, &deployments, &brute_force_best, &label_sets);
 
-        let milp = minimize_tco(&rqes, &deployments, &label_sets, &MilpBounds::default())
-            .expect("feasible MILP");
+        let milp = minimize(
+            &rqes,
+            &deployments,
+            &label_sets,
+            &MilpBounds::default(),
+            Objective::Tco,
+        )
+        .expect("feasible MILP");
 
         assert_eq!(milp.mapping, brute_force_best);
         assert!(
@@ -399,12 +409,12 @@ mod tests {
                 })
                 .min_by(f64::total_cmp)
                 .expect("test workload is servable");
-            let milp = minimize_cost(
+            let milp = minimize(
                 &rqes,
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                &family,
+                Objective::Cost(&family),
             )
             .expect("feasible MILP");
             assert!((family.usd_per_hour(&milp.objectives) - best).abs() < 1e-9);
@@ -427,12 +437,12 @@ mod tests {
             },
         )]);
         let solve = |memory_gib| {
-            minimize_cost(
+            minimize(
                 &rqes,
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                &family(memory_gib),
+                Objective::Cost(&family(memory_gib)),
             )
             .expect("feasible MILP")
             .mapping
@@ -479,12 +489,12 @@ mod tests {
                 })
                 .min_by(f64::total_cmp)
                 .expect("test workload is servable");
-            let milp = minimize_cost(
+            let milp = minimize(
                 &rqes,
                 &deployments,
                 &label_sets,
                 &MilpBounds::default(),
-                &family,
+                Objective::Cost(&family),
             )
             .expect("feasible MILP");
             let got = family.usd_per_hour(&milp.objectives);
@@ -498,7 +508,7 @@ mod tests {
             deployment(tiny, tiny, 1.5e-7),
             deployment(10.0 * tiny, tiny, 0.5e-7),
         ];
-        let milp = minimize_cost(
+        let milp = minimize(
             &rqes,
             &deployments,
             &label_sets,
@@ -506,7 +516,7 @@ mod tests {
                 max_peak_query_memory_bytes: None,
                 max_query_latency_secs: vec![Some(1e-7)],
             },
-            &family(8.0),
+            Objective::Cost(&family(8.0)),
         )
         .expect("feasible MILP");
         assert_eq!(milp.mapping, vec![1]);

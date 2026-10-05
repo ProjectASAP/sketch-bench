@@ -137,7 +137,7 @@ substitute the remaining one without weakening a modeled objective.
 Historical instances must be retained long enough to answer the RQEs assigned
 to a deployment. Retention is not a candidate parameter: a deployment retains
 the history needed by the largest assigned query window. Its memory is scored
-as retained memory (below) and priced by `minimize_cost`.
+as retained memory (below) and priced by `Objective::Cost`.
 
 ## Workload mapping
 
@@ -185,7 +185,7 @@ TCO_cpu = Σ_D ingest_cpu_D × u_D
 latency_i = Σ_{D: (i,D)∈E} latency_{i,D} × z_{i,D}
 ```
 
-`minimize_cost` instead prices the plan on one EC2 machine family `f` (vCPUs
+`Objective::Cost` instead prices the plan on one EC2 machine family `f` (vCPUs
 `vcpu_f`, memory `gib_f`, hourly price `price_f`) in fractional instances
 `n_f`, with a continuous `R_D ≥ 0` for each candidate's retained GiB:
 

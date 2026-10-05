@@ -32,7 +32,7 @@ implemented, what is next, and what is intentionally deferred.
 - A regression test confirms the MILP matches exhaustive minimum-TCO search on
   a tiny workload with shared deployment activation costs.
 - Retained memory (`(x + max S) / y` instances per active deployment) is
-  scored, and `milp::minimize_cost` minimizes the hourly price on one EC2
+  scored, and `milp::minimize` with `Objective::Cost` minimizes the hourly price on one EC2
   machine family in fractional instances. Prices are a committed snapshot from
   `scripts/fetch_ec2_pricing.py`; `small_problem --milp --machine-family NAME`
   uses it.
