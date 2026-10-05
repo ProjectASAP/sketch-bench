@@ -77,7 +77,6 @@ fn solve(
         .iter()
         .map(|_| variables.add(variable().binary()))
         .collect();
-    let peak_memory = variables.add(variable().min(0));
     let assignments: Vec<Vec<(usize, Variable)>> = eligible
         .iter()
         .map(|choices| {
@@ -88,32 +87,73 @@ fn solve(
         })
         .collect();
 
-    let mut objective = Expression::with_capacity(deployments.len() + rqes.len());
-    for (deployment, &active_variable) in deployments.iter().zip(&active) {
-        let labels = &label_sets[&deployment.labels];
+    // Real plans cost ~1e-6 $/hour and read in microseconds, below HiGHS's
+    // absolute gap (1e-6) and feasibility tolerance (1e-7). So every row is
+    // scaled to O(1) by `reference`, a plan's resource demand without sharing
+    // (each RQE on its cheapest deployment); per-RQE bounds become exclusions. Results are re-scored on
+    // real costs below, so the scaling never leaks out.
+    let ingest = |deployment: &Deployment| {
         let fanout = deployment
             .active_instance_count()
             .expect("candidate window and slide align") as f64;
-        objective.add_mul(
-            labels.arrival_rate_per_sec * fanout * deployment.config.insert_cpu_secs,
-            active_variable,
-        );
+        label_sets[&deployment.labels].arrival_rate_per_sec
+            * fanout
+            * deployment.config.insert_cpu_secs
+    };
+    let retained = |rqe: &Rqe, deployment: &Deployment| {
+        label_sets[&deployment.labels].cardinality as f64
+            * deployment.config.mem_bytes_per_instance
+            * deployment
+                .retained_instance_count(rqe.lookback_secs)
+                .expect("assignment only contains eligible deployments") as f64
+            / BYTES_PER_GIB
+    };
+    // Per resource, in the units the solve minimizes: CPU for TCO, and for a
+    // family the vCPU and GiB fractions of one instance.
+    let (cpu_unit, gib_unit) = match family {
+        Some(f) => (f.vcpu, f.memory_gib),
+        None => (1.0, f64::INFINITY),
+    };
+    let reference: f64 = rqes
+        .iter()
+        .zip(&eligible)
+        .map(|(rqe, choices)| {
+            choices
+                .iter()
+                .map(|&d| {
+                    let deployment = &deployments[d];
+                    let cpu = ingest(deployment)
+                        + query_and_merge_cpu_per_sec(rqe, deployment, label_sets);
+                    cpu / cpu_unit + retained(rqe, deployment) / gib_unit
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+        .sum();
+    let reference = if reference.is_normal() {
+        reference
+    } else {
+        1.0
+    };
+
+    let mut cpu = Expression::with_capacity(deployments.len() + rqes.len());
+    for (deployment, &active_variable) in deployments.iter().zip(&active) {
+        cpu.add_mul(ingest(deployment) / reference, active_variable);
     }
     for (rqe_index, choices) in assignments.iter().enumerate() {
         for &(deployment_index, assignment) in choices {
-            objective.add_mul(
+            cpu.add_mul(
                 query_and_merge_cpu_per_sec(
                     &rqes[rqe_index],
                     &deployments[deployment_index],
                     label_sets,
-                ),
+                ) / reference,
                 assignment,
             );
         }
     }
 
     // Retained GiB per deployment, and fractional instances, priced only when
-    // a machine family is given.
+    // a machine family is given. Both are in units of `reference`.
     let retained_gib: Vec<Variable> = match family {
         Some(_) => deployments
             .iter()
@@ -122,19 +162,18 @@ fn solve(
         None => Vec::new(),
     };
     let instances = variables.add(variable().min(0));
+    // The price per instance is a positive constant, so minimizing instances
+    // minimizes the price.
     let goal = match family {
-        Some(f) => f.usd_per_hour * instances,
-        None => objective.clone(),
+        Some(_) => Expression::from(instances),
+        None => cpu.clone(),
     };
 
     let mut model = variables.minimise(goal).using(default_solver);
     if let Some(f) = family {
-        model.add_constraint((objective - f.vcpu * instances).leq(0));
+        model.add_constraint((cpu / f.vcpu - instances).leq(0));
         let total_gib: Expression = retained_gib.iter().sum();
-        model.add_constraint((total_gib - f.memory_gib * instances).leq(0));
-    }
-    if let Some(memory_limit) = bounds.max_peak_query_memory_bytes {
-        model.add_constraint(Expression::from(peak_memory).leq(memory_limit));
+        model.add_constraint((total_gib / f.memory_gib - instances).leq(0));
     }
 
     for (rqe_index, choices) in assignments.iter().enumerate() {
@@ -144,32 +183,31 @@ fn solve(
         for &(deployment_index, assignment) in choices {
             let deployment = &deployments[deployment_index];
             model.add_constraint((assignment - active[deployment_index]).leq(0));
+            // Each RQE takes exactly one deployment, so a per-RQE bound just
+            // forbids the choices over it. Comparing in f64 here, not in the
+            // solver, keeps µs latencies clear of its feasibility tolerance.
             let memory = label_sets[&deployment.labels].cardinality as f64
                 * deployment.config.mem_bytes_per_instance;
-            model.add_constraint((memory * assignment - peak_memory).leq(0));
+            let latency = query_latency_secs(&rqes[rqe_index], deployment, label_sets);
+            if bounds
+                .max_peak_query_memory_bytes
+                .is_some_and(|limit| memory > limit)
+                || bounds
+                    .max_query_latency_secs
+                    .get(rqe_index)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|limit| latency > limit)
+            {
+                model.add_constraint(Expression::from(assignment).leq(0));
+            }
             if family.is_some() {
                 // Linearized max over the RQEs a deployment serves.
-                let retained = memory
-                    * deployment
-                        .retained_instance_count(rqes[rqe_index].lookback_secs)
-                        .expect("assignment only contains eligible deployments")
-                        as f64
-                    / BYTES_PER_GIB;
+                let retained = retained(&rqes[rqe_index], deployment) / reference;
                 model.add_constraint(
                     (retained * assignment - retained_gib[deployment_index]).leq(0),
                 );
             }
-        }
-
-        if let Some(Some(latency_limit)) = bounds.max_query_latency_secs.get(rqe_index) {
-            let latency: Expression = choices
-                .iter()
-                .map(|&(deployment_index, assignment)| {
-                    query_latency_secs(&rqes[rqe_index], &deployments[deployment_index], label_sets)
-                        * assignment
-                })
-                .sum();
-            model.add_constraint(latency.leq(*latency_limit));
         }
     }
 
@@ -402,5 +440,76 @@ mod tests {
 
         assert_eq!(solve(8.0), vec![0]); // memory is scarce: 0.25 vs 0.5 instances
         assert_eq!(solve(32.0), vec![1]); // CPU is scarce: 0.25 vs 0.125 instances
+    }
+
+    #[test]
+    fn tiny_magnitudes_match_brute_force_and_respect_latency_bounds() {
+        // Real W2 plans cost ~1e-6 $/hour with µs latencies: below HiGHS's
+        // absolute gap and feasibility tolerances unless the model is scaled.
+        let mut frequent = rqe();
+        frequent.id = "frequent".into();
+        let mut long = rqe();
+        long.id = "long".into();
+        long.lookback_secs = 600;
+        let rqes = vec![frequent, long];
+        let tiny = 1e-9;
+        let deployments = vec![
+            deployment(1.0 * tiny, 0.5 * tiny * BYTES_PER_GIB, 400.0 * tiny),
+            deployment(3.0 * tiny, 0.1 * tiny * BYTES_PER_GIB, 1.0 * tiny),
+            deployment(0.2 * tiny, 2.0 * tiny * BYTES_PER_GIB, 1.0 * tiny),
+        ]
+        .into_iter()
+        .map(|mut d| {
+            d.config.merge_cpu_secs = tiny;
+            d
+        })
+        .collect::<Vec<_>>();
+        let label_sets = BTreeMap::from([(
+            LabelSet::new(),
+            LabelSetInfo {
+                cardinality: 1,
+                arrival_rate_per_sec: 1.0,
+            },
+        )]);
+        for family in [family(8.0), family(32.0)] {
+            let best = brute_force(&rqes, &deployments)
+                .iter()
+                .map(|mapping| {
+                    family.usd_per_hour(&score(&rqes, &deployments, mapping, &label_sets))
+                })
+                .min_by(f64::total_cmp)
+                .expect("test workload is servable");
+            let milp = minimize_cost(
+                &rqes,
+                &deployments,
+                &label_sets,
+                &MilpBounds::default(),
+                &family,
+            )
+            .expect("feasible MILP");
+            let got = family.usd_per_hour(&milp.objectives);
+            assert!((got - best).abs() <= 1e-9 * best, "{got} vs {best}");
+        }
+
+        // The cheap deployment's latency is 1.5e-7 s, over a 1e-7 s bound by
+        // less than HiGHS's absolute feasibility tolerance.
+        let rqes = vec![rqe()];
+        let deployments = vec![
+            deployment(tiny, tiny, 1.5e-7),
+            deployment(10.0 * tiny, tiny, 0.5e-7),
+        ];
+        let milp = minimize_cost(
+            &rqes,
+            &deployments,
+            &label_sets,
+            &MilpBounds {
+                max_peak_query_memory_bytes: None,
+                max_query_latency_secs: vec![Some(1e-7)],
+            },
+            &family(8.0),
+        )
+        .expect("feasible MILP");
+        assert_eq!(milp.mapping, vec![1]);
+        assert!(milp.objectives.query_latency_secs[0] <= 1e-7);
     }
 }
