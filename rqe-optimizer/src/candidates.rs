@@ -27,16 +27,17 @@ fn divisors(value: Seconds) -> Vec<Seconds> {
     out
 }
 
-/// Every gcd reachable from a non-empty subset, folded incrementally rather
-/// than by enumerating the powerset.
+/// The gcd of every non-empty subset of `values`, in one pass without listing
+/// subsets: `gcd(A ∪ {v}) = gcd(gcd(A), v)`, so each new value extends every
+/// gcd found so far.
 fn subset_gcds(values: impl IntoIterator<Item = Seconds>) -> BTreeSet<Seconds> {
-    let mut out = BTreeSet::new();
+    let mut gcds = BTreeSet::new();
     for value in values {
-        let extensions: Vec<_> = out.iter().map(|&previous| gcd(previous, value)).collect();
-        out.insert(value);
-        out.extend(extensions);
+        let extended: Vec<_> = gcds.iter().map(|&found| gcd(found, value)).collect();
+        gcds.insert(value);
+        gcds.extend(extended);
     }
-    out
+    gcds
 }
 
 /// Windows and slides are multiples of the metric's scrape interval: anything
@@ -57,6 +58,8 @@ fn candidate_deployments(
         .collect::<BTreeSet<_>>();
     let mut deployments = Vec::new();
     for window_secs in windows {
+        // gcd(x, T) is the largest slide that serves an RQE. RQEs sharing a
+        // deployment need the gcd of theirs, and any subset might share.
         let slides = subset_gcds(
             group
                 .iter()

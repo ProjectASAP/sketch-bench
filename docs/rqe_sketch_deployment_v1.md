@@ -6,10 +6,6 @@ Given a workload of repeating query expressions (RQEs), find sketch deployments
 that can serve it and report the trade-offs among query working memory, CPU,
 and per-RQE latency.
 
-v1 is static and small-scale. It enumerates feasible mappings rather than
-calling an ILP solver, but states the problem in solver-friendly terms so that
-enumeration can be replaced later.
-
 ## Inputs
 
 Let `R = {r_1, ..., r_n}` be the RQE workload. Each RQE `r_i` provides:
@@ -32,17 +28,15 @@ For each metric, the caller provides `MetricFacts`:
 - `card(X)`: distinct value combinations of each label set `X` in use,
   including `labels` itself (the raw series count).
 
-The arrival rate is derived, never given, so it can't disagree with the
-cardinalities:
+The arrival rate is derived as follows (not provided by the user):
 
 ```text
 lambda(metric) = card(metric.labels) / scrape_interval      samples/second
 ```
 
-These are inputs to the optimizer; estimating them is outside v1.
 `validate_facts` reports every missing or inconsistent fact up front.
 
-Sketch Bench supplies empirical measurements for each sketch configuration:
+sketch-bench supplies empirical measurements for each sketch configuration:
 
 - memory per sketch instance;
 - insert CPU per item;
@@ -86,14 +80,13 @@ For a query ending at time `t`, use the instances:
 ```
 
 They exactly cover the query window and do not overlap. The deployment may
-have produced other, overlapping instances between these starts; this query
-does not merge them.
+have produced other, overlapping instances between these starts. That is okay. Those overlapping instances are not used for this query.
 
 `S % T == 0` is not required. For example, a 10-minute window running every
 3 minutes can use `x = 2 minutes` and `y = 1 minute`; each query merges five
 non-overlapping two-minute instances.
 
-v1 assumes all RQEs share a common time origin. Query phase offsets are not
+We assume all RQEs share a common time origin. Query phase offsets are not
 modeled.
 
 ## Candidate deployments
@@ -111,25 +104,47 @@ selected deployment may serve multiple compatible RQEs.
 For each (capability, metric, G) group, generate candidates as follows:
 
 ```text
-for each x that divides S_i for at least one RQE i in the group,
-        and is a multiple of the metric's scrape interval:
-    let g_i = gcd(x, T_i) for every RQE i whose S_i is divisible by x
-    let slides = every gcd reachable from a non-empty subset of {g_i}
-    for each measured configuration that serves the group's capability:
-        for each y in slides that is a multiple of the scrape interval:
-            add (capability, configuration, metric, G, x, y)
+for each window x that divides some S_i and is a multiple of the scrape interval:
+    for each RQE i whose S_i is divisible by x:
+        g_i = gcd(x, T_i)                  # the largest slide that serves RQE i
+    slides = { gcd(A) : A a non-empty subset of {g_i} }
+    for each configuration serving the capability,
+            and each y in slides that is a multiple of the scrape interval:
+        add (capability, configuration, metric, G, x, y)
 ```
 
+**Windows.** An RQE merges `S_i / x` whole windows, so `x` must divide `S_i`.
 Windows and slides finer than the scrape interval would only split one
 scrape's samples.
 
-For an RQE considered alone, its only useful slide for a fixed `x` is its
-largest legal slide, `gcd(x, T_i)`. A smaller slide adds ingest fan-out without
-improving that RQE's query cost or memory. A shared deployment may need a
-smaller slide: for example, two RQEs with `gcd(x, T)` values of 20 and 30 need
-`y = 10` to share. Subset gcds include that slide without enumerating every
-divisor. Any still-finer slide is useful only if it aligns an additional RQE,
-in which case it appears as another subset gcd.
+**Slides.** A slide `y` serves RQE `i` when it divides both `x` and `T_i`,
+that is, when it divides `g_i`. A smaller `y` only adds open windows (`x / y`),
+which costs ingest and storage for no gain. So:
+
+- one RQE alone wants `y = g_i`;
+- a set `A` of RQEs sharing a deployment wants the largest `y` dividing every
+  `g_i` in `A`, which is `gcd(A)`.
+
+Which RQEs share is the solver's choice, so every subset's gcd is a candidate.
+Every other divisor of `x` is dominated by one of these.
+
+Example: `x = 60`, RQE `a` every 20 s, RQE `b` every 30 s.
+
+| Served RQEs | `y` | Open windows `x / y` |
+|---|---|---|
+| `a` | gcd(60, 20) = 20 | 3 |
+| `b` | gcd(60, 30) = 30 | 2 |
+| `a` and `b` | gcd(20, 30) = 10 | 6 |
+
+The slides are `{10, 20, 30}`. `y = 5` would also serve both, but holds 12 open
+windows instead of 6. With a 15 s scrape interval only `y = 30` remains: no
+multiple of 15 divides both 20 and 30, so `a` and `b` cannot share at
+`x = 60`.
+
+The subset gcds take one pass, without listing subsets: keep the gcds found so
+far, and for each new `g` add `g` and `gcd(found, g)` for every `found`. For
+`{20, 30}`: `{20}`, then `{20, 30, 10}`. One pass suffices because
+`gcd(A ∪ {g}) = gcd(gcd(A), g)`.
 
 An RQE `r_i` is eligible for a candidate `D` when:
 
