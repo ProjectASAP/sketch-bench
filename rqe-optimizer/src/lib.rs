@@ -71,25 +71,21 @@ impl Capability {
     }
 }
 
-/// Facts about one metric's stream, given as input (#143 S2). RQEs and
-/// deployments on the same metric read the same samples, grouped by
-/// `grouping_labels`.
+/// Facts about one metric, given as input. RQEs and deployments on the same
+/// metric read the same samples.
 #[derive(Debug, Clone)]
 pub struct MetricFacts {
-    /// Every label the metric's series carry, so `cardinality[labels]` is the
-    /// raw series count.
+    /// Every label the metric's series carry.
     pub labels: LabelSet,
-    /// Every series yields one sample per scrape.
+    /// Each series yields one sample per scrape.
     pub scrape_interval_secs: Seconds,
-    /// `card(G)`: distinct value combinations of each label set in use, i.e.
-    /// how many instances a deployment grouped by `G` holds per window. Must
-    /// include `labels` itself.
+    /// `card(X)`: distinct value combinations of each label set `X` in use.
+    /// Must include `labels` itself, whose cardinality is the series count.
     pub cardinality: BTreeMap<LabelSet, u64>,
 }
 
 impl MetricFacts {
-    /// `λ`: samples/sec across all of the metric's series. Derived, never
-    /// given, so it can't disagree with the cardinalities.
+    /// `λ`: samples/sec across all of the metric's series.
     pub fn arrival_rate_per_sec(&self) -> f64 {
         self.cardinality[&self.labels] as f64 / self.scrape_interval_secs as f64
     }
@@ -98,35 +94,35 @@ impl MetricFacts {
 /// [`MetricFacts`] keyed by metric name.
 pub type WorkloadFacts = BTreeMap<String, MetricFacts>;
 
-/// Every problem with `facts` for serving `rqes`, so a caller sees them all
-/// at once. The rest of the crate indexes `facts` without checks, so call
-/// this first on caller input.
+/// Every problem with `facts` for serving `rqes`. The rest of the crate
+/// indexes `facts` without checks, so call this first on caller input.
 pub fn validate_facts(rqes: &[Rqe], facts: &WorkloadFacts) -> Result<(), Vec<String>> {
     let mut problems = BTreeSet::new();
     for rqe in rqes {
         let (metric, grouping) = (&rqe.metric, &rqe.grouping_labels);
-        let Some(f) = facts.get(metric) else {
+        let Some(metric_facts) = facts.get(metric) else {
             problems.insert(format!("{metric}: no facts for this metric"));
             continue;
         };
-        if f.scrape_interval_secs == 0 {
+        let all_labels = &metric_facts.labels;
+        let cardinality = &metric_facts.cardinality;
+        if metric_facts.scrape_interval_secs == 0 {
             problems.insert(format!("{metric}: scrape interval is 0"));
         }
-        if !grouping.is_subset(&f.labels) {
+        if !grouping.is_subset(all_labels) {
             problems.insert(format!(
-                "{metric}: grouping {grouping:?} is not a subset of its labels {:?}",
-                f.labels
+                "{metric}: grouping {grouping:?} is not a subset of its labels {all_labels:?}"
             ));
         }
-        for labels in [grouping, &f.labels] {
-            match f.cardinality.get(labels) {
+        for labels in [grouping, all_labels] {
+            match cardinality.get(labels) {
                 None => problems.insert(format!("{metric}: no cardinality for {labels:?}")),
                 Some(0) => problems.insert(format!("{metric}: cardinality of {labels:?} is 0")),
                 Some(_) => false,
             };
         }
         if let (Some(&groups), Some(&series)) =
-            (f.cardinality.get(grouping), f.cardinality.get(&f.labels))
+            (cardinality.get(grouping), cardinality.get(all_labels))
         {
             if groups > series {
                 problems.insert(format!(
@@ -231,9 +227,8 @@ impl Deployment {
         Some(lookback_secs / self.window_secs)
     }
 
-    /// Closed instances held to serve a lookback (#143 S7): those lying
-    /// wholly inside it, which start in `[now − L, now − x]`, so
-    /// `(L − x) / y + 1`. Open instances are [`Self::active_instance_count`].
+    /// Closed instances kept to serve a lookback: those wholly inside it,
+    /// which start in `[now − L, now − x]`, so `(L − x) / y + 1`.
     pub fn closed_instance_count(&self, lookback_secs: Seconds) -> Option<u64> {
         self.query_instance_count(lookback_secs)?;
         self.active_instance_count()?;
@@ -323,11 +318,21 @@ mod tests {
 
     #[test]
     fn closed_instances_lie_wholly_inside_the_lookback() {
-        // Windows of 10 min every 1 min over 1 h start in [now − 60, now − 10].
-        let d = deployment(1.0, 1.0, 1.0, 1.0, 600, 60);
-        assert_eq!(d.closed_instance_count(3_600), Some(51));
-        assert_eq!(d.closed_instance_count(600), Some(1));
-        assert_eq!(d.closed_instance_count(900), None); // not tiled by x
+        // 10-minute windows every minute, over an hour: starts in minutes
+        // [now − 60, now − 10].
+        let sliding = deployment(1.0, 1.0, 1.0, 1.0, 600, 60);
+        assert_eq!(sliding.closed_instance_count(3_600), Some(51));
+        assert_eq!(sliding.closed_instance_count(600), Some(1));
+        assert_eq!(sliding.closed_instance_count(900), None); // not tiled by x
+    }
+
+    #[test]
+    fn arrival_rate_is_series_over_scrape_interval() {
+        let metric_facts = MetricFacts {
+            scrape_interval_secs: 15,
+            ..test_support::facts(4, 600)[METRIC].clone()
+        };
+        assert_eq!(metric_facts.arrival_rate_per_sec(), 40.0);
     }
 
     #[test]

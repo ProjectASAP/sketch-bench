@@ -39,12 +39,12 @@ fn subset_gcds(values: impl IntoIterator<Item = Seconds>) -> BTreeSet<Seconds> {
     out
 }
 
-/// Windows and slides are multiples of the metric's scrape interval (#143
-/// S6): anything finer only splits one scrape's samples.
+/// Windows and slides are multiples of the metric's scrape interval: anything
+/// finer only splits one scrape's samples.
 fn candidate_deployments(
     group: &[&Rqe],
     costs: &[AtomicCostEntry],
-    scrape_secs: Seconds,
+    scrape_interval_secs: Seconds,
 ) -> Vec<Deployment> {
     if group.is_empty() {
         return Vec::new();
@@ -53,7 +53,7 @@ fn candidate_deployments(
     let windows = group
         .iter()
         .flat_map(|r| divisors(r.lookback_secs))
-        .filter(|w| w.is_multiple_of(scrape_secs))
+        .filter(|window_secs| window_secs.is_multiple_of(scrape_interval_secs))
         .collect::<BTreeSet<_>>();
     let mut deployments = Vec::new();
     for window_secs in windows {
@@ -67,16 +67,18 @@ fn candidate_deployments(
             .iter()
             .filter(|c| capability.families().contains(&c.sketch.as_str()))
         {
-            deployments.extend(slides.iter().filter(|s| s.is_multiple_of(scrape_secs)).map(
-                |&slide_secs| Deployment {
-                    capability,
-                    metric: group[0].metric.clone(),
-                    grouping_labels: group[0].grouping_labels.clone(),
-                    config: config.clone(),
-                    window_secs,
-                    slide_secs,
-                },
-            ));
+            for &slide_secs in &slides {
+                if slide_secs.is_multiple_of(scrape_interval_secs) {
+                    deployments.push(Deployment {
+                        capability,
+                        metric: group[0].metric.clone(),
+                        grouping_labels: group[0].grouping_labels.clone(),
+                        config: config.clone(),
+                        window_secs,
+                        slide_secs,
+                    });
+                }
+            }
         }
     }
     deployments
@@ -118,11 +120,10 @@ pub fn build_all_candidates_unpruned(
 /// mapping without making any modeled objective worse.
 ///
 /// This comparison is deliberately local to a (capability, metric, grouping)
-/// group. Within such a group, `card(G)`, arrival rate and query output size
-/// are common multipliers, so comparing per-instance memory (merge) and
-/// `active_instances ×` insert cost and memory (ingest) is sufficient. Query
-/// latency (merge and query CPU) and stored memory are checked for each RQE
-/// the dominated candidate can serve.
+/// group, where `card(G)`, arrival rate and query output size are common
+/// multipliers. So it compares instance size (merge memory) and ingest CPU and
+/// memory per group, then latency (merge and query CPU) and stored memory for
+/// each RQE the dominated candidate can serve.
 pub fn prune_dominated_candidates(rqes: &[Rqe], candidates: Vec<Deployment>) -> Vec<Deployment> {
     let eligibility: Vec<Vec<bool>> = candidates
         .iter()
@@ -175,10 +176,8 @@ fn candidate_dominates(
     }
 
     replacement.config.mem_bytes_per_instance <= original.config.mem_bytes_per_instance
-        && ingest(replacement)
-            .iter()
-            .zip(ingest(original))
-            .all(|(r, o)| *r <= o)
+        && ingest_cpu(replacement) <= ingest_cpu(original)
+        && ingest_memory(replacement) <= ingest_memory(original)
         && original_coverage
             .iter()
             .zip(replacement_coverage)
@@ -203,10 +202,8 @@ fn strictly_better(
     rqes: &[Rqe],
 ) -> bool {
     replacement.config.mem_bytes_per_instance < original.config.mem_bytes_per_instance
-        || ingest(replacement)
-            .iter()
-            .zip(ingest(original))
-            .any(|(r, o)| *r < o)
+        || ingest_cpu(replacement) < ingest_cpu(original)
+        || ingest_memory(replacement) < ingest_memory(original)
         || original_coverage
             .iter()
             .zip(replacement_coverage)
@@ -223,14 +220,20 @@ fn strictly_better(
             })
 }
 
-/// Ingest CPU and memory per group, up to the group's common `λ` / `card(G)`:
-/// `active_instances ×` insert cost and instance size.
-fn ingest(deployment: &Deployment) -> [f64; 2] {
-    let active = deployment.active_instance_count().unwrap_or(u64::MAX) as f64;
-    [
-        active * deployment.config.insert_cpu_secs,
-        active * deployment.config.mem_bytes_per_instance,
-    ]
+fn open_window_count(deployment: &Deployment) -> f64 {
+    deployment.active_instance_count().unwrap_or(u64::MAX) as f64
+}
+
+/// Insert CPU per sample. Arrival rate is a common multiplier within a group,
+/// so it is left out.
+fn ingest_cpu(deployment: &Deployment) -> f64 {
+    open_window_count(deployment) * deployment.config.insert_cpu_secs
+}
+
+/// Open-window bytes per group. `card(G)` is a common multiplier within a
+/// group, so it is left out.
+fn ingest_memory(deployment: &Deployment) -> f64 {
+    open_window_count(deployment) * deployment.config.mem_bytes_per_instance
 }
 
 fn query_latency(deployment: &Deployment, rqe: &Rqe) -> f64 {
@@ -241,8 +244,7 @@ fn query_latency(deployment: &Deployment, rqe: &Rqe) -> f64 {
         + instances.saturating_sub(1) as f64 * deployment.config.merge_cpu_secs
 }
 
-/// Closed-window bytes per group when serving `rqe`. `card(G)` is a common
-/// multiplier within a group, so it is left out.
+/// Closed-window bytes per group when serving `rqe`.
 fn stored_memory(deployment: &Deployment, rqe: &Rqe) -> f64 {
     deployment
         .closed_instance_count(rqe.lookback_secs)

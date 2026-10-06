@@ -79,7 +79,7 @@ fn load_cost_table() -> AtomicCostTable {
 /// Both metrics: 5 services × 10 endpoints × 600 pods = 30,000 series
 /// scraped every 15 s, so `λ` = 2,000 samples/sec each.
 fn facts() -> WorkloadFacts {
-    let metric = || MetricFacts {
+    let http_metric_facts = || MetricFacts {
         labels: label_set(&["service", "endpoint", "pod"]),
         scrape_interval_secs: 15,
         cardinality: [
@@ -90,8 +90,8 @@ fn facts() -> WorkloadFacts {
         .into(),
     };
     [
-        (REQUESTS.to_string(), metric()),
-        (DURATION.to_string(), metric()),
+        (REQUESTS.to_string(), http_metric_facts()),
+        (DURATION.to_string(), http_metric_facts()),
     ]
     .into()
 }

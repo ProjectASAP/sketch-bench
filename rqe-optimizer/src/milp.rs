@@ -98,43 +98,45 @@ pub fn minimize(
                 .collect()
         })
         .collect();
-    // Weighted closed-window storage per deployment: a linearized max over the
-    // RQEs it serves.
-    let stored: Vec<Variable> = deployments
+    // Weighted storage cost per deployment: the max over the RQEs it serves.
+    let storage: Vec<Variable> = deployments
         .iter()
         .map(|_| variables.add(variable().min(0)))
         .collect();
 
-    // Weighted costs: ingest once per active deployment; merge and query once
-    // per assignment; storage as the max over a deployment's assignments.
-    let ingest: Vec<f64> = deployments
+    // Ingest is paid once per active deployment, merge and query once per
+    // assignment, and storage once per deployment for its longest lookback.
+    let ingest_cost: Vec<f64> = deployments
         .iter()
-        .map(|d| objective.weigh(objectives::ingest(d, facts)))
+        .map(|deployment| objective.weigh(objectives::ingest(deployment, facts)))
         .collect();
-    let per_assignment = |r: &Rqe, d: &Deployment| {
-        objective.weigh(objectives::merge(r, d, facts))
-            + objective.weigh(objectives::query(r, d, facts))
+    let assignment_cost = |rqe: &Rqe, deployment: &Deployment| {
+        objective.weigh(objectives::merge(rqe, deployment, facts))
+            + objective.weigh(objectives::query(rqe, deployment, facts))
     };
-    let storage = |r: &Rqe, d: &Deployment| {
+    let storage_cost = |rqe: &Rqe, deployment: &Deployment| {
         objective.weigh(PhaseCost {
             cpu_secs_per_sec: 0.0,
-            memory_bytes: objectives::storage_bytes(r, d, facts),
+            memory_bytes: objectives::storage_bytes(rqe, deployment, facts),
         })
     };
 
     // Real plans cost ~1e-6 CPU-sec/sec and read in microseconds, below
-    // HiGHS's absolute gap (1e-6) and feasibility tolerance (1e-7). So every
-    // row is scaled to O(1) by `reference`, a plan's cost without sharing
-    // (each RQE on its cheapest deployment); per-RQE bounds become exclusions.
-    // Results are re-scored on real costs below, so the scaling never leaks out.
+    // HiGHS's absolute gap (1e-6) and feasibility tolerance (1e-7). So costs
+    // are divided by `reference`, a plan's cost without sharing (each RQE on
+    // its cheapest deployment), and per-RQE bounds become exclusions. The
+    // result is re-scored on real costs.
     let reference: f64 = rqes
         .iter()
         .zip(&eligible)
-        .map(|(r, choices)| {
+        .map(|(rqe, choices)| {
             choices
                 .iter()
-                .map(|&d| {
-                    ingest[d] + per_assignment(r, &deployments[d]) + storage(r, &deployments[d])
+                .map(|&deployment_index| {
+                    let deployment = &deployments[deployment_index];
+                    ingest_cost[deployment_index]
+                        + assignment_cost(rqe, deployment)
+                        + storage_cost(rqe, deployment)
                 })
                 .fold(f64::INFINITY, f64::min)
         })
@@ -145,14 +147,14 @@ pub fn minimize(
         1.0
     };
 
-    let mut goal: Expression = stored.iter().sum();
-    for (&cost, &active_variable) in ingest.iter().zip(&active) {
+    let mut goal: Expression = storage.iter().sum();
+    for (&cost, &active_variable) in ingest_cost.iter().zip(&active) {
         goal.add_mul(cost / reference, active_variable);
     }
     for (rqe_index, choices) in assignments.iter().enumerate() {
         for &(deployment_index, assignment) in choices {
             goal.add_mul(
-                per_assignment(&rqes[rqe_index], &deployments[deployment_index]) / reference,
+                assignment_cost(&rqes[rqe_index], &deployments[deployment_index]) / reference,
                 assignment,
             );
         }
@@ -167,9 +169,12 @@ pub fn minimize(
             let rqe = &rqes[rqe_index];
             let deployment = &deployments[deployment_index];
             model.add_constraint((assignment - active[deployment_index]).leq(0));
-            let stored_cost = storage(rqe, deployment) / reference;
-            if stored_cost > 0.0 {
-                model.add_constraint((stored_cost * assignment - stored[deployment_index]).leq(0));
+            // Zero when `w_mem` is 0; such a row can never bind.
+            let rqe_storage_cost = storage_cost(rqe, deployment) / reference;
+            if rqe_storage_cost > 0.0 {
+                model.add_constraint(
+                    (rqe_storage_cost * assignment - storage[deployment_index]).leq(0),
+                );
             }
             // Each RQE takes exactly one deployment, so a per-RQE bound just
             // forbids the choices over it. Comparing in f64 here, not in the
@@ -328,9 +333,9 @@ mod tests {
             deployment(0.2 * tiny, 2.0 * tiny * BYTES_PER_GIB, 1.0 * tiny),
         ]
         .into_iter()
-        .map(|mut d| {
-            d.config.merge_cpu_secs = tiny;
-            d
+        .map(|mut candidate| {
+            candidate.config.merge_cpu_secs = tiny;
+            candidate
         })
         .collect::<Vec<_>>();
         for objective in [weights(1.0, 0.0), weights(1.0, 4.0)] {
