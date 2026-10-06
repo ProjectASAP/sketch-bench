@@ -21,8 +21,13 @@ use std::collections::BTreeSet;
 
 pub use aqpbm_core::{AtomicCostEntry, AtomicCostTable};
 
-/// Whole seconds. Window alignment is expressed with exact `%` checks.
-pub type Seconds = u64;
+/// Whole milliseconds. Window alignment is expressed with exact `%` checks.
+pub type Millis = u64;
+
+/// Rates (CPU-sec/sec, samples/sec) stay per second.
+pub(crate) fn secs(ms: Millis) -> f64 {
+    ms as f64 / 1000.0
+}
 
 /// A group-by key, compared as a set (§3's `labels_i == labels_D` rule).
 pub type LabelSet = BTreeSet<String>;
@@ -78,7 +83,7 @@ pub struct MetricFacts {
     /// Every label the metric's series carry.
     pub labels: LabelSet,
     /// Each series yields one sample per scrape.
-    pub scrape_interval_secs: Seconds,
+    pub scrape_interval_ms: Millis,
     /// `card(X)`: distinct value combinations of each label set `X` in use.
     /// Must include `labels` itself, whose cardinality is the series count.
     pub cardinality: BTreeMap<LabelSet, u64>,
@@ -87,7 +92,7 @@ pub struct MetricFacts {
 impl MetricFacts {
     /// `λ`: samples/sec across all of the metric's series.
     pub fn arrival_rate_per_sec(&self) -> f64 {
-        self.cardinality[&self.labels] as f64 / self.scrape_interval_secs as f64
+        self.cardinality[&self.labels] as f64 / secs(self.scrape_interval_ms)
     }
 }
 
@@ -106,7 +111,7 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
         };
         let all_labels = &metric_facts.labels;
         let cardinality = &metric_facts.cardinality;
-        if metric_facts.scrape_interval_secs == 0 {
+        if metric_facts.scrape_interval_ms == 0 {
             problems.insert(format!("{metric}: scrape interval is 0"));
         }
         if !grouping.is_subset(all_labels) {
@@ -159,9 +164,9 @@ pub struct Raqe {
     pub id: String,
     pub capability: Capability,
     /// `L_i`.
-    pub lookback_secs: Seconds,
+    pub lookback_ms: Millis,
     /// `T_i`: how often this RAQE is queried.
-    pub interval_secs: Seconds,
+    pub interval_ms: Millis,
     pub metric: String,
     /// `G`: the query's group-by labels.
     pub grouping_labels: LabelSet,
@@ -205,34 +210,34 @@ pub struct Deployment {
     pub grouping_labels: LabelSet,
     pub config: AtomicCostEntry,
     /// `x`: materialized sketch-window size.
-    pub window_secs: Seconds,
+    pub window_ms: Millis,
     /// `y`: materialized sketch slide.
-    pub slide_secs: Seconds,
+    pub slide_ms: Millis,
 }
 
 impl Deployment {
     /// Number of active overlapping instances receiving each item.
     pub fn active_instance_count(&self) -> Option<u64> {
-        if self.slide_secs == 0 || !self.window_secs.is_multiple_of(self.slide_secs) {
+        if self.slide_ms == 0 || !self.window_ms.is_multiple_of(self.slide_ms) {
             return None;
         }
-        Some(self.window_secs / self.slide_secs)
+        Some(self.window_ms / self.slide_ms)
     }
 
     /// Number of non-overlapping instances merged for one query window.
-    pub fn query_instance_count(&self, lookback_secs: Seconds) -> Option<u64> {
-        if self.window_secs == 0 || !lookback_secs.is_multiple_of(self.window_secs) {
+    pub fn query_instance_count(&self, lookback_ms: Millis) -> Option<u64> {
+        if self.window_ms == 0 || !lookback_ms.is_multiple_of(self.window_ms) {
             return None;
         }
-        Some(lookback_secs / self.window_secs)
+        Some(lookback_ms / self.window_ms)
     }
 
     /// Closed instances kept to serve a lookback: those wholly inside it,
     /// which start in `[now − L, now − x]`, so `(L − x) / y + 1`.
-    pub fn closed_instance_count(&self, lookback_secs: Seconds) -> Option<u64> {
-        self.query_instance_count(lookback_secs)?;
+    pub fn closed_instance_count(&self, lookback_ms: Millis) -> Option<u64> {
+        self.query_instance_count(lookback_ms)?;
         self.active_instance_count()?;
-        Some((lookback_secs - self.window_secs) / self.slide_secs + 1)
+        Some((lookback_ms - self.window_ms) / self.slide_ms + 1)
     }
 }
 
@@ -259,18 +264,18 @@ pub(crate) mod test_support {
             METRIC.to_string(),
             MetricFacts {
                 labels: labels.clone(),
-                scrape_interval_secs: 1,
+                scrape_interval_ms: 1_000,
                 cardinality: BTreeMap::from([(LabelSet::new(), groups), (labels, series)]),
             },
         )])
     }
 
-    pub fn raqe(lookback_secs: Seconds, interval_secs: Seconds) -> Raqe {
+    pub fn raqe(lookback_ms: Millis, interval_ms: Millis) -> Raqe {
         Raqe {
             id: "r".into(),
             capability: Capability::TopK,
-            lookback_secs,
-            interval_secs,
+            lookback_ms,
+            interval_ms,
             metric: METRIC.into(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".into(),
@@ -285,8 +290,8 @@ pub(crate) mod test_support {
         insert: f64,
         merge: f64,
         query: f64,
-        window_secs: Seconds,
-        slide_secs: Seconds,
+        window_ms: Millis,
+        slide_ms: Millis,
     ) -> Deployment {
         Deployment {
             capability: Capability::TopK,
@@ -301,8 +306,8 @@ pub(crate) mod test_support {
                 query_cpu_secs: query,
                 query_accuracy: BTreeMap::from([("err".into(), 0.0)]),
             },
-            window_secs,
-            slide_secs,
+            window_ms,
+            slide_ms,
         }
     }
 }
@@ -320,16 +325,16 @@ mod tests {
     fn closed_instances_lie_wholly_inside_the_lookback() {
         // 10-minute windows every minute, over an hour: starts in minutes
         // [now − 60, now − 10].
-        let sliding = deployment(1.0, 1.0, 1.0, 1.0, 600, 60);
-        assert_eq!(sliding.closed_instance_count(3_600), Some(51));
-        assert_eq!(sliding.closed_instance_count(600), Some(1));
-        assert_eq!(sliding.closed_instance_count(900), None); // not tiled by x
+        let sliding = deployment(1.0, 1.0, 1.0, 1.0, 600_000, 60_000);
+        assert_eq!(sliding.closed_instance_count(3_600_000), Some(51));
+        assert_eq!(sliding.closed_instance_count(600_000), Some(1));
+        assert_eq!(sliding.closed_instance_count(900_000), None); // not tiled by x
     }
 
     #[test]
     fn arrival_rate_is_series_over_scrape_interval() {
         let metric_facts = MetricFacts {
-            scrape_interval_secs: 15,
+            scrape_interval_ms: 15_000,
             ..test_support::facts(4, 600)[METRIC].clone()
         };
         assert_eq!(metric_facts.arrival_rate_per_sec(), 40.0);
@@ -341,7 +346,7 @@ mod tests {
             METRIC.to_string(),
             MetricFacts {
                 labels: labels(&["service", "endpoint"]),
-                scrape_interval_secs: 15,
+                scrape_interval_ms: 15_000,
                 cardinality: BTreeMap::from([
                     (labels(&["service"]), 5),
                     (labels(&["service", "endpoint"]), 50),
@@ -350,7 +355,7 @@ mod tests {
         )]);
         let r = Raqe {
             grouping_labels: labels(&["service"]),
-            ..raqe(60, 60)
+            ..raqe(60_000, 60_000)
         };
         assert_eq!(validate_facts(&[r], &facts), Ok(()));
     }
@@ -361,18 +366,18 @@ mod tests {
             METRIC.to_string(),
             MetricFacts {
                 labels: labels(&["service"]),
-                scrape_interval_secs: 0,
+                scrape_interval_ms: 0,
                 cardinality: BTreeMap::from([(labels(&["service"]), 0)]),
             },
         )]);
         let raqes = [
             Raqe {
                 metric: "missing".into(),
-                ..raqe(60, 60)
+                ..raqe(60_000, 60_000)
             },
             Raqe {
                 grouping_labels: labels(&["pod"]),
-                ..raqe(60, 60)
+                ..raqe(60_000, 60_000)
             },
         ];
         let problems = validate_facts(&raqes, &facts).unwrap_err();
@@ -391,7 +396,7 @@ mod tests {
             METRIC.to_string(),
             MetricFacts {
                 labels: labels(&["service", "endpoint"]),
-                scrape_interval_secs: 15,
+                scrape_interval_ms: 15_000,
                 cardinality: BTreeMap::from([
                     (labels(&["service"]), 60),
                     (labels(&["service", "endpoint"]), 50),
@@ -400,7 +405,7 @@ mod tests {
         )]);
         let r = Raqe {
             grouping_labels: labels(&["service"]),
-            ..raqe(60, 60)
+            ..raqe(60_000, 60_000)
         };
         let problems = validate_facts(&[r], &facts).unwrap_err();
         assert!(problems[0].contains("60 groups but only 50 series"));

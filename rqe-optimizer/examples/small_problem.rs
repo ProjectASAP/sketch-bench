@@ -81,7 +81,7 @@ fn load_cost_table() -> AtomicCostTable {
 fn facts() -> WorkloadFacts {
     let http_metric_facts = || MetricFacts {
         labels: label_set(&["service", "endpoint", "pod"]),
-        scrape_interval_secs: 15,
+        scrape_interval_ms: 15_000,
         cardinality: [
             (label_set(&["service"]), 5),
             (label_set(&["service", "endpoint"]), 50),
@@ -105,8 +105,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "req_rate_1h".to_string(),
             capability: Capability::RateOrIncrease,
-            lookback_secs: 3_600,
-            interval_secs: 60,
+            lookback_ms: 3_600_000,
+            interval_ms: 60_000,
             metric: requests(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
@@ -116,8 +116,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "req_rate_1d".to_string(),
             capability: Capability::RateOrIncrease,
-            lookback_secs: 86_400,
-            interval_secs: 60,
+            lookback_ms: 86_400_000,
+            interval_ms: 60_000,
             metric: requests(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
@@ -127,8 +127,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "req_rate_5m_tick".to_string(),
             capability: Capability::RateOrIncrease,
-            lookback_secs: 3_600,
-            interval_secs: 300,
+            lookback_ms: 3_600_000,
+            interval_ms: 300_000,
             metric: requests(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
@@ -138,8 +138,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "latency_p99_1h".to_string(),
             capability: Capability::Quantile,
-            lookback_secs: 3_600,
-            interval_secs: 60,
+            lookback_ms: 3_600_000,
+            interval_ms: 60_000,
             metric: duration(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
@@ -149,8 +149,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "latency_p99_6h_tick".to_string(),
             capability: Capability::Quantile,
-            lookback_secs: 21_600,
-            interval_secs: 300,
+            lookback_ms: 21_600_000,
+            interval_ms: 300_000,
             metric: duration(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
@@ -160,8 +160,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "latency_p99_1d".to_string(),
             capability: Capability::Quantile,
-            lookback_secs: 86_400,
-            interval_secs: 60,
+            lookback_ms: 86_400_000,
+            interval_ms: 60_000,
             metric: duration(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
@@ -171,8 +171,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "distinct_services_1h".to_string(),
             capability: Capability::Cardinality,
-            lookback_secs: 3_600,
-            interval_secs: 60,
+            lookback_ms: 3_600_000,
+            interval_ms: 60_000,
             metric: requests(),
             grouping_labels: s.clone(),
             accuracy_metric: CARDINALITY_ERR.to_string(),
@@ -186,8 +186,8 @@ fn raqes() -> Vec<Raqe> {
         Raqe {
             id: "top_endpoints_1h".to_string(),
             capability: Capability::TopK,
-            lookback_secs: 3_600,
-            interval_secs: 60,
+            lookback_ms: 3_600_000,
+            interval_ms: 60_000,
             metric: requests(),
             grouping_labels: se.clone(),
             accuracy_metric: TOPK_PRECISION.to_string(),
@@ -221,25 +221,25 @@ fn print_mapping(
     for (raqe, &deployment_index) in raqes.iter().zip(mapping) {
         let deployment = &deployments[deployment_index];
         println!(
-            "  {} -> {} {} (x={}s, y={}s)",
+            "  {} -> {} {} (x={}ms, y={}ms)",
             raqe.id,
             deployment.config.sketch,
             deployment.config.sketch_config,
-            deployment.window_secs,
-            deployment.slide_secs,
+            deployment.window_ms,
+            deployment.slide_ms,
         );
     }
 }
 
 fn print_candidate(candidate_number: usize, deployment: &rqe_optimizer::Deployment) {
     println!(
-        "candidate {candidate_number}: {} {} {} by {:?} (x={}s, y={}s)",
+        "candidate {candidate_number}: {} {} {} by {:?} (x={}ms, y={}ms)",
         deployment.config.sketch,
         deployment.config.sketch_config,
         deployment.metric,
         deployment.grouping_labels,
-        deployment.window_secs,
-        deployment.slide_secs,
+        deployment.window_ms,
+        deployment.slide_ms,
     );
 }
 

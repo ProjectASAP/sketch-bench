@@ -229,13 +229,13 @@ mod tests {
 
     /// Window and slide 60 s, merge 1 CPU-sec.
     fn deployment(insert_cpu_secs: f64, memory: f64, query_cpu_secs: f64) -> Deployment {
-        test_support::deployment(memory, insert_cpu_secs, 1.0, query_cpu_secs, 60, 60)
+        test_support::deployment(memory, insert_cpu_secs, 1.0, query_cpu_secs, 60_000, 60_000)
     }
 
-    fn raqe(id: &str, lookback_secs: u64) -> Raqe {
+    fn raqe(id: &str, lookback_ms: u64) -> Raqe {
         Raqe {
             id: id.into(),
-            ..test_support::raqe(lookback_secs, 60)
+            ..test_support::raqe(lookback_ms, 60_000)
         }
     }
 
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn minimizes_cpu_and_respects_a_latency_bound() {
-        let raqes = vec![raqe("r", 60)];
+        let raqes = vec![raqe("r", 60_000)];
         // CPU 1 + 3/60 with latency 3, or 2 + 1/60 with latency 1.
         let deployments = vec![deployment(1.0, 20.0, 3.0), deployment(2.0, 10.0, 1.0)];
         let solve = |bounds: &MilpBounds| {
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn matches_brute_force_with_shared_deployment_costs() {
-        let raqes = vec![raqe("frequent", 60), raqe("long", 600)];
+        let raqes = vec![raqe("frequent", 60_000), raqe("long", 600_000)];
         let deployments = vec![
             deployment(1.0, 0.5 * BYTES_PER_GIB, 400.0),
             deployment(3.0, 0.1 * BYTES_PER_GIB, 1.0),
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn memory_weight_trades_cpu_for_memory() {
-        let raqes = vec![raqe("r", 60)];
+        let raqes = vec![raqe("r", 60_000)];
         // CPU-heavy and small, or CPU-light and twice the size.
         let deployments = vec![
             deployment(1.0, 1.0 * BYTES_PER_GIB, 0.0),
@@ -335,7 +335,7 @@ mod tests {
     fn tiny_magnitudes_match_brute_force_and_respect_latency_bounds() {
         // Real plans cost ~1e-6 CPU-sec/sec with µs latencies: below HiGHS's
         // absolute gap and feasibility tolerances unless the model is scaled.
-        let raqes = vec![raqe("frequent", 60), raqe("long", 600)];
+        let raqes = vec![raqe("frequent", 60_000), raqe("long", 600_000)];
         let tiny = 1e-9;
         let deployments = vec![
             deployment(1.0 * tiny, 0.5 * tiny * BYTES_PER_GIB, 400.0 * tiny),
@@ -354,7 +354,7 @@ mod tests {
 
         // The cheap deployment's latency is 1.5e-7 s, over a 1e-7 s bound by
         // less than HiGHS's absolute feasibility tolerance.
-        let raqes = vec![raqe("r", 60)];
+        let raqes = vec![raqe("r", 60_000)];
         let deployments = vec![
             deployment(tiny, tiny, 1.5e-7),
             deployment(10.0 * tiny, tiny, 0.5e-7),

@@ -15,7 +15,7 @@
 // ponytail: a family with one fixed-size instance for all groups (HydraKLL,
 // sketch-bench#142) needs a per-family shape so it isn't multiplied by card(G).
 
-use crate::{Capability, Deployment, Mapping, Raqe, WorkloadFacts};
+use crate::{secs, Capability, Deployment, Mapping, Raqe, WorkloadFacts};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const BYTES_PER_GIB: f64 = (1u64 << 30) as f64;
@@ -90,7 +90,7 @@ fn open_window_count(deployment: &Deployment) -> f64 {
 /// `L / x`: windows merged per query.
 fn merged_window_count(raqe: &Raqe, deployment: &Deployment) -> f64 {
     deployment
-        .query_instance_count(raqe.lookback_secs)
+        .query_instance_count(raqe.lookback_ms)
         .expect("only eligible pairs are costed") as f64
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn merge(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
     let merges_per_group = merged_window_count(raqe, deployment) - 1.0;
     PhaseCost {
         cpu_secs_per_sec: groups * merges_per_group * deployment.config.merge_cpu_secs
-            / raqe.interval_secs as f64,
+            / secs(raqe.interval_ms),
         memory_bytes: groups * merge_memory_per_group(raqe, deployment),
     }
 }
@@ -137,7 +137,7 @@ pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
         _ => OUTPUT_BYTES_PER_VALUE,
     };
     PhaseCost {
-        cpu_secs_per_sec: groups * deployment.config.query_cpu_secs / raqe.interval_secs as f64,
+        cpu_secs_per_sec: groups * deployment.config.query_cpu_secs / secs(raqe.interval_ms),
         memory_bytes: groups * output_bytes_per_group,
     }
 }
@@ -145,7 +145,7 @@ pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
 /// Closed windows kept to answer `raqe`: `card(G) · m · ((L − x)/y + 1)`.
 pub(crate) fn storage_bytes(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
     let closed_windows = deployment
-        .closed_instance_count(raqe.lookback_secs)
+        .closed_instance_count(raqe.lookback_ms)
         .expect("only eligible pairs are costed") as f64;
     group_count(deployment, facts) * deployment.config.mem_bytes_per_instance * closed_windows
 }
@@ -218,8 +218,13 @@ mod tests {
         // 4 groups and 7 samples/sec. Window 20 s sliding by 10 s: 2 open
         // windows. Lookback 60 s every 30 s: 3 windows merged, and
         // (60 − 20)/10 + 1 = 5 closed windows stored.
-        let deployment = deployment(10.0, 2.0, 3.0, 5.0, 20, 10);
-        let result = score(&[raqe(60, 30)], &[deployment], &vec![0], &facts(4, 7));
+        let deployment = deployment(10.0, 2.0, 3.0, 5.0, 20_000, 10_000);
+        let result = score(
+            &[raqe(60_000, 30_000)],
+            &[deployment],
+            &vec![0],
+            &facts(4, 7),
+        );
 
         assert_eq!(result.ingest.cpu_secs_per_sec, 28.0); // 7 × 2 × 2
         assert_eq!(result.ingest.memory_bytes, 80.0); // 4 × 10 × 2
@@ -236,16 +241,21 @@ mod tests {
 
     #[test]
     fn a_direct_query_stores_one_closed_window_and_never_merges() {
-        let deployment = deployment(10.0, 1.0, 1.0, 1.0, 60, 60);
-        let result = score(&[raqe(60, 60)], &[deployment], &vec![0], &facts(1, 1));
+        let deployment = deployment(10.0, 1.0, 1.0, 1.0, 60_000, 60_000);
+        let result = score(
+            &[raqe(60_000, 60_000)],
+            &[deployment],
+            &vec![0],
+            &facts(1, 1),
+        );
         assert_eq!(result.storage.memory_bytes, 10.0);
         assert_eq!(result.merge, PhaseCost::default());
     }
 
     #[test]
     fn shared_deployment_stores_for_its_longest_lookback() {
-        let deployment = deployment(10.0, 1.0, 1.0, 1.0, 10, 10);
-        let raqes = [raqe(60, 10), raqe(600, 10)];
+        let deployment = deployment(10.0, 1.0, 1.0, 1.0, 10_000, 10_000);
+        let raqes = [raqe(60_000, 10_000), raqe(600_000, 10_000)];
         let result = score(&raqes, &[deployment], &vec![0, 0], &facts(2, 2));
         // 2 groups × 10 bytes × ((600 − 10)/10 + 1) closed windows.
         assert_eq!(result.storage.memory_bytes, 1200.0);

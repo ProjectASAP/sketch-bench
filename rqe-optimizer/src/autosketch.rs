@@ -14,7 +14,7 @@
 //! from the same sketches as the MILP.
 
 use crate::candidates::gcd;
-use crate::{AtomicCostEntry, Deployment, Mapping, Raqe, Seconds};
+use crate::{AtomicCostEntry, Deployment, Mapping, Millis, Raqe};
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
@@ -40,11 +40,8 @@ pub struct AutoSketchPlan {
 
 /// One sliding sketch per query window: `x = S`, `y = T`, or `gcd(S, T)`
 /// when `T` does not divide `S`, so the window still tiles into slides.
-pub fn window_adapter(raqe: &Raqe) -> (Seconds, Seconds) {
-    (
-        raqe.lookback_secs,
-        gcd(raqe.lookback_secs, raqe.interval_secs),
-    )
+pub fn window_adapter(raqe: &Raqe) -> (Millis, Millis) {
+    (raqe.lookback_ms, gcd(raqe.lookback_ms, raqe.interval_ms))
 }
 
 /// Search every RAQE independently. `accuracy` is the benchmark oracle: the
@@ -72,14 +69,14 @@ pub fn plan(
         .iter()
         .zip(&searches)
         .map(|(raqe, s)| {
-            let (window_secs, slide_secs) = window_adapter(raqe);
+            let (window_ms, slide_ms) = window_adapter(raqe);
             Deployment {
                 capability: raqe.capability,
                 metric: raqe.metric.clone(),
                 grouping_labels: raqe.grouping_labels.clone(),
                 config: costs[s.selected.expect("unservable RAQEs returned above")].clone(),
-                window_secs,
-                slide_secs,
+                window_ms,
+                slide_ms,
             }
         })
         .collect();
@@ -354,12 +351,12 @@ mod tests {
             .collect()
     }
 
-    fn raqe(id: &str, lookback: Seconds, interval: Seconds, tolerance: f64) -> Raqe {
+    fn raqe(id: &str, lookback: Millis, interval: Millis, tolerance: f64) -> Raqe {
         Raqe {
             id: id.into(),
             capability: Capability::TopK,
-            lookback_secs: lookback,
-            interval_secs: interval,
+            lookback_ms: lookback,
+            interval_ms: interval,
             metric: METRIC.into(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: ERR.into(),
@@ -384,7 +381,7 @@ mod tests {
         let costs = grid(&[1, 2, 3], &[100, 200, 400, 800]);
         // Needs rows * cols >= 1000: rows=3 cols=400 (1200 counters) is the
         // smallest; rows=2 cols=800 and rows=3 cols=800 also pass.
-        let r = raqe("r", 3_600, 60, 1.0 / 1_000.0);
+        let r = raqe("r", 3_600_000, 60_000, 1.0 / 1_000.0);
         let found = search(&r, &costs, 7, table_accuracy);
         assert_eq!(found.selected, Some(cheapest_feasible(&r, &costs)));
     }
@@ -394,7 +391,7 @@ mod tests {
         let rows: Vec<u64> = (1..=8).collect();
         let cols: Vec<u64> = (0..8).map(|i| 64 << i).collect();
         let costs = grid(&rows, &cols);
-        let r = raqe("r", 3_600, 60, 1.0 / 2_000.0);
+        let r = raqe("r", 3_600_000, 60_000, 1.0 / 2_000.0);
         let found = search(&r, &costs, 42, table_accuracy);
         assert!(found.selected.is_some());
         assert!(
@@ -409,7 +406,10 @@ mod tests {
     #[test]
     fn never_shares_identical_choices() {
         let costs = grid(&[2, 3], &[256, 512]);
-        let raqes = vec![raqe("a", 3_600, 60, 0.01), raqe("b", 3_600, 60, 0.01)];
+        let raqes = vec![
+            raqe("a", 3_600_000, 60_000, 0.01),
+            raqe("b", 3_600_000, 60_000, 0.01),
+        ];
         let plan = plan(&raqes, &costs, 1, table_accuracy).unwrap();
         assert_eq!(plan.deployments.len(), 2);
         assert_eq!(plan.deployments[0], plan.deployments[1]);
@@ -432,12 +432,12 @@ mod tests {
         let costs = grid(&[2, 3], &[256, 512]);
         // T divides S, and T does not divide S (gcd slide).
         let raqes = vec![
-            raqe("tiled", 3_600, 60, 0.01),
-            raqe("gcd", 3_600, 280, 0.01),
+            raqe("tiled", 3_600_000, 60_000, 0.01),
+            raqe("gcd", 3_600_000, 280_000, 0.01),
         ];
         let plan = plan(&raqes, &costs, 1, table_accuracy).unwrap();
-        assert_eq!(window_adapter(&raqes[0]), (3_600, 60));
-        assert_eq!(window_adapter(&raqes[1]), (3_600, 40));
+        assert_eq!(window_adapter(&raqes[0]), (3_600_000, 60_000));
+        assert_eq!(window_adapter(&raqes[1]), (3_600_000, 40_000));
         for (r, d) in raqes.iter().zip(&plan.deployments) {
             assert!(is_eligible(r, d), "{} not eligible", r.id);
         }
@@ -447,8 +447,8 @@ mod tests {
     fn reports_unservable_raqe() {
         let costs = grid(&[2, 3], &[256, 512]);
         let raqes = vec![
-            raqe("ok", 3_600, 60, 0.01),
-            raqe("too_strict", 3_600, 60, 1e-9),
+            raqe("ok", 3_600_000, 60_000, 0.01),
+            raqe("too_strict", 3_600_000, 60_000, 1e-9),
         ];
         assert_eq!(
             plan(&raqes, &costs, 1, table_accuracy).unwrap_err(),
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn missing_measurement_is_infeasible() {
         let costs = grid(&[2, 3], &[256, 512]);
-        let r = raqe("r", 3_600, 60, 0.01);
+        let r = raqe("r", 3_600_000, 60_000, 0.01);
         let found = search(&r, &costs, 1, |_, _| None);
         assert_eq!(found.selected, None);
         assert_eq!(found.probes.len(), costs.len());
@@ -480,7 +480,7 @@ mod tests {
     fn quantile_raqe(tolerance: f64) -> Raqe {
         Raqe {
             capability: Capability::Quantile,
-            ..raqe("q", 3_600, 60, tolerance)
+            ..raqe("q", 3_600_000, 60_000, tolerance)
         }
     }
 
@@ -512,7 +512,7 @@ mod tests {
         cs.sketch = "countsketch-heap-topk-fastpath-vector2d".into();
         cs.mem_bytes_per_instance = 100.0;
         costs.push(cs);
-        let r = raqe("r", 3_600, 60, 0.01);
+        let r = raqe("r", 3_600_000, 60_000, 0.01);
         let found = search(&r, &costs, 3, table_accuracy);
         assert_eq!(found.selected, Some(costs.len() - 1));
     }

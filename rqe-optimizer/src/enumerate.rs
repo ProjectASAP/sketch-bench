@@ -137,8 +137,8 @@ mod tests {
         Raqe {
             id: id.to_string(),
             capability: Capability::TopK,
-            lookback_secs: lookback,
-            interval_secs: interval,
+            lookback_ms: lookback,
+            interval_ms: interval,
             metric: METRIC.into(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".to_string(),
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn two_raqes_can_share_one_deployment() {
-        let raqes = vec![raqe("a", 60, 3_600), raqe("b", 60, 3_600)];
+        let raqes = vec![raqe("a", 60_000, 3_600_000), raqe("b", 60_000, 3_600_000)];
         let table = vec![cost("cms-heap-topk-fastpath-vector2d")];
         let deployments = build_all_candidates(&raqes, &table);
 
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn unservable_raqe_yields_no_mappings() {
-        let raqes = vec![raqe("a", 60, 3_600)];
+        let raqes = vec![raqe("a", 60_000, 3_600_000)];
         let table: Vec<AtomicCostEntry> = Vec::new(); // no configs at all
         let deployments = build_all_candidates(&raqes, &table);
 
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn streaming_visits_the_same_mappings_as_eager_enumeration() {
-        let raqes = vec![raqe("a", 60, 3_600), raqe("b", 60, 3_600)];
+        let raqes = vec![raqe("a", 60_000, 3_600_000), raqe("b", 60_000, 3_600_000)];
         let deployments = build_all_candidates(&raqes, &[cost("cms-heap-topk-fastpath-vector2d")]);
         let eager = brute_force(&raqes, &deployments);
         let mut streamed = Vec::new();
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn streaming_can_stop_after_a_fixed_number_of_mappings() {
-        let raqes = vec![raqe("a", 60, 3_600), raqe("b", 60, 3_600)];
+        let raqes = vec![raqe("a", 60_000, 3_600_000), raqe("b", 60_000, 3_600_000)];
         let deployments = build_all_candidates(&raqes, &[cost("cms-heap-topk-fastpath-vector2d")]);
         let mut sampled = Vec::new();
         let result = for_each_mapping_while(&raqes, &deployments, |mapping| {
