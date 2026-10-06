@@ -250,7 +250,7 @@ Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
 | Phase | CPU | Memory |
 |---|---|---|
 | Ingest, per active `D` | `lambda × a_D × c_ins` | `card(G) × m × a_D` (open windows) |
-| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one merged instance per group) |
+| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `2 × card(G) × m` (both operands of a pairwise merge, per group) |
 | Query, per RQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
 | Storage, per active `D` | 0 | `card(G) × m × ((max_i S_i − x) / y + 1)` (closed windows) |
 
@@ -282,7 +282,7 @@ no cheaper k-way merge.
 | Ingest memory | yes | yes | × `x/y` open | not modeled |
 | Storage memory | yes, sized for the longest `S` it serves | yes | × `(S−x)/y + 1` closed | not modeled |
 | Merge CPU | no, per RQE | yes | × `(S/x − 1)` folds | not modeled |
-| Merge memory | no, per RQE | yes | × 1 merged instance | not modeled |
+| Merge memory | no, per RQE | yes | × 2, the operands of a pairwise merge | not modeled |
 | Query CPU | no, per RQE | yes | — | one probe per group |
 | Query memory | no, per RQE | yes | — | 8 B, or 32 × 16 B for top-k |
 | Latency | per RQE | yes | `S/x − 1` merges | — |
