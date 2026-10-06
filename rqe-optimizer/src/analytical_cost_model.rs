@@ -84,19 +84,21 @@ fn group_count(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
 }
 
 /// `m`: memory per instance. DDSketch on a metric with a known value range
-/// holds one store (values are positive) of [`dd_bucket_count`] buckets.
-/// Every other row, and DDSketch without a range, keeps the measured size.
-// ponytail: buckets are also capped by values per instance, which facts don't
-// carry yet (sketch-bench#147).
+/// holds one store (values are positive) of [`dd_bucket_count`] buckets,
+/// capped by the values one instance sees, `λ · x / card(G)`, as
+/// `dd_footprint` caps them by count. The range is the metric's, so this is
+/// an upper bound for a group whose own values span less. Every other row,
+/// and DDSketch without a range, keeps the measured size.
 pub(crate) fn instance_memory_bytes(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
     let config = &deployment.config;
+    let metric = &facts[&deployment.metric];
     let alpha = config.sketch_config["params"]["alpha"].as_f64();
-    match (
-        config.sketch.as_str(),
-        facts[&deployment.metric].value_range,
-        alpha,
-    ) {
-        ("dd", Some((lo, hi)), Some(alpha)) => dd_bucket_count(lo, hi, alpha) * DD_BYTES_PER_BUCKET,
+    match (config.sketch.as_str(), metric.value_range, alpha) {
+        ("dd", Some((lo, hi)), Some(alpha)) => {
+            let values = metric.arrival_rate_per_sec() * secs(deployment.window_ms)
+                / group_count(deployment, facts);
+            dd_bucket_count(lo, hi, alpha).min(values.ceil().max(1.0)) * DD_BYTES_PER_BUCKET
+        }
         _ => config.mem_bytes_per_instance,
     }
 }
@@ -262,6 +264,13 @@ mod tests {
             .value_range = Some((1.0, 1000.0));
 
         assert_eq!(instance_memory_bytes(&dd, &ranged), 80.0); // 10 buckets × 8 B
+                                                               // 1 sample/sec into a 5 s window: 5 values, fewer than the 10 buckets.
+        let short = Deployment {
+            window_ms: 5_000,
+            slide_ms: 5_000,
+            ..dd.clone()
+        };
+        assert_eq!(instance_memory_bytes(&short, &ranged), 40.0);
         assert_eq!(ingest(&dd, &ranged).memory_bytes, 80.0);
         // No range, or not DDSketch: the measured size.
         assert_eq!(instance_memory_bytes(&dd, &facts(1, 1)), 1_000.0);
