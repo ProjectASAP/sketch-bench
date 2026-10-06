@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use aqpbm_datagen::{DataDistribution, TableDescription};
+use aqpbm_datagen::{DataDistribution, TableDescription, RULE_MONOTONIC_INCREASE};
 
 use crate::accuracy::aggregate::GROUPS_PER_INSTANCE;
 use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescription};
@@ -55,6 +55,8 @@ pub struct MeasuredAt {
     /// keys actually drawn.
     pub keys_per_instance: Option<u64>,
     /// `[lower, upper]` of the value column's distribution, plus its shift.
+    /// `None` for a monotonic (counter) column, whose values are a running sum
+    /// of draws rather than the draws themselves.
     pub value_range: Option<[f64; 2]>,
     /// Items in each sketch the merge benchmark folded in:
     /// `items_per_instance / merge_shards`.
@@ -238,15 +240,17 @@ fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredA
     MeasuredAt {
         items_per_instance: items,
         keys_per_instance: groups_measured.map(|g| g as u64).or(keys),
-        value_range: value.and_then(|c| {
-            let shift = c.shift.unwrap_or(0.0);
-            match &c.distribution {
-                DataDistribution::Zipf(p) => Some([1.0, p.population_size as f64]),
-                DataDistribution::Uniform(p) => Some([p.lower_bound, p.upper_bound]),
-                DataDistribution::Normal(_) | DataDistribution::Pareto(_) => None,
-            }
-            .map(|[lo, hi]| [lo + shift, hi + shift])
-        }),
+        value_range: value
+            .filter(|c| c.special_rule & RULE_MONOTONIC_INCREASE == 0)
+            .and_then(|c| {
+                let shift = c.shift.unwrap_or(0.0);
+                match &c.distribution {
+                    DataDistribution::Zipf(p) => Some([1.0, p.population_size as f64]),
+                    DataDistribution::Uniform(p) => Some([p.lower_bound, p.upper_bound]),
+                    DataDistribution::Normal(_) | DataDistribution::Pareto(_) => None,
+                }
+                .map(|[lo, hi]| [lo + shift, hi + shift])
+            }),
         merge_operand_items: record
             .merge
             .merge_shards
@@ -448,6 +452,19 @@ mod tests {
             Some(serde_json::json!({"relative_error": 0.0, "groups_per_instance": 9_876.0}));
         let at = reduce_one(&record).unwrap().measured_at.unwrap();
         assert_eq!(at.keys_per_instance, Some(9_876));
+    }
+
+    /// A counter column emits a running sum of its draws, so the draws'
+    /// bounds say nothing about the values.
+    #[test]
+    fn measured_at_has_no_value_range_for_a_counter_column() {
+        let mut description = dataset();
+        description.column_spec[0].special_rule = aqpbm_datagen::RULE_MONOTONIC_INCREASE;
+        let mut record = full_record();
+        record.input_dataset = description.into();
+        let at = reduce_one(&record).unwrap().measured_at.unwrap();
+        assert_eq!(at.value_range, None);
+        assert_eq!(at.items_per_instance, 1_000_000);
     }
 
     /// Tables written before `measured_at` existed still load.
