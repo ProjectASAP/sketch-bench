@@ -1,4 +1,4 @@
-//! Non-dominated filtering for `(CPU, memory, per-RQE latency)`.
+//! Non-dominated filtering for `(CPU, memory, per-RAQE latency)`.
 
 use crate::{analytical_cost_model::PlanCost, Mapping};
 

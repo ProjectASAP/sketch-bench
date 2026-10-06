@@ -1,9 +1,9 @@
-//! v1 brute-force solver for the RQE -> sketch-deployment mapping problem.
+//! v1 brute-force solver for the RAQE -> sketch-deployment mapping problem.
 //! `docs/rqe_sketch_deployment_v1.md` is the problem statement; doc comments
 //! cite its section numbers.
 //!
 //! Three independent stages, so an ILP can replace [`enumerate`] alone:
-//! [`candidates`] builds 𝒟 and per-RQE eligibility (§3), [`enumerate`]
+//! [`candidates`] builds 𝒟 and per-RAQE eligibility (§3), [`enumerate`]
 //! searches (§4), [`analytical_cost_model`] scores (§5).
 //!
 //! Every number the algorithm uses is caller-supplied, except the query
@@ -27,7 +27,7 @@ pub type Seconds = u64;
 /// A group-by key, compared as a set (§3's `labels_i == labels_D` rule).
 pub type LabelSet = BTreeSet<String>;
 
-/// What an RQE's statistic needs (§1). `families()` is the only place
+/// What an RAQE's statistic needs (§1). `families()` is the only place
 /// capability scope is encoded; widening it means editing that match arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
@@ -71,7 +71,7 @@ impl Capability {
     }
 }
 
-/// Facts about one metric, given as input. RQEs and deployments on the same
+/// Facts about one metric, given as input. RAQEs and deployments on the same
 /// metric read the same samples.
 #[derive(Debug, Clone)]
 pub struct MetricFacts {
@@ -94,12 +94,12 @@ impl MetricFacts {
 /// [`MetricFacts`] keyed by metric name.
 pub type WorkloadFacts = BTreeMap<String, MetricFacts>;
 
-/// Every problem with `facts` for serving `rqes`. The rest of the crate
+/// Every problem with `facts` for serving `raqes`. The rest of the crate
 /// indexes `facts` without checks, so call this first on caller input.
-pub fn validate_facts(rqes: &[Rqe], facts: &WorkloadFacts) -> Result<(), Vec<String>> {
+pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<String>> {
     let mut problems = BTreeSet::new();
-    for rqe in rqes {
-        let (metric, grouping) = (&rqe.metric, &rqe.grouping_labels);
+    for raqe in raqes {
+        let (metric, grouping) = (&raqe.metric, &raqe.grouping_labels);
         let Some(metric_facts) = facts.get(metric) else {
             problems.insert(format!("{metric}: no facts for this metric"));
             continue;
@@ -142,7 +142,7 @@ pub fn validate_facts(rqes: &[Rqe], facts: &WorkloadFacts) -> Result<(), Vec<Str
 /// (lower better); top-k reports `precision_at_k`/`recall_at_k` (higher
 /// better), so its tolerance is a floor.
 ///
-/// Named per RQE, never inferred from the metric name: an unanticipated name
+/// Named per RAQE, never inferred from the metric name: an unanticipated name
 /// would get a silent wrong default, and the failure mode is a hard
 /// constraint accepting exactly what it should reject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,36 +155,36 @@ pub enum AccuracyDirection {
 
 /// One repeating query expression (§1).
 #[derive(Debug, Clone)]
-pub struct Rqe {
+pub struct Raqe {
     pub id: String,
     pub capability: Capability,
     /// `L_i`.
     pub lookback_secs: Seconds,
-    /// `T_i`: how often this RQE is queried.
+    /// `T_i`: how often this RAQE is queried.
     pub interval_secs: Seconds,
     pub metric: String,
     /// `G`: the query's group-by labels.
     pub grouping_labels: LabelSet,
     /// Which `AtomicCostEntry::query_accuracy` key to check. Comparators
-    /// name their metrics differently per capability, so the RQE picks.
+    /// name their metrics differently per capability, so the RAQE picks.
     pub accuracy_metric: String,
     /// `tol_i`: hard constraint. Read as a ceiling or a floor depending on
-    /// [`Rqe::accuracy_direction`].
-    pub accuracy_tolerance: f64,
+    /// [`Raqe::accuracy_direction`].
+    pub accuracy_sla: f64,
     pub accuracy_direction: AccuracyDirection,
 }
 
-impl Rqe {
+impl Raqe {
     /// The one place comparison direction is decided -- both the
     /// candidate prefilter and eligibility route here so they can't drift.
     pub fn accuracy_ok(&self, value: f64) -> bool {
         match self.accuracy_direction {
-            AccuracyDirection::LowerIsBetter => value <= self.accuracy_tolerance,
-            AccuracyDirection::HigherIsBetter => value >= self.accuracy_tolerance,
+            AccuracyDirection::LowerIsBetter => value <= self.accuracy_sla,
+            AccuracyDirection::HigherIsBetter => value >= self.accuracy_sla,
         }
     }
 
-    /// Whether `config` measured this RQE's metric and clears it. Missing
+    /// Whether `config` measured this RAQE's metric and clears it. Missing
     /// is not passing.
     pub fn accuracy_ok_for(&self, config: &AtomicCostEntry) -> bool {
         config
@@ -237,7 +237,7 @@ impl Deployment {
 }
 
 /// A full mapping: one deployment index (into the `deployments` slice passed
-/// to `enumerate::brute_force`) per RQE, aligned with the `rqes` slice's
+/// to `enumerate::brute_force`) per RAQE, aligned with the `raqes` slice's
 /// order. `z_{i,D} = 1 <=> mapping[i] == D`'s index; `u_D = 1 <=>` `D`'s
 /// index appears anywhere in `mapping` (§4) -- `y` is never stored
 /// separately, it's always derived from `mapping`.
@@ -265,8 +265,8 @@ pub(crate) mod test_support {
         )])
     }
 
-    pub fn rqe(lookback_secs: Seconds, interval_secs: Seconds) -> Rqe {
-        Rqe {
+    pub fn raqe(lookback_secs: Seconds, interval_secs: Seconds) -> Raqe {
+        Raqe {
             id: "r".into(),
             capability: Capability::TopK,
             lookback_secs,
@@ -274,7 +274,7 @@ pub(crate) mod test_support {
             metric: METRIC.into(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".into(),
-            accuracy_tolerance: 1.0,
+            accuracy_sla: 1.0,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
         }
     }
@@ -310,7 +310,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_support::{deployment, rqe, METRIC};
+    use test_support::{deployment, raqe, METRIC};
 
     fn labels(names: &[&str]) -> LabelSet {
         names.iter().map(|s| s.to_string()).collect()
@@ -348,9 +348,9 @@ mod tests {
                 ]),
             },
         )]);
-        let r = Rqe {
+        let r = Raqe {
             grouping_labels: labels(&["service"]),
-            ..rqe(60, 60)
+            ..raqe(60, 60)
         };
         assert_eq!(validate_facts(&[r], &facts), Ok(()));
     }
@@ -365,17 +365,17 @@ mod tests {
                 cardinality: BTreeMap::from([(labels(&["service"]), 0)]),
             },
         )]);
-        let rqes = [
-            Rqe {
+        let raqes = [
+            Raqe {
                 metric: "missing".into(),
-                ..rqe(60, 60)
+                ..raqe(60, 60)
             },
-            Rqe {
+            Raqe {
                 grouping_labels: labels(&["pod"]),
-                ..rqe(60, 60)
+                ..raqe(60, 60)
             },
         ];
-        let problems = validate_facts(&rqes, &facts).unwrap_err();
+        let problems = validate_facts(&raqes, &facts).unwrap_err();
         let has = |needle: &str| problems.iter().any(|p| p.contains(needle));
         assert!(has("missing: no facts"));
         assert!(has("scrape interval is 0"));
@@ -398,9 +398,9 @@ mod tests {
                 ]),
             },
         )]);
-        let r = Rqe {
+        let r = Raqe {
             grouping_labels: labels(&["service"]),
-            ..rqe(60, 60)
+            ..raqe(60, 60)
         };
         let problems = validate_facts(&[r], &facts).unwrap_err();
         assert!(problems[0].contains("60 groups but only 50 series"));
