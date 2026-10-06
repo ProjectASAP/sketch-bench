@@ -12,7 +12,7 @@ use good_lp::{
 };
 
 /// What a [`minimize`] solve minimizes. Eligibility, assignment and activation
-/// rows, and bounds are the same for every objective.
+/// rows, and latency SLAs are the same for every objective.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Objective {
     /// `w_cpu · CPU + w_mem · memory`. CPU is mean CPU-sec/sec, the area under
@@ -45,20 +45,13 @@ impl Objective {
     }
 }
 
-/// Optional hard bounds for a solve. An empty latency vector means no RAQE has
-/// a latency bound; otherwise it is index-aligned with `raqes`.
-#[derive(Debug, Clone, Default)]
-pub struct MilpBounds {
-    pub max_query_latency_secs: Vec<Option<f64>>,
-}
-
 #[derive(Debug, Clone)]
 pub struct MilpSolution {
     pub mapping: Mapping,
     pub plan_cost: PlanCost,
 }
 
-/// Minimize `objective` subject to optional latency bounds. `facts` must pass
+/// Minimize `objective` subject to each RAQE's latency SLA. `facts` must pass
 /// [`crate::validate_facts`]. Missing eligible deployments are a caller input
 /// error; use `enumerate::unservable` to report them before calling this
 /// function.
@@ -66,15 +59,8 @@ pub fn minimize(
     raqes: &[Raqe],
     deployments: &[Deployment],
     facts: &WorkloadFacts,
-    bounds: &MilpBounds,
     objective: Objective,
 ) -> Result<MilpSolution, ResolutionError> {
-    assert!(
-        bounds.max_query_latency_secs.is_empty()
-            || bounds.max_query_latency_secs.len() == raqes.len(),
-        "latency bounds must be empty or index-aligned with raqes"
-    );
-
     let eligible: Vec<Vec<usize>> = raqes
         .iter()
         .map(|raqe| eligible_deployments_for(raqe, deployments))
@@ -124,7 +110,7 @@ pub fn minimize(
     // Real plans cost ~1e-6 CPU-sec/sec and read in microseconds, below
     // HiGHS's absolute gap (1e-6) and feasibility tolerance (1e-7). So costs
     // are divided by `reference`, a plan's cost without sharing (each RAQE on
-    // its cheapest deployment), and per-RAQE bounds become exclusions. The
+    // its cheapest deployment), and latency SLAs become exclusions. The
     // result is re-scored on real costs.
     let reference: f64 = raqes
         .iter()
@@ -179,17 +165,12 @@ pub fn minimize(
                         .leq(0),
                 );
             }
-            // Each RAQE takes exactly one deployment, so a per-RAQE bound just
+            // Each RAQE takes exactly one deployment, so its latency SLA just
             // forbids the choices over it. Comparing in f64 here, not in the
             // solver, keeps µs latencies clear of its feasibility tolerance.
-            let latency = analytical_cost_model::query_latency_secs(raqe, deployment, facts);
-            if bounds
-                .max_query_latency_secs
-                .get(raqe_index)
-                .copied()
-                .flatten()
-                .is_some_and(|limit| latency > limit)
-            {
+            let latency_ms =
+                1000.0 * analytical_cost_model::query_latency_secs(raqe, deployment, facts);
+            if raqe.latency_sla_ms.is_some_and(|limit| latency_ms > limit) {
                 model.add_constraint(Expression::from(assignment).leq(0));
             }
         }
@@ -255,14 +236,7 @@ mod tests {
             .map(|mapping| objective.value(&score(raqes, deployments, mapping, &facts)))
             .min_by(f64::total_cmp)
             .expect("test workload is servable");
-        let milp = minimize(
-            raqes,
-            deployments,
-            &facts,
-            &MilpBounds::default(),
-            objective,
-        )
-        .expect("feasible MILP");
+        let milp = minimize(raqes, deployments, &facts, objective).expect("feasible MILP");
         let got = objective.value(&milp.plan_cost);
         assert!(
             (got - best).abs() <= 1e-9 * best,
@@ -271,27 +245,22 @@ mod tests {
     }
 
     #[test]
-    fn minimizes_cpu_and_respects_a_latency_bound() {
+    fn minimizes_cpu_and_respects_a_latency_sla() {
         let raqes = vec![raqe("r", 60_000)];
         // CPU 1 + 3/60 with latency 3, or 2 + 1/60 with latency 1.
         let deployments = vec![deployment(1.0, 20.0, 3.0), deployment(2.0, 10.0, 1.0)];
-        let solve = |bounds: &MilpBounds| {
-            minimize(
-                &raqes,
-                &deployments,
-                &facts(1, 1),
-                bounds,
-                Objective::default(),
-            )
-            .expect("feasible MILP")
-            .mapping
+        let solve = |raqes: &[Raqe]| {
+            minimize(raqes, &deployments, &facts(1, 1), Objective::default())
+                .expect("feasible MILP")
+                .mapping
         };
 
-        assert_eq!(solve(&MilpBounds::default()), vec![0]);
-        let bounded = MilpBounds {
-            max_query_latency_secs: vec![Some(2.0)],
+        assert_eq!(solve(&raqes), vec![0]);
+        let bounded = Raqe {
+            latency_sla_ms: Some(2_000.0),
+            ..raqes[0].clone()
         };
-        assert_eq!(solve(&bounded), vec![1]);
+        assert_eq!(solve(&[bounded]), vec![1]);
     }
 
     #[test]
@@ -316,15 +285,9 @@ mod tests {
             deployment(0.05, 2.0 * BYTES_PER_GIB, 0.0),
         ];
         let solve = |objective| {
-            minimize(
-                &raqes,
-                &deployments,
-                &facts(1, 1),
-                &MilpBounds::default(),
-                objective,
-            )
-            .expect("feasible MILP")
-            .mapping
+            minimize(&raqes, &deployments, &facts(1, 1), objective)
+                .expect("feasible MILP")
+                .mapping
         };
 
         assert_eq!(solve(weights(1.0, 0.0)), vec![1]);
@@ -332,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn tiny_magnitudes_match_brute_force_and_respect_latency_bounds() {
+    fn tiny_magnitudes_match_brute_force_and_respect_latency_slas() {
         // Real plans cost ~1e-6 CPU-sec/sec with µs latencies: below HiGHS's
         // absolute gap and feasibility tolerances unless the model is scaled.
         let raqes = vec![raqe("frequent", 60_000), raqe("long", 600_000)];
@@ -352,23 +315,18 @@ mod tests {
             assert_matches_brute_force(&raqes, &deployments, objective);
         }
 
-        // The cheap deployment's latency is 1.5e-7 s, over a 1e-7 s bound by
+        // The cheap deployment's latency is 1.5e-7 s, over a 1e-7 s SLA by
         // less than HiGHS's absolute feasibility tolerance.
-        let raqes = vec![raqe("r", 60_000)];
+        let raqes = vec![Raqe {
+            latency_sla_ms: Some(1e-4),
+            ..raqe("r", 60_000)
+        }];
         let deployments = vec![
             deployment(tiny, tiny, 1.5e-7),
             deployment(10.0 * tiny, tiny, 0.5e-7),
         ];
-        let milp = minimize(
-            &raqes,
-            &deployments,
-            &facts(1, 1),
-            &MilpBounds {
-                max_query_latency_secs: vec![Some(1e-7)],
-            },
-            Objective::default(),
-        )
-        .expect("feasible MILP");
+        let milp = minimize(&raqes, &deployments, &facts(1, 1), Objective::default())
+            .expect("feasible MILP");
         assert_eq!(milp.mapping, vec![1]);
         assert!(milp.plan_cost.query_latency_secs[0] <= 1e-7);
     }

@@ -73,6 +73,7 @@ pub fn plan(
             Deployment {
                 capability: raqe.capability,
                 metric: raqe.metric.clone(),
+                spatial_filter: raqe.spatial_filter.clone(),
                 grouping_labels: raqe.grouping_labels.clone(),
                 config: costs[s.selected.expect("unservable RAQEs returned above")].clone(),
                 window_ms,
@@ -358,10 +359,12 @@ mod tests {
             lookback_ms: lookback,
             interval_ms: interval,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: ERR.into(),
             accuracy_sla: tolerance,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         }
     }
 
@@ -529,6 +532,7 @@ mod tests {
             .collect();
         let r = Raqe {
             accuracy_direction: AccuracyDirection::HigherIsBetter,
+            latency_sla_ms: None,
             ..quantile_raqe(0.95)
         };
         let found = search(&r, &costs, 11, table_accuracy);

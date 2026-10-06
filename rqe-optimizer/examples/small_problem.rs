@@ -23,7 +23,7 @@
 //! `--print-first N` to display example mappings. `--milp` minimizes
 //! `w_cpu · CPU + w_mem · memory GiB` without enumerating mappings; set the
 //! weights with `--w-cpu X --w-mem Y` (default 1 and 0). Repeat
-//! `--latency-limit RAQE_ID=SECONDS` to impose MILP latency bounds.
+//! `--latency-sla RAQE_ID=MS` to impose MILP latency SLAs.
 //! `--sample-mappings N` prints N feasible mappings and exits.
 
 use std::collections::BTreeSet;
@@ -34,7 +34,7 @@ use rqe_optimizer::candidates::{
     build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
 };
 use rqe_optimizer::enumerate::{brute_force, for_each_mapping, for_each_mapping_while, unservable};
-use rqe_optimizer::milp::{minimize, MilpBounds, Objective};
+use rqe_optimizer::milp::{minimize, Objective};
 use rqe_optimizer::pareto::{pareto_front, ParetoFront};
 use rqe_optimizer::{
     validate_facts, AccuracyDirection, AtomicCostTable, Capability, LabelSet, MetricFacts, Raqe,
@@ -108,10 +108,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 3_600_000,
             interval_ms: 60_000,
             metric: requests(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
             accuracy_sla: 0.1,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "req_rate_1d".to_string(),
@@ -119,10 +121,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 86_400_000,
             interval_ms: 60_000,
             metric: requests(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
             accuracy_sla: 0.1,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "req_rate_5m_tick".to_string(),
@@ -130,10 +134,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 3_600_000,
             interval_ms: 300_000,
             metric: requests(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RATE_ERR.to_string(),
             accuracy_sla: 0.1,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "latency_p99_1h".to_string(),
@@ -141,10 +147,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 3_600_000,
             interval_ms: 60_000,
             metric: duration(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
             accuracy_sla: 0.05,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "latency_p99_6h_tick".to_string(),
@@ -152,10 +160,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 21_600_000,
             interval_ms: 300_000,
             metric: duration(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
             accuracy_sla: 0.05,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "latency_p99_1d".to_string(),
@@ -163,10 +173,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 86_400_000,
             interval_ms: 60_000,
             metric: duration(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: RANK_ERR.to_string(),
             accuracy_sla: 0.05,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         Raqe {
             id: "distinct_services_1h".to_string(),
@@ -174,10 +186,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 3_600_000,
             interval_ms: 60_000,
             metric: requests(),
+            spatial_filter: String::new(),
             grouping_labels: s.clone(),
             accuracy_metric: CARDINALITY_ERR.to_string(),
             accuracy_sla: 0.1,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         },
         // The higher-is-better case: 0.9 is a *floor* on precision@k, not a
         // ceiling on error. Served by cms-heap, whose measured precision is
@@ -189,10 +203,12 @@ fn raqes() -> Vec<Raqe> {
             lookback_ms: 3_600_000,
             interval_ms: 60_000,
             metric: requests(),
+            spatial_filter: String::new(),
             grouping_labels: se.clone(),
             accuracy_metric: TOPK_PRECISION.to_string(),
             accuracy_sla: 0.9,
             accuracy_direction: AccuracyDirection::HigherIsBetter,
+            latency_sla_ms: None,
         },
     ]
 }
@@ -243,28 +259,26 @@ fn print_candidate(candidate_number: usize, deployment: &rqe_optimizer::Deployme
     );
 }
 
-fn latency_bounds(raqes: &[Raqe]) -> Vec<Option<f64>> {
+fn apply_latency_slas(raqes: &mut [Raqe]) {
     let args: Vec<_> = std::env::args().collect();
-    let mut bounds = vec![None; raqes.len()];
-    for pair in args.windows(2).filter(|pair| pair[0] == "--latency-limit") {
-        let (id, seconds) = pair[1]
+    for pair in args.windows(2).filter(|pair| pair[0] == "--latency-sla") {
+        let (id, ms) = pair[1]
             .split_once('=')
-            .unwrap_or_else(|| panic!("--latency-limit expects RAQE_ID=SECONDS"));
-        let seconds = seconds
+            .unwrap_or_else(|| panic!("--latency-sla expects RAQE_ID=MS"));
+        let ms = ms
             .parse::<f64>()
             .ok()
             .filter(|value| *value > 0.0)
-            .unwrap_or_else(|| panic!("latency limit must be a positive number of seconds"));
-        let index = raqes
-            .iter()
-            .position(|raqe| raqe.id == id)
-            .unwrap_or_else(|| panic!("unknown RAQE in --latency-limit: {id}"));
+            .unwrap_or_else(|| panic!("latency SLA must be a positive number of milliseconds"));
+        let raqe = raqes
+            .iter_mut()
+            .find(|raqe| raqe.id == id)
+            .unwrap_or_else(|| panic!("unknown RAQE in --latency-sla: {id}"));
         assert!(
-            bounds[index].replace(seconds).is_none(),
-            "duplicate latency limit for {id}"
+            raqe.latency_sla_ms.replace(ms).is_none(),
+            "duplicate latency SLA for {id}"
         );
     }
-    bounds
 }
 
 fn weight_flag(name: &str, default: f64) -> f64 {
@@ -301,7 +315,8 @@ fn print_plan_cost(label: &str, plan_cost: &PlanCost) {
 
 fn main() {
     let candidates_only = std::env::args().any(|arg| arg == "--candidates-only");
-    let raqes = raqes();
+    let mut raqes = raqes();
+    apply_latency_slas(&mut raqes);
     let cost_table = load_cost_table();
     let facts = facts();
     if let Err(problems) = validate_facts(&raqes, &facts) {
@@ -374,14 +389,11 @@ fn main() {
     }
 
     if std::env::args().any(|arg| arg == "--milp") {
-        let bounds = MilpBounds {
-            max_query_latency_secs: latency_bounds(&raqes),
-        };
         let objective = Objective::AUCCost {
             w_cpu: weight_flag("--w-cpu", 1.0),
             w_mem: weight_flag("--w-mem", 0.0),
         };
-        let solution = minimize(&raqes, &deployments, &facts, &bounds, objective)
+        let solution = minimize(&raqes, &deployments, &facts, objective)
             .expect("small_problem MILP should be feasible");
         println!(
             "MILP solution for {objective:?}: {:.3e}",

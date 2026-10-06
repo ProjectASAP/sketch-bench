@@ -2,7 +2,7 @@
 //!
 //! A mapping is one deployment choice per RAQE (§4's only constraint is
 //! `Σ_D x_{i,D} = 1`; `y_D` is derived). No RAQE is eligible outside its own
-//! `(capability, metric, grouping_labels)` group, so choices are independent and the search
+//! `(capability, metric, spatial_filter, grouping_labels)` group, so choices are independent and the search
 //! space is exactly the cartesian product of the per-RAQE eligible lists --
 //! nothing to prune against. Sharing falls out when two choices land on the
 //! same index.
@@ -140,10 +140,12 @@ mod tests {
             lookback_ms: lookback,
             interval_ms: interval,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".to_string(),
             accuracy_sla: 1.0,
             accuracy_direction: crate::AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         }
     }
 

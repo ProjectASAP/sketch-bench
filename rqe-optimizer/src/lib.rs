@@ -168,6 +168,11 @@ pub struct Raqe {
     /// `T_i`: how often this RAQE is queried.
     pub interval_ms: Millis,
     pub metric: String,
+    /// Series selector beyond the metric name, as canonical PromQL matcher
+    /// text; empty for none. Compared as an opaque string.
+    // ponytail: identity only. Filters that select the same series but are
+    // spelled differently don't share, and facts ignore the filter.
+    pub spatial_filter: String,
     /// `G`: the query's group-by labels.
     pub grouping_labels: LabelSet,
     /// Which `AtomicCostEntry::query_accuracy` key to check. Comparators
@@ -177,6 +182,9 @@ pub struct Raqe {
     /// [`Raqe::accuracy_direction`].
     pub accuracy_sla: f64,
     pub accuracy_direction: AccuracyDirection,
+    /// Hard ceiling on modeled query latency; `None` for no limit. Only the
+    /// MILP enforces it.
+    pub latency_sla_ms: Option<f64>,
 }
 
 impl Raqe {
@@ -206,6 +214,7 @@ impl Raqe {
 pub struct Deployment {
     pub capability: Capability,
     pub metric: String,
+    pub spatial_filter: String,
     /// `G`: one instance per group, per window.
     pub grouping_labels: LabelSet,
     pub config: AtomicCostEntry,
@@ -277,10 +286,12 @@ pub(crate) mod test_support {
             lookback_ms,
             interval_ms,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".into(),
             accuracy_sla: 1.0,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         }
     }
 
@@ -296,6 +307,7 @@ pub(crate) mod test_support {
         Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: AtomicCostEntry {
                 sketch: "cms-heap-topk-fastpath-vector2d".into(),
@@ -354,6 +366,7 @@ mod tests {
             },
         )]);
         let r = Raqe {
+            spatial_filter: String::new(),
             grouping_labels: labels(&["service"]),
             ..raqe(60_000, 60_000)
         };
@@ -376,6 +389,7 @@ mod tests {
                 ..raqe(60_000, 60_000)
             },
             Raqe {
+                spatial_filter: String::new(),
                 grouping_labels: labels(&["pod"]),
                 ..raqe(60_000, 60_000)
             },
@@ -404,6 +418,7 @@ mod tests {
             },
         )]);
         let r = Raqe {
+            spatial_filter: String::new(),
             grouping_labels: labels(&["service"]),
             ..raqe(60_000, 60_000)
         };

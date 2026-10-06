@@ -77,6 +77,7 @@ fn candidate_deployments(
                     deployments.push(Deployment {
                         capability,
                         metric: group[0].metric.clone(),
+                        spatial_filter: group[0].spatial_filter.clone(),
                         grouping_labels: group[0].grouping_labels.clone(),
                         config: config.clone(),
                         window_ms,
@@ -106,16 +107,21 @@ pub fn build_all_candidates_unpruned(
     costs: &[AtomicCostEntry],
     facts: &WorkloadFacts,
 ) -> Vec<Deployment> {
-    let mut groups: BTreeMap<(Capability, &str, &LabelSet), Vec<&Raqe>> = BTreeMap::new();
+    let mut groups: BTreeMap<(Capability, &str, &str, &LabelSet), Vec<&Raqe>> = BTreeMap::new();
     for raqe in raqes {
         groups
-            .entry((raqe.capability, &raqe.metric, &raqe.grouping_labels))
+            .entry((
+                raqe.capability,
+                &raqe.metric,
+                &raqe.spatial_filter,
+                &raqe.grouping_labels,
+            ))
             .or_default()
             .push(raqe);
     }
     groups
         .iter()
-        .flat_map(|(&(_, metric, _), group)| {
+        .flat_map(|(&(_, metric, _, _), group)| {
             candidate_deployments(group, costs, facts[metric].scrape_interval_ms)
         })
         .collect()
@@ -184,6 +190,7 @@ fn dominance(
 ) -> Dominance {
     let same_group = replacement.capability == original.capability
         && replacement.metric == original.metric
+        && replacement.spatial_filter == original.spatial_filter
         && replacement.grouping_labels == original.grouping_labels;
     let covers_original = original_coverage
         .iter()
@@ -281,6 +288,7 @@ pub fn eligible_deployments_for(r: &Raqe, deployments: &[Deployment]) -> Vec<usi
 pub fn is_eligible(r: &Raqe, d: &Deployment) -> bool {
     r.capability == d.capability
         && r.metric == d.metric
+        && r.spatial_filter == d.spatial_filter
         && r.grouping_labels == d.grouping_labels
         && d.window_ms != 0
         && d.slide_ms != 0
@@ -303,10 +311,12 @@ mod tests {
             lookback_ms: lookback,
             interval_ms: interval,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             accuracy_metric: "err".into(),
             accuracy_sla: 1.0,
             accuracy_direction: AccuracyDirection::LowerIsBetter,
+            latency_sla_ms: None,
         }
     }
     fn cost() -> AtomicCostEntry {
@@ -344,6 +354,23 @@ mod tests {
             .all(|d| d.window_ms % 15_000 == 0 && d.slide_ms % 15_000 == 0));
     }
     #[test]
+    fn different_spatial_filters_never_share_a_deployment() {
+        let unfiltered = raqe("a", 60_000, 60_000);
+        let filtered = Raqe {
+            spatial_filter: r#"{job="api"}"#.into(),
+            ..raqe("b", 60_000, 60_000)
+        };
+        let candidates = build_all_candidates(
+            &[unfiltered.clone(), filtered.clone()],
+            &[cost()],
+            &facts(1, 1),
+        );
+        assert!(candidates
+            .iter()
+            .all(|d| is_eligible(&unfiltered, d) != is_eligible(&filtered, d)));
+    }
+
+    #[test]
     fn a_min_query_is_only_offered_the_min_accumulator() {
         let r = Raqe {
             capability: Capability::Min,
@@ -368,6 +395,7 @@ mod tests {
         let d = Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: cost(),
             window_ms: 120_000,
@@ -396,6 +424,7 @@ mod tests {
         let coarse = Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: cost(),
             window_ms: 60_000,
@@ -418,6 +447,7 @@ mod tests {
         let large_window = Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: cost.clone(),
             window_ms: 60_000,
@@ -442,6 +472,7 @@ mod tests {
         let whole_window = Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: AtomicCostEntry {
                 mem_bytes_per_instance: 10.0,
@@ -475,6 +506,7 @@ mod tests {
         let direct = Deployment {
             capability: Capability::TopK,
             metric: METRIC.into(),
+            spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
             config: AtomicCostEntry {
                 mem_bytes_per_instance: 10.0,
