@@ -101,6 +101,13 @@ Candidates may be generated from individual RQEs, then deduplicated. This is
 only a way to construct the candidate set: when solving a workload, one
 selected deployment may serve multiple compatible RQEs.
 
+Intuition: candidates are built in two steps, and each drops only candidates
+that another candidate beats, so the best plan is never lost. Generation uses
+no measurements. It keeps every legal window and configuration, and drops only
+slides that a coarser slide beats for the same RQEs. Pruning then attaches the
+measured costs and drops a candidate when another serves all of its RQEs and
+is no worse on every cost.
+
 For each (capability, metric, G) group, generate candidates as follows:
 
 ```text
