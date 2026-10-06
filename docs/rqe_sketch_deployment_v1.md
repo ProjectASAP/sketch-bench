@@ -6,13 +6,38 @@ Given a workload of repeating query expressions (RQEs), find sketch deployments
 that can serve it and report the trade-offs among query working memory, CPU,
 and per-RQE latency.
 
+## Glossary
+
+- **RQE**: repeating query expression, evaluated every `T` over the last `S`.
+- **Capability**: the statistic an RQE needs: sum/count, min, max,
+  rate/increase, quantile, cardinality or top-k.
+- **Metric**: a named stream of samples whose series are told apart by labels.
+- **Group**: one combination of values of an RQE's group-by labels `G`. There
+  are `card(G)` groups.
+- **Family**: one sketch or accumulator implementation, such as `kll-percall`,
+  `cms-heap-topk-fastpath-vector2d` or `exact-sum`. Each capability lists the
+  families that serve it.
+- **Configuration**: a family plus its parameters, such as KLL with `k = 200`.
+  One row of the cost table.
+- **Cost table**: per configuration, measured memory per instance, CPU per
+  insert, merge and query, and accuracy. Exported by
+  [`scripts/export_rqe_optimizer_costs.sh`](../scripts/export_rqe_optimizer_costs.sh).
+- **Window**: the interval `[k × y, k × y + x)` an instance covers; `x` is the
+  window size and `y` the slide.
+- **Instance**: one sketch or accumulator object holding one group's samples
+  (or all groups', for a shared family) over one window. Open or closed; see
+  [Window model](#window-model).
+- **Deployment**: a configuration run over one metric, grouped by `G`, with
+  window `x` and slide `y`. A **candidate** is a deployment the optimizer may
+  choose.
+
 ## Inputs
 
 Let `R = {r_1, ..., r_n}` be the RQE workload. Each RQE `r_i` provides:
 
 | Field | Meaning |
 |---|---|
-| `cap_i` | Required capability: `freq`, `quantile`, `cardinality`, or `topk`. |
+| `cap_i` | Required capability. |
 | `S_i` | Query-window size. This is the current `lookback` field. |
 | `T_i` | Query slide: how often the RQE runs. This is the current `interval` field. |
 | `metric_i` | Metric the RQE reads. |
@@ -36,17 +61,18 @@ lambda(metric) = card(metric.labels) / scrape_interval      samples/second
 
 `validate_facts` reports every missing or inconsistent fact up front.
 
-sketch-bench supplies empirical measurements for each sketch configuration:
+The cost table, exported by
+[`scripts/export_rqe_optimizer_costs.sh`](../scripts/export_rqe_optimizer_costs.sh)
+from sketch-bench runs, gives for each configuration:
 
-- memory per sketch instance;
-- insert CPU per item;
-- query CPU per estimate;
+- memory per instance;
+- CPU per insert;
+- CPU per query of one instance;
 - CPU per pairwise merge; and
 - measured accuracy values.
 
-Configurations are associated with the capabilities they can serve. The
-implementation uses measured configuration variant names, because variants of
-the same algorithm can have different costs.
+Families are named by sketch-bench variant, not algorithm, because variants
+of the same algorithm can have different costs.
 
 ## Window model
 
@@ -273,14 +299,18 @@ top-k (sketch-bench's heap size, with 64-bit key hashes); it is not measured.
 
 ### Instance shape and size law
 
-Each exported cost row is measured on one instance, at whatever key count the
-benchmark fed it (`measured_keys`). Turning that into a deployment's cost
-needs two properties of the family:
+Each row of the cost table (from
+[`scripts/export_rqe_optimizer_costs.sh`](../scripts/export_rqe_optimizer_costs.sh))
+is measured on one instance, at whatever key count the benchmark fed it
+(`measured_keys`). A key is one distinct entry an instance stores exactly,
+such as one group's running sum in an exact accumulator. Turning a row into a
+deployment's cost needs two properties of the family:
 
 - **Shape**: instances per window. `PerGroup` keeps one per group, so
   `card(G)`; `Shared` keeps one for all groups.
-- **Law**: how one instance's size grows with its keys. `Fixed` is set by the
-  configuration (e.g. CMS rows × columns); `PerKey` grows with every key.
+- **Law**: how one instance's size grows. `Fixed` is set by the configuration
+  (e.g. CMS rows × columns); `PerKey` stores one entry per key, so it grows
+  linearly with keys.
 
 Memory per window is instances × instance size:
 
@@ -291,6 +321,12 @@ Memory per window is instances × instance size:
 
 The same factor scales merge and query CPU. Insert CPU is per sample and does
 not scale.
+
+Quantile sketches have no keys, but are not strictly fixed either: KLL grows
+slowly with the number of values inserted (about `k × log(n / k)`), and
+DDSketch with the range of values. The model treats them as Fixed at the size
+the export measured (1,000,000 values per instance), so it misstates instances
+that see far fewer or far more values.
 
 The model uses one formula, `card(G) × m`, which is right for both cells in
 use:
@@ -303,7 +339,9 @@ use:
 
 The other two cells are deferred until a family needs them: Shared + Fixed
 would be overpriced by `card(G)` (sketch-bench#142), and PerGroup + PerKey
-needs the key labels `K`, the metric's labels minus `G`.
+needs the key labels `K`, the metric's labels minus `G`. So for every family
+in use, nothing scales with keys below the group: a per-service top-k CMS
+costs the same however many endpoints it counts.
 
 Per-RQE latency is the serial CPU time of one query:
 
@@ -313,34 +351,6 @@ latency_i = card(G) × (c_qry + (n_i − 1) × c_mrg)
 
 It is not a wall-clock SLA: it assumes no parallel execution across groups and
 no cheaper k-way merge.
-
-### What each cost is counted per
-
-| Cost | Shared by RQEs on one deployment? | × groups `card(G)` | × windows | Per key inside an instance |
-|---|---|---|---|---|
-| Ingest CPU | yes, paid once per deployment | no, `lambda` already totals all groups | × `x/y` open | each sample is one insert, whatever the family |
-| Ingest memory | yes | yes | × `x/y` open | not modeled |
-| Storage memory | yes, sized for the longest `S` it serves | yes | × `(S−x)/y + 1` closed | not modeled |
-| Merge CPU | no, per RQE | yes | × `(S/x − 1)` folds | not modeled |
-| Merge memory | no, per RQE | yes | × 1 accumulator, 0 when `n_i = 1` | not modeled |
-| Query CPU | no, per RQE | yes | — | one probe per group |
-| Query memory | no, per RQE | yes | — | 8 B, or 32 × 16 B for top-k |
-| Latency | per RQE | yes | `S/x − 1` merges | — |
-
-Keys inside an instance matter only through the size law above. For every
-family in use, nothing scales with keys below the group: a per-service top-k
-CMS costs the same however many endpoints it counts.
-
-Not shared, though it may look shareable:
-
-- **The stream read.** Two deployments on the same metric each pay full
-  ingest. Only RQEs on the same deployment share it.
-- **Merges and query results.** Two RQEs with the same lookback on one
-  deployment each pay their own merge and query.
-- **Groupings.** A `{service, endpoint}` deployment does not serve
-  `by (service)`: `G` must match exactly, with no regrouping at query time.
-- **Capabilities.** RQEs with different capabilities never share a
-  deployment, even on the same metric and `G`.
 
 ## Procedure
 
