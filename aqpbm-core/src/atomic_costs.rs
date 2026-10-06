@@ -11,8 +11,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use aqpbm_datagen::{DataDistribution, TableDescription, RULE_MONOTONIC_INCREASE};
+
 use crate::accuracy::aggregate::GROUPS_PER_INSTANCE;
-use crate::benchmark_result::{CpuTime, MergedRecord, RunStats};
+use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescription};
 
 /// One row: measured atomic costs for one (sketch algorithm, construction
 /// params) point, at the grid resolution ASAPQuery's `candidate_gen.rs`
@@ -34,6 +36,33 @@ pub struct AtomicCostEntry {
     /// rank-error's `mean_rank_err`). No single scalar covers all of them, so
     /// this stays a map rather than picking one field to promote.
     pub query_accuracy: BTreeMap<String, f64>,
+    /// The conditions the row was measured under. Optional so tables written
+    /// before it was added still load; [`reduce_one`] always fills it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured_at: Option<MeasuredAt>,
+}
+
+/// What one benchmark instance saw. A consumer applying the row to an instance
+/// of a different size, key count or value range can tell how far it is
+/// extrapolating (sketch-bench#147). Read off the record's workload, so a
+/// field the workload doesn't determine is `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeasuredAt {
+    /// Items (rows) inserted into the instance.
+    pub items_per_instance: u64,
+    /// The measured group count for a grouped accumulator; otherwise the
+    /// product of the key columns' populations, an upper bound on the distinct
+    /// keys actually drawn.
+    pub keys_per_instance: Option<u64>,
+    /// `[lower, upper]` of the value column's distribution, plus its shift.
+    /// `None` for a monotonic (counter) column, whose values are a running sum
+    /// of draws rather than the draws themselves.
+    pub value_range: Option<[f64; 2]>,
+    /// Items in each sketch the merge benchmark folded in:
+    /// `items_per_instance / merge_shards`.
+    pub merge_operand_items: Option<u64>,
+    /// The value column's distribution as generated, e.g. Zipf with its skew.
+    pub distribution: Option<DataDistribution>,
 }
 
 pub type AtomicCostTable = Vec<AtomicCostEntry>;
@@ -169,11 +198,8 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
     // Priced per group here, so the optimizer's `card(group-by) ×` counts each
     // group once. Query is already per group (one probe per group); insert is
     // per item.
-    let groups = query_accuracy
-        .get(GROUPS_PER_INSTANCE)
-        .copied()
-        .unwrap_or(1.0)
-        .max(1.0);
+    let groups_measured = query_accuracy.get(GROUPS_PER_INSTANCE).copied();
+    let groups = groups_measured.unwrap_or(1.0).max(1.0);
     let mem_bytes_per_instance = mem_bytes_per_instance / groups;
     let merge_cpu_secs = merge_cpu_secs / groups;
 
@@ -187,8 +213,51 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
         insert_cpu_secs,
         merge_cpu_secs,
         query_cpu_secs,
+        measured_at: Some(measured_at(record, groups_measured)),
         query_accuracy,
     })
+}
+
+/// The record's measurement conditions. In a table description the last
+/// column holds the values and the ones before it are the keys; a
+/// single-column table's one column is both.
+fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredAt {
+    let (items, columns) = match &record.input_dataset {
+        WorkloadDescription::Synthetic { description, .. } => {
+            (description.row_num, Some(description))
+        }
+        WorkloadDescription::External(external) => (external.records_loaded, None),
+    };
+    let value = columns.and_then(|d: &TableDescription| d.column_spec.last());
+    let keys = columns.and_then(|d| match d.column_spec.split_last() {
+        Some((value, [])) => value.distribution.domain().map(|d| d.size),
+        // Saturating: wide label domains multiply past u64; the bound stays a bound.
+        Some((_, labels)) => labels.iter().try_fold(1u64, |keys, c| {
+            Some(keys.saturating_mul(c.distribution.domain()?.size))
+        }),
+        None => None,
+    });
+    MeasuredAt {
+        items_per_instance: items,
+        keys_per_instance: groups_measured.map(|g| g as u64).or(keys),
+        value_range: value
+            .filter(|c| c.special_rule & RULE_MONOTONIC_INCREASE == 0)
+            .and_then(|c| {
+                let shift = c.shift.unwrap_or(0.0);
+                match &c.distribution {
+                    DataDistribution::Zipf(p) => Some([1.0, p.population_size as f64]),
+                    DataDistribution::Uniform(p) => Some([p.lower_bound, p.upper_bound]),
+                    DataDistribution::Normal(_) | DataDistribution::Pareto(_) => None,
+                }
+                .map(|[lo, hi]| [lo + shift, hi + shift])
+            }),
+        merge_operand_items: record
+            .merge
+            .merge_shards
+            .filter(|&m| m > 0)
+            .map(|m| items / m as u64),
+        distribution: value.map(|c| c.distribution.clone()),
+    }
 }
 
 /// `MergedRecord::query.accuracy` down to the flat numeric map every
@@ -336,6 +405,76 @@ mod tests {
         assert!((entry.query_cpu_secs - 4e-6).abs() < 1e-12);
     }
 
+    /// A one-column table: its column gives the keys and the values, and the
+    /// merge operand is the stream split `merge_shards` ways.
+    #[test]
+    fn measured_at_reads_a_single_column_workload() {
+        let mut record = full_record();
+        record.merge.merge_shards = Some(16);
+        let entry = reduce_one(&record).expect("fully populated record");
+        let at = entry.measured_at.expect("always filled");
+        assert_eq!(at.items_per_instance, 1_000_000);
+        assert_eq!(at.keys_per_instance, Some(100_000));
+        assert_eq!(at.value_range, Some([0.0, 100_000.0]));
+        assert_eq!(at.merge_operand_items, Some(62_500));
+        assert_eq!(
+            at.distribution,
+            Some(dataset().column_spec[0].distribution.clone())
+        );
+    }
+
+    /// A multi-column table: the last column is the value, the rest are keys.
+    /// A measured group count wins over the key populations' bound.
+    #[test]
+    fn measured_at_reads_a_labelled_workload() {
+        let zipf = |population_size| aqpbm_datagen::ColumnSpec {
+            distribution: aqpbm_datagen::DataDistribution::Zipf(aqpbm_datagen::ZipfParameter {
+                skewness: 1.1,
+                population_size,
+                seed: 1,
+            }),
+            ..dataset().column_spec[0].clone()
+        };
+        let mut description = dataset();
+        description.column_num = 3;
+        description.column_label = vec!["a".into(), "b".into(), "value".into()];
+        description.column_spec = vec![zipf(50), zipf(1000), dataset().column_spec[0].clone()];
+        description.column_spec[2].shift = Some(10.0);
+        let mut record = full_record();
+        record.input_dataset = description.into();
+
+        let at = reduce_one(&record).unwrap().measured_at.unwrap();
+        assert_eq!(at.keys_per_instance, Some(50_000));
+        assert_eq!(at.value_range, Some([10.0, 100_010.0]));
+        assert_eq!(at.merge_operand_items, None);
+
+        record.query.accuracy =
+            Some(serde_json::json!({"relative_error": 0.0, "groups_per_instance": 9_876.0}));
+        let at = reduce_one(&record).unwrap().measured_at.unwrap();
+        assert_eq!(at.keys_per_instance, Some(9_876));
+    }
+
+    /// A counter column emits a running sum of its draws, so the draws'
+    /// bounds say nothing about the values.
+    #[test]
+    fn measured_at_has_no_value_range_for_a_counter_column() {
+        let mut description = dataset();
+        description.column_spec[0].special_rule = aqpbm_datagen::RULE_MONOTONIC_INCREASE;
+        let mut record = full_record();
+        record.input_dataset = description.into();
+        let at = reduce_one(&record).unwrap().measured_at.unwrap();
+        assert_eq!(at.value_range, None);
+        assert_eq!(at.items_per_instance, 1_000_000);
+    }
+
+    /// Tables written before `measured_at` existed still load.
+    #[test]
+    fn a_row_without_measured_at_still_loads() {
+        let json = r#"{"sketch":"cms","sketch_config":null,"mem_bytes_per_instance":1.0,"insert_cpu_secs":1.0,"merge_cpu_secs":1.0,"query_cpu_secs":1.0,"query_accuracy":{}}"#;
+        let entry: AtomicCostEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.measured_at, None);
+    }
+
     #[test]
     fn reduces_a_full_record_to_per_op_seconds() {
         let entry = reduce_one(&full_record()).expect("fully populated record");
@@ -454,6 +593,7 @@ mod tests {
             merge_cpu_secs: 1e-2,
             query_cpu_secs: 4e-6,
             query_accuracy: BTreeMap::from([("relative_error_mean".to_string(), 0.01)]),
+            measured_at: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(

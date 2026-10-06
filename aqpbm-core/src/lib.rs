@@ -19,7 +19,9 @@ pub use aqpbm_datagen::{
     NormalParameter, ParetoParameter, StringOpts, TableDescription, UniformParameter,
     ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
-pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
+pub use atomic_costs::{
+    reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, MeasuredAt, SkipReason,
+};
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
     MergeMetrics, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
