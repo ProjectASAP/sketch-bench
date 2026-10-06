@@ -271,11 +271,39 @@ Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
 Query output is estimated at 8 bytes per group, or 32 × 16 bytes per group for
 top-k (sketch-bench's heap size, with 64-bit key hashes); it is not measured.
 
-Exact multi-group accumulators are measured as one instance holding many
-groups. The export divides their memory and merge cost by the measured group
-count, so `card(G) ×` prices them correctly too. A family holding every group
-in one fixed-size instance (HydraKLL) would need a per-family shape instead
-(sketch-bench#142).
+### Instance shape and size law
+
+Each exported cost row is measured on one instance, at whatever key count the
+benchmark fed it (`measured_keys`). Turning that into a deployment's cost
+needs two properties of the family:
+
+- **Shape**: instances per window. `PerGroup` keeps one per group, so
+  `card(G)`; `Shared` keeps one for all groups.
+- **Law**: how one instance's size grows with its keys. `Fixed` is set by the
+  configuration (e.g. CMS rows × columns); `PerKey` grows with every key.
+
+Memory per window is instances × instance size:
+
+| | Fixed | PerKey |
+|---|---|---|
+| **PerGroup** | `card(G) × m`: CMS, CountSketch, KLL, DDSketch, HLL, UnivMon, top-k (heap fixed at k = 32) | `card(G) × m × keys_per_group / measured_keys`: none yet (e.g. an exact top-k map) |
+| **Shared** | `m`: HydraKLL and other Hydra sketches | `m × card(G) / measured_keys`: exact sum, min, max, increase (one value per group, so keys = groups) |
+
+The same factor scales merge and query CPU. Insert CPU is per sample and does
+not scale.
+
+The model uses one formula, `card(G) × m`, which is right for both cells in
+use:
+
+- PerGroup + Fixed is that formula as is.
+- Shared + PerKey reduces to it because the export divides the exact
+  accumulators' memory and merge cost by `measured_keys`
+  (`groups_per_instance`), making `m` a per-group cost. Their query cost is
+  already per group.
+
+The other two cells are deferred until a family needs them: Shared + Fixed
+would be overpriced by `card(G)` (sketch-bench#142), and PerGroup + PerKey
+needs the key labels `K`, the metric's labels minus `G`.
 
 Per-RQE latency is the serial CPU time of one query:
 
@@ -299,18 +327,9 @@ no cheaper k-way merge.
 | Query memory | no, per RQE | yes | — | 8 B, or 32 × 16 B for top-k |
 | Latency | per RQE | yes | `S/x − 1` merges | — |
 
-Keys inside an instance:
-
-- **Sketches** (CMS, CountSketch, KLL, DDSketch, HLL, UnivMon) keep one
-  fixed-size instance per group. The keys inside it, such as the endpoints a
-  per-service top-k counts, change neither memory nor CPU. The top-k heap is
-  fixed at the benchmark's k = 32.
-- **Exact accumulators** keep one value per group, so keys are groups. The
-  export divides their measured memory and merge cost by the group count, so
-  `m` is per group.
-- Nothing scales with keys below the group. Key labels `K` (the metric's
-  labels minus `G`) would matter only for a family whose size grows with keys
-  inside a group, such as an exact top-k map; none exists yet.
+Keys inside an instance matter only through the size law above. For every
+family in use, nothing scales with keys below the group: a per-service top-k
+CMS costs the same however many endpoints it counts.
 
 Not shared, though it may look shareable:
 
