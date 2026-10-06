@@ -65,24 +65,24 @@ mod tests {
         }
     }
 
-    /// Footprint is `rows * cols` counters at the real width — the heap itself
-    /// isn't counted, matching how the plain CMS rows don't count their own
-    /// bookkeeping fields either.
+    /// Footprint is `rows * cols` counters at the real width plus a full heap
+    /// of `CMS_HEAP_TOP_K` `HHItem`s, as UnivMon counts its heaps (#146).
     #[test]
-    fn footprint_is_rows_times_cols_times_counter_width() {
+    fn footprint_is_counters_plus_heap() {
         let p = ParamSet::of(&CmsHeapParams {
             rows: 5,
             cols: 2048,
         });
+        let heap = CMS_HEAP_TOP_K * std::mem::size_of::<asap_sketchlib::input::HHItem>();
         let fast = build_cms_heap_lib_vector2d_fast(&p).expect("5x2048 is a valid shape");
         assert_eq!(
             memory_cms_heap_lib_vector2d_fast(&fast),
-            5 * 2048 * std::mem::size_of::<i32>()
+            5 * 2048 * std::mem::size_of::<i32>() + heap
         );
         let regular = build_cms_heap_lib_vector2d_regular(&p).expect("5x2048 is a valid shape");
         assert_eq!(
             memory_cms_heap_lib_vector2d_regular(&regular),
-            5 * 2048 * std::mem::size_of::<i32>()
+            5 * 2048 * std::mem::size_of::<i32>() + heap
         );
     }
 }

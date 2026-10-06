@@ -401,7 +401,7 @@ pub fn query_univmon_lib_topk<T: FrequencyValue>(
 pub fn merge_query_univmon_lib_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
-    _probes: Rc<Vec<()>>,
+    probes: Rc<Vec<()>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
@@ -411,21 +411,26 @@ pub fn merge_query_univmon_lib_topk<T: FrequencyValue>(
         for other in rest.iter() {
             sketch.inner.merge(&other.inner);
         }
+        let probes = probes.clone();
         out.push(Box::new(move || {
-            let mut heap: Vec<_> = sketch.inner.hh_layers[0].heap().iter().collect();
-            heap.sort_unstable_by_key(|item| std::cmp::Reverse(item.count));
-            let ranked: TopkAnswer<T> = heap
-                .into_iter()
-                .take(CMS_HEAP_TOP_K)
-                .map(|item| {
-                    (
-                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
-                        item.count.max(0) as u64,
-                    )
-                })
-                .collect();
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                let mut heap: Vec<_> = sketch.inner.hh_layers[0].heap().iter().collect();
+                heap.sort_unstable_by_key(|item| std::cmp::Reverse(item.count));
+                let ranked: TopkAnswer<T> = heap
+                    .into_iter()
+                    .take(CMS_HEAP_TOP_K)
+                    .map(|item| {
+                        (
+                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            item.count.max(0) as u64,
+                        )
+                    })
+                    .collect();
+                answers.push(ranked);
+            }
             let footprint = memory_univmon_lib(&sketch);
-            (vec![ranked], footprint)
+            (answers, footprint)
         }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
