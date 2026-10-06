@@ -1,7 +1,7 @@
 use super::*;
 use aqpbm_core::accuracy::aggregate::{Aggregate, AggregateGT};
 use sketch_bench::wrappers::cs_heap as csh;
-use sketch_bench::wrappers::exact::{self as ex, Cell, Increase, Max, Min, Sum};
+use sketch_bench::wrappers::exact::{self as ex, Cell, Increase, Max, Min, Present, Sum};
 use sketch_bench::wrappers::quantile_value::ToF64;
 use sketch_bench::wrappers::univmon::sketchlib as ul;
 
@@ -90,6 +90,15 @@ pub(crate) fn row_exact_increase(
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
     exact_row::<Increase>(req, description, table, want, Aggregate::Increase)
+}
+
+pub(crate) fn row_exact_delta_set(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    exact_row::<Present>(req, description, table, want, Aggregate::Presence)
 }
 
 // -------- more top-k: CountSketch + heap, UnivMon --------

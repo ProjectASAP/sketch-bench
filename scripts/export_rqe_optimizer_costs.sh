@@ -41,91 +41,101 @@ CARDINALITY=100000
 SEED=42
 MERGE_SHARDS=16
 
+# The swept parameters, every one of them. Exact accumulators take none.
 HLL_PRECISIONS=(12 14)
 KLL_KS=(200 500)
 DD_ALPHAS=(0.01 0.02)
 CMS_HEAP_ROWS=(3 5)
 CMS_HEAP_COLS=(2048)
+UNIVMON_CONFIGS=(
+    "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
+    "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
+)
+HYDRA_KLL_CONFIGS=(
+    "rows=3 cols=128 cell_k=200"
+    "rows=3 cols=256 cell_k=200"
+    "rows=3 cols=512 cell_k=200"
+    "rows=5 cols=256 cell_k=200"
+    "rows=3 cols=256 cell_k=500"
+)
 
-# Zipf is deliberate. Uniform data makes request-rate relative error
-# meaningless in the rare-key tail and makes top-k accuracy degenerate.
-point() {
-    local variant=$1 config=$2 comparator=$3
-    echo "  $variant ($config)" >&2
+# One row: a cost pass, then an accuracy pass, over the same data. Arguments
+# after the comparator name the data (`--dataset ...` or `--spec ...`, plus
+# `--dtype`). An empty config omits `--config` (the exact accumulators).
+measure() {
+    local variant=$1 library=$2 config=$3 comparator=$4
+    shift 4
+    local config_args=()
+    [[ -n "$config" ]] && config_args=(--config "$config")
+    echo "  $variant${config:+ ($config)}" >&2
 
     # Cost goes first. Secondary query timings accompany both passes, and
     # flattening retains the first one; this preserves the five-sample cost
     # timings that atomic-costs pairs with query throughput.
     "$BINARY" sketchbench \
-        --variant "$variant" --library lib --config "$config" \
+        --variant "$variant" --library "$library" "${config_args[@]}" \
         --operations insert,query,merge --metrics throughput,cpu,memory \
         --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --dataset zipf --zipf-s 1.1 --size "$SIZE" --cardinality "$CARDINALITY" \
-        --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+        "$@" --seed "$SEED" --report "$RAW_JSONL"
     "$BINARY" sketchbench \
-        --variant "$variant" --library lib --config "$config" \
+        --variant "$variant" --library "$library" "${config_args[@]}" \
         --operations query --metrics accuracy --comparator "$comparator" \
         --runs "$RUNS" --warmup-runs "$WARMUP" \
+        "$@" --seed "$SEED" --report "$RAW_JSONL"
+}
+
+# One-column sketches on inline data. Zipf is deliberate. Uniform data makes
+# request-rate relative error meaningless in the rare-key tail and makes top-k
+# accuracy degenerate.
+point() {
+    local variant=$1 config=$2 comparator=$3
+    measure "$variant" lib "$config" "$comparator" \
         --dataset zipf --zipf-s 1.1 --size "$SIZE" --cardinality "$CARDINALITY" \
-        --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+        --dtype i64
 }
 
-# Exact accumulators take no --config, live under library "exact", and ingest
-# grouped records: label columns, then an i64 value. Increase reads counters.
-point_exact() {
-    local variant=$1 comparator=$2 spec=$3
-    echo "  $variant" >&2
-    "$BINARY" sketchbench \
-        --variant "$variant" --library exact \
-        --operations insert,query,merge --metrics throughput,cpu,memory \
-        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
-    "$BINARY" sketchbench \
-        --variant "$variant" --library exact \
-        --operations query --metrics accuracy --comparator "$comparator" \
-        --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+# Rows that need a multi-column spec: grouped records for the exact
+# accumulators and Hydra, key/value pairs for UnivMon cardinality.
+point_spec() {
+    local variant=$1 library=$2 config=$3 comparator=$4 spec=$5 dtype=$6
+    measure "$variant" "$library" "$config" "$comparator" --spec "$spec" --dtype "$dtype"
 }
 
-# UnivMon consumes key/value pairs. The inline dataset path is one-column, so
-# use the tracked two-column spec whose key column is u64.
-point_univmon() {
-    local config=$1
-    echo "  univmon-cardinality ($config)" >&2
-    "$BINARY" sketchbench \
-        --variant univmon-cardinality --library lib --config "$config" \
-        --operations insert,query,merge --metrics throughput,cpu,memory \
-        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/univmon_columns.yaml --dtype u64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-    "$BINARY" sketchbench \
-        --variant univmon-cardinality --library lib --config "$config" \
-        --operations query --metrics accuracy --comparator keyed-cardinality \
-        --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/univmon_columns.yaml --dtype u64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-}
+# Exact accumulators live under library "exact" and take no config. Increase
+# reads counters; the rest read grouped i64 records.
+echo "==> Exact accumulators: sum, min, max, increase, delta set" >&2
+point_spec exact-sum exact "" sum-or-count configs/datagen/hydra_columns.yaml i64
+point_spec exact-min exact "" min configs/datagen/hydra_columns.yaml i64
+point_spec exact-max exact "" max configs/datagen/hydra_columns.yaml i64
+point_spec exact-increase exact "" rate-or-increase configs/datagen/counter_columns.yaml i64
+point_spec exact-delta-set exact "" key-set configs/datagen/hydra_columns.yaml i64
 
-echo "==> Exact accumulators: sum, min, max, increase" >&2
-point_exact exact-sum sum-or-count configs/datagen/hydra_columns.yaml
-point_exact exact-min min configs/datagen/hydra_columns.yaml
-point_exact exact-max max configs/datagen/hydra_columns.yaml
-point_exact exact-increase rate-or-increase configs/datagen/counter_columns.yaml
-
-echo "==> Quantiles: KLL and DDSketch" >&2
+# HydraKLL rows are whole-sketch: one instance serves every group, and memory
+# and merge cost are not divided per group (`subpop-rank-error` reports no
+# `groups_per_instance`). The optimizer prices a row as card(G) x per-instance
+# cost, so these rows must not become candidates until #142 lands. Cost and
+# accuracy hold at this spec's group count only. The spec gives each label its
+# own alphabet, so rank error is the sketch's, not label collisions' (#74).
+echo "==> Quantiles: KLL, DDSketch, HydraKLL" >&2
 for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k" rank-error
 done
 for alpha in "${DD_ALPHAS[@]}"; do
     point dd "alpha=$alpha" rank-error
 done
+for config in "${HYDRA_KLL_CONFIGS[@]}"; do
+    point_spec hydra-kll lib "$config" subpop-rank-error \
+        configs/datagen/hydra_kll_disjoint_labels.yaml f64
+done
 
 echo "==> Cardinality: HLL and UnivMon" >&2
 for lg_k in "${HLL_PRECISIONS[@]}"; do
     point hll "lg_k=$lg_k" cardinality
 done
-point_univmon "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
-point_univmon "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
+for config in "${UNIVMON_CONFIGS[@]}"; do
+    point_spec univmon-cardinality lib "$config" keyed-cardinality \
+        configs/datagen/univmon_columns.yaml u64
+done
 
 echo "==> Top-k: CMS heap, CountSketch heap, UnivMon" >&2
 for rows in "${CMS_HEAP_ROWS[@]}"; do
@@ -134,13 +144,21 @@ for rows in "${CMS_HEAP_ROWS[@]}"; do
         point countsketch-heap-topk-fastpath-vector2d "rows=$rows cols=$cols" topk
     done
 done
-point univmon-topk "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8" topk
-point univmon-topk "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6" topk
+for config in "${UNIVMON_CONFIGS[@]}"; do
+    point univmon-topk "$config" topk
+done
 
 echo "==> Flattening cost + accuracy passes..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
-echo "==> Reducing to atomic-cost table (expect 18 row(s), 0 skipped)..." >&2
-"$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
+echo "==> Reducing to atomic-cost table (expect 24 row(s), 0 skipped)..." >&2
+# A skipped row is a failed measurement, e.g. an exact row that missed a group
+# scores an infinite error, which JSON holds as null. Fail rather than publish
+# a table that is silently short.
+summary=$("$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" 2>&1 | tee /dev/stderr | tail -n 1)
+if [[ "$summary" != *", 0 skipped" ]]; then
+    echo "ERROR: atomic-costs skipped rows; see the reasons above." >&2
+    exit 1
+fi
 
 echo "Done. $TABLE_JSON" >&2
