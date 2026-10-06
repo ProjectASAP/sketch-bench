@@ -1,0 +1,36 @@
+# `hydra_columns_f64.yaml` with a separate alphabet per label column, so a key1
+# value can never render the same as a key2 value (#74). On the shared alphabet
+# a key1 query also picks up the matching key2 group, and that collision shows
+# up as rank error; here the `polars` baseline scores zero and any rank error
+# is the sketch's. `export_rqe_optimizer_costs.sh` prices `hydra-kll` on it.
+
+column_num: 3
+column_label: [key1, key2, value]
+row_num: 200000
+
+column_spec:
+  # key1: the column the comparator groups by.
+  - data_type: string
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 200.0
+      seed: 1
+    string: {alphabet: "abcdefghijklm"}
+
+  # key2: a second label, skewed, so the subset fan-out is not uniform.
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 50
+      seed: 2
+    string: {alphabet: "nopqrstuvwxyz"}
+
+  # value: KLL orders these inside each subpopulation.
+  - data_type: f64
+    distribution:
+      kind: zipf
+      skewness: 1.2
+      population_size: 1000
+      seed: 3

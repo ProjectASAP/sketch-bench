@@ -59,91 +59,63 @@ HYDRA_KLL_CONFIGS=(
     "rows=3 cols=256 cell_k=500"
 )
 
-# Zipf is deliberate. Uniform data makes request-rate relative error
-# meaningless in the rare-key tail and makes top-k accuracy degenerate.
-point() {
-    local variant=$1 config=$2 comparator=$3
-    echo "  $variant ($config)" >&2
+# One row: a cost pass, then an accuracy pass, over the same data. Arguments
+# after the comparator name the data (`--dataset ...` or `--spec ...`, plus
+# `--dtype`). An empty config omits `--config` (the exact accumulators).
+measure() {
+    local variant=$1 library=$2 config=$3 comparator=$4
+    shift 4
+    local config_args=()
+    [[ -n "$config" ]] && config_args=(--config "$config")
+    echo "  $variant${config:+ ($config)}" >&2
 
     # Cost goes first. Secondary query timings accompany both passes, and
     # flattening retains the first one; this preserves the five-sample cost
     # timings that atomic-costs pairs with query throughput.
     "$BINARY" sketchbench \
-        --variant "$variant" --library lib --config "$config" \
+        --variant "$variant" --library "$library" "${config_args[@]}" \
         --operations insert,query,merge --metrics throughput,cpu,memory \
         --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --dataset zipf --zipf-s 1.1 --size "$SIZE" --cardinality "$CARDINALITY" \
-        --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+        "$@" --seed "$SEED" --report "$RAW_JSONL"
     "$BINARY" sketchbench \
-        --variant "$variant" --library lib --config "$config" \
+        --variant "$variant" --library "$library" "${config_args[@]}" \
         --operations query --metrics accuracy --comparator "$comparator" \
         --runs "$RUNS" --warmup-runs "$WARMUP" \
+        "$@" --seed "$SEED" --report "$RAW_JSONL"
+}
+
+# One-column sketches on inline data. Zipf is deliberate. Uniform data makes
+# request-rate relative error meaningless in the rare-key tail and makes top-k
+# accuracy degenerate.
+point() {
+    local variant=$1 config=$2 comparator=$3
+    measure "$variant" lib "$config" "$comparator" \
         --dataset zipf --zipf-s 1.1 --size "$SIZE" --cardinality "$CARDINALITY" \
-        --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+        --dtype i64
 }
 
-# Exact accumulators take no --config, live under library "exact", and ingest
-# grouped records: label columns, then an i64 value. Increase reads counters.
-point_exact() {
-    local variant=$1 comparator=$2 spec=$3
-    echo "  $variant" >&2
-    "$BINARY" sketchbench \
-        --variant "$variant" --library exact \
-        --operations insert,query,merge --metrics throughput,cpu,memory \
-        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
-    "$BINARY" sketchbench \
-        --variant "$variant" --library exact \
-        --operations query --metrics accuracy --comparator "$comparator" \
-        --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+# Rows that need a multi-column spec: grouped records for the exact
+# accumulators and Hydra, key/value pairs for UnivMon cardinality.
+point_spec() {
+    local variant=$1 library=$2 config=$3 comparator=$4 spec=$5 dtype=$6
+    measure "$variant" "$library" "$config" "$comparator" --spec "$spec" --dtype "$dtype"
 }
 
-# UnivMon consumes key/value pairs. The inline dataset path is one-column, so
-# use the tracked two-column spec whose key column is u64.
-point_univmon() {
-    local config=$1
-    echo "  univmon-cardinality ($config)" >&2
-    "$BINARY" sketchbench \
-        --variant univmon-cardinality --library lib --config "$config" \
-        --operations insert,query,merge --metrics throughput,cpu,memory \
-        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/univmon_columns.yaml --dtype u64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-    "$BINARY" sketchbench \
-        --variant univmon-cardinality --library lib --config "$config" \
-        --operations query --metrics accuracy --comparator keyed-cardinality \
-        --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/univmon_columns.yaml --dtype u64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-}
-
-# HydraKLL ingests grouped records with an f64 value. One instance serves
-# every group, so its cost and accuracy hold at this spec's group count only.
-point_hydra_kll() {
-    local config=$1
-    echo "  hydra-kll ($config)" >&2
-    "$BINARY" sketchbench \
-        --variant hydra-kll --library lib --config "$config" \
-        --operations insert,query,merge --metrics throughput,cpu,memory \
-        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/hydra_columns_f64.yaml --dtype f64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-    "$BINARY" sketchbench \
-        --variant hydra-kll --library lib --config "$config" \
-        --operations query --metrics accuracy --comparator subpop-rank-error \
-        --runs "$RUNS" --warmup-runs "$WARMUP" \
-        --spec configs/datagen/hydra_columns_f64.yaml --dtype f64 --seed "$SEED" \
-        --report "$RAW_JSONL"
-}
-
+# Exact accumulators live under library "exact" and take no config. Increase
+# reads counters; the rest read grouped i64 records.
 echo "==> Exact accumulators: sum, min, max, increase, delta set" >&2
-point_exact exact-sum sum-or-count configs/datagen/hydra_columns.yaml
-point_exact exact-min min configs/datagen/hydra_columns.yaml
-point_exact exact-max max configs/datagen/hydra_columns.yaml
-point_exact exact-increase rate-or-increase configs/datagen/counter_columns.yaml
-point_exact exact-delta-set key-set configs/datagen/hydra_columns.yaml
+point_spec exact-sum exact "" sum-or-count configs/datagen/hydra_columns.yaml i64
+point_spec exact-min exact "" min configs/datagen/hydra_columns.yaml i64
+point_spec exact-max exact "" max configs/datagen/hydra_columns.yaml i64
+point_spec exact-increase exact "" rate-or-increase configs/datagen/counter_columns.yaml i64
+point_spec exact-delta-set exact "" key-set configs/datagen/hydra_columns.yaml i64
 
+# HydraKLL rows are whole-sketch: one instance serves every group, and memory
+# and merge cost are not divided per group (`subpop-rank-error` reports no
+# `groups_per_instance`). The optimizer prices a row as card(G) x per-instance
+# cost, so these rows must not become candidates until #142 lands. Cost and
+# accuracy hold at this spec's group count only. The spec gives each label its
+# own alphabet, so rank error is the sketch's, not label collisions' (#74).
 echo "==> Quantiles: KLL, DDSketch, HydraKLL" >&2
 for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k" rank-error
@@ -152,7 +124,8 @@ for alpha in "${DD_ALPHAS[@]}"; do
     point dd "alpha=$alpha" rank-error
 done
 for config in "${HYDRA_KLL_CONFIGS[@]}"; do
-    point_hydra_kll "$config"
+    point_spec hydra-kll lib "$config" subpop-rank-error \
+        configs/datagen/hydra_kll_disjoint_labels.yaml f64
 done
 
 echo "==> Cardinality: HLL and UnivMon" >&2
@@ -160,7 +133,8 @@ for lg_k in "${HLL_PRECISIONS[@]}"; do
     point hll "lg_k=$lg_k" cardinality
 done
 for config in "${UNIVMON_CONFIGS[@]}"; do
-    point_univmon "$config"
+    point_spec univmon-cardinality lib "$config" keyed-cardinality \
+        configs/datagen/univmon_columns.yaml u64
 done
 
 echo "==> Top-k: CMS heap, CountSketch heap, UnivMon" >&2
