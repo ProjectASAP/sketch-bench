@@ -143,13 +143,14 @@ For each (capability, metric, G) group, generate candidates as follows:
 
 ```text
 for each window x that divides some S_i and is a multiple of the scrape interval:
-    for each RAQE i whose S_i is divisible by x:
-        g_i = gcd(x, T_i)    # the largest slide that serves RAQE i
-    slides = { gcd(A) : A is a non-empty subset of {g_i} }
+    g = { g_i = gcd(x, T_i) : RAQE i with S_i divisible by x }
+    slides = { gcd(A) : A is a non-empty subset of g }
     for each y in slides that is a multiple of the scrape interval:
         for each configuration that serves the capability:
             add (capability, configuration, metric, G, x, y)
 ```
+
+`g_i = gcd(x, T_i)` is the largest slide that serves RAQE `i`.
 
 **Windows.** An RAQE merges `S_i / x` whole windows, so `x` must divide `S_i`.
 Windows and slides finer than the scrape interval would only split one
