@@ -9,6 +9,12 @@ use aqpbm_datagen::{DataGenError, GeneratedTable};
 
 use super::{CountedValue, GroundTruth};
 
+/// How many times to put the one question. A heap dump of `k` items takes
+/// well under a microsecond, near `Instant::now()`'s 20-50 ns noise floor, so
+/// one call per pass would report mostly timer jitter. As for
+/// `CardinalityGT`, the count is this statistic's knowledge, not the runner's.
+const QUERY_TIMING_REPEATS: usize = 1024;
+
 pub struct TopkGT<K> {
     pub k: usize,
     pub column: usize,
@@ -31,7 +37,7 @@ where
 {
     /// The true k heaviest keys, in the total order every top-k impl ranks by.
     type Truth = Vec<(K, u64)>;
-    /// One question: the whole list. A probe carries nothing.
+    /// One question, the whole list, asked repeatedly. A probe carries nothing.
     type Probe = ();
     type Answer = Vec<(K, u64)>;
 
@@ -60,7 +66,7 @@ where
     }
 
     fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
-        vec![()]
+        vec![(); QUERY_TIMING_REPEATS]
     }
 
     fn score(
@@ -69,6 +75,8 @@ where
         _probes: &[()],
         answers: &[Vec<(K, u64)>],
     ) -> BTreeMap<String, f64> {
+        // Every answer is to the same question, so the first is the estimate
+        // and the rest existed to make the timing readable.
         let empty = Vec::new();
         let est = answers.first().unwrap_or(&empty);
         let est_set: std::collections::HashSet<K::CountKey> =

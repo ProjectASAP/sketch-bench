@@ -80,7 +80,7 @@ pub(super) fn cardinality_row<T: ColumnItem>(
 }
 
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
-/// `()` — one question, the whole list, asked once — and `k` is
+/// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
 /// `chl::CMS_HEAP_TOP_K`, the same compile-time constant the sketch was built
 /// with, so the heap's capacity and the truth it's graded against can never
 /// silently disagree (see #95's design-decision comment on the registry entry).

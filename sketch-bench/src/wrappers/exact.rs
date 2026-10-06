@@ -234,20 +234,24 @@ impl<C: Cell> Multiple<C> {
             .ok_or_else(|| AggregateQueryError::GroupNotFound(group.to_vec()))
     }
 
-    /// Key and cell bytes per group; hash-table overhead left out.
+    /// The hash table plus what each group owns outside it. The table is an
+    /// estimate of hashbrown's layout: one `(key, cell)` slot and one control
+    /// byte per unit of capacity. It ignores the few trailing control bytes
+    /// and the gap between `capacity()` and the bucket count.
     fn footprint(&self) -> usize {
-        self.by_group
+        let table = self.by_group.capacity()
+            * (std::mem::size_of::<Vec<String>>() + std::mem::size_of::<C>() + 1);
+        let owned: usize = self
+            .by_group
             .iter()
             .map(|(key, cell)| {
-                std::mem::size_of::<Vec<String>>()
-                    + key
-                        .iter()
-                        .map(|l| std::mem::size_of::<String>() + l.len())
-                        .sum::<usize>()
-                    + std::mem::size_of::<C>()
+                key.iter()
+                    .map(|l| std::mem::size_of::<String>() + l.len())
+                    .sum::<usize>()
                     + cell.heap_bytes()
             })
-            .sum()
+            .sum();
+        table + owned
     }
 }
 

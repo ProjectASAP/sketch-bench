@@ -8,6 +8,7 @@ use crate::params::{CountSketchParams, ParamSet};
 use crate::wrappers::cms_heap::sketchlib::{TopkAnswer, CMS_HEAP_TOP_K};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
+use asap_sketchlib::input::HHItem;
 use asap_sketchlib::{heap_item_to_sketch_input, CSHeap, FastPath, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -31,9 +32,10 @@ pub fn build_cs_heap_lib_vector2d_fast(
     })
 }
 
-/// Counter matrix only, as `cms_heap` counts it.
+/// Counter matrix plus a full heap, as `cms_heap` counts it.
 pub fn memory_cs_heap_lib_vector2d_fast(sketch: &CsHeapLibVector2dFast) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+        + CMS_HEAP_TOP_K * std::mem::size_of::<HHItem>()
 }
 
 pub fn insert_cs_heap_lib_vector2d_fast<T: FrequencyValue>(
@@ -86,7 +88,7 @@ pub fn query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
 pub fn merge_query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
-    _probes: Rc<Vec<()>>,
+    probes: Rc<Vec<()>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
@@ -96,21 +98,26 @@ pub fn merge_query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
         for other in rest.iter() {
             sketch.inner.merge(&other.inner);
         }
+        let probes = probes.clone();
         out.push(Box::new(move || {
-            let ranked: TopkAnswer<T> = sketch
-                .inner
-                .heap()
-                .heap()
-                .iter()
-                .map(|item| {
-                    (
-                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
-                        item.count.max(0) as u64,
-                    )
-                })
-                .collect();
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                let ranked: TopkAnswer<T> = sketch
+                    .inner
+                    .heap()
+                    .heap()
+                    .iter()
+                    .map(|item| {
+                        (
+                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            item.count.max(0) as u64,
+                        )
+                    })
+                    .collect();
+                answers.push(ranked);
+            }
             let footprint = memory_cs_heap_lib_vector2d_fast(&sketch);
-            (vec![ranked], footprint)
+            (answers, footprint)
         }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
