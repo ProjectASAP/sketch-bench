@@ -23,6 +23,10 @@ pub enum Capability {
     KeyedL1Norm,
     KeyedL2Norm,
     KeyedEntropy,
+    SumOrCount,
+    Min,
+    Max,
+    RateOrIncrease,
     #[default]
     None,
 }
@@ -46,6 +50,10 @@ impl Capability {
             Capability::KeyedL1Norm => "keyed-l1-norm",
             Capability::KeyedL2Norm => "keyed-l2-norm",
             Capability::KeyedEntropy => "keyed-entropy",
+            Capability::SumOrCount => "sum-or-count",
+            Capability::Min => "min",
+            Capability::Max => "max",
+            Capability::RateOrIncrease => "rate-or-increase",
             Capability::None => "none",
         }
     }

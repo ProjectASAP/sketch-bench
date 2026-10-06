@@ -11,6 +11,7 @@ use aqpbm_datagen::{ColumnData, ColumnItem, DataGenError, GeneratedTable};
 
 use crate::error::RunError;
 
+pub mod aggregate;
 pub mod cardinality;
 pub(crate) mod curve;
 pub mod frequency;

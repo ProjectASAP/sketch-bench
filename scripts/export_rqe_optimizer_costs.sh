@@ -41,8 +41,6 @@ CARDINALITY=100000
 SEED=42
 MERGE_SHARDS=16
 
-CMS_DEPTHS=(3 5)
-CMS_WIDTHS=(1024 2048)
 HLL_PRECISIONS=(12 14)
 KLL_KS=(200 500)
 DD_ALPHAS=(0.01 0.02)
@@ -72,6 +70,23 @@ point() {
         --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
 }
 
+# Exact accumulators take no --config, live under library "exact", and ingest
+# grouped records: label columns, then an i64 value. Increase reads counters.
+point_exact() {
+    local variant=$1 comparator=$2 spec=$3
+    echo "  $variant" >&2
+    "$BINARY" sketchbench \
+        --variant "$variant" --library exact \
+        --operations insert,query,merge --metrics throughput,cpu,memory \
+        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
+        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+    "$BINARY" sketchbench \
+        --variant "$variant" --library exact \
+        --operations query --metrics accuracy --comparator "$comparator" \
+        --runs "$RUNS" --warmup-runs "$WARMUP" \
+        --spec "$spec" --dtype i64 --seed "$SEED" --report "$RAW_JSONL"
+}
+
 # UnivMon consumes key/value pairs. The inline dataset path is one-column, so
 # use the tracked two-column spec whose key column is u64.
 point_univmon() {
@@ -91,13 +106,11 @@ point_univmon() {
         --report "$RAW_JSONL"
 }
 
-echo "==> Frequency: CMS and CountSketch" >&2
-for rows in "${CMS_DEPTHS[@]}"; do
-    for cols in "${CMS_WIDTHS[@]}"; do
-        point cms-fastpath-vector2d "rows=$rows cols=$cols" frequency
-        point countsketch-fastpath-vector2d "rows=$rows cols=$cols" frequency
-    done
-done
+echo "==> Exact accumulators: sum, min, max, increase" >&2
+point_exact exact-sum sum-or-count configs/datagen/hydra_columns.yaml
+point_exact exact-min min configs/datagen/hydra_columns.yaml
+point_exact exact-max max configs/datagen/hydra_columns.yaml
+point_exact exact-increase rate-or-increase configs/datagen/counter_columns.yaml
 
 echo "==> Quantiles: KLL and DDSketch" >&2
 for k in "${KLL_KS[@]}"; do
@@ -114,12 +127,15 @@ done
 point_univmon "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
 point_univmon "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
 
-echo "==> Top-k: CMS heap" >&2
+echo "==> Top-k: CMS heap, CountSketch heap, UnivMon" >&2
 for rows in "${CMS_HEAP_ROWS[@]}"; do
     for cols in "${CMS_HEAP_COLS[@]}"; do
         point cms-heap-topk-fastpath-vector2d "rows=$rows cols=$cols" topk
+        point countsketch-heap-topk-fastpath-vector2d "rows=$rows cols=$cols" topk
     done
 done
+point univmon-topk "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8" topk
+point univmon-topk "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6" topk
 
 echo "==> Flattening cost + accuracy passes..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
