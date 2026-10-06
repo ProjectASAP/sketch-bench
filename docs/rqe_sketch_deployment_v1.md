@@ -30,6 +30,11 @@ and per-RAQE latency.
 - **Deployment**: a configuration run over one metric, grouped by `G`, with
   window `x` and slide `y`. A **candidate** is a deployment the optimizer may
   choose.
+- **Phase**: one of the four kinds of work a deployment does, each costed in
+  CPU and memory: **ingest** (inserting samples into open instances),
+  **merge** (folding a query's windows into an accumulator), **query**
+  (reading the merged result) and **storage** (keeping closed instances, no
+  CPU). See [Analytical cost model](#analytical-cost-model).
 
 ## Inputs
 
