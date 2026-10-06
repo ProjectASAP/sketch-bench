@@ -237,7 +237,10 @@ impl<C: Cell> Multiple<C> {
     /// The hash table plus what each group owns outside it. The table is an
     /// estimate of hashbrown's layout: one `(key, cell)` slot and one control
     /// byte per unit of capacity. It ignores the few trailing control bytes
-    /// and the gap between `capacity()` and the bucket count.
+    /// and the gap between `capacity()` and the bucket count. Capacity is what
+    /// is allocated, so the per-group share depends on the load factor at the
+    /// measured group count (~1.44 slots per group at the export's ~9.9k
+    /// groups); other group counts land between 1 and 2.
     fn footprint(&self) -> usize {
         let table = self.by_group.capacity()
             * (std::mem::size_of::<Vec<String>>() + std::mem::size_of::<C>() + 1);

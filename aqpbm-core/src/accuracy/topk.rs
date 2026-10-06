@@ -10,8 +10,8 @@ use aqpbm_datagen::{DataGenError, GeneratedTable};
 use super::{CountedValue, GroundTruth};
 
 /// How many times to put the one question. A heap dump of `k` items takes
-/// well under a microsecond, near `Instant::now()`'s 20-50 ns noise floor, so
-/// one call per pass would report mostly timer jitter. As for
+/// about a microsecond, so with one call per pass the CPU time read from
+/// `getrusage` around it is mostly the cost of the reading itself. As for
 /// `CardinalityGT`, the count is this statistic's knowledge, not the runner's.
 const QUERY_TIMING_REPEATS: usize = 1024;
 
