@@ -106,15 +106,25 @@ pub(crate) fn ingest(deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCos
     }
 }
 
-/// CPU `card(G) · (L/x − 1) · c_mrg / T`; memory `2 · card(G) · m`, both
-/// operands of a pairwise merge per group.
+/// CPU `card(G) · (L/x − 1) · c_mrg / T`; memory `card(G) · m`, one
+/// accumulator per group. The windows folded into it are live in storage.
+/// A direct query (`L == x`) merges nothing and costs neither.
 pub(crate) fn merge(rqe: &Rqe, deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCost {
     let groups = group_count(deployment, facts);
     let merges_per_group = merged_window_count(rqe, deployment) - 1.0;
     PhaseCost {
         cpu_secs_per_sec: groups * merges_per_group * deployment.config.merge_cpu_secs
             / rqe.interval_secs as f64,
-        memory_bytes: 2.0 * groups * deployment.config.mem_bytes_per_instance,
+        memory_bytes: groups * merge_memory_per_group(rqe, deployment),
+    }
+}
+
+/// One accumulator if the query merges at all.
+pub(crate) fn merge_memory_per_group(rqe: &Rqe, deployment: &Deployment) -> f64 {
+    if merged_window_count(rqe, deployment) > 1.0 {
+        deployment.config.mem_bytes_per_instance
+    } else {
+        0.0
     }
 }
 
@@ -209,14 +219,14 @@ mod tests {
         assert_eq!(result.ingest.cpu_secs_per_sec, 28.0); // 7 × 2 × 2
         assert_eq!(result.ingest.memory_bytes, 80.0); // 4 × 10 × 2
         assert_eq!(result.merge.cpu_secs_per_sec, 24.0 / 30.0); // 4 × 2 × 3 / 30
-        assert_eq!(result.merge.memory_bytes, 80.0); // 2 × 4 × 10
+        assert_eq!(result.merge.memory_bytes, 40.0); // 4 × 10
         assert_eq!(result.query.cpu_secs_per_sec, 20.0 / 30.0); // 4 × 5 / 30
         assert_eq!(result.query.memory_bytes, 2048.0); // 4 × 32 × 16
         assert_eq!(result.storage.cpu_secs_per_sec, 0.0);
         assert_eq!(result.storage.memory_bytes, 200.0); // 4 × 10 × 5
         assert_eq!(result.query_latency_secs, vec![44.0]); // 4 × (5 + 2 × 3)
         assert!((result.cpu_secs_per_sec() - (28.0 + 44.0 / 30.0)).abs() < 1e-12);
-        assert_eq!(result.memory_bytes(), 80.0 + 80.0 + 2048.0 + 200.0);
+        assert_eq!(result.memory_bytes(), 80.0 + 40.0 + 2048.0 + 200.0);
     }
 
     #[test]
@@ -224,7 +234,7 @@ mod tests {
         let deployment = deployment(10.0, 1.0, 1.0, 1.0, 60, 60);
         let result = score(&[rqe(60, 60)], &[deployment], &vec![0], &facts(1, 1));
         assert_eq!(result.storage.memory_bytes, 10.0);
-        assert_eq!(result.merge.cpu_secs_per_sec, 0.0);
+        assert_eq!(result.merge, PhaseCost::default());
     }
 
     #[test]
@@ -236,7 +246,7 @@ mod tests {
         assert_eq!(result.storage.memory_bytes, 1200.0);
         // Ingest is paid once; merge once per RQE.
         assert_eq!(result.ingest.cpu_secs_per_sec, 2.0);
-        // Two RQEs × 2 operands × 2 groups × 10 bytes.
-        assert_eq!(result.merge.memory_bytes, 2.0 * 2.0 * 2.0 * 10.0);
+        // Two RQEs × 2 groups × 10 bytes.
+        assert_eq!(result.merge.memory_bytes, 2.0 * 2.0 * 10.0);
     }
 }

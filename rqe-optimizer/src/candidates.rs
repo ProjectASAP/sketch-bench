@@ -1,5 +1,6 @@
 //! Candidate generation and eligibility (§3).
 
+use crate::objectives::merge_memory_per_group;
 use crate::{AtomicCostEntry, Capability, Deployment, LabelSet, Rqe, Seconds, WorkloadFacts};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -125,9 +126,9 @@ pub fn build_all_candidates_unpruned(
 ///
 /// This comparison is deliberately local to a (capability, metric, grouping)
 /// group, where `card(G)`, arrival rate and query output size are common
-/// multipliers. So it compares instance size (merge memory) and ingest CPU and
-/// memory per group, then latency (merge and query CPU) and stored memory for
-/// each RQE the dominated candidate can serve.
+/// multipliers. So it compares ingest CPU and memory per group, then latency
+/// (merge and query CPU), merge memory and stored memory for each RQE the
+/// dominated candidate can serve.
 pub fn prune_dominated_candidates(rqes: &[Rqe], candidates: Vec<Deployment>) -> Vec<Deployment> {
     let eligibility: Vec<Vec<bool>> = candidates
         .iter()
@@ -179,8 +180,7 @@ fn candidate_dominates(
         return false;
     }
 
-    replacement.config.mem_bytes_per_instance <= original.config.mem_bytes_per_instance
-        && ingest_cpu(replacement) <= ingest_cpu(original)
+    ingest_cpu(replacement) <= ingest_cpu(original)
         && ingest_memory(replacement) <= ingest_memory(original)
         && original_coverage
             .iter()
@@ -190,11 +190,12 @@ fn candidate_dominates(
             .iter()
             .enumerate()
             .all(|(rqe_index, &serves)| {
+                let rqe = &rqes[rqe_index];
                 !serves
-                    || (query_latency(replacement, &rqes[rqe_index])
-                        <= query_latency(original, &rqes[rqe_index])
-                        && stored_memory(replacement, &rqes[rqe_index])
-                            <= stored_memory(original, &rqes[rqe_index]))
+                    || (query_latency(replacement, rqe) <= query_latency(original, rqe)
+                        && merge_memory_per_group(rqe, replacement)
+                            <= merge_memory_per_group(rqe, original)
+                        && stored_memory(replacement, rqe) <= stored_memory(original, rqe))
             })
 }
 
@@ -205,8 +206,7 @@ fn strictly_better(
     original_coverage: &[bool],
     rqes: &[Rqe],
 ) -> bool {
-    replacement.config.mem_bytes_per_instance < original.config.mem_bytes_per_instance
-        || ingest_cpu(replacement) < ingest_cpu(original)
+    ingest_cpu(replacement) < ingest_cpu(original)
         || ingest_memory(replacement) < ingest_memory(original)
         || original_coverage
             .iter()
@@ -216,11 +216,12 @@ fn strictly_better(
             .iter()
             .enumerate()
             .any(|(rqe_index, &serves)| {
+                let rqe = &rqes[rqe_index];
                 serves
-                    && (query_latency(replacement, &rqes[rqe_index])
-                        < query_latency(original, &rqes[rqe_index])
-                        || stored_memory(replacement, &rqes[rqe_index])
-                            < stored_memory(original, &rqes[rqe_index]))
+                    && (query_latency(replacement, rqe) < query_latency(original, rqe)
+                        || merge_memory_per_group(rqe, replacement)
+                            < merge_memory_per_group(rqe, original)
+                        || stored_memory(replacement, rqe) < stored_memory(original, rqe))
             })
 }
 
@@ -453,5 +454,39 @@ mod tests {
         let retained = prune_dominated_candidates(&[r], vec![whole_window.clone(), panes.clone()]);
 
         assert_eq!(retained, vec![whole_window, panes]);
+    }
+
+    #[test]
+    fn retains_direct_query_candidate_that_never_merges() {
+        let r = rqe("r", 60, 60);
+        // x == L: no merge, so no merge memory.
+        let direct = Deployment {
+            capability: Capability::TopK,
+            metric: METRIC.into(),
+            grouping_labels: LabelSet::new(),
+            config: AtomicCostEntry {
+                mem_bytes_per_instance: 10.0,
+                ..cost()
+            },
+            window_secs: 60,
+            slide_secs: 60,
+        };
+        // Smaller and cheaper on every other cost, but merges two windows,
+        // holding a 4-byte accumulator per group.
+        let halves = Deployment {
+            config: AtomicCostEntry {
+                mem_bytes_per_instance: 4.0,
+                query_cpu_secs: 0.5,
+                merge_cpu_secs: 0.1,
+                ..cost()
+            },
+            window_secs: 30,
+            slide_secs: 30,
+            ..direct.clone()
+        };
+
+        let retained = prune_dominated_candidates(&[r], vec![direct.clone(), halves.clone()]);
+
+        assert_eq!(retained, vec![direct, halves]);
     }
 }
