@@ -26,7 +26,8 @@ pub enum Aggregate {
     /// unbounded: last minus first, plus the value before each drop (a reset).
     Increase,
     /// 1 for every group seen: the key set ASAPQuery's `DeltaSetAggregator`
-    /// tracks, as one value per key so a missing key scores infinite.
+    /// tracks, as one value per key so a missing key is scored. Its infinite
+    /// error serializes as `null`, which `atomic-costs` skips the row for.
     Presence,
 }
 

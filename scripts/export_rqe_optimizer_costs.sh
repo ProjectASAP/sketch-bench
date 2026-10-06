@@ -152,6 +152,13 @@ echo "==> Flattening cost + accuracy passes..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
 echo "==> Reducing to atomic-cost table (expect 24 row(s), 0 skipped)..." >&2
-"$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
+# A skipped row is a failed measurement, e.g. an exact row that missed a group
+# scores an infinite error, which JSON holds as null. Fail rather than publish
+# a table that is silently short.
+summary=$("$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" 2>&1 | tee /dev/stderr | tail -n 1)
+if [[ "$summary" != *", 0 skipped" ]]; then
+    echo "ERROR: atomic-costs skipped rows; see the reasons above." >&2
+    exit 1
+fi
 
 echo "Done. $TABLE_JSON" >&2
