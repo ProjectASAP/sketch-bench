@@ -1,18 +1,18 @@
-# RQE-to-sketch deployment mapping: v1
+# RAQE-to-sketch deployment mapping: v1
 
 ## Purpose
 
-Given a workload of repeating query expressions (RQEs), find sketch deployments
+Given a workload of repeating atomic query expressions (RAQEs), find sketch deployments
 that can serve it and report the trade-offs among query working memory, CPU,
-and per-RQE latency.
+and per-RAQE latency.
 
 ## Glossary
 
-- **RQE**: repeating query expression, evaluated every `T` over the last `S`.
-- **Capability**: the statistic an RQE needs: sum/count, min, max,
+- **RAQE**: repeating atomic query expression, evaluated every `T` over the last `S`.
+- **Capability**: the statistic an RAQE needs: sum/count, min, max,
   rate/increase, quantile, cardinality or top-k.
 - **Metric**: a named stream of samples whose series are told apart by labels.
-- **Group**: one combination of values of an RQE's group-by labels `G`. There
+- **Group**: one combination of values of an RAQE's group-by labels `G`. There
   are `card(G)` groups.
 - **Family**: one sketch or accumulator implementation, such as `kll-percall`,
   `cms-heap-topk-fastpath-vector2d` or `exact-sum`. Each capability lists the
@@ -33,14 +33,14 @@ and per-RQE latency.
 
 ## Inputs
 
-Let `R = {r_1, ..., r_n}` be the RQE workload. Each RQE `r_i` provides:
+Let `R = {r_1, ..., r_n}` be the RAQE workload. Each RAQE `r_i` provides:
 
 | Field | Meaning |
 |---|---|
 | `cap_i` | Required capability. |
 | `S_i` | Query-window size. This is the current `lookback` field. |
-| `T_i` | Query slide: how often the RQE runs. This is the current `interval` field. |
-| `metric_i` | Metric the RQE reads. |
+| `T_i` | Query slide: how often the RAQE runs. This is the current `interval` field. |
+| `metric_i` | Metric the RAQE reads. |
 | `G_i` | Group-by label set (`grouping_labels`). |
 | `accuracy_metric_i` | Accuracy measurement to check. |
 | `tol_i` | Accuracy threshold. |
@@ -89,14 +89,14 @@ For every label-value group, it creates an instance for every interval:
 
 At time `t`, an instance is **open** while its interval has not ended
 (`t < k × y + x`): it still receives samples. After that it is **closed**: it
-never changes again and is kept only while some RQE's lookback still needs it.
+never changes again and is kept only while some RAQE's lookback still needs it.
 A deployment has `x / y` open instances per group at any time.
 
 Instances overlap when `x > y`. There is no subtract operation. To answer an
-RQE, the system selects and merges only non-overlapping instances, so items
+RAQE, the system selects and merges only non-overlapping instances, so items
 are never counted twice.
 
-An RQE with query window `S` and query slide `T` can use a deployment when:
+An RAQE with query window `S` and query slide `T` can use a deployment when:
 
 ```text
 x % y == 0
@@ -117,7 +117,7 @@ have produced other, overlapping instances between these starts. That is okay. T
 3 minutes can use `x = 2 minutes` and `y = 1 minute`; each query merges five
 non-overlapping two-minute instances.
 
-We assume all RQEs share a common time origin. Query phase offsets are not
+We assume all RAQEs share a common time origin. Query phase offsets are not
 modeled.
 
 ## Candidate deployments
@@ -128,50 +128,50 @@ A candidate deployment is:
 D = (capability, configuration, metric, G, x, y)
 ```
 
-Candidates may be generated from individual RQEs, then deduplicated. This is
+Candidates may be generated from individual RAQEs, then deduplicated. This is
 only a way to construct the candidate set: when solving a workload, one
-selected deployment may serve multiple compatible RQEs.
+selected deployment may serve multiple compatible RAQEs.
 
 Intuition: candidates are built in two steps, and each drops only candidates
 that another candidate beats, so the best plan is never lost. Generation uses
 no measurements. It keeps every legal window and configuration, and drops only
-slides that a coarser slide beats for the same RQEs. Pruning then attaches the
-measured costs and drops a candidate when another serves all of its RQEs and
+slides that a coarser slide beats for the same RAQEs. Pruning then attaches the
+measured costs and drops a candidate when another serves all of its RAQEs and
 is no worse on every cost.
 
 For each (capability, metric, G) group, generate candidates as follows:
 
 ```text
 for each window x that divides some S_i and is a multiple of the scrape interval:
-    for each RQE i whose S_i is divisible by x:
-        g_i = gcd(x, T_i)    # the largest slide that serves RQE i
+    for each RAQE i whose S_i is divisible by x:
+        g_i = gcd(x, T_i)    # the largest slide that serves RAQE i
     slides = { gcd(A) : A is a non-empty subset of {g_i} }
     for each y in slides that is a multiple of the scrape interval:
         for each configuration that serves the capability:
             add (capability, configuration, metric, G, x, y)
 ```
 
-**Windows.** An RQE merges `S_i / x` whole windows, so `x` must divide `S_i`.
+**Windows.** An RAQE merges `S_i / x` whole windows, so `x` must divide `S_i`.
 Windows and slides finer than the scrape interval would only split one
 scrape's samples.
 
-**Slides.** A slide `y` serves RQE `i` when it divides both `x` and `T_i`,
-that is, when it divides `g_i`. A finer slide serves no more RQEs but holds
+**Slides.** A slide `y` serves RAQE `i` when it divides both `x` and `T_i`,
+that is, when it divides `g_i`. A finer slide serves no more RAQEs but holds
 more open windows (`x / y`) and more closed ones, so it costs more ingest and
 storage at the same latency. Hence:
 
-- for one RQE, `y = g_i` is strictly better than every finer slide that serves
+- for one RAQE, `y = g_i` is strictly better than every finer slide that serves
   it;
-- for a set `A` of RQEs sharing a deployment, `y = gcd(A)`, the largest slide
+- for a set `A` of RAQEs sharing a deployment, `y = gcd(A)`, the largest slide
   dividing every `g_i` in `A`, is strictly better than every finer slide that
   serves them all.
 
-Which RQEs share is the solver's choice, so every subset's gcd is a candidate.
+Which RAQEs share is the solver's choice, so every subset's gcd is a candidate.
 Every other divisor of `x` is strictly worse than one of these.
 
-Example: `x = 60`, RQE `a` every 20 s, RQE `b` every 30 s.
+Example: `x = 60`, RAQE `a` every 20 s, RAQE `b` every 30 s.
 
-| Served RQEs | `y` | Open windows `x / y` |
+| Served RAQEs | `y` | Open windows `x / y` |
 |---|---|---|
 | `a` | gcd(60, 20) = 20 | 3 |
 | `b` | gcd(60, 30) = 30 | 2 |
@@ -187,7 +187,7 @@ far, and for each new `g` add `g` and `gcd(found, g)` for every `found`. For
 `{20, 30}`: `{20}`, then `{20, 30, 10}`. One pass suffices because
 `gcd(A ∪ {g}) = gcd(gcd(A), g)`.
 
-An RQE `r_i` is eligible for a candidate `D` when:
+An RAQE `r_i` is eligible for a candidate `D` when:
 
 1. `cap_i = D.capability`, `metric_i = D.metric` and `G_i = D.G`.
 2. `D.x % D.y = 0`, `S_i % D.x = 0`, and `T_i % D.y = 0`.
@@ -196,34 +196,34 @@ An RQE `r_i` is eligible for a candidate `D` when:
 
 For lower-is-better metrics, passing means `measured <= tol_i`. For
 higher-is-better metrics, passing means `measured >= tol_i`. Direction is
-explicit on the RQE; it is never inferred from a metric name. A missing metric
+explicit on the RAQE; it is never inferred from a metric name. A missing metric
 does not pass.
 
 Before mapping, prune a candidate only if another candidate can serve every
-RQE it can and is no worse in ingest CPU and memory, and in latency, merge
-memory and stored memory for each such RQE. This is safe because any mapping using
+RAQE it can and is no worse in ingest CPU and memory, and in latency, merge
+memory and stored memory for each such RAQE. This is safe because any mapping using
 the removed candidate can substitute the remaining one without weakening a
 modeled objective.
 
-Closed instances must be stored long enough to answer the RQEs assigned to a
+Closed instances must be stored long enough to answer the RAQEs assigned to a
 deployment. Retention is not a candidate parameter: a deployment stores the
 history needed by the largest assigned query window, costed as the storage
 phase (below).
 
 ## Workload mapping
 
-Let `z_{i,D}` be 1 when RQE `i` uses candidate deployment `D`; let `u_D` be 1
+Let `z_{i,D}` be 1 when RAQE `i` uses candidate deployment `D`; let `u_D` be 1
 when deployment `D` is active.
 
 ```text
-Σ_D z_{i,D} = 1       for every RQE i
+Σ_D z_{i,D} = 1       for every RAQE i
 z_{i,D} <= u_D        for every eligible pair (i, D)
 ```
 
-Every RQE selects exactly one eligible deployment. Multiple RQEs may select
+Every RAQE selects exactly one eligible deployment. Multiple RAQEs may select
 the same deployment and therefore share its ingest work. A query may merge
 multiple instances from its selected deployment, but v1 does not combine
-results from several deployments to satisfy one RQE.
+results from several deployments to satisfy one RAQE.
 
 ### MILP formulation
 
@@ -236,14 +236,14 @@ z_{i,D}  ∈ {0, 1}    for (i, D) ∈ E
 u_D      ∈ {0, 1}    for D ∈ candidates
 stored_D ≥ 0
 
-Σ_{D: (i,D) ∈ E} z_{i,D} = 1                    for every RQE i
+Σ_{D: (i,D) ∈ E} z_{i,D} = 1                    for every RAQE i
 z_{i,D} ≤ u_D                                    for (i, D) ∈ E
 u_D ≤ Σ_{i: (i,D) ∈ E} z_{i,D}                   for every candidate D
 stored_D ≥ w(storage_{i,D}) × z_{i,D}            for (i, D) ∈ E
 ```
 
 The `u_D ≤ Σ z` constraint prevents a deployment from becoming active when no
-RQE selected it. It is not required for feasibility, but makes ingest cost
+RAQE selected it. It is not required for feasibility, but makes ingest cost
 unambiguous. `stored_D` is a linearized max: a deployment stores enough for
 the longest lookback it serves.
 
@@ -260,7 +260,7 @@ CPU is the area under the CPU curve (mean CPU-sec/sec), so plans are sized
 for the mean load, not for bursts. Memory sums every phase, as if every query
 evaluates at once. The default weights are `(1, 0)`: CPU only.
 
-Per-RQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
+Per-RAQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
 never enumerates full mappings.
 
 ## Analytical cost model
@@ -269,13 +269,13 @@ The analytical model combines the empirical per-operation Sketch Bench
 measurements with workload properties such as group cardinality, arrival rate,
 window size, and query frequency.
 
-For deployment `D` serving RQE `i`:
+For deployment `D` serving RAQE `i`:
 
 - `lambda`: samples/sec arriving for `D`'s metric, `card(metric.labels) / scrape_interval`.
 - `card(G)`: cardinality of `G`, so the number of parallel accumulator instances per window.
 - `x`, `y`: `D`'s window and slide.
 - `a_D = x / y`: open windows; each sample is inserted into `a_D` instances of its group.
-- `S_i`, `T_i`: RQE `i`'s lookback and interval.
+- `S_i`, `T_i`: RAQE `i`'s lookback and interval.
 - `n_i = S_i / x`: windows merged per query.
 - `m`: memory per instance, measured.
 - `c_ins`: CPU per insert, measured.
@@ -288,8 +288,8 @@ Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
 | Phase | CPU | Memory |
 |---|---|---|
 | Ingest, per active `D` | `lambda × a_D × c_ins` | `card(G) × m × a_D` (open windows) |
-| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one accumulator per group); 0 when `n_i = 1` |
-| Query, per RQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
+| Merge, per RAQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one accumulator per group); 0 when `n_i = 1` |
+| Query, per RAQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
 | Storage, per active `D` | 0 | `card(G) × m × ((max_i S_i − x) / y + 1)` (closed windows) |
 
 Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
@@ -343,7 +343,7 @@ needs the key labels `K`, the metric's labels minus `G`. So for every family
 in use, nothing scales with keys below the group: a per-service top-k CMS
 costs the same however many endpoints it counts.
 
-Per-RQE latency is the serial CPU time of one query:
+Per-RAQE latency is the serial CPU time of one query:
 
 ```text
 latency_i = card(G) × (c_qry + (n_i − 1) × c_mrg)
@@ -354,11 +354,11 @@ no cheaper k-way merge.
 
 ## Procedure
 
-1. Generate candidate deployments for each input RQE, then deduplicate them.
-2. Build the eligible candidate–RQE pairs. Reject pairs that fail capability,
+1. Generate candidate deployments for each input RAQE, then deduplicate them.
+2. Build the eligible candidate–RAQE pairs. Reject pairs that fail capability,
    metric, grouping, window alignment, or empirical accuracy.
-3. Enumerate feasible workload mappings. Every RQE must select one eligible
-   candidate; a single selected candidate may serve multiple RQEs. Small
+3. Enumerate feasible workload mappings. Every RAQE must select one eligible
+   candidate; a single selected candidate may serve multiple RAQEs. Small
    instances may retain every mapping eagerly; larger ones stream mappings
    through incremental Pareto filtering, retaining only the current frontier.
 4. Score every complete mapping with the analytical cost model.
@@ -378,15 +378,15 @@ each phase's CPU and memory, together with the selected deployment mapping.
 - **Accuracy after merging:** v1 uses the measured, single-instance accuracy
   of a configuration. Measure or model merged accuracy before relying on a
   selected mapping as truly accuracy-feasible.
-- **Query-result sharing:** v1 charges every RQE its own query and merge CPU.
-  Revisit when RQE semantics and execution timing identify safe reuse cases.
-- **Latency SLAs:** the MILP takes optional per-RQE latency bounds; the
+- **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
+  Revisit when RAQE semantics and execution timing identify safe reuse cases.
+- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; the
   enumerator reports latency but does not reject a mapping for it.
-- **Memory model:** query memory sums every RQE's merge and output memory, as
+- **Memory model:** query memory sums every RAQE's merge and output memory, as
   if all queries run at once; real concurrency is not modeled. Query output
   size is an estimate.
 - **Bursts:** CPU is a mean over time, so plans are sized for average load.
-- **Static planning:** no RQE churn, replanning, or migration cost.
+- **Static planning:** no RAQE churn, replanning, or migration cost.
 - **Rollups:** v1 does not precompute merged rollups. Queries merge their
   selected base instances when they run.
 - **Selection policy:** the enumerator reports the Pareto frontier; the MILP
