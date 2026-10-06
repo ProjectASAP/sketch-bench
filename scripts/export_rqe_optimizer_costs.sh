@@ -63,6 +63,8 @@ MERGE_SHARDS=16
 # One shard is the accuracy pass's single instance. The same stream is split m
 # ways (fixed total): for a fixed query L, choosing x splits the query's total
 # over L/x windows. Beyond the largest count the optimizer reads the largest.
+# Accuracy is scored once, so each merge pass runs once with no warm-up. On the
+# 200k-row specs, 1024 shards of ceil(200000/1024) rows come out as 1021.
 MERGE_ACCURACY_SHARDS=(4 16 64 256 1024)
 
 # The swept parameters, every one of them. Exact accumulators take none.
@@ -114,7 +116,7 @@ measure() {
         "$BINARY" sketchbench \
             --variant "$variant" --library "$library" "${config_args[@]}" \
             --operations merge --metrics accuracy --comparator "$comparator" \
-            --merge-shards "$m" \
+            --merge-shards "$m" --runs 1 --warmup-runs 0 \
             "$@" --seed "$SEED" --flat --report "$MERGE_ACCURACY_JSONL"
     done
 }

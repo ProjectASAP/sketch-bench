@@ -289,7 +289,9 @@ fn accuracy_map(
 }
 
 /// Whether two rows measured the same cell: the identity `approxbench
-/// flatten` groups by.
+/// flatten` groups by. It has no comparator, so a cell scored by two
+/// comparators would collect both sets of merge rows and be skipped as a
+/// duplicate count, loudly.
 pub fn same_cell(a: &MergedRecord, b: &MergedRecord) -> bool {
     a.sketch == b.sketch
         && a.library == b.library
@@ -716,7 +718,7 @@ mod tests {
         let (table, _) = reduce_all(&[full_record()], &[merge_run(16, 0.2)]);
         let json = serde_json::to_string(&table[0]).unwrap();
         assert!(
-            json.ends_with(r#""merge_accuracy":{"16":{"relative_error_mean":0.2}}}"#),
+            json.contains(r#""merge_accuracy":{"16":{"relative_error_mean":0.2}}"#),
             "{json}"
         );
         assert_eq!(

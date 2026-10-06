@@ -447,6 +447,33 @@ mod tests {
         assert_eq!(at(&config, 1_000), [64.0, 64.0]);
     }
 
+    /// Both brackets must pass in the metric's own direction: top-k precision
+    /// is higher-is-better, and a bad count between two good ones fails.
+    #[test]
+    fn both_brackets_must_clear_a_higher_is_better_metric() {
+        let mut config = deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config;
+        let precision = |v: f64| BTreeMap::from([("p".to_string(), v)]);
+        config.query_accuracy = precision(1.0);
+        config.merge_accuracy = BTreeMap::from([
+            (4, precision(0.97)),
+            (16, precision(0.8)),
+            (64, precision(1.0)),
+        ]);
+        let r = Raqe {
+            accuracy_metric: "p".into(),
+            accuracy_sla: 0.9,
+            accuracy_direction: AccuracyDirection::HigherIsBetter,
+            ..raqe(60_000, 60_000)
+        };
+        assert!(r.accuracy_ok_for(&config, 1));
+        assert!(r.accuracy_ok_for(&config, 4));
+        assert!(!r.accuracy_ok_for(&config, 8)); // [4, 16]: 16 fails
+        assert!(!r.accuracy_ok_for(&config, 16));
+        assert!(!r.accuracy_ok_for(&config, 32)); // [16, 64]
+        assert!(r.accuracy_ok_for(&config, 64));
+        assert!(r.accuracy_ok_for(&config, 5_000)); // beyond: [64, 64]
+    }
+
     #[test]
     fn every_deployable_family_serves_a_capability() {
         for family in DEPLOYABLE_FAMILIES {
