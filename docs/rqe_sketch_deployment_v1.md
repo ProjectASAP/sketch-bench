@@ -118,15 +118,18 @@ Windows and slides finer than the scrape interval would only split one
 scrape's samples.
 
 **Slides.** A slide `y` serves RQE `i` when it divides both `x` and `T_i`,
-that is, when it divides `g_i`. A smaller `y` only adds open windows (`x / y`),
-which costs ingest and storage for no gain. So:
+that is, when it divides `g_i`. A finer slide serves no more RQEs but holds
+more open windows (`x / y`) and more closed ones, so it costs more ingest and
+storage at the same latency. Hence:
 
-- one RQE alone wants `y = g_i`;
-- a set `A` of RQEs sharing a deployment wants the largest `y` dividing every
-  `g_i` in `A`, which is `gcd(A)`.
+- for one RQE, `y = g_i` is strictly better than every finer slide that serves
+  it;
+- for a set `A` of RQEs sharing a deployment, `y = gcd(A)`, the largest slide
+  dividing every `g_i` in `A`, is strictly better than every finer slide that
+  serves them all.
 
 Which RQEs share is the solver's choice, so every subset's gcd is a candidate.
-Every other divisor of `x` is dominated by one of these.
+Every other divisor of `x` is strictly worse than one of these.
 
 Example: `x = 60`, RQE `a` every 20 s, RQE `b` every 30 s.
 

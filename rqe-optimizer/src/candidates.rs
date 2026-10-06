@@ -58,8 +58,9 @@ fn candidate_deployments(
         .collect::<BTreeSet<_>>();
     let mut deployments = Vec::new();
     for window_secs in windows {
-        // gcd(x, T) is the largest slide that serves an RQE. RQEs sharing a
-        // deployment need the gcd of theirs, and any subset might share.
+        // gcd(x, T) is the largest slide that serves an RQE. For RQEs sharing a
+        // deployment, the gcd of theirs is strictly better than any finer
+        // slide that serves them all. Any subset might share.
         let slides = subset_gcds(
             group
                 .iter()
