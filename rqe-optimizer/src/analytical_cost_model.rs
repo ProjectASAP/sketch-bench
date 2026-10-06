@@ -89,8 +89,15 @@ fn priced_parts<'a>(
     deployment: &'a Deployment,
     facts: &WorkloadFacts,
 ) -> impl Iterator<Item = (&'a AtomicCostEntry, f64)> {
+    let properties = deployment.properties();
+    assert_eq!(
+        properties.needs_delta_set_key_tracker,
+        deployment.key_tracker.is_some(),
+        "{}: key tracker present iff the family needs one, or the plan is mispriced",
+        deployment.config.sketch
+    );
     let groups = group_count(deployment, facts);
-    let sketch_instances = if deployment.properties().one_fixed_size_sketch_for_all_groups {
+    let sketch_instances = if properties.one_fixed_size_sketch_for_all_groups {
         1.0
     } else {
         groups
@@ -425,5 +432,13 @@ mod tests {
         assert_eq!(result.storage.memory_bytes, 100.0 * 5.0 + 4.0 * 10.0 * 5.0);
         // 4 × (5 + 1) query + 2 × 3 Hydra merges + 4 × 2 × 1 tracker merges, in s.
         assert_eq!(result.query_latency_ms, vec![38_000.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "key tracker present iff the family needs one")]
+    fn a_family_that_needs_a_tracker_is_never_priced_without_one() {
+        let mut deployment = deployment(100.0, 1.0, 1.0, 1.0, 60_000, 60_000);
+        deployment.config.sketch = "hydra-kll".into();
+        ingest(&deployment, &facts(1, 1));
     }
 }

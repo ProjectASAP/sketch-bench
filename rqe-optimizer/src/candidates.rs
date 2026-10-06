@@ -3,7 +3,7 @@
 use crate::analytical_cost_model;
 use crate::{
     AtomicCostEntry, Capability, Deployment, LabelSet, MetricFacts, Millis, Raqe, WorkloadFacts,
-    KEY_TRACKER_FAMILY,
+    DEPLOYABLE_FAMILIES, KEY_TRACKER_FAMILY,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -73,7 +73,10 @@ fn candidate_deployments(
     let scrape_interval_ms = metric_facts.scrape_interval_ms;
     let groups = metric_facts.cardinality[&group[0].grouping_labels];
     // ponytail: the first tracker row; the export measures one.
-    let tracker_row = costs.iter().find(|c| c.sketch == KEY_TRACKER_FAMILY);
+    let tracker_row = costs.iter().find(|c| {
+        c.sketch == KEY_TRACKER_FAMILY
+            && (allow_undeployable_families || DEPLOYABLE_FAMILIES.contains(&KEY_TRACKER_FAMILY))
+    });
     let windows = group
         .iter()
         .flat_map(|r| divisors(r.lookback_ms / scrape_interval_ms))
@@ -186,14 +189,9 @@ pub fn prune_dominated_candidates(
     facts: &WorkloadFacts,
     candidates: Vec<Deployment>,
 ) -> Vec<Deployment> {
-    let eligibility: Vec<Vec<bool>> = candidates
+    let costs: Vec<CandidateCosts> = candidates
         .iter()
-        .map(|candidate| {
-            raqes
-                .iter()
-                .map(|raqe| is_eligible(raqe, candidate))
-                .collect()
-        })
+        .map(|candidate| CandidateCosts::new(candidate, raqes, facts))
         .collect();
 
     candidates
@@ -206,11 +204,9 @@ pub fn prune_dominated_candidates(
                 }
                 match dominance(
                     &candidates[other_index],
-                    &eligibility[other_index],
+                    &costs[other_index],
                     candidate,
-                    &eligibility[candidate_index],
-                    raqes,
-                    facts,
+                    &costs[candidate_index],
                 ) {
                     Dominance::StrictlyBetter => true,
                     // The earlier of two identical candidates wins, so a tie
@@ -224,6 +220,37 @@ pub fn prune_dominated_candidates(
         .collect()
 }
 
+/// One candidate's costs, computed once for every pairwise comparison.
+struct CandidateCosts {
+    /// Ingest CPU and memory.
+    ingest: [f64; 2],
+    /// Per RAQE: latency, merge memory and stored memory if the candidate
+    /// serves it, else `None`.
+    per_raqe: Vec<Option<[f64; 3]>>,
+}
+
+impl CandidateCosts {
+    fn new(candidate: &Deployment, raqes: &[Raqe], facts: &WorkloadFacts) -> Self {
+        let ingest = analytical_cost_model::ingest(candidate, facts);
+        let per_raqe = raqes
+            .iter()
+            .map(|raqe| {
+                is_eligible(raqe, candidate).then(|| {
+                    [
+                        analytical_cost_model::query_latency_ms(raqe, candidate, facts),
+                        analytical_cost_model::merge(raqe, candidate, facts).memory_bytes,
+                        analytical_cost_model::storage_bytes(raqe, candidate, facts),
+                    ]
+                })
+            })
+            .collect();
+        Self {
+            ingest: [ingest.cpu_secs_per_sec, ingest.memory_bytes],
+            per_raqe,
+        }
+    }
+}
+
 enum Dominance {
     StrictlyBetter,
     Equal,
@@ -234,60 +261,54 @@ enum Dominance {
 /// `original` serves and is no worse on any cost.
 fn dominance(
     replacement: &Deployment,
-    replacement_coverage: &[bool],
+    replacement_costs: &CandidateCosts,
     original: &Deployment,
-    original_coverage: &[bool],
-    raqes: &[Raqe],
-    facts: &WorkloadFacts,
+    original_costs: &CandidateCosts,
 ) -> Dominance {
     let same_group = replacement.capability == original.capability
         && replacement.metric == original.metric
         && replacement.spatial_filter == original.spatial_filter
         && replacement.grouping_labels == original.grouping_labels;
-    let covers_original = original_coverage
+    let covers_original = original_costs
+        .per_raqe
         .iter()
-        .zip(replacement_coverage)
-        .all(|(&original_serves, &replacement_serves)| !original_serves || replacement_serves);
+        .zip(&replacement_costs.per_raqe)
+        .all(|(original_serves, replacement_serves)| {
+            original_serves.is_none() || replacement_serves.is_some()
+        });
     if !same_group || !covers_original {
         return Dominance::NotDominating;
     }
 
-    // Each pair is (replacement's cost, original's cost).
-    let replacement_ingest = analytical_cost_model::ingest(replacement, facts);
-    let original_ingest = analytical_cost_model::ingest(original, facts);
-    let mut costs = vec![
-        (
-            replacement_ingest.cpu_secs_per_sec,
-            original_ingest.cpu_secs_per_sec,
-        ),
-        (
-            replacement_ingest.memory_bytes,
-            original_ingest.memory_bytes,
-        ),
-    ];
-    for (raqe, _) in raqes
+    // Each pair is (replacement's cost, original's cost), over the RAQEs
+    // `original` serves.
+    let mut costs: Vec<(f64, f64)> = replacement_costs
+        .ingest
+        .into_iter()
+        .zip(original_costs.ingest)
+        .collect();
+    for (replacement_raqe, original_raqe) in replacement_costs
+        .per_raqe
         .iter()
-        .zip(original_coverage)
-        .filter(|(_, &serves)| serves)
+        .zip(&original_costs.per_raqe)
     {
-        costs.push((
-            analytical_cost_model::query_latency_ms(raqe, replacement, facts),
-            analytical_cost_model::query_latency_ms(raqe, original, facts),
-        ));
-        costs.push((
-            analytical_cost_model::merge(raqe, replacement, facts).memory_bytes,
-            analytical_cost_model::merge(raqe, original, facts).memory_bytes,
-        ));
-        costs.push((
-            analytical_cost_model::storage_bytes(raqe, replacement, facts),
-            analytical_cost_model::storage_bytes(raqe, original, facts),
-        ));
+        if let (Some(replacement_raqe), Some(original_raqe)) = (replacement_raqe, original_raqe) {
+            costs.extend(
+                replacement_raqe
+                    .iter()
+                    .copied()
+                    .zip(original_raqe.iter().copied()),
+            );
+        }
     }
 
-    let serves_more = original_coverage
+    let serves_more = original_costs
+        .per_raqe
         .iter()
-        .zip(replacement_coverage)
-        .any(|(&original_serves, &replacement_serves)| !original_serves && replacement_serves);
+        .zip(&replacement_costs.per_raqe)
+        .any(|(original_serves, replacement_serves)| {
+            original_serves.is_none() && replacement_serves.is_some()
+        });
     if costs
         .iter()
         .any(|(replacement_cost, original_cost)| replacement_cost > original_cost)
