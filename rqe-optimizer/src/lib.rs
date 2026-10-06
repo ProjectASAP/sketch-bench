@@ -6,7 +6,8 @@
 //! [`candidates`] builds 𝒟 and per-RQE eligibility (§3), [`enumerate`]
 //! searches (§4), [`objectives`] scores (§5).
 //!
-//! Every number the algorithm uses is caller-supplied -- no constants here.
+//! Every number the algorithm uses is caller-supplied, except the query
+//! output size estimates in [`objectives`].
 
 pub mod autosketch;
 pub mod candidates;
@@ -70,16 +71,75 @@ impl Capability {
     }
 }
 
-/// Property of a label set, not of an RQE (§1): RQEs sharing a label set
-/// read the same grouped stream. Given as input, never estimated.
-#[derive(Debug, Clone, Copy)]
-pub struct LabelSetInfo {
-    /// `card(labels)`: distinct label-value combinations, i.e. how many
-    /// physical sketch instances one deployment for this label set needs.
-    pub cardinality: u64,
-    /// `λ(labels)`: aggregate items/sec flowing into this grouped stream,
-    /// across all of its groups.
-    pub arrival_rate_per_sec: f64,
+/// Facts about one metric's stream, given as input (#143 S2). RQEs and
+/// deployments on the same metric read the same samples, grouped by
+/// `grouping_labels`.
+#[derive(Debug, Clone)]
+pub struct MetricFacts {
+    /// Every label the metric's series carry, so `cardinality[labels]` is the
+    /// raw series count.
+    pub labels: LabelSet,
+    /// Every series yields one sample per scrape.
+    pub scrape_interval_secs: Seconds,
+    /// `card(G)`: distinct value combinations of each label set in use, i.e.
+    /// how many instances a deployment grouped by `G` holds per window. Must
+    /// include `labels` itself.
+    pub cardinality: BTreeMap<LabelSet, u64>,
+}
+
+impl MetricFacts {
+    /// `λ`: samples/sec across all of the metric's series. Derived, never
+    /// given, so it can't disagree with the cardinalities.
+    pub fn arrival_rate_per_sec(&self) -> f64 {
+        self.cardinality[&self.labels] as f64 / self.scrape_interval_secs as f64
+    }
+}
+
+/// [`MetricFacts`] keyed by metric name.
+pub type WorkloadFacts = BTreeMap<String, MetricFacts>;
+
+/// Every problem with `facts` for serving `rqes`, so a caller sees them all
+/// at once. The rest of the crate indexes `facts` without checks, so call
+/// this first on caller input.
+pub fn validate_facts(rqes: &[Rqe], facts: &WorkloadFacts) -> Result<(), Vec<String>> {
+    let mut problems = BTreeSet::new();
+    for rqe in rqes {
+        let (metric, grouping) = (&rqe.metric, &rqe.grouping_labels);
+        let Some(f) = facts.get(metric) else {
+            problems.insert(format!("{metric}: no facts for this metric"));
+            continue;
+        };
+        if f.scrape_interval_secs == 0 {
+            problems.insert(format!("{metric}: scrape interval is 0"));
+        }
+        if !grouping.is_subset(&f.labels) {
+            problems.insert(format!(
+                "{metric}: grouping {grouping:?} is not a subset of its labels {:?}",
+                f.labels
+            ));
+        }
+        for labels in [grouping, &f.labels] {
+            match f.cardinality.get(labels) {
+                None => problems.insert(format!("{metric}: no cardinality for {labels:?}")),
+                Some(0) => problems.insert(format!("{metric}: cardinality of {labels:?} is 0")),
+                Some(_) => false,
+            };
+        }
+        if let (Some(&groups), Some(&series)) =
+            (f.cardinality.get(grouping), f.cardinality.get(&f.labels))
+        {
+            if groups > series {
+                problems.insert(format!(
+                    "{metric}: {grouping:?} has {groups} groups but only {series} series"
+                ));
+            }
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.into_iter().collect())
+    }
 }
 
 /// Which way an accuracy metric runs. Most comparators report an error
@@ -106,7 +166,9 @@ pub struct Rqe {
     pub lookback_secs: Seconds,
     /// `T_i`: how often this RQE is queried.
     pub interval_secs: Seconds,
-    pub labels: LabelSet,
+    pub metric: String,
+    /// `G`: the query's group-by labels.
+    pub grouping_labels: LabelSet,
     /// Which `AtomicCostEntry::query_accuracy` key to check. Comparators
     /// name their metrics differently per capability, so the RQE picks.
     pub accuracy_metric: String,
@@ -136,13 +198,15 @@ impl Rqe {
     }
 }
 
-/// A candidate deployment (§3): one configuration, one label set, and a
+/// A candidate deployment (§3): one configuration, one grouped stream, and a
 /// sliding sketch window. Retention is an execution/storage concern, not an
 /// optimizer candidate dimension.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Deployment {
     pub capability: Capability,
-    pub labels: LabelSet,
+    pub metric: String,
+    /// `G`: one instance per group, per window.
+    pub grouping_labels: LabelSet,
     pub config: AtomicCostEntry,
     /// `x`: materialized sketch-window size.
     pub window_secs: Seconds,
@@ -167,12 +231,13 @@ impl Deployment {
         Some(lookback_secs / self.window_secs)
     }
 
-    /// Instances held to serve a lookback: `x / y` open ones plus the closed
-    /// ones still inside the lookback, `(x + S) / y`.
-    pub fn retained_instance_count(&self, lookback_secs: Seconds) -> Option<u64> {
+    /// Closed instances held to serve a lookback (#143 S7): those lying
+    /// wholly inside it, which start in `[now − L, now − x]`, so
+    /// `(L − x) / y + 1`. Open instances are [`Self::active_instance_count`].
+    pub fn closed_instance_count(&self, lookback_secs: Seconds) -> Option<u64> {
         self.query_instance_count(lookback_secs)?;
         self.active_instance_count()?;
-        Some((self.window_secs + lookback_secs) / self.slide_secs)
+        Some((lookback_secs - self.window_secs) / self.slide_secs + 1)
     }
 }
 
@@ -183,6 +248,156 @@ impl Deployment {
 /// separately, it's always derived from `mapping`.
 pub type Mapping = Vec<usize>;
 
-/// `LabelSetInfo` lookup used throughout -- keyed by the same `LabelSet`
-/// type deployments and RQEs carry.
-pub type LabelSetTable = BTreeMap<LabelSet, LabelSetInfo>;
+/// Fixtures shared by the unit tests: one metric `m`, grouped by nothing,
+/// served by top-k.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    pub const METRIC: &str = "m";
+
+    /// `groups` groups and `series` raw series scraped every second, so
+    /// `λ = series`. Not validated: unit tests set `groups` freely.
+    pub fn facts(groups: u64, series: u64) -> WorkloadFacts {
+        let labels = LabelSet::from(["series".to_string()]);
+        WorkloadFacts::from([(
+            METRIC.to_string(),
+            MetricFacts {
+                labels: labels.clone(),
+                scrape_interval_secs: 1,
+                cardinality: BTreeMap::from([(LabelSet::new(), groups), (labels, series)]),
+            },
+        )])
+    }
+
+    pub fn rqe(lookback_secs: Seconds, interval_secs: Seconds) -> Rqe {
+        Rqe {
+            id: "r".into(),
+            capability: Capability::TopK,
+            lookback_secs,
+            interval_secs,
+            metric: METRIC.into(),
+            grouping_labels: LabelSet::new(),
+            accuracy_metric: "err".into(),
+            accuracy_tolerance: 1.0,
+            accuracy_direction: AccuracyDirection::LowerIsBetter,
+        }
+    }
+
+    /// Per-instance memory and insert/merge/query CPU, then window and slide.
+    pub fn deployment(
+        memory: f64,
+        insert: f64,
+        merge: f64,
+        query: f64,
+        window_secs: Seconds,
+        slide_secs: Seconds,
+    ) -> Deployment {
+        Deployment {
+            capability: Capability::TopK,
+            metric: METRIC.into(),
+            grouping_labels: LabelSet::new(),
+            config: AtomicCostEntry {
+                sketch: "cms-heap-topk-fastpath-vector2d".into(),
+                sketch_config: serde_json::json!(null),
+                mem_bytes_per_instance: memory,
+                insert_cpu_secs: insert,
+                merge_cpu_secs: merge,
+                query_cpu_secs: query,
+                query_accuracy: BTreeMap::from([("err".into(), 0.0)]),
+            },
+            window_secs,
+            slide_secs,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_support::{deployment, rqe, METRIC};
+
+    fn labels(names: &[&str]) -> LabelSet {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn closed_instances_lie_wholly_inside_the_lookback() {
+        // Windows of 10 min every 1 min over 1 h start in [now − 60, now − 10].
+        let d = deployment(1.0, 1.0, 1.0, 1.0, 600, 60);
+        assert_eq!(d.closed_instance_count(3_600), Some(51));
+        assert_eq!(d.closed_instance_count(600), Some(1));
+        assert_eq!(d.closed_instance_count(900), None); // not tiled by x
+    }
+
+    #[test]
+    fn valid_facts_pass() {
+        let facts = WorkloadFacts::from([(
+            METRIC.to_string(),
+            MetricFacts {
+                labels: labels(&["service", "endpoint"]),
+                scrape_interval_secs: 15,
+                cardinality: BTreeMap::from([
+                    (labels(&["service"]), 5),
+                    (labels(&["service", "endpoint"]), 50),
+                ]),
+            },
+        )]);
+        let r = Rqe {
+            grouping_labels: labels(&["service"]),
+            ..rqe(60, 60)
+        };
+        assert_eq!(validate_facts(&[r], &facts), Ok(()));
+    }
+
+    #[test]
+    fn reports_every_problem_at_once() {
+        let facts = WorkloadFacts::from([(
+            METRIC.to_string(),
+            MetricFacts {
+                labels: labels(&["service"]),
+                scrape_interval_secs: 0,
+                cardinality: BTreeMap::from([(labels(&["service"]), 0)]),
+            },
+        )]);
+        let rqes = [
+            Rqe {
+                metric: "missing".into(),
+                ..rqe(60, 60)
+            },
+            Rqe {
+                grouping_labels: labels(&["pod"]),
+                ..rqe(60, 60)
+            },
+        ];
+        let problems = validate_facts(&rqes, &facts).unwrap_err();
+        let has = |needle: &str| problems.iter().any(|p| p.contains(needle));
+        assert!(has("missing: no facts"));
+        assert!(has("scrape interval is 0"));
+        assert!(has("not a subset"));
+        assert!(has("no cardinality for {\"pod\"}"));
+        assert!(has("cardinality of {\"service\"} is 0"));
+        assert_eq!(problems.len(), 5, "{problems:?}");
+    }
+
+    #[test]
+    fn rejects_more_groups_than_series() {
+        let facts = WorkloadFacts::from([(
+            METRIC.to_string(),
+            MetricFacts {
+                labels: labels(&["service", "endpoint"]),
+                scrape_interval_secs: 15,
+                cardinality: BTreeMap::from([
+                    (labels(&["service"]), 60),
+                    (labels(&["service", "endpoint"]), 50),
+                ]),
+            },
+        )]);
+        let r = Rqe {
+            grouping_labels: labels(&["service"]),
+            ..rqe(60, 60)
+        };
+        let problems = validate_facts(&[r], &facts).unwrap_err();
+        assert!(problems[0].contains("60 groups but only 50 series"));
+    }
+}

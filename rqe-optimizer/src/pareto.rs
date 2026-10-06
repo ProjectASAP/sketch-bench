@@ -1,4 +1,4 @@
-//! Non-dominated filtering for `(peak memory, TCO CPU, per-RQE latency)`.
+//! Non-dominated filtering for `(CPU, memory, per-RQE latency)`.
 
 use crate::{objectives::Objectives, Mapping};
 
@@ -16,10 +16,7 @@ fn dominates(a: &[f64], b: &[f64]) -> bool {
 }
 
 fn objective_vector(objectives: &Objectives) -> Vec<f64> {
-    let mut vector = vec![
-        objectives.peak_query_memory_bytes,
-        objectives.tco_cpu_secs_per_sec,
-    ];
+    let mut vector = vec![objectives.cpu_secs_per_sec(), objectives.memory_bytes()];
     vector.extend(&objectives.query_latency_secs);
     vector
 }
@@ -78,15 +75,18 @@ pub fn pareto_front(objs: &[Objectives]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::objectives::PhaseCost;
 
     fn objectives(memory: f64, cpu: f64, latency: f64) -> Objectives {
+        let phase = PhaseCost {
+            cpu_secs_per_sec: cpu,
+            memory_bytes: memory,
+        };
         Objectives {
-            peak_query_memory_bytes: memory,
-            retained_memory_bytes: 0.0,
-            ingest_cpu_secs_per_sec: 0.0,
-            merge_cpu_secs_per_sec: 0.0,
-            query_cpu_secs_per_sec: 0.0,
-            tco_cpu_secs_per_sec: cpu,
+            ingest: phase,
+            merge: PhaseCost::default(),
+            query: PhaseCost::default(),
+            storage: PhaseCost::default(),
             query_latency_secs: vec![latency],
         }
     }

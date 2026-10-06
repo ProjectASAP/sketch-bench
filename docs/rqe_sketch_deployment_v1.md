@@ -19,18 +19,28 @@ Let `R = {r_1, ..., r_n}` be the RQE workload. Each RQE `r_i` provides:
 | `cap_i` | Required capability: `freq`, `quantile`, `cardinality`, or `topk`. |
 | `S_i` | Query-window size. This is the current `lookback` field. |
 | `T_i` | Query slide: how often the RQE runs. This is the current `interval` field. |
-| `labels_i` | Group-by label set. |
+| `metric_i` | Metric the RQE reads. |
+| `G_i` | Group-by label set (`grouping_labels`). |
 | `accuracy_metric_i` | Accuracy measurement to check. |
 | `tol_i` | Accuracy threshold. |
 | `direction_i` | Whether lower or higher values are better. |
 
-For each label set, the caller provides:
+For each metric, the caller provides `MetricFacts`:
 
-- `card(labels)`: number of distinct label-value groups.
-- `lambda(labels)`: aggregate item arrival rate across those groups, in
-  items/second.
+- `labels`: every label the metric's series carry.
+- `scrape_interval`: every series yields one sample per scrape.
+- `card(X)`: distinct value combinations of each label set `X` in use,
+  including `labels` itself (the raw series count).
+
+The arrival rate is derived, never given, so it can't disagree with the
+cardinalities:
+
+```text
+lambda(metric) = card(metric.labels) / scrape_interval      samples/second
+```
 
 These are inputs to the optimizer; estimating them is outside v1.
+`validate_facts` reports every missing or inconsistent fact up front.
 
 Sketch Bench supplies empirical measurements for each sketch configuration:
 
@@ -91,23 +101,27 @@ modeled.
 A candidate deployment is:
 
 ```text
-D = (capability, configuration, labels, x, y)
+D = (capability, configuration, metric, G, x, y)
 ```
 
 Candidates may be generated from individual RQEs, then deduplicated. This is
 only a way to construct the candidate set: when solving a workload, one
 selected deployment may serve multiple compatible RQEs.
 
-For each capability/label-set group, generate candidates as follows:
+For each (capability, metric, G) group, generate candidates as follows:
 
 ```text
-for each x that divides S_i for at least one RQE i in the group:
+for each x that divides S_i for at least one RQE i in the group,
+        and is a multiple of the metric's scrape interval:
     let g_i = gcd(x, T_i) for every RQE i whose S_i is divisible by x
     let slides = every gcd reachable from a non-empty subset of {g_i}
     for each measured configuration that serves the group's capability:
-        for each y in slides:
-            add (capability, configuration, labels, x, y)
+        for each y in slides that is a multiple of the scrape interval:
+            add (capability, configuration, metric, G, x, y)
 ```
+
+Windows and slides finer than the scrape interval would only split one
+scrape's samples.
 
 For an RQE considered alone, its only useful slide for a fixed `x` is its
 largest legal slide, `gcd(x, T_i)`. A smaller slide adds ingest fan-out without
@@ -119,7 +133,7 @@ in which case it appears as another subset gcd.
 
 An RQE `r_i` is eligible for a candidate `D` when:
 
-1. `cap_i = D.capability` and `labels_i = D.labels`.
+1. `cap_i = D.capability`, `metric_i = D.metric` and `G_i = D.G`.
 2. `D.x % D.y = 0`, `S_i % D.x = 0`, and `T_i % D.y = 0`.
 3. `D.configuration` contains a measured value for `accuracy_metric_i` that clears
    `tol_i` in `direction_i`.
@@ -130,14 +144,15 @@ explicit on the RQE; it is never inferred from a metric name. A missing metric
 does not pass.
 
 Before mapping, prune a candidate only if another candidate can serve every
-RQE it can and is no worse in query memory, ingest CPU, latency, and retained
-memory for each such RQE. This is safe because any mapping using the removed candidate can
-substitute the remaining one without weakening a modeled objective.
+RQE it can and is no worse in instance memory, ingest CPU and memory, latency,
+and stored memory for each such RQE. This is safe because any mapping using
+the removed candidate can substitute the remaining one without weakening a
+modeled objective.
 
-Historical instances must be retained long enough to answer the RQEs assigned
-to a deployment. Retention is not a candidate parameter: a deployment retains
-the history needed by the largest assigned query window. Its memory is scored
-as retained memory (below) and priced by `Objective::AUCCost`.
+Closed instances must be stored long enough to answer the RQEs assigned to a
+deployment. Retention is not a candidate parameter: a deployment stores the
+history needed by the largest assigned query window, costed as the storage
+phase (below).
 
 ## Workload mapping
 
@@ -158,53 +173,39 @@ results from several deployments to satisfy one RQE.
 
 Let `E` be the eligible `(i, D)` pairs. The solver has one binary `z_{i,D}`
 for each pair in `E`, one binary `u_D` for each candidate, and a continuous
-variable `M` for peak query memory. It minimizes a chosen scalarization or
-solves under supplied budgets.
+`stored_D` for each candidate's closed-window storage.
 
 ```text
-z_{i,D} ∈ {0, 1}     for (i, D) ∈ E
-u_D     ∈ {0, 1}     for D ∈ candidates
-M       ≥ 0
+z_{i,D}  ∈ {0, 1}    for (i, D) ∈ E
+u_D      ∈ {0, 1}    for D ∈ candidates
+stored_D ≥ 0
 
 Σ_{D: (i,D) ∈ E} z_{i,D} = 1                    for every RQE i
 z_{i,D} ≤ u_D                                    for (i, D) ∈ E
 u_D ≤ Σ_{i: (i,D) ∈ E} z_{i,D}                   for every candidate D
-M ≥ query_memory_{i,D} × z_{i,D}                 for (i, D) ∈ E
+stored_D ≥ w(storage_{i,D}) × z_{i,D}            for (i, D) ∈ E
 ```
 
-The final `u_D` constraint prevents a deployment from becoming active when no
+The `u_D ≤ Σ z` constraint prevents a deployment from becoming active when no
 RQE selected it. It is not required for feasibility, but makes ingest cost
-unambiguous.
+unambiguous. `stored_D` is a linearized max: a deployment stores enough for
+the longest lookback it serves.
 
-All CPU and latency terms are constants for an eligible pair. The solver uses:
-
-```text
-TCO_cpu = Σ_D ingest_cpu_D × u_D
-        + Σ_(i,D)∈E (query_cpu_{i,D} + merge_cpu_{i,D}) / T_i × z_{i,D}
-
-latency_i = Σ_{D: (i,D)∈E} latency_{i,D} × z_{i,D}
-```
-
-The MILP's only objective, `Objective::AUCCost`, prices the plan on one EC2
-machine family `f` (vCPUs
-`vcpu_f`, memory `gib_f`, hourly price `price_f`) in fractional instances
-`n_f`, with a continuous `R_D ≥ 0` for each candidate's retained GiB:
+The only objective, `Objective::AUCCost { w_cpu, w_mem }`, weighs each phase
+cost (below) as `w(c) = w_cpu × c.cpu + w_mem × c.memory_GiB`:
 
 ```text
-minimize  price_f × n_f
-R_D ≥ retained_gib_{i,D} × z_{i,D}               for (i, D) ∈ E
-vcpu_f × n_f ≥ TCO_cpu
-gib_f  × n_f ≥ Σ_D R_D
+minimize  Σ_D w(ingest_D) × u_D
+        + Σ_(i,D)∈E (w(merge_{i,D}) + w(query_{i,D})) × z_{i,D}
+        + Σ_D stored_D
 ```
 
-`TCO_cpu` is the area under the CPU curve (mean CPU-sec/sec), so instances are
-sized for the mean load, not for bursts. Prices come from `rqe-optimizer/data/ec2-pricing-<date>.json`, written by
-`scripts/fetch_ec2_pricing.py`. Disk is not priced.
+CPU is the area under the CPU curve (mean CPU-sec/sec), so plans are sized
+for the mean load, not for bursts. Memory sums every phase, as if every query
+evaluates at once. The default weights are `(1, 0)`: CPU only.
 
-One solve needs a scalar objective, such as minimum hourly price subject to
-`M ≤ memory_budget` and optional `latency_i ≤ latency_budget_i`. To sample the
-Pareto frontier, repeat solves over memory and latency budgets, or use a
-normalized weighted objective. The solver never enumerates full mappings.
+Per-RQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
+never enumerates full mappings.
 
 ## Analytical cost model
 
@@ -212,75 +213,47 @@ The analytical model combines the empirical per-operation Sketch Bench
 measurements with workload properties such as group cardinality, arrival rate,
 window size, and query frequency.
 
-For deployment `D`, let `a_D = D.x / D.y`. Each incoming item is inserted into
-`a_D` concurrently active sketch instances per group.
+A deployment `D` holds `card(D.G)` instances per window, one per group. Let
+`a_D = D.x / D.y`: each sample is inserted into `a_D` concurrently open
+instances of its group. For RQE `i` on `D`, let `n_i = S_i / D.x` windows be
+merged per query. Write `m`, `c_ins`, `c_mrg`, `c_qry` for the
+configuration's measured per-instance memory and insert, merge and query CPU.
 
-### Query working memory
+Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
+(bytes):
 
-v1 models query working memory, not retained-storage footprint. For RQE `i`:
+| Phase | CPU | Memory |
+|---|---|---|
+| Ingest, per active `D` | `lambda × a_D × c_ins` | `card(G) × m × a_D` (open windows) |
+| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one merged instance per group) |
+| Query, per RQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
+| Storage, per active `D` | 0 | `card(G) × m × ((max_i S_i − x) / y + 1)` (closed windows) |
 
-```text
-query_memory_i = card(labels_i) × mem_bytes(D(i).configuration)
-```
+Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
+`(S − x) / y + 1` of them; storage takes the longest lookback `D` serves.
+Query output is estimated at 8 bytes per group, or 32 × 16 bytes per group for
+top-k (sketch-bench's heap size, with 64-bit key hashes); it is not measured.
 
-This assumes one instance per group is loaded and groups are processed
-concurrently. It does not model merge buffers or concurrent queries.
+Exact multi-group accumulators are measured as one instance holding many
+groups. The export divides their memory and merge cost by the measured group
+count, so `card(G) ×` prices them correctly too. A family holding every group
+in one fixed-size instance (HydraKLL) would need a per-family shape instead
+(sketch-bench#142).
 
-The mapping-level memory objective is the worst individual query:
-
-```text
-peak_query_memory = max_i query_memory_i
-```
-
-### Retained memory
-
-A deployment holds `x / y` open instances plus the closed instances still
-inside the longest lookback it serves:
-
-```text
-retained_memory = Σ_{D: u_D=1} card(D.labels) × mem_bytes(D.configuration)
-                  × (D.x + max_{i: D(i)=D} S_i) / D.y
-```
-
-### CPU
-
-Ingest CPU is paid once for every active deployment:
+Per-RQE latency is the serial CPU time of one query:
 
 ```text
-ingest_cpu = Σ_{D: u_D=1}
-             lambda(D.labels) × a_D × insert_cpu_secs(D.configuration)
+latency_i = card(G) × (c_qry + (n_i − 1) × c_mrg)
 ```
 
-For RQE `i`, let `n_i = S_i / D(i).x`. One query performs one final estimate
-and `n_i - 1` pairwise merges for each group:
-
-```text
-query_cpu_i = card(labels_i) × query_cpu_secs(D(i).configuration)
-merge_cpu_i = card(labels_i) × (n_i - 1) × merge_cpu_secs(D(i).configuration)
-latency_i   = query_cpu_i + merge_cpu_i
-```
-
-`latency_i` is estimated serial CPU time for one query, not a wall-clock SLA.
-It assumes no parallel execution across groups and no cheaper k-way merge.
-
-The repeating query load is:
-
-```text
-query_cpu = Σ_i query_cpu_i / T_i
-merge_cpu = Σ_i merge_cpu_i / T_i
-```
-
-Total steady-state CPU is:
-
-```text
-TCO_cpu = ingest_cpu + merge_cpu + query_cpu
-```
+It is not a wall-clock SLA: it assumes no parallel execution across groups and
+no cheaper k-way merge.
 
 ## Procedure
 
 1. Generate candidate deployments for each input RQE, then deduplicate them.
 2. Build the eligible candidate–RQE pairs. Reject pairs that fail capability,
-   labels, window alignment, or empirical accuracy.
+   metric, grouping, window alignment, or empirical accuracy.
 3. Enumerate feasible workload mappings. Every RQE must select one eligible
    candidate; a single selected candidate may serve multiple RQEs. Small
    instances may retain every mapping eagerly; larger ones stream mappings
@@ -291,11 +264,11 @@ TCO_cpu = ingest_cpu + merge_cpu + query_cpu
 The Pareto vector is:
 
 ```text
-(peak_query_memory, TCO_cpu, {latency_i})
+(CPU, memory, {latency_i})
 ```
 
-The report also includes `ingest_cpu`, `merge_cpu`, and `query_cpu` as the
-breakdown of `TCO_cpu`, together with the selected deployment mapping.
+CPU and memory are the sums over the four phases. The report also includes
+each phase's CPU and memory, together with the selected deployment mapping.
 
 ## v1 scope and TODOs
 
@@ -304,15 +277,17 @@ breakdown of `TCO_cpu`, together with the selected deployment mapping.
   selected mapping as truly accuracy-feasible.
 - **Query-result sharing:** v1 charges every RQE its own query and merge CPU.
   Revisit when RQE semantics and execution timing identify safe reuse cases.
-- **Latency SLAs:** v1 reports per-RQE latency but does not reject a mapping
-  for exceeding a target. Add optional per-RQE maximum latency as a hard
-  constraint when workloads supply targets.
-- **Memory model:** merge buffers and concurrent queries are not modeled.
+- **Latency SLAs:** the MILP takes optional per-RQE latency bounds; the
+  enumerator reports latency but does not reject a mapping for it.
+- **Memory model:** query memory sums every RQE's merge and output memory, as
+  if all queries run at once; real concurrency is not modeled. Query output
+  size is an estimate.
+- **Bursts:** CPU is a mean over time, so plans are sized for average load.
 - **Static planning:** no RQE churn, replanning, or migration cost.
 - **Rollups:** v1 does not precompute merged rollups. Queries merge their
   selected base instances when they run.
-- **Selection policy:** the optimizer reports the Pareto frontier; selecting a
-  single point through weights or budgets is deferred.
+- **Selection policy:** the enumerator reports the Pareto frontier; the MILP
+  selects one point by the `w_cpu`/`w_mem` weights.
 
 ## Implementation status
 
