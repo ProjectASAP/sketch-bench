@@ -68,10 +68,11 @@ fn candidate_deployments(
                 .filter(|r| r.lookback_ms % window_ms == 0)
                 .map(|r| gcd(window_ms, r.interval_ms)),
         );
-        for config in costs
-            .iter()
-            .filter(|c| capability.families().contains(&c.sketch.as_str()))
-        {
+        for config in costs.iter().filter(|c| {
+            capability
+                .deployable_families()
+                .any(|family| family == c.sketch)
+        }) {
             for &slide_ms in &slides {
                 if slide_ms.is_multiple_of(scrape_interval_ms) {
                     deployments.push(Deployment {
@@ -387,6 +388,22 @@ mod tests {
         );
         assert!(!candidates.is_empty());
         assert!(candidates.iter().all(|d| d.config.sketch == "exact-min"));
+    }
+
+    #[test]
+    fn undeployable_families_are_not_candidates() {
+        let r = Raqe {
+            capability: Capability::Quantile,
+            ..raqe("r", 60_000, 60_000)
+        };
+        let named = |sketch: &str| AtomicCostEntry {
+            sketch: sketch.into(),
+            ..cost()
+        };
+        let candidates =
+            build_all_candidates(&[r], &[named("kll-percall"), named("dd")], &facts(1, 1));
+        assert!(!candidates.is_empty());
+        assert!(candidates.iter().all(|d| d.config.sketch == "kll-percall"));
     }
 
     #[test]

@@ -74,7 +74,28 @@ impl Capability {
             ],
         }
     }
+
+    /// The subset of [`Capability::families`] in [`DEPLOYABLE_FAMILIES`]:
+    /// the only variants that become candidates.
+    pub fn deployable_families(self) -> impl Iterator<Item = &'static str> {
+        self.families()
+            .iter()
+            .copied()
+            .filter(|family| DEPLOYABLE_FAMILIES.contains(family))
+    }
 }
+
+/// Variants ASAPQuery can deploy, each with the `AggregationType` its query
+/// engine runs. Both sides use `asap_sketchlib` for the sketches.
+pub const DEPLOYABLE_FAMILIES: &[&str] = &[
+    "exact-sum",                       // MultipleSum
+    "exact-min",                       // MultipleMinMax, sub_type "min"
+    "exact-max",                       // MultipleMinMax, sub_type "max"
+    "exact-increase",                  // MultipleIncrease
+    "kll-percall",                     // DatasketchesKLL
+    "hll",                             // HLL
+    "cms-heap-topk-fastpath-vector2d", // CountMinSketchWithHeap
+];
 
 /// Facts about one metric, given as input. RAQEs and deployments on the same
 /// metric read the same samples.
@@ -331,6 +352,24 @@ mod tests {
 
     fn labels(names: &[&str]) -> LabelSet {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn every_deployable_family_serves_a_capability() {
+        let capabilities = [
+            Capability::SumOrCount,
+            Capability::Min,
+            Capability::Max,
+            Capability::RateOrIncrease,
+            Capability::Quantile,
+            Capability::Cardinality,
+            Capability::TopK,
+        ];
+        let served: usize = capabilities
+            .iter()
+            .map(|capability| capability.deployable_families().count())
+            .sum();
+        assert_eq!(served, DEPLOYABLE_FAMILIES.len());
     }
 
     #[test]

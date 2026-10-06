@@ -10,8 +10,8 @@
 //!
 //! One extension over the paper: AutoSketch's compiler maps an operator to one
 //! sketch algorithm and tunes its parameters, while this search covers every
-//! variant serving the RAQE's capability and keeps the cheapest, so it chooses
-//! from the same sketches as the MILP.
+//! deployable variant serving the RAQE's capability and keeps the cheapest,
+//! so it chooses from the same sketches as the MILP.
 
 use crate::candidates::gcd;
 use crate::{AtomicCostEntry, Deployment, Mapping, Millis, Raqe};
@@ -100,8 +100,7 @@ pub fn search(
     let started = Instant::now();
     let grids: Vec<Grid> = raqe
         .capability
-        .families()
-        .iter()
+        .deployable_families()
         .filter_map(|variant| Grid::new(variant, costs))
         .collect();
 
@@ -509,18 +508,6 @@ mod tests {
     }
 
     #[test]
-    fn chooses_the_cheaper_variant() {
-        let mut costs = grid(&[2, 3], &[256, 512]);
-        let mut cs = cms(2, 256);
-        cs.sketch = "countsketch-heap-topk-fastpath-vector2d".into();
-        cs.mem_bytes_per_instance = 100.0;
-        costs.push(cs);
-        let r = raqe("r", 3_600_000, 60_000, 0.01);
-        let found = search(&r, &costs, 3, table_accuracy);
-        assert_eq!(found.selected, Some(costs.len() - 1));
-    }
-
-    #[test]
     fn higher_is_better_metric_is_a_floor() {
         // Precision rises with k; the target is a floor of 0.95.
         let costs: Vec<_> = (1..=10)
@@ -532,7 +519,6 @@ mod tests {
             .collect();
         let r = Raqe {
             accuracy_direction: AccuracyDirection::HigherIsBetter,
-            latency_sla_ms: None,
             ..quantile_raqe(0.95)
         };
         let found = search(&r, &costs, 11, table_accuracy);
