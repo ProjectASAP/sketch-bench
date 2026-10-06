@@ -318,7 +318,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment) -> bool {
         && d.window_ms.is_multiple_of(d.slide_ms)
         && r.lookback_ms.is_multiple_of(d.window_ms)
         && r.interval_ms.is_multiple_of(d.slide_ms)
-        && r.accuracy_ok_for(&d.config)
+        && r.accuracy_ok_for(&d.config, r.lookback_ms / d.window_ms)
 }
 
 #[cfg(test)]
@@ -351,8 +351,28 @@ mod tests {
             merge_cpu_secs: 1.0,
             query_cpu_secs: 1.0,
             query_accuracy: BTreeMap::from([("err".into(), 0.1)]),
+            merge_accuracy: BTreeMap::new(),
             measured_at: None,
         }
+    }
+    #[test]
+    fn eligibility_checks_accuracy_at_the_queries_merge_count() {
+        let mut config = cost();
+        config.merge_accuracy = BTreeMap::from([(4, BTreeMap::from([("err".into(), 2.0)]))]);
+        let at_window = |window_ms| Deployment {
+            capability: Capability::TopK,
+            metric: METRIC.into(),
+            spatial_filter: String::new(),
+            grouping_labels: LabelSet::new(),
+            config: config.clone(),
+            window_ms,
+            slide_ms: window_ms,
+        };
+        let r = raqe("a", 60_000, 60_000);
+        // One window per query reads query_accuracy (0.1 <= 1.0); four merged
+        // windows read merge_accuracy[4] (2.0 > 1.0).
+        assert!(is_eligible(&r, &at_window(60_000)));
+        assert!(!is_eligible(&r, &at_window(15_000)));
     }
     #[test]
     fn shared_slide_comes_from_subset_gcd_not_all_divisors() {

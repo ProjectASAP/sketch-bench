@@ -36,6 +36,11 @@ pub struct AtomicCostEntry {
     /// rank-error's `mean_rank_err`). No single scalar covers all of them, so
     /// this stays a map rather than picking one field to promote.
     pub query_accuracy: BTreeMap<String, f64>,
+    /// The same comparator's scores for the sketch left by folding `m`
+    /// shards, keyed by `m`: `MergedRecord::merge.accuracy` from the
+    /// merge-accuracy runs [`reduce_all`] is given. Empty when none were.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub merge_accuracy: BTreeMap<u64, BTreeMap<String, f64>>,
     /// The conditions the row was measured under. Optional so tables written
     /// before it was added still load; [`reduce_one`] always fills it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,7 +196,7 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
         record.merge.cpu_time_ms.as_ref(),
     )?;
 
-    let query_accuracy = query_accuracy(record.query.accuracy.as_ref())?;
+    let query_accuracy = accuracy_map("query_accuracy", record.query.accuracy.as_ref())?;
 
     // A multi-subpopulation accumulator holds every group in one instance, so
     // its footprint and fold were measured at the bench spec's group count.
@@ -215,6 +220,7 @@ pub fn reduce_one(record: &MergedRecord) -> Result<AtomicCostEntry, SkipReason> 
         query_cpu_secs,
         measured_at: Some(measured_at(record, groups_measured)),
         query_accuracy,
+        merge_accuracy: BTreeMap::new(),
     })
 }
 
@@ -267,27 +273,67 @@ fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredA
 /// None` entries are all insert-only), so it is already excluded here by
 /// `query_cpu_secs` above — requiring accuracy too costs nothing further and
 /// keeps every kept row equally complete.
-fn query_accuracy(
+fn accuracy_map(
+    field: &'static str,
     accuracy: Option<&serde_json::Value>,
 ) -> Result<BTreeMap<String, f64>, SkipReason> {
-    let accuracy = accuracy.ok_or(SkipReason::MissingField("query_accuracy"))?;
+    let accuracy = accuracy.ok_or(SkipReason::MissingField(field))?;
     let object = accuracy
         .as_object()
-        .ok_or(SkipReason::InvalidField("query_accuracy"))?;
+        .ok_or(SkipReason::InvalidField(field))?;
     object
         .iter()
         .map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)))
         .collect::<Option<_>>()
-        .ok_or(SkipReason::InvalidField("query_accuracy"))
+        .ok_or(SkipReason::InvalidField(field))
+}
+
+/// Whether two rows measured the same cell: the identity `approxbench
+/// flatten` groups by.
+pub fn same_cell(a: &MergedRecord, b: &MergedRecord) -> bool {
+    a.sketch == b.sketch
+        && a.library == b.library
+        && a.sketch_config == b.sketch_config
+        && a.input_dataset == b.input_dataset
+}
+
+/// `record`'s merge accuracy, keyed by merge count, from the `merge_runs`
+/// of its cell. A merge run is one `--flat` invocation at one
+/// `--merge-shards`, so each count is its own row; two at one count is a
+/// duplicated export, refused rather than resolved.
+fn merge_accuracy(
+    record: &MergedRecord,
+    merge_runs: &[MergedRecord],
+) -> Result<BTreeMap<u64, BTreeMap<String, f64>>, SkipReason> {
+    let mut out = BTreeMap::new();
+    for run in merge_runs.iter().filter(|run| same_cell(record, run)) {
+        let shards = run
+            .merge
+            .merge_shards
+            .ok_or(SkipReason::MissingField("merge_shards"))?;
+        let scores = accuracy_map("merge_accuracy", run.merge.accuracy.as_ref())?;
+        if out.insert(shards as u64, scores).is_some() {
+            return Err(SkipReason::InvalidField("merge_accuracy"));
+        }
+    }
+    Ok(out)
 }
 
 /// Reduce every record that has what it takes, skipping (and reporting) the
-/// rest. Order follows `records`.
-pub fn reduce_all(records: &[MergedRecord]) -> (AtomicCostTable, Vec<(usize, SkipReason)>) {
+/// rest. Order follows `records`. `merge_runs` are merge-accuracy rows; each
+/// is attached to the record of its cell (see [`same_cell`]).
+pub fn reduce_all(
+    records: &[MergedRecord],
+    merge_runs: &[MergedRecord],
+) -> (AtomicCostTable, Vec<(usize, SkipReason)>) {
     let mut table = Vec::with_capacity(records.len());
     let mut skipped = Vec::new();
     for (i, record) in records.iter().enumerate() {
-        match reduce_one(record) {
+        let entry = reduce_one(record).and_then(|mut entry| {
+            entry.merge_accuracy = merge_accuracy(record, merge_runs)?;
+            Ok(entry)
+        });
+        match entry {
             Ok(entry) => table.push(entry),
             Err(reason) => skipped.push((i, reason)),
         }
@@ -576,7 +622,7 @@ mod tests {
         let mut bad = full_record();
         bad.memory_bytes = None;
 
-        let (table, skipped) = reduce_all(&[good, bad]);
+        let (table, skipped) = reduce_all(&[good, bad], &[]);
         assert_eq!(table.len(), 1);
         assert_eq!(skipped, vec![(1, SkipReason::MissingField("memory_bytes"))]);
     }
@@ -593,12 +639,73 @@ mod tests {
             merge_cpu_secs: 1e-2,
             query_cpu_secs: 4e-6,
             query_accuracy: BTreeMap::from([("relative_error_mean".to_string(), 0.01)]),
+            merge_accuracy: BTreeMap::new(),
             measured_at: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert_eq!(
             json,
             r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01}}"#
+        );
+    }
+
+    /// A `--flat` merge-accuracy row: only `merge_shards` and its scores.
+    fn merge_run(shards: usize, err: f64) -> MergedRecord {
+        let mut run = full_record();
+        run.memory_bytes = None;
+        run.insert = InsertMetrics::default();
+        run.query = QueryMetrics::default();
+        run.merge = MergeMetrics {
+            merge_shards: Some(shards),
+            accuracy: Some(serde_json::json!({ "relative_error_mean": err })),
+            ..Default::default()
+        };
+        run
+    }
+
+    #[test]
+    fn merge_runs_attach_to_their_cell_by_merge_count() {
+        let mut other_cell = merge_run(4, 9.0);
+        other_cell.sketch_config = Some(serde_json::json!({"algorithm": "cms", "params": {}}));
+        let runs = [merge_run(64, 0.3), merge_run(4, 0.1), other_cell];
+        let (table, skipped) = reduce_all(&[full_record()], &runs);
+        assert!(skipped.is_empty(), "{skipped:?}");
+        let at = |m: u64| table[0].merge_accuracy[&m]["relative_error_mean"];
+        assert_eq!(table[0].merge_accuracy.len(), 2);
+        assert_eq!(at(4), 0.1);
+        assert_eq!(at(64), 0.3);
+    }
+
+    #[test]
+    fn two_merge_runs_at_one_count_skip_the_row() {
+        let (table, skipped) =
+            reduce_all(&[full_record()], &[merge_run(4, 0.1), merge_run(4, 0.2)]);
+        assert!(table.is_empty());
+        assert_eq!(
+            skipped,
+            vec![(0, SkipReason::InvalidField("merge_accuracy"))]
+        );
+    }
+
+    #[test]
+    fn merge_accuracy_round_trips_and_is_omitted_when_empty() {
+        let (table, _) = reduce_all(&[full_record()], &[merge_run(16, 0.2)]);
+        let json = serde_json::to_string(&table[0]).unwrap();
+        assert!(
+            json.ends_with(r#""merge_accuracy":{"16":{"relative_error_mean":0.2}}}"#),
+            "{json}"
+        );
+        assert_eq!(
+            serde_json::from_str::<AtomicCostEntry>(&json).unwrap(),
+            table[0]
+        );
+
+        let (table, _) = reduce_all(&[full_record()], &[]);
+        let json = serde_json::to_string(&table[0]).unwrap();
+        assert!(!json.contains("merge_accuracy"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<AtomicCostEntry>(&json).unwrap(),
+            table[0]
         );
     }
 }

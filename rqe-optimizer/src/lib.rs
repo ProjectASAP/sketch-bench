@@ -264,14 +264,29 @@ impl Raqe {
         }
     }
 
-    /// Whether `config` measured this RAQE's metric and clears it. Missing
-    /// is not passing.
-    pub fn accuracy_ok_for(&self, config: &AtomicCostEntry) -> bool {
-        config
-            .query_accuracy
+    /// Whether `config` measured this RAQE's metric and clears it after
+    /// `merges` windows are folded per query (`L / x`). Missing is not
+    /// passing.
+    pub fn accuracy_ok_for(&self, config: &AtomicCostEntry, merges: u64) -> bool {
+        accuracy_at(config, merges)
             .get(&self.accuracy_metric)
             .is_some_and(|&v| self.accuracy_ok(v))
     }
+}
+
+/// `config`'s scores after folding `merges` windows: the smallest measured
+/// merge count at or above `merges`, else the largest measured. One window,
+/// or a row with no merge measurements, reads the single-instance scores.
+pub fn accuracy_at(config: &AtomicCostEntry, merges: u64) -> &BTreeMap<String, f64> {
+    if merges <= 1 {
+        return &config.query_accuracy;
+    }
+    config
+        .merge_accuracy
+        .range(merges..)
+        .next()
+        .or_else(|| config.merge_accuracy.last_key_value())
+        .map_or(&config.query_accuracy, |(_, scores)| scores)
 }
 
 /// A candidate deployment (§3): one configuration, one grouped stream, and a
@@ -385,6 +400,7 @@ pub(crate) mod test_support {
                 merge_cpu_secs: merge,
                 query_cpu_secs: query,
                 query_accuracy: BTreeMap::from([("err".into(), 0.0)]),
+                merge_accuracy: BTreeMap::new(),
                 measured_at: None,
             },
             window_ms,
@@ -400,6 +416,24 @@ mod tests {
 
     fn labels(names: &[&str]) -> LabelSet {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn accuracy_at_reads_the_nearest_measured_merge_count_at_or_above() {
+        let mut config = deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config;
+        let scores = |v: f64| BTreeMap::from([("err".to_string(), v)]);
+        let at = |c: &AtomicCostEntry, merges| accuracy_at(c, merges)["err"];
+        // No merge measurements: every count reads the single instance.
+        assert_eq!(at(&config, 60), 0.0);
+        config.merge_accuracy =
+            BTreeMap::from([(4, scores(4.0)), (16, scores(16.0)), (64, scores(64.0))]);
+        assert_eq!(at(&config, 0), 0.0);
+        assert_eq!(at(&config, 1), 0.0);
+        assert_eq!(at(&config, 2), 4.0);
+        assert_eq!(at(&config, 4), 4.0);
+        assert_eq!(at(&config, 5), 16.0);
+        assert_eq!(at(&config, 64), 64.0);
+        assert_eq!(at(&config, 1_000), 64.0);
     }
 
     #[test]

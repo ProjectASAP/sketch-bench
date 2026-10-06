@@ -9,7 +9,7 @@ use std::io::Read;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use aqpbm_core::{reduce_all, MergedRecord};
+use aqpbm_core::{reduce_all, same_cell, MergedRecord};
 
 #[derive(Parser, Debug)]
 pub struct AtomicCostsArgs {
@@ -19,28 +19,52 @@ pub struct AtomicCostsArgs {
     /// Output path for the reduced table (JSON array). Defaults to stdout.
     #[arg(short, long)]
     output: Option<String>,
+    /// `--flat` merge-accuracy rows (`--operations merge --metrics accuracy`),
+    /// one per cell and `--merge-shards`. Each lands in its cell's
+    /// `merge_accuracy`; one that matches no input row is an error.
+    #[arg(long)]
+    merge_accuracy: Option<String>,
 }
 
-pub fn run(args: AtomicCostsArgs) -> Result<()> {
-    let raw = if args.input == "-" {
+fn read_records(path: &str) -> Result<Vec<MergedRecord>> {
+    let raw = if path == "-" {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
             .context("reading stdin")?;
         buf
     } else {
-        std::fs::read_to_string(&args.input).with_context(|| format!("reading {}", args.input))?
+        std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?
     };
-
-    let records: Vec<MergedRecord> = raw
-        .lines()
+    raw.lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
             serde_json::from_str(line).with_context(|| format!("parsing MergedRecord: {line}"))
         })
-        .collect::<Result<_>>()?;
+        .collect()
+}
 
-    let (table, skipped) = reduce_all(&records);
+pub fn run(args: AtomicCostsArgs) -> Result<()> {
+    let records = read_records(&args.input)?;
+    let merge_runs = match args.merge_accuracy.as_deref() {
+        Some(path) => read_records(path)?,
+        None => Vec::new(),
+    };
+    if let Some(run) = merge_runs
+        .iter()
+        .find(|run| !records.iter().any(|record| same_cell(record, run)))
+    {
+        anyhow::bail!(
+            "merge-accuracy row {} {} matches no input row",
+            run.sketch,
+            run.sketch_config
+                .as_ref()
+                .map(|c| c.to_string())
+                .unwrap_or_default()
+        );
+    }
+
+    let (table, skipped) = reduce_all(&records, &merge_runs);
     for (i, reason) in &skipped {
         let record = &records[*i];
         eprintln!(
