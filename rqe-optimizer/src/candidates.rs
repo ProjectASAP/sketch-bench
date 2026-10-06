@@ -1,6 +1,6 @@
 //! Candidate generation and eligibility (§3).
 
-use crate::objectives::merge_memory_per_group;
+use crate::analytical_cost_model::merge_memory_per_group;
 use crate::{AtomicCostEntry, Capability, Deployment, LabelSet, Rqe, Seconds, WorkloadFacts};
 use std::collections::{BTreeMap, BTreeSet};
 

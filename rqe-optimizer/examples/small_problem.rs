@@ -29,12 +29,12 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
+use rqe_optimizer::analytical_cost_model::{score, PlanCost};
 use rqe_optimizer::candidates::{
     build_all_candidates, build_all_candidates_unpruned, eligible_deployments_for,
 };
 use rqe_optimizer::enumerate::{brute_force, for_each_mapping, for_each_mapping_while, unservable};
 use rqe_optimizer::milp::{minimize, MilpBounds, Objective};
-use rqe_optimizer::objectives::{score, Objectives};
 use rqe_optimizer::pareto::{pareto_front, ParetoFront};
 use rqe_optimizer::{
     validate_facts, AccuracyDirection, AtomicCostTable, Capability, LabelSet, MetricFacts, Rqe,
@@ -279,17 +279,17 @@ fn weight_flag(name: &str, default: f64) -> f64 {
     }
 }
 
-fn print_objectives(label: &str, objectives: &Objectives) {
+fn print_plan_cost(label: &str, plan_cost: &PlanCost) {
     println!(
         "{label}: cpu={:.3e} cpu-sec/sec, memory={:.1}MB",
-        objectives.cpu_secs_per_sec(),
-        objectives.memory_bytes() / 1e6,
+        plan_cost.cpu_secs_per_sec(),
+        plan_cost.memory_bytes() / 1e6,
     );
     for (phase, cost) in [
-        ("ingest", &objectives.ingest),
-        ("merge", &objectives.merge),
-        ("query", &objectives.query),
-        ("storage", &objectives.storage),
+        ("ingest", &plan_cost.ingest),
+        ("merge", &plan_cost.merge),
+        ("query", &plan_cost.query),
+        ("storage", &plan_cost.storage),
     ] {
         println!(
             "    {phase:<7} cpu={:.3e} memory={:.1}MB",
@@ -385,11 +385,11 @@ fn main() {
             .expect("small_problem MILP should be feasible");
         println!(
             "MILP solution for {objective:?}: {:.3e}",
-            objective.value(&solution.objectives)
+            objective.value(&solution.plan_cost)
         );
-        print_objectives("  totals", &solution.objectives);
+        print_plan_cost("  totals", &solution.plan_cost);
         print_mapping(1, &solution.mapping, &rqes, &deployments);
-        for (rqe, latency) in rqes.iter().zip(&solution.objectives.query_latency_secs) {
+        for (rqe, latency) in rqes.iter().zip(&solution.plan_cost.query_latency_secs) {
             println!("  {}: query_latency={latency:.3e} sec", rqe.id);
         }
         return;
@@ -431,23 +431,23 @@ fn main() {
     let mappings = brute_force(&rqes, &deployments);
     println!("{} feasible full mappings", mappings.len());
 
-    let objectives: Vec<_> = mappings
+    let plan_costs: Vec<_> = mappings
         .iter()
         .map(|m| score(&rqes, &deployments, m, &facts))
         .collect();
-    let front = pareto_front(&objectives);
+    let front = pareto_front(&plan_costs);
     println!("{} on the Pareto front\n", front.len());
 
     let mut front = front;
     front.sort_unstable();
     for &i in &front {
-        let obj = &objectives[i];
+        let plan_cost = &plan_costs[i];
         let distinct_deployments: BTreeSet<usize> = mappings[i].iter().copied().collect();
-        print_objectives(
+        print_plan_cost(
             &format!("mapping {i}: {} deployments", distinct_deployments.len()),
-            obj,
+            plan_cost,
         );
-        for (rqe, latency) in rqes.iter().zip(&obj.query_latency_secs) {
+        for (rqe, latency) in rqes.iter().zip(&plan_cost.query_latency_secs) {
             let rqe_id = &rqe.id;
             println!("    {rqe_id}: query_latency={latency:.3e} sec");
         }

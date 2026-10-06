@@ -4,16 +4,16 @@
 //!
 //! Three independent stages, so an ILP can replace [`enumerate`] alone:
 //! [`candidates`] builds 𝒟 and per-RQE eligibility (§3), [`enumerate`]
-//! searches (§4), [`objectives`] scores (§5).
+//! searches (§4), [`analytical_cost_model`] scores (§5).
 //!
 //! Every number the algorithm uses is caller-supplied, except the query
-//! output size estimates in [`objectives`].
+//! output size estimates in [`analytical_cost_model`].
 
+pub mod analytical_cost_model;
 pub mod autosketch;
 pub mod candidates;
 pub mod enumerate;
 pub mod milp;
-pub mod objectives;
 pub mod pareto;
 
 use std::collections::BTreeMap;

@@ -3,8 +3,8 @@
 //! The model is documented in `docs/rqe_sketch_deployment_v1.md`. It avoids
 //! enumerating the Cartesian product of eligible deployment choices.
 
+use crate::analytical_cost_model::{self, score, PhaseCost, PlanCost, BYTES_PER_GIB};
 use crate::candidates::eligible_deployments_for;
-use crate::objectives::{self, score, Objectives, PhaseCost, BYTES_PER_GIB};
 use crate::{Deployment, Mapping, Rqe, WorkloadFacts};
 use good_lp::{
     default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution, SolverModel,
@@ -32,10 +32,10 @@ impl Default for Objective {
 }
 
 impl Objective {
-    pub fn value(&self, objectives: &Objectives) -> f64 {
+    pub fn value(&self, plan_cost: &PlanCost) -> f64 {
         self.weigh(PhaseCost {
-            cpu_secs_per_sec: objectives.cpu_secs_per_sec(),
-            memory_bytes: objectives.memory_bytes(),
+            cpu_secs_per_sec: plan_cost.cpu_secs_per_sec(),
+            memory_bytes: plan_cost.memory_bytes(),
         })
     }
 
@@ -55,7 +55,7 @@ pub struct MilpBounds {
 #[derive(Debug, Clone)]
 pub struct MilpSolution {
     pub mapping: Mapping,
-    pub objectives: Objectives,
+    pub plan_cost: PlanCost,
 }
 
 /// Minimize `objective` subject to optional latency bounds. `facts` must pass
@@ -99,7 +99,7 @@ pub fn minimize(
         })
         .collect();
     // Weighted storage cost per deployment: the max over the RQEs it serves.
-    let storage: Vec<Variable> = deployments
+    let deployment_storage_cost: Vec<Variable> = deployments
         .iter()
         .map(|_| variables.add(variable().min(0)))
         .collect();
@@ -108,16 +108,16 @@ pub fn minimize(
     // assignment, and storage once per deployment for its longest lookback.
     let ingest_cost: Vec<f64> = deployments
         .iter()
-        .map(|deployment| objective.weigh(objectives::ingest(deployment, facts)))
+        .map(|deployment| objective.weigh(analytical_cost_model::ingest(deployment, facts)))
         .collect();
-    let assignment_cost = |rqe: &Rqe, deployment: &Deployment| {
-        objective.weigh(objectives::merge(rqe, deployment, facts))
-            + objective.weigh(objectives::query(rqe, deployment, facts))
+    let merge_and_query_cost = |rqe: &Rqe, deployment: &Deployment| {
+        objective.weigh(analytical_cost_model::merge(rqe, deployment, facts))
+            + objective.weigh(analytical_cost_model::query(rqe, deployment, facts))
     };
-    let storage_cost = |rqe: &Rqe, deployment: &Deployment| {
+    let storage_cost_for_rqe_and_deployment = |rqe: &Rqe, deployment: &Deployment| {
         objective.weigh(PhaseCost {
             cpu_secs_per_sec: 0.0,
-            memory_bytes: objectives::storage_bytes(rqe, deployment, facts),
+            memory_bytes: analytical_cost_model::storage_bytes(rqe, deployment, facts),
         })
     };
 
@@ -135,8 +135,8 @@ pub fn minimize(
                 .map(|&deployment_index| {
                     let deployment = &deployments[deployment_index];
                     ingest_cost[deployment_index]
-                        + assignment_cost(rqe, deployment)
-                        + storage_cost(rqe, deployment)
+                        + merge_and_query_cost(rqe, deployment)
+                        + storage_cost_for_rqe_and_deployment(rqe, deployment)
                 })
                 .fold(f64::INFINITY, f64::min)
         })
@@ -147,14 +147,14 @@ pub fn minimize(
         1.0
     };
 
-    let mut goal: Expression = storage.iter().sum();
+    let mut goal: Expression = deployment_storage_cost.iter().sum();
     for (&cost, &active_variable) in ingest_cost.iter().zip(&active) {
         goal.add_mul(cost / reference, active_variable);
     }
     for (rqe_index, choices) in assignments.iter().enumerate() {
         for &(deployment_index, assignment) in choices {
             goal.add_mul(
-                assignment_cost(&rqes[rqe_index], &deployments[deployment_index]) / reference,
+                merge_and_query_cost(&rqes[rqe_index], &deployments[deployment_index]) / reference,
                 assignment,
             );
         }
@@ -170,16 +170,18 @@ pub fn minimize(
             let deployment = &deployments[deployment_index];
             model.add_constraint((assignment - active[deployment_index]).leq(0));
             // Zero when `w_mem` is 0; such a row can never bind.
-            let rqe_storage_cost = storage_cost(rqe, deployment) / reference;
-            if rqe_storage_cost > 0.0 {
+            let scaled_storage_cost =
+                storage_cost_for_rqe_and_deployment(rqe, deployment) / reference;
+            if scaled_storage_cost > 0.0 {
                 model.add_constraint(
-                    (rqe_storage_cost * assignment - storage[deployment_index]).leq(0),
+                    (scaled_storage_cost * assignment - deployment_storage_cost[deployment_index])
+                        .leq(0),
                 );
             }
             // Each RQE takes exactly one deployment, so a per-RQE bound just
             // forbids the choices over it. Comparing in f64 here, not in the
             // solver, keeps µs latencies clear of its feasibility tolerance.
-            let latency = objectives::query_latency_secs(rqe, deployment, facts);
+            let latency = analytical_cost_model::query_latency_secs(rqe, deployment, facts);
             if bounds
                 .max_query_latency_secs
                 .get(rqe_index)
@@ -214,11 +216,8 @@ pub fn minimize(
                 .expect("MILP assigns exactly one deployment to every RQE")
         })
         .collect();
-    let objectives = score(rqes, deployments, &mapping, facts);
-    Ok(MilpSolution {
-        mapping,
-        objectives,
-    })
+    let plan_cost = score(rqes, deployments, &mapping, facts);
+    Ok(MilpSolution { mapping, plan_cost })
 }
 
 #[cfg(test)]
@@ -253,7 +252,7 @@ mod tests {
             .expect("test workload is servable");
         let milp = minimize(rqes, deployments, &facts, &MilpBounds::default(), objective)
             .expect("feasible MILP");
-        let got = objective.value(&milp.objectives);
+        let got = objective.value(&milp.plan_cost);
         assert!(
             (got - best).abs() <= 1e-9 * best,
             "{objective:?}: {got} vs {best}"
@@ -360,6 +359,6 @@ mod tests {
         )
         .expect("feasible MILP");
         assert_eq!(milp.mapping, vec![1]);
-        assert!(milp.objectives.query_latency_secs[0] <= 1e-7);
+        assert!(milp.plan_cost.query_latency_secs[0] <= 1e-7);
     }
 }

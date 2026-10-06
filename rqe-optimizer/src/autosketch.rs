@@ -321,8 +321,8 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analytical_cost_model::{score, PhaseCost};
     use crate::candidates::is_eligible;
-    use crate::objectives::{score, PhaseCost};
     use crate::test_support::{facts, METRIC};
     use crate::{AccuracyDirection, Capability, LabelSet};
     use std::collections::BTreeSet;

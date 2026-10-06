@@ -47,7 +47,7 @@ impl std::ops::AddAssign for PhaseCost {
 }
 
 #[derive(Debug, Clone)]
-pub struct Objectives {
+pub struct PlanCost {
     /// Paid once per active deployment.
     pub ingest: PhaseCost,
     /// Paid per RQE; memory as if every query runs at once.
@@ -60,7 +60,7 @@ pub struct Objectives {
     pub query_latency_secs: Vec<f64>,
 }
 
-impl Objectives {
+impl PlanCost {
     pub fn cpu_secs_per_sec(&self) -> f64 {
         self.phases().map(|phase| phase.cpu_secs_per_sec).sum()
     }
@@ -162,7 +162,7 @@ pub fn score(
     deployments: &[Deployment],
     mapping: &Mapping,
     facts: &WorkloadFacts,
-) -> Objectives {
+) -> PlanCost {
     assert_eq!(
         mapping.len(),
         rqes.len(),
@@ -192,7 +192,7 @@ pub fn score(
         })
         .collect();
 
-    Objectives {
+    PlanCost {
         ingest: ingest_cost,
         merge: merge_cost,
         query: query_cost,
