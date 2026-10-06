@@ -8,22 +8,38 @@
 # engine gains them, and for research baselines.
 #
 # Usage:
-#   scripts/export_rqe_optimizer_costs.sh
-#   scripts/export_rqe_optimizer_costs.sh --no-build
+#   scripts/export_rqe_optimizer_costs.sh OUT_DIR
+#   scripts/export_rqe_optimizer_costs.sh OUT_DIR --no-build
+#
+# OUT_DIR must not exist yet, so a run never overwrites earlier measurements.
 
 set -euo pipefail
 
 BUILD=1
-if [[ "${1:-}" == "--no-build" ]]; then
-    BUILD=0
+OUT_DIR=
+for arg in "$@"; do
+    case "$arg" in
+        --no-build) BUILD=0 ;;
+        -*) echo "ERROR: unknown flag $arg" >&2; exit 1 ;;
+        *)
+            [[ -z "$OUT_DIR" ]] || { echo "ERROR: more than one OUT_DIR given" >&2; exit 1; }
+            OUT_DIR=$arg
+            ;;
+    esac
+done
+if [[ -z "$OUT_DIR" ]]; then
+    echo "Usage: $0 OUT_DIR [--no-build]" >&2
+    exit 1
+fi
+if [[ -e "$OUT_DIR" ]]; then
+    echo "ERROR: $OUT_DIR already exists; pick a new directory." >&2
+    exit 1
 fi
 
-OUT_DIR=out
 RAW_JSONL="$OUT_DIR/rqe_atomic_costs_raw.jsonl"
 GRID_JSONL="$OUT_DIR/rqe_atomic_costs_grid.jsonl"
 TABLE_JSON="$OUT_DIR/rqe_atomic_costs.json"
 mkdir -p "$OUT_DIR"
-rm -f "$RAW_JSONL" "$GRID_JSONL"
 
 if [[ $BUILD -eq 1 ]]; then
     echo "==> Building approxbench (release)..." >&2
