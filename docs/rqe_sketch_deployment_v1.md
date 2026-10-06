@@ -249,6 +249,43 @@ latency_i = card(G) × (c_qry + (n_i − 1) × c_mrg)
 It is not a wall-clock SLA: it assumes no parallel execution across groups and
 no cheaper k-way merge.
 
+### What each cost is counted per
+
+| Cost | Shared by RQEs on one deployment? | × groups `card(G)` | × windows | Per key inside an instance |
+|---|---|---|---|---|
+| Ingest CPU | yes, paid once per deployment | no, `lambda` already totals all groups | × `x/y` open | each sample is one insert, whatever the family |
+| Ingest memory | yes | yes | × `x/y` open | not modeled |
+| Storage memory | yes, sized for the longest `S` it serves | yes | × `(S−x)/y + 1` closed | not modeled |
+| Merge CPU | no, per RQE | yes | × `(S/x − 1)` folds | not modeled |
+| Merge memory | no, per RQE | yes | × 1 merged instance | not modeled |
+| Query CPU | no, per RQE | yes | — | one probe per group |
+| Query memory | no, per RQE | yes | — | 8 B, or 32 × 16 B for top-k |
+| Latency | per RQE | yes | `S/x − 1` merges | — |
+
+Keys inside an instance:
+
+- **Sketches** (CMS, CountSketch, KLL, DDSketch, HLL, UnivMon) keep one
+  fixed-size instance per group. The keys inside it, such as the endpoints a
+  per-service top-k counts, change neither memory nor CPU. The top-k heap is
+  fixed at the benchmark's k = 32.
+- **Exact accumulators** keep one value per group, so keys are groups. The
+  export divides their measured memory and merge cost by the group count, so
+  `m` is per group.
+- Nothing scales with keys below the group. Key labels `K` (the metric's
+  labels minus `G`) would matter only for a family whose size grows with keys
+  inside a group, such as an exact top-k map; none exists yet.
+
+Not shared, though it may look shareable:
+
+- **The stream read.** Two deployments on the same metric each pay full
+  ingest. Only RQEs on the same deployment share it.
+- **Merges and query results.** Two RQEs with the same lookback on one
+  deployment each pay their own merge and query.
+- **Groupings.** A `{service, endpoint}` deployment does not serve
+  `by (service)`: `G` must match exactly, with no regrouping at query time.
+- **Capabilities.** RQEs with different capabilities never share a
+  deployment, even on the same metric and `G`.
+
 ## Procedure
 
 1. Generate candidate deployments for each input RQE, then deduplicate them.
