@@ -57,7 +57,7 @@ pub struct PlanCost {
     /// Paid once per active deployment, sized for its longest lookback.
     pub storage: PhaseCost,
     /// Index-aligned with the input RAQE slice; display IDs need not be unique.
-    pub query_latency_secs: Vec<f64>,
+    pub query_latency_ms: Vec<f64>,
 }
 
 impl PlanCost {
@@ -150,14 +150,11 @@ pub(crate) fn storage_bytes(raqe: &Raqe, deployment: &Deployment, facts: &Worklo
     group_count(deployment, facts) * deployment.config.mem_bytes_per_instance * closed_windows
 }
 
-/// Serial CPU time of one query: `card(G) · (c_qry + (L/x − 1) · c_mrg)`.
-pub(crate) fn query_latency_secs(
-    raqe: &Raqe,
-    deployment: &Deployment,
-    facts: &WorkloadFacts,
-) -> f64 {
+/// Serial CPU time of one query, in ms: `card(G) · (c_qry + (L/x − 1) · c_mrg)`.
+pub(crate) fn query_latency_ms(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
     let merges_per_group = merged_window_count(raqe, deployment) - 1.0;
-    group_count(deployment, facts)
+    1000.0
+        * group_count(deployment, facts)
         * (deployment.config.query_cpu_secs + merges_per_group * deployment.config.merge_cpu_secs)
 }
 
@@ -181,7 +178,7 @@ pub fn score(
     let mut storage_bytes_by_deployment: BTreeMap<usize, f64> = BTreeMap::new();
     let mut merge_cost = PhaseCost::default();
     let mut query_cost = PhaseCost::default();
-    let query_latency_secs = raqes
+    let query_latency_ms = raqes
         .iter()
         .zip(mapping)
         .map(|(raqe, &deployment_index)| {
@@ -192,7 +189,7 @@ pub fn score(
             *stored = stored.max(storage_bytes(raqe, deployment, facts));
             merge_cost += merge(raqe, deployment, facts);
             query_cost += query(raqe, deployment, facts);
-            query_latency_secs(raqe, deployment, facts)
+            query_latency_ms(raqe, deployment, facts)
         })
         .collect();
 
@@ -204,7 +201,7 @@ pub fn score(
             cpu_secs_per_sec: 0.0,
             memory_bytes: storage_bytes_by_deployment.values().sum(),
         },
-        query_latency_secs,
+        query_latency_ms,
     }
 }
 
@@ -234,7 +231,7 @@ mod tests {
         assert_eq!(result.query.memory_bytes, 2048.0); // 4 × 32 × 16
         assert_eq!(result.storage.cpu_secs_per_sec, 0.0);
         assert_eq!(result.storage.memory_bytes, 200.0); // 4 × 10 × 5
-        assert_eq!(result.query_latency_secs, vec![44.0]); // 4 × (5 + 2 × 3)
+        assert_eq!(result.query_latency_ms, vec![44_000.0]); // 4 × (5 + 2 × 3) s
         assert!((result.cpu_secs_per_sec() - (28.0 + 44.0 / 30.0)).abs() < 1e-12);
         assert_eq!(result.memory_bytes(), 80.0 + 40.0 + 2048.0 + 200.0);
     }

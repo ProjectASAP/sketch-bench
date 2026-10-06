@@ -168,8 +168,7 @@ pub fn minimize(
             // Each RAQE takes exactly one deployment, so its latency SLA just
             // forbids the choices over it. Comparing in f64 here, not in the
             // solver, keeps µs latencies clear of its feasibility tolerance.
-            let latency_ms =
-                1000.0 * analytical_cost_model::query_latency_secs(raqe, deployment, facts);
+            let latency_ms = analytical_cost_model::query_latency_ms(raqe, deployment, facts);
             if raqe.latency_sla_ms.is_some_and(|limit| latency_ms > limit) {
                 model.add_constraint(Expression::from(assignment).leq(0));
             }
@@ -328,6 +327,6 @@ mod tests {
         let milp = minimize(&raqes, &deployments, &facts(1, 1), Objective::default())
             .expect("feasible MILP");
         assert_eq!(milp.mapping, vec![1]);
-        assert!(milp.plan_cost.query_latency_secs[0] <= 1e-7);
+        assert!(milp.plan_cost.query_latency_ms[0] <= 1e-4);
     }
 }

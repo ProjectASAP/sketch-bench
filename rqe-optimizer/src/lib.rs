@@ -32,8 +32,8 @@ pub(crate) fn secs(ms: Millis) -> f64 {
 /// A group-by key, compared as a set (§3's `labels_i == labels_D` rule).
 pub type LabelSet = BTreeSet<String>;
 
-/// What an RAQE's statistic needs (§1). `families()` is the only place
-/// capability scope is encoded; widening it means editing that match arm.
+/// What an RAQE's statistic needs (§1). A variant becomes a candidate only
+/// if it is in both `families()` and [`DEPLOYABLE_FAMILIES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
     SumOrCount,
@@ -120,11 +120,20 @@ impl MetricFacts {
 /// [`MetricFacts`] keyed by metric name.
 pub type WorkloadFacts = BTreeMap<String, MetricFacts>;
 
-/// Every problem with `facts` for serving `raqes`. The rest of the crate
-/// indexes `facts` without checks, so call this first on caller input.
+/// Every problem with `raqes` and the `facts` serving them. The rest of the
+/// crate indexes `facts` without checks, so call this first on caller input.
 pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<String>> {
     let mut problems = BTreeSet::new();
     for raqe in raqes {
+        let id = &raqe.id;
+        if !raqe.spatial_filter.is_empty() {
+            problems.insert(format!("{id}: spatial filters are not supported yet"));
+        }
+        if let Some(limit) = raqe.latency_sla_ms {
+            if !(limit.is_finite() && limit > 0.0) {
+                problems.insert(format!("{id}: latency SLA {limit} ms is not positive"));
+            }
+        }
         let (metric, grouping) = (&raqe.metric, &raqe.grouping_labels);
         let Some(metric_facts) = facts.get(metric) else {
             problems.insert(format!("{metric}: no facts for this metric"));
@@ -190,9 +199,11 @@ pub struct Raqe {
     pub interval_ms: Millis,
     pub metric: String,
     /// Series selector beyond the metric name, as canonical PromQL matcher
-    /// text; empty for none. Compared as an opaque string.
-    // ponytail: identity only. Filters that select the same series but are
-    // spelled differently don't share, and facts ignore the filter.
+    /// text; empty for none. Part of stream identity, compared as an opaque
+    /// string.
+    // ponytail: validate_facts rejects non-empty filters until facts carry
+    // per-filter cardinality; without it a filtered stream is costed as the
+    // whole metric.
     pub spatial_filter: String,
     /// `G`: the query's group-by labels.
     pub grouping_labels: LabelSet,
@@ -365,11 +376,12 @@ mod tests {
             Capability::Cardinality,
             Capability::TopK,
         ];
-        let served: usize = capabilities
-            .iter()
-            .map(|capability| capability.deployable_families().count())
-            .sum();
-        assert_eq!(served, DEPLOYABLE_FAMILIES.len());
+        for family in DEPLOYABLE_FAMILIES {
+            assert!(
+                capabilities.iter().any(|c| c.families().contains(family)),
+                "{family} serves no capability"
+            );
+        }
     }
 
     #[test]
@@ -405,7 +417,6 @@ mod tests {
             },
         )]);
         let r = Raqe {
-            spatial_filter: String::new(),
             grouping_labels: labels(&["service"]),
             ..raqe(60_000, 60_000)
         };
@@ -428,8 +439,14 @@ mod tests {
                 ..raqe(60_000, 60_000)
             },
             Raqe {
-                spatial_filter: String::new(),
                 grouping_labels: labels(&["pod"]),
+                ..raqe(60_000, 60_000)
+            },
+            Raqe {
+                id: "filtered".into(),
+                grouping_labels: labels(&["service"]),
+                spatial_filter: r#"{job="api"}"#.into(),
+                latency_sla_ms: Some(f64::NAN),
                 ..raqe(60_000, 60_000)
             },
         ];
@@ -440,7 +457,9 @@ mod tests {
         assert!(has("not a subset"));
         assert!(has("no cardinality for {\"pod\"}"));
         assert!(has("cardinality of {\"service\"} is 0"));
-        assert_eq!(problems.len(), 5, "{problems:?}");
+        assert!(has("filtered: spatial filters are not supported"));
+        assert!(has("filtered: latency SLA NaN ms is not positive"));
+        assert_eq!(problems.len(), 7, "{problems:?}");
     }
 
     #[test]
@@ -457,7 +476,6 @@ mod tests {
             },
         )]);
         let r = Raqe {
-            spatial_filter: String::new(),
             grouping_labels: labels(&["service"]),
             ..raqe(60_000, 60_000)
         };

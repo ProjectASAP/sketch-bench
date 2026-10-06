@@ -259,8 +259,13 @@ fn print_candidate(candidate_number: usize, deployment: &rqe_optimizer::Deployme
     );
 }
 
+/// Only `--milp` enforces latency SLAs, so other modes reject the flag.
 fn apply_latency_slas(raqes: &mut [Raqe]) {
     let args: Vec<_> = std::env::args().collect();
+    assert!(
+        !args.iter().any(|arg| arg == "--latency-sla") || args.iter().any(|arg| arg == "--milp"),
+        "--latency-sla is only enforced with --milp"
+    );
     for pair in args.windows(2).filter(|pair| pair[0] == "--latency-sla") {
         let (id, ms) = pair[1]
             .split_once('=')
@@ -401,8 +406,8 @@ fn main() {
         );
         print_plan_cost("  totals", &solution.plan_cost);
         print_mapping(1, &solution.mapping, &raqes, &deployments);
-        for (raqe, latency) in raqes.iter().zip(&solution.plan_cost.query_latency_secs) {
-            println!("  {}: query_latency={latency:.3e} sec", raqe.id);
+        for (raqe, latency) in raqes.iter().zip(&solution.plan_cost.query_latency_ms) {
+            println!("  {}: query_latency={latency:.3e} ms", raqe.id);
         }
         return;
     }
@@ -459,9 +464,9 @@ fn main() {
             &format!("mapping {i}: {} deployments", distinct_deployments.len()),
             plan_cost,
         );
-        for (raqe, latency) in raqes.iter().zip(&plan_cost.query_latency_secs) {
+        for (raqe, latency) in raqes.iter().zip(&plan_cost.query_latency_ms) {
             let raqe_id = &raqe.id;
-            println!("    {raqe_id}: query_latency={latency:.3e} sec");
+            println!("    {raqe_id}: query_latency={latency:.3e} ms");
         }
     }
 }

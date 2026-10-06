@@ -2,8 +2,10 @@
 # Measure the small atomic-cost grid consumed by rqe-optimizer.
 #
 # This is intentionally separate from export_atomic_costs.sh: that script
-# serves ASAPQuery's pinned grid, while this one covers exactly the variants
-# named by rqe_optimizer::Capability::families().
+# serves ASAPQuery's pinned grid, while this one covers the variants named by
+# rqe_optimizer::Capability::families(). Only those also in
+# DEPLOYABLE_FAMILIES become candidates; the rest are measured for when the
+# engine gains them, and for research baselines.
 #
 # Usage:
 #   scripts/export_rqe_optimizer_costs.sh

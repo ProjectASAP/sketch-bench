@@ -95,12 +95,28 @@ pub fn search(
     raqe: &Raqe,
     costs: &[AtomicCostEntry],
     seed: u64,
+    accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
+) -> RaqeSearch {
+    search_variants(
+        raqe,
+        raqe.capability.deployable_families(),
+        costs,
+        seed,
+        accuracy,
+    )
+}
+
+/// [`search`] over the given variants.
+fn search_variants<'a>(
+    raqe: &Raqe,
+    variants: impl IntoIterator<Item = &'a str>,
+    costs: &[AtomicCostEntry],
+    seed: u64,
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> RaqeSearch {
     let started = Instant::now();
-    let grids: Vec<Grid> = raqe
-        .capability
-        .deployable_families()
+    let grids: Vec<Grid> = variants
+        .into_iter()
         .filter_map(|variant| Grid::new(variant, costs))
         .collect();
 
@@ -505,6 +521,25 @@ mod tests {
                 "seed {seed}: {ks:?}"
             );
         }
+    }
+
+    #[test]
+    fn chooses_the_cheaper_variant() {
+        // Both top-k families, though only one is deployable today.
+        let mut costs = grid(&[2, 3], &[256, 512]);
+        let mut cs = cms(2, 256);
+        cs.sketch = "countsketch-heap-topk-fastpath-vector2d".into();
+        cs.mem_bytes_per_instance = 100.0;
+        costs.push(cs);
+        let r = raqe("r", 3_600_000, 60_000, 0.01);
+        let found = search_variants(
+            &r,
+            r.capability.families().iter().copied(),
+            &costs,
+            3,
+            table_accuracy,
+        );
+        assert_eq!(found.selected, Some(costs.len() - 1));
     }
 
     #[test]
