@@ -321,16 +321,28 @@ fn merge_accuracy(
 
 /// Reduce every record that has what it takes, skipping (and reporting) the
 /// rest. Order follows `records`. `merge_runs` are merge-accuracy rows; each
-/// is attached to the record of its cell (see [`same_cell`]).
+/// is attached to the record of its cell (see [`same_cell`]). A record
+/// missing any merge count that appears in `merge_runs` is skipped, so a
+/// partial grid can't pass as complete.
 pub fn reduce_all(
     records: &[MergedRecord],
     merge_runs: &[MergedRecord],
 ) -> (AtomicCostTable, Vec<(usize, SkipReason)>) {
+    let grid_counts: std::collections::BTreeSet<u64> = merge_runs
+        .iter()
+        .filter_map(|run| run.merge.merge_shards.map(|m| m as u64))
+        .collect();
     let mut table = Vec::with_capacity(records.len());
     let mut skipped = Vec::new();
     for (i, record) in records.iter().enumerate() {
         let entry = reduce_one(record).and_then(|mut entry| {
             entry.merge_accuracy = merge_accuracy(record, merge_runs)?;
+            if !grid_counts
+                .iter()
+                .all(|m| entry.merge_accuracy.contains_key(m))
+            {
+                return Err(SkipReason::MissingField("merge_accuracy"));
+            }
             Ok(entry)
         });
         match entry {
@@ -674,6 +686,18 @@ mod tests {
         assert_eq!(table[0].merge_accuracy.len(), 2);
         assert_eq!(at(4), 0.1);
         assert_eq!(at(64), 0.3);
+    }
+
+    #[test]
+    fn a_row_missing_a_grid_merge_count_is_skipped() {
+        let mut other_cell = merge_run(16, 0.2);
+        other_cell.sketch_config = Some(serde_json::json!({"algorithm": "cms", "params": {}}));
+        let (table, skipped) = reduce_all(&[full_record()], &[merge_run(4, 0.1), other_cell]);
+        assert!(table.is_empty());
+        assert_eq!(
+            skipped,
+            vec![(0, SkipReason::MissingField("merge_accuracy"))]
+        );
     }
 
     #[test]

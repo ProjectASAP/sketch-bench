@@ -265,28 +265,38 @@ impl Raqe {
     }
 
     /// Whether `config` measured this RAQE's metric and clears it after
-    /// `merges` windows are folded per query (`L / x`). Missing is not
-    /// passing.
+    /// `merges` windows are folded per query (`L / x`), at both measured
+    /// counts bracketing `merges` (error is not monotone in the count).
+    /// Missing is not passing.
     pub fn accuracy_ok_for(&self, config: &AtomicCostEntry, merges: u64) -> bool {
-        accuracy_at(config, merges)
-            .get(&self.accuracy_metric)
-            .is_some_and(|&v| self.accuracy_ok(v))
+        accuracy_at(config, merges).iter().all(|scores| {
+            scores
+                .get(&self.accuracy_metric)
+                .is_some_and(|&v| self.accuracy_ok(v))
+        })
     }
 }
 
-/// `config`'s scores after folding `merges` windows: the smallest measured
-/// merge count at or above `merges`, else the largest measured. One window,
-/// or a row with no merge measurements, reads the single-instance scores.
-pub fn accuracy_at(config: &AtomicCostEntry, merges: u64) -> &BTreeMap<String, f64> {
+/// `config`'s scores at the two measured merge counts bracketing `merges`:
+/// the largest at or below it (count 1 is `query_accuracy`), and the smallest
+/// at or above it, else the largest measured. One window, or a row with no
+/// merge measurements, reads the single-instance scores for both.
+pub fn accuracy_at(config: &AtomicCostEntry, merges: u64) -> [&BTreeMap<String, f64>; 2] {
+    let single = &config.query_accuracy;
     if merges <= 1 {
-        return &config.query_accuracy;
+        return [single, single];
     }
-    config
-        .merge_accuracy
+    let measured = &config.merge_accuracy;
+    let below = measured
+        .range(..=merges)
+        .next_back()
+        .map_or(single, |(_, scores)| scores);
+    let above = measured
         .range(merges..)
         .next()
-        .or_else(|| config.merge_accuracy.last_key_value())
-        .map_or(&config.query_accuracy, |(_, scores)| scores)
+        .or_else(|| measured.last_key_value())
+        .map_or(single, |(_, scores)| scores);
+    [below, above]
 }
 
 /// A candidate deployment (§3): one configuration, one grouped stream, and a
@@ -419,21 +429,22 @@ mod tests {
     }
 
     #[test]
-    fn accuracy_at_reads_the_nearest_measured_merge_count_at_or_above() {
+    fn accuracy_at_reads_both_measured_merge_counts_bracketing_the_query() {
         let mut config = deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config;
         let scores = |v: f64| BTreeMap::from([("err".to_string(), v)]);
-        let at = |c: &AtomicCostEntry, merges| accuracy_at(c, merges)["err"];
+        let at = |c: &AtomicCostEntry, merges| accuracy_at(c, merges).map(|s| s["err"]);
         // No merge measurements: every count reads the single instance.
-        assert_eq!(at(&config, 60), 0.0);
+        assert_eq!(at(&config, 60), [0.0, 0.0]);
         config.merge_accuracy =
             BTreeMap::from([(4, scores(4.0)), (16, scores(16.0)), (64, scores(64.0))]);
-        assert_eq!(at(&config, 0), 0.0);
-        assert_eq!(at(&config, 1), 0.0);
-        assert_eq!(at(&config, 2), 4.0);
-        assert_eq!(at(&config, 4), 4.0);
-        assert_eq!(at(&config, 5), 16.0);
-        assert_eq!(at(&config, 64), 64.0);
-        assert_eq!(at(&config, 1_000), 64.0);
+        assert_eq!(at(&config, 0), [0.0, 0.0]);
+        assert_eq!(at(&config, 1), [0.0, 0.0]);
+        // Below the smallest measured count, the lower bracket is count 1.
+        assert_eq!(at(&config, 2), [0.0, 4.0]);
+        assert_eq!(at(&config, 4), [4.0, 4.0]);
+        assert_eq!(at(&config, 5), [4.0, 16.0]);
+        assert_eq!(at(&config, 64), [64.0, 64.0]);
+        assert_eq!(at(&config, 1_000), [64.0, 64.0]);
     }
 
     #[test]

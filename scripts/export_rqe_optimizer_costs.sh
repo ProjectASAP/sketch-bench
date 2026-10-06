@@ -60,8 +60,10 @@ CARDINALITY=100000
 SEED=42
 MERGE_SHARDS=16
 # Accuracy after folding m shards, for the optimizer's L/x windows per query.
-# One shard is the accuracy pass's single instance.
-MERGE_ACCURACY_SHARDS=(4 16 64)
+# One shard is the accuracy pass's single instance. The same stream is split m
+# ways (fixed total): for a fixed query L, choosing x splits the query's total
+# over L/x windows. Beyond the largest count the optimizer reads the largest.
+MERGE_ACCURACY_SHARDS=(4 16 64 256 1024)
 
 # The swept parameters, every one of them. Exact accumulators take none.
 HLL_PRECISIONS=(12 14)
