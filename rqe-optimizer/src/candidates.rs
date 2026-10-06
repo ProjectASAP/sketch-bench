@@ -280,7 +280,7 @@ fn ingest_cpu(deployment: &Deployment) -> f64 {
 /// Open-window bytes per group. `card(G)` is a common multiplier within a
 /// group, so it is left out.
 fn ingest_memory(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
-    open_window_count(deployment) * instance_memory_bytes(deployment, facts)
+    open_window_count(deployment) * instance_memory_bytes(deployment, facts, deployment.window_ms)
 }
 
 fn query_latency(deployment: &Deployment, raqe: &Raqe) -> f64 {
@@ -296,7 +296,7 @@ fn stored_memory(deployment: &Deployment, raqe: &Raqe, facts: &WorkloadFacts) ->
     deployment
         .closed_instance_count(raqe.lookback_ms)
         .expect("candidate coverage only contains exactly tiled RAQEs") as f64
-        * instance_memory_bytes(deployment, facts)
+        * instance_memory_bytes(deployment, facts, deployment.window_ms)
 }
 
 pub fn eligible_deployments_for(r: &Raqe, deployments: &[Deployment]) -> Vec<usize> {

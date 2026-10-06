@@ -288,8 +288,8 @@ For deployment `D` serving RAQE `i`:
 - `m`: memory per instance, measured. For DDSketch on a metric with a
   `value_range`, `m = (floor(ln(hi / lo) / ln((1 + alpha) / (1 - alpha))) + 1) × 8`
   bytes instead: one bucket count per `gamma`-power in the range, capped by
-  the values one instance sees (`λ · x / card(G)`), as sketch-bench's
-  `dd_footprint` counts them. The range is the metric's, so `m` is an upper
+  the values one instance sees (`λ · x / card(G)` for a window, `λ · L / card(G)`
+  for a query's merge accumulator), as sketch-bench's `dd_footprint` counts them. The range is the metric's, so `m` is an upper
   bound for a group whose own values span less.
 - `c_ins`: CPU per insert, measured.
 - `c_mrg`: CPU per pairwise merge, measured.
