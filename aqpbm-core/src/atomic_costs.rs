@@ -231,10 +231,10 @@ fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredA
     let value = columns.and_then(|d: &TableDescription| d.column_spec.last());
     let keys = columns.and_then(|d| match d.column_spec.split_last() {
         Some((value, [])) => value.distribution.domain().map(|d| d.size),
-        Some((_, labels)) => labels
-            .iter()
-            .map(|c| c.distribution.domain().map(|d| d.size))
-            .product(),
+        // Saturating: wide label domains multiply past u64; the bound stays a bound.
+        Some((_, labels)) => labels.iter().try_fold(1u64, |keys, c| {
+            Some(keys.saturating_mul(c.distribution.domain()?.size))
+        }),
         None => None,
     });
     MeasuredAt {
