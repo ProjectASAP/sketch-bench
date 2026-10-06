@@ -47,15 +47,26 @@ pub fn window_adapter(raqe: &Raqe) -> (Millis, Millis) {
 /// Search every RAQE independently. `accuracy` is the benchmark oracle: the
 /// measured metric named by `raqe.accuracy_metric` for a configuration, or
 /// `None` when it was not measured. Returns the IDs of unservable RAQEs.
+/// `allow_undeployable_families` as in
+/// [`crate::Capability::candidate_families`].
 pub fn plan(
     raqes: &[Raqe],
     costs: &[AtomicCostEntry],
     seed: u64,
+    allow_undeployable_families: bool,
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> Result<AutoSketchPlan, Vec<String>> {
     let searches: Vec<_> = raqes
         .iter()
-        .map(|raqe| search(raqe, costs, seed, &mut accuracy))
+        .map(|raqe| {
+            search(
+                raqe,
+                costs,
+                seed,
+                allow_undeployable_families,
+                &mut accuracy,
+            )
+        })
         .collect();
     let unservable: Vec<_> = searches
         .iter()
@@ -95,28 +106,13 @@ pub fn search(
     raqe: &Raqe,
     costs: &[AtomicCostEntry],
     seed: u64,
-    accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
-) -> RaqeSearch {
-    search_variants(
-        raqe,
-        raqe.capability.deployable_families(),
-        costs,
-        seed,
-        accuracy,
-    )
-}
-
-/// [`search`] over the given variants.
-fn search_variants<'a>(
-    raqe: &Raqe,
-    variants: impl IntoIterator<Item = &'a str>,
-    costs: &[AtomicCostEntry],
-    seed: u64,
+    allow_undeployable_families: bool,
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> RaqeSearch {
     let started = Instant::now();
-    let grids: Vec<Grid> = variants
-        .into_iter()
+    let grids: Vec<Grid> = raqe
+        .capability
+        .candidate_families(allow_undeployable_families)
         .filter_map(|variant| Grid::new(variant, costs))
         .collect();
 
@@ -400,7 +396,7 @@ mod tests {
         // Needs rows * cols >= 1000: rows=3 cols=400 (1200 counters) is the
         // smallest; rows=2 cols=800 and rows=3 cols=800 also pass.
         let r = raqe("r", 3_600_000, 60_000, 1.0 / 1_000.0);
-        let found = search(&r, &costs, 7, table_accuracy);
+        let found = search(&r, &costs, 7, false, table_accuracy);
         assert_eq!(found.selected, Some(cheapest_feasible(&r, &costs)));
     }
 
@@ -410,7 +406,7 @@ mod tests {
         let cols: Vec<u64> = (0..8).map(|i| 64 << i).collect();
         let costs = grid(&rows, &cols);
         let r = raqe("r", 3_600_000, 60_000, 1.0 / 2_000.0);
-        let found = search(&r, &costs, 42, table_accuracy);
+        let found = search(&r, &costs, 42, false, table_accuracy);
         assert!(found.selected.is_some());
         assert!(
             found.probes.len() < costs.len(),
@@ -428,7 +424,7 @@ mod tests {
             raqe("a", 3_600_000, 60_000, 0.01),
             raqe("b", 3_600_000, 60_000, 0.01),
         ];
-        let plan = plan(&raqes, &costs, 1, table_accuracy).unwrap();
+        let plan = plan(&raqes, &costs, 1, false, table_accuracy).unwrap();
         assert_eq!(plan.deployments.len(), 2);
         assert_eq!(plan.deployments[0], plan.deployments[1]);
         assert_eq!(plan.mapping, vec![0, 1]);
@@ -453,7 +449,7 @@ mod tests {
             raqe("tiled", 3_600_000, 60_000, 0.01),
             raqe("gcd", 3_600_000, 280_000, 0.01),
         ];
-        let plan = plan(&raqes, &costs, 1, table_accuracy).unwrap();
+        let plan = plan(&raqes, &costs, 1, false, table_accuracy).unwrap();
         assert_eq!(window_adapter(&raqes[0]), (3_600_000, 60_000));
         assert_eq!(window_adapter(&raqes[1]), (3_600_000, 40_000));
         for (r, d) in raqes.iter().zip(&plan.deployments) {
@@ -469,7 +465,7 @@ mod tests {
             raqe("too_strict", 3_600_000, 60_000, 1e-9),
         ];
         assert_eq!(
-            plan(&raqes, &costs, 1, table_accuracy).unwrap_err(),
+            plan(&raqes, &costs, 1, false, table_accuracy).unwrap_err(),
             vec!["too_strict".to_string()]
         );
     }
@@ -478,7 +474,7 @@ mod tests {
     fn missing_measurement_is_infeasible() {
         let costs = grid(&[2, 3], &[256, 512]);
         let r = raqe("r", 3_600_000, 60_000, 0.01);
-        let found = search(&r, &costs, 1, |_, _| None);
+        let found = search(&r, &costs, 1, false, |_, _| None);
         assert_eq!(found.selected, None);
         assert_eq!(found.probes.len(), costs.len());
     }
@@ -510,7 +506,7 @@ mod tests {
         let costs: Vec<_> = (1..=10).map(kll).collect();
         let r = quantile_raqe(1.0 / 6.0);
         for seed in 0..20 {
-            let found = search(&r, &costs, seed, table_accuracy);
+            let found = search(&r, &costs, seed, false, table_accuracy);
             let ks: Vec<u64> = found.probes.iter().map(|&i| i as u64 + 1).collect();
             assert_eq!(found.selected, Some(5), "seed {seed}: {ks:?}");
             let s = ks[0];
@@ -525,20 +521,14 @@ mod tests {
 
     #[test]
     fn chooses_the_cheaper_variant() {
-        // Both top-k families, though only one is deployable today.
+        // countsketch-heap isn't deployable, so this needs the study flag.
         let mut costs = grid(&[2, 3], &[256, 512]);
         let mut cs = cms(2, 256);
         cs.sketch = "countsketch-heap-topk-fastpath-vector2d".into();
         cs.mem_bytes_per_instance = 100.0;
         costs.push(cs);
         let r = raqe("r", 3_600_000, 60_000, 0.01);
-        let found = search_variants(
-            &r,
-            r.capability.families().iter().copied(),
-            &costs,
-            3,
-            table_accuracy,
-        );
+        let found = search(&r, &costs, 3, true, table_accuracy);
         assert_eq!(found.selected, Some(costs.len() - 1));
     }
 
@@ -556,7 +546,7 @@ mod tests {
             accuracy_direction: AccuracyDirection::HigherIsBetter,
             ..quantile_raqe(0.95)
         };
-        let found = search(&r, &costs, 11, table_accuracy);
+        let found = search(&r, &costs, 11, false, table_accuracy);
         assert_eq!(found.selected, Some(4)); // k = 5: 0.95
     }
 

@@ -46,6 +46,16 @@ pub enum Capability {
 }
 
 impl Capability {
+    pub const ALL: [Capability; 7] = [
+        Capability::SumOrCount,
+        Capability::Min,
+        Capability::Max,
+        Capability::RateOrIncrease,
+        Capability::Quantile,
+        Capability::Cardinality,
+        Capability::TopK,
+    ];
+
     /// `AtomicCostEntry.sketch` values serving this capability. These are
     /// sketch-bench *variant* strings, not algorithm names: fastpath and
     /// regularpath have different cost profiles, so `"cms"` would be
@@ -75,13 +85,17 @@ impl Capability {
         }
     }
 
-    /// The subset of [`Capability::families`] in [`DEPLOYABLE_FAMILIES`]:
-    /// the only variants that become candidates.
-    pub fn deployable_families(self) -> impl Iterator<Item = &'static str> {
-        self.families()
-            .iter()
-            .copied()
-            .filter(|family| DEPLOYABLE_FAMILIES.contains(family))
+    /// The variants the MILP and AutoSketch plan with: the subset of
+    /// [`Capability::families`] in [`DEPLOYABLE_FAMILIES`], or all of them
+    /// when `allow_undeployable_families` (for studies; the plan can't be
+    /// deployed).
+    pub fn candidate_families(
+        self,
+        allow_undeployable_families: bool,
+    ) -> impl Iterator<Item = &'static str> {
+        self.families().iter().copied().filter(move |family| {
+            allow_undeployable_families || DEPLOYABLE_FAMILIES.contains(family)
+        })
     }
 }
 
@@ -126,6 +140,9 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
     let mut problems = BTreeSet::new();
     for raqe in raqes {
         let id = &raqe.id;
+        if raqe.lookback_ms == 0 || raqe.interval_ms == 0 {
+            problems.insert(format!("{id}: lookback and interval must be nonzero"));
+        }
         if !raqe.spatial_filter.is_empty() {
             problems.insert(format!("{id}: spatial filters are not supported yet"));
         }
@@ -141,8 +158,16 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
         };
         let all_labels = &metric_facts.labels;
         let cardinality = &metric_facts.cardinality;
-        if metric_facts.scrape_interval_ms == 0 {
+        let scrape_ms = metric_facts.scrape_interval_ms;
+        if scrape_ms == 0 {
             problems.insert(format!("{metric}: scrape interval is 0"));
+        } else if !(raqe.lookback_ms.is_multiple_of(scrape_ms)
+            && raqe.interval_ms.is_multiple_of(scrape_ms))
+        {
+            problems.insert(format!(
+                "{id}: lookback {} ms and interval {} ms must be multiples of the {scrape_ms} ms scrape interval",
+                raqe.lookback_ms, raqe.interval_ms
+            ));
         }
         if !grouping.is_subset(all_labels) {
             problems.insert(format!(
@@ -367,18 +392,11 @@ mod tests {
 
     #[test]
     fn every_deployable_family_serves_a_capability() {
-        let capabilities = [
-            Capability::SumOrCount,
-            Capability::Min,
-            Capability::Max,
-            Capability::RateOrIncrease,
-            Capability::Quantile,
-            Capability::Cardinality,
-            Capability::TopK,
-        ];
         for family in DEPLOYABLE_FAMILIES {
             assert!(
-                capabilities.iter().any(|c| c.families().contains(family)),
+                Capability::ALL
+                    .iter()
+                    .any(|c| c.families().contains(family)),
                 "{family} serves no capability"
             );
         }
@@ -460,6 +478,25 @@ mod tests {
         assert!(has("filtered: spatial filters are not supported"));
         assert!(has("filtered: latency SLA NaN ms is not positive"));
         assert_eq!(problems.len(), 7, "{problems:?}");
+    }
+
+    #[test]
+    fn rejects_zero_and_scrape_unaligned_times() {
+        // 1 s scrape. 3_600 looks like seconds left unconverted.
+        let raqes = [
+            Raqe {
+                id: "zero".into(),
+                ..raqe(0, 60_000)
+            },
+            Raqe {
+                id: "unaligned".into(),
+                ..raqe(3_600, 60_000)
+            },
+        ];
+        let problems = validate_facts(&raqes, &test_support::facts(1, 1)).unwrap_err();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].starts_with("unaligned: lookback 3600 ms"));
+        assert!(problems[1].starts_with("zero: lookback and interval must be nonzero"));
     }
 
     #[test]

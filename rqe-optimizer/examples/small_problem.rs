@@ -261,12 +261,15 @@ fn print_candidate(candidate_number: usize, deployment: &rqe_optimizer::Deployme
     );
 }
 
-/// Only `--milp` enforces latency SLAs, so other modes reject the flag.
+/// Only `--milp` enforces latency SLAs, so every other mode rejects the flag.
+/// `--candidates-only` and `--sample-mappings` run before the MILP branch.
 fn apply_latency_slas(raqes: &mut [Raqe]) {
     let args: Vec<_> = std::env::args().collect();
+    let has = |flag: &str| args.iter().any(|arg| arg == flag);
     assert!(
-        !args.iter().any(|arg| arg == "--latency-sla") || args.iter().any(|arg| arg == "--milp"),
-        "--latency-sla is only enforced with --milp"
+        !has("--latency-sla")
+            || (has("--milp") && !has("--candidates-only") && !has("--sample-mappings")),
+        "--latency-sla is only enforced with --milp, without --candidates-only or --sample-mappings"
     );
     for pair in args.windows(2).filter(|pair| pair[0] == "--latency-sla") {
         let (id, ms) = pair[1]
@@ -275,8 +278,10 @@ fn apply_latency_slas(raqes: &mut [Raqe]) {
         let ms = ms
             .parse::<f64>()
             .ok()
-            .filter(|value| *value > 0.0)
-            .unwrap_or_else(|| panic!("latency SLA must be a positive number of milliseconds"));
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or_else(|| {
+                panic!("latency SLA must be a finite positive number of milliseconds")
+            });
         let raqe = raqes
             .iter_mut()
             .find(|raqe| raqe.id == id)

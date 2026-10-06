@@ -1,10 +1,7 @@
 //! Candidate generation and eligibility (§3).
 
 use crate::analytical_cost_model::merge_memory_per_group;
-use crate::{
-    AtomicCostEntry, Capability, Deployment, LabelSet, Millis, Raqe, WorkloadFacts,
-    DEPLOYABLE_FAMILIES,
-};
+use crate::{AtomicCostEntry, Capability, Deployment, LabelSet, Millis, Raqe, WorkloadFacts};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn gcd(a: Millis, b: Millis) -> Millis {
@@ -58,8 +55,8 @@ fn candidate_deployments(
     let capability = group[0].capability;
     let windows = group
         .iter()
-        .flat_map(|r| divisors(r.lookback_ms))
-        .filter(|window_ms| window_ms.is_multiple_of(scrape_interval_ms))
+        .flat_map(|r| divisors(r.lookback_ms / scrape_interval_ms))
+        .map(|scrapes| scrapes * scrape_interval_ms)
         .collect::<BTreeSet<_>>();
     let mut deployments = Vec::new();
     for window_ms in windows {
@@ -73,9 +70,9 @@ fn candidate_deployments(
                 .map(|r| gcd(window_ms, r.interval_ms)),
         );
         for config in costs.iter().filter(|c| {
-            let sketch = c.sketch.as_str();
-            capability.families().contains(&sketch)
-                && (allow_undeployable_families || DEPLOYABLE_FAMILIES.contains(&sketch))
+            capability
+                .candidate_families(allow_undeployable_families)
+                .any(|family| family == c.sketch)
         }) {
             for &slide_ms in &slides {
                 if slide_ms.is_multiple_of(scrape_interval_ms) {
@@ -95,9 +92,7 @@ fn candidate_deployments(
     deployments
 }
 
-/// Only [`DEPLOYABLE_FAMILIES`] become candidates unless
-/// `allow_undeployable_families`, which plans with every measured family
-/// (for studies; the plan can't be deployed).
+/// Configurations come from [`Capability::candidate_families`].
 pub fn build_all_candidates(
     raqes: &[Raqe],
     costs: &[AtomicCostEntry],
@@ -148,8 +143,8 @@ pub fn build_all_candidates_unpruned(
 /// Remove a candidate only when another candidate can replace it in every
 /// mapping without making any modeled objective worse.
 ///
-/// This comparison is deliberately local to a (capability, metric, grouping)
-/// group, where `card(G)`, arrival rate and query output size are common
+/// This comparison is deliberately local to a (capability, metric,
+/// spatial_filter, grouping) group, where `card(G)`, arrival rate and query output size are common
 /// multipliers. So it compares ingest CPU and memory per group, then latency
 /// (merge and query CPU), merge memory and stored memory for each RAQE the
 /// dominated candidate can serve.
