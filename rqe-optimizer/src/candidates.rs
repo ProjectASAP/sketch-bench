@@ -139,90 +139,97 @@ pub fn prune_dominated_candidates(rqes: &[Rqe], candidates: Vec<Deployment>) -> 
         .iter()
         .enumerate()
         .filter_map(|(candidate_index, candidate)| {
-            let dominated = eligibility
-                .iter()
-                .enumerate()
-                .any(|(other_index, other_coverage)| {
-                    other_index != candidate_index
-                    && candidate_dominates(
-                        &candidates[other_index],
-                        other_coverage,
-                        candidate,
-                        &eligibility[candidate_index],
-                        rqes,
-                    )
-                    // Identical candidates dominate only in a stable direction,
-                    // so a tie never removes both candidates.
-                    && (strictly_better(
-                        &candidates[other_index],
-                        other_coverage,
-                        candidate,
-                        &eligibility[candidate_index],
-                        rqes,
-                    ) || other_index < candidate_index)
-                });
+            let dominated = (0..candidates.len()).any(|other_index| {
+                if other_index == candidate_index {
+                    return false;
+                }
+                match dominance(
+                    &candidates[other_index],
+                    &eligibility[other_index],
+                    candidate,
+                    &eligibility[candidate_index],
+                    rqes,
+                ) {
+                    Dominance::StrictlyBetter => true,
+                    // The earlier of two identical candidates wins, so a tie
+                    // never removes both.
+                    Dominance::Equal => other_index < candidate_index,
+                    Dominance::NotDominating => false,
+                }
+            });
             (!dominated).then(|| candidate.clone())
         })
         .collect()
 }
 
-fn candidate_dominates(
-    replacement: &Deployment,
-    replacement_coverage: &[bool],
-    original: &Deployment,
-    original_coverage: &[bool],
-    rqes: &[Rqe],
-) -> bool {
-    if replacement.capability != original.capability
-        || replacement.metric != original.metric
-        || replacement.grouping_labels != original.grouping_labels
-    {
-        return false;
-    }
-
-    ingest_cpu(replacement) <= ingest_cpu(original)
-        && ingest_memory(replacement) <= ingest_memory(original)
-        && original_coverage
-            .iter()
-            .zip(replacement_coverage)
-            .all(|(&original_serves, &replacement_serves)| !original_serves || replacement_serves)
-        && original_coverage
-            .iter()
-            .enumerate()
-            .all(|(rqe_index, &serves)| {
-                let rqe = &rqes[rqe_index];
-                !serves
-                    || (query_latency(replacement, rqe) <= query_latency(original, rqe)
-                        && merge_memory_per_group(rqe, replacement)
-                            <= merge_memory_per_group(rqe, original)
-                        && stored_memory(replacement, rqe) <= stored_memory(original, rqe))
-            })
+enum Dominance {
+    StrictlyBetter,
+    Equal,
+    NotDominating,
 }
 
-fn strictly_better(
+/// Whether `replacement` can stand in for `original`: it serves every RQE
+/// `original` serves and is no worse on any cost.
+fn dominance(
     replacement: &Deployment,
     replacement_coverage: &[bool],
     original: &Deployment,
     original_coverage: &[bool],
     rqes: &[Rqe],
-) -> bool {
-    ingest_cpu(replacement) < ingest_cpu(original)
-        || ingest_memory(replacement) < ingest_memory(original)
-        || original_coverage
+) -> Dominance {
+    let same_group = replacement.capability == original.capability
+        && replacement.metric == original.metric
+        && replacement.grouping_labels == original.grouping_labels;
+    let covers_original = original_coverage
+        .iter()
+        .zip(replacement_coverage)
+        .all(|(&original_serves, &replacement_serves)| !original_serves || replacement_serves);
+    if !same_group || !covers_original {
+        return Dominance::NotDominating;
+    }
+
+    // Each pair is (replacement's cost, original's cost).
+    let mut costs = vec![
+        (ingest_cpu(replacement), ingest_cpu(original)),
+        (ingest_memory(replacement), ingest_memory(original)),
+    ];
+    for (rqe, _) in rqes
+        .iter()
+        .zip(original_coverage)
+        .filter(|(_, &serves)| serves)
+    {
+        costs.push((
+            query_latency(replacement, rqe),
+            query_latency(original, rqe),
+        ));
+        costs.push((
+            merge_memory_per_group(rqe, replacement),
+            merge_memory_per_group(rqe, original),
+        ));
+        costs.push((
+            stored_memory(replacement, rqe),
+            stored_memory(original, rqe),
+        ));
+    }
+
+    let serves_more = original_coverage
+        .iter()
+        .zip(replacement_coverage)
+        .any(|(&original_serves, &replacement_serves)| !original_serves && replacement_serves);
+    if costs
+        .iter()
+        .any(|(replacement_cost, original_cost)| replacement_cost > original_cost)
+    {
+        Dominance::NotDominating
+    } else if serves_more
+        || costs
             .iter()
-            .zip(replacement_coverage)
-            .any(|(&original_serves, &replacement_serves)| !original_serves && replacement_serves)
-        || original_coverage
-            .iter()
-            .enumerate()
-            .any(|(rqe_index, &serves)| {
-                let rqe = &rqes[rqe_index];
-                serves
-                    && (query_latency(replacement, rqe) < query_latency(original, rqe)
-                        || merge_memory_per_group(rqe, replacement)
-                            < merge_memory_per_group(rqe, original)
-                        || stored_memory(replacement, rqe) < stored_memory(original, rqe))
-            })
+            .any(|(replacement_cost, original_cost)| replacement_cost < original_cost)
+    {
+        Dominance::StrictlyBetter
+    } else {
+        Dominance::Equal
+    }
 }
 
 fn open_window_count(deployment: &Deployment) -> f64 {

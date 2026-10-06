@@ -74,7 +74,8 @@ impl Objectives {
     }
 }
 
-/// `card(G)`: instances per window.
+/// `card(G)`: cardinality of `G`, so the number of parallel accumulator
+/// instances per window.
 fn group_count(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
     facts[&deployment.metric].cardinality[&deployment.grouping_labels] as f64
 }
@@ -107,8 +108,8 @@ pub(crate) fn ingest(deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCos
 }
 
 /// CPU `card(G) · (L/x − 1) · c_mrg / T`; memory `card(G) · m`, one
-/// accumulator per group. The windows folded into it are live in storage.
-/// A direct query (`L == x`) merges nothing and costs neither.
+/// accumulator per group. A direct query (`L == x`) merges nothing and costs
+/// neither.
 pub(crate) fn merge(rqe: &Rqe, deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCost {
     let groups = group_count(deployment, facts);
     let merges_per_group = merged_window_count(rqe, deployment) - 1.0;

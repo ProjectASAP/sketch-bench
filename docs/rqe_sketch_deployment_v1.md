@@ -61,6 +61,11 @@ For every label-value group, it creates an instance for every interval:
 [k × y, k × y + x)
 ```
 
+At time `t`, an instance is **open** while its interval has not ended
+(`t < k × y + x`): it still receives samples. After that it is **closed**: it
+never changes again and is kept only while some RQE's lookback still needs it.
+A deployment has `x / y` open instances per group at any time.
+
 Instances overlap when `x > y`. There is no subtract operation. To answer an
 RQE, the system selects and merges only non-overlapping instances, so items
 are never counted twice.
@@ -113,11 +118,11 @@ For each (capability, metric, G) group, generate candidates as follows:
 ```text
 for each window x that divides some S_i and is a multiple of the scrape interval:
     for each RQE i whose S_i is divisible by x:
-        g_i = gcd(x, T_i)                  # the largest slide that serves RQE i
-    slides = { gcd(A) : A a non-empty subset of {g_i} }
-    for each configuration serving the capability,
-            and each y in slides that is a multiple of the scrape interval:
-        add (capability, configuration, metric, G, x, y)
+        g_i = gcd(x, T_i)    # the largest slide that serves RQE i
+    slides = { gcd(A) : A is a non-empty subset of {g_i} }
+    for each y in slides that is a multiple of the scrape interval:
+        for each configuration that serves the capability:
+            add (capability, configuration, metric, G, x, y)
 ```
 
 **Windows.** An RQE merges `S_i / x` whole windows, so `x` must divide `S_i`.
@@ -241,7 +246,7 @@ window size, and query frequency.
 For deployment `D` serving RQE `i`:
 
 - `lambda`: samples/sec arriving for `D`'s metric, `card(metric.labels) / scrape_interval`.
-- `card(G)`: groups of `D`, so instances per window.
+- `card(G)`: cardinality of `G`, so the number of parallel accumulator instances per window.
 - `x`, `y`: `D`'s window and slide.
 - `a_D = x / y`: open windows; each sample is inserted into `a_D` instances of its group.
 - `S_i`, `T_i`: RQE `i`'s lookback and interval.
@@ -257,7 +262,7 @@ Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
 | Phase | CPU | Memory |
 |---|---|---|
 | Ingest, per active `D` | `lambda × a_D × c_ins` | `card(G) × m × a_D` (open windows) |
-| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one accumulator per group; the windows folded in are live in storage); 0 when `n_i = 1` |
+| Merge, per RQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one accumulator per group); 0 when `n_i = 1` |
 | Query, per RQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
 | Storage, per active `D` | 0 | `card(G) × m × ((max_i S_i − x) / y + 1)` (closed windows) |
 
