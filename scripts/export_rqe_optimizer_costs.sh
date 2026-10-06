@@ -41,11 +41,23 @@ CARDINALITY=100000
 SEED=42
 MERGE_SHARDS=16
 
+# The swept parameters, every one of them. Exact accumulators take none.
 HLL_PRECISIONS=(12 14)
 KLL_KS=(200 500)
 DD_ALPHAS=(0.01 0.02)
 CMS_HEAP_ROWS=(3 5)
 CMS_HEAP_COLS=(2048)
+UNIVMON_CONFIGS=(
+    "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
+    "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
+)
+HYDRA_KLL_CONFIGS=(
+    "rows=3 cols=128 cell_k=200"
+    "rows=3 cols=256 cell_k=200"
+    "rows=3 cols=512 cell_k=200"
+    "rows=5 cols=256 cell_k=200"
+    "rows=3 cols=256 cell_k=500"
+)
 
 # Zipf is deliberate. Uniform data makes request-rate relative error
 # meaningless in the rare-key tail and makes top-k accuracy degenerate.
@@ -106,26 +118,50 @@ point_univmon() {
         --report "$RAW_JSONL"
 }
 
-echo "==> Exact accumulators: sum, min, max, increase" >&2
+# HydraKLL ingests grouped records with an f64 value. One instance serves
+# every group, so its cost and accuracy hold at this spec's group count only.
+point_hydra_kll() {
+    local config=$1
+    echo "  hydra-kll ($config)" >&2
+    "$BINARY" sketchbench \
+        --variant hydra-kll --library lib --config "$config" \
+        --operations insert,query,merge --metrics throughput,cpu,memory \
+        --merge-shards "$MERGE_SHARDS" --runs "$RUNS" --warmup-runs "$WARMUP" \
+        --spec configs/datagen/hydra_columns_f64.yaml --dtype f64 --seed "$SEED" \
+        --report "$RAW_JSONL"
+    "$BINARY" sketchbench \
+        --variant hydra-kll --library lib --config "$config" \
+        --operations query --metrics accuracy --comparator subpop-rank-error \
+        --runs "$RUNS" --warmup-runs "$WARMUP" \
+        --spec configs/datagen/hydra_columns_f64.yaml --dtype f64 --seed "$SEED" \
+        --report "$RAW_JSONL"
+}
+
+echo "==> Exact accumulators: sum, min, max, increase, delta set" >&2
 point_exact exact-sum sum-or-count configs/datagen/hydra_columns.yaml
 point_exact exact-min min configs/datagen/hydra_columns.yaml
 point_exact exact-max max configs/datagen/hydra_columns.yaml
 point_exact exact-increase rate-or-increase configs/datagen/counter_columns.yaml
+point_exact exact-delta-set key-set configs/datagen/hydra_columns.yaml
 
-echo "==> Quantiles: KLL and DDSketch" >&2
+echo "==> Quantiles: KLL, DDSketch, HydraKLL" >&2
 for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k" rank-error
 done
 for alpha in "${DD_ALPHAS[@]}"; do
     point dd "alpha=$alpha" rank-error
 done
+for config in "${HYDRA_KLL_CONFIGS[@]}"; do
+    point_hydra_kll "$config"
+done
 
 echo "==> Cardinality: HLL and UnivMon" >&2
 for lg_k in "${HLL_PRECISIONS[@]}"; do
     point hll "lg_k=$lg_k" cardinality
 done
-point_univmon "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
-point_univmon "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
+for config in "${UNIVMON_CONFIGS[@]}"; do
+    point_univmon "$config"
+done
 
 echo "==> Top-k: CMS heap, CountSketch heap, UnivMon" >&2
 for rows in "${CMS_HEAP_ROWS[@]}"; do
@@ -134,13 +170,14 @@ for rows in "${CMS_HEAP_ROWS[@]}"; do
         point countsketch-heap-topk-fastpath-vector2d "rows=$rows cols=$cols" topk
     done
 done
-point univmon-topk "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8" topk
-point univmon-topk "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6" topk
+for config in "${UNIVMON_CONFIGS[@]}"; do
+    point univmon-topk "$config" topk
+done
 
 echo "==> Flattening cost + accuracy passes..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
-echo "==> Reducing to atomic-cost table (expect 18 row(s), 0 skipped)..." >&2
+echo "==> Reducing to atomic-cost table (expect 24 row(s), 0 skipped)..." >&2
 "$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
 
 echo "Done. $TABLE_JSON" >&2

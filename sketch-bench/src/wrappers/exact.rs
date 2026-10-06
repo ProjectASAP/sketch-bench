@@ -184,6 +184,23 @@ impl Cell for Increase {
     }
 }
 
+/// `DeltaSetAggregatorAccumulator`'s `added` set: a key and nothing else.
+/// Keys are never removed here (no churn between windows), so `removed`
+/// stays empty and the chronological merge is a union.
+#[derive(Clone)]
+pub struct Present;
+
+impl Cell for Present {
+    fn first(_v: f64, _ts: i64) -> Self {
+        Present
+    }
+    fn insert(&mut self, _v: f64, _ts: i64) {}
+    fn merge(&mut self, _other: &Self) {}
+    fn value(&self) -> f64 {
+        1.0
+    }
+}
+
 /// One accumulator holding every group.
 pub struct Multiple<C> {
     by_group: HashMap<Vec<String>, C>,

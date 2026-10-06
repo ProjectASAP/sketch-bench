@@ -27,6 +27,7 @@ pub enum Capability {
     Min,
     Max,
     RateOrIncrease,
+    KeySet,
     #[default]
     None,
 }
@@ -54,6 +55,7 @@ impl Capability {
             Capability::Min => "min",
             Capability::Max => "max",
             Capability::RateOrIncrease => "rate-or-increase",
+            Capability::KeySet => "key-set",
             Capability::None => "none",
         }
     }

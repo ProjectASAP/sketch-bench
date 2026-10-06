@@ -1003,6 +1003,22 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-delta-set",
+        library: "exact",
+        description: "key set per window, ASAPQuery DeltaSetAggregator (no churn: added only)",
+        capability: Capability::KeySet,
+        comparator: Some("key-set"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
 ];
 
 // ---------- what the frontend asks ----------
@@ -1353,6 +1369,7 @@ mod tests {
             "min",
             "max",
             "rate-or-increase",
+            "key-set",
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {

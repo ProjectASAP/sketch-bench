@@ -25,6 +25,9 @@ pub enum Aggregate {
     /// Counter increase, as ASAPQuery's `IncreaseAccumulator` answers it
     /// unbounded: last minus first, plus the value before each drop (a reset).
     Increase,
+    /// 1 for every group seen: the key set ASAPQuery's `DeltaSetAggregator`
+    /// tracks, as one value per key so a missing key scores infinite.
+    Presence,
 }
 
 impl Aggregate {
@@ -42,6 +45,7 @@ impl Aggregate {
                     .sum();
                 values.last().unwrap_or(&0.0) - values.first().unwrap_or(&0.0) + resets
             }
+            Aggregate::Presence => 1.0,
         }
     }
 }

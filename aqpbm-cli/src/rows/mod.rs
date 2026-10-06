@@ -153,6 +153,7 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("exact-min", "exact") => row_exact_min,
         ("exact-max", "exact") => row_exact_max,
         ("exact-increase", "exact") => row_exact_increase,
+        ("exact-delta-set", "exact") => row_exact_delta_set,
         _ => return None,
     })
 }
