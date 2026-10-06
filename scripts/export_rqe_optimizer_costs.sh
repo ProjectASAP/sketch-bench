@@ -38,6 +38,7 @@ fi
 
 RAW_JSONL="$OUT_DIR/rqe_atomic_costs_raw.jsonl"
 GRID_JSONL="$OUT_DIR/rqe_atomic_costs_grid.jsonl"
+MERGE_ACCURACY_JSONL="$OUT_DIR/rqe_merge_accuracy_grid.jsonl"
 TABLE_JSON="$OUT_DIR/rqe_atomic_costs.json"
 mkdir -p "$OUT_DIR"
 
@@ -58,6 +59,13 @@ SIZE=1000000
 CARDINALITY=100000
 SEED=42
 MERGE_SHARDS=16
+# Accuracy after folding m shards, for the optimizer's L/x windows per query.
+# One shard is the accuracy pass's single instance. The same stream is split m
+# ways (fixed total): for a fixed query L, choosing x splits the query's total
+# over L/x windows. Beyond the largest count the optimizer reads the largest.
+# Accuracy is scored once, so each merge pass runs once with no warm-up. On the
+# 200k-row specs, 1024 shards of ceil(200000/1024) rows come out as 1021.
+MERGE_ACCURACY_SHARDS=(4 16 64 256 1024)
 
 # The swept parameters, every one of them. Exact accumulators take none.
 HLL_PRECISIONS=(12 14)
@@ -77,7 +85,8 @@ HYDRA_KLL_CONFIGS=(
     "rows=3 cols=256 cell_k=500"
 )
 
-# One row: a cost pass, then an accuracy pass, over the same data. Arguments
+# One row: a cost pass, an accuracy pass, then one merge-accuracy pass per
+# merge count, over the same data. Arguments
 # after the comparator name the data (`--dataset ...` or `--spec ...`, plus
 # `--dtype`). An empty config omits `--config` (the exact accumulators).
 measure() {
@@ -100,6 +109,16 @@ measure() {
         --operations query --metrics accuracy --comparator "$comparator" \
         --runs "$RUNS" --warmup-runs "$WARMUP" \
         "$@" --seed "$SEED" --report "$RAW_JSONL"
+    # One `--flat` row per merge count: a cell's counts would collide in
+    # `flatten`, which keeps one merge slot per cell. atomic-costs joins them.
+    local m
+    for m in "${MERGE_ACCURACY_SHARDS[@]}"; do
+        "$BINARY" sketchbench \
+            --variant "$variant" --library "$library" "${config_args[@]}" \
+            --operations merge --metrics accuracy --comparator "$comparator" \
+            --merge-shards "$m" --runs 1 --warmup-runs 0 \
+            "$@" --seed "$SEED" --flat --report "$MERGE_ACCURACY_JSONL"
+    done
 }
 
 # One-column sketches on inline data. Zipf is deliberate. Uniform data makes
@@ -173,7 +192,8 @@ echo "==> Reducing to atomic-cost table (expect 24 row(s), 0 skipped)..." >&2
 # A skipped row is a failed measurement, e.g. an exact row that missed a group
 # scores an infinite error, which JSON holds as null. Fail rather than publish
 # a table that is silently short.
-summary=$("$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" 2>&1 | tee /dev/stderr | tail -n 1)
+summary=$("$BINARY" atomic-costs "$GRID_JSONL" --merge-accuracy "$MERGE_ACCURACY_JSONL" \
+    --output "$TABLE_JSON" 2>&1 | tee /dev/stderr | tail -n 1)
 if [[ "$summary" != *", 0 skipped" ]]; then
     echo "ERROR: atomic-costs skipped rows; see the reasons above." >&2
     exit 1
