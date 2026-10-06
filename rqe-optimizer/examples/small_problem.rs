@@ -25,6 +25,8 @@
 //! weights with `--w-cpu X --w-mem Y` (default 1 and 0). Repeat
 //! `--latency-sla RAQE_ID=MS` to impose MILP latency SLAs.
 //! `--sample-mappings N` prints N feasible mappings and exits.
+//! `--allow-undeployable-families` also plans with measured families
+//! ASAPQuery can't deploy (dd, univmon-*, countsketch-heap).
 
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -328,9 +330,11 @@ fn main() {
         panic!("invalid workload facts: {problems:#?}");
     }
 
-    let unpruned_count =
-        candidates_only.then(|| build_all_candidates_unpruned(&raqes, &cost_table, &facts).len());
-    let deployments = build_all_candidates(&raqes, &cost_table, &facts);
+    let allow_undeployable = std::env::args().any(|arg| arg == "--allow-undeployable-families");
+    let unpruned_count = candidates_only.then(|| {
+        build_all_candidates_unpruned(&raqes, &cost_table, &facts, allow_undeployable).len()
+    });
+    let deployments = build_all_candidates(&raqes, &cost_table, &facts, allow_undeployable);
     println!(
         "{} RAQEs, {} candidate deployments (from {} real cost-table rows)",
         raqes.len(),

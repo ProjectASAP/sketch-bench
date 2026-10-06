@@ -1,7 +1,10 @@
 //! Candidate generation and eligibility (§3).
 
 use crate::analytical_cost_model::merge_memory_per_group;
-use crate::{AtomicCostEntry, Capability, Deployment, LabelSet, Millis, Raqe, WorkloadFacts};
+use crate::{
+    AtomicCostEntry, Capability, Deployment, LabelSet, Millis, Raqe, WorkloadFacts,
+    DEPLOYABLE_FAMILIES,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn gcd(a: Millis, b: Millis) -> Millis {
@@ -47,6 +50,7 @@ fn candidate_deployments(
     group: &[&Raqe],
     costs: &[AtomicCostEntry],
     scrape_interval_ms: Millis,
+    allow_undeployable_families: bool,
 ) -> Vec<Deployment> {
     if group.is_empty() {
         return Vec::new();
@@ -69,9 +73,9 @@ fn candidate_deployments(
                 .map(|r| gcd(window_ms, r.interval_ms)),
         );
         for config in costs.iter().filter(|c| {
-            capability
-                .deployable_families()
-                .any(|family| family == c.sketch)
+            let sketch = c.sketch.as_str();
+            capability.families().contains(&sketch)
+                && (allow_undeployable_families || DEPLOYABLE_FAMILIES.contains(&sketch))
         }) {
             for &slide_ms in &slides {
                 if slide_ms.is_multiple_of(scrape_interval_ms) {
@@ -91,12 +95,19 @@ fn candidate_deployments(
     deployments
 }
 
+/// Only [`DEPLOYABLE_FAMILIES`] become candidates unless
+/// `allow_undeployable_families`, which plans with every measured family
+/// (for studies; the plan can't be deployed).
 pub fn build_all_candidates(
     raqes: &[Raqe],
     costs: &[AtomicCostEntry],
     facts: &WorkloadFacts,
+    allow_undeployable_families: bool,
 ) -> Vec<Deployment> {
-    prune_dominated_candidates(raqes, build_all_candidates_unpruned(raqes, costs, facts))
+    prune_dominated_candidates(
+        raqes,
+        build_all_candidates_unpruned(raqes, costs, facts, allow_undeployable_families),
+    )
 }
 
 /// Generate the complete v1 candidate set before dominance pruning.
@@ -107,6 +118,7 @@ pub fn build_all_candidates_unpruned(
     raqes: &[Raqe],
     costs: &[AtomicCostEntry],
     facts: &WorkloadFacts,
+    allow_undeployable_families: bool,
 ) -> Vec<Deployment> {
     let mut groups: BTreeMap<(Capability, &str, &str, &LabelSet), Vec<&Raqe>> = BTreeMap::new();
     for raqe in raqes {
@@ -123,7 +135,12 @@ pub fn build_all_candidates_unpruned(
     groups
         .iter()
         .flat_map(|(&(_, metric, _, _), group)| {
-            candidate_deployments(group, costs, facts[metric].scrape_interval_ms)
+            candidate_deployments(
+                group,
+                costs,
+                facts[metric].scrape_interval_ms,
+                allow_undeployable_families,
+            )
         })
         .collect()
 }
@@ -334,7 +351,7 @@ mod tests {
     #[test]
     fn shared_slide_comes_from_subset_gcd_not_all_divisors() {
         let raqes = vec![raqe("a", 60_000, 20_000), raqe("b", 60_000, 30_000)];
-        let candidates = build_all_candidates(&raqes, &[cost()], &facts(1, 1));
+        let candidates = build_all_candidates(&raqes, &[cost()], &facts(1, 1), false);
         let slides: BTreeSet<_> = candidates
             .iter()
             .filter(|d| d.window_ms == 60_000)
@@ -347,7 +364,7 @@ mod tests {
         let raqes = vec![raqe("a", 60_000, 20_000), raqe("b", 60_000, 30_000)];
         let mut facts = facts(1, 1);
         facts.get_mut(METRIC).unwrap().scrape_interval_ms = 15_000;
-        let candidates = build_all_candidates_unpruned(&raqes, &[cost()], &facts);
+        let candidates = build_all_candidates_unpruned(&raqes, &[cost()], &facts, false);
         assert!(!candidates.is_empty());
         // Without the filter, windows 1..60 and slides 10/20 would appear.
         assert!(candidates
@@ -365,6 +382,7 @@ mod tests {
             &[unfiltered.clone(), filtered.clone()],
             &[cost()],
             &facts(1, 1),
+            false,
         );
         assert!(candidates
             .iter()
@@ -385,13 +403,14 @@ mod tests {
             &[r],
             &[named("exact-min"), named("exact-max")],
             &facts(1, 1),
+            false,
         );
         assert!(!candidates.is_empty());
         assert!(candidates.iter().all(|d| d.config.sketch == "exact-min"));
     }
 
     #[test]
-    fn undeployable_families_are_not_candidates() {
+    fn undeployable_families_are_candidates_only_when_allowed() {
         let r = Raqe {
             capability: Capability::Quantile,
             ..raqe("r", 60_000, 60_000)
@@ -400,10 +419,13 @@ mod tests {
             sketch: sketch.into(),
             ..cost()
         };
+        let costs = [named("kll-percall"), named("dd")];
         let candidates =
-            build_all_candidates(&[r], &[named("kll-percall"), named("dd")], &facts(1, 1));
+            build_all_candidates(std::slice::from_ref(&r), &costs, &facts(1, 1), false);
         assert!(!candidates.is_empty());
         assert!(candidates.iter().all(|d| d.config.sketch == "kll-percall"));
+        let all = build_all_candidates_unpruned(&[r], &costs, &facts(1, 1), true);
+        assert!(all.iter().any(|d| d.config.sketch == "dd"));
     }
 
     #[test]

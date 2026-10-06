@@ -130,7 +130,7 @@ mod tests {
     }
 
     fn build_all_candidates(raqes: &[Raqe], costs: &[AtomicCostEntry]) -> Vec<Deployment> {
-        candidates::build_all_candidates(raqes, costs, &facts(1, 1))
+        candidates::build_all_candidates(raqes, costs, &facts(1, 1), false)
     }
 
     fn raqe(id: &str, interval: u64, lookback: u64) -> Raqe {
