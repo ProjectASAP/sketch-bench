@@ -1,7 +1,10 @@
 //! Candidate generation and eligibility (§3).
 
-use crate::analytical_cost_model::{instance_memory_bytes, merge_memory_per_group};
-use crate::{AtomicCostEntry, Capability, Deployment, LabelSet, Millis, Raqe, WorkloadFacts};
+use crate::analytical_cost_model;
+use crate::{
+    AtomicCostEntry, Capability, Deployment, LabelSet, MetricFacts, Millis, Raqe, WorkloadFacts,
+    KEY_TRACKER_FAMILY,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn gcd(a: Millis, b: Millis) -> Millis {
@@ -41,18 +44,36 @@ fn subset_gcds(values: impl IntoIterator<Item = Millis>) -> BTreeSet<Millis> {
     gcds
 }
 
+/// Whether a fixed-size sketch shared by all groups was measured holding at
+/// least `groups` of them. Its accuracy degrades as groups grow, and the row
+/// holds one measured point (`subpopulations`).
+// ponytail: one point, so larger groupings are never planned. Rows at more
+// group counts (sketch-bench#143 S5) loosen this with no code change. Hydra
+// inserts every label subset of its key, so error really depends on the total
+// subpopulation count, not card(G) alone.
+fn measured_at_group_count(config: &AtomicCostEntry, groups: u64) -> bool {
+    config
+        .query_accuracy
+        .get("subpopulations")
+        .is_some_and(|&measured| groups as f64 <= measured)
+}
+
 /// Windows and slides are multiples of the metric's scrape interval: anything
 /// finer only splits one scrape's samples.
 fn candidate_deployments(
     group: &[&Raqe],
     costs: &[AtomicCostEntry],
-    scrape_interval_ms: Millis,
+    metric_facts: &MetricFacts,
     allow_undeployable_families: bool,
 ) -> Vec<Deployment> {
     if group.is_empty() {
         return Vec::new();
     }
     let capability = group[0].capability;
+    let scrape_interval_ms = metric_facts.scrape_interval_ms;
+    let groups = metric_facts.cardinality[&group[0].grouping_labels];
+    // ponytail: the first tracker row; the export measures one.
+    let tracker_row = costs.iter().find(|c| c.sketch == KEY_TRACKER_FAMILY);
     let windows = group
         .iter()
         .flat_map(|r| divisors(r.lookback_ms / scrape_interval_ms))
@@ -74,6 +95,20 @@ fn candidate_deployments(
                 .candidate_families(allow_undeployable_families)
                 .any(|family| family == c.sketch)
         }) {
+            let properties = crate::family_properties(&config.sketch);
+            if properties.one_fixed_size_sketch_for_all_groups
+                && !measured_at_group_count(config, groups)
+            {
+                continue;
+            }
+            let key_tracker = if properties.needs_delta_set_key_tracker {
+                match tracker_row {
+                    Some(tracker) => Some(tracker.clone()),
+                    None => continue,
+                }
+            } else {
+                None
+            };
             for &slide_ms in &slides {
                 if slide_ms.is_multiple_of(scrape_interval_ms) {
                     deployments.push(Deployment {
@@ -84,6 +119,7 @@ fn candidate_deployments(
                         config: config.clone(),
                         window_ms,
                         slide_ms,
+                        key_tracker: key_tracker.clone(),
                     });
                 }
             }
@@ -131,12 +167,7 @@ pub fn build_all_candidates_unpruned(
     groups
         .iter()
         .flat_map(|(&(_, metric, _, _), group)| {
-            candidate_deployments(
-                group,
-                costs,
-                facts[metric].scrape_interval_ms,
-                allow_undeployable_families,
-            )
+            candidate_deployments(group, costs, &facts[metric], allow_undeployable_families)
         })
         .collect()
 }
@@ -144,11 +175,12 @@ pub fn build_all_candidates_unpruned(
 /// Remove a candidate only when another candidate can replace it in every
 /// mapping without making any modeled objective worse.
 ///
-/// This comparison is deliberately local to a (capability, metric,
-/// spatial_filter, grouping) group, where `card(G)`, arrival rate and query output size are common
-/// multipliers. So it compares ingest CPU and memory per group, then latency
-/// (merge and query CPU), merge memory and stored memory for each RAQE the
-/// dominated candidate can serve.
+/// This comparison is local to a (capability, metric, spatial_filter,
+/// grouping) group, where query output size is common. It compares ingest CPU
+/// and memory, then latency (merge and query CPU), merge memory and stored
+/// memory for each RAQE the dominated candidate can serve, all as the
+/// analytical cost model prices them: a sketch shared by all groups and a
+/// sketch per group don't scale alike with `card(G)`.
 pub fn prune_dominated_candidates(
     raqes: &[Raqe],
     facts: &WorkloadFacts,
@@ -221,11 +253,16 @@ fn dominance(
     }
 
     // Each pair is (replacement's cost, original's cost).
+    let replacement_ingest = analytical_cost_model::ingest(replacement, facts);
+    let original_ingest = analytical_cost_model::ingest(original, facts);
     let mut costs = vec![
-        (ingest_cpu(replacement), ingest_cpu(original)),
         (
-            ingest_memory(replacement, facts),
-            ingest_memory(original, facts),
+            replacement_ingest.cpu_secs_per_sec,
+            original_ingest.cpu_secs_per_sec,
+        ),
+        (
+            replacement_ingest.memory_bytes,
+            original_ingest.memory_bytes,
         ),
     ];
     for (raqe, _) in raqes
@@ -234,16 +271,16 @@ fn dominance(
         .filter(|(_, &serves)| serves)
     {
         costs.push((
-            query_latency(replacement, raqe),
-            query_latency(original, raqe),
+            analytical_cost_model::query_latency_ms(raqe, replacement, facts),
+            analytical_cost_model::query_latency_ms(raqe, original, facts),
         ));
         costs.push((
-            merge_memory_per_group(raqe, replacement, facts),
-            merge_memory_per_group(raqe, original, facts),
+            analytical_cost_model::merge(raqe, replacement, facts).memory_bytes,
+            analytical_cost_model::merge(raqe, original, facts).memory_bytes,
         ));
         costs.push((
-            stored_memory(replacement, raqe, facts),
-            stored_memory(original, raqe, facts),
+            analytical_cost_model::storage_bytes(raqe, replacement, facts),
+            analytical_cost_model::storage_bytes(raqe, original, facts),
         ));
     }
 
@@ -267,38 +304,6 @@ fn dominance(
     }
 }
 
-fn open_window_count(deployment: &Deployment) -> f64 {
-    deployment.active_instance_count().unwrap_or(u64::MAX) as f64
-}
-
-/// Insert CPU per sample. Arrival rate is a common multiplier within a group,
-/// so it is left out.
-fn ingest_cpu(deployment: &Deployment) -> f64 {
-    open_window_count(deployment) * deployment.config.insert_cpu_secs
-}
-
-/// Open-window bytes per group. `card(G)` is a common multiplier within a
-/// group, so it is left out.
-fn ingest_memory(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
-    open_window_count(deployment) * instance_memory_bytes(deployment, facts, deployment.window_ms)
-}
-
-fn query_latency(deployment: &Deployment, raqe: &Raqe) -> f64 {
-    let instances = deployment
-        .query_instance_count(raqe.lookback_ms)
-        .expect("candidate coverage only contains exactly tiled RAQEs");
-    deployment.config.query_cpu_secs
-        + instances.saturating_sub(1) as f64 * deployment.config.merge_cpu_secs
-}
-
-/// Closed-window bytes per group when serving `raqe`.
-fn stored_memory(deployment: &Deployment, raqe: &Raqe, facts: &WorkloadFacts) -> f64 {
-    deployment
-        .closed_instance_count(raqe.lookback_ms)
-        .expect("candidate coverage only contains exactly tiled RAQEs") as f64
-        * instance_memory_bytes(deployment, facts, deployment.window_ms)
-}
-
 pub fn eligible_deployments_for(r: &Raqe, deployments: &[Deployment]) -> Vec<usize> {
     deployments
         .iter()
@@ -318,6 +323,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment) -> bool {
         && d.window_ms.is_multiple_of(d.slide_ms)
         && r.lookback_ms.is_multiple_of(d.window_ms)
         && r.interval_ms.is_multiple_of(d.slide_ms)
+        && (d.properties().mergeable_across_windows || r.lookback_ms == d.window_ms)
         && r.accuracy_ok_for(&d.config, r.lookback_ms / d.window_ms)
 }
 
@@ -369,6 +375,7 @@ mod tests {
             config: config.clone(),
             window_ms,
             slide_ms: window_ms,
+            key_tracker: None,
         };
         let r = raqe("a", 60_000, 60_000);
         // One window reads query_accuracy; 2 reads 1 and 4; 4 reads 4 alone.
@@ -474,6 +481,7 @@ mod tests {
             config: cost(),
             window_ms: 120_000,
             slide_ms: 60_000,
+            key_tracker: None,
         };
         assert!(is_eligible(&r, &d));
         assert!(!is_eligible(
@@ -503,6 +511,7 @@ mod tests {
             config: cost(),
             window_ms: 60_000,
             slide_ms: 60_000,
+            key_tracker: None,
         };
         let fine = Deployment {
             slide_ms: 30_000,
@@ -526,6 +535,7 @@ mod tests {
             config: cost.clone(),
             window_ms: 60_000,
             slide_ms: 60_000,
+            key_tracker: None,
         };
         let small_window = Deployment {
             window_ms: 30_000,
@@ -557,6 +567,7 @@ mod tests {
             },
             window_ms: 60_000,
             slide_ms: 60_000,
+            key_tracker: None,
         };
         // Smaller, faster sketches, but (60 − 20) / 20 + 1 = 3 of them: 18 bytes.
         let panes = Deployment {
@@ -595,6 +606,7 @@ mod tests {
             },
             window_ms: 60_000,
             slide_ms: 60_000,
+            key_tracker: None,
         };
         // Smaller and cheaper on every other cost, but merges two windows,
         // holding a 4-byte accumulator per group.
@@ -614,5 +626,78 @@ mod tests {
             prune_dominated_candidates(&[r], &facts(1, 1), vec![direct.clone(), halves.clone()]);
 
         assert_eq!(retained, vec![direct, halves]);
+    }
+    /// A whole-sketch hydra-kll row measured at `subpopulations` groups, and
+    /// a per-key DeltaSet row.
+    fn hydra_and_tracker(subpopulations: f64) -> [AtomicCostEntry; 2] {
+        [
+            AtomicCostEntry {
+                sketch: "hydra-kll".into(),
+                mem_bytes_per_instance: 1000.0,
+                query_accuracy: BTreeMap::from([
+                    ("err".into(), 0.1),
+                    ("subpopulations".into(), subpopulations),
+                ]),
+                ..cost()
+            },
+            AtomicCostEntry {
+                sketch: KEY_TRACKER_FAMILY.into(),
+                ..cost()
+            },
+        ]
+    }
+
+    fn quantile_raqe() -> Raqe {
+        Raqe {
+            capability: Capability::Quantile,
+            ..raqe("r", 60_000, 60_000)
+        }
+    }
+
+    #[test]
+    fn hydra_carries_the_delta_set_tracker_and_needs_one() {
+        let costs = hydra_and_tracker(100.0);
+        let candidates = build_all_candidates(&[quantile_raqe()], &costs, &facts(10, 10), true);
+        assert!(!candidates.is_empty());
+        assert!(candidates
+            .iter()
+            .all(|d| d.key_tracker.as_ref() == Some(&costs[1])));
+        let untracked = build_all_candidates(&[quantile_raqe()], &costs[..1], &facts(10, 10), true);
+        assert!(untracked.is_empty());
+    }
+
+    #[test]
+    fn hydra_is_planned_only_up_to_its_measured_group_count() {
+        let costs = hydra_and_tracker(100.0);
+        let candidates =
+            |groups| build_all_candidates(&[quantile_raqe()], &costs, &facts(groups, groups), true);
+        assert!(!candidates(100).is_empty());
+        assert!(candidates(101).is_empty());
+    }
+
+    #[test]
+    fn a_shared_sketch_is_not_pruned_by_a_smaller_per_group_one() {
+        // Same CPU per op, and 10 bytes per group against Hydra's 1000 for
+        // the whole sketch: compared per group, Hydra is dominated. Over 100
+        // groups and 2 merged windows, Hydra's latency is 100 queries + 1
+        // merge against KLL's 100 + 100, so it must survive.
+        let r = Raqe {
+            lookback_ms: 120_000,
+            ..quantile_raqe()
+        };
+        let [hydra, tracker] = hydra_and_tracker(100.0);
+        let kll = AtomicCostEntry {
+            sketch: "kll-percall".into(),
+            mem_bytes_per_instance: 10.0,
+            ..cost()
+        };
+        let tracker = AtomicCostEntry {
+            query_cpu_secs: 0.0,
+            merge_cpu_secs: 0.0,
+            ..tracker
+        };
+        let candidates = build_all_candidates(&[r], &[kll, hydra, tracker], &facts(100, 100), true);
+        assert!(candidates.iter().any(|d| d.config.sketch == "hydra-kll"));
+        assert!(candidates.iter().any(|d| d.config.sketch == "kll-percall"));
     }
 }
