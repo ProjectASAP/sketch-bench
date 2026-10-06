@@ -1,0 +1,78 @@
+{
+ "method": "first-to-last record timestamp per run (see scripts/profiling_time.py)",
+ "runs": {
+  "#130 grid accuracy": {
+   "file": "out_grid_1e7/saturation_accuracy.jsonl",
+   "records": 30384,
+   "first": "2026-09-29T20:40:43Z",
+   "last": "2026-09-29T21:18:55Z",
+   "wall_secs": 2292.0
+  },
+  "#130 grid cost": {
+   "file": "out_grid_1e7_cost/saturation_cost.jsonl",
+   "records": 343,
+   "first": "2026-09-30T16:49:46Z",
+   "last": "2026-09-30T19:37:05Z",
+   "wall_secs": 10039.0
+  },
+  "#130 1e9 subset": {
+   "file": "out_1e9/saturation_accuracy.jsonl",
+   "records": 13875,
+   "first": "2026-09-29T21:24:47Z",
+   "last": "2026-09-30T15:50:56Z",
+   "wall_secs": 66369.0
+  },
+  "#131 merge (first config)": {
+   "file": "out_merge/saturation_accuracy.jsonl",
+   "records": 8160,
+   "first": "2026-09-29T21:40:14Z",
+   "last": "2026-09-29T21:52:21Z",
+   "wall_secs": 727.0
+  },
+  "#131 merge top-k grid": {
+   "file": "out_merge_topk/saturation_accuracy.jsonl",
+   "records": 34272,
+   "first": "2026-10-02T02:33:13Z",
+   "last": "2026-10-02T03:04:25Z",
+   "wall_secs": 1872.0
+  },
+  "#131 merge quantile grid": {
+   "file": "out_merge_quantile/saturation_accuracy.jsonl",
+   "records": 19040,
+   "first": "2026-10-02T03:04:26Z",
+   "last": "2026-10-02T03:06:14Z",
+   "wall_secs": 108.0
+  },
+  "#140 accuracy grid": {
+   "file": "grid/saturation_accuracy.jsonl",
+   "records": 30240,
+   "first": "2026-10-05T03:24:53Z",
+   "last": "2026-10-05T05:45:15Z",
+   "wall_secs": 8422.0
+  },
+  "#140 merge top-k": {
+   "file": "merge_topk/saturation_accuracy.jsonl",
+   "records": 32640,
+   "first": "2026-10-05T03:24:53Z",
+   "last": "2026-10-05T05:11:07Z",
+   "wall_secs": 6374.0
+  },
+  "#140 cost (178 points, N 1e8, serial)": {
+   "file": "grid/saturation_cost.serial-178.jsonl",
+   "records": 178,
+   "first": "2026-10-05T05:45:53Z",
+   "last": "2026-10-05T12:33:48Z",
+   "wall_secs": 24475.0
+  },
+  "#140 cost (62 top-k points, N 1e7, serial)": {
+   "file": "grid/saturation_cost.serial-1e7-62.jsonl",
+   "records": 62,
+   "first": "2026-10-05T20:40:49Z",
+   "last": "2026-10-05T22:45:37Z",
+   "wall_secs": 7488.0
+  }
+ },
+ "total_wall_secs": 128166.0,
+ "missing": [],
+ "note": "Wall spans on the machines that produced each run, with that run's own --jobs. #140's discarded 12-way parallel cost records and its stopped serial N=1e8 rerun are not counted: they did not produce the tables."
+}
