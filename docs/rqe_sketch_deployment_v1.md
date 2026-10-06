@@ -231,11 +231,18 @@ The analytical model combines the empirical per-operation Sketch Bench
 measurements with workload properties such as group cardinality, arrival rate,
 window size, and query frequency.
 
-A deployment `D` holds `card(D.G)` instances per window, one per group. Let
-`a_D = D.x / D.y`: each sample is inserted into `a_D` concurrently open
-instances of its group. For RQE `i` on `D`, let `n_i = S_i / D.x` windows be
-merged per query. Write `m`, `c_ins`, `c_mrg`, `c_qry` for the
-configuration's measured per-instance memory and insert, merge and query CPU.
+For deployment `D` serving RQE `i`:
+
+- `lambda`: samples/sec arriving for `D`'s metric, `card(metric.labels) / scrape_interval`.
+- `card(G)`: groups of `D`, so instances per window.
+- `x`, `y`: `D`'s window and slide.
+- `a_D = x / y`: open windows; each sample is inserted into `a_D` instances of its group.
+- `S_i`, `T_i`: RQE `i`'s lookback and interval.
+- `n_i = S_i / x`: windows merged per query.
+- `m`: memory per instance, measured.
+- `c_ins`: CPU per insert, measured.
+- `c_mrg`: CPU per pairwise merge, measured.
+- `c_qry`: CPU per query of one instance, measured.
 
 Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
 (bytes):
