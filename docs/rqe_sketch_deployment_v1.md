@@ -356,8 +356,11 @@ The model uses `I × m`, where `I` is instances per window:
 - Shared + Fixed: `I = 1`. In code this is the family property
   `one_fixed_size_sketch_for_all_groups`, true only for HydraKLL. It applies
   to memory and merge; query stays `card(G) × c_qry`, one probe per group.
-  A fixed-size sketch degrades as groups grow, so it is a candidate only when
-  `card(G)` is at most the `subpopulations` its row was measured at.
+  A fixed-size sketch degrades as groups grow, so it is eligible only when
+  `card(G)` is at most the `subpopulations` its row was measured at. This
+  models a sketch keyed by the joined `G` value alone; the current rows fan
+  out to every label subset (sketch-bench#165), and merging several windows
+  is not yet measured (sketch-bench#166).
 
 PerGroup + PerKey is deferred until a family needs it: it needs the key labels
 `K`, the metric's labels minus `G`. So for every family in use, nothing scales
@@ -374,7 +377,9 @@ Side by side, with `G = card(G)` and `C` closed windows:
 | Merge CPU | `G·(n_i−1)·c_mrg/T_i` | same | `(n_i−1)·c_mrg/T_i` |
 | Merge memory | `G·m` | same | `m` |
 | Query CPU | `G·c_qry/T_i` | same | `G·c_qry/T_i` |
+| Query memory | `G ×` output bytes | same | `G ×` output bytes |
 | Storage memory | `G·m·C` | same | `m·C` |
+| Latency | `G·(c_qry + (n_i−1)·c_mrg)` | same | `(n_i−1)·c_mrg + G·c_qry` |
 
 ### Family properties and key tracker
 
@@ -387,7 +392,8 @@ Each family has properties, hardcoded by variant in `family_properties`
 - `needs_delta_set_key_tracker`: the sketch can't list its groups, so a
   DeltaSet (`exact-delta-set`) records each window's keys for the query to
   probe. True for HydraKLL. A candidate needing one carries the DeltaSet row
-  and is dropped if the cost table has none.
+  and is dropped if the cost table has none; a deployment without its tracker
+  is never eligible. The cost table may hold at most one DeltaSet row.
 
 The tracker is priced as an exact accumulator on the same `x`, `y` and `G`,
 in every phase: ingest, merge (union of the `n_i` windows' key sets), query

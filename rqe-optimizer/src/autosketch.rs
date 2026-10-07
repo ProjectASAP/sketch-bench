@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(window_adapter(&raqes[0]), (3_600_000, 60_000));
         assert_eq!(window_adapter(&raqes[1]), (3_600_000, 40_000));
         for (r, d) in raqes.iter().zip(&plan.deployments) {
-            assert!(is_eligible(r, d), "{} not eligible", r.id);
+            assert!(is_eligible(r, d, &facts(1, 1)), "{} not eligible", r.id);
         }
     }
 

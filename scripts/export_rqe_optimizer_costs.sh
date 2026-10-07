@@ -149,9 +149,10 @@ point_spec exact-delta-set exact "" key-set configs/datagen/hydra_columns.yaml i
 
 # HydraKLL rows are whole-sketch: one instance serves every group, and memory
 # and merge cost are not divided per group (`subpop-rank-error` reports no
-# `groups_per_instance`). The optimizer prices a row as card(G) x per-instance
-# cost, so these rows must not become candidates until #142 lands. Cost and
-# accuracy hold at this spec's group count only. The spec gives each label its
+# `groups_per_instance`). The optimizer prices them as one shared fixed-size
+# sketch, not card(G) instances, and plans them only up to the `subpopulations`
+# they were measured at. The keys fan out to every label subset, unlike the
+# single-key sketch the optimizer models (#165). The spec gives each label its
 # own alphabet, so rank error is the sketch's, not label collisions' (#74).
 echo "==> Quantiles: KLL, DDSketch, HydraKLL" >&2
 for k in "${KLL_KS[@]}"; do
