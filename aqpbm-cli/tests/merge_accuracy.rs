@@ -6,9 +6,18 @@ use std::process::Command;
 /// One `--flat` record measuring both the single sketch's and the merged
 /// sketch's accuracy over the same small fixed-seed stream.
 fn query_and_merge_accuracy(variant: &str, config: &str, dataset: &[&str]) -> serde_json::Value {
+    run_merge_accuracy(variant, "lib", &["--config", config], dataset)
+}
+
+fn run_merge_accuracy(
+    variant: &str,
+    library: &str,
+    config: &[&str],
+    dataset: &[&str],
+) -> serde_json::Value {
     let out = Command::new(env!("CARGO_BIN_EXE_approxbench"))
-        .args(["sketchbench", "--variant", variant, "--library", "lib"])
-        .args(["--config", config])
+        .args(["sketchbench", "--variant", variant, "--library", library])
+        .args(config)
         .args(["--operations", "query,merge", "--metrics", "accuracy"])
         .args(["--merge-shards", "4", "--runs", "1", "--warmup-runs", "0"])
         .args(["--size", "20000", "--seed", "7", "--flat"])
@@ -69,4 +78,37 @@ fn merged_kll_scores_finite() {
         .as_f64()
         .unwrap_or_else(|| panic!("no merged mean_rank_err in {r}"));
     assert!(err.is_finite(), "{err}");
+}
+
+/// Exact accumulators merge without loss (the optimizer relies on it and no
+/// longer measures merged accuracy per row, #174): every merged score is the
+/// single accumulator's, and the worst group's error is 0. Increase reads
+/// counters, so its shard boundaries split counter runs.
+#[test]
+fn merged_exact_accumulators_score_exactly_like_one() {
+    let spec = |name: &str| format!("{}/../configs/datagen/{name}", env!("CARGO_MANIFEST_DIR"));
+    for (variant, comparator, columns) in [
+        ("exact-sum", "sum-or-count", "hydra_columns.yaml"),
+        ("exact-min", "min", "hydra_columns.yaml"),
+        ("exact-max", "max", "hydra_columns.yaml"),
+        ("exact-increase", "rate-or-increase", "counter_columns.yaml"),
+        ("exact-delta-set", "key-set", "hydra_columns.yaml"),
+    ] {
+        let path = spec(columns);
+        let r = run_merge_accuracy(
+            variant,
+            "exact",
+            &[],
+            &[
+                "--comparator",
+                comparator,
+                "--spec",
+                &path,
+                "--dtype",
+                "i64",
+            ],
+        );
+        assert_eq!(r["merge_accuracy"], r["query_accuracy"], "{variant}: {r}");
+        assert_eq!(r["merge_accuracy"]["relative_error"], 0.0, "{variant}: {r}");
+    }
 }

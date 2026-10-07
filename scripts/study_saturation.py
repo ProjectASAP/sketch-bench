@@ -17,7 +17,8 @@ indicative. The optimizer's costs come from --phase optimizer-cost (#174).
 --phase accuracy runs only the (parallel) accuracy runs; --phase cost reads
 saturation_curve.csv from --out and runs only the serial cost runs, so CPU
 can be timed later on a quiet machine. Both take the same grid arguments.
---phase optimizer-cost measures each (sketch, config) once, serially, at one
+--phase optimizer-cost measures each (sketch, config) of the families the
+optimizer plans (OPTIMIZER_FAMILIES) once, serially, at one
 shape (COST_*, the synthetic evaluation's dataset) with a cost and an
 accuracy pass, plus the exact accumulators, and reduces them to
 rqe_atomic_costs.json, the table rqe-optimizer loads; every row names its
@@ -90,6 +91,8 @@ COST_N = 1_000_000
 COST_RUNS, COST_WARMUP = 5, 3
 COST_SEED = 42
 COST_TABLE = "rqe_atomic_costs.json"
+# Families some rqe-optimizer capability plans; frequency sketches serve none.
+OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
 
 # Exact accumulators the optimizer plans, on grouped records (variant,
 # comparator, datagen spec). Their error is 0 by construction; the accuracy
@@ -219,7 +222,9 @@ def read_curve(path, points, ns, tolerance, tail):
         curve = curves.get(point_key(p[1], p[2], *p[6:]), [])
         if [n for n, _, _ in curve] != ns:
             sys.exit(f"{path} has no curve over these sizes for {p[1]} ({p[2]}) "
-                     f"{p[6]}={p[7]} K={p[8]}; pass the accuracy run's grid arguments")
+                     f"{p[6]}={p[7]} K={p[8]}; pass the accuracy run's grid arguments "
+                     "(an accuracy run without the optimizer-cost shape needs "
+                     "--no-cost-shape)")
         means = [e for _, e, _ in curve]
         ses = [se for _, _, se in curve]
         results.append((p, n_saturation(ns, means, tolerance, tail, ses), means[-1]))
@@ -296,7 +301,7 @@ def optimizer_cost(args, families):
 
     rows, metrics = [], {}
     for family, variant, configs, comparator, metric in SKETCHES:
-        if family not in families:
+        if family not in families or family not in OPTIMIZER_FAMILIES:
             continue
         metrics[variant] = metric
         for config in configs[:1] if args.one_config else configs:
