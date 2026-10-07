@@ -14,6 +14,8 @@ use crate::analytical_cost_model::TOPK_ENTRIES;
 
 /// One-sided confidence the bounds are stated at.
 pub const CONFIDENCE: f64 = 0.95;
+/// The standard normal quantile at [`CONFIDENCE`], one-sided.
+const Z: f64 = 1.645;
 
 /// The bound on `sketch`'s error with `params` on data shaped `shape`,
 /// answering from `merges` merged instances, or `None` when the algorithm
@@ -23,15 +25,19 @@ pub const CONFIDENCE: f64 = 0.95;
 ///   publishes `2.296 / k^0.9723` at 99%; KLL's error scales with
 ///   `sqrt(ln(1/δ))`, which gives the 95% value. KLL merges without loss of
 ///   this guarantee.
-/// - `dd`: relative value error `α`, deterministic while the bucket limit
-///   isn't reached; merges exactly.
-/// - `hll`: relative error `1.96 · 1.04 / sqrt(2^lg_k)`; merges exactly.
+/// - `dd`: relative value error `α`, deterministic for an unbounded store
+///   (sketch-bench's DDSketch collapses no buckets); merges exactly.
+/// - `hll`: relative error `z · 1.04 / sqrt(2^lg_k)`, `z` the one-sided
+///   normal quantile; merges exactly.
 /// - `cms-heap-topk-fastpath-vector2d`: precision@k on Zipf(θ) over `K`
-///   keys. Each CMS estimate exceeds the true count by at most `e/w · N`
-///   with probability `1 − e^−d`, so a top-k key whose share `p_i` beats
-///   the (k+1)-th's by more than `e/w` stays ranked: precision is the
-///   fraction of the top `k` that do. Needs `1 − e^−d ≥ 95%`. A merged
-///   answer has none: each shard's heap keeps only its own top `k`.
+///   keys, for every key at once. A CMS row overshoots a key by more than
+///   `t` with probability at most `N / (w·t)` (Markov), and the `d` rows are
+///   independent, so a non-top key overtakes top key `i` with probability at
+///   most `(w·(p_i − p_{k+1}))^−d`. A union bound over the `K − k` non-top
+///   keys, then over the counted top keys, keeps the total failure within
+///   `1 − CONFIDENCE`: precision is the share of the top `k` counted,
+///   taken from the most frequent down. A merged answer has none: each
+///   shard's heap keeps only its own top `k`.
 pub fn bound(
     sketch: &str,
     params: &BTreeMap<String, f64>,
@@ -47,37 +53,59 @@ pub fn bound(
         "dd" => params.get("alpha").copied(),
         "hll" => {
             let registers = 2f64.powf(*params.get("lg_k")?);
-            Some(1.96 * 1.04 / registers.sqrt())
+            Some(Z * 1.04 / registers.sqrt())
         }
         "cms-heap-topk-fastpath-vector2d" if merges <= 1 => {
-            let (rows, cols) = (params.get("rows")?, params.get("cols")?);
-            if 1.0 - (-rows).exp() < CONFIDENCE {
-                return None;
-            }
+            let (rows, cols) = (*params.get("rows")?, *params.get("cols")?);
             let MeasuredShape::Zipf { skew, keys } = shape else {
                 return None;
             };
-            Some(topk_precision(skew, keys, std::f64::consts::E / cols))
+            Some(topk_precision(skew, keys, rows, cols))
         }
         _ => None,
     }
 }
 
 /// The share of the top [`TOPK_ENTRIES`] keys of Zipf(`skew`) over `keys`
-/// keys whose probability exceeds the next key's by more than `slack`.
-fn topk_precision(skew: f64, keys: f64, slack: f64) -> f64 {
+/// keys that a CMS with `rows` × `cols` keeps ranked, all at once with
+/// probability [`CONFIDENCE`] (see [`bound`]).
+fn topk_precision(skew: f64, keys: f64, rows: f64, cols: f64) -> f64 {
     let k = TOPK_ENTRIES as usize;
-    let keys = keys as usize;
-    if keys <= k {
+    if keys <= k as f64 {
         return 1.0;
     }
-    let weight = |rank: usize| (rank as f64).powf(-skew);
-    let total: f64 = (1..=keys).map(weight).sum();
-    let next = weight(k + 1) / total;
-    let ranked = (1..=k)
-        .filter(|&i| weight(i) / total - next > slack)
-        .count();
+    let total = zipf_normalizer(skew, keys);
+    let share = |rank: usize| (rank as f64).powf(-skew) / total;
+    let next = share(k + 1);
+    let mut failure = 0.0;
+    let mut ranked = 0;
+    for i in 1..=k {
+        failure += (keys - k as f64) * (cols * (share(i) - next)).powf(-rows);
+        if failure > 1.0 - CONFIDENCE {
+            break;
+        }
+        ranked += 1;
+    }
     ranked as f64 / k as f64
+}
+
+/// `Σ_{n=1}^{K} n^−θ`: the first terms exactly, the rest by its integral
+/// with the endpoint correction (Euler–Maclaurin), so large `K` costs O(1).
+fn zipf_normalizer(skew: f64, keys: f64) -> f64 {
+    const EXACT: f64 = 1000.0;
+    let head = keys.min(EXACT) as usize;
+    let mut total: f64 = (1..=head).map(|n| (n as f64).powf(-skew)).sum();
+    if keys > EXACT {
+        let integral = |x: f64| {
+            if (skew - 1.0).abs() < 1e-12 {
+                x.ln()
+            } else {
+                x.powf(1.0 - skew) / (1.0 - skew)
+            }
+        };
+        total += integral(keys) - integral(EXACT) + (keys.powf(-skew) - EXACT.powf(-skew)) / 2.0;
+    }
+    total
 }
 
 #[cfg(test)]
@@ -100,36 +128,43 @@ mod tests {
             Some(0.01)
         );
         let hll = bound("hll", &params(&[("lg_k", 12.0)]), PARETO, 4).unwrap();
-        assert!((hll - 1.96 * 1.04 / 64.0).abs() < 1e-12);
+        assert!((hll - 1.645 * 1.04 / 64.0).abs() < 1e-12);
     }
 
     #[test]
-    fn topk_precision_needs_the_rows_and_one_window() {
+    fn topk_precision_holds_for_every_key_at_once() {
         let zipf = MeasuredShape::Zipf {
             skew: 1.1,
             keys: 1e4,
         };
-        let wide = params(&[("rows", 3.0), ("cols", 16384.0)]);
-        // e/w = 1.7e-4 separates all but the 32nd key of Zipf 1.1 over 1e4
-        // keys from the 33rd.
-        assert_eq!(
-            bound("cms-heap-topk-fastpath-vector2d", &wide, zipf, 1),
-            Some(31.0 / 32.0)
-        );
-        let narrow = params(&[("rows", 3.0), ("cols", 256.0)]);
-        let p = bound("cms-heap-topk-fastpath-vector2d", &narrow, zipf, 1).unwrap();
-        assert!(p < 1.0, "{p}");
-        // Two rows: 1 − e^−2 = 86% < 95%.
-        let two = params(&[("rows", 2.0), ("cols", 16384.0)]);
-        assert_eq!(
-            bound("cms-heap-topk-fastpath-vector2d", &two, zipf, 1),
-            None
-        );
+        let topk = |rows: f64, cols: f64, merges| {
+            bound(
+                "cms-heap-topk-fastpath-vector2d",
+                &params(&[("rows", rows), ("cols", cols)]),
+                zipf,
+                merges,
+            )
+        };
+        let wide = topk(5.0, 16384.0, 1).unwrap();
+        let narrow = topk(3.0, 256.0, 1).unwrap();
+        // More rows and columns keep more of the top 32 ranked; the 32nd and
+        // 33rd keys of Zipf 1.1 are too close for any of them.
+        assert!(wide > narrow, "{wide} {narrow}");
+        assert!(wide < 1.0 && wide > 0.0, "{wide}");
         // Merged heaps: no guarantee.
-        assert_eq!(
-            bound("cms-heap-topk-fastpath-vector2d", &wide, zipf, 4),
-            None
-        );
+        assert_eq!(topk(5.0, 16384.0, 4), None);
+    }
+
+    #[test]
+    fn the_normalizer_matches_the_exact_sum() {
+        for (skew, keys) in [(1.1, 1e4), (0.5, 5e4), (1.0, 2e3), (2.0, 1e5)] {
+            let exact: f64 = (1..=keys as usize).map(|n| (n as f64).powf(-skew)).sum();
+            let approx = zipf_normalizer(skew, keys);
+            assert!(
+                (approx - exact).abs() / exact < 1e-6,
+                "{skew} {keys}: {approx} {exact}"
+            );
+        }
     }
 
     #[test]

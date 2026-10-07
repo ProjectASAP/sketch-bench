@@ -121,6 +121,29 @@ impl GridPoint {
         curve_error_at(&self.curve, self.n_sat, n, direction)
     }
 
+    /// The smallest N the study measured this point at, for an answer merged
+    /// from `merges` instances: the plain curve's first N, and the merge
+    /// curves' too when merging.
+    fn first_measured_n(&self, merges: u64) -> Option<f64> {
+        let plain = self.curve.first()?.0;
+        let merged = (merges > 1)
+            .then(|| self.merged.values().filter_map(|c| c.first().map(|p| p.0)))
+            .into_iter()
+            .flatten();
+        Some(merged.fold(plain, f64::max))
+    }
+
+    /// The last error measured on the curve an answer merged from `merges`
+    /// instances extends: the largest measured merge count up to `merges`,
+    /// else the plain curve.
+    fn last_measured_error(&self, merges: u64) -> Option<f64> {
+        let curve = (merges > 1)
+            .then(|| self.merged.range(..=merges).next_back().map(|(_, c)| c))
+            .flatten()
+            .unwrap_or(&self.curve);
+        curve.last().map(|p| p.1)
+    }
+
     /// The error at `n` items of the sketch merged from `merges` instances:
     /// the worse of the measured shard counts either side of `merges` (one
     /// is the plain sketch). `None` past the largest measured count, past the
@@ -382,20 +405,27 @@ impl SaturationCurves {
             1
         };
         let params = config_params(&deployment.config)?;
-        let mut worst: Option<f64> = None;
-        let mut source = AccuracySource::Measured;
+        let mut worst: Option<(f64, AccuracySource)> = None;
         for point in points {
-            let error = match point.merged_error_at(merges, covered, direction) {
-                Some(error) => error,
-                None if covered >= point.curve.first()?.0 => {
-                    source = AccuracySource::Theory;
-                    theory::bound(&deployment.config.sketch, &params, point.shape, merges)?
+            let found = match point.merged_error_at(merges, covered, direction) {
+                Some(error) => (error, AccuracySource::Measured),
+                None if covered >= point.first_measured_n(merges)? => {
+                    let bound =
+                        theory::bound(&deployment.config.sketch, &params, point.shape, merges)?;
+                    // No better than the last measurement it extends.
+                    let error = match point.last_measured_error(merges) {
+                        Some(last) => worse(bound, last, direction),
+                        None => bound,
+                    };
+                    (error, AccuracySource::Theory)
                 }
                 None => return None,
             };
-            worst = Some(worst.map_or(error, |w| worse(w, error, direction)));
+            if worst.is_none_or(|(w, _)| worse(w, found.0, direction) != w) {
+                worst = Some(found);
+            }
         }
-        worst.map(|w| (w, source))
+        worst
     }
 
     /// The oracle for [`crate::autosketch::plan`]: AutoSketch keeps one
