@@ -4,12 +4,12 @@
 //!
 //! ```text
 //! autosketch_vs_asap traces --dataset alibaba_v2022 --saturation-dir DIR --out FILE [--runs 5]
-//! autosketch_vs_asap synthetic --table FILE --target default --saturation-dir DIR --out FILE [--runs 1]
+//! autosketch_vs_asap synthetic --table FILE --target p95 --saturation-dir DIR --out FILE [--runs 1]
 //!
 //! Options for both: --slas-ms 0.01,inf (override the SLA grid), --weights
 //! cpu,fargate (a subset of the objective weights), --no-chosen (drop
-//! per-RQE choices). The synthetic --target is a strictness level (loose,
-//! default, strict).
+//! per-RQE choices). The synthetic --target is the accuracy level; there is
+//! one, p95, which traces use too.
 //! ```
 //!
 //! Every plan is scored by `analytical_cost_model::score` (#145): mean CPU and
@@ -130,7 +130,7 @@ fn main() {
         Some("traces") => from_table(
             TRACES_TABLE,
             Some(&arg(&args, "--dataset").expect("--dataset")),
-            None,
+            Some("p95".to_string()),
             &saturation_dir,
         ),
         Some("synthetic") => from_table(
@@ -176,26 +176,22 @@ fn main() {
 
 // ---------------------------------------------------------------- workloads
 
-/// Per-capability accuracy targets for a strictness level of the synthetic
-/// workload (#777 §5). Exact accumulators must have zero error.
+/// Per-capability accuracy target at the evaluation's one accuracy level,
+/// p95 (95% in each family's own metric). Exact accumulators must have zero
+/// error.
 fn strictness_target(level: &str, capability: Capability) -> f64 {
-    let column = match level {
-        "loose" => 0,
-        "default" => 1,
-        "strict" => 2,
-        other => panic!("unknown strictness level {other}"),
-    };
-    let targets = match capability {
-        Capability::Quantile => [0.02, 0.01, 0.005],
-        Capability::TopKByValue | Capability::TopKByCount => [0.90, 0.95, 0.99],
-        Capability::Cardinality => [0.05, 0.02, 0.01],
+    assert_eq!(level, "p95", "the evaluation has one accuracy level, p95");
+    match capability {
+        // 95% accuracy in each family's own metric: error at most 0.05 for
+        // rank, relative value and relative errors; precision at least 0.95.
+        Capability::Quantile | Capability::Cardinality => 0.05,
+        Capability::TopKByValue | Capability::TopKByCount => 0.95,
         Capability::Sum
         | Capability::Count
         | Capability::Min
         | Capability::Max
-        | Capability::RateOrIncrease => [0.0; 3],
-    };
-    targets[column]
+        | Capability::RateOrIncrease => 0.0,
+    }
 }
 
 /// The table's capability for an RQE. `traces` key queries are per-key sums
@@ -232,7 +228,7 @@ fn label_set(names: &[&str]) -> LabelSet {
 
 /// One workload of an evaluation table: `traces`'s `dataset`, or a
 /// `synthetic` table's only workload. `target` sets every RQE's accuracy
-/// target to a strictness level.
+/// target to that level (p95).
 fn from_table(
     path: &str,
     dataset: Option<&str>,
@@ -375,9 +371,10 @@ fn from_table(
             (stream.clone(), rows)
         })
         .collect();
-    let name = match &target {
-        Some(t) => format!("{dataset}/t{t}"),
-        None => format!("traces/{dataset}"),
+    let name = if dataset.starts_with("synthetic") {
+        format!("{dataset}/t{}", target.as_deref().unwrap_or("p95"))
+    } else {
+        format!("traces/{dataset}")
     };
     Workload {
         name,
@@ -882,11 +879,10 @@ mod tests {
     }
 
     #[test]
-    fn exact_accumulators_must_have_zero_error_at_every_level() {
-        for level in ["loose", "default", "strict"] {
-            assert_eq!(strictness_target(level, Capability::Sum), 0.0);
-            assert_eq!(strictness_target(level, Capability::RateOrIncrease), 0.0);
-        }
-        assert_eq!(strictness_target("strict", Capability::Quantile), 0.005);
+    fn one_95_percent_level_in_each_familys_metric() {
+        assert_eq!(strictness_target("p95", Capability::Sum), 0.0);
+        assert_eq!(strictness_target("p95", Capability::RateOrIncrease), 0.0);
+        assert_eq!(strictness_target("p95", Capability::Quantile), 0.05);
+        assert_eq!(strictness_target("p95", Capability::TopKByValue), 0.95);
     }
 }

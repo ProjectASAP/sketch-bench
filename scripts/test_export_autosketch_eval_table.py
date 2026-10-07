@@ -115,7 +115,7 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(len(plan), len(synthetic_plan()))
         self.assertEqual(len(os.listdir(out)), len({row[0] for row in plan}) + 1)
         default = "synthetic-templatesdashboard-shared1.json"
-        self.assertIn([default, "default", default[:-5] + "-tdefault.json"], plan)
+        self.assertIn([default, "p95", default[:-5] + "-tp95.json"], plan)
         with open(os.path.join(out, "synthetic-templatesall-shared1.json")) as f:
             rqes = {r["query_id"] + "/" + r["range"]: r
                     for r in json.load(f)["workloads"][0]["rqes"]}

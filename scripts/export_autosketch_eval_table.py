@@ -229,11 +229,11 @@ SHARED_INTERVALS = [10, 60, 300]
 SHARED_SEED = 7
 TEMPLATE_SETS = ["dashboard", "all"]
 # Workload grid (#777 section 6): the default, then one dimension at a time.
-SYNTHETIC_DEFAULT = {"templates": "dashboard", "shared": 1, "target": "default"}
+# One accuracy level, 95% in each family's metric (the runner's p95).
+SYNTHETIC_DEFAULT = {"templates": "dashboard", "shared": 1, "target": "p95"}
 SYNTHETIC_GRID = {
     "templates": TEMPLATE_SETS,
     "shared": [1, 8, 64],
-    "target": ["loose", "default", "strict"],
 }
 
 

@@ -1,8 +1,10 @@
 # Synthetic workload: AutoSketch vs. ASAP
 
 Results of ProjectASAP/ASAPQuery#777's synthetic workload grid (§6 "Workload
-grid"): the dashboard default, the 10 templates, shared replicas {8, 64} and
-strictness {loose, strict}. Each is solved by ASAP, PerQuery-CostAware and
+grid"): the dashboard default, the 10 templates and shared replicas {8, 64},
+all at one accuracy level, p95: 95% in each family's own metric (rank,
+relative value and relative error at most 0.05; top-k precision at least
+0.95). The trace workloads use the same level. Each is solved by ASAP, PerQuery-CostAware and
 AutoSketch-Adapted at both weight settings (CPU only; Fargate prices) and
 across the SLA grid {0.01, 0.1, 1, 10} ms and none. The trace workloads
 alibaba_v2022 and google_2011 run with the same inputs
