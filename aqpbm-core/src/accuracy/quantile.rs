@@ -100,7 +100,7 @@ impl GroundTruth for RelativeValueErrorGT {
 
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
         if truth.is_empty() || probes.is_empty() {
-            return metrics_from([("items", 0.0), ("grid_points", 0.0)]);
+            return metrics_from([("items", 0.0), ("grid_points", 0.0), ("scored_points", 0.0)]);
         }
         let mut sum = 0.0;
         let mut scored = 0usize;
@@ -114,7 +114,8 @@ impl GroundTruth for RelativeValueErrorGT {
         }
         let mut metrics = metrics_from([
             ("items", truth.len() as f64),
-            ("grid_points", scored as f64),
+            ("grid_points", probes.len() as f64),
+            ("scored_points", scored as f64),
         ]);
         if scored > 0 {
             metrics.insert("mean_relative_value_error".into(), sum / scored as f64);
@@ -201,7 +202,8 @@ mod tests {
         let scores = gt.score(&truth, &[0.0, 0.5, 1.0], &[100.0, 11.0, 16.0]);
 
         assert_eq!(scores["items"], 3.0);
-        assert_eq!(scores["grid_points"], 2.0);
+        assert_eq!(scores["grid_points"], 3.0);
+        assert_eq!(scores["scored_points"], 2.0);
         assert!((scores["mean_relative_value_error"] - 0.15).abs() < f64::EPSILON);
         assert!(!scores.contains_key("mean_rank_err"));
     }
@@ -211,7 +213,8 @@ mod tests {
         let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![0.0; 3], &[0.0, 0.5, 1.0], &[0.0, 1.0, -1.0]);
 
-        assert_eq!(scores["grid_points"], 0.0);
+        assert_eq!(scores["grid_points"], 3.0);
+        assert_eq!(scores["scored_points"], 0.0);
         assert!(!scores.contains_key("mean_relative_value_error"));
     }
 
