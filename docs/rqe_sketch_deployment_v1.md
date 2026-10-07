@@ -240,6 +240,21 @@ lookback: series per group times scrapes per lookback.
   last N, the merged answer has no accuracy either (#158).
   `SaturationCurves::load` refuses a study with no merge curves for a
   candidate KLL or top-k sketch.
+- Where the study measured nothing for a bracketing point at or above its
+  first N (past an unsaturated curve, past the measured merge counts or N,
+  or with no merge curve), the accuracy falls back to the algorithm's
+  guarantee at 95% confidence (`rqe_optimizer::theory`). The fallbacks are:
+  - KLL: rank error `2.296 / k^0.9723` (DataSketches' 99% value), scaled
+    to 95%;
+  - DDSketch: relative value error `α`;
+  - HLL: `1.96 · 1.04 / sqrt(2^lg_k)`;
+  - CMS-heap top-k, unmerged, with `1 − e^−rows ≥ 95%`: the share of the
+    top `k` Zipf(θ, K) keys whose probability beats the (k+1)-th's by more
+    than `e/cols`.
+
+  A sketch with no published bound, a merged top-k answer, a point below
+  the first N, or a shape outside the grid stays unknown.
+  `accuracy_with_source` reports which points used a bound.
 
 The cost table's sketch accuracies are not read, but they are one point on
 each curve: a row's `measured_at` (items, Zipf θ and population, or Pareto

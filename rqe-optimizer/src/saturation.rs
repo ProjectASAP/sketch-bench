@@ -19,6 +19,7 @@ use std::io;
 use std::path::Path;
 
 use crate::autosketch::window_adapter;
+use crate::theory;
 use crate::{
     accuracy_key, family_properties, table_accuracy, AccuracyDirection, AtomicCostEntry,
     Capability, Deployment, LabelSet, MetricFacts, Raqe, WorkloadFacts,
@@ -196,6 +197,15 @@ fn worse(a: f64, b: f64, direction: AccuracyDirection) -> f64 {
     }
 }
 
+/// Where an accuracy came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccuracySource {
+    /// The cost table (exact accumulators) or the study's curves.
+    Measured,
+    /// The algorithm's published guarantee, where the study measured nothing.
+    Theory,
+}
+
 /// What [`SaturationCurves::check_cost_table`] found, one line per row.
 #[derive(Debug, Default, PartialEq)]
 pub struct CostTableCheck {
@@ -342,8 +352,23 @@ impl SaturationCurves {
         deployment: &Deployment,
         facts: &WorkloadFacts,
     ) -> Option<f64> {
+        self.accuracy_with_source(raqe, deployment, facts)
+            .map(|(value, _)| value)
+    }
+
+    /// [`SaturationCurves::accuracy`], and whether a bracketing point fell
+    /// back to the algorithm's guarantee ([`crate::theory`]) because the
+    /// study didn't measure it: past an unsaturated curve, past the measured
+    /// merge counts or N, or with no merge curve. Below the curve's first N,
+    /// or outside the grid, it stays unknown.
+    pub fn accuracy_with_source(
+        &self,
+        raqe: &Raqe,
+        deployment: &Deployment,
+        facts: &WorkloadFacts,
+    ) -> Option<(f64, AccuracySource)> {
         if family_properties(&deployment.config.sketch).exact {
-            return table_accuracy(raqe, deployment);
+            return table_accuracy(raqe, deployment).map(|v| (v, AccuracySource::Measured));
         }
         let metric_facts = &facts[&deployment.metric];
         let grouping = &deployment.grouping_labels;
@@ -356,12 +381,21 @@ impl SaturationCurves {
         } else {
             1
         };
-        let mut worst = None;
+        let params = config_params(&deployment.config)?;
+        let mut worst: Option<f64> = None;
+        let mut source = AccuracySource::Measured;
         for point in points {
-            let error = point.merged_error_at(merges, covered, direction)?;
+            let error = match point.merged_error_at(merges, covered, direction) {
+                Some(error) => error,
+                None if covered >= point.curve.first()?.0 => {
+                    source = AccuracySource::Theory;
+                    theory::bound(&deployment.config.sketch, &params, point.shape, merges)?
+                }
+                None => return None,
+            };
             worst = Some(worst.map_or(error, |w| worse(w, error, direction)));
         }
-        worst
+        worst.map(|w| (w, source))
     }
 
     /// The oracle for [`crate::autosketch::plan`]: AutoSketch keeps one
