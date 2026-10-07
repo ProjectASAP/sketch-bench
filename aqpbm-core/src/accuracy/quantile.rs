@@ -231,4 +231,12 @@ mod tests {
 
         assert!((scores["mean_relative_value_error"] - 0.1).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn relative_value_error_uses_the_last_item_at_one_quantile() {
+        let gt = RelativeValueErrorGT { column: 0 };
+        let scores = gt.score(&vec![10.0, 20.0, 40.0], &[1.0], &[44.0]);
+
+        assert!((scores["mean_relative_value_error"] - 0.1).abs() < f64::EPSILON);
+    }
 }
