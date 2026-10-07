@@ -398,12 +398,14 @@ sketch_params!(
 pub struct CmsHeapParams {
     pub rows: usize,
     pub cols: usize,
-    /// The heap's capacity. Absent means `TOPK_K`, the `k` every top-k row
-    /// answers and is graded at (`wrappers::cms_heap::sketchlib`); a larger
-    /// heap still answers its heaviest `TOPK_K`. Fewer than `TOPK_K` is
-    /// refused at build.
+    /// The heap's capacity. Absent means `topk_k`. A larger heap still
+    /// answers its heaviest `topk_k`; fewer than `topk_k` is refused at build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heap: Option<usize>,
+    /// The `k` a top-k query answers and is graded at. Absent means
+    /// `TOPK_K` (`wrappers::cms_heap::sketchlib`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
 }
 sketch_params!(
     CmsHeapParams,
@@ -411,7 +413,8 @@ sketch_params!(
     CmsHeapParams {
         rows: 3,
         cols: 1024,
-        heap: None
+        heap: None,
+        topk_k: None
     }
 );
 
@@ -424,6 +427,8 @@ pub struct CsHeapParams {
     pub cols: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heap: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
 }
 sketch_params!(
     CsHeapParams,
@@ -431,7 +436,8 @@ sketch_params!(
     CsHeapParams {
         rows: 3,
         cols: 1024,
-        heap: None
+        heap: None,
+        topk_k: None
     }
 );
 

@@ -81,8 +81,8 @@ pub(super) fn cardinality_row<T: ColumnItem>(
 
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
 /// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
-/// `chl::TOPK_K`, the `k` every top-k row answers whatever its heap's capacity
-/// (`heap=`): a larger heap answers its heaviest `k`.
+/// the row's `topk_k` (`chl::answered_k`, default `chl::TOPK_K`), whatever its
+/// heap's capacity (`heap=`): a larger heap answers its heaviest `k`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn topk_row<T: CountedValue>(
     req: &Requirement,
@@ -99,7 +99,7 @@ pub(super) fn topk_row<T: CountedValue>(
         description,
         table,
         want,
-        TopkGT::<T>::over_column(chl::TOPK_K, value_column(description)),
+        TopkGT::<T>::over_column(chl::answered_k(&req.params), value_column(description)),
         peel::<T>,
         insert,
         insert_step,

@@ -35,7 +35,7 @@ sketch whose error is still moving at the top of the grid is reported
 | family | sketches | data | error metric |
 |---|---|---|---|
 | frequency | `cms-fastpath-vector2d`, `countsketch-fastpath-vector2d` | Zipf(theta) over K keys, i64 | `are_top100` (falls back to `are_all` when fewer than 100 keys were seen) |
-| topk | `cms-heap-topk-fastpath-vector2d` | Zipf(theta) over K keys, i64 | `precision_at_k` (k = 32) |
+| topk | `cms-heap-topk-fastpath-vector2d` | Zipf(theta) over K keys, i64 | `precision_at_k`, per k in `--topk-ks` (10, 32, 100; `topk_k=` in the config, absent for 32) |
 | cardinality | `hll` | Zipf(theta) over K keys, i64 | `relative_error` |
 | quantile | `kll-percall`, `dd` | floor(Pareto(alpha, scale 1000)), i64 | `mean_rank_err` |
 
@@ -78,7 +78,7 @@ runs after 3 warm-ups and one accuracy pass, reduced by `approxbench
 atomic-costs` to `rqe_atomic_costs.json` (#174). Top-k configs are measured at heaps 32, 128, 512 and
 2048 (`TOPK_HEAPS`, `heap=`): a deployment merging `m` windows keeps `m · k`
 and rqe-optimizer interpolates between them. The accuracy grid measures top-k
-at the default heap, `k = 32`. Put it under the curves'
+at each k in `--topk-ks`, at a heap of k. Put it under the curves'
 directory as `optimizer_cost/`, where `rqe-optimizer` reads it. The accuracy
 grid also covers that shape (unless `--no-cost-shape`): θ = 1.1 and K = 1e4
 join the grid as a full row and column (a = 2 joins the Pareto values), so
