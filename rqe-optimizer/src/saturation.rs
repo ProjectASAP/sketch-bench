@@ -14,7 +14,7 @@
 //! checks that the two agree there (#171). Both come from one study run
 //! (`study_saturation.py --phase optimizer-cost`, #174).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
@@ -549,6 +549,23 @@ impl SaturationCurves {
                 Some(true) => {}
             }
         }
+        // A heap top-k config priced at one heap only can't serve any heap
+        // above it: every merged top-k candidate would quietly vanish.
+        let mut heaps: BTreeMap<(String, String), BTreeSet<u64>> = BTreeMap::new();
+        for row in costs.iter().filter(|row| is_candidate(&row.sketch)) {
+            if let Some(heap) = heap_capacity(row) {
+                let key = (row.sketch.clone(), format!("{:?}", config_params(row)));
+                heaps.entry(key).or_default().insert(heap);
+            }
+        }
+        for ((sketch, params), measured) in heaps {
+            if measured.len() < 2 {
+                check.mismatched.push(format!(
+                    "{sketch} {params}: priced at heap {measured:?} only; rerun \
+                     study_saturation.py --phase optimizer-cost for the heap sizes"
+                ));
+            }
+        }
         check
     }
 
@@ -1016,7 +1033,20 @@ mod tests {
 
     #[test]
     fn the_cost_table_is_a_point_on_the_curve() {
-        let check = |rows: &[AtomicCostEntry]| curves().check_cost_table(rows);
+        // Each top-k row also priced at a large heap, as the study does.
+        let check = |rows: &[AtomicCostEntry]| {
+            let mut all = rows.to_vec();
+            for row in rows.iter().filter(|row| heap_capacity(row).is_some()) {
+                let mut large = row.clone();
+                large.sketch_config["params"]["heap"] = (64 * TOPK_K).into();
+                all.push(large);
+            }
+            curves().check_cost_table(&all)
+        };
+        // Priced at one heap only: no merged top-k candidate could be built.
+        let lone = curves().check_cost_table(&[measured_row(1024, 10_000, 0.93)]);
+        assert_eq!(lone.mismatched.len(), 1, "{lone:?}");
+        assert!(lone.mismatched[0].contains("priced at heap"), "{lone:?}");
         // A heap of k is checked like no heap; a larger heap is cost-only.
         let with_heap = |heap: u64, precision| {
             let mut row = measured_row(1024, 10_000, precision);
@@ -1055,7 +1085,12 @@ mod tests {
         let mut other_metric = measured_row(1024, 10_000, 0.95);
         other_metric.query_accuracy = BTreeMap::from([("recall_at_k".into(), 0.95)]);
         other_metric.accuracy_metric = "recall_at_k".into();
-        assert_eq!(check(&[other_metric]).mismatched.len(), 1);
+        // (Its large-heap copy names the same wrong metric.)
+        let wrong = check(&[other_metric]).mismatched;
+        assert!(
+            !wrong.is_empty() && wrong.iter().all(|m| m.contains("recall_at_k")),
+            "{wrong:?}"
+        );
         // Sketches the study didn't run, exact ones among them, skip the
         // curve, but still name their family's metric.
         let exact = AtomicCostEntry {

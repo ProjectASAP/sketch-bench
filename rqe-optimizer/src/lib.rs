@@ -147,9 +147,9 @@ pub fn has_heap(sketch: &str) -> bool {
 /// other families.
 pub fn heap_capacity(config: &AtomicCostEntry) -> Option<u64> {
     has_heap(&config.sketch).then(|| {
-        config.sketch_config["params"]["heap"]
-            .as_u64()
-            .unwrap_or(TOPK_K)
+        let heap = &config.sketch_config["params"]["heap"];
+        // A number in any JSON form (128, 128.0); absent is k.
+        heap.as_f64().map_or(TOPK_K, |h| h.round() as u64)
     })
 }
 

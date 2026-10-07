@@ -210,7 +210,11 @@ impl Grid {
         let rows: Vec<(usize, BTreeMap<String, f64>)> = costs
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.sketch == variant)
+            // AutoSketch never merges (x = S), so a heap of k serves it; the
+            // larger heaps only cost more and aren't a search axis.
+            .filter(|(_, c)| {
+                c.sketch == variant && crate::heap_capacity(c).is_none_or(|h| h <= crate::TOPK_K)
+            })
             .map(|(i, c)| (i, numeric_params(&c.sketch_config)))
             .collect();
         if rows.is_empty() {

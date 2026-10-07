@@ -614,10 +614,13 @@ def main():
         # --resume over a narrower grid keeps the other points' rows, as the
         # curve files keep their curves.
         kept_summary = []
-        if args.resume and os.path.exists(summary_path):
+        # Accuracy phase only: a cost phase truncates saturation_cost.jsonl,
+        # so other points' cost columns would outlive their records.
+        if args.resume and args.phase == "accuracy" and os.path.exists(summary_path):
             grid = {point_key(p[1], p[2], *p[6:]) for p in points}
             with open(summary_path, newline="") as f:
-                kept_summary = [[r[c] for c in SUMMARY_COLUMNS] for r in csv.DictReader(f)
+                kept_summary = [[r.get(c, "") for c in SUMMARY_COLUMNS]
+                                for r in csv.DictReader(f)
                                 if point_key(r["sketch"], r["config"], r["dist"], r["param"],
                                              r["cardinality"]) not in grid]
         with open(summary_path, "w", newline="") as f:

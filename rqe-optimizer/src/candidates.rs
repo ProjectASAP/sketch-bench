@@ -188,11 +188,16 @@ fn heap_rows_by_shape<'a>(
 /// `TOPK_K`. `None` when no row can hold `heap`.
 fn at_heap(rows: &BTreeMap<u64, &AtomicCostEntry>, heap: u64) -> Option<AtomicCostEntry> {
     let (_, &base) = rows.first_key_value()?;
+    // A measured heap's costs, with the base's accuracy like every other.
+    let measured = |row: &AtomicCostEntry| AtomicCostEntry {
+        query_accuracy: base.query_accuracy.clone(),
+        ..row.clone()
+    };
     if let Some(row) = rows.get(&heap) {
-        return Some((*row).clone());
+        return Some(measured(row));
     }
     if rows.len() < 2 {
-        return rows.range(heap..).next().map(|(_, row)| (*row).clone());
+        return rows.range(heap..).next().map(|(_, row)| measured(row));
     }
     let mut below = rows.range(..heap).rev();
     let mut above = rows.range(heap..);
