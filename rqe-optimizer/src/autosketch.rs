@@ -341,7 +341,7 @@ mod tests {
     use crate::analytical_cost_model::{score, PhaseCost};
     use crate::candidates::is_eligible;
     use crate::test_support::{facts, METRIC};
-    use crate::{AccuracyDirection, Capability, LabelSet};
+    use crate::{table_accuracy_at, AccuracyDirection, Capability, LabelSet};
     use std::collections::BTreeSet;
 
     const ERR: &str = "err";
@@ -392,7 +392,7 @@ mod tests {
 
     fn cheapest_feasible(raqe: &Raqe, costs: &[AtomicCostEntry]) -> usize {
         (0..costs.len())
-            .filter(|&i| raqe.accuracy_ok_for(&costs[i], 1))
+            .filter(|&i| table_accuracy_at(raqe, &costs[i], 1).is_some_and(|v| raqe.accuracy_ok(v)))
             .min_by(|&a, &b| compare_resources(&costs[a], &costs[b]))
             .unwrap()
     }
@@ -460,7 +460,11 @@ mod tests {
         assert_eq!(window_adapter(&raqes[0]), (3_600_000, 60_000));
         assert_eq!(window_adapter(&raqes[1]), (3_600_000, 40_000));
         for (r, d) in raqes.iter().zip(&plan.deployments) {
-            assert!(is_eligible(r, d, &facts(1, 1)), "{} not eligible", r.id);
+            assert!(
+                is_eligible(r, d, &facts(1, 1), &crate::table_accuracy),
+                "{} not eligible",
+                r.id
+            );
         }
     }
 

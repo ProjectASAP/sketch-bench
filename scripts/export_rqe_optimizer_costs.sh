@@ -68,11 +68,14 @@ MERGE_SHARDS=16
 MERGE_ACCURACY_SHARDS=(4 16 64 256 1024)
 
 # The swept parameters, every one of them. Exact accumulators take none.
+# Sketch configs are points of the saturation grid (scripts/study_saturation.py):
+# the optimizer reads their accuracy from its curves, and a config with no
+# curve is never eligible (#156).
 HLL_PRECISIONS=(12 14)
-KLL_KS=(200 500)
+KLL_KS=(200 800)
 DD_ALPHAS=(0.01 0.02)
 CMS_HEAP_ROWS=(3 5)
-CMS_HEAP_COLS=(2048)
+CMS_HEAP_COLS=(1024 4096)
 UNIVMON_CONFIGS=(
     "heap_size=1000 sketch_row=5 sketch_col=2048 layer_size=8"
     "heap_size=500 sketch_row=3 sketch_col=1024 layer_size=6"
