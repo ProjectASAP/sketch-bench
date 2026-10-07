@@ -572,9 +572,14 @@ impl SaturationCurves {
         check
     }
 
-    /// Every grid point of `config` bracketing `shape` (Q8 of #156), or
-    /// `None` when `config` isn't in the grid, `shape` lies outside it, or a
-    /// bracketing point is missing.
+    /// Every grid point of `config` bracketing `shape` (Q8 of #156): the
+    /// shape parameter (θ, or the Pareto `a`) bracketed within each K, and K
+    /// bracketed among the K values that can bracket the parameter. The grid
+    /// needn't be a full cross (the cost table's shape adds one (θ, K)
+    /// point), so a θ measured at one K only isn't asked for at another; the
+    /// bracket falls back to the neighbouring Ks that have it, which is
+    /// conservative. Points with equal shapes all count. `None` when
+    /// `config` isn't in the grid or `shape` lies outside it.
     fn bracketing_points(
         &self,
         config: &AtomicCostEntry,
@@ -587,52 +592,40 @@ impl SaturationCurves {
             .iter()
             .filter(|point| point.params == params)
             .collect();
-        let quantile = points.first()?.distinct_keys().is_none();
+        let quantile = points.iter().all(|p| p.distinct_keys().is_none());
         let target = if quantile {
             shape.tail_index
         } else {
             shape.zipf_s
         };
-        // The grid needn't be a full cross: the cost table's shape adds one
-        // (θ, K) point. Bracket the shape parameter within each K, and K
-        // among the K values that can bracket it, so a θ measured at one K
-        // only isn't asked for at another.
+        // Per K (none for quantiles): the points bracketing the parameter.
         let mut by_keys: BTreeMap<Option<u64>, Vec<&GridPoint>> = BTreeMap::new();
-        for point in points {
+        for point in &points {
             by_keys
                 .entry(point.distinct_keys().map(f64::to_bits))
                 .or_default()
                 .push(point);
         }
-        let mut params_at: BTreeMap<Option<u64>, Vec<f64>> = BTreeMap::new();
-        for (keys, at) in &by_keys {
-            if let Some(params) = bracket(at.iter().map(|p| p.shape_param()), target) {
-                params_at.insert(*keys, params);
+        let mut bracketed: BTreeMap<Option<u64>, Vec<&GridPoint>> = BTreeMap::new();
+        for (keys, at) in by_keys {
+            if let Some(values) = bracket(at.iter().map(|p| p.shape_param()), target) {
+                let at: Vec<&GridPoint> = at
+                    .into_iter()
+                    .filter(|p| values.contains(&p.shape_param()))
+                    .collect();
+                bracketed.insert(keys, at);
             }
         }
-        let keys: Vec<Option<u64>> = if quantile {
-            vec![None]
-        } else {
-            let measured = params_at.keys().filter_map(|k| k.map(f64::from_bits));
-            bracket(measured, shape.distinct_keys)?
-                .into_iter()
-                .map(|k| Some(k.to_bits()))
-                .collect()
-        };
-        let mut bracketing = Vec::new();
-        for key in keys {
-            let params = params_at.get(&key)?;
-            let at: Vec<&GridPoint> = by_keys[&key]
-                .iter()
-                .copied()
-                .filter(|p| params.contains(&p.shape_param()))
-                .collect();
-            if at.len() != params.len() {
-                return None;
-            }
-            bracketing.extend(at);
+        if quantile {
+            return bracketed.remove(&None);
         }
-        Some(bracketing)
+        let measured = bracketed.keys().filter_map(|k| k.map(f64::from_bits));
+        let keys = bracket(measured, shape.distinct_keys)?;
+        Some(
+            keys.into_iter()
+                .flat_map(|k| bracketed.remove(&Some(k.to_bits())).unwrap_or_default())
+                .collect(),
+        )
     }
 }
 
@@ -847,6 +840,7 @@ mod tests {
             keys: 1e4,
         };
         extra.curve = vec![(1e3, 0.5, 0.0), (1e4, 0.5, 0.0), (1e5, 0.5, 0.0)];
+        extra.merged = BTreeMap::new();
         curves.points_by_sketch.get_mut(TOPK).unwrap().push(extra);
         let r = topk_raqe(1_000_000);
         let d = deployment(TOPK, 1_000_000);
