@@ -43,11 +43,14 @@ pub enum Capability {
     RateOrIncrease,
     Quantile,
     Cardinality,
-    TopK,
+    /// `topk(k, sum_over_time(x[w]))`: ranked by summed value.
+    TopKByValue,
+    /// `topk(k, count_over_time(x[w]))`: ranked by sample count.
+    TopKByCount,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 8] = [
+    pub const ALL: [Capability; 9] = [
         Capability::Sum,
         Capability::Count,
         Capability::Min,
@@ -55,7 +58,8 @@ impl Capability {
         Capability::RateOrIncrease,
         Capability::Quantile,
         Capability::Cardinality,
-        Capability::TopK,
+        Capability::TopKByValue,
+        Capability::TopKByCount,
     ];
 
     /// `AtomicCostEntry.sketch` values serving this capability. These are
@@ -80,7 +84,9 @@ impl Capability {
             // count, same target as HLL. Second candidate, not a second
             // capability.
             Capability::Cardinality => &["hll", "univmon-cardinality"],
-            Capability::TopK => &[
+            // The sketch is the same; ASAPQuery deploys the two kinds with
+            // different `count_events`, so they never share one.
+            Capability::TopKByValue | Capability::TopKByCount => &[
                 "cms-heap-topk-fastpath-vector2d",
                 "countsketch-heap-topk-fastpath-vector2d",
                 "univmon-topk",
@@ -378,7 +384,7 @@ pub(crate) mod test_support {
     pub fn raqe(lookback_ms: Millis, interval_ms: Millis) -> Raqe {
         Raqe {
             id: "r".into(),
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             lookback_ms,
             interval_ms,
             metric: METRIC.into(),
@@ -401,7 +407,7 @@ pub(crate) mod test_support {
         slide_ms: Millis,
     ) -> Deployment {
         Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),

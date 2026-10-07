@@ -330,7 +330,7 @@ mod tests {
     fn raqe(id: &str, lookback: Millis, interval: Millis) -> Raqe {
         Raqe {
             id: id.into(),
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             lookback_ms: lookback,
             interval_ms: interval,
             metric: METRIC.into(),
@@ -362,7 +362,7 @@ mod tests {
         // Error is not monotone in the count: 16 is worse than 4 and 64.
         config.merge_accuracy = BTreeMap::from([(4, err(0.2)), (16, err(2.0)), (64, err(0.3))]);
         let at_window = |window_ms| Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
@@ -425,30 +425,43 @@ mod tests {
     }
 
     #[test]
-    fn sum_and_count_never_share_a_deployment() {
-        let sum = Raqe {
-            capability: Capability::Sum,
-            ..raqe("sum", 60_000, 60_000)
-        };
-        let count = Raqe {
-            capability: Capability::Count,
-            ..raqe("count", 60_000, 60_000)
-        };
-        let exact_sum = AtomicCostEntry {
-            sketch: "exact-sum".into(),
-            ..cost()
-        };
-        let candidates = build_all_candidates(
-            &[sum.clone(), count.clone()],
-            &[exact_sum],
-            &facts(1, 1),
-            false,
-        );
-        assert!(candidates.iter().any(|d| is_eligible(&sum, d)));
-        assert!(candidates.iter().any(|d| is_eligible(&count, d)));
-        assert!(candidates
-            .iter()
-            .all(|d| !(is_eligible(&sum, d) && is_eligible(&count, d))));
+    fn paired_capabilities_never_share_a_deployment() {
+        let pairs = [
+            (Capability::Sum, Capability::Count, "exact-sum"),
+            (
+                Capability::TopKByValue,
+                Capability::TopKByCount,
+                "cms-heap-topk-fastpath-vector2d",
+            ),
+        ];
+        for (a, b, sketch) in pairs {
+            let raqe_a = Raqe {
+                capability: a,
+                ..raqe("a", 60_000, 60_000)
+            };
+            let raqe_b = Raqe {
+                capability: b,
+                ..raqe("b", 60_000, 60_000)
+            };
+            let entry = AtomicCostEntry {
+                sketch: sketch.into(),
+                ..cost()
+            };
+            let candidates = build_all_candidates(
+                &[raqe_a.clone(), raqe_b.clone()],
+                &[entry],
+                &facts(1, 1),
+                false,
+            );
+            assert!(candidates.iter().any(|d| is_eligible(&raqe_a, d)), "{a:?}");
+            assert!(candidates.iter().any(|d| is_eligible(&raqe_b, d)), "{b:?}");
+            assert!(
+                candidates
+                    .iter()
+                    .all(|d| !(is_eligible(&raqe_a, d) && is_eligible(&raqe_b, d))),
+                "{a:?} and {b:?} share a deployment"
+            );
+        }
     }
 
     #[test]
@@ -494,7 +507,7 @@ mod tests {
     fn eligibility_requires_exact_non_overlapping_tiling() {
         let r = raqe("r", 600_000, 180_000);
         let d = Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
@@ -523,7 +536,7 @@ mod tests {
     fn prunes_finer_slide_when_the_coarser_slide_serves_the_same_raqe() {
         let r = raqe("r", 60_000, 60_000);
         let coarse = Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
@@ -546,7 +559,7 @@ mod tests {
         let r = raqe("r", 60_000, 60_000);
         let cost = cost();
         let large_window = Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
@@ -574,7 +587,7 @@ mod tests {
         let r = raqe("r", 60_000, 60_000);
         // Stores (60 − 60) / 60 + 1 = 1 closed instance of 10 bytes.
         let whole_window = Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),
@@ -612,7 +625,7 @@ mod tests {
         let r = raqe("r", 60_000, 60_000);
         // x == L: no merge, so no merge memory.
         let direct = Deployment {
-            capability: Capability::TopK,
+            capability: Capability::TopKByValue,
             metric: METRIC.into(),
             spatial_filter: String::new(),
             grouping_labels: LabelSet::new(),

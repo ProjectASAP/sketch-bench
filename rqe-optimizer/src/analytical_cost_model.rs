@@ -171,7 +171,9 @@ pub(crate) fn merge_memory_per_group(
 pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCost {
     let groups = group_count(deployment, facts);
     let output_bytes_per_group = match raqe.capability {
-        Capability::TopK => TOPK_ENTRIES * OUTPUT_BYTES_PER_TOPK_ENTRY,
+        Capability::TopKByValue | Capability::TopKByCount => {
+            TOPK_ENTRIES * OUTPUT_BYTES_PER_TOPK_ENTRY
+        }
         _ => OUTPUT_BYTES_PER_VALUE,
     };
     PhaseCost {
