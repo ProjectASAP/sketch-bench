@@ -588,27 +588,51 @@ impl SaturationCurves {
             .filter(|point| point.params == params)
             .collect();
         let quantile = points.first()?.distinct_keys().is_none();
-        let shape_params = if quantile {
-            bracket(points.iter().map(|p| p.shape_param()), shape.tail_index)?
+        let target = if quantile {
+            shape.tail_index
         } else {
-            bracket(points.iter().map(|p| p.shape_param()), shape.zipf_s)?
+            shape.zipf_s
         };
-        let keys = if quantile {
+        // The grid needn't be a full cross: the cost table's shape adds one
+        // (θ, K) point. Bracket the shape parameter within each K, and K
+        // among the K values that can bracket it, so a θ measured at one K
+        // only isn't asked for at another.
+        let mut by_keys: BTreeMap<Option<u64>, Vec<&GridPoint>> = BTreeMap::new();
+        for point in points {
+            by_keys
+                .entry(point.distinct_keys().map(f64::to_bits))
+                .or_default()
+                .push(point);
+        }
+        let mut params_at: BTreeMap<Option<u64>, Vec<f64>> = BTreeMap::new();
+        for (keys, at) in &by_keys {
+            if let Some(params) = bracket(at.iter().map(|p| p.shape_param()), target) {
+                params_at.insert(*keys, params);
+            }
+        }
+        let keys: Vec<Option<u64>> = if quantile {
             vec![None]
         } else {
-            let keys = points.iter().filter_map(|p| p.distinct_keys());
-            bracket(keys, shape.distinct_keys)?
+            let measured = params_at.keys().filter_map(|k| k.map(f64::from_bits));
+            bracket(measured, shape.distinct_keys)?
                 .into_iter()
-                .map(Some)
+                .map(|k| Some(k.to_bits()))
                 .collect()
         };
-        let bracketing: Vec<&GridPoint> = points
-            .into_iter()
-            .filter(|p| {
-                shape_params.contains(&p.shape_param()) && keys.contains(&p.distinct_keys())
-            })
-            .collect();
-        (bracketing.len() == shape_params.len() * keys.len()).then_some(bracketing)
+        let mut bracketing = Vec::new();
+        for key in keys {
+            let params = params_at.get(&key)?;
+            let at: Vec<&GridPoint> = by_keys[&key]
+                .iter()
+                .copied()
+                .filter(|p| params.contains(&p.shape_param()))
+                .collect();
+            if at.len() != params.len() {
+                return None;
+            }
+            bracketing.extend(at);
+        }
+        Some(bracketing)
     }
 }
 
@@ -808,6 +832,32 @@ mod tests {
             Some(0.95 - 0.05),
             "θ = 1.0 at 1e4 is worse than θ = 1.2"
         );
+    }
+
+    /// The cost table's shape adds one (θ = 1.1, K = 1e4) point to a grid
+    /// of θ ∈ {1.0, 1.2}: θ = 1.1 at K = 1e3 still brackets 1.0 and 1.2, a
+    /// θ = 1.0 at K between 1e3 and 1e5 skips the K that has θ = 1.1 only,
+    /// and θ = 1.1 at K = 1e4 reads the extra point itself.
+    #[test]
+    fn a_sparse_extra_point_brackets_only_where_measured() {
+        let mut curves = curves();
+        let mut extra = curves.points_by_sketch[TOPK][1].clone();
+        extra.shape = MeasuredShape::Zipf {
+            skew: 1.1,
+            keys: 1e4,
+        };
+        extra.curve = vec![(1e3, 0.5, 0.0), (1e4, 0.5, 0.0), (1e5, 0.5, 0.0)];
+        curves.points_by_sketch.get_mut(TOPK).unwrap().push(extra);
+        let r = topk_raqe(1_000_000);
+        let d = deployment(TOPK, 1_000_000);
+        let at = |theta, keys| curves.accuracy(&r, &d, &workload(10, shape(theta, keys)));
+        // Same as without the extra point: θ = 1.0 at 1e4 items is worse.
+        assert_eq!(at(1.1, 1e3), Some(0.95 - 0.05));
+        // K = 5e3 brackets 1e3 and 1e5, not the 1e4 that has θ = 1.1 only;
+        // θ = 1.0 at K = 1e5 never saturates, but reads 0.85 at 1e4.
+        assert_eq!(at(1.0, 5e3), Some(0.95 - 0.1));
+        // The extra point itself.
+        assert_eq!(at(1.1, 1e4), Some(0.5));
     }
 
     #[test]
