@@ -212,11 +212,8 @@ single-instance accuracy; beyond the largest measured count, the largest).
 Merge accuracy is not monotone in the count, so the worse bracket is used.
 Sketches take it
 from the saturation study's error-vs-N curves (`SaturationCurves`, #156),
-read at the items the answer covers per group:
-
-```text
-n(S_i) = card(metric.labels) / card(G) × S_i / scrape_interval
-```
+read at the number of items one group receives over the RAQE's whole
+lookback: series per group times scrapes per lookback.
 
 - The curve is the configuration's at the metric's fitted `data_shape` for
   `G` (zipf θ and keys `K`, or tail index `a` for quantiles). Between grid
@@ -225,8 +222,9 @@ n(S_i) = card(metric.labels) / card(G) × S_i / scrape_interval
 - Between checkpoints, the worse neighbour. Below the first checkpoint, no
   accuracy. Past the last, the plateau if the point saturated, else none.
 - The curve's `error_metric` must be `accuracy_metric_i`.
-- Pane size doesn't matter: a merged answer reads the curve at `n(S_i)`.
-  KLL and top-k merge lossily; their merge penalty is #158.
+- The window size doesn't matter: a merged answer reads the curve at the
+  lookback's item count, like a single sketch. KLL and top-k merge lossily;
+  their merge penalty is #158.
 
 The cost table's sketch accuracies are not read, but they are one point on
 each curve: a row's `measured_at` (items, Zipf θ and population, or Pareto

@@ -2,9 +2,10 @@
 //! (`scripts/study_saturation.py`, #130, #140) at the number of items a
 //! deployment's answer covers. Design decisions: #156.
 //!
-//! A deployment answering an RAQE with lookback `T` covers
-//! `n(T) = card(L)/card(G) · T / scrape` items per group, merged from `T/x`
-//! panes or not, and the curve is read there. Pane size doesn't matter.
+//! The curve is read at the number of items one group receives over the
+//! RAQE's whole lookback: series per group times scrapes per lookback. That
+//! holds whether the answer is one sketch or a merge of many smaller-window
+//! sketches; the window size doesn't matter.
 //! KLL and top-k merge lossily (#131); their merge penalty is #158.
 //!
 //! The cost table's sketch accuracies are not read: each is one point on a
@@ -150,7 +151,7 @@ pub struct SaturationCurves {
 }
 
 impl SaturationCurves {
-    /// Reads `saturation.csv` (for `N_sat`) and `saturation_curve.csv` from
+    /// Reads `saturation.csv` (for the saturation point) and `saturation_curve.csv` from
     /// each of [`RUN_DIRS`] under `dir`.
     pub fn load(dir: &Path) -> io::Result<Self> {
         type PointKey = (String, String, String, String, String);
@@ -352,7 +353,8 @@ impl SaturationCurves {
     }
 }
 
-/// `card(L)/card(G) · window / scrape`: one group's items in a window.
+/// Items one group receives in `window_ms`: series per group times scrapes
+/// in the window.
 fn items_per_group(facts: &MetricFacts, grouping: &LabelSet, window_ms: u64) -> f64 {
     let series = facts.cardinality[&facts.labels] as f64;
     let groups = facts.cardinality[grouping] as f64;
@@ -572,9 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn merged_answers_read_the_curve_at_the_merged_count_whatever_the_pane_size() {
-        // 10 items/s: 100 s panes hold 1e3 < N_sat = 1e4; the 1e4 s answer
-        // covers 1e5 either way.
+    fn merged_answers_read_the_curve_at_the_lookback_count_whatever_the_window() {
+        // 10 items/s: a 100 s window holds 1e3 items, below the 1e4
+        // saturation point, but the 1e4 s lookback covers 1e5 items whatever
+        // the window.
         let facts = workload(10, shape(1.2, 1e3));
         let r = topk_raqe(10_000_000);
         for window_ms in [100_000, 1_000_000, 10_000_000] {
