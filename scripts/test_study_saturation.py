@@ -429,11 +429,29 @@ class CostShapeTest(unittest.TestCase):
 FAKE_COST_APPROXBENCH = textwrap.dedent("""\
     import json, os, sys
     a = sys.argv
+    value = lambda flag: a[a.index(flag) + 1] if flag in a else None
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(json.dumps(a[1:]) + "\\n")
     if a[1] == "atomic-costs":
+        # One row per logged accuracy pass, scoring 0.5 in its metric.
+        metrics = dict(m.split("=") for m in a[3:] if "=" in m and "/" not in m)
+        rows = []
+        for line in open(os.environ["FAKE_LOG"]):
+            c = json.loads(line)
+            if c[0] == "sketchbench" and "--report" in c and "accuracy" in c:
+                v = c[c.index("--variant") + 1]
+                cfg = c[c.index("--config") + 1] if "--config" in c else ""
+                params = {k: float(x) for k, x in (kv.split("=") for kv in cfg.split())}
+                rows.append({"sketch": v, "sketch_config": {"params": params},
+                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v]})
+        json.dump(rows, open(value("--output"), "w"))
         kept = int(os.environ["FAKE_KEPT"])
         sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
+    elif a[1] == "sketchbench" and "--report" not in a:
+        # A seed run: error = seed / 100 in every metric.
+        e = int(value("--seed")) / 100
+        print(json.dumps({"bench": {"accuracy": {m: e for m in (
+            "precision_at_k", "mean_rank_err", "mean_relative_value_error")}}}))
 """)
 
 
@@ -447,6 +465,7 @@ class OptimizerCostTest(unittest.TestCase):
         result = subprocess.run([
             sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
             "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+            "--seeds", "3",
         ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
         with open(log) as f:
             return result, [json.loads(line) for line in f]
@@ -457,7 +476,7 @@ class OptimizerCostTest(unittest.TestCase):
             # each, plus 5 exact.
             result, calls = self.run_phase(d, 11)
         self.assertEqual(result.returncode, 0, result.stderr)
-        bench = [c for c in calls if c[0] == "sketchbench"]
+        bench = [c for c in calls if c[0] == "sketchbench" and "--report" in c]
         self.assertEqual(len(bench), 22)
         value = lambda c, flag: c[c.index(flag) + 1]
         topk, kll = bench[0], bench[8]
@@ -474,6 +493,28 @@ class OptimizerCostTest(unittest.TestCase):
         self.assertIn("kll-percall=mean_rank_err", reduce)
         self.assertIn("exact-sum=relative_error", reduce)
         self.assertNotIn("--merge-accuracy", reduce)
+        # Then 3 seed runs per sketch config at heap k: top-k, KLL, DD.
+        seeds = [c for c in calls if c[0] == "sketchbench" and "--report" not in c]
+        self.assertEqual(len(seeds), 9)
+        self.assertEqual({c[c.index("--seed") + 1] for c in seeds}, {"1", "2", "3"})
+        self.assertTrue(all("heap=32" in c[c.index("--config") + 1] for c in seeds
+                            if "topk" in c[c.index("--variant") + 1]))
+
+    def test_sketch_rows_take_the_seed_mean_accuracy(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, _ = self.run_phase(d, 11)
+            with open(os.path.join(d, "out", "rqe_atomic_costs.json")) as f:
+                rows = json.load(f)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Seeds 1..3 score 0.01, 0.02, 0.03: every sketch row (every heap)
+        # reads their mean; exact rows keep the accuracy pass's.
+        sketches = [r for r in rows if not r["sketch"].startswith("exact-")]
+        self.assertEqual(len(sketches), 6)
+        for row in sketches:
+            self.assertAlmostEqual(row["query_accuracy"][row["accuracy_metric"]], 0.02)
+        for row in rows:
+            if row["sketch"].startswith("exact-"):
+                self.assertEqual(row["query_accuracy"][row["accuracy_metric"]], 0.5)
 
     def test_a_skipped_row_fails(self):
         with tempfile.TemporaryDirectory() as d:

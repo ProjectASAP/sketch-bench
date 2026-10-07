@@ -295,7 +295,11 @@ def cost_dataset(family):
 def optimizer_cost(args, families):
     """The optimizer's cost table: one serial cost pass and one accuracy pass
     per (sketch, config) at the COST_* shape, plus the exact accumulators,
-    reduced by `approxbench atomic-costs` to --out/COST_TABLE."""
+    reduced by `approxbench atomic-costs` to --out/COST_TABLE. Each sketch
+    row's accuracy is then the mean over seeds 1..--seeds at COST_N, the
+    same measurement as the curve's point there when --seeds matches the
+    accuracy run's, so check_cost_table compares like with like. Exact rows
+    keep their 0."""
     os.makedirs(args.out, exist_ok=True)
     raw = os.path.join(args.out, "rqe_atomic_costs_raw.jsonl")
     grid = os.path.join(args.out, "rqe_atomic_costs_grid.jsonl")
@@ -350,8 +354,39 @@ def optimizer_cost(args, families):
     expected = f"approxbench atomic-costs: {len(rows)} row(s), 0 skipped"
     if summary != expected:
         sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary!r}")
+    seed_mean_accuracy(args, table, rows, metrics)
     print(f"Done. {table}", file=sys.stderr)
     return 0
+
+
+def seed_mean_accuracy(args, table, rows, metrics):
+    """Rewrite each sketch row's accuracy in `table` as the mean over seeds
+    1..--seeds of one accuracy run at COST_N: the run the curves make at that
+    N. Top-k at heaps above k keep the base's: curves are measured at k."""
+    def params(config):
+        return {k: float(v) for k, v in (kv.split("=") for kv in config.split())}
+
+    means = {}
+    for variant, library, config, comparator, data in rows:
+        if library == "exact" or float(params(config[1]).get("heap", TOPK_HEAPS[0])) != \
+                TOPK_HEAPS[0]:
+            continue
+        errors = [error(run(args.binary, [
+            "--variant", variant, "--library", library, *config,
+            "--operations", "query", "--metrics", "accuracy", "--comparator", comparator,
+            "--runs", "1", "--warmup-runs", "0", "--seed", str(seed)] + data),
+            metrics[variant]) for seed in range(1, args.seeds + 1)]
+        base = {k: v for k, v in params(config[1]).items() if k != "heap"}
+        means[(variant, tuple(sorted(base.items())))] = sum(errors) / len(errors)
+    with open(table) as f:
+        entries = json.load(f)
+    for entry in entries:
+        p = {k: float(v) for k, v in entry["sketch_config"]["params"].items() if k != "heap"}
+        mean = means.get((entry["sketch"], tuple(sorted(p.items()))))
+        if mean is not None:
+            entry["query_accuracy"][entry["accuracy_metric"]] = mean
+    with open(table, "w") as f:
+        json.dump(entries, f, indent=2)
 
 
 def main():
