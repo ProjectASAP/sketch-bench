@@ -80,10 +80,11 @@ atomic-costs` to `rqe_atomic_costs.json` (#174). Top-k configs are measured at h
 and rqe-optimizer interpolates between them. The accuracy grid measures top-k
 at the default heap, `k = 32`. Put it under the curves'
 directory as `optimizer_cost/`, where `rqe-optimizer` reads it. The accuracy
-grid also runs every configuration at that shape (unless `--no-cost-shape`),
-so each cost-table row is a point on a curve and the synthetic evaluation,
-which uses the same data, reads an exact curve rather than the worse
-neighbouring grid point.
+grid also covers that shape (unless `--no-cost-shape`): θ = 1.1 and K = 1e4
+join the grid as a full row and column (a = 2 joins the Pareto values), so
+the grid stays a full cross, each cost-table row is a point on a curve, and
+the synthetic evaluation, which uses the same data, reads an exact curve
+rather than the worse neighbouring grid point.
 
 `--cost-rows 3` times only the rows=3 configs of CMS, CountSketch and
 CMS-heap top-k (all four cols); HLL, KLL and DDSketch are timed at every

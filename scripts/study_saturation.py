@@ -23,8 +23,9 @@ shape (COST_*, the synthetic evaluation's dataset) with a cost and an
 accuracy pass, plus the exact accumulators, and reduces them to
 rqe_atomic_costs.json, the table rqe-optimizer loads; every row names its
 accuracy_metric. It runs no curves and ignores the grid arguments.
-The grid also holds every config at the optimizer-cost shape (Zipf 1.1 over
-1e4 keys, Pareto a = 2) unless --no-cost-shape.
+The grid also holds every config at the optimizer-cost shape unless
+--no-cost-shape: θ = 1.1 and K = 1e4 join --thetas and --cardinalities (a full
+row and column, so the grid stays a full cross) and a = 2 joins --alphas.
 --resume keeps the complete curves of an interrupted accuracy run;
 --cost-rows 3 times only the rows=3 Vector2D configs.
 
@@ -462,11 +463,13 @@ def main():
                     points.append((family, variant, config, comparator, metric,
                                    dataset, "pareto", alpha, ""))
                 continue
-            # Plus the cost table's shape, so its rows are points on a curve.
-            shapes = [(t, k) for t in thetas for k in cardinalities]
-            if args.cost_shape and (COST_THETA, COST_KEYS) not in shapes:
-                shapes.append((COST_THETA, COST_KEYS))
-            for theta, k in shapes:
+            # Plus the cost table's shape as a full row and column (θ = 1.1 at
+            # every K, K = 1e4 at every θ), so its rows are points on a curve
+            # and the grid stays a full cross for the optimizer's bracketing.
+            grid_thetas = thetas + [COST_THETA] * (args.cost_shape and COST_THETA not in thetas)
+            grid_keys = cardinalities + [COST_KEYS] * (
+                args.cost_shape and COST_KEYS not in cardinalities)
+            for theta, k in [(t, k) for t in grid_thetas for k in grid_keys]:
                 dataset = ["--dataset", "zipf", "--zipf-s", str(theta),
                            "--cardinality", str(k), "--dtype", "i64"]
                 points.append((family, variant, config, comparator, metric,
