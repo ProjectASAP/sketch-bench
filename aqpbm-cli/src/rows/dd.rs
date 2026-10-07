@@ -11,7 +11,7 @@ pub(crate) fn row_dd_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            quantile_row::<$t>(
+            relative_value_quantile_row::<$t>(
                 req,
                 description,
                 table,
@@ -44,7 +44,7 @@ pub(crate) fn row_dd_oxide(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            quantile_row::<$t>(
+            relative_value_quantile_row::<$t>(
                 req,
                 description,
                 table,

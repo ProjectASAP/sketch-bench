@@ -13,7 +13,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from recommend_config import (  # noqa: E402
-    OUTPUT_COLUMNS, error_at, main, round_down, round_up,
+    DEFAULT_TARGETS, FAMILIES, OUTPUT_COLUMNS, error_at, main, round_down, round_up,
 )
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -40,6 +40,10 @@ def key_query(theta, K, min_N, max_N, target=""):
 
 
 class RoundingTest(unittest.TestCase):
+    def test_ddsketch_uses_the_relative_value_error_default(self):
+        self.assertEqual(FAMILIES["dd"][1], "target_relative_value_err")
+        self.assertEqual(DEFAULT_TARGETS["target_relative_value_err"], 0.01)
+
     def test_theta_rounds_down_and_K_rounds_up(self):
         self.assertEqual(round_down(0.97, [0.5, 0.8, 1.0]), (0.8, ""))
         self.assertEqual(round_down(1.0, [0.5, 0.8, 1.0]), (1.0, ""))

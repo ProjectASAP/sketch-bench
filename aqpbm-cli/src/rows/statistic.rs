@@ -298,6 +298,37 @@ pub(super) fn quantile_row<T: ColumnItem>(
     )
 }
 
+/// A row answering **quantile**, scored by relative value error. DDSketch's
+/// paper guarantees this metric, unlike rank error.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn relative_value_quantile_row<T: ColumnItem>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<T>,
+    insert_step: InsertStepBody<T>,
+    query: QueryBody<T, f64, f64>,
+    merge: Option<Folds<T, f64, f64>>,
+    prepare: Option<PrepareBody<T>>,
+) -> Result<Measurements, RunError> {
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        RelativeValueErrorGT {
+            column: value_column(description),
+        },
+        peel::<T>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scored_row<G, I>(
     req: &Requirement,
