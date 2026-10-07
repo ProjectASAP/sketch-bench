@@ -1343,6 +1343,57 @@ mod tests {
         assert_eq!(check(&[misnamed]).mismatched.len(), 1);
     }
 
+    /// Each top-k k is its own grid: k = 32 on θ 1.0 and k = 10 on θ 1.2
+    /// are each a full cross, though their union isn't, and load accepts them.
+    /// A hole within one k is still refused.
+    #[test]
+    fn the_full_cross_is_checked_per_k() {
+        let write = |tag: &str, points: &[String]| {
+            let dir = std::env::temp_dir().join(format!("rqe-k-{tag}-{}", std::process::id()));
+            let header = "family,sketch,config,dist,param,cardinality";
+            for run in RUN_DIRS {
+                std::fs::create_dir_all(dir.join(run)).unwrap();
+                let summary: String = points
+                    .iter()
+                    .map(|p| format!("{p},1000,0.9,precision_at_k\n"))
+                    .collect();
+                let curve: String = points.iter().map(|p| format!("{p},1000,0.9,0\n")).collect();
+                std::fs::write(
+                    dir.join(run).join("saturation.csv"),
+                    format!("{header},n_sat,final_error,error_metric\n{summary}"),
+                )
+                .unwrap();
+                std::fs::write(
+                    dir.join(run).join("saturation_curve.csv"),
+                    format!("{header},n,seed_mean_error,seed_se\n{curve}"),
+                )
+                .unwrap();
+            }
+            let loaded = SaturationCurves::load(&dir).map(|_| ());
+            std::fs::remove_dir_all(&dir).unwrap();
+            loaded
+        };
+        let point = |config: &str, shape: &str| format!("topk,{TOPK},{config},zipf,{shape}");
+        let per_k = [
+            point("rows=3 cols=1024", "1.0,1000"),
+            point("rows=3 cols=1024", "1.0,100000"),
+            point("rows=3 cols=1024 topk_k=10", "1.2,1000"),
+            point("rows=3 cols=1024 topk_k=10", "1.2,100000"),
+        ];
+        write("ok", &per_k).expect("each k is a full cross");
+        let holed = [
+            per_k[0].clone(),
+            per_k[1].clone(),
+            point("rows=3 cols=1024 topk_k=10", "1.0,1000"),
+            point("rows=3 cols=1024 topk_k=10", "1.2,100000"),
+        ];
+        let err = write("hole", &holed).unwrap_err().to_string();
+        assert!(
+            err.contains("topk_k") && err.contains("full cross"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn load_refuses_a_grid_that_isnt_a_full_cross() {
         let dir = std::env::temp_dir().join(format!("rqe-cross-{}", std::process::id()));
