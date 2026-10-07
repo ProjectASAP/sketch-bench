@@ -21,7 +21,7 @@ use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::keyed::{
     KeyedCardinalityGT, KeyedEntropyGT, KeyedL1NormGT, KeyedL2NormGT,
 };
-use aqpbm_core::accuracy::quantile::RankErrorGT;
+use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeValueErrorGT};
 use aqpbm_core::accuracy::subpopulation::{
     SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT, SubpopL2NormGT,
     SubpopRankErrorGT,

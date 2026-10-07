@@ -519,7 +519,7 @@ pub const REGISTRY: &[SketchId] = &[
         library: "lib",
         description: "asap_sketchlib::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
-        comparator: Some("rank-error"),
+        comparator: Some("relative-value-error"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -535,7 +535,7 @@ pub const REGISTRY: &[SketchId] = &[
         library: "oxide",
         description: "sketch_oxide::quantiles::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
-        comparator: Some("rank-error"),
+        comparator: Some("relative-value-error"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -1354,6 +1354,7 @@ mod tests {
             "cardinality",
             "frequency",
             "rank-error",
+            "relative-value-error",
             "topk",
             "subpop-cardinality",
             "subpop-frequency",

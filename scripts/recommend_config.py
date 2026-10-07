@@ -76,7 +76,7 @@ FAMILIES = {
     "countsketch": ("countsketch-fastpath-vector2d", "target_are_top100", False),
     "topk": ("cms-heap-topk-fastpath-vector2d", "target_precision_at_k", True),
     "kll": ("kll-percall", "target_rank_err", False),
-    "dd": ("dd", "target_rank_err", False),
+    "dd": ("dd", "target_relative_value_err", False),
 }
 KIND_FAMILIES = {"keys": ["cms", "countsketch", "topk"], "values": ["kll", "dd"]}
 # Families whose merged error differs from one sketch over the union.
@@ -87,6 +87,9 @@ DEFAULT_TARGETS = {
     "target_precision_at_k": 0.95,
     "target_hll_rel_err": 0.02,
     "target_rank_err": 0.01,
+    # DDSketch is evaluated by relative value error; skew_summary has no
+    # first-class target for it yet, so use the agreed 1% default.
+    "target_relative_value_err": 0.01,
 }
 
 OUTPUT_COLUMNS = [

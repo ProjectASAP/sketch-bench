@@ -158,7 +158,7 @@ for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k" rank-error
 done
 for alpha in "${DD_ALPHAS[@]}"; do
-    point dd "alpha=$alpha" rank-error
+    point dd "alpha=$alpha" relative-value-error
 done
 for config in "${HYDRA_KLL_CONFIGS[@]}"; do
     point_spec hydra-kll lib "$config" subpop-rank-error \
