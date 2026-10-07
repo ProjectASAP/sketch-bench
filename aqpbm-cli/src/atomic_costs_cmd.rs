@@ -9,7 +9,9 @@ use std::io::Read;
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use aqpbm_core::{reduce_all, same_cell, MergedRecord};
+use std::collections::BTreeMap;
+
+use aqpbm_core::{reduce_all, MergedRecord};
 
 #[derive(Parser, Debug)]
 pub struct AtomicCostsArgs {
@@ -19,11 +21,21 @@ pub struct AtomicCostsArgs {
     /// Output path for the reduced table (JSON array). Defaults to stdout.
     #[arg(short, long)]
     output: Option<String>,
-    /// `--flat` merge-accuracy rows (`--operations merge --metrics accuracy`),
-    /// one per cell and `--merge-shards`. Each lands in its cell's
-    /// `merge_accuracy`; one that matches no input row is an error.
-    #[arg(long)]
-    merge_accuracy: Option<String>,
+    /// `VARIANT=METRIC`, once per variant: the `query_accuracy` key that is
+    /// that variant's `accuracy_metric`. A row whose variant has none, or
+    /// whose scores lack it, is skipped.
+    #[arg(long = "accuracy-metric", value_name = "VARIANT=METRIC", required = true,
+          value_parser = parse_accuracy_metric)]
+    accuracy_metrics: Vec<(String, String)>,
+}
+
+fn parse_accuracy_metric(arg: &str) -> Result<(String, String), String> {
+    match arg.split_once('=') {
+        Some((variant, metric)) if !variant.is_empty() && !metric.is_empty() => {
+            Ok((variant.to_string(), metric.to_string()))
+        }
+        _ => Err(format!("expected VARIANT=METRIC, got {arg}")),
+    }
 }
 
 fn read_records(path: &str) -> Result<Vec<MergedRecord>> {
@@ -46,25 +58,13 @@ fn read_records(path: &str) -> Result<Vec<MergedRecord>> {
 
 pub fn run(args: AtomicCostsArgs) -> Result<()> {
     let records = read_records(&args.input)?;
-    let merge_runs = match args.merge_accuracy.as_deref() {
-        Some(path) => read_records(path)?,
-        None => Vec::new(),
-    };
-    if let Some(run) = merge_runs
-        .iter()
-        .find(|run| !records.iter().any(|record| same_cell(record, run)))
-    {
-        anyhow::bail!(
-            "merge-accuracy row {} {} matches no input row",
-            run.sketch,
-            run.sketch_config
-                .as_ref()
-                .map(|c| c.to_string())
-                .unwrap_or_default()
-        );
+    let mut accuracy_metrics = BTreeMap::new();
+    for (variant, metric) in args.accuracy_metrics {
+        if let Some(earlier) = accuracy_metrics.insert(variant.clone(), metric.clone()) {
+            anyhow::bail!("--accuracy-metric gives {variant} twice ({earlier}, {metric})");
+        }
     }
-
-    let (table, skipped) = reduce_all(&records, &merge_runs);
+    let (table, skipped) = reduce_all(&records, &accuracy_metrics);
     for (i, reason) in &skipped {
         let record = &records[*i];
         eprintln!(

@@ -2,7 +2,8 @@
 # value can never render the same as a key2 value (#74). On the shared alphabet
 # a key1 query also picks up the matching key2 group, and that collision shows
 # up as rank error; here the `polars` baseline scores zero and any rank error
-# is the sketch's. `export_rqe_optimizer_costs.sh` prices `hydra-kll` on it.
+# is the sketch's. `export_rqe_optimizer_costs.sh` priced `hydra-kll` on it
+# until #174; HydraKLL has no saturation curve, so nothing measures it now.
 
 column_num: 3
 column_label: [key1, key2, value]

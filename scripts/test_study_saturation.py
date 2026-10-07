@@ -172,7 +172,7 @@ class AccuracyPhaseTest(unittest.TestCase):
             sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
             "--phase", "accuracy", "--families", "cardinality", "--one-config",
             "--thetas", "0,1.0", "--cardinalities", "1000", "--n-max", "1e6",
-            "--per-decade", "1", "--seeds", "2", "--points-from", points_csv,
+            "--per-decade", "1", "--no-cost-shape", "--seeds", "2", "--points-from", points_csv,
         ], capture_output=True)
 
     def test_points_from_selects_points_and_cost_columns_stay_blank(self):
@@ -203,7 +203,7 @@ class MergeCurveTest(unittest.TestCase):
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "accuracy", "--families", "cardinality", "--one-config",
                 "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
-                "--per-decade", "1", "--seeds", "2", "--merge-shards-list", "4,1",
+                "--per-decade", "1", "--no-cost-shape", "--seeds", "2", "--merge-shards-list", "4,1",
             ], check=True, capture_output=True)
             with open(os.path.join(d, "saturation_merge_curve.csv"), newline="") as f:
                 rows = list(csv.DictReader(f))
@@ -218,7 +218,7 @@ class MergeCurveTest(unittest.TestCase):
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "accuracy", "--families", "cardinality", "--one-config",
                 "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
-                "--per-decade", "1", "--seeds", "1",
+                "--per-decade", "1", "--no-cost-shape", "--seeds", "1",
             ], check=True, capture_output=True)
             self.assertFalse(os.path.exists(os.path.join(d, "saturation_merge_curve.csv")))
 
@@ -242,7 +242,7 @@ class ResumeTest(unittest.TestCase):
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "accuracy", "--families", "cardinality", "--one-config",
                 "--thetas", "0,1.0", "--cardinalities", "1000", "--n-max", "1e6",
-                "--per-decade", "1", "--seeds", "2", "--resume",
+                "--per-decade", "1", "--no-cost-shape", "--seeds", "2", "--resume",
             ], check=True, capture_output=True)
             with open(curve, newline="") as f:
                 rows = list(csv.DictReader(f))
@@ -274,7 +274,7 @@ class ResumeTest(unittest.TestCase):
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "accuracy", "--families", "cardinality", "--one-config",
                 "--thetas", "0,1.0", "--cardinalities", "1000", "--n-max", "1e6",
-                "--per-decade", "1", "--seeds", "2", "--merge-shards-list", "1,4",
+                "--per-decade", "1", "--no-cost-shape", "--seeds", "2", "--merge-shards-list", "1,4",
                 "--resume",
             ], check=True, capture_output=True)
             with open(os.path.join(d, "saturation_merge_curve.csv"), newline="") as f:
@@ -300,7 +300,7 @@ class CostPhaseTest(unittest.TestCase):
             subprocess.run([
                 sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                 "--phase", "cost", "--families", "frequency", "--thetas", "1.0",
-                "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1",
+                "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1", "--no-cost-shape",
                 "--points-from", points, "--cost-rows", "3",
             ], check=True, capture_output=True)
             with open(os.path.join(d, "saturation.csv"), newline="") as f:
@@ -321,7 +321,7 @@ class CostPhaseTest(unittest.TestCase):
             subprocess.run([
                 sys.executable, SCRIPT, "--binary", binary, "--out", d, "--phase", "cost",
                 "--families", "cardinality", "--one-config", "--thetas", "1.0",
-                "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1",
+                "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1", "--no-cost-shape",
             ], check=True, capture_output=True)
             with open(os.path.join(d, "crossover.csv"), newline="") as f:
                 [row] = list(csv.DictReader(f))
@@ -347,7 +347,7 @@ class CostPhaseTest(unittest.TestCase):
                        for n in ns])
             args = [sys.executable, SCRIPT, "--binary", binary, "--out", d,
                     "--families", "cardinality", "--one-config", "--thetas", "1.0",
-                    "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1"]
+                    "--cardinalities", "1000", "--n-max", "1e6", "--per-decade", "1", "--no-cost-shape"]
             subprocess.run(args + ["--phase", "cost"], check=True, capture_output=True)
             path = os.path.join(d, "crossover.csv")
             with open(path) as f:
@@ -372,7 +372,7 @@ class CostPhaseTest(unittest.TestCase):
                       [["cms-fastpath-vector2d", c, "zipf", 1.0, 1000] for c in configs])
             args = [sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
                     "--families", "frequency", "--thetas", "1.0", "--cardinalities",
-                    "1000", "--n-max", "1e6", "--per-decade", "1", "--points-from", points]
+                    "1000", "--n-max", "1e6", "--per-decade", "1", "--no-cost-shape", "--points-from", points]
             subprocess.run(args + ["--phase", "cost"], check=True, capture_output=True)
             # Tell the rows=5 record apart, and store it first.
             cost = os.path.join(d, "saturation_cost.jsonl")
@@ -392,6 +392,74 @@ class CostPhaseTest(unittest.TestCase):
         self.assertEqual((row["config"], row["sketch_memory_bytes"]), ("rows=3 cols=256", "1000"))
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn(b"has no record", missing.stderr)
+
+
+class CostShapeTest(unittest.TestCase):
+    def test_the_grid_also_runs_the_optimizer_cost_shape(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
+                "--per-decade", "1", "--seeds", "1",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation_curve.csv"), newline="") as f:
+                shapes = {(r["param"], r["cardinality"]) for r in csv.DictReader(f)}
+        self.assertEqual(shapes, {("1.0", "1000"), ("1.1", "10000")})
+
+
+# Logs every call; atomic-costs reports `--rows` rows kept, 0 skipped.
+FAKE_COST_APPROXBENCH = textwrap.dedent("""\
+    import json, os, sys
+    a = sys.argv
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(a[1:]) + "\\n")
+    if a[1] == "atomic-costs":
+        kept = int(os.environ["FAKE_KEPT"])
+        sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
+""")
+
+
+class OptimizerCostTest(unittest.TestCase):
+    def run_phase(self, d, kept):
+        binary = os.path.join(d, "approxbench")
+        with open(binary, "w") as f:
+            f.write("#!" + sys.executable + "\n" + FAKE_COST_APPROXBENCH)
+        os.chmod(binary, 0o755)
+        log = os.path.join(d, "log.jsonl")
+        result = subprocess.run([
+            sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
+            "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+        ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
+        with open(log) as f:
+            return result, [json.loads(line) for line in f]
+
+    def test_one_cost_and_one_accuracy_pass_per_config_at_one_shape(self):
+        with tempfile.TemporaryDirectory() as d:
+            # topk and quantile (kll, dd) one config each, plus 5 exact.
+            result, calls = self.run_phase(d, 8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bench = [c for c in calls if c[0] == "sketchbench"]
+        self.assertEqual(len(bench), 16)
+        value = lambda c, flag: c[c.index(flag) + 1]
+        topk, kll = bench[0], bench[2]
+        self.assertEqual((value(topk, "--zipf-s"), value(topk, "--cardinality"),
+                          value(topk, "--size")), ("1.1", "10000", "1000000"))
+        self.assertEqual(value(kll, "--pareto-alpha"), "2.0")
+        self.assertEqual((value(topk, "--runs"), value(topk, "--warmup-runs")), ("5", "3"))
+        self.assertEqual(value(bench[1], "--metrics"), "accuracy")
+        self.assertEqual(value(bench[-1], "--library"), "exact")
+        [reduce] = [c for c in calls if c[0] == "atomic-costs"]
+        self.assertIn("cms-heap-topk-fastpath-vector2d=precision_at_k", reduce)
+        self.assertIn("kll-percall=mean_rank_err", reduce)
+        self.assertIn("exact-sum=relative_error", reduce)
+        self.assertNotIn("--merge-accuracy", reduce)
+
+    def test_a_skipped_row_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, _ = self.run_phase(d, 7)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"did not keep all 8 rows", result.stderr)
 
 
 if __name__ == "__main__":

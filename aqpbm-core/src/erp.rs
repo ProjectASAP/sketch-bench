@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use aqpbm_datagen::DataDistribution;
 
-use crate::{reduce_one, MergedRecord, SkipReason, WorkloadDescription};
+use crate::atomic_costs::reduce_scores;
+use crate::{MergedRecord, SkipReason, WorkloadDescription};
 
 pub const ERP_SCHEMA_VERSION: u32 = 1;
 
@@ -111,7 +112,7 @@ fn distribution_descriptor(workload: &WorkloadDescription) -> serde_json::Value 
 /// row. The caller supplies an artifact-local ID and producer revision so an
 /// export remains auditable.
 pub fn erp_record(id: impl Into<String>, record: &MergedRecord) -> Result<ErpRecord, SkipReason> {
-    let atomic = reduce_one(record)?;
+    let atomic = reduce_scores(record)?;
     Ok(ErpRecord {
         id: id.into(),
         sketch: atomic.sketch,
