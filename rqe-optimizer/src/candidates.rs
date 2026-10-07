@@ -2,8 +2,8 @@
 
 use crate::analytical_cost_model;
 use crate::{
-    has_heap, heap_capacity, Accuracy, AtomicCostEntry, Capability, Deployment, LabelSet,
-    MetricFacts, Millis, Raqe, WorkloadFacts, KEY_TRACKER_FAMILY, TOPK_K,
+    has_heap, heap_capacity, heap_needed, Accuracy, AtomicCostEntry, Capability, Deployment,
+    LabelSet, MetricFacts, Millis, Raqe, WorkloadFacts, KEY_TRACKER_FAMILY,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -113,8 +113,7 @@ fn candidate_deployments(
         // interpolating the measured heap sizes. Other rows are used as they are.
         let heaps: BTreeSet<u64> = group
             .iter()
-            .filter(|r| r.lookback_ms.is_multiple_of(window_ms))
-            .map(|r| r.lookback_ms / window_ms * TOPK_K)
+            .filter_map(|r| heap_needed(r.lookback_ms, window_ms))
             .collect();
         let configs: Vec<AtomicCostEntry> = family_rows
             .iter()
@@ -161,7 +160,7 @@ fn candidate_deployments(
 
 /// A heap family's rows, by family and counter shape (every param but
 /// `heap`), then by heap capacity.
-fn heap_rows_by_shape<'a>(
+pub(crate) fn heap_rows_by_shape<'a>(
     rows: &[&'a AtomicCostEntry],
 ) -> BTreeMap<(String, String), BTreeMap<u64, &'a AtomicCostEntry>> {
     let mut out: BTreeMap<_, BTreeMap<u64, &AtomicCostEntry>> = BTreeMap::new();
@@ -173,9 +172,19 @@ fn heap_rows_by_shape<'a>(
         if let Some(params) = shape.as_object_mut() {
             params.remove("heap");
         }
-        out.entry((row.sketch.clone(), shape.to_string()))
+        let shape = shape.to_string();
+        if out
+            .entry((row.sketch.clone(), shape.clone()))
             .or_default()
-            .insert(heap, row);
+            .insert(heap, row)
+            .is_some()
+        {
+            panic!(
+                "two {} {shape} cost rows at heap {heap} (e.g. no heap and heap={heap}); \
+                 keep one",
+                row.sketch
+            );
+        }
     }
     out
 }
@@ -185,7 +194,8 @@ fn heap_rows_by_shape<'a>(
 /// extended from the two nearest past them. With one measured size, the
 /// smallest row holding at least `heap` serves at its own size and cost.
 /// The accuracy fields are the smallest heap's: curves are measured at
-/// `TOPK_K`. `None` when no row can hold `heap`.
+/// `TOPK_K`. Panics when one measured heap is smaller than `heap`: the
+/// table needs the heap sizes measured.
 fn at_heap(rows: &BTreeMap<u64, &AtomicCostEntry>, heap: u64) -> Option<AtomicCostEntry> {
     let (_, &base) = rows.first_key_value()?;
     // A measured heap's costs, with the base's accuracy like every other.
@@ -197,7 +207,15 @@ fn at_heap(rows: &BTreeMap<u64, &AtomicCostEntry>, heap: u64) -> Option<AtomicCo
         return Some(measured(row));
     }
     if rows.len() < 2 {
-        return rows.range(heap..).next().map(|(_, row)| measured(row));
+        let Some((_, row)) = rows.range(heap..).next() else {
+            panic!(
+                "{} {} is priced at one heap only, smaller than the heap {heap} a \
+                 candidate needs; rerun study_saturation.py --phase optimizer-cost to \
+                 measure the top-k heap sizes",
+                base.sketch, base.sketch_config["params"]
+            );
+        };
+        return Some(measured(row));
     }
     let mut below = rows.range(..heap).rev();
     let mut above = rows.range(heap..);
@@ -453,7 +471,10 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
         && properties.needs_delta_set_key_tracker == d.key_tracker.is_some()
         && (!properties.one_fixed_size_sketch_for_all_groups
             || measured_at_group_count(&d.config, facts[&d.metric].cardinality[&d.grouping_labels]))
-        && heap_capacity(&d.config).is_none_or(|heap| heap >= r.lookback_ms / d.window_ms * TOPK_K)
+        && heap_capacity(&d.config).is_none_or(|heap| {
+            d.heap_needed(r.lookback_ms)
+                .is_some_and(|need| heap >= need)
+        })
         && r.meets_sla(&d.config.sketch, accuracy(r, d))
 }
 
@@ -518,7 +539,29 @@ mod tests {
         // One measured size: the smallest row holding the heap serves as is.
         let single = BTreeMap::from([(128, &b)]);
         assert_eq!(at_heap(&single, 64), Some(b.clone()));
-        assert_eq!(at_heap(&single, 256), None);
+    }
+
+    /// A table priced at one heap can't price a larger one: planning stops
+    /// and names the rerun, rather than dropping the candidate.
+    #[test]
+    #[should_panic(expected = "rerun study_saturation.py --phase optimizer-cost")]
+    fn one_measured_heap_cannot_price_a_larger_one() {
+        let b = heap_row(128);
+        at_heap(&BTreeMap::from([(128, &b)]), 256);
+    }
+
+    /// No heap and heap = k are one heap: two such rows would overwrite each
+    /// other.
+    #[test]
+    #[should_panic(expected = "cost rows at heap 32")]
+    fn two_rows_at_one_heap_are_refused() {
+        let explicit = heap_row(32);
+        let mut implicit = heap_row(32);
+        implicit.sketch_config["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("heap");
+        heap_rows_by_shape(&[&explicit, &implicit]);
     }
 
     /// Each window gets the heaps its RAQEs need, m · k for m = L / x, and a

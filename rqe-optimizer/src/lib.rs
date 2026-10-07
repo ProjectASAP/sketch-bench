@@ -143,6 +143,16 @@ pub fn has_heap(sketch: &str) -> bool {
     )
 }
 
+/// The heap a heap top-k deployment with `window_ms` windows needs to serve
+/// `lookback_ms`: `m · k` for its `m` merged windows, or `None` when the
+/// lookback isn't whole windows. [`Deployment::heap_needed`] for a built one.
+pub fn heap_needed(lookback_ms: Millis, window_ms: Millis) -> Option<u64> {
+    if window_ms == 0 || !lookback_ms.is_multiple_of(window_ms) {
+        return None;
+    }
+    Some(lookback_ms / window_ms * TOPK_K)
+}
+
 /// A heap family's capacity: its `heap` param, else [`TOPK_K`]. `None` for
 /// other families.
 pub fn heap_capacity(config: &AtomicCostEntry) -> Option<u64> {
@@ -468,6 +478,13 @@ impl Deployment {
             return None;
         }
         Some(lookback_ms / self.window_ms)
+    }
+
+    /// The heap a heap top-k deployment needs to serve `lookback_ms`: `m · k`
+    /// for its `m` merged windows. `None` when the lookback isn't whole
+    /// windows.
+    pub fn heap_needed(&self, lookback_ms: Millis) -> Option<u64> {
+        heap_needed(lookback_ms, self.window_ms)
     }
 
     /// Closed instances kept to serve a lookback: those wholly inside it,

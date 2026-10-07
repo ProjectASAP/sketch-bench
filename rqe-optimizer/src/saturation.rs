@@ -424,8 +424,11 @@ impl SaturationCurves {
             let merges = deployment.query_instance_count(raqe.lookback_ms)?;
             // A heap of m · k merged from m windows reads as one sketch: the
             // merged heaps are taken to still hold the true top k.
-            match heap_capacity(&deployment.config) {
-                Some(heap) if heap >= merges * TOPK_K => 1,
+            match (
+                heap_capacity(&deployment.config),
+                deployment.heap_needed(raqe.lookback_ms),
+            ) {
+                (Some(heap), Some(need)) if heap >= need => 1,
                 _ => merges,
             }
         } else {
@@ -630,9 +633,9 @@ fn bracket(values: impl Iterator<Item = f64>, target: f64) -> Option<Vec<f64>> {
     (above > 0 && above < values.len()).then(|| vec![values[above - 1], values[above]])
 }
 
-/// `{"params": {"rows": 3, "cols": 1024}}` → `{rows: 3, cols: 1024}`.
-/// `config`'s params, less a top-k `heap`: curves are measured at a heap of
-/// `TOPK_K`, and a larger heap reads the same curve.
+/// `config`'s params, less a top-k `heap`: `{"params": {"rows": 3, "cols":
+/// 1024, "heap": 128}}` → `{rows: 3, cols: 1024}`. Curves are measured at a
+/// heap of `TOPK_K`, and a larger heap reads the same curve.
 fn config_params(config: &AtomicCostEntry) -> Option<BTreeMap<String, f64>> {
     config.sketch_config["params"]
         .as_object()?
@@ -1148,8 +1151,6 @@ mod tests {
         assert_eq!(points[0].params, BTreeMap::from([("k".to_string(), 200.0)]));
     }
 
-    /// A curve for another metric than the family's, such as DD's max error
-    /// before #175, is a stale study: refused at load, whatever the lookback.
     /// Top-k merges as one sketch when its heap holds m · k, so a study needs
     /// no merge curves for it.
     #[test]
@@ -1177,6 +1178,8 @@ mod tests {
         assert!(loaded.is_ok(), "{:?}", loaded.err());
     }
 
+    /// A curve for another metric than the family's, such as DD's max error
+    /// before #175, is a stale study: refused at load, whatever the lookback.
     #[test]
     fn load_refuses_a_curve_for_another_metric() {
         let dir = std::env::temp_dir().join(format!("rqe-stale-{}", std::process::id()));

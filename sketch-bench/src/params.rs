@@ -441,14 +441,19 @@ pub struct CountSketchParams {
     pub rows: usize,
     pub cols: usize,
 }
-sketch_params!(
-    CountSketchParams,
-    "countsketch",
-    CountSketchParams {
-        rows: 3,
-        cols: 1024
+impl SketchParams for CountSketchParams {
+    const ALGORITHM: &'static str = "countsketch";
+    /// Not `countsketch-heap-*`: those take [`CsHeapParams`].
+    fn owns(variant: &str) -> bool {
+        in_algorithm(variant, Self::ALGORITHM) && !in_algorithm(variant, "countsketch-heap")
     }
-);
+    fn canonical() -> Self {
+        CountSketchParams {
+            rows: 3,
+            cols: 1024,
+        }
+    }
+}
 
 // ---------- Hydra, one algorithm per cell type ----------
 // The cell type is on the algorithm axis because each cell answers a different
@@ -680,6 +685,13 @@ mod tests {
 
         assert!(CountSketchParams::owns("countsketch-fastpath-vector2d"));
         assert!(!CountSketchParams::owns("cms"));
+        assert!(!CountSketchParams::owns(
+            "countsketch-heap-topk-fastpath-vector2d"
+        ));
+        assert!(CsHeapParams::owns(
+            "countsketch-heap-topk-fastpath-vector2d"
+        ));
+        assert!(!CsHeapParams::owns("countsketch-fastpath-vector2d"));
 
         assert!(HllParams::owns("hll"));
         assert!(HllParams::owns("hll-hip"));

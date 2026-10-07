@@ -34,8 +34,14 @@ pub fn heap_capacity(name: &str, heap: Option<usize>) -> Result<usize, BuildErro
 /// answers.
 pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>) -> Vec<&'a HHItem> {
     let mut items: Vec<&HHItem> = items.collect();
-    items.sort_by_key(|item| std::cmp::Reverse(item.count));
-    items.truncate(TOPK_K);
+    let heaviest = |item: &&HHItem| std::cmp::Reverse(item.count);
+    // Select the heaviest k without sorting the rest: the query's cost is
+    // what's benchmarked.
+    if items.len() > TOPK_K {
+        items.select_nth_unstable_by_key(TOPK_K, heaviest);
+        items.truncate(TOPK_K);
+    }
+    items.sort_unstable_by_key(heaviest);
     items
 }
 

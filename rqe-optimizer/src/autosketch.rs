@@ -207,6 +207,14 @@ struct Grid {
 
 impl Grid {
     fn new(variant: &str, costs: &[AtomicCostEntry]) -> Option<Grid> {
+        // Two rows at one heap (no heap and heap=k) would be two grid points
+        // for one config; the candidates' check refuses them.
+        crate::candidates::heap_rows_by_shape(
+            &costs
+                .iter()
+                .filter(|c| c.sketch == variant)
+                .collect::<Vec<_>>(),
+        );
         let rows: Vec<(usize, BTreeMap<String, f64>)> = costs
             .iter()
             .enumerate()
