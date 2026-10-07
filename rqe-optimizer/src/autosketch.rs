@@ -149,8 +149,7 @@ pub fn search(
             continue;
         }
         probes.push(index);
-        let feasible = accuracy(raqe, &costs[index])
-            .is_some_and(|value| value.is_finite() && raqe.accuracy_ok(value));
+        let feasible = raqe.meets_sla(accuracy(raqe, &costs[index]));
         evaluated.insert(index, feasible);
         if feasible && best.is_none_or(|b| cheaper(index, b)) {
             best = Some(index);
@@ -392,7 +391,7 @@ mod tests {
 
     fn cheapest_feasible(raqe: &Raqe, costs: &[AtomicCostEntry]) -> usize {
         (0..costs.len())
-            .filter(|&i| table_accuracy_at(raqe, &costs[i], 1).is_some_and(|v| raqe.accuracy_ok(v)))
+            .filter(|&i| raqe.meets_sla(table_accuracy_at(raqe, &costs[i], 1)))
             .min_by(|&a, &b| compare_resources(&costs[a], &costs[b]))
             .unwrap()
     }

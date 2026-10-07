@@ -138,6 +138,9 @@ pub struct FamilyProperties {
     /// The sketch can't list its groups, so a DeltaSet records which keys
     /// each window saw, for the query to probe.
     pub needs_delta_set_key_tracker: bool,
+    /// Answers without error, so its accuracy comes from the cost table
+    /// rather than a saturation curve.
+    pub exact: bool,
 }
 
 /// Panics on a variant with no entry: guessing would misprice it.
@@ -146,14 +149,16 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
         mergeable_across_windows: true,
         one_fixed_size_sketch_for_all_groups: false,
         needs_delta_set_key_tracker: false,
+        exact: false,
     };
     match variant {
-        "exact-sum"
-        | "exact-min"
-        | "exact-max"
-        | "exact-increase"
-        | KEY_TRACKER_FAMILY
-        | "kll-percall"
+        "exact-sum" | "exact-min" | "exact-max" | "exact-increase" | KEY_TRACKER_FAMILY => {
+            FamilyProperties {
+                exact: true,
+                ..one_sketch_per_group
+            }
+        }
+        "kll-percall"
         | "dd"
         | "hll"
         | "univmon-cardinality"
@@ -164,6 +169,7 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
             mergeable_across_windows: true,
             one_fixed_size_sketch_for_all_groups: true,
             needs_delta_set_key_tracker: true,
+            exact: false,
         },
         _ => panic!("{variant} has no FamilyProperties; add it to family_properties"),
     }
@@ -325,6 +331,12 @@ impl Raqe {
             AccuracyDirection::LowerIsBetter => value <= self.accuracy_sla,
             AccuracyDirection::HigherIsBetter => value >= self.accuracy_sla,
         }
+    }
+
+    /// Whether `accuracy` clears the SLA. Unknown or non-finite never passes.
+    /// The MILP's eligibility and the AutoSketch baseline both decide here.
+    pub fn meets_sla(&self, accuracy: Option<f64>) -> bool {
+        accuracy.is_some_and(|value| value.is_finite() && self.accuracy_ok(value))
     }
 }
 

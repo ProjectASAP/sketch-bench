@@ -18,8 +18,8 @@ use std::path::Path;
 
 use crate::autosketch::window_adapter;
 use crate::{
-    table_accuracy, AccuracyDirection, AtomicCostEntry, Deployment, LabelSet, MetricFacts, Raqe,
-    WorkloadFacts,
+    family_properties, table_accuracy, AccuracyDirection, AtomicCostEntry, Deployment, LabelSet,
+    MetricFacts, Raqe, WorkloadFacts,
 };
 use aqpbm_core::MeasuredShape;
 
@@ -215,8 +215,7 @@ impl SaturationCurves {
         deployment: &Deployment,
         facts: &WorkloadFacts,
     ) -> Option<f64> {
-        let sketch = deployment.config.sketch.as_str();
-        if sketch.starts_with("exact-") {
+        if family_properties(&deployment.config.sketch).exact {
             return table_accuracy(raqe, deployment);
         }
         let metric_facts = &facts[&deployment.metric];

@@ -365,7 +365,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
         && properties.needs_delta_set_key_tracker == d.key_tracker.is_some()
         && (!properties.one_fixed_size_sketch_for_all_groups
             || measured_at_group_count(&d.config, facts[&d.metric].cardinality[&d.grouping_labels]))
-        && accuracy(r, d).is_some_and(|value| value.is_finite() && r.accuracy_ok(value))
+        && r.meets_sla(accuracy(r, d))
 }
 
 #[cfg(test)]
