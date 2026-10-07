@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
+};
 
 /// Registers in one `HyperLogLog<ErtlMLE>` cell. The library fixes the cell at
 /// `HyperLogLogP14`, so this is `2^14` and not a parameter. Named here because
@@ -23,7 +25,7 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built_hll() -> HydraHll {
-        build_hydra_hll(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }))
+        build_hydra_hll(&ParamSet::of(&HydraHllParams { rows: 3, cols: 64 }), 2)
             .expect("canonical dimensions build")
     }
 
@@ -32,14 +34,17 @@ mod tests {
     }
 
     fn fed_hll(sketch: &mut HydraHll, r: &(String, i64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-hll",
+        );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_hll(&ParamSet::of(&HydraHllParams::canonical())).is_ok());
+        assert!(build_hydra_hll(&ParamSet::of(&HydraHllParams::canonical()), 2).is_ok());
     }
 
     /// The statistic is the *size* of the group, so repeats of one value must
@@ -100,7 +105,7 @@ mod tests {
     #[test]
     fn zero_dimensions_are_refused_by_name() {
         let bad = ParamSet::of(&HydraHllParams { rows: 3, cols: 0 });
-        let Err(err) = build_hydra_hll(&bad) else {
+        let Err(err) = build_hydra_hll(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();

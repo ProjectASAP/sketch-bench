@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
+};
 
 #[cfg(test)]
 mod tests {
@@ -18,12 +20,15 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built() -> HydraCs {
-        build_hydra_cs(&ParamSet::of(&HydraCsParams {
-            rows: 3,
-            cols: 64,
-            cell_rows: 3,
-            cell_cols: 256,
-        }))
+        build_hydra_cs(
+            &ParamSet::of(&HydraCsParams {
+                rows: 3,
+                cols: 64,
+                cell_rows: 3,
+                cell_cols: 256,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -32,9 +37,12 @@ mod tests {
     }
 
     fn fed(sketch: &mut HydraCs, r: &(String, i64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-cs",
+        );
     }
 
     /// The statistic is the frequency of a value *within* a subpopulation, and
@@ -94,7 +102,7 @@ mod tests {
             cell_rows: 3,
             cell_cols: 256,
         });
-        let Err(err) = build_hydra_cs(&bad) else {
+        let Err(err) = build_hydra_cs(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -115,6 +123,6 @@ mod tests {
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_cs(&ParamSet::of(&HydraCsParams::canonical())).is_ok());
+        assert!(build_hydra_cs(&ParamSet::of(&HydraCsParams::canonical()), 2).is_ok());
     }
 }

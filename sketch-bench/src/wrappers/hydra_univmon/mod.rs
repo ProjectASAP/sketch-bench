@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
+};
 
 #[cfg(test)]
 mod tests {
@@ -18,14 +20,17 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built() -> HydraUnivmon {
-        build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams {
-            rows: 2,
-            cols: 16,
-            cell_heap_size: 32,
-            cell_sketch_row: 5,
-            cell_sketch_col: 256,
-            cell_layer_size: 4,
-        }))
+        build_hydra_univmon(
+            &ParamSet::of(&HydraUnivmonParams {
+                rows: 2,
+                cols: 16,
+                cell_heap_size: 32,
+                cell_sketch_row: 5,
+                cell_sketch_col: 256,
+                cell_layer_size: 4,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -34,14 +39,17 @@ mod tests {
     }
 
     fn fed(sketch: &mut HydraUnivmon, r: &(String, i64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-univmon",
+        );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams::canonical())).is_ok());
+        assert!(build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams::canonical()), 2).is_ok());
     }
 
     #[test]
@@ -125,7 +133,7 @@ mod tests {
             cell_sketch_col: 0,
             cell_layer_size: 4,
         });
-        let Err(err) = build_hydra_univmon(&bad) else {
+        let Err(err) = build_hydra_univmon(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();

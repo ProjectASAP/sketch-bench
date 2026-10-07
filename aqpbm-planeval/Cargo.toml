@@ -19,9 +19,7 @@ asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c3133
 asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
 asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
 
-# 0.3.0, not the workspace pin (0.2.2): cdf_cached/quantile_cached do not
-# exist before 0.3.0 and a 101-point probe grid re-sorts on every call there.
-asap_sketchlib = { version = "0.3.0", features = ["experimental"] }
+asap_sketchlib.workspace = true
 
 aqpbm-core = { workspace = true, features = ["hdrhist"] }
 aqpbm-datagen.workspace = true

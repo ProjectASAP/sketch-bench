@@ -18,7 +18,11 @@ pub struct HydraUnivmon {
     params: HydraUnivmonParams,
 }
 
-pub fn build_hydra_univmon(config: &ParamSet) -> Result<HydraUnivmon, BuildError> {
+/// `label_columns`: the key columns every record carries.
+pub fn build_hydra_univmon(
+    config: &ParamSet,
+    label_columns: usize,
+) -> Result<HydraUnivmon, BuildError> {
     let p: HydraUnivmonParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-univmon")?;
     for (name, v) in [
@@ -38,7 +42,7 @@ pub fn build_hydra_univmon(config: &ParamSet) -> Result<HydraUnivmon, BuildError
         p.cell_layer_size,
     ));
     Ok(HydraUnivmon {
-        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-univmon")?,
         params: p,
     })
 }
@@ -46,23 +50,27 @@ pub fn build_hydra_univmon(config: &ParamSet) -> Result<HydraUnivmon, BuildError
 impl HydraUnivmon {
     #[inline]
     pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Cardinality)
+        query(
+            &self.inner,
+            labels,
+            &HydraQuery::Cardinality,
+            "hydra-univmon",
+        )
     }
 
     #[inline]
     pub fn estimate_subpop_l1_norm(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::L1Norm)
+        query(&self.inner, labels, &HydraQuery::L1Norm, "hydra-univmon")
     }
 
     #[inline]
     pub fn estimate_subpop_l2_norm(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::L2Norm)
+        query(&self.inner, labels, &HydraQuery::L2Norm, "hydra-univmon")
     }
 
     #[inline]
     pub fn estimate_subpop_entropy(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::Entropy)
+        query(&self.inner, labels, &HydraQuery::Entropy, "hydra-univmon")
     }
 }
 
@@ -82,11 +90,11 @@ pub fn insert_hydra_univmon<V: CardinalityValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_univmon(params)?;
+        let mut sketch = build_hydra_univmon(params, label_columns(&items, "hydra-univmon")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-univmon");
             }
             memory_hydra_univmon(&sketch)
         }) as Pass);
@@ -101,7 +109,10 @@ pub fn insert_step_hydra_univmon<V: CardinalityValue>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_univmon(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_univmon(
+            params,
+            label_columns(&items, "hydra-univmon")?,
+        )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -109,7 +120,7 @@ pub fn insert_step_hydra_univmon<V: CardinalityValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-univmon");
             }),
             footprint: Box::new(move || memory_hydra_univmon(&read.borrow())),
         });
@@ -345,9 +356,9 @@ fn hydra_univmon_shards<V: CardinalityValue>(
 ) -> Result<(HydraUnivmon, Vec<HydraUnivmon>), BuildError> {
     let mut parts: Vec<HydraUnivmon> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_univmon(params)?;
+        let mut sketch = build_hydra_univmon(params, label_columns(items, "hydra-univmon")?)?;
         for v in shard {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+            update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-univmon");
         }
         parts.push(sketch);
     }

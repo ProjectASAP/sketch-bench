@@ -19,7 +19,8 @@ pub struct HydraKll {
     params: HydraKllParams,
 }
 
-pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, BuildError> {
+/// `label_columns`: the key columns every record carries.
+pub fn build_hydra_kll(config: &ParamSet, label_columns: usize) -> Result<HydraKll, BuildError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
     // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
@@ -35,7 +36,7 @@ pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, BuildError> {
     }
     let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
     Ok(HydraKll {
-        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-kll")?,
         params: p,
     })
 }
@@ -46,8 +47,7 @@ impl HydraKll {
     /// answers the inverse question.
     #[inline]
     pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Quantile(phi))
+        query(&self.inner, labels, &HydraQuery::Quantile(phi), "hydra-kll")
     }
 }
 
@@ -69,11 +69,11 @@ pub fn insert_hydra_kll<V: QuantileValue + 'static>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_kll(params)?;
+        let mut sketch = build_hydra_kll(params, label_columns(&items, "hydra-kll")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
             }
             memory_hydra_kll(&sketch)
         }) as Pass);
@@ -88,7 +88,10 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(
+            params,
+            label_columns(&items, "hydra-kll")?,
+        )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -96,7 +99,7 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
             }),
             footprint: Box::new(move || memory_hydra_kll(&read.borrow())),
         });
@@ -202,9 +205,9 @@ fn hydra_kll_shards<V: QuantileValue>(
 ) -> Result<(HydraKll, Vec<HydraKll>), BuildError> {
     let mut parts: Vec<HydraKll> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_kll(params)?;
+        let mut sketch = build_hydra_kll(params, label_columns(items, "hydra-kll")?)?;
         for v in shard {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+            update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
         }
         parts.push(sketch);
     }

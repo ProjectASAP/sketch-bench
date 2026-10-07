@@ -80,7 +80,7 @@ pub fn build_cms_heap_lib_vector2d_fast(
 /// UnivMon counts its heaps so the TopK rows compare like for like.
 pub fn memory_cms_heap_lib_vector2d_fast(sketch: &CmsHeapLibVector2dFast) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + sketch.heap * std::mem::size_of::<HHItem>()
+        + crate::wrappers::hh_heap_footprint(sketch.heap)
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
@@ -109,7 +109,7 @@ pub fn build_cms_heap_lib_vector2d_regular(
 /// As [`memory_cms_heap_lib_vector2d_fast`].
 pub fn memory_cms_heap_lib_vector2d_regular(sketch: &CmsHeapLibVector2dRegular) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + sketch.heap * std::mem::size_of::<HHItem>()
+        + crate::wrappers::hh_heap_footprint(sketch.heap)
 }
 
 // ---------- insert / insert_step (FastPath) ----------

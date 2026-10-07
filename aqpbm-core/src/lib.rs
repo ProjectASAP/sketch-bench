@@ -7,6 +7,7 @@ pub mod atomic_costs;
 pub mod benchmark_result;
 pub mod erp;
 pub mod error;
+pub mod heap_footprint;
 pub mod measure;
 pub mod metrics;
 
@@ -31,6 +32,7 @@ pub use erp::{
     erp_artifact, erp_record, ErpArtifact, ErpRecord, ErpResourceProfile, ERP_SCHEMA_VERSION,
 };
 pub use error::RunError;
+pub use heap_footprint::{hash_buckets, hh_heap_bytes, HH_HEAP_INDEX_ENTRY_BYTES};
 pub use measure::{
     measure, record_calls, runs_for, MeasureConfig, Measurement, Pass, Report, RunOutcome,
     MIN_MERGE_SHARDS,

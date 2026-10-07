@@ -9,7 +9,6 @@ use crate::params::{CsHeapParams, ParamSet};
 use crate::wrappers::cms_heap::sketchlib::{heap_capacity, top_k, TopkAnswer};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::input::HHItem;
 use asap_sketchlib::{heap_item_to_sketch_input, CSHeap, FastPath, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,7 +38,7 @@ pub fn build_cs_heap_lib_vector2d_fast(
 /// Counter matrix plus a full heap, as `cms_heap` counts it.
 pub fn memory_cs_heap_lib_vector2d_fast(sketch: &CsHeapLibVector2dFast) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + sketch.heap * std::mem::size_of::<HHItem>()
+        + crate::wrappers::hh_heap_footprint(sketch.heap)
 }
 
 pub fn insert_cs_heap_lib_vector2d_fast<T: FrequencyValue>(

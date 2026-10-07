@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
+};
 
 // Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
 // in the library, reproduced here because a cell's footprint is a function of
@@ -26,7 +28,8 @@ const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
 
 /// Retained slots one KLL cell allocates at construction — `KLL::init` boxes a
 /// slice of this length once and never grows it. A line-for-line copy of the
-/// library's private `compute_max_capacity`, so a claim about 0.2.2, not a bound.
+/// library's private `compute_max_capacity` (unchanged from 0.2.2 to 0.3.0), so
+/// a claim about the pinned version, not a bound.
 fn kll_cell_slots(k: u32) -> usize {
     // `init_internal` normalises before sizing: `m` floors `k`, and `k` is
     // capped. Reproduced so an out-of-range `k` reports the footprint the
@@ -51,11 +54,14 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built_kll() -> HydraKll {
-        build_hydra_kll(&ParamSet::of(&HydraKllParams {
-            rows: 3,
-            cols: 64,
-            cell_k: 200,
-        }))
+        build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 64,
+                cell_k: 200,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -64,14 +70,17 @@ mod tests {
     }
 
     fn fed_kll(sketch: &mut HydraKll, r: &(String, f64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::F64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::F64(r.1),
+            "hydra-kll",
+        );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical())).is_ok());
+        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical()), 2).is_ok());
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one
@@ -131,7 +140,7 @@ mod tests {
             cols: 64,
             cell_k: 0,
         });
-        let Err(err) = build_hydra_kll(&bad) else {
+        let Err(err) = build_hydra_kll(&bad, 2) else {
             panic!("a zero cell_k must be refused, not built");
         };
         assert!(

@@ -222,3 +222,13 @@ pub(crate) fn require_resolved_shape(
     }
     Ok(())
 }
+
+/// Bytes a top-k heap of `capacity` residents holds in asap_sketchlib 0.3:
+/// the `HHItem` array, the digest column and the position index
+/// ([`aqpbm_core::hh_heap_bytes`]). Integer keys own no further bytes.
+pub fn hh_heap_footprint(capacity: usize) -> usize {
+    aqpbm_core::hh_heap_bytes(
+        capacity,
+        std::mem::size_of::<asap_sketchlib::input::HHItem>(),
+    )
+}
