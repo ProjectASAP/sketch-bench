@@ -36,6 +36,7 @@ use aqpbm_core::measure::{
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 use sketch_bench::wrappers::frequency_value::FrequencyValue;
+use sketch_bench::wrappers::hydra_kll::SERIES_SEPARATOR;
 
 /// The label column every subpopulation comparator scores over.
 const SCORED_LABEL_COLUMN: usize = 0;

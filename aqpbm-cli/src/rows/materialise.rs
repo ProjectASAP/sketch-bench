@@ -21,13 +21,30 @@ pub(super) fn peel_labeled<V: ColumnItem>(
     description: &TableDescription,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(String, V)>>, RunError> {
+    peel_joined(description, table, ';')
+}
+
+/// The same, joined with [`SERIES_SEPARATOR`], which `Hydra::update` does not
+/// split on: each record is one key, the full label set, and not every subset.
+pub(super) fn peel_series<V: ColumnItem>(
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Rc<Vec<(String, V)>>, RunError> {
+    peel_joined(description, table, SERIES_SEPARATOR)
+}
+
+fn peel_joined<V: ColumnItem>(
+    description: &TableDescription,
+    table: GeneratedTable,
+    separator: char,
+) -> Result<Rc<Vec<(String, V)>>, RunError> {
     let (labels, values) = label_columns::<V>(description, table)?;
     let mut items = Vec::with_capacity(values.len());
     for (row, value) in values.into_iter().enumerate() {
         let mut key = String::new();
         for (column, labels) in labels.iter().enumerate() {
             if column > 0 {
-                key.push(';');
+                key.push(separator);
             }
             key.push_str(&labels[row]);
         }

@@ -47,7 +47,7 @@ impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// rank interval contains `phi * n`, which is what the rank-error
     /// comparator scores against, so an exact answer scores zero.
     pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        let Some(values) = self.sorted.get(&labels.join(";")) else {
+        let Some(values) = self.sorted.get(&labels.join(&SERIES_SEPARATOR.to_string())) else {
             return f64::NAN;
         };
         if values.is_empty() {
@@ -75,10 +75,7 @@ impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// The exact answer, over the stream as buffered. Its own step because the
     /// runner times it as `prepare`: this row's cost is the pass, not the ask.
     fn finalize(&mut self) {
-        let (mut keys, mut values) = (Vec::new(), Vec::new());
-        for r in &self.buf {
-            fan_out(&r.0, &r.1, &mut keys, &mut values);
-        }
+        let (keys, values): (Vec<String>, Vec<T>) = self.buf.iter().cloned().unzip();
         if keys.is_empty() {
             return;
         }

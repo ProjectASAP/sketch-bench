@@ -1,6 +1,7 @@
-//! Hydra wrappers — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022). Their
-//! item is a **record**; insert fans out into every non-empty label subset, so
-//! `d` labels cost `2^d - 1` cells and throughput is records per second.
+//! Hydra over KLL cells — `asap_sketchlib::Hydra` (Manousis et al., VLDB 2022).
+//! The item is a **record** whose key is its full label set joined with
+//! [`SERIES_SEPARATOR`]. `Hydra::update` only fans out across `;`, so each
+//! record is one insert and the sketch holds one subpopulation per label set.
 
 use crate::params::*;
 
@@ -8,6 +9,10 @@ pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+
+/// Joins a record's label values into its key. Not `;`, which `Hydra::update`
+/// splits on to insert every label subset.
+pub const SERIES_SEPARATOR: char = '\u{1f}';
 
 // Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
 // in the library, reproduced here because a cell's footprint is a function of
@@ -59,8 +64,8 @@ mod tests {
         .expect("canonical dimensions build")
     }
 
-    fn frecord(key: &str, value: f64) -> (String, f64) {
-        (key.to_string(), value)
+    fn frecord(labels: &[&str], value: f64) -> (String, f64) {
+        (labels.join(&SERIES_SEPARATOR.to_string()), value)
     }
 
     fn fed_kll(sketch: &mut HydraKll, r: &(String, f64)) {
@@ -80,16 +85,28 @@ mod tests {
     fn kll_quantiles_are_taken_inside_the_group() {
         let mut h = built_kll();
         for v in 1..=101 {
-            fed_kll(&mut h, &frecord("a;x", v as f64));
+            fed_kll(&mut h, &frecord(&["a", "x"], v as f64));
         }
         for _ in 0..500 {
-            fed_kll(&mut h, &frecord("b;x", 10_000.0));
+            fed_kll(&mut h, &frecord(&["b", "x"], 10_000.0));
         }
-        let median = h.estimate_subpop_quantile(&["a"], 0.5);
+        let median = h.estimate_subpop_quantile(&["a", "x"], 0.5);
         assert!(
             (1.0..=101.0).contains(&median),
             "group `a` spans 1..=101, median estimated {median}"
         );
+    }
+
+    /// A record lands in its full label set's cells only, not in any subset's.
+    /// An untouched KLL cell answers 0.0, so `a` alone must see nothing.
+    #[test]
+    fn kll_record_is_not_inserted_under_its_label_subsets() {
+        let mut h = built_kll();
+        for v in 1..=101 {
+            fed_kll(&mut h, &frecord(&["a", "x"], v as f64));
+        }
+        assert_eq!(h.estimate_subpop_quantile(&["a"], 0.5), 0.0);
+        assert_eq!(h.estimate_subpop_quantile(&["x"], 0.5), 0.0);
     }
 
     /// `k` is well past the group size here, so the cell retains everything and
@@ -99,10 +116,10 @@ mod tests {
     fn kll_is_exact_below_k() {
         let mut h = built_kll();
         for v in 1..=101 {
-            fed_kll(&mut h, &frecord("a;x", v as f64));
+            fed_kll(&mut h, &frecord(&["a", "x"], v as f64));
         }
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 0.0), 1.0);
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);
+        assert_eq!(h.estimate_subpop_quantile(&["a", "x"], 0.0), 1.0);
+        assert_eq!(h.estimate_subpop_quantile(&["a", "x"], 1.0), 101.0);
     }
 
     /// The library allocates a cell's retained slots once, so the footprint is

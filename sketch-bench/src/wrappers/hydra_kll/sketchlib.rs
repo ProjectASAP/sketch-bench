@@ -46,8 +46,8 @@ impl HydraKll {
     /// answers the inverse question.
     #[inline]
     pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Quantile(phi))
+        let key = labels.join(&SERIES_SEPARATOR.to_string());
+        self.inner.query_key(vec![&key], &HydraQuery::Quantile(phi))
     }
 }
 

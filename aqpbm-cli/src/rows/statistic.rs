@@ -223,10 +223,11 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
         table,
         want,
         SubpopRankErrorGT {
-            group_columns: vec![SCORED_LABEL_COLUMN],
+            // Every label column: the sketch holds one key per full label set.
+            group_columns: (0..value_column(description)).collect(),
             value_column: value_column(description),
         },
-        peel_labeled::<V>,
+        peel_series::<V>,
         insert,
         insert_step,
         query,
