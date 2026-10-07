@@ -209,6 +209,29 @@ fn capability_of(r: &Value) -> Capability {
     }
 }
 
+/// A top-k RQE's k, from its query id (`topk32_...`: the table names the
+/// query's literal k there); `None` for other capabilities.
+fn topk_k_of(r: &Value, capability: Capability) -> Option<u64> {
+    if !matches!(
+        capability,
+        Capability::TopKByValue | Capability::TopKByCount
+    ) {
+        return None;
+    }
+    let query = r["query_id"].as_str().unwrap();
+    let digits: String = query
+        .strip_prefix("topk")
+        .unwrap_or_else(|| panic!("top-k query {query:?} names no k"))
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    Some(
+        digits
+            .parse()
+            .unwrap_or_else(|_| panic!("top-k query {query:?} names no k")),
+    )
+}
+
 /// The groups an RQE's deployment keeps one instance per. A `traces` key
 /// query sums per key: one exact accumulator per key, so its groups are the
 /// window's keys (the table's `groups` counts one sketch holding them all).
@@ -354,6 +377,7 @@ fn from_table(
             // target is never read.
             accuracy_sla: rqe_target.unwrap_or(0.0),
             latency_sla_ms: None,
+            topk_k: topk_k_of(r, capability),
         });
     }
     // Every stream may use every row; one evaluation runs q_r queries per
@@ -876,6 +900,15 @@ mod tests {
         assert_eq!(groups_of(&quantile, capability_of(&quantile)), 1);
         let synthetic = json!({"capability": "sum", "kind": "keys", "label_set": {"groups": 10, "keys_per_window": 1e4}});
         assert_eq!(groups_of(&synthetic, Capability::Sum), 10);
+    }
+
+    #[test]
+    fn topk_k_comes_from_the_query_id() {
+        let r = json!({"query_id": "topk32_sum_by_label0_rate"});
+        assert_eq!(topk_k_of(&r, Capability::TopKByValue), Some(32));
+        let r = json!({"query_id": "topk100_x"});
+        assert_eq!(topk_k_of(&r, Capability::TopKByValue), Some(100));
+        assert_eq!(topk_k_of(&r, Capability::Quantile), None);
     }
 
     #[test]
