@@ -121,27 +121,45 @@ impl GridPoint {
         curve_error_at(&self.curve, self.n_sat, n, direction)
     }
 
-    /// The smallest N the study measured this point at, for an answer merged
-    /// from `merges` instances: the plain curve's first N, and the merge
-    /// curves' too when merging.
-    fn first_measured_n(&self, merges: u64) -> Option<f64> {
-        let plain = self.curve.first()?.0;
-        let merged = (merges > 1)
-            .then(|| self.merged.values().filter_map(|c| c.first().map(|p| p.0)))
-            .into_iter()
-            .flatten();
-        Some(merged.fold(plain, f64::max))
+    /// The curves an answer merged from `merges` instances reads: the plain
+    /// curve alone, or the measured shard counts either side of `merges`
+    /// (one is the plain curve). Past the largest count, only the largest.
+    fn bracketing_curves(&self, merges: u64) -> Vec<&[(f64, f64, f64)]> {
+        if merges <= 1 {
+            return vec![&self.curve];
+        }
+        let below = self
+            .merged
+            .range(..=merges)
+            .next_back()
+            .map_or(&self.curve[..], |(_, c)| &c[..]);
+        match self.merged.range(merges..).next() {
+            Some((_, above)) => vec![below, above],
+            None => self
+                .merged
+                .values()
+                .next_back()
+                .map_or(vec![below], |c| vec![&c[..]]),
+        }
     }
 
-    /// The last error measured on the curve an answer merged from `merges`
-    /// instances extends: the largest measured merge count up to `merges`,
-    /// else the plain curve.
-    fn last_measured_error(&self, merges: u64) -> Option<f64> {
-        let curve = (merges > 1)
-            .then(|| self.merged.range(..=merges).next_back().map(|(_, c)| c))
-            .flatten()
-            .unwrap_or(&self.curve);
-        curve.last().map(|p| p.1)
+    /// The smallest N the study measured the curves an answer merged from
+    /// `merges` instances reads.
+    fn first_measured_n(&self, merges: u64) -> Option<f64> {
+        self.bracketing_curves(merges)
+            .iter()
+            .map(|c| c.first().map(|p| p.0))
+            .try_fold(0.0, |max: f64, first| first.map(|f| max.max(f)))
+    }
+
+    /// The worst last error measured on the curves an answer merged from
+    /// `merges` instances reads: the floor a fallback extending them can't
+    /// beat.
+    fn last_measured_error(&self, merges: u64, direction: AccuracyDirection) -> Option<f64> {
+        self.bracketing_curves(merges)
+            .iter()
+            .filter_map(|c| c.last().map(|p| p.1))
+            .reduce(|a, b| worse(a, b, direction))
     }
 
     /// The error at `n` items of the sketch merged from `merges` instances:
@@ -379,11 +397,12 @@ impl SaturationCurves {
             .map(|(value, _)| value)
     }
 
-    /// [`SaturationCurves::accuracy`], and whether a bracketing point fell
-    /// back to the algorithm's guarantee ([`crate::theory`]) because the
-    /// study didn't measure it: past an unsaturated curve, past the measured
-    /// merge counts or N, or with no merge curve. Below the curve's first N,
-    /// or outside the grid, it stays unknown.
+    /// [`SaturationCurves::accuracy`], and where the returned (worst) value
+    /// came from: measured, or the algorithm's guarantee
+    /// ([`crate::theory`]) for a bracketing point the study didn't measure
+    /// (past an unsaturated curve, past the measured merge counts or N, or
+    /// with no merge curve). Below the curves' first N, or outside the grid,
+    /// it stays unknown.
     pub fn accuracy_with_source(
         &self,
         raqe: &Raqe,
@@ -413,7 +432,7 @@ impl SaturationCurves {
                     let bound =
                         theory::bound(&deployment.config.sketch, &params, point.shape, merges)?;
                     // No better than the last measurement it extends.
-                    let error = match point.last_measured_error(merges) {
+                    let error = match point.last_measured_error(merges, direction) {
                         Some(last) => worse(bound, last, direction),
                         None => bound,
                     };
@@ -897,6 +916,20 @@ mod tests {
             measured.map(|(_, source)| source),
             Some(AccuracySource::Measured)
         );
+    }
+
+    /// A fallback's floor is the worse last measurement of both shard
+    /// counts around the merge count, not only the smaller.
+    #[test]
+    fn a_fallback_floor_reads_both_bracketing_merge_curves() {
+        let point = &curves().points_by_sketch[TOPK][1];
+        let higher = AccuracyDirection::HigherIsBetter;
+        // 4 shards end at 0.88, 16 at 0.80: 8 merges floor at 0.80.
+        assert!((point.last_measured_error(8, higher).unwrap() - 0.8).abs() < 1e-12);
+        assert!((point.last_measured_error(4, higher).unwrap() - 0.88).abs() < 1e-12);
+        assert!((point.last_measured_error(1, higher).unwrap() - 0.9).abs() < 1e-12);
+        // Past the largest count, the largest's.
+        assert!((point.last_measured_error(100, higher).unwrap() - 0.8).abs() < 1e-12);
     }
 
     #[test]

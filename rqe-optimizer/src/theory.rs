@@ -12,10 +12,12 @@ use aqpbm_core::MeasuredShape;
 
 use crate::analytical_cost_model::TOPK_ENTRIES;
 
-/// One-sided confidence the bounds are stated at.
+/// Confidence the bounds are stated at. Rank and relative errors are
+/// absolute, so their bounds are two-sided; CMS only overestimates, so the
+/// top-k bound is one-sided.
 pub const CONFIDENCE: f64 = 0.95;
-/// The standard normal quantile at [`CONFIDENCE`], one-sided.
-const Z: f64 = 1.645;
+/// The standard normal quantile at [`CONFIDENCE`], two-sided.
+const Z: f64 = 1.96;
 
 /// The bound on `sketch`'s error with `params` on data shaped `shape`,
 /// answering from `merges` merged instances, or `None` when the algorithm
@@ -23,11 +25,13 @@ const Z: f64 = 1.645;
 ///
 /// - `kll-percall`: normalized rank error of one quantile. DataSketches
 ///   publishes `2.296 / k^0.9723` at 99%; KLL's error scales with
-///   `sqrt(ln(1/δ))`, which gives the 95% value. KLL merges without loss of
+///   `sqrt(ln(2/δ))` (two-sided), which gives the 95% value. KLL merges without loss of
 ///   this guarantee.
-/// - `dd`: relative value error `α`, deterministic for an unbounded store
-///   (sketch-bench's DDSketch collapses no buckets); merges exactly.
-/// - `hll`: relative error `z · 1.04 / sqrt(2^lg_k)`, `z` the one-sided
+/// - `dd`: relative value error `α` for an unbounded store (sketch-bench's
+///   DDSketch collapses no buckets); merges exactly. The measured metric can
+///   exceed `α` (zero-bucket values, rank conventions), which the caller's
+///   floor at the last measurement covers.
+/// - `hll`: relative error `z · 1.04 / sqrt(2^lg_k)`, `z` the two-sided
 ///   normal quantile; merges exactly.
 /// - `cms-heap-topk-fastpath-vector2d`: precision@k on Zipf(θ) over `K`
 ///   keys, for every key at once. A CMS row overshoots a key by more than
@@ -36,8 +40,9 @@ const Z: f64 = 1.645;
 ///   most `(w·(p_i − p_{k+1}))^−d`. A union bound over the `K − k` non-top
 ///   keys, then over the counted top keys, keeps the total failure within
 ///   `1 − CONFIDENCE`: precision is the share of the top `k` counted,
-///   taken from the most frequent down. A merged answer has none: each
-///   shard's heap keeps only its own top `k`.
+///   taken from the most frequent down. It assumes the heap ranks keys by
+///   their final CMS estimates. A merged answer has none: each shard's heap
+///   keeps only its own top `k`.
 pub fn bound(
     sketch: &str,
     params: &BTreeMap<String, f64>,
@@ -48,7 +53,8 @@ pub fn bound(
         "kll-percall" => {
             let k = params.get("k")?;
             let at_99 = 2.296 / k.powf(0.9723);
-            Some(at_99 * ((1.0 / (1.0 - CONFIDENCE)).ln() / 100f64.ln()).sqrt())
+            // Two-sided tails: ln(2/δ).
+            Some(at_99 * ((2.0 / (1.0 - CONFIDENCE)).ln() / 200f64.ln()).sqrt())
         }
         "dd" => params.get("alpha").copied(),
         "hll" => {
@@ -121,14 +127,14 @@ mod tests {
     #[test]
     fn kll_hll_and_dd_bounds_ignore_n_and_merges() {
         let kll = bound("kll-percall", &params(&[("k", 200.0)]), PARETO, 64).unwrap();
-        // 1.32% at 99%, scaled by sqrt(ln 20 / ln 100).
-        assert!((kll - 0.01068).abs() < 1e-4, "{kll}");
+        // 1.32% at 99%, scaled by sqrt(ln 40 / ln 200).
+        assert!((kll - 0.01109).abs() < 1e-4, "{kll}");
         assert_eq!(
             bound("dd", &params(&[("alpha", 0.01)]), PARETO, 1000),
             Some(0.01)
         );
         let hll = bound("hll", &params(&[("lg_k", 12.0)]), PARETO, 4).unwrap();
-        assert!((hll - 1.645 * 1.04 / 64.0).abs() < 1e-12);
+        assert!((hll - 1.96 * 1.04 / 64.0).abs() < 1e-12);
     }
 
     #[test]

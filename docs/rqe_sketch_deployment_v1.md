@@ -243,17 +243,19 @@ lookback: series per group times scrapes per lookback.
 - Where the study measured nothing for a bracketing point at or above its
   first N (past an unsaturated curve, past the measured merge counts or N,
   or with no merge curve), the accuracy falls back to the algorithm's
-  guarantee at 95% one-sided confidence (`rqe_optimizer::theory`), and is
-  never better than the last measurement it extends. The fallbacks are:
+  guarantee at 95% confidence (`rqe_optimizer::theory`; two-sided for
+  rank and relative errors, one-sided for CMS overestimates). It is never
+  better than the worst last measurement of the curves it extends. The fallbacks are:
   - KLL: rank error `2.296 / k^0.9723` (DataSketches' 99% value), scaled
-    to 95%;
+    to 95% two-sided;
   - DDSketch: relative value error `α` (unbounded store);
-  - HLL: `1.645 · 1.04 / sqrt(2^lg_k)`;
+  - HLL: `1.96 · 1.04 / sqrt(2^lg_k)`;
   - CMS-heap top-k, unmerged: the share of the top `k` Zipf(θ, K) keys kept
     ranked for every key at once. With Markov per row, independent rows,
     and a union bound over the `K − k` other keys, key `i` fails with
     probability at most `(cols · (p_i − p_{k+1}))^−rows`. Keys are counted
-    from the most frequent while the summed failure stays within 5%.
+    from the most frequent while the summed failure stays within 5%. It
+    assumes the heap ranks keys by their final CMS estimates.
 
   A sketch with no published bound, a merged top-k answer, a point below
   the first N, or a shape outside the grid stays unknown.
