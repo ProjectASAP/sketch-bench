@@ -1,0 +1,38 @@
+# `hydra_columns_f64.yaml` with a separate alphabet per label column, so a key1
+# value can never render the same as a key2 value (#74). The sketch keys each
+# record by its full label set, so a group is a distinct (key1, key2) pair:
+# key1's population times key2's ~50, about 100 here. The `_1k` and `_10k`
+# specs differ only in key1's population (#165). The `polars` baseline scores
+# zero, so any rank error is the sketch's. `export_rqe_optimizer_costs.sh`
+# prices `hydra-kll` on all three.
+
+column_num: 3
+column_label: [key1, key2, value]
+row_num: 200000
+
+column_spec:
+  # key1: its population sets the group count.
+  - data_type: string
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 2.0
+      seed: 1
+    string: {alphabet: "abcdefghijklm"}
+
+  # key2: a second label, skewed, so groups are not all the same size.
+  - data_type: string
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 50
+      seed: 2
+    string: {alphabet: "nopqrstuvwxyz"}
+
+  # value: KLL orders these inside each group.
+  - data_type: f64
+    distribution:
+      kind: zipf
+      skewness: 1.2
+      population_size: 1000
+      seed: 3

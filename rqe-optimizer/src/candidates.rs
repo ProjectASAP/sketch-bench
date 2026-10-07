@@ -45,12 +45,11 @@ fn subset_gcds(values: impl IntoIterator<Item = Millis>) -> BTreeSet<Millis> {
 }
 
 /// Whether a fixed-size sketch shared by all groups was measured holding at
-/// least `groups` of them. Its accuracy degrades as groups grow, and the row
-/// holds one measured point (`subpopulations`). Models a sketch keyed by the
-/// joined `G` value alone, so it holds exactly `card(G)` subpopulations; the
-/// current rows fan out to every label subset (sketch-bench#165).
-// ponytail: one point, so larger groupings are never planned. Rows at more
-// group counts (sketch-bench#143 S5) loosen this with no code change.
+/// least `groups` of them. Its accuracy degrades as groups grow, so a row
+/// measured at more groups than `G` has is conservative. The sketch is keyed
+/// by the joined `G` value alone, so it holds exactly `card(G)` subpopulations,
+/// and each config is measured at several group counts, one row each.
+// ponytail: groupings past the largest measured count are never planned.
 fn measured_at_group_count(config: &AtomicCostEntry, groups: u64) -> bool {
     config
         .query_accuracy

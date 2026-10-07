@@ -1,15 +1,17 @@
 # `hydra_columns_f64.yaml` with a separate alphabet per label column, so a key1
-# value can never render the same as a key2 value (#74). On the shared alphabet
-# a key1 query also picks up the matching key2 group, and that collision shows
-# up as rank error; here the `polars` baseline scores zero and any rank error
-# is the sketch's. `export_rqe_optimizer_costs.sh` prices `hydra-kll` on it.
+# value can never render the same as a key2 value (#74). The sketch keys each
+# record by its full label set, so a group is a distinct (key1, key2) pair:
+# key1's population times key2's ~50, about 10k here. The `_100` and `_1k`
+# specs differ only in key1's population (#165). The `polars` baseline scores
+# zero, so any rank error is the sketch's. `export_rqe_optimizer_costs.sh`
+# prices `hydra-kll` on all three.
 
 column_num: 3
 column_label: [key1, key2, value]
 row_num: 200000
 
 column_spec:
-  # key1: the column the comparator groups by.
+  # key1: its population sets the group count.
   - data_type: string
     distribution:
       kind: uniform
@@ -18,7 +20,7 @@ column_spec:
       seed: 1
     string: {alphabet: "abcdefghijklm"}
 
-  # key2: a second label, skewed, so the subset fan-out is not uniform.
+  # key2: a second label, skewed, so groups are not all the same size.
   - data_type: string
     distribution:
       kind: zipf
@@ -27,7 +29,7 @@ column_spec:
       seed: 2
     string: {alphabet: "nopqrstuvwxyz"}
 
-  # value: KLL orders these inside each subpopulation.
+  # value: KLL orders these inside each group.
   - data_type: f64
     distribution:
       kind: zipf

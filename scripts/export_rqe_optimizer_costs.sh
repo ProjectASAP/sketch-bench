@@ -84,6 +84,8 @@ HYDRA_KLL_CONFIGS=(
     "rows=5 cols=256 cell_k=200"
     "rows=3 cols=256 cell_k=500"
 )
+# Suffixes of the hydra-kll specs: about this many groups each.
+HYDRA_KLL_GROUP_COUNTS=(100 1k 10k)
 
 # One row: a cost pass, an accuracy pass, then one merge-accuracy pass per
 # merge count, over the same data. Arguments
@@ -151,9 +153,9 @@ point_spec exact-delta-set exact "" key-set configs/datagen/hydra_columns.yaml i
 # and merge cost are not divided per group (`subpop-rank-error` reports no
 # `groups_per_instance`). The optimizer prices them as one shared fixed-size
 # sketch, not card(G) instances, and plans them only up to the `subpopulations`
-# they were measured at. The keys fan out to every label subset, unlike the
-# single-key sketch the optimizer models (#165). The spec gives each label its
-# own alphabet, so rank error is the sketch's, not label collisions' (#74).
+# they were measured at, so every config runs at ~100, ~1k and ~10k groups
+# (#165). Each record is one key, its full label set. The specs give each label
+# its own alphabet, so rank error is the sketch's, not label collisions' (#74).
 echo "==> Quantiles: KLL, DDSketch, HydraKLL" >&2
 for k in "${KLL_KS[@]}"; do
     point kll-percall "k=$k" rank-error
@@ -161,9 +163,11 @@ done
 for alpha in "${DD_ALPHAS[@]}"; do
     point dd "alpha=$alpha" rank-error
 done
-for config in "${HYDRA_KLL_CONFIGS[@]}"; do
-    point_spec hydra-kll lib "$config" subpop-rank-error \
-        configs/datagen/hydra_kll_disjoint_labels.yaml f64
+for groups in "${HYDRA_KLL_GROUP_COUNTS[@]}"; do
+    for config in "${HYDRA_KLL_CONFIGS[@]}"; do
+        point_spec hydra-kll lib "$config" subpop-rank-error \
+            "configs/datagen/hydra_kll_disjoint_labels_$groups.yaml" f64
+    done
 done
 
 echo "==> Cardinality: HLL and UnivMon" >&2
