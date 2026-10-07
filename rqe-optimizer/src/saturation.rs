@@ -122,19 +122,20 @@ impl GridPoint {
 
     /// The error at `n` items of the sketch merged from `merges` instances:
     /// the worse of the measured shard counts either side of `merges` (one
-    /// is the plain sketch). `None` past the largest measured count, or with
-    /// no merge curve: a merge count the study didn't reach is unmeasured.
-    /// Past the merge curve's last checkpoint, its last value if the plain
-    /// curve saturated by then.
+    /// is the plain sketch). `None` past the largest measured count, past the
+    /// merge curve's last N, or with no merge curve: what the study didn't
+    /// measure is unknown.
     fn merged_error_at(&self, merges: u64, n: f64, direction: AccuracyDirection) -> Option<f64> {
         if merges <= 1 {
             return self.error_at(n, direction);
         }
         let below = self.merged.range(..=merges).next_back().map(|(&m, _)| m);
         let (&above, _) = self.merged.range(merges..).next()?;
+        // Past a merge curve's last N it has no plateau: nothing shows the
+        // merged sketch stopped changing there.
         let at = |m: u64| match m {
             1 => self.error_at(n, direction),
-            m => curve_error_at(&self.merged[&m], self.n_sat, n, direction),
+            m => curve_error_at(&self.merged[&m], None, n, direction),
         };
         let below = at(below.unwrap_or(1))?;
         Some(worse(below, at(above)?, direction))
@@ -153,9 +154,11 @@ fn curve_error_at(
     if n < first_n {
         return None;
     }
-    // Past the last checkpoint, the plateau, if saturated by then: a merge
-    // curve stops at 1e7 while its point's n_sat may come from the 1e9 run.
-    if n >= last_n {
+    if n == last_n {
+        return Some(last_error);
+    }
+    // Past the last checkpoint, the plateau if the curve saturated by then.
+    if n > last_n {
         return n_sat.filter(|&sat| sat <= last_n).map(|_| last_error);
     }
     let above = curve.partition_point(|&(checkpoint, ..)| checkpoint < n);
@@ -300,19 +303,21 @@ impl SaturationCurves {
                 points.insert(key, (sketch, point));
             }
         }
-        // A study run without --merge-shards-list leaves every merged KLL or
-        // top-k deployment silently without accuracy; refuse it. A point
-        // without a merge curve (one only the 1e9 run has) just has no merged
+        // A lossy candidate sketch with no merge curve at all (a study run
+        // without --merge-shards-list for it) would leave every merged
+        // deployment of it silently without accuracy; refuse it. A single
+        // point without one (only the 1e9 run has it) just has no merged
         // accuracy.
-        let lossy: Vec<&GridPoint> = points
-            .values()
-            .filter(|(sketch, _)| is_candidate(sketch) && merges_lossily(sketch))
-            .map(|(_, point)| point)
-            .collect();
-        if !lossy.is_empty() && lossy.iter().all(|point| point.merged.is_empty()) {
-            return Err(invalid(
-                "no merge curves for KLL or top-k; rerun the study with --merge-shards-list".into(),
-            ));
+        let mut lossy: BTreeMap<&str, bool> = BTreeMap::new();
+        for (sketch, point) in points.values() {
+            if is_candidate(sketch) && merges_lossily(sketch) {
+                *lossy.entry(sketch).or_default() |= !point.merged.is_empty();
+            }
+        }
+        if let Some((sketch, _)) = lossy.iter().find(|(_, &merged)| !merged) {
+            return Err(invalid(format!(
+                "no merge curves for {sketch}; rerun the study with --merge-shards-list"
+            )));
         }
         let mut points_by_sketch: BTreeMap<String, Vec<GridPoint>> = BTreeMap::new();
         for (sketch, mut point) in points.into_values() {
@@ -347,7 +352,7 @@ impl SaturationCurves {
         let covered = items_per_group(metric_facts, grouping, raqe.lookback_ms);
         let (_, direction) = accuracy_key(&deployment.config.sketch);
         let merges = if merges_lossily(&deployment.config.sketch) {
-            raqe.lookback_ms / deployment.window_ms
+            deployment.query_instance_count(raqe.lookback_ms)?
         } else {
             1
         };
@@ -719,16 +724,17 @@ mod tests {
         assert_eq!(at(100_000), None);
     }
 
-    /// Past a merge curve's last checkpoint, its plateau only if the point
-    /// saturated by then: n_sat may come from a longer plain run.
+    /// Past a merge curve's last checkpoint the merged answer is unknown,
+    /// even when the plain curve saturated: nothing shows the merged sketch
+    /// stopped changing.
     #[test]
-    fn a_merge_curve_extrapolates_only_from_a_saturation_it_covers() {
-        let mut curves = curves();
-        let point = &mut curves.points_by_sketch.get_mut(TOPK).unwrap()[1];
+    fn a_merge_curve_has_no_plateau() {
+        let point = &curves().points_by_sketch[TOPK][1];
         let higher = AccuracyDirection::HigherIsBetter;
-        assert!((point.merged_error_at(4, 1e9, higher).unwrap() - 0.88).abs() < 1e-12);
-        point.n_sat = Some(1e8);
+        assert_eq!(point.n_sat, Some(1e4));
+        assert!((point.merged_error_at(4, 1e5, higher).unwrap() - 0.88).abs() < 1e-12);
         assert_eq!(point.merged_error_at(4, 1e9, higher), None);
+        assert_eq!(point.error_at(1e9, higher), Some(0.9));
     }
 
     /// Without a merge curve, a merged top-k answer has no known accuracy;

@@ -236,9 +236,10 @@ lookback: series per group times scrapes per lookback.
   count. Between measured shard counts, the worse. Past the largest
   measured count, or without a merge curve, a merged KLL or top-k answer has
   no accuracy: the study must measure the merge counts a workload needs
-  (`--merge-shards-list`). Past the merge curve's last N, its last value only
-  if the plain curve saturated by then (#158). `SaturationCurves::load`
-  refuses a study with no merge curves at all.
+  (`--merge-shards-list`) up to the N it reads at: past the merge curve's
+  last N, the merged answer has no accuracy either (#158).
+  `SaturationCurves::load` refuses a study with no merge curves for a
+  candidate KLL or top-k sketch.
 
 The cost table's sketch accuracies are not read, but they are one point on
 each curve: a row's `measured_at` (items, Zipf θ and population, or Pareto
