@@ -228,11 +228,22 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
         if !raqe.spatial_filter.is_empty() {
             problems.insert(format!("{id}: spatial filters are not supported yet"));
         }
-        if !raqe.accuracy_sla.is_finite() {
-            problems.insert(format!(
-                "{id}: accuracy SLA {} is not finite",
-                raqe.accuracy_sla
-            ));
+        // An SLA no candidate's metric can meet would read as "unservable"
+        // rather than bad input. Every metric is >= 0, and every
+        // higher-is-better one is a fraction (precision), so its floor is <= 1.
+        let sla = raqe.accuracy_sla;
+        let floors_a_fraction = raqe.capability.families().iter().any(|family| {
+            family_properties(family)
+                .accuracy
+                .is_some_and(|(_, direction)| direction == AccuracyDirection::HigherIsBetter)
+        });
+        let max = if floors_a_fraction {
+            1.0
+        } else {
+            f64::INFINITY
+        };
+        if !(sla.is_finite() && (0.0..=max).contains(&sla)) {
+            problems.insert(format!("{id}: accuracy SLA {sla} is outside [0, {max}]"));
         }
         if let Some(limit) = raqe.latency_sla_ms {
             if !(limit.is_finite() && limit > 0.0) {
@@ -771,6 +782,34 @@ mod tests {
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].starts_with("unaligned: lookback 3600 ms"));
         assert!(problems[1].starts_with("zero: lookback and interval must be nonzero"));
+    }
+
+    /// No metric can meet a negative SLA, nor a precision floor above 1; an
+    /// error ceiling above 1 is merely loose.
+    #[test]
+    fn rejects_an_accuracy_sla_no_metric_can_meet() {
+        let sla = |id: &str, capability, accuracy_sla| Raqe {
+            id: id.into(),
+            capability,
+            accuracy_sla,
+            ..raqe(60_000, 60_000)
+        };
+        let raqes = [
+            sla("negative", Capability::Quantile, -0.1),
+            sla("nan", Capability::Quantile, f64::NAN),
+            sla("precision_above_1", Capability::TopKByValue, 1.5),
+            sla("loose_error", Capability::Cardinality, 1.5),
+            sla("exact_precision", Capability::TopKByValue, 1.0),
+        ];
+        let problems = validate_facts(&raqes, &test_support::facts(1, 1)).unwrap_err();
+        assert_eq!(
+            problems,
+            [
+                "nan: accuracy SLA NaN is outside [0, inf]",
+                "negative: accuracy SLA -0.1 is outside [0, inf]",
+                "precision_above_1: accuracy SLA 1.5 is outside [0, 1]",
+            ]
+        );
     }
 
     #[test]
