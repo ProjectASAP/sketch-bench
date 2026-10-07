@@ -11,7 +11,7 @@ Writes, next to the inputs:
                                  varied alone (templates, shared replicas)
   fig_planning_time.png          planning time vs. RQEs (shared replicas);
                                  AutoSketch also with its benchmark time
-  summary.md                     every workload, method, weights and SLA
+  summary_synthetic.md           every workload, method, weights and SLA
 
 Usage: scripts/plot_autosketch_vs_asap_synthetic.py DIR
 """
@@ -150,6 +150,14 @@ def fmt(x, digits=3):
     return "—" if x is None else f"{x:.{digits}g}"
 
 
+def copies(r):
+    """Window / slide summed over the plan's deployments: each deployment
+    writes an item into window / slide overlapping sketches, which is what
+    AutoSketch's one window per query (window = lookback) pays at ingest."""
+    deps = {c["deployment"]: c["window_secs"] / c["slide_secs"] for c in r["chosen"]}
+    return sum(deps.values())
+
+
 def summary(runs, out):
     lines = ["# Synthetic workload: AutoSketch vs. ASAP\n"]
     for key, data in sorted(runs.items(), key=lambda kv: str(kv[0])):
@@ -159,8 +167,8 @@ def summary(runs, out):
                      f"{data['autosketch']['probes']}, benchmark time ≥ "
                      f"{fmt(data['autosketch']['benchmark_secs_lower_bound_nbench1e8'])} s.\n")
         lines.append("| weights | SLA (ms) | RQEs | method | objective | vs ASAP | CPU (vCPU) | "
-                     "GiB | deployments | max latency (ms) | planning (s) |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+                     "GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for w in weight_names(runs):
             for sla in data["sla_grid_ms"]:
                 base = pick(data, "asap", w, sla)
@@ -172,10 +180,10 @@ def summary(runs, out):
                     lines.append(
                         f"| {w} | {sla} | {r['rqes']} | {LABELS[m]} | {fmt(r['objective'])} | "
                         f"{fmt(ratio)}× | {fmt(r['cpu'])} | {fmt(r['gib'])} | "
-                        f"{r['active_deployments']} | {fmt(r['max_latency_ms'])} | "
+                        f"{r['active_deployments']} | {fmt(copies(r))} | {fmt(r['max_latency_ms'])} | "
                         f"{fmt(r['planning_secs'])} |")
         lines.append("")
-    (out / "summary.md").write_text("\n".join(lines))
+    (out / "summary_synthetic.md").write_text("\n".join(lines))
 
 
 def main():

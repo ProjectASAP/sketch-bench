@@ -92,6 +92,14 @@ def fmt(x, digits=3):
     return "—" if x is None else f"{x:.{digits}g}"
 
 
+def copies(r):
+    """Window / slide summed over the plan's deployments: each deployment
+    writes an item into window / slide overlapping sketches, which is what
+    AutoSketch's one window per query (window = lookback) pays at ingest."""
+    deps = {c["deployment"]: c["window_secs"] / c["slide_secs"] for c in r["chosen"]}
+    return sum(deps.values())
+
+
 def summary(runs, out):
     lines = ["# AutoSketch vs. ASAP on the trace workloads\n"]
     for name, run in runs.items():
@@ -107,17 +115,17 @@ def summary(runs, out):
                 base = objective(rows[0])
                 lines.append(f"Weights {w['name']}, {sla_text(sla)}:\n")
                 lines.append("| method | objective | vs ASAP | CPU (vCPU) | GiB | deployments | "
-                             "max latency (ms) | planning (s) |")
-                lines.append("|---|---|---|---|---|---|---|---|")
+                             "Σ window/slide | max latency (ms) | planning (s) |")
+                lines.append("|---|---|---|---|---|---|---|---|---|")
                 for method, r in zip(METHODS, rows):
                     if r is None or "error" in r:
-                        lines.append(f"| {LABELS[method]} | {r and r.get('error')} |||||||")
+                        lines.append(f"| {LABELS[method]} | {r and r.get('error')} ||||||||")
                         continue
                     ratio = r["objective"] / base if base else None
                     lines.append(
                         f"| {LABELS[method]} | {fmt(r['objective'])} | {fmt(ratio)}× | "
                         f"{fmt(r['cpu'])} | {fmt(r['gib'])} | {r['active_deployments']} | "
-                        f"{fmt(r['max_latency_ms'])} | {fmt(r['planning_secs'])} |")
+                        f"{fmt(copies(r))} | {fmt(r['max_latency_ms'])} | {fmt(r['planning_secs'])} |")
                 lines.append("")
     (out / "summary.md").write_text("\n".join(lines))
 
