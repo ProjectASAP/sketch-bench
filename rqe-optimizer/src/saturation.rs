@@ -18,8 +18,8 @@ use std::path::Path;
 
 use crate::autosketch::window_adapter;
 use crate::{
-    family_properties, table_accuracy, AccuracyDirection, AtomicCostEntry, Deployment, LabelSet,
-    MetricFacts, Raqe, WorkloadFacts,
+    accuracy_key, family_properties, table_accuracy, AccuracyDirection, AtomicCostEntry,
+    Deployment, LabelSet, MetricFacts, Raqe, WorkloadFacts,
 };
 use aqpbm_core::MeasuredShape;
 
@@ -205,8 +205,9 @@ impl SaturationCurves {
     }
 
     /// The accuracy `raqe` gets from `deployment`, or `None` when it can't be
-    /// read: no fitted [`DataShape`], a config or shape outside the grid, the
-    /// wrong metric, or too few items.
+    /// read: no fitted [`DataShape`], a config or shape outside the grid, or
+    /// too few items. Panics on a curve that measured a metric other than its
+    /// family's, e.g. a DDSketch curve from before relative value error.
     /// Exact accumulators keep the cost table's value. `facts` must pass
     /// [`crate::validate_facts`].
     pub fn accuracy(
@@ -223,13 +224,16 @@ impl SaturationCurves {
         let shape = metric_facts.data_shape.get(grouping)?;
         let points = self.bracketing_points(&deployment.config, shape)?;
         let covered = items_per_group(metric_facts, grouping, raqe.lookback_ms);
+        let sketch = &deployment.config.sketch;
+        let (metric, direction) = accuracy_key(sketch);
         let mut worst = None;
         for point in points {
-            if point.error_metric != raqe.accuracy_metric {
-                return None;
-            }
-            let error = point.error_at(covered, raqe.accuracy_direction)?;
-            worst = Some(worst.map_or(error, |w| worse(w, error, raqe.accuracy_direction)));
+            assert_eq!(
+                point.error_metric, metric,
+                "{sketch}'s saturation curve measured the wrong metric; rerun the study"
+            );
+            let error = point.error_at(covered, direction)?;
+            worst = Some(worst.map_or(error, |w| worse(w, error, direction)));
         }
         worst
     }
@@ -490,8 +494,6 @@ mod tests {
     fn topk_raqe(lookback_ms: u64) -> Raqe {
         Raqe {
             capability: Capability::TopKByValue,
-            accuracy_metric: "precision_at_k".into(),
-            accuracy_direction: AccuracyDirection::HigherIsBetter,
             ..raqe(lookback_ms, lookback_ms)
         }
     }
@@ -559,16 +561,18 @@ mod tests {
         assert_eq!(curves().accuracy(&r, &d, &facts(1, 10)), None);
     }
 
+    /// A curve for another metric is a stale study, not a missing point.
     #[test]
-    fn a_metric_the_curve_did_not_measure_has_no_accuracy() {
-        let facts = workload(10, shape(1.2, 1e3));
-        let r = Raqe {
-            accuracy_metric: "recall_at_k".into(),
-            ..topk_raqe(1_000_000)
-        };
-        assert_eq!(
-            curves().accuracy(&r, &deployment(TOPK, 1_000_000), &facts),
-            None
+    #[should_panic(expected = "saturation curve measured the wrong metric")]
+    fn a_curve_for_another_metric_panics() {
+        let mut curves = curves();
+        for point in curves.points_by_sketch.get_mut(TOPK).unwrap() {
+            point.error_metric = "recall_at_k".into();
+        }
+        curves.accuracy(
+            &topk_raqe(1_000_000),
+            &deployment(TOPK, 1_000_000),
+            &workload(10, shape(1.2, 1e3)),
         );
     }
 
@@ -590,8 +594,10 @@ mod tests {
     #[test]
     fn exact_accumulators_keep_the_cost_table_value() {
         let r = topk_raqe(1_000_000);
-        let value = curves().accuracy(&r, &deployment("exact-sum", 1_000_000), &facts(1, 10));
-        assert_eq!(value, Some(1.0));
+        let mut d = deployment("exact-sum", 1_000_000);
+        d.config.query_accuracy = BTreeMap::from([("relative_error".into(), 0.0)]);
+        let value = curves().accuracy(&r, &d, &facts(1, 10));
+        assert_eq!(value, Some(0.0));
     }
 
     /// A top-k row measured at θ = 1.2, K = 1e3 and `items`, scoring
