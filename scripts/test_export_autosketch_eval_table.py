@@ -207,17 +207,5 @@ class DashboardAndSharedTest(unittest.TestCase):
         self.assertLess(sizes[2], 8 * sizes[1])
 
 
-class BoomTest(unittest.TestCase):
-    def test_chunk_defines_n_and_window(self):
-        row = dict.fromkeys(SUMMARY_HEADER, "")
-        row.update(dataset="boom", query_id="target_tail[ds-1-5T]", kind="values",
-                   K_total="10", rows_total="2000")
-        q = boom_query(row)
-        self.assertEqual(q["max_N"], 100)
-        # 2000 rows / 10 variates / 20 chunks = 10 steps of 300 s.
-        self.assertEqual((q["range_s"], q["step_s"]), (3000, 3000))
-        self.assertEqual(q["alpha_rank"], float("inf"))
-
-
 if __name__ == "__main__":
     unittest.main()

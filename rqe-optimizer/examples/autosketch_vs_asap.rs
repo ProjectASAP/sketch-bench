@@ -97,6 +97,8 @@ struct Workload {
     raqes: Vec<Raqe>,
     facts: WorkloadFacts,
     costs: BTreeMap<String, Vec<AtomicCostEntry>>,
+    /// q_r: queries one evaluation issues per instance, per stream.
+    queries_per_stream: BTreeMap<String, f64>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
@@ -157,6 +159,11 @@ fn main() {
         })
         .map(|&(name, w_cpu, w_mem)| (name, Objective::AUCCost { w_cpu, w_mem }))
         .collect();
+    assert!(
+        !weights.is_empty(),
+        "--weights names none of {:?}",
+        WEIGHTS.map(|(name, ..)| name)
+    );
     let mut result = evaluate(&workload, runs, &slas, &weights);
     if args.iter().any(|a| a == "--no-chosen") {
         for r in result["results"].as_array_mut().unwrap() {
@@ -191,9 +198,10 @@ fn strictness_target(level: &str, capability: Capability) -> f64 {
     targets[column]
 }
 
-/// The table's capability for an RQE. `traces` key queries are group sums,
-/// served by exact accumulators; its tables list sketch families only, so
-/// those RQEs stay unservable until the table carries an exact row.
+/// The table's capability for an RQE. `traces` key queries are per-key sums
+/// (`sum by (key)`), served by the cost table's exact accumulators, one per
+/// key; the table lists only their sketch families, so their target falls
+/// back to 0 (exact).
 fn capability_of(r: &Value) -> Capability {
     match (r["capability"].as_str(), r["kind"].as_str().unwrap()) {
         (Some("sum"), _) | (Some("freq"), _) | (None, "keys") => Capability::Sum,
@@ -202,6 +210,19 @@ fn capability_of(r: &Value) -> Capability {
         (Some("topk"), _) => Capability::TopKByValue,
         (Some("quantile"), _) | (None, "values") => Capability::Quantile,
         other => panic!("unknown capability {other:?}"),
+    }
+}
+
+/// The groups an RQE's deployment keeps one instance per. A `traces` key
+/// query sums per key: one exact accumulator per key, so its groups are the
+/// window's keys (the table's `groups` counts one sketch holding them all).
+fn groups_of(r: &Value, capability: Capability) -> u64 {
+    let groups = r["label_set"]["groups"].as_u64().unwrap();
+    if r["capability"].is_null() && capability == Capability::Sum {
+        let keys = r["label_set"]["keys_per_window"].as_f64().unwrap_or(1.0);
+        groups.max(keys.ceil() as u64)
+    } else {
+        groups
     }
 }
 
@@ -257,7 +278,7 @@ fn from_table(
         };
         let capability = capability_of(r);
         let rate = r["label_set"]["arrival_rate_per_sec"].as_f64().unwrap();
-        let groups = r["label_set"]["groups"].as_u64().unwrap();
+        let groups = groups_of(r, capability);
         let grouping = if groups > 1 {
             label_set(&["g"])
         } else {
@@ -284,6 +305,10 @@ fn from_table(
             value_range: None,
             data_shape: BTreeMap::new(),
         });
+        // A stream's RQEs may see different group counts (keys per window
+        // grow with the range): take the largest (conservative).
+        let card = metric.cardinality.get_mut(&label_set(&["g"])).unwrap();
+        *card = (*card).max(groups);
         let total = metric.cardinality.get_mut(&label_set(&["g", "x"])).unwrap();
         *total = (*total).max(series).max(groups);
         // Queries one evaluation issues per instance (the table's q_r); tables
@@ -338,8 +363,8 @@ fn from_table(
     // Every stream may use every row; one evaluation runs q_r queries per
     // instance.
     let costs = queries_per_stream
-        .into_iter()
-        .map(|(stream, queries)| {
+        .iter()
+        .map(|(stream, &queries)| {
             let rows = cost_table
                 .iter()
                 .map(|row| AtomicCostEntry {
@@ -347,7 +372,7 @@ fn from_table(
                     ..row.clone()
                 })
                 .collect();
-            (stream, rows)
+            (stream.clone(), rows)
         })
         .collect();
     let name = match &target {
@@ -359,6 +384,7 @@ fn from_table(
         raqes,
         facts,
         costs,
+        queries_per_stream,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
@@ -505,6 +531,10 @@ fn summarize(
                 "latency_ms": latency,
                 "deployment": di,
                 "asap_accuracy": w.asap_accuracy(r, d),
+                "accuracy_source": w
+                    .curves
+                    .accuracy_with_source(r, d, &w.facts)
+                    .map(|(_, source)| format!("{source:?}")),
             })
         })
         .collect();
@@ -606,11 +636,13 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
         .flat_map(|s| {
             let r = raqes.iter().find(|r| r.id == s.raqe_id).unwrap();
             let costs = &w.costs[&r.metric];
+            let queries = w.queries_per_stream[&r.metric];
             s.probes.iter().map(move |&p| {
                 let c = &costs[p];
-                // One query of one instance stands in for the query phase.
+                // One query of one instance stands in for the query phase;
+                // the stream's rows charge q_r of them.
                 let name = format!("{}/{}", c.sketch, c.sketch_config["params"]);
-                (name, c.insert_cpu_secs, c.query_cpu_secs)
+                (name, c.insert_cpu_secs, c.query_cpu_secs / queries)
             })
         })
         .collect();
@@ -835,6 +867,18 @@ mod tests {
         let (distinct, secs) = benchmark_lower_bound(&probes);
         assert_eq!(distinct, 2);
         assert!((secs - (1e8 * 2e-8 + 0.5 + 1e8 * 1e-8 + 0.25)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_trace_key_query_keeps_one_accumulator_per_key() {
+        let key_query =
+            json!({"kind": "keys", "label_set": {"groups": 1, "keys_per_window": 26019.0}});
+        assert_eq!(groups_of(&key_query, capability_of(&key_query)), 26019);
+        let quantile =
+            json!({"kind": "values", "label_set": {"groups": 1, "keys_per_window": 5.0}});
+        assert_eq!(groups_of(&quantile, capability_of(&quantile)), 1);
+        let synthetic = json!({"capability": "sum", "kind": "keys", "label_set": {"groups": 10, "keys_per_window": 1e4}});
+        assert_eq!(groups_of(&synthetic, Capability::Sum), 10);
     }
 
     #[test]
