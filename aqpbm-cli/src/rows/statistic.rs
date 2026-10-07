@@ -81,9 +81,8 @@ pub(super) fn cardinality_row<T: ColumnItem>(
 
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
 /// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
-/// `chl::CMS_HEAP_TOP_K`, the same compile-time constant the sketch was built
-/// with, so the heap's capacity and the truth it's graded against can never
-/// silently disagree (see #95's design-decision comment on the registry entry).
+/// `chl::TOPK_K`, the `k` every top-k row answers whatever its heap's capacity
+/// (`heap=`): a larger heap answers its heaviest `k`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn topk_row<T: CountedValue>(
     req: &Requirement,
@@ -100,7 +99,7 @@ pub(super) fn topk_row<T: CountedValue>(
         description,
         table,
         want,
-        TopkGT::<T>::over_column(chl::CMS_HEAP_TOP_K, value_column(description)),
+        TopkGT::<T>::over_column(chl::TOPK_K, value_column(description)),
         peel::<T>,
         insert,
         insert_step,

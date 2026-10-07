@@ -75,7 +75,10 @@ defaults to 0, so these costs are indicative. The optimizer's costs come
 from `--phase optimizer-cost`: each configuration once, serially, at Zipf
 θ = 1.1 over 1e4 keys (Pareto `a` = 2 for quantiles) and 1e6 items, with 5
 runs after 3 warm-ups and one accuracy pass, reduced by `approxbench
-atomic-costs` to `rqe_atomic_costs.json` (#174). Put it under the curves'
+atomic-costs` to `rqe_atomic_costs.json` (#174). Top-k configs are measured at heaps 32, 128, 512 and
+2048 (`TOPK_HEAPS`, `heap=`): a deployment merging `m` windows keeps `m · k`
+and rqe-optimizer interpolates between them. The accuracy grid measures top-k
+at the default heap, `k = 32`. Put it under the curves'
 directory as `optimizer_cost/`, where `rqe-optimizer` reads it. The accuracy
 grid also runs every configuration at that shape (unless `--no-cost-shape`),
 so each cost-table row is a point on a curve and the synthetic evaluation,

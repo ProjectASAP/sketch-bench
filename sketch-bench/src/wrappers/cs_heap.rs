@@ -1,11 +1,12 @@
 //! `asap_sketchlib::CSHeap` — a Count Sketch paired with a top-k heap. The
 //! CountSketch counterpart of `cms_heap`'s top-k row, and graded the same way:
-//! heap capacity is `CMS_HEAP_TOP_K`, the `k` `TopkGT` grades against.
+//! the heap holds `heap` items (default `TOPK_K`) and the answer is its
+//! heaviest `TOPK_K`, the `k` `TopkGT` grades against.
 // ponytail: Vector2D + FastPath top-k only, the one the optimizer prices; add
 // RegularPath / per-key estimate rows when something asks for them.
 
-use crate::params::{CountSketchParams, ParamSet};
-use crate::wrappers::cms_heap::sketchlib::{TopkAnswer, CMS_HEAP_TOP_K};
+use crate::params::{CsHeapParams, ParamSet};
+use crate::wrappers::cms_heap::sketchlib::{heap_capacity, top_k, TopkAnswer};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::HHItem;
@@ -17,25 +18,28 @@ pub struct CsHeapLibVector2dFast {
     inner: CSHeap<Vector2D<i32>, FastPath>,
     rows: usize,
     cols: usize,
+    heap: usize,
 }
 
 pub fn build_cs_heap_lib_vector2d_fast(
     config: &ParamSet,
 ) -> Result<CsHeapLibVector2dFast, BuildError> {
-    let p: CountSketchParams = config.parse()?;
+    let p: CsHeapParams = config.parse()?;
     require_positive("asap CSHeap Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CSHeap Vector2D FastPath", "cols", p.cols)?;
+    let heap = heap_capacity("asap CSHeap Vector2D FastPath", p.heap)?;
     Ok(CsHeapLibVector2dFast {
-        inner: CSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, CMS_HEAP_TOP_K),
+        inner: CSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
+        heap,
     })
 }
 
 /// Counter matrix plus a full heap, as `cms_heap` counts it.
 pub fn memory_cs_heap_lib_vector2d_fast(sketch: &CsHeapLibVector2dFast) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + CMS_HEAP_TOP_K * std::mem::size_of::<HHItem>()
+        + sketch.heap * std::mem::size_of::<HHItem>()
 }
 
 pub fn insert_cs_heap_lib_vector2d_fast<T: FrequencyValue>(
@@ -102,11 +106,8 @@ pub fn merge_query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = sketch
-                    .inner
-                    .heap()
-                    .heap()
-                    .iter()
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                    .into_iter()
                     .map(|item| {
                         (
                             T::from_data_input(&heap_item_to_sketch_input(&item.key)),

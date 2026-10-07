@@ -93,6 +93,11 @@ COST_SEED = 42
 COST_TABLE = "rqe_atomic_costs.json"
 # Families some rqe-optimizer capability plans; frequency sketches serve none.
 OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
+# Heap capacities the cost table measures each top-k config at. A deployment
+# merging m windows keeps a heap of m · k (k = 32, the graded and answered
+# k); rqe-optimizer interpolates costs between these. Accuracy curves are
+# measured at the default heap, k.
+TOPK_HEAPS = (32, 128, 512, 2048)
 
 # Exact accumulators the optimizer plans, on grouped records (variant,
 # comparator, datagen spec). Their error is 0 by construction; the accuracy
@@ -290,7 +295,11 @@ def cost_dataset(family):
 def optimizer_cost(args, families):
     """The optimizer's cost table: one serial cost pass and one accuracy pass
     per (sketch, config) at the COST_* shape, plus the exact accumulators,
-    reduced by `approxbench atomic-costs` to --out/COST_TABLE."""
+    reduced by `approxbench atomic-costs` to --out/COST_TABLE. Each sketch
+    row's accuracy is then the mean over seeds 1..--seeds at COST_N, the
+    same measurement as the curve's point there when --seeds matches the
+    accuracy run's, so check_cost_table compares like with like. Exact rows
+    keep their 0."""
     os.makedirs(args.out, exist_ok=True)
     raw = os.path.join(args.out, "rqe_atomic_costs_raw.jsonl")
     grid = os.path.join(args.out, "rqe_atomic_costs_grid.jsonl")
@@ -305,8 +314,10 @@ def optimizer_cost(args, families):
             continue
         metrics[variant] = metric
         for config in configs[:1] if args.one_config else configs:
-            rows.append((variant, "lib", ["--config", config], comparator,
-                         cost_dataset(family)))
+            heaps = [f" heap={h}" for h in TOPK_HEAPS] if family == "topk" else [""]
+            for heap in heaps:
+                rows.append((variant, "lib", ["--config", config + heap], comparator,
+                             cost_dataset(family)))
     for variant, comparator, spec in EXACT_COST_ROWS:
         metrics[variant] = EXACT_METRIC
         rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
@@ -343,8 +354,39 @@ def optimizer_cost(args, families):
     expected = f"approxbench atomic-costs: {len(rows)} row(s), 0 skipped"
     if summary != expected:
         sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary!r}")
+    seed_mean_accuracy(args, table, rows, metrics)
     print(f"Done. {table}", file=sys.stderr)
     return 0
+
+
+def seed_mean_accuracy(args, table, rows, metrics):
+    """Rewrite each sketch row's accuracy in `table` as the mean over seeds
+    1..--seeds of one accuracy run at COST_N: the run the curves make at that
+    N. Top-k at heaps above k keep the base's: curves are measured at k."""
+    def params(config):
+        return {k: float(v) for k, v in (kv.split("=") for kv in config.split())}
+
+    means = {}
+    for variant, library, config, comparator, data in rows:
+        if library == "exact" or float(params(config[1]).get("heap", TOPK_HEAPS[0])) != \
+                TOPK_HEAPS[0]:
+            continue
+        errors = [error(run(args.binary, [
+            "--variant", variant, "--library", library, *config,
+            "--operations", "query", "--metrics", "accuracy", "--comparator", comparator,
+            "--runs", "1", "--warmup-runs", "0", "--seed", str(seed)] + data),
+            metrics[variant]) for seed in range(1, args.seeds + 1)]
+        base = {k: v for k, v in params(config[1]).items() if k != "heap"}
+        means[(variant, tuple(sorted(base.items())))] = sum(errors) / len(errors)
+    with open(table) as f:
+        entries = json.load(f)
+    for entry in entries:
+        p = {k: float(v) for k, v in entry["sketch_config"]["params"].items() if k != "heap"}
+        mean = means.get((entry["sketch"], tuple(sorted(p.items()))))
+        if mean is not None:
+            entry["query_accuracy"][entry["accuracy_metric"]] = mean
+    with open(table, "w") as f:
+        json.dump(entries, f, indent=2)
 
 
 def main():
@@ -603,10 +645,23 @@ def main():
         cost_raw.close()
 
     if not rebuild:
-        with open(os.path.join(args.out, "saturation.csv"), "w", newline="") as f:
+        summary_path = os.path.join(args.out, "saturation.csv")
+        # --resume over a narrower grid keeps the other points' rows, as the
+        # curve files keep their curves.
+        kept_summary = []
+        # Accuracy phase only: a cost phase truncates saturation_cost.jsonl,
+        # so other points' cost columns would outlive their records.
+        if args.resume and args.phase == "accuracy" and os.path.exists(summary_path):
+            grid = {point_key(p[1], p[2], *p[6:]) for p in points}
+            with open(summary_path, newline="") as f:
+                kept_summary = [[r.get(c, "") for c in SUMMARY_COLUMNS]
+                                for r in csv.DictReader(f)
+                                if point_key(r["sketch"], r["config"], r["dist"], r["param"],
+                                             r["cardinality"]) not in grid]
+        with open(summary_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(SUMMARY_COLUMNS)
-            writer.writerows(rows)
+            writer.writerows(kept_summary + rows)
         print(f"Done. {os.path.join(args.out, 'saturation.csv')}", file=sys.stderr)
     if not cost:
         return 0

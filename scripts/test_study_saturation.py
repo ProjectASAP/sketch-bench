@@ -394,6 +394,23 @@ class CostPhaseTest(unittest.TestCase):
         self.assertIn(b"has no record", missing.stderr)
 
 
+class ResumeSummaryTest(unittest.TestCase):
+    def test_a_narrower_resume_keeps_the_other_points_summary_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = [sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                    "--phase", "accuracy", "--one-config", "--thetas", "1.0",
+                    "--cardinalities", "1000", "--n-max", "1e4", "--per-decade", "1",
+                    "--seeds", "1", "--no-cost-shape"]
+            subprocess.run(base + ["--families", "cardinality,frequency"], check=True,
+                           capture_output=True)
+            subprocess.run(base + ["--families", "cardinality", "--resume"], check=True,
+                           capture_output=True)
+            with open(os.path.join(d, "saturation.csv"), newline="") as f:
+                sketches = sorted(r["sketch"] for r in csv.DictReader(f))
+        self.assertEqual(sketches, ["cms-fastpath-vector2d", "countsketch-fastpath-vector2d",
+                                    "hll"])
+
+
 class CostShapeTest(unittest.TestCase):
     def test_the_grid_also_runs_the_optimizer_cost_shape(self):
         with tempfile.TemporaryDirectory() as d:
@@ -412,11 +429,29 @@ class CostShapeTest(unittest.TestCase):
 FAKE_COST_APPROXBENCH = textwrap.dedent("""\
     import json, os, sys
     a = sys.argv
+    value = lambda flag: a[a.index(flag) + 1] if flag in a else None
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(json.dumps(a[1:]) + "\\n")
     if a[1] == "atomic-costs":
+        # One row per logged accuracy pass, scoring 0.5 in its metric.
+        metrics = dict(m.split("=") for m in a[3:] if "=" in m and "/" not in m)
+        rows = []
+        for line in open(os.environ["FAKE_LOG"]):
+            c = json.loads(line)
+            if c[0] == "sketchbench" and "--report" in c and "accuracy" in c:
+                v = c[c.index("--variant") + 1]
+                cfg = c[c.index("--config") + 1] if "--config" in c else ""
+                params = {k: float(x) for k, x in (kv.split("=") for kv in cfg.split())}
+                rows.append({"sketch": v, "sketch_config": {"params": params},
+                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v]})
+        json.dump(rows, open(value("--output"), "w"))
         kept = int(os.environ["FAKE_KEPT"])
         sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
+    elif a[1] == "sketchbench" and "--report" not in a:
+        # A seed run: error = seed / 100 in every metric.
+        e = int(value("--seed")) / 100
+        print(json.dumps({"bench": {"accuracy": {m: e for m in (
+            "precision_at_k", "mean_rank_err", "mean_relative_value_error")}}}))
 """)
 
 
@@ -430,19 +465,23 @@ class OptimizerCostTest(unittest.TestCase):
         result = subprocess.run([
             sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
             "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+            "--seeds", "3",
         ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
         with open(log) as f:
             return result, [json.loads(line) for line in f]
 
     def test_one_cost_and_one_accuracy_pass_per_config_at_one_shape(self):
         with tempfile.TemporaryDirectory() as d:
-            # topk and quantile (kll, dd) one config each, plus 5 exact.
-            result, calls = self.run_phase(d, 8)
+            # topk one config at 4 heaps, quantile (kll, dd) one config
+            # each, plus 5 exact.
+            result, calls = self.run_phase(d, 11)
         self.assertEqual(result.returncode, 0, result.stderr)
-        bench = [c for c in calls if c[0] == "sketchbench"]
-        self.assertEqual(len(bench), 16)
+        bench = [c for c in calls if c[0] == "sketchbench" and "--report" in c]
+        self.assertEqual(len(bench), 22)
         value = lambda c, flag: c[c.index(flag) + 1]
-        topk, kll = bench[0], bench[2]
+        topk, kll = bench[0], bench[8]
+        self.assertEqual([value(c, "--config") for c in bench[0:8:2]],
+                         [f"rows=3 cols=256 heap={h}" for h in (32, 128, 512, 2048)])
         self.assertEqual((value(topk, "--zipf-s"), value(topk, "--cardinality"),
                           value(topk, "--size")), ("1.1", "10000", "1000000"))
         self.assertEqual(value(kll, "--pareto-alpha"), "2.0")
@@ -454,12 +493,34 @@ class OptimizerCostTest(unittest.TestCase):
         self.assertIn("kll-percall=mean_rank_err", reduce)
         self.assertIn("exact-sum=relative_error", reduce)
         self.assertNotIn("--merge-accuracy", reduce)
+        # Then 3 seed runs per sketch config at heap k: top-k, KLL, DD.
+        seeds = [c for c in calls if c[0] == "sketchbench" and "--report" not in c]
+        self.assertEqual(len(seeds), 9)
+        self.assertEqual({c[c.index("--seed") + 1] for c in seeds}, {"1", "2", "3"})
+        self.assertTrue(all("heap=32" in c[c.index("--config") + 1] for c in seeds
+                            if "topk" in c[c.index("--variant") + 1]))
+
+    def test_sketch_rows_take_the_seed_mean_accuracy(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, _ = self.run_phase(d, 11)
+            with open(os.path.join(d, "out", "rqe_atomic_costs.json")) as f:
+                rows = json.load(f)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Seeds 1..3 score 0.01, 0.02, 0.03: every sketch row (every heap)
+        # reads their mean; exact rows keep the accuracy pass's.
+        sketches = [r for r in rows if not r["sketch"].startswith("exact-")]
+        self.assertEqual(len(sketches), 6)
+        for row in sketches:
+            self.assertAlmostEqual(row["query_accuracy"][row["accuracy_metric"]], 0.02)
+        for row in rows:
+            if row["sketch"].startswith("exact-"):
+                self.assertEqual(row["query_accuracy"][row["accuracy_metric"]], 0.5)
 
     def test_a_skipped_row_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            result, _ = self.run_phase(d, 7)
+            result, _ = self.run_phase(d, 10)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"did not keep all 8 rows", result.stderr)
+        self.assertIn(b"did not keep all 11 rows", result.stderr)
 
 
 if __name__ == "__main__":

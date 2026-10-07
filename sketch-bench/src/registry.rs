@@ -143,8 +143,8 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY),
     },
     // -------- CMS + heap (frequency, and top-k) --------
-    // A separate algorithm from `cms`: `CmsHeapParams` has no `top_k` (it's a
-    // compile-time constant, see wrappers::cms_heap::sketchlib::CMS_HEAP_TOP_K),
+    // A separate algorithm from `cms`: `CmsHeapParams` adds the heap's
+    // capacity (`heap`; the answered k is wrappers::cms_heap::sketchlib::TOPK_K),
     // so it's a different knob set, and `CMSHeap` answers two different
     // questions (per-key frequency, and top-k), so it gets two rows per
     // backend instead of one. Only `Vector2D` x {FastPath, RegularPath}: no

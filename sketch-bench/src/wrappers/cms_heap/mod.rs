@@ -1,6 +1,6 @@
 //! `asap_sketchlib::CMSHeap` wrappers — a Count-Min sketch paired with a
-//! fixed-capacity top-k heap. A separate algorithm from `cms`: it takes a
-//! different knob set (no `top_k` in `--config`, see `sketchlib::CMS_HEAP_TOP_K`)
+//! top-k heap. A separate algorithm from `cms`: it takes a different knob set
+//! (`heap`, the heap's capacity; the answered `k` is `sketchlib::TOPK_K`)
 //! and answers two different questions (per-key frequency, and top-k), so it
 //! gets two registry rows per backend rather than one.
 
@@ -13,9 +13,8 @@ mod tests {
     use std::collections::HashMap;
     use std::rc::Rc;
 
-    /// `deny_unknown_fields` is what turns a stray `top_k` in `--config` into a
-    /// named error rather than silently ignoring it or building at the wrong
-    /// capacity — the guarantee the whole compile-time-`k` design rests on.
+    /// `deny_unknown_fields` turns a stray `top_k` in `--config` into a named
+    /// error: the answered `k` is `TOPK_K`, not a knob.
     #[test]
     fn top_k_is_not_a_config_field() {
         let bad = ParamSet {
@@ -37,6 +36,7 @@ mod tests {
         let params = ParamSet::of(&CmsHeapParams {
             rows: 5,
             cols: 4096,
+            heap: None,
         });
         let items = Rc::new(vec![1i64, 1, 1, 2, 2, 3]);
         let probes = Rc::new(vec![()]);
@@ -53,7 +53,11 @@ mod tests {
     #[test]
     fn degenerate_shapes_are_refused_by_name() {
         for (rows, cols) in [(0usize, 256usize), (3, 0), (0, 0)] {
-            let p = ParamSet::of(&CmsHeapParams { rows, cols });
+            let p = ParamSet::of(&CmsHeapParams {
+                rows,
+                cols,
+                heap: None,
+            });
             assert!(
                 build_cms_heap_lib_vector2d_fast(&p).is_err(),
                 "fastpath {rows}x{cols}"
@@ -66,14 +70,15 @@ mod tests {
     }
 
     /// Footprint is `rows * cols` counters at the real width plus a full heap
-    /// of `CMS_HEAP_TOP_K` `HHItem`s, as UnivMon counts its heaps (#146).
+    /// of `heap` `HHItem`s, as UnivMon counts its heaps (#146).
     #[test]
     fn footprint_is_counters_plus_heap() {
         let p = ParamSet::of(&CmsHeapParams {
             rows: 5,
             cols: 2048,
+            heap: Some(128),
         });
-        let heap = CMS_HEAP_TOP_K * std::mem::size_of::<asap_sketchlib::input::HHItem>();
+        let heap = 128 * std::mem::size_of::<asap_sketchlib::input::HHItem>();
         let fast = build_cms_heap_lib_vector2d_fast(&p).expect("5x2048 is a valid shape");
         assert_eq!(
             memory_cms_heap_lib_vector2d_fast(&fast),
@@ -84,5 +89,39 @@ mod tests {
             memory_cms_heap_lib_vector2d_regular(&regular),
             5 * 2048 * std::mem::size_of::<i32>() + heap
         );
+    }
+
+    /// A heap smaller than the `k` it answers can't answer, and is refused.
+    #[test]
+    fn a_heap_below_k_is_refused() {
+        let p = ParamSet::of(&CmsHeapParams {
+            rows: 3,
+            cols: 256,
+            heap: Some(TOPK_K - 1),
+        });
+        let err = build_cms_heap_lib_vector2d_fast(&p).err().expect("refused");
+        assert!(err.to_string().contains("heap="), "{err}");
+    }
+
+    /// A heap larger than `k` still answers its heaviest `TOPK_K`.
+    #[test]
+    fn a_larger_heap_answers_its_heaviest_k() {
+        let params = ParamSet::of(&CmsHeapParams {
+            rows: 5,
+            cols: 4096,
+            heap: Some(4 * TOPK_K),
+        });
+        // Key i appears i times, for 2k keys: the heaviest k are k+1..=2k.
+        let keys = 2 * TOPK_K as i64;
+        let stream: Vec<i64> = (1..=keys)
+            .flat_map(|i| std::iter::repeat_n(i, i as usize))
+            .collect();
+        let mut passes =
+            query_cms_heap_lib_vector2d_fast_topk(&params, Rc::new(stream), Rc::new(vec![()]), 1)
+                .expect("builds");
+        let (answers, _) = passes.remove(0)();
+        let mut answered: Vec<i64> = answers[0].iter().map(|&(k, _)| k).collect();
+        answered.sort_unstable();
+        assert_eq!(answered, (TOPK_K as i64 + 1..=keys).collect::<Vec<_>>());
     }
 }

@@ -398,18 +398,40 @@ sketch_params!(
 pub struct CmsHeapParams {
     pub rows: usize,
     pub cols: usize,
+    /// The heap's capacity. Absent means `TOPK_K`, the `k` every top-k row
+    /// answers and is graded at (`wrappers::cms_heap::sketchlib`); a larger
+    /// heap still answers its heaviest `TOPK_K`. Fewer than `TOPK_K` is
+    /// refused at build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heap: Option<usize>,
 }
-// No `top_k` field: the heap's capacity and the TopK comparator's grading `k`
-// are the same compile-time constant (`CMS_HEAP_TOP_K` in
-// `wrappers::cms_heap::sketchlib`), so there is nothing here for them to
-// silently disagree about. `deny_unknown_fields` turns a `--config` that
-// tries to set `top_k` anyway into a named error rather than ignoring it.
 sketch_params!(
     CmsHeapParams,
     "cms-heap",
     CmsHeapParams {
         rows: 3,
-        cols: 1024
+        cols: 1024,
+        heap: None
+    }
+);
+
+/// CountSketch + heap: CountSketch's knobs plus the heap's capacity, as
+/// [`CmsHeapParams`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CsHeapParams {
+    pub rows: usize,
+    pub cols: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heap: Option<usize>,
+}
+sketch_params!(
+    CsHeapParams,
+    "countsketch-heap",
+    CsHeapParams {
+        rows: 3,
+        cols: 1024,
+        heap: None
     }
 );
 
@@ -419,14 +441,19 @@ pub struct CountSketchParams {
     pub rows: usize,
     pub cols: usize,
 }
-sketch_params!(
-    CountSketchParams,
-    "countsketch",
-    CountSketchParams {
-        rows: 3,
-        cols: 1024
+impl SketchParams for CountSketchParams {
+    const ALGORITHM: &'static str = "countsketch";
+    /// Not `countsketch-heap-*`: those take [`CsHeapParams`].
+    fn owns(variant: &str) -> bool {
+        in_algorithm(variant, Self::ALGORITHM) && !in_algorithm(variant, "countsketch-heap")
     }
-);
+    fn canonical() -> Self {
+        CountSketchParams {
+            rows: 3,
+            cols: 1024,
+        }
+    }
+}
 
 // ---------- Hydra, one algorithm per cell type ----------
 // The cell type is on the algorithm axis because each cell answers a different
@@ -633,6 +660,8 @@ mod tests {
         check::<DdParams>();
         check::<CmsParams>();
         check::<CountSketchParams>();
+        check::<CmsHeapParams>();
+        check::<CsHeapParams>();
         check::<HydraCmsParams>();
         check::<HydraCsParams>();
         check::<HydraHllParams>();
@@ -656,6 +685,13 @@ mod tests {
 
         assert!(CountSketchParams::owns("countsketch-fastpath-vector2d"));
         assert!(!CountSketchParams::owns("cms"));
+        assert!(!CountSketchParams::owns(
+            "countsketch-heap-topk-fastpath-vector2d"
+        ));
+        assert!(CsHeapParams::owns(
+            "countsketch-heap-topk-fastpath-vector2d"
+        ));
+        assert!(!CsHeapParams::owns("countsketch-fastpath-vector2d"));
 
         assert!(HllParams::owns("hll"));
         assert!(HllParams::owns("hll-hip"));

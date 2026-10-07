@@ -11,14 +11,39 @@ use std::rc::Rc;
 use asap_sketchlib::input::HHItem;
 use asap_sketchlib::{heap_item_to_sketch_input, CMSHeap, FastPath, RegularPath, Vector2D};
 
-/// The heap's fixed capacity, and the `k` every TopK-capability row grades
-/// against. The two are the same constant on purpose (see #95's design-decision
-/// comment): a `CMSHeap` cannot answer a `k` bigger than its own capacity, so
-/// letting grading `k` and construction capacity diverge — whether by a
-/// `--config` field or a second constant — would let them silently disagree.
-/// Changing this means editing it and rebuilding, not a config sweep; the
-/// follow-up issue tracks loosening that.
-pub const CMS_HEAP_TOP_K: usize = 32;
+/// The `k` every TopK-capability row answers and is graded against, and the
+/// heap's capacity when `--config` sets no `heap`. A larger heap (`heap=`)
+/// keeps more candidates, so a merge of `m` heaps of `m · k` loses fewer of
+/// the true top `k`; the answer is still its heaviest `k`. A heap smaller
+/// than `k` couldn't answer, and is refused at build.
+pub const TOPK_K: usize = 32;
+
+/// The heap capacity `heap` asks for: `TOPK_K` when absent, at least
+/// `TOPK_K`.
+pub fn heap_capacity(name: &str, heap: Option<usize>) -> Result<usize, BuildError> {
+    let heap = heap.unwrap_or(TOPK_K);
+    if heap < TOPK_K {
+        return Err(BuildError(format!(
+            "{name}: heap={heap} is smaller than the k={TOPK_K} it answers"
+        )));
+    }
+    Ok(heap)
+}
+
+/// A heap's contents, heaviest first, cut to the `TOPK_K` a top-k query
+/// answers.
+pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>) -> Vec<&'a HHItem> {
+    let mut items: Vec<&HHItem> = items.collect();
+    let heaviest = |item: &&HHItem| std::cmp::Reverse(item.count);
+    // Select the heaviest k without sorting the rest: the query's cost is
+    // what's benchmarked.
+    if items.len() > TOPK_K {
+        items.select_nth_unstable_by_key(TOPK_K, heaviest);
+        items.truncate(TOPK_K);
+    }
+    items.sort_unstable_by_key(heaviest);
+    items
+}
 
 /// One key read off the heap, paired with its estimated count. `TopkGT<T>`
 /// scores a `Vec` of these against the exact top-k.
@@ -33,6 +58,7 @@ pub struct CmsHeapLibVector2dFast {
     inner: CMSHeap<Vector2D<i32>, FastPath>,
     rows: usize,
     cols: usize,
+    heap: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_fast(
@@ -41,18 +67,20 @@ pub fn build_cms_heap_lib_vector2d_fast(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D FastPath", "cols", p.cols)?;
+    let heap = heap_capacity("asap CMSHeap Vector2D FastPath", p.heap)?;
     Ok(CmsHeapLibVector2dFast {
-        inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, CMS_HEAP_TOP_K),
+        inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
+        heap,
     })
 }
 
-/// The counter matrix plus a full heap of `CMS_HEAP_TOP_K` `HHItem`s, counted
-/// the way UnivMon counts its heaps so the TopK rows compare like for like.
+/// The counter matrix plus a full heap of `heap` `HHItem`s, counted the way
+/// UnivMon counts its heaps so the TopK rows compare like for like.
 pub fn memory_cms_heap_lib_vector2d_fast(sketch: &CmsHeapLibVector2dFast) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + CMS_HEAP_TOP_K * std::mem::size_of::<HHItem>()
+        + sketch.heap * std::mem::size_of::<HHItem>()
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
@@ -60,6 +88,7 @@ pub struct CmsHeapLibVector2dRegular {
     inner: CMSHeap<Vector2D<i32>, RegularPath>,
     rows: usize,
     cols: usize,
+    heap: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_regular(
@@ -68,17 +97,19 @@ pub fn build_cms_heap_lib_vector2d_regular(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D RegularPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D RegularPath", "cols", p.cols)?;
+    let heap = heap_capacity("asap CMSHeap Vector2D RegularPath", p.heap)?;
     Ok(CmsHeapLibVector2dRegular {
-        inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, CMS_HEAP_TOP_K),
+        inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
+        heap,
     })
 }
 
 /// As [`memory_cms_heap_lib_vector2d_fast`].
 pub fn memory_cms_heap_lib_vector2d_regular(sketch: &CmsHeapLibVector2dRegular) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + CMS_HEAP_TOP_K * std::mem::size_of::<HHItem>()
+        + sketch.heap * std::mem::size_of::<HHItem>()
 }
 
 // ---------- insert / insert_step (FastPath) ----------
@@ -282,11 +313,8 @@ pub fn merge_query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = sketch
-                    .inner
-                    .heap()
-                    .heap()
-                    .iter()
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                    .into_iter()
                     .map(|item| {
                         (
                             T::from_data_input(&heap_item_to_sketch_input(&item.key)),
@@ -332,11 +360,8 @@ pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = sketch
-                    .inner
-                    .heap()
-                    .heap()
-                    .iter()
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                    .into_iter()
                     .map(|item| {
                         (
                             T::from_data_input(&heap_item_to_sketch_input(&item.key)),
@@ -357,7 +382,7 @@ pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
 //
 // Heavier than plain CMS's merge: after folding the counter matrices,
 // `CMSHeap::merge` re-estimates every heap candidate from both sides (up to
-// 2 * CMS_HEAP_TOP_K `estimate()` calls) to rebuild the merged heap. Not a
+// 2 * heap `estimate()` calls) to rebuild the merged heap. Not a
 // pure cell-fold the way plain CMS merge is — see the registry description.
 
 pub fn merge_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
