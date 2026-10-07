@@ -80,34 +80,19 @@ KLL_KS=(200 500)
 # comparator. Both write raw (non-`--flat`) records to the same file; `flatten`
 # below folds the two passes of one grid point back into one row.
 #
-# Accuracy first, cost second — order matters. `BenchReport::from_runs` sets
-# every square's own wall_time_ms/cpu_time_ms unconditionally, not just the
-# metric that was asked for, and accuracy always runs exactly 1 sample
-# (`aqpbm_core::runs_for`) regardless of `--runs`. `flatten_record`'s merge is
-# last-square-wins per field, so whichever pass is written second decides
-# query's wall_time_ms/cpu_time_ms. Cost must win that, since query_cpu_secs
-# pairs them against query's throughput samples (`atomic_costs.rs`) — pairing
-# them against accuracy's unrelated single-sample timing instead skips the row
-# ("query rate/elapsed/cpu_time sample counts disagree"). query.accuracy
-# itself is unaffected by the order: only the accuracy square ever sets it.
+# Cost first, accuracy second — order matters. `BenchReport::from_runs` sets
+# every square's own wall_time_ms/cpu_time_ms, not just the metric asked for,
+# and `flatten_record` keeps the first value of each shared field. Cost must
+# be first, since query_cpu_secs pairs those timings with query's throughput
+# samples (`atomic_costs.rs`); the accuracy pass's single-sample timing would
+# skip the row ("query rate/elapsed/cpu_time sample counts disagree").
+# Accuracy scores one run (`aqpbm_core::runs_for`), and warm-ups don't change
+# it, so that pass runs once with none.
 point() {
     local algorithm=$1 config=$2 comparator=$3
     echo "  $algorithm ($config)" >&2
-    "$BINARY" sketchbench \
-        --variant "$algorithm" \
-        --library lib \
-        --config "$config" \
-        --operations query \
-        --metrics accuracy \
-        --comparator "$comparator" \
-        --runs "$RUNS" \
-        --warmup-runs "$WARMUP" \
-        --dataset uniform \
-        --size "$SIZE" \
-        --cardinality "$CARDINALITY" \
-        --dtype i64 \
-        --seed "$SEED" \
-        --report "$RAW_JSONL"
+    local data=(--dataset uniform --size "$SIZE" --cardinality "$CARDINALITY"
+        --dtype i64 --seed "$SEED" --report "$RAW_JSONL")
     "$BINARY" sketchbench \
         --variant "$algorithm" \
         --library lib \
@@ -117,12 +102,17 @@ point() {
         --merge-shards "$MERGE_SHARDS" \
         --runs "$RUNS" \
         --warmup-runs "$WARMUP" \
-        --dataset uniform \
-        --size "$SIZE" \
-        --cardinality "$CARDINALITY" \
-        --dtype i64 \
-        --seed "$SEED" \
-        --report "$RAW_JSONL"
+        "${data[@]}"
+    "$BINARY" sketchbench \
+        --variant "$algorithm" \
+        --library lib \
+        --config "$config" \
+        --operations query \
+        --metrics accuracy \
+        --comparator "$comparator" \
+        --runs 1 \
+        --warmup-runs 0 \
+        "${data[@]}"
 }
 
 echo "==> cms-fastpath-vector2d (CMS_DEPTHS x CMS_WIDTHS)" >&2
@@ -147,11 +137,17 @@ echo "==> Flattening cost + accuracy passes into one row per grid point..." >&2
 
 echo "==> Reducing to atomic-cost table..." >&2
 # Each row names its accuracy: the metric the saturation study records for
-# the variant (scripts/study_saturation.py SKETCHES).
-"$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" \
+# the variant (scripts/study_saturation.py SKETCHES). A skipped row is a
+# failed measurement; fail rather than publish a short table.
+summary=$("$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" \
     --accuracy-metric cms-fastpath-vector2d=are_top100 \
     --accuracy-metric hll=relative_error \
-    --accuracy-metric kll-percall=mean_rank_err
+    --accuracy-metric kll-percall=mean_rank_err \
+    2>&1 | tee /dev/stderr | tail -n 1)
+if [[ "$summary" != *", 0 skipped" ]]; then
+    echo "ERROR: atomic-costs skipped rows; see the reasons above." >&2
+    exit 1
+fi
 
 echo "" >&2
 echo "Done. $TABLE_JSON" >&2

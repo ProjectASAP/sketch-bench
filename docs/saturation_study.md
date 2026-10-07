@@ -76,7 +76,11 @@ from `--phase optimizer-cost`: each configuration once, serially, at Zipf
 θ = 1.1 over 1e4 keys (Pareto `a` = 2 for quantiles) and 1e6 items, with 5
 runs after 3 warm-ups and one accuracy pass, reduced by `approxbench
 atomic-costs` to `rqe_atomic_costs.json` (#174). Put it under the curves'
-directory as `optimizer_cost/`, where `rqe-optimizer` reads it.
+directory as `optimizer_cost/`, where `rqe-optimizer` reads it. The accuracy
+grid also runs every configuration at that shape (unless `--no-cost-shape`),
+so each cost-table row is a point on a curve and the synthetic evaluation,
+which uses the same data, reads an exact curve rather than the worse
+neighbouring grid point.
 
 `--cost-rows 3` times only the rows=3 configs of CMS, CountSketch and
 CMS-heap top-k (all four cols); HLL, KLL and DDSketch are timed at every

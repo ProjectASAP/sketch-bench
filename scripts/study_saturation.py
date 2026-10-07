@@ -22,6 +22,8 @@ shape (COST_*, the synthetic evaluation's dataset) with a cost and an
 accuracy pass, plus the exact accumulators, and reduces them to
 rqe_atomic_costs.json, the table rqe-optimizer loads; every row names its
 accuracy_metric. It runs no curves and ignores the grid arguments.
+The grid also holds every config at the optimizer-cost shape (Zipf 1.1 over
+1e4 keys, Pareto a = 2) unless --no-cost-shape.
 --resume keeps the complete curves of an interrupted accuracy run;
 --cost-rows 3 times only the rows=3 Vector2D configs.
 
@@ -326,12 +328,16 @@ def optimizer_cost(args, families):
         [args.binary, "atomic-costs", grid, "--output", table]
         + [arg for variant, metric in sorted(metrics.items())
            for arg in ("--accuracy-metric", f"{variant}={metric}")],
-        check=True, capture_output=True, text=True)
+        capture_output=True, text=True)
     sys.stderr.write(reduce.stderr)
+    if reduce.returncode != 0:
+        sys.exit(f"atomic-costs failed (exit {reduce.returncode}); see above")
     # A skipped row is a failed measurement; a short table must not pass.
-    summary = reduce.stderr.strip().splitlines()[-1]
-    if not summary.endswith(f"{len(rows)} row(s), 0 skipped"):
-        sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary}")
+    lines = reduce.stderr.strip().splitlines()
+    summary = lines[-1] if lines else ""
+    expected = f"approxbench atomic-costs: {len(rows)} row(s), 0 skipped"
+    if summary != expected:
+        sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary!r}")
     print(f"Done. {table}", file=sys.stderr)
     return 0
 
@@ -348,6 +354,9 @@ def main():
     parser.add_argument("--thetas", default="0,0.5,0.8,1.0,1.2,1.5,2.0")
     parser.add_argument("--cardinalities", default="1000,100000,10000000")
     parser.add_argument("--alphas", default="1.1,1.5,2,3")
+    parser.add_argument("--cost-shape", action=argparse.BooleanOptionalAction, default=True,
+                        help="also run every config at --phase optimizer-cost's shape "
+                             "(COST_*), so the cost table is a point on a curve")
     parser.add_argument("--n-min", type=float, default=1e3)
     parser.add_argument("--n-max", type=float, default=1e8)
     parser.add_argument("--per-decade", type=int, default=4)
@@ -397,7 +406,8 @@ def main():
             continue
         for config in configs[:1] if args.one_config else configs:
             if family == "quantile":
-                for alpha in alphas:
+                extra = args.cost_shape and COST_PARETO_ALPHA not in alphas
+                for alpha in alphas + [COST_PARETO_ALPHA] * extra:
                     # --cardinality is required by the CLI but ignored for pareto.
                     dataset = ["--dataset", "pareto", "--pareto-alpha", str(alpha),
                                "--pareto-scale", "1000", "--cardinality", "1",
@@ -405,12 +415,15 @@ def main():
                     points.append((family, variant, config, comparator, metric,
                                    dataset, "pareto", alpha, ""))
                 continue
-            for theta in thetas:
-                for k in cardinalities:
-                    dataset = ["--dataset", "zipf", "--zipf-s", str(theta),
-                               "--cardinality", str(k), "--dtype", "i64"]
-                    points.append((family, variant, config, comparator, metric,
-                                   dataset, "zipf", theta, k))
+            # Plus the cost table's shape, so its rows are points on a curve.
+            shapes = [(t, k) for t in thetas for k in cardinalities]
+            if args.cost_shape and (COST_THETA, COST_KEYS) not in shapes:
+                shapes.append((COST_THETA, COST_KEYS))
+            for theta, k in shapes:
+                dataset = ["--dataset", "zipf", "--zipf-s", str(theta),
+                           "--cardinality", str(k), "--dtype", "i64"]
+                points.append((family, variant, config, comparator, metric,
+                               dataset, "zipf", theta, k))
     if args.points_from:
         with open(args.points_from, newline="") as f:
             wanted = {point_key(r["sketch"], r["config"], r["dist"], r["param"],

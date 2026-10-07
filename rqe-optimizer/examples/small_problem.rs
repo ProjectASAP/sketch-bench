@@ -86,7 +86,8 @@ fn load_cost_table() -> AtomicCostTable {
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "couldn't read {} ({e}) -- run \
-             `scripts/study_saturation.py --phase optimizer-cost` first to generate it",
+             `scripts/study_saturation.py --phase optimizer-cost --out DIR/optimizer_cost` \
+             first to generate it",
             path.display()
         )
     });
