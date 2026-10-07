@@ -16,6 +16,7 @@ fn bad(msg: String) -> DataGenError {
 /// `1..=population_size`.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ZipfParameter {
     pub skewness: f64,
     pub population_size: u64,
@@ -25,6 +26,7 @@ pub struct ZipfParameter {
 /// Flat over `[lower_bound, upper_bound)`.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UniformParameter {
     pub lower_bound: f64,
     pub upper_bound: f64,
@@ -34,6 +36,7 @@ pub struct UniformParameter {
 /// Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NormalParameter {
     pub mean: f64,
     pub standard_deviation: f64,
@@ -44,6 +47,7 @@ pub struct NormalParameter {
 /// Unbounded above, so like Normal it has no domain.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParetoParameter {
     pub alpha: f64,
     pub scale: f64,
