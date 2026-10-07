@@ -384,13 +384,17 @@ pub fn table_accuracy(_raqe: &Raqe, deployment: &Deployment) -> Option<f64> {
     Some(row_accuracy(&deployment.config))
 }
 
-/// `config`'s score in its family's [`accuracy_key`]. Panics when the row
-/// lacks it: the family table names the metric, so its absence means the
-/// cost export is broken. [`saturation::SaturationCurves::check_cost_table`]
-/// also refuses a row whose `accuracy_metric` is another one.
+/// `config`'s accuracy: its `query_accuracy[accuracy_metric]`. Panics when
+/// `accuracy_metric` isn't its family's [`accuracy_key`] or the score is
+/// missing: either means the cost export is broken.
 pub fn row_accuracy(config: &AtomicCostEntry) -> f64 {
     let (metric, _) = accuracy_key(&config.sketch);
-    *config.query_accuracy.get(metric).unwrap_or_else(|| {
+    assert_eq!(
+        config.accuracy_metric, metric,
+        "{} {}: the row's accuracy_metric isn't its family's; the cost export is broken",
+        config.sketch, config.sketch_config
+    );
+    config.accuracy().unwrap_or_else(|| {
         panic!(
             "{} {} has no {metric}; the cost export is broken",
             config.sketch, config.sketch_config
@@ -476,6 +480,11 @@ pub(crate) mod test_support {
         .into_iter()
         .chain([("precision_at_k".to_string(), 1.0)])
         .collect()
+    }
+
+    /// The accuracy metric a row of `sketch` names: its family's.
+    pub fn metric_of(sketch: &str) -> String {
+        accuracy_key(sketch).0.to_string()
     }
 
     /// Where a fixture row was "measured": the cost table's canonical point.
@@ -572,6 +581,7 @@ mod tests {
         let row = |sketch: &str, metric: &str, value: f64| AtomicCostEntry {
             sketch: sketch.into(),
             query_accuracy: BTreeMap::from([(metric.to_string(), value)]),
+            accuracy_metric: metric.to_string(),
             ..deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config
         };
         let ok = |c: AtomicCostEntry| r.meets_sla(&c.sketch, Some(row_accuracy(&c)));
@@ -589,6 +599,21 @@ mod tests {
         let config = AtomicCostEntry {
             sketch: "dd".into(),
             query_accuracy: BTreeMap::from([("mean_rank_err".to_string(), 0.0)]),
+            accuracy_metric: "mean_relative_value_error".into(),
+            ..deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config
+        };
+        row_accuracy(&config);
+    }
+
+    /// The row's declared metric is the one read, and it must be the
+    /// family's: a row naming another is a broken export, not a guess.
+    #[test]
+    #[should_panic(expected = "the row's accuracy_metric isn't its family's")]
+    fn a_row_naming_another_metric_panics() {
+        let config = AtomicCostEntry {
+            sketch: "kll-percall".into(),
+            query_accuracy: BTreeMap::from([("max_rank_err".to_string(), 0.0)]),
+            accuracy_metric: "max_rank_err".into(),
             ..deployment(0.0, 0.0, 0.0, 0.0, 60_000, 60_000).config
         };
         row_accuracy(&config);

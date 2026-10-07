@@ -371,7 +371,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{facts, measured_at, perfect_accuracy, METRIC};
+    use crate::test_support::{facts, measured_at, metric_of, perfect_accuracy, METRIC};
     use crate::{table_accuracy, LabelSet};
     use std::collections::BTreeMap;
     fn raqe(id: &str, lookback: Millis, interval: Millis) -> Raqe {
@@ -459,6 +459,7 @@ mod tests {
         };
         let named = |sketch: &str| AtomicCostEntry {
             sketch: sketch.into(),
+            accuracy_metric: metric_of(sketch),
             ..cost()
         };
         let candidates = build_all_candidates(
@@ -477,6 +478,7 @@ mod tests {
         let r = raqe("r", 60_000, 60_000);
         let named = |sketch: &str| AtomicCostEntry {
             sketch: sketch.into(),
+            accuracy_metric: metric_of(sketch),
             ..cost()
         };
         let costs = [

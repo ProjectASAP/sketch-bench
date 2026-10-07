@@ -544,7 +544,7 @@ mod tests {
                 merge_cpu_secs: 1.0,
                 query_cpu_secs: 1.0,
                 query_accuracy: BTreeMap::from([("precision_at_k".into(), 1.0)]),
-                accuracy_metric: "precision_at_k".into(),
+                accuracy_metric: crate::test_support::metric_of(sketch),
                 measured_at: crate::test_support::measured_at(),
             },
             window_ms,
@@ -678,7 +678,10 @@ mod tests {
             accuracy_metric: "relative_error".into(),
             ..measured_row(1024, 10_000, 0.0)
         };
-        assert_eq!(check(std::slice::from_ref(&exact)), CostTableCheck::default());
+        assert_eq!(
+            check(std::slice::from_ref(&exact)),
+            CostTableCheck::default()
+        );
         let misnamed = AtomicCostEntry {
             accuracy_metric: "relative_error_mean".into(),
             ..exact
