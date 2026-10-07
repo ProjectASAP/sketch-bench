@@ -422,7 +422,9 @@ class CostShapeTest(unittest.TestCase):
             ], check=True, capture_output=True)
             with open(os.path.join(d, "saturation_curve.csv"), newline="") as f:
                 shapes = {(r["param"], r["cardinality"]) for r in csv.DictReader(f)}
-        self.assertEqual(shapes, {("1.0", "1000"), ("1.1", "10000")})
+        # A full row and column: θ = 1.1 at every K, K = 1e4 at every θ.
+        self.assertEqual(shapes, {("1.0", "1000"), ("1.0", "10000"),
+                                  ("1.1", "1000"), ("1.1", "10000")})
 
 
 # Logs every call; atomic-costs reports `--rows` rows kept, 0 skipped.

@@ -572,14 +572,9 @@ impl SaturationCurves {
         check
     }
 
-    /// Every grid point of `config` bracketing `shape` (Q8 of #156): the
-    /// shape parameter (θ, or the Pareto `a`) bracketed within each K, and K
-    /// bracketed among the K values that can bracket the parameter. The grid
-    /// needn't be a full cross (the cost table's shape adds one (θ, K)
-    /// point), so a θ measured at one K only isn't asked for at another; the
-    /// bracket falls back to the neighbouring Ks that have it, which is
-    /// conservative. Points with equal shapes all count. `None` when
-    /// `config` isn't in the grid or `shape` lies outside it.
+    /// Every grid point of `config` bracketing `shape` (Q8 of #156), or
+    /// `None` when `config` isn't in the grid, `shape` lies outside it, or a
+    /// bracketing point is missing.
     fn bracketing_points(
         &self,
         config: &AtomicCostEntry,
@@ -592,40 +587,31 @@ impl SaturationCurves {
             .iter()
             .filter(|point| point.params == params)
             .collect();
+        if points.is_empty() {
+            return None;
+        }
         let quantile = points.iter().all(|p| p.distinct_keys().is_none());
-        let target = if quantile {
-            shape.tail_index
+        let shape_params = if quantile {
+            bracket(points.iter().map(|p| p.shape_param()), shape.tail_index)?
         } else {
-            shape.zipf_s
+            bracket(points.iter().map(|p| p.shape_param()), shape.zipf_s)?
         };
-        // Per K (none for quantiles): the points bracketing the parameter.
-        let mut by_keys: BTreeMap<Option<u64>, Vec<&GridPoint>> = BTreeMap::new();
-        for point in &points {
-            by_keys
-                .entry(point.distinct_keys().map(f64::to_bits))
-                .or_default()
-                .push(point);
-        }
-        let mut bracketed: BTreeMap<Option<u64>, Vec<&GridPoint>> = BTreeMap::new();
-        for (keys, at) in by_keys {
-            if let Some(values) = bracket(at.iter().map(|p| p.shape_param()), target) {
-                let at: Vec<&GridPoint> = at
-                    .into_iter()
-                    .filter(|p| values.contains(&p.shape_param()))
-                    .collect();
-                bracketed.insert(keys, at);
-            }
-        }
-        if quantile {
-            return bracketed.remove(&None);
-        }
-        let measured = bracketed.keys().filter_map(|k| k.map(f64::from_bits));
-        let keys = bracket(measured, shape.distinct_keys)?;
-        Some(
-            keys.into_iter()
-                .flat_map(|k| bracketed.remove(&Some(k.to_bits())).unwrap_or_default())
-                .collect(),
-        )
+        let keys = if quantile {
+            vec![None]
+        } else {
+            let keys = points.iter().filter_map(|p| p.distinct_keys());
+            bracket(keys, shape.distinct_keys)?
+                .into_iter()
+                .map(Some)
+                .collect()
+        };
+        let bracketing: Vec<&GridPoint> = points
+            .into_iter()
+            .filter(|p| {
+                shape_params.contains(&p.shape_param()) && keys.contains(&p.distinct_keys())
+            })
+            .collect();
+        (bracketing.len() == shape_params.len() * keys.len()).then_some(bracketing)
     }
 }
 
@@ -827,31 +813,24 @@ mod tests {
         );
     }
 
-    /// The cost table's shape adds one (θ = 1.1, K = 1e4) point to a grid
-    /// of θ ∈ {1.0, 1.2}: θ = 1.1 at K = 1e3 still brackets 1.0 and 1.2, a
-    /// θ = 1.0 at K between 1e3 and 1e5 skips the K that has θ = 1.1 only,
-    /// and θ = 1.1 at K = 1e4 reads the extra point itself.
+    /// A hole in the grid (a bracketing point the study didn't measure)
+    /// leaves the shape unknown rather than bridging to farther points:
+    /// accuracy needn't be monotone in K.
     #[test]
-    fn a_sparse_extra_point_brackets_only_where_measured() {
+    fn a_hole_in_the_grid_has_no_accuracy() {
         let mut curves = curves();
-        let mut extra = curves.points_by_sketch[TOPK][1].clone();
-        extra.shape = MeasuredShape::Zipf {
-            skew: 1.1,
-            keys: 1e4,
-        };
-        extra.curve = vec![(1e3, 0.5, 0.0), (1e4, 0.5, 0.0), (1e5, 0.5, 0.0)];
-        extra.merged = BTreeMap::new();
-        curves.points_by_sketch.get_mut(TOPK).unwrap().push(extra);
+        // Drop θ = 1.2, K = 1e3.
+        curves.points_by_sketch.get_mut(TOPK).unwrap().remove(1);
         let r = topk_raqe(1_000_000);
         let d = deployment(TOPK, 1_000_000);
-        let at = |theta, keys| curves.accuracy(&r, &d, &workload(10, shape(theta, keys)));
-        // Same as without the extra point: θ = 1.0 at 1e4 items is worse.
-        assert_eq!(at(1.1, 1e3), Some(0.95 - 0.05));
-        // K = 5e3 brackets 1e3 and 1e5, not the 1e4 that has θ = 1.1 only;
-        // θ = 1.0 at K = 1e5 never saturates, but reads 0.85 at 1e4.
-        assert_eq!(at(1.0, 5e3), Some(0.95 - 0.1));
-        // The extra point itself.
-        assert_eq!(at(1.1, 1e4), Some(0.5));
+        assert_eq!(
+            curves.accuracy(&r, &d, &workload(10, shape(1.1, 1e3))),
+            None
+        );
+        // θ = 1.0 at K = 1e3 is still measured.
+        assert!(curves
+            .accuracy(&r, &d, &workload(10, shape(1.0, 1e3)))
+            .is_some());
     }
 
     #[test]
