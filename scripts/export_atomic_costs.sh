@@ -146,7 +146,12 @@ echo "==> Flattening cost + accuracy passes into one row per grid point..." >&2
 "$BINARY" flatten "$RAW_JSONL" --output "$GRID_JSONL"
 
 echo "==> Reducing to atomic-cost table..." >&2
-"$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON"
+# Each row names its accuracy: the metric the saturation study records for
+# the variant (scripts/study_saturation.py SKETCHES).
+"$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" \
+    --accuracy-metric cms-fastpath-vector2d=are_top100 \
+    --accuracy-metric hll=relative_error \
+    --accuracy-metric kll-percall=mean_rank_err
 
 echo "" >&2
 echo "Done. $TABLE_JSON" >&2

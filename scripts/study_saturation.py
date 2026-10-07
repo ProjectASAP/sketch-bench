@@ -11,12 +11,17 @@ baseline at every checkpoint N to find the crossover N* (see `n_star`).
 Frequency, top-k and cardinality sketches run on Zipf(theta) over K keys;
 quantile sketches run on Pareto(alpha, scale 1000) floored to i64 (the exact
 quantile baseline is i64 only), which is unbounded, so K is blank.
-`BENCH_WARMUP_SECS` defaults to 0 here: the cost numbers are indicative, and
-scripts/export_rqe_optimizer_costs.sh stays the source of optimizer costs.
+`BENCH_WARMUP_SECS` defaults to 0 here: the per-point cost numbers are
+indicative. The optimizer's costs come from --phase optimizer-cost (#174).
 
 --phase accuracy runs only the (parallel) accuracy runs; --phase cost reads
 saturation_curve.csv from --out and runs only the serial cost runs, so CPU
 can be timed later on a quiet machine. Both take the same grid arguments.
+--phase optimizer-cost measures each (sketch, config) once, serially, at one
+shape (COST_*, the synthetic evaluation's dataset) with a cost and an
+accuracy pass, plus the exact accumulators, and reduces them to
+rqe_atomic_costs.json, the table rqe-optimizer loads; every row names its
+accuracy_metric. It runs no curves and ignores the grid arguments.
 --resume keeps the complete curves of an interrupted accuracy run;
 --cost-rows 3 times only the rows=3 Vector2D configs.
 
@@ -32,6 +37,7 @@ Writes, under --out:
   saturation_merge_curve.csv                         with --merge-shards-list:
       seed-mean error per N of the sketch merged from m contiguous shards
       (m=1 is the plain single-sketch query)
+  rqe_atomic_costs.json (+ _raw, _grid .jsonl)       --phase optimizer-cost only
 """
 
 import argparse
@@ -45,8 +51,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 FREQ_CONFIGS = [f"rows={r} cols={c}" for r in (3, 5) for c in (256, 1024, 4096, 16384)]
 
-# (family, variant, configs, comparator, error metric). Variants follow
-# scripts/export_rqe_optimizer_costs.sh; configs step 4x in the size knob
+# (family, variant, configs, comparator, error metric). The error metric is
+# also the cost table's accuracy_metric; configs step 4x in the size knob
 # (asap HLL is compiled at lg_k 12, 14, 16 only, so it has no lg_k 10).
 SKETCHES = [
     ("frequency", "cms-fastpath-vector2d", FREQ_CONFIGS, "frequency", "are_top100"),
@@ -70,6 +76,30 @@ EXACT = {
 CROSSOVER_FACTORS = (10, 100)
 
 MERGE_SHARDS = 16
+
+# --phase optimizer-cost: the one data shape every sketch's cost is measured
+# at, the synthetic evaluation's dataset (ProjectASAP/ASAPQuery#777):
+# Zipf(1.1) over 1e4 keys, quantiles on Pareto(a = 2, scale 1000), 1e6
+# items. Cost is taken as independent of the shape (#174).
+COST_THETA = 1.1
+COST_KEYS = 10_000
+COST_PARETO_ALPHA = 2.0
+COST_N = 1_000_000
+COST_RUNS, COST_WARMUP = 5, 3
+COST_SEED = 42
+COST_TABLE = "rqe_atomic_costs.json"
+
+# Exact accumulators the optimizer plans, on grouped records (variant,
+# comparator, datagen spec). Their error is 0 by construction; the accuracy
+# pass checks it. They report the worst group's relative_error.
+EXACT_COST_ROWS = [
+    ("exact-sum", "sum-or-count", "configs/datagen/hydra_columns.yaml"),
+    ("exact-min", "min", "configs/datagen/hydra_columns.yaml"),
+    ("exact-max", "max", "configs/datagen/hydra_columns.yaml"),
+    ("exact-increase", "rate-or-increase", "configs/datagen/counter_columns.yaml"),
+    ("exact-delta-set", "key-set", "configs/datagen/hydra_columns.yaml"),
+]
+EXACT_METRIC = "relative_error"
 
 SUMMARY_COLUMNS = [
     "family", "sketch", "config", "dist", "param", "cardinality", "n_sat",
@@ -240,6 +270,72 @@ def cpu_secs(record, op):
     return (cpu["user_ms"]["mean"] + cpu["sys_ms"]["mean"]) / 1000.0
 
 
+def cost_dataset(family):
+    """The approxbench data arguments of --phase optimizer-cost's shape."""
+    if family == "quantile":
+        return ["--dataset", "pareto", "--pareto-alpha", str(COST_PARETO_ALPHA),
+                "--pareto-scale", "1000", "--cardinality", "1", "--dtype", "i64",
+                "--size", str(COST_N)]
+    return ["--dataset", "zipf", "--zipf-s", str(COST_THETA), "--cardinality",
+            str(COST_KEYS), "--dtype", "i64", "--size", str(COST_N)]
+
+
+def optimizer_cost(args, families):
+    """The optimizer's cost table: one serial cost pass and one accuracy pass
+    per (sketch, config) at the COST_* shape, plus the exact accumulators,
+    reduced by `approxbench atomic-costs` to --out/COST_TABLE."""
+    os.makedirs(args.out, exist_ok=True)
+    raw = os.path.join(args.out, "rqe_atomic_costs_raw.jsonl")
+    grid = os.path.join(args.out, "rqe_atomic_costs_grid.jsonl")
+    table = os.path.join(args.out, COST_TABLE)
+    for path in (raw, grid, table):
+        if os.path.exists(path):
+            sys.exit(f"{path} exists; pick a new --out")
+
+    rows, metrics = [], {}
+    for family, variant, configs, comparator, metric in SKETCHES:
+        if family not in families:
+            continue
+        metrics[variant] = metric
+        for config in configs[:1] if args.one_config else configs:
+            rows.append((variant, "lib", ["--config", config], comparator,
+                         cost_dataset(family)))
+    for variant, comparator, spec in EXACT_COST_ROWS:
+        metrics[variant] = EXACT_METRIC
+        rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
+
+    def sketchbench(variant, library, config, data, passes):
+        subprocess.run(
+            [args.binary, "sketchbench", "--variant", variant, "--library", library]
+            + config + passes + data + ["--seed", str(COST_SEED), "--report", raw],
+            check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+    for variant, library, config, comparator, data in rows:
+        print(f"  {variant} {' '.join(config[1:])}", file=sys.stderr)
+        # Cost first: flatten keeps the first pass's query timings.
+        sketchbench(variant, library, config, data, [
+            "--operations", "insert,query,merge", "--metrics", "throughput,cpu,memory",
+            "--merge-shards", str(MERGE_SHARDS), "--runs", str(COST_RUNS),
+            "--warmup-runs", str(COST_WARMUP)])
+        sketchbench(variant, library, config, data, [
+            "--operations", "query", "--metrics", "accuracy", "--comparator", comparator,
+            "--runs", "1", "--warmup-runs", "0"])
+
+    subprocess.run([args.binary, "flatten", raw, "--output", grid], check=True)
+    reduce = subprocess.run(
+        [args.binary, "atomic-costs", grid, "--output", table]
+        + [arg for variant, metric in sorted(metrics.items())
+           for arg in ("--accuracy-metric", f"{variant}={metric}")],
+        check=True, capture_output=True, text=True)
+    sys.stderr.write(reduce.stderr)
+    # A skipped row is a failed measurement; a short table must not pass.
+    summary = reduce.stderr.strip().splitlines()[-1]
+    if not summary.endswith(f"{len(rows)} row(s), 0 skipped"):
+        sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary}")
+    print(f"Done. {table}", file=sys.stderr)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -260,10 +356,13 @@ def main():
     parser.add_argument("--plateau-tail", type=int, default=3)
     parser.add_argument("--jobs", type=int, default=1,
                         help="parallel accuracy runs (cost runs are always serial)")
-    parser.add_argument("--phase", choices=["accuracy", "cost", "crossover", "all"],
+    parser.add_argument("--phase",
+                        choices=["accuracy", "cost", "crossover", "all", "optimizer-cost"],
                         default="all",
                         help="cost reads saturation_curve.csv from --out; crossover "
-                             "recomputes crossover.csv from the cost phase's JSONL in --out")
+                             "recomputes crossover.csv from the cost phase's JSONL in --out; "
+                             "optimizer-cost writes the optimizer's cost table to --out "
+                             "(the grid's configs at one shape, no curves)")
     parser.add_argument("--points-from",
                         help="CSV with sketch,config,dist,param,cardinality columns "
                              "(e.g. a filtered saturation.csv): run only those points")
@@ -285,6 +384,8 @@ def main():
     ns = checkpoints(args.n_min, args.n_max, args.per_decade)
     seeds = list(range(1, args.seeds + 1))
     shard_list = [int(m) for m in args.merge_shards_list.split(",") if m]
+    if args.phase == "optimizer-cost":
+        return optimizer_cost(args, families)
     os.environ.setdefault("BENCH_WARMUP_SECS", "0")
     os.makedirs(args.out, exist_ok=True)
 
@@ -446,7 +547,7 @@ def main():
             merge_file.close()
 
     # Cost at the final N, one serial run per point with the merge setup of
-    # export_rqe_optimizer_costs.sh. --phase accuracy leaves these blank.
+    # --phase optimizer-cost. --phase accuracy leaves these blank.
     rows, records = [], []
     cost = args.phase != "accuracy"
     rebuild = args.phase == "crossover"

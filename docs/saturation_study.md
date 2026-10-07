@@ -71,8 +71,12 @@ At the final N of each point one extra run
 (`--operations insert,query,merge --metrics throughput,cpu,memory
 --merge-shards 16 --runs 3 --warmup-runs 1 --flat`) records insert, merge and
 query CPU seconds (user + sys) and `memory_bytes`. `BENCH_WARMUP_SECS`
-defaults to 0, so these costs are indicative;
-`scripts/export_rqe_optimizer_costs.sh` remains the source of optimizer costs.
+defaults to 0, so these costs are indicative. The optimizer's costs come
+from `--phase optimizer-cost`: each configuration once, serially, at Zipf
+θ = 1.1 over 1e4 keys (Pareto `a` = 2 for quantiles) and 1e6 items, with 5
+runs after 3 warm-ups and one accuracy pass, reduced by `approxbench
+atomic-costs` to `rqe_atomic_costs.json` (#174). Put it under the curves'
+directory as `optimizer_cost/`, where `rqe-optimizer` reads it.
 
 `--cost-rows 3` times only the rows=3 configs of CMS, CountSketch and
 CMS-heap top-k (all four cols); HLL, KLL and DDSketch are timed at every

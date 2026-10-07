@@ -394,5 +394,59 @@ class CostPhaseTest(unittest.TestCase):
         self.assertIn(b"has no record", missing.stderr)
 
 
+# Logs every call; atomic-costs reports `--rows` rows kept, 0 skipped.
+FAKE_COST_APPROXBENCH = textwrap.dedent("""\
+    import json, os, sys
+    a = sys.argv
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(a[1:]) + "\\n")
+    if a[1] == "atomic-costs":
+        kept = int(os.environ["FAKE_KEPT"])
+        sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
+""")
+
+
+class OptimizerCostTest(unittest.TestCase):
+    def run_phase(self, d, kept):
+        binary = os.path.join(d, "approxbench")
+        with open(binary, "w") as f:
+            f.write("#!" + sys.executable + "\n" + FAKE_COST_APPROXBENCH)
+        os.chmod(binary, 0o755)
+        log = os.path.join(d, "log.jsonl")
+        result = subprocess.run([
+            sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
+            "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+        ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
+        with open(log) as f:
+            return result, [json.loads(line) for line in f]
+
+    def test_one_cost_and_one_accuracy_pass_per_config_at_one_shape(self):
+        with tempfile.TemporaryDirectory() as d:
+            # topk and quantile (kll, dd) one config each, plus 5 exact.
+            result, calls = self.run_phase(d, 8)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bench = [c for c in calls if c[0] == "sketchbench"]
+        self.assertEqual(len(bench), 16)
+        value = lambda c, flag: c[c.index(flag) + 1]
+        topk, kll = bench[0], bench[2]
+        self.assertEqual((value(topk, "--zipf-s"), value(topk, "--cardinality"),
+                          value(topk, "--size")), ("1.1", "10000", "1000000"))
+        self.assertEqual(value(kll, "--pareto-alpha"), "2.0")
+        self.assertEqual((value(topk, "--runs"), value(topk, "--warmup-runs")), ("5", "3"))
+        self.assertEqual(value(bench[1], "--metrics"), "accuracy")
+        self.assertEqual(value(bench[-1], "--library"), "exact")
+        [reduce] = [c for c in calls if c[0] == "atomic-costs"]
+        self.assertIn("cms-heap-topk-fastpath-vector2d=precision_at_k", reduce)
+        self.assertIn("kll-percall=mean_rank_err", reduce)
+        self.assertIn("exact-sum=relative_error", reduce)
+        self.assertNotIn("--merge-accuracy", reduce)
+
+    def test_a_skipped_row_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, _ = self.run_phase(d, 7)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"did not keep all 8 rows", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
