@@ -13,7 +13,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from export_autosketch_eval_table import boom_query, main  # noqa: E402
+from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
+from export_autosketch_eval_table import (  # noqa: E402
+    SYNTHETIC_DEFAULT, SYNTHETIC_GRID, boom_query, main, queries_per_instance, shared_queries,
+    synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
 SUMMARY_HEADER = [
@@ -87,22 +90,98 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(kll["asap_error_by_m"]["16"], kll["autosketch_error"])
         self.assertIn("single-sketch curve optimistic", kll["asap_flag_by_m"]["16"])
 
-    def test_saturated_compares_max_N_with_n_sat(self):
-        configs, _ = self.export()
-        self.assertTrue(configs["freq"]["saturated"])
-        self.assertFalse(configs["p99"]["saturated"])
-
-    def test_autosketch_reads_the_curve_even_when_unsaturated(self):
-        configs, _ = self.export()
-        # max_N 5000 lies between 1000 (0.2) and 10000 (0.1), log-linear: 0.130.
-        self.assertAlmostEqual(configs["p99"]["autosketch_error"], 0.2 - 0.1 * 0.69897, 4)
-
-    def test_rqe_carries_window_and_label_set(self):
+    def test_a_key_query_reads_every_key(self):
         _, rqes = self.export()
-        r = rqes["freq"]
-        self.assertEqual((r["lookback_secs"], r["interval_secs"]), (3600, 60))
-        self.assertEqual(r["label_set"]["groups"], 1)
-        self.assertAlmostEqual(r["label_set"]["arrival_rate_per_sec"], 5000 / 3600)
+        # A key query reads every key (worst_K); a value query issues one.
+        self.assertEqual(rqes["freq"]["queries_per_instance"], 1000)
+        self.assertEqual(rqes["p99"]["queries_per_instance"], 1)
+
+    def test_synthetic_mode_writes_one_table_per_grid_point_and_a_plan(self):
+        out = self.path("synthetic")
+        main(["--synthetic", "--revision", "test", "--out", out])
+        with open(os.path.join(out, "plan.tsv")) as f:
+            plan = [line.rstrip("\n").split("\t") for line in f]
+        self.assertEqual(len(plan), len(synthetic_plan()))
+        self.assertEqual(len(os.listdir(out)), len({row[0] for row in plan}) + 1)
+        default = "synthetic-templatesdashboard-shared1.json"
+        self.assertIn([default, "default", default[:-5] + "-tdefault.json"], plan)
+        with open(os.path.join(out, "synthetic-templatesall-shared1.json")) as f:
+            rqes = {r["query_id"] + "/" + r["range"]: r
+                    for r in json.load(f)["workloads"][0]["rqes"]}
+        # The tables hold the workload only: sums name the exact accumulator
+        # with no data shape; sketches carry the cost table's shape.
+        family = rqes["sum_by_job/1s"]["families"][0]
+        self.assertEqual((family["sketch"], family["target"], family["grid_param"]),
+                         ("exact-sum", 0.0, None))
+        self.assertNotIn("configs", family)
+        self.assertEqual(rqes["sum_by_job/1s"]["label_set"]["groups"], 10)
+        top = rqes["topk32_sum_by_label0_rate/15m"]["families"][0]
+        self.assertEqual((top["grid_param"], top["grid_K"]), (COST_THETA, COST_KEYS))
+        kll, dd = rqes["quantile_over_time_p0.5/15m"]["families"]
+        self.assertEqual((kll["sketch"], kll["grid_param"], kll["grid_K"]),
+                         ("kll-percall", COST_PARETO_ALPHA, None))
+        self.assertEqual(dd["sketch"], "dd")
+
+
+class SyntheticQueriesTest(unittest.TestCase):
+    def test_ten_templates_give_50_distinct_rqes(self):
+        qs = synthetic_queries(templates="all")
+        # 1 + 5 spatial; per window 1 + 1 + 5 + 1 + 1 + 1 + 1 temporal, and
+        # template 10's operands repeat template 5's.
+        self.assertEqual(len(qs), 6 + 11 * 4)
+        streams = {(q["stream"], q["capability"], q["groups"]) for q in qs}
+        self.assertEqual(streams, {
+            ("job/value", "sum", 10), ("job/increment", "rate", 10),
+            ("job/dist", "quantile", 10), ("series/value", "sum", 10_000),
+            ("series/increment", "rate", 10_000), ("series/dist", "quantile", 10_000),
+            ("label_0/value", "topk", 1), ("label_0/increment", "topk", 1)})
+
+    def test_items_per_instance_follow_the_data_model(self):
+        qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="all")}
+        # 1e4 series x 200 samples/s = 2e6 samples/s.
+        self.assertEqual(qs[("quantile_by_job_p0.5", "1s")]["max_N"], 2e5)
+        self.assertEqual(qs[("quantile_over_time_p0.5", "15m")]["max_N"], 200 * 900)
+        top = qs[("topk32_sum_by_label0_rate", "24h")]
+        self.assertEqual((top["K"], top["groups"], top["max_N"]), (10_000, 1, 2e6 * 86400))
+
+    def test_every_template_issues_one_query_per_instance(self):
+        self.assertEqual({queries_per_instance(q) for q in synthetic_queries(templates="all")},
+                         {1})
+
+
+class SyntheticPlanTest(unittest.TestCase):
+    def test_plan_is_the_default_and_each_dimension_alone(self):
+        plan = synthetic_plan()
+        self.assertEqual(plan[0], SYNTHETIC_DEFAULT)
+        for dim, values in SYNTHETIC_GRID.items():
+            for v in values:
+                self.assertIn({**SYNTHETIC_DEFAULT, dim: v}, plan)
+        self.assertEqual(len(plan), 1 + sum(len(v) - 1 for v in SYNTHETIC_GRID.values()))
+
+
+class DashboardAndSharedTest(unittest.TestCase):
+    def test_dashboard_has_21_distinct_rqes(self):
+        qs = synthetic_queries(templates="dashboard")
+        count = {}
+        for q in qs:
+            name = q["query_id"].split("_p")[0]
+            count[name] = count.get(name, 0) + 1
+        # D1 3 q x 4 windows, D2 3, D3 4, D4 2; D5 repeats D1.
+        self.assertEqual(count, {"quantile_over_time": 12, "quantile_by_job": 3,
+                                 "sum_by_job_rate": 4, "topk32_sum_by_label0_rate": 2})
+        self.assertTrue(all(q["step_s"] == 60 for q in qs if q["range"] != "1s"))
+
+    def test_shared_replicas_read_one_stream_and_dedupe(self):
+        point = {**SYNTHETIC_DEFAULT, "shared": 4}
+        qs = shared_queries(point)
+        self.assertEqual(qs, shared_queries(point))  # seeded
+        ids = [(q["query_id"], q["range"]) for q in qs]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(q["dataset"].endswith("shared=4") for q in qs))
+        self.assertTrue(all("@" in q["range"] for q in qs if q["range"] != "1s"))
+        sizes = [len(shared_queries({**SYNTHETIC_DEFAULT, "shared": r})) for r in (1, 8, 64)]
+        self.assertLess(sizes[0], sizes[1])
+        self.assertLess(sizes[2], 8 * sizes[1])
 
 
 class BoomTest(unittest.TestCase):
