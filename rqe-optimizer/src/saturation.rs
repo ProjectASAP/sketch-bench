@@ -839,6 +839,36 @@ mod tests {
         assert!(missing.unwrap_err().to_string().contains("no merge curve"));
     }
 
+    /// Past an unsaturated curve the study measured nothing: the answer
+    /// falls back to the algorithm's guarantee, and says so. A merged top-k
+    /// answer has no guarantee.
+    #[test]
+    fn an_unmeasured_point_falls_back_to_the_guarantee() {
+        // θ = 1.0, K = 1e5 never saturates; 10 series × 1e8 s = 1e9 items.
+        let facts = workload(10, shape(1.0, 1e5));
+        let r = topk_raqe(100_000_000);
+        let one_window = curves().accuracy_with_source(&r, &deployment(TOPK, 100_000_000), &facts);
+        let params = BTreeMap::from([("rows".to_string(), 3.0), ("cols".to_string(), 1024.0)]);
+        let zipf = MeasuredShape::Zipf {
+            skew: 1.0,
+            keys: 1e5,
+        };
+        let bound = theory::bound(TOPK, &params, zipf, 1).unwrap();
+        assert_eq!(one_window, Some((bound, AccuracySource::Theory)));
+        let merged = curves().accuracy_with_source(&r, &deployment(TOPK, 10_000_000), &facts);
+        assert_eq!(merged, None);
+        // Measured where the curve has it.
+        let measured = curves().accuracy_with_source(
+            &r,
+            &deployment(TOPK, 100_000_000),
+            &workload(10, shape(1.2, 1e3)),
+        );
+        assert_eq!(
+            measured.map(|(_, source)| source),
+            Some(AccuracySource::Measured)
+        );
+    }
+
     #[test]
     fn exact_accumulators_keep_the_cost_table_value() {
         let r = topk_raqe(1_000_000);
