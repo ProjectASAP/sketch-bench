@@ -225,8 +225,8 @@ n(S_i) = card(metric.labels) / card(G) × S_i / scrape_interval
 - Between checkpoints, the worse neighbour. Below the first checkpoint, no
   accuracy. Past the last, the plateau if the point saturated, else none.
 - The curve's `error_metric` must be `accuracy_metric_i`.
-- KLL and top-k merge lossily: when `S_i > D.x`, every pane must also hold
-  `n(D.x) ≥ N_sat`. The remaining merge penalty is #158.
+- Pane size doesn't matter: a merged answer reads the curve at `n(S_i)`.
+  KLL and top-k merge lossily; their merge penalty is #158.
 
 For lower-is-better metrics, passing means `measured <= tol_i`. For
 higher-is-better metrics, passing means `measured >= tol_i`. Direction is
@@ -458,9 +458,8 @@ each phase's CPU and memory, together with the selected deployment mapping.
 
 ## v1 scope and TODOs
 
-- **Accuracy after merging:** exact merges read the curve at the merged item
-  count. KLL and top-k need saturated panes but still don't model the merge
-  penalty at saturation (#158).
+- **Accuracy after merging:** every merge reads the curve at the merged item
+  count. KLL and top-k don't model their merge penalty yet (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
 - **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; the

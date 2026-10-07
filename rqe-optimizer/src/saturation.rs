@@ -3,11 +3,9 @@
 //! deployment's answer covers. Design decisions: #156.
 //!
 //! A deployment answering an RAQE with lookback `T` covers
-//! `n(T) = card(L)/card(G) · T / scrape` items per group. CMS, CountSketch,
-//! HLL and DDSketch merge exactly, so merging `T/x` panes reads the curve at
-//! `n(T)` like one unmerged sketch. KLL and top-k merge lossily (#131): a
-//! merged answer also needs every pane saturated, `n(x) ≥ N_sat`. The
-//! remaining merge penalty at saturation is #158.
+//! `n(T) = card(L)/card(G) · T / scrape` items per group, merged from `T/x`
+//! panes or not, and the curve is read there. Pane size doesn't matter.
+//! KLL and top-k merge lossily (#131); their merge penalty is #158.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -32,10 +30,6 @@ pub struct DataShape {
     /// Pareto tail index `a` of the values (KLL, DDSketch).
     pub tail_index: f64,
 }
-
-/// Sketches whose merged answer is less accurate than one sketch over the
-/// same items (#131).
-const LOSSY_MERGE: &[&str] = &["kll-percall", "cms-heap-topk-fastpath-vector2d"];
 
 /// The two runs' output directories under `--saturation-dir`. A point in
 /// both is taken whole from the later one.
@@ -151,7 +145,7 @@ impl SaturationCurves {
 
     /// The accuracy `raqe` gets from `deployment`, or `None` when it can't be
     /// read: no fitted [`DataShape`], a config or shape outside the grid, the
-    /// wrong metric, too few items, or lossy-merge panes below `N_sat`.
+    /// wrong metric, or too few items.
     /// Exact accumulators keep the cost table's value. `facts` must pass
     /// [`crate::validate_facts`].
     pub fn accuracy(
@@ -169,14 +163,9 @@ impl SaturationCurves {
         let shape = metric_facts.data_shape.get(grouping)?;
         let points = self.bracketing_points(&deployment.config, shape)?;
         let covered = items_per_group(metric_facts, grouping, raqe.lookback_ms);
-        let pane = items_per_group(metric_facts, grouping, deployment.window_ms);
-        let needs_saturated_panes =
-            raqe.lookback_ms > deployment.window_ms && LOSSY_MERGE.contains(&sketch);
         let mut worst = None;
         for point in points {
-            if point.error_metric != raqe.accuracy_metric
-                || needs_saturated_panes && !point.n_sat.is_some_and(|n_sat| pane >= n_sat)
-            {
+            if point.error_metric != raqe.accuracy_metric {
                 return None;
             }
             let error = point.error_at(covered, raqe.accuracy_direction)?;
@@ -453,26 +442,17 @@ mod tests {
     }
 
     #[test]
-    fn lossy_merges_need_saturated_panes() {
-        // 10 items/s: 100 s panes hold 1e3 < N_sat = 1e4; 1000 s panes reach it.
+    fn merged_answers_read_the_curve_at_the_merged_count_whatever_the_pane_size() {
+        // 10 items/s: 100 s panes hold 1e3 < N_sat = 1e4; the 1e4 s answer
+        // covers 1e5 either way.
         let facts = workload(10, shape(1.2, 1e3));
         let r = topk_raqe(10_000_000);
-        assert_eq!(
-            curves().accuracy(&r, &deployment(TOPK, 100_000), &facts),
-            None
-        );
-        assert_eq!(
-            curves().accuracy(&r, &deployment(TOPK, 1_000_000), &facts),
-            Some(0.9)
-        );
-        // The same small panes are fine for a sketch that merges exactly.
-        let mut exact_merge = curves();
-        let points = exact_merge.points_by_sketch.remove(TOPK).unwrap();
-        exact_merge.points_by_sketch.insert("cms".into(), points);
-        assert_eq!(
-            exact_merge.accuracy(&r, &deployment("cms", 100_000), &facts),
-            Some(0.9)
-        );
+        for window_ms in [100_000, 1_000_000, 10_000_000] {
+            assert_eq!(
+                curves().accuracy(&r, &deployment(TOPK, window_ms), &facts),
+                Some(0.9)
+            );
+        }
     }
 
     #[test]
