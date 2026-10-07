@@ -394,6 +394,23 @@ class CostPhaseTest(unittest.TestCase):
         self.assertIn(b"has no record", missing.stderr)
 
 
+class ResumeSummaryTest(unittest.TestCase):
+    def test_a_narrower_resume_keeps_the_other_points_summary_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = [sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                    "--phase", "accuracy", "--one-config", "--thetas", "1.0",
+                    "--cardinalities", "1000", "--n-max", "1e4", "--per-decade", "1",
+                    "--seeds", "1", "--no-cost-shape"]
+            subprocess.run(base + ["--families", "cardinality,frequency"], check=True,
+                           capture_output=True)
+            subprocess.run(base + ["--families", "cardinality", "--resume"], check=True,
+                           capture_output=True)
+            with open(os.path.join(d, "saturation.csv"), newline="") as f:
+                sketches = sorted(r["sketch"] for r in csv.DictReader(f))
+        self.assertEqual(sketches, ["cms-fastpath-vector2d", "countsketch-fastpath-vector2d",
+                                    "hll"])
+
+
 class CostShapeTest(unittest.TestCase):
     def test_the_grid_also_runs_the_optimizer_cost_shape(self):
         with tempfile.TemporaryDirectory() as d:
@@ -436,13 +453,16 @@ class OptimizerCostTest(unittest.TestCase):
 
     def test_one_cost_and_one_accuracy_pass_per_config_at_one_shape(self):
         with tempfile.TemporaryDirectory() as d:
-            # topk and quantile (kll, dd) one config each, plus 5 exact.
-            result, calls = self.run_phase(d, 8)
+            # topk one config at 4 heaps, quantile (kll, dd) one config
+            # each, plus 5 exact.
+            result, calls = self.run_phase(d, 11)
         self.assertEqual(result.returncode, 0, result.stderr)
         bench = [c for c in calls if c[0] == "sketchbench"]
-        self.assertEqual(len(bench), 16)
+        self.assertEqual(len(bench), 22)
         value = lambda c, flag: c[c.index(flag) + 1]
-        topk, kll = bench[0], bench[2]
+        topk, kll = bench[0], bench[8]
+        self.assertEqual([value(c, "--config") for c in bench[0:8:2]],
+                         [f"rows=3 cols=256 heap={h}" for h in (32, 128, 512, 2048)])
         self.assertEqual((value(topk, "--zipf-s"), value(topk, "--cardinality"),
                           value(topk, "--size")), ("1.1", "10000", "1000000"))
         self.assertEqual(value(kll, "--pareto-alpha"), "2.0")
@@ -457,9 +477,9 @@ class OptimizerCostTest(unittest.TestCase):
 
     def test_a_skipped_row_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            result, _ = self.run_phase(d, 7)
+            result, _ = self.run_phase(d, 10)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(b"did not keep all 8 rows", result.stderr)
+        self.assertIn(b"did not keep all 11 rows", result.stderr)
 
 
 if __name__ == "__main__":

@@ -326,9 +326,9 @@ fn univmon_lib_shards<K: UnivMonKey>(
 //
 // Fed the same one-column stream the CMS/CS heap rows are, so `TopkGT` grades
 // all three alike. The answer is layer 0's heap -- the layer every item
-// reaches -- cut to the `CMS_HEAP_TOP_K` heaviest.
+// reaches -- cut to the `TOPK_K` heaviest.
 
-use crate::wrappers::cms_heap::sketchlib::{TopkAnswer, CMS_HEAP_TOP_K};
+use crate::wrappers::cms_heap::sketchlib::{TopkAnswer, TOPK_K};
 use asap_sketchlib::heap_item_to_sketch_input;
 
 fn univmon_lib_item_shards<T: FrequencyValue>(
@@ -419,7 +419,7 @@ pub fn merge_query_univmon_lib_topk<T: FrequencyValue>(
                 heap.sort_unstable_by_key(|item| std::cmp::Reverse(item.count));
                 let ranked: TopkAnswer<T> = heap
                     .into_iter()
-                    .take(CMS_HEAP_TOP_K)
+                    .take(TOPK_K)
                     .map(|item| {
                         (
                             T::from_data_input(&heap_item_to_sketch_input(&item.key)),

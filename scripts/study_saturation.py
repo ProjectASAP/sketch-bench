@@ -93,6 +93,11 @@ COST_SEED = 42
 COST_TABLE = "rqe_atomic_costs.json"
 # Families some rqe-optimizer capability plans; frequency sketches serve none.
 OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
+# Heap capacities the cost table measures each top-k config at. A deployment
+# merging m windows keeps a heap of m · k (k = 32, the graded and answered
+# k); rqe-optimizer interpolates costs between these. Accuracy curves are
+# measured at the default heap, k.
+TOPK_HEAPS = (32, 128, 512, 2048)
 
 # Exact accumulators the optimizer plans, on grouped records (variant,
 # comparator, datagen spec). Their error is 0 by construction; the accuracy
@@ -305,8 +310,10 @@ def optimizer_cost(args, families):
             continue
         metrics[variant] = metric
         for config in configs[:1] if args.one_config else configs:
-            rows.append((variant, "lib", ["--config", config], comparator,
-                         cost_dataset(family)))
+            heaps = [f" heap={h}" for h in TOPK_HEAPS] if family == "topk" else [""]
+            for heap in heaps:
+                rows.append((variant, "lib", ["--config", config + heap], comparator,
+                             cost_dataset(family)))
     for variant, comparator, spec in EXACT_COST_ROWS:
         metrics[variant] = EXACT_METRIC
         rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
@@ -603,10 +610,20 @@ def main():
         cost_raw.close()
 
     if not rebuild:
-        with open(os.path.join(args.out, "saturation.csv"), "w", newline="") as f:
+        summary_path = os.path.join(args.out, "saturation.csv")
+        # --resume over a narrower grid keeps the other points' rows, as the
+        # curve files keep their curves.
+        kept_summary = []
+        if args.resume and os.path.exists(summary_path):
+            grid = {point_key(p[1], p[2], *p[6:]) for p in points}
+            with open(summary_path, newline="") as f:
+                kept_summary = [[r[c] for c in SUMMARY_COLUMNS] for r in csv.DictReader(f)
+                                if point_key(r["sketch"], r["config"], r["dist"], r["param"],
+                                             r["cardinality"]) not in grid]
+        with open(summary_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(SUMMARY_COLUMNS)
-            writer.writerows(rows)
+            writer.writerows(kept_summary + rows)
         print(f"Done. {os.path.join(args.out, 'saturation.csv')}", file=sys.stderr)
     if not cost:
         return 0

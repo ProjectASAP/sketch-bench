@@ -2,8 +2,8 @@
 
 use crate::analytical_cost_model;
 use crate::{
-    Accuracy, AtomicCostEntry, Capability, Deployment, LabelSet, MetricFacts, Millis, Raqe,
-    WorkloadFacts, KEY_TRACKER_FAMILY,
+    has_heap, heap_capacity, Accuracy, AtomicCostEntry, Capability, Deployment, LabelSet,
+    MetricFacts, Millis, Raqe, WorkloadFacts, KEY_TRACKER_FAMILY, TOPK_K,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,6 +83,15 @@ fn candidate_deployments(
         tracker_rows.len()
     );
     let tracker_row = tracker_rows.first().copied();
+    let family_rows: Vec<&AtomicCostEntry> = costs
+        .iter()
+        .filter(|c| {
+            capability
+                .candidate_families(allow_undeployable_families)
+                .any(|family| family == c.sketch)
+        })
+        .collect();
+    let heap_rows = heap_rows_by_shape(&family_rows);
     let windows = group
         .iter()
         .flat_map(|r| divisors(r.lookback_ms / scrape_interval_ms))
@@ -99,11 +108,29 @@ fn candidate_deployments(
                 .filter(|r| r.lookback_ms % window_ms == 0)
                 .map(|r| gcd(window_ms, r.interval_ms)),
         );
-        for config in costs.iter().filter(|c| {
-            capability
-                .candidate_families(allow_undeployable_families)
-                .any(|family| family == c.sketch)
-        }) {
+        // A heap family keeps one candidate per heap a RAQE on this window
+        // needs, m · k for its m = L / x merged windows, priced by
+        // interpolating the measured heap sizes. Other rows are used as they are.
+        let heaps: BTreeSet<u64> = group
+            .iter()
+            .filter(|r| r.lookback_ms.is_multiple_of(window_ms))
+            .map(|r| r.lookback_ms / window_ms * TOPK_K)
+            .collect();
+        let configs: Vec<AtomicCostEntry> = family_rows
+            .iter()
+            .filter(|c| !has_heap(&c.sketch))
+            .map(|c| (*c).clone())
+            .chain(heap_rows.values().flat_map(|rows| {
+                // Needs that one measured row serves collapse onto it.
+                let by_heap: BTreeMap<u64, AtomicCostEntry> = heaps
+                    .iter()
+                    .filter_map(|&heap| at_heap(rows, heap))
+                    .filter_map(|entry| Some((heap_capacity(&entry)?, entry)))
+                    .collect();
+                by_heap.into_values()
+            }))
+            .collect();
+        for config in &configs {
             let key_tracker =
                 if crate::family_properties(&config.sketch).needs_delta_set_key_tracker {
                     match tracker_row {
@@ -130,6 +157,62 @@ fn candidate_deployments(
         }
     }
     deployments
+}
+
+/// A heap family's rows, by family and counter shape (every param but
+/// `heap`), then by heap capacity.
+fn heap_rows_by_shape<'a>(
+    rows: &[&'a AtomicCostEntry],
+) -> BTreeMap<(String, String), BTreeMap<u64, &'a AtomicCostEntry>> {
+    let mut out: BTreeMap<_, BTreeMap<u64, &AtomicCostEntry>> = BTreeMap::new();
+    for &row in rows {
+        let Some(heap) = heap_capacity(row) else {
+            continue;
+        };
+        let mut shape = row.sketch_config["params"].clone();
+        if let Some(params) = shape.as_object_mut() {
+            params.remove("heap");
+        }
+        out.entry((row.sketch.clone(), shape.to_string()))
+            .or_default()
+            .insert(heap, row);
+    }
+    out
+}
+
+/// `rows` (one family and counter shape, by heap) priced at `heap`: each
+/// per-op cost linear in the heap between the measured sizes around it, and
+/// extended from the two nearest past them. With one measured size, the
+/// smallest row holding at least `heap` serves at its own size and cost.
+/// The accuracy fields are the smallest heap's: curves are measured at
+/// `TOPK_K`. `None` when no row can hold `heap`.
+fn at_heap(rows: &BTreeMap<u64, &AtomicCostEntry>, heap: u64) -> Option<AtomicCostEntry> {
+    let (_, &base) = rows.first_key_value()?;
+    if let Some(row) = rows.get(&heap) {
+        return Some((*row).clone());
+    }
+    if rows.len() < 2 {
+        return rows.range(heap..).next().map(|(_, row)| (*row).clone());
+    }
+    let mut below = rows.range(..heap).rev();
+    let mut above = rows.range(heap..);
+    let ((h0, a), (h1, b)) = match (below.next(), above.next()) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        (Some(hi), None) => (below.next()?, hi),
+        (None, Some(lo)) => (lo, above.next()?),
+        (None, None) => return None,
+    };
+    let t = (heap as f64 - *h0 as f64) / (*h1 as f64 - *h0 as f64);
+    let line = |x: f64, y: f64| (x + t * (y - x)).max(0.0);
+    let mut entry = AtomicCostEntry {
+        mem_bytes_per_instance: line(a.mem_bytes_per_instance, b.mem_bytes_per_instance),
+        insert_cpu_secs: line(a.insert_cpu_secs, b.insert_cpu_secs),
+        merge_cpu_secs: line(a.merge_cpu_secs, b.merge_cpu_secs),
+        query_cpu_secs: line(a.query_cpu_secs, b.query_cpu_secs),
+        ..(*base).clone()
+    };
+    entry.sketch_config["params"]["heap"] = heap.into();
+    Some(entry)
 }
 
 /// Configurations come from [`Capability::candidate_families`].
@@ -365,6 +448,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
         && properties.needs_delta_set_key_tracker == d.key_tracker.is_some()
         && (!properties.one_fixed_size_sketch_for_all_groups
             || measured_at_group_count(&d.config, facts[&d.metric].cardinality[&d.grouping_labels]))
+        && heap_capacity(&d.config).is_none_or(|heap| heap >= r.lookback_ms / d.window_ms * TOPK_K)
         && r.meets_sla(&d.config.sketch, accuracy(r, d))
 }
 
@@ -390,7 +474,8 @@ mod tests {
     fn cost() -> AtomicCostEntry {
         AtomicCostEntry {
             sketch: "cms-heap-topk-fastpath-vector2d".into(),
-            sketch_config: serde_json::json!(null),
+            // A heap that holds any merge, so heap top-k fixtures merge freely.
+            sketch_config: serde_json::json!({"params": {"heap": 1u64 << 40}}),
             mem_bytes_per_instance: 1.0,
             insert_cpu_secs: 1.0,
             merge_cpu_secs: 1.0,
@@ -400,6 +485,63 @@ mod tests {
             measured_at: measured_at(),
         }
     }
+    /// A heap top-k row measured at `heap`, its costs `heap` per op.
+    fn heap_row(heap: u64) -> AtomicCostEntry {
+        let h = heap as f64;
+        AtomicCostEntry {
+            sketch_config: serde_json::json!({"params": {"rows": 3, "cols": 256, "heap": heap}}),
+            mem_bytes_per_instance: 1000.0 + h,
+            insert_cpu_secs: h,
+            merge_cpu_secs: 2.0 * h,
+            query_cpu_secs: 3.0 * h,
+            ..cost()
+        }
+    }
+
+    #[test]
+    fn heap_costs_are_linear_between_and_past_the_measured_sizes() {
+        let (a, b, c) = (heap_row(32), heap_row(128), heap_row(512));
+        let rows = BTreeMap::from([(32, &a), (128, &b), (512, &c)]);
+        let at = |heap| at_heap(&rows, heap).unwrap();
+        assert_eq!(at(128), b);
+        let between = at(64);
+        assert_eq!(between.mem_bytes_per_instance, 1064.0);
+        assert_eq!(between.merge_cpu_secs, 128.0);
+        assert_eq!(heap_capacity(&between), Some(64));
+        // Past the largest: the line through the two largest.
+        assert_eq!(at(2048).query_cpu_secs, 3.0 * 2048.0);
+        // One measured size: the smallest row holding the heap serves as is.
+        let single = BTreeMap::from([(128, &b)]);
+        assert_eq!(at_heap(&single, 64), Some(b.clone()));
+        assert_eq!(at_heap(&single, 256), None);
+    }
+
+    /// Each window gets the heaps its RAQEs need, m · k for m = L / x, and a
+    /// RAQE is eligible only where the heap holds its m · k.
+    #[test]
+    fn a_heap_candidate_holds_m_times_k_for_its_merges() {
+        let raqes = vec![raqe("a", 60_000, 60_000), raqe("b", 240_000, 60_000)];
+        let rows = [heap_row(32), heap_row(128), heap_row(512)];
+        let candidates = build_all_candidates_unpruned(&raqes, &rows, &facts(1, 1), false);
+        let heaps_at = |window_ms: Millis| {
+            candidates
+                .iter()
+                .filter(|d| d.window_ms == window_ms)
+                .filter_map(|d| heap_capacity(&d.config))
+                .collect::<BTreeSet<_>>()
+        };
+        // x = 60 s: a merges 1 (32), b merges 4 (128).
+        assert_eq!(heaps_at(60_000), BTreeSet::from([32, 128]));
+        // x = 30 s: a merges 2 (64, interpolated), b merges 8 (256).
+        assert_eq!(heaps_at(30_000), BTreeSet::from([64, 256]));
+        let d = candidates
+            .iter()
+            .find(|d| d.window_ms == 60_000 && heap_capacity(&d.config) == Some(32))
+            .unwrap();
+        assert!(is_eligible(&raqes[0], d, &facts(1, 1), &table_accuracy));
+        assert!(!is_eligible(&raqes[1], d, &facts(1, 1), &table_accuracy));
+    }
+
     #[test]
     fn shared_slide_comes_from_subset_gcd_not_all_divisors() {
         let raqes = vec![raqe("a", 60_000, 20_000), raqe("b", 60_000, 30_000)];
