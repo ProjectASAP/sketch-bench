@@ -1,6 +1,7 @@
 //! `asap_sketchlib::CMSHeap` wrappers — a Count-Min sketch paired with a
 //! top-k heap. A separate algorithm from `cms`: it takes a different knob set
-//! (`heap`, the heap's capacity; the answered `k` is `sketchlib::TOPK_K`)
+//! (`heap`, the heap's capacity, and `topk_k`, the answered `k`, default
+//! `sketchlib::TOPK_K`)
 //! and answers two different questions (per-key frequency, and top-k), so it
 //! gets two registry rows per backend rather than one.
 
@@ -14,7 +15,7 @@ mod tests {
     use std::rc::Rc;
 
     /// `deny_unknown_fields` turns a stray `top_k` in `--config` into a named
-    /// error: the answered `k` is `TOPK_K`, not a knob.
+    /// error: the answered `k`'s knob is `topk_k`.
     #[test]
     fn top_k_is_not_a_config_field() {
         let bad = ParamSet {
@@ -37,6 +38,7 @@ mod tests {
             rows: 5,
             cols: 4096,
             heap: None,
+            topk_k: None,
         });
         let items = Rc::new(vec![1i64, 1, 1, 2, 2, 3]);
         let probes = Rc::new(vec![()]);
@@ -57,6 +59,7 @@ mod tests {
                 rows,
                 cols,
                 heap: None,
+                topk_k: None,
             });
             assert!(
                 build_cms_heap_lib_vector2d_fast(&p).is_err(),
@@ -77,6 +80,7 @@ mod tests {
             rows: 5,
             cols: 2048,
             heap: Some(128),
+            topk_k: None,
         });
         let heap = crate::wrappers::hh_heap_footprint(128);
         let fast = build_cms_heap_lib_vector2d_fast(&p).expect("5x2048 is a valid shape");
@@ -100,6 +104,7 @@ mod tests {
                 rows: 3,
                 cols: 256,
                 heap: Some(heap),
+                topk_k: None,
             });
             memory_cms_heap_lib_vector2d_fast(&build_cms_heap_lib_vector2d_fast(&p).unwrap())
         };
@@ -119,18 +124,21 @@ mod tests {
             rows: 3,
             cols: 256,
             heap: Some(TOPK_K - 1),
+            topk_k: None,
         });
         let err = build_cms_heap_lib_vector2d_fast(&p).err().expect("refused");
         assert!(err.to_string().contains("heap="), "{err}");
     }
 
-    /// A heap larger than `k` still answers its heaviest `TOPK_K`.
+    /// A heap larger than `k` still answers its heaviest `k` (`TOPK_K` by
+    /// default).
     #[test]
     fn a_larger_heap_answers_its_heaviest_k() {
         let params = ParamSet::of(&CmsHeapParams {
             rows: 5,
             cols: 4096,
             heap: Some(4 * TOPK_K),
+            topk_k: None,
         });
         // Key i appears i times, for 2k keys: the heaviest k are k+1..=2k.
         let keys = 2 * TOPK_K as i64;
@@ -144,5 +152,47 @@ mod tests {
         let mut answered: Vec<i64> = answers[0].iter().map(|&(k, _)| k).collect();
         answered.sort_unstable();
         assert_eq!(answered, (TOPK_K as i64 + 1..=keys).collect::<Vec<_>>());
+    }
+
+    /// `topk_k` sets the answered `k`: a heap of 4·10 answers its heaviest 10,
+    /// and the heap defaults to `k`.
+    #[test]
+    fn topk_k_sets_the_answered_k() {
+        let answer = |heap, k: usize| {
+            let params = ParamSet::of(&CmsHeapParams {
+                rows: 5,
+                cols: 4096,
+                heap,
+                topk_k: Some(k),
+            });
+            let keys = 4 * k as i64;
+            let stream: Vec<i64> = (1..=keys)
+                .flat_map(|i| std::iter::repeat_n(i, i as usize))
+                .collect();
+            let mut passes = query_cms_heap_lib_vector2d_fast_topk(
+                &params,
+                Rc::new(stream),
+                Rc::new(vec![()]),
+                1,
+            )
+            .expect("builds");
+            let (answers, _) = passes.remove(0)();
+            let mut answered: Vec<i64> = answers[0].iter().map(|&(key, _)| key).collect();
+            answered.sort_unstable();
+            (answered, answered_k(&params))
+        };
+        let (answered, k) = answer(Some(40), 10);
+        assert_eq!(k, 10);
+        assert_eq!(answered, (31..=40).collect::<Vec<_>>());
+        let (answered, _) = answer(None, 100);
+        assert_eq!(answered.len(), 100);
+        // A heap below topk_k is refused.
+        let p = ParamSet::of(&CmsHeapParams {
+            rows: 3,
+            cols: 256,
+            heap: Some(50),
+            topk_k: Some(100),
+        });
+        assert!(build_cms_heap_lib_vector2d_fast(&p).is_err());
     }
 }

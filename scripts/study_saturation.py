@@ -17,6 +17,9 @@ indicative. The optimizer's costs come from --phase optimizer-cost (#174).
 --phase accuracy runs only the (parallel) accuracy runs; --phase cost reads
 saturation_curve.csv from --out and runs only the serial cost runs, so CPU
 can be timed later on a quiet machine. Both take the same grid arguments.
+Top-k curves run at each k in --topk-ks (default 10, 32, 100); a config at
+k != 32 carries ` topk_k=k` in its config string, so the CSVs key k there and
+older files (k = 32 only) read unchanged.
 --phase optimizer-cost measures each (sketch, config) of the families the
 optimizer plans (OPTIMIZER_FAMILIES) once, serially, at one
 shape (COST_*, the synthetic evaluation's dataset) with a cost and an
@@ -99,6 +102,11 @@ OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
 # k); rqe-optimizer interpolates costs between these. Accuracy curves are
 # measured at the default heap, k.
 TOPK_HEAPS = (32, 128, 512, 2048)
+# The k a top-k answer is graded at: curves run at each, a config at k
+# carrying ` topk_k=k` (its heap defaults to k). TOPK_K is left implicit,
+# so its points keep their old keys.
+TOPK_K = 32
+TOPK_KS = (10, 32, 100)
 
 # Exact accumulators the optimizer plans, on grouped records (variant,
 # comparator, datagen spec). Their error is 0 by construction; the accuracy
@@ -402,6 +410,8 @@ def main():
     parser.add_argument("--thetas", default="0,0.5,0.8,1.0,1.2,1.5,2.0")
     parser.add_argument("--cardinalities", default="1000,100000,10000000")
     parser.add_argument("--alphas", default="1.1,1.5,2,3")
+    parser.add_argument("--topk-ks", default=",".join(map(str, TOPK_KS)),
+                        help="the k values top-k curves are graded at")
     parser.add_argument("--cost-shape", action=argparse.BooleanOptionalAction, default=True,
                         help="also run every config at --phase optimizer-cost's shape "
                              "(COST_*), so the cost table is a point on a curve")
@@ -438,6 +448,7 @@ def main():
     thetas = [float(t) for t in args.thetas.split(",")]
     cardinalities = [int(k) for k in args.cardinalities.split(",")]
     alphas = [float(a) for a in args.alphas.split(",")]
+    topk_ks = [int(k) for k in args.topk_ks.split(",")]
     ns = checkpoints(args.n_min, args.n_max, args.per_decade)
     seeds = list(range(1, args.seeds + 1))
     shard_list = [int(m) for m in args.merge_shards_list.split(",") if m]
@@ -452,7 +463,11 @@ def main():
     for family, variant, configs, comparator, metric in SKETCHES:
         if family not in families:
             continue
-        for config in configs[:1] if args.one_config else configs:
+        configs = configs[:1] if args.one_config else configs
+        if family == "topk":
+            configs = [c + ("" if k == TOPK_K else f" topk_k={k}")
+                       for c in configs for k in topk_ks]
+        for config in configs:
             if family == "quantile":
                 extra = args.cost_shape and COST_PARETO_ALPHA not in alphas
                 for alpha in alphas + [COST_PARETO_ALPHA] * extra:

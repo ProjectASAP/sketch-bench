@@ -2,7 +2,7 @@
 //! `FastPath`/`RegularPath` hashing — no `FixedMatrix` or parallel-insert
 //! variant, see the follow-up issue linked from #95.
 
-use crate::params::{CmsHeapParams, ParamSet};
+use crate::params::{CmsHeapParams, CsHeapParams, ParamSet};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
@@ -11,35 +11,53 @@ use std::rc::Rc;
 use asap_sketchlib::input::HHItem;
 use asap_sketchlib::{heap_item_to_sketch_input, CMSHeap, FastPath, RegularPath, Vector2D};
 
-/// The `k` every TopK-capability row answers and is graded against, and the
-/// heap's capacity when `--config` sets no `heap`. A larger heap (`heap=`)
-/// keeps more candidates, so a merge of `m` heaps of `m · k` loses fewer of
-/// the true top `k`; the answer is still its heaviest `k`. A heap smaller
-/// than `k` couldn't answer, and is refused at build.
+/// The `k` a top-k row answers and is graded at when `--config` sets no
+/// `topk_k`, and the heap's capacity when it sets no `heap`. A larger heap
+/// (`heap=`) keeps more candidates, so a merge of `m` heaps of `m · k` loses
+/// fewer of the true top `k`; the answer is still its heaviest `k`. A heap
+/// smaller than `k` couldn't answer, and is refused at build.
 pub const TOPK_K: usize = 32;
 
-/// The heap capacity `heap` asks for: `TOPK_K` when absent, at least
-/// `TOPK_K`.
-pub fn heap_capacity(name: &str, heap: Option<usize>) -> Result<usize, BuildError> {
-    let heap = heap.unwrap_or(TOPK_K);
-    if heap < TOPK_K {
+/// `(heap capacity, answered k)` for `heap` and `topk_k`: `k` defaults to
+/// `TOPK_K`, the heap to `k`; a heap smaller than `k` is refused.
+pub fn heap_capacity(
+    name: &str,
+    heap: Option<usize>,
+    topk_k: Option<usize>,
+) -> Result<(usize, usize), BuildError> {
+    let k = topk_k.unwrap_or(TOPK_K);
+    if k == 0 {
+        return Err(BuildError(format!("{name}: topk_k must be positive")));
+    }
+    let heap = heap.unwrap_or(k);
+    if heap < k {
         return Err(BuildError(format!(
-            "{name}: heap={heap} is smaller than the k={TOPK_K} it answers"
+            "{name}: heap={heap} is smaller than the k={k} it answers"
         )));
     }
-    Ok(heap)
+    Ok((heap, k))
 }
 
-/// A heap's contents, heaviest first, cut to the `TOPK_K` a top-k query
-/// answers.
-pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>) -> Vec<&'a HHItem> {
+/// The `k` a top-k row with `params` answers: its `topk_k`, else `TOPK_K`.
+/// Rows without the knob (UnivMon, exact) answer `TOPK_K`.
+pub fn answered_k(params: &ParamSet) -> usize {
+    params
+        .parse::<CmsHeapParams>()
+        .ok()
+        .and_then(|p| p.topk_k)
+        .or_else(|| params.parse::<CsHeapParams>().ok().and_then(|p| p.topk_k))
+        .unwrap_or(TOPK_K)
+}
+
+/// A heap's contents, heaviest first, cut to the `k` a top-k query answers.
+pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>, k: usize) -> Vec<&'a HHItem> {
     let mut items: Vec<&HHItem> = items.collect();
     let heaviest = |item: &&HHItem| std::cmp::Reverse(item.count);
     // Select the heaviest k without sorting the rest: the query's cost is
     // what's benchmarked.
-    if items.len() > TOPK_K {
-        items.select_nth_unstable_by_key(TOPK_K, heaviest);
-        items.truncate(TOPK_K);
+    if items.len() > k {
+        items.select_nth_unstable_by_key(k, heaviest);
+        items.truncate(k);
     }
     items.sort_unstable_by_key(heaviest);
     items
@@ -59,6 +77,7 @@ pub struct CmsHeapLibVector2dFast {
     rows: usize,
     cols: usize,
     heap: usize,
+    k: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_fast(
@@ -67,12 +86,13 @@ pub fn build_cms_heap_lib_vector2d_fast(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D FastPath", "cols", p.cols)?;
-    let heap = heap_capacity("asap CMSHeap Vector2D FastPath", p.heap)?;
+    let (heap, k) = heap_capacity("asap CMSHeap Vector2D FastPath", p.heap, p.topk_k)?;
     Ok(CmsHeapLibVector2dFast {
         inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
         heap,
+        k,
     })
 }
 
@@ -89,6 +109,7 @@ pub struct CmsHeapLibVector2dRegular {
     rows: usize,
     cols: usize,
     heap: usize,
+    k: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_regular(
@@ -97,12 +118,13 @@ pub fn build_cms_heap_lib_vector2d_regular(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D RegularPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D RegularPath", "cols", p.cols)?;
-    let heap = heap_capacity("asap CMSHeap Vector2D RegularPath", p.heap)?;
+    let (heap, k) = heap_capacity("asap CMSHeap Vector2D RegularPath", p.heap, p.topk_k)?;
     Ok(CmsHeapLibVector2dRegular {
         inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
         heap,
+        k,
     })
 }
 
@@ -313,7 +335,7 @@ pub fn merge_query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter(), sketch.k)
                     .into_iter()
                     .map(|item| {
                         (
@@ -360,7 +382,7 @@ pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter(), sketch.k)
                     .into_iter()
                     .map(|item| {
                         (

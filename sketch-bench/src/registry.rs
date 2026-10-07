@@ -144,7 +144,8 @@ pub const REGISTRY: &[SketchId] = &[
     },
     // -------- CMS + heap (frequency, and top-k) --------
     // A separate algorithm from `cms`: `CmsHeapParams` adds the heap's
-    // capacity (`heap`; the answered k is wrappers::cms_heap::sketchlib::TOPK_K),
+    // capacity (`heap`) and the answered k (`topk_k`, default
+    // wrappers::cms_heap::sketchlib::TOPK_K),
     // so it's a different knob set, and `CMSHeap` answers two different
     // questions (per-key frequency, and top-k), so it gets two rows per
     // backend instead of one. Only `Vector2D` x {FastPath, RegularPath}: no

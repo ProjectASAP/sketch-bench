@@ -327,7 +327,7 @@ fn univmon_lib_shards<K: UnivMonKey>(
 // all three alike. The answer is layer 0's heap -- the layer every item
 // reaches -- cut to the `TOPK_K` heaviest.
 
-use crate::wrappers::cms_heap::sketchlib::{top_k, TopkAnswer};
+use crate::wrappers::cms_heap::sketchlib::{top_k, TopkAnswer, TOPK_K};
 use asap_sketchlib::heap_item_to_sketch_input;
 
 fn univmon_lib_item_shards<T: FrequencyValue>(
@@ -414,7 +414,7 @@ pub fn merge_query_univmon_lib_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = top_k(sketch.inner.hh_layers[0].heap().iter())
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.hh_layers[0].heap().iter(), TOPK_K)
                     .into_iter()
                     .map(|item| {
                         (

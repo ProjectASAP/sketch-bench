@@ -26,10 +26,6 @@ pub(crate) const BYTES_PER_GIB: f64 = (1u64 << 30) as f64;
 pub const OUTPUT_BYTES_PER_VALUE: f64 = 8.0;
 /// Query output per top-k entry: a 64-bit key hash and a count.
 pub const OUTPUT_BYTES_PER_TOPK_ENTRY: f64 = 16.0;
-/// Top-k entries one query outputs per group: the `k` it answers
-/// ([`crate::TOPK_K`]), whatever the heap's capacity.
-// ponytail: fixed k. A large k needs `k` on the RAQE.
-pub const TOPK_ENTRIES: f64 = crate::TOPK_K as f64;
 /// Bytes per DDSketch bucket: one `u64` count, as sketch-bench's
 /// `dd_footprint` counts them.
 pub const DD_BYTES_PER_BUCKET: f64 = 8.0;
@@ -197,7 +193,7 @@ pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
     let groups = group_count(deployment, facts);
     let output_bytes_per_group = match raqe.capability {
         Capability::TopKByValue | Capability::TopKByCount => {
-            TOPK_ENTRIES * OUTPUT_BYTES_PER_TOPK_ENTRY
+            raqe.topk_k() as f64 * OUTPUT_BYTES_PER_TOPK_ENTRY
         }
         _ => OUTPUT_BYTES_PER_VALUE,
     };

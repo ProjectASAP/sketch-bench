@@ -1,7 +1,7 @@
 //! `asap_sketchlib::CSHeap` — a Count Sketch paired with a top-k heap. The
 //! CountSketch counterpart of `cms_heap`'s top-k row, and graded the same way:
-//! the heap holds `heap` items (default `TOPK_K`) and the answer is its
-//! heaviest `TOPK_K`, the `k` `TopkGT` grades against.
+//! the heap holds `heap` items (default `topk_k`) and the answer is its
+//! heaviest `topk_k` (default `TOPK_K`), the `k` `TopkGT` grades against.
 // ponytail: Vector2D + FastPath top-k only, the one the optimizer prices; add
 // RegularPath / per-key estimate rows when something asks for them.
 
@@ -18,6 +18,7 @@ pub struct CsHeapLibVector2dFast {
     rows: usize,
     cols: usize,
     heap: usize,
+    k: usize,
 }
 
 pub fn build_cs_heap_lib_vector2d_fast(
@@ -26,12 +27,13 @@ pub fn build_cs_heap_lib_vector2d_fast(
     let p: CsHeapParams = config.parse()?;
     require_positive("asap CSHeap Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CSHeap Vector2D FastPath", "cols", p.cols)?;
-    let heap = heap_capacity("asap CSHeap Vector2D FastPath", p.heap)?;
+    let (heap, k) = heap_capacity("asap CSHeap Vector2D FastPath", p.heap, p.topk_k)?;
     Ok(CsHeapLibVector2dFast {
         inner: CSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
         heap,
+        k,
     })
 }
 
@@ -105,7 +107,7 @@ pub fn merge_query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter())
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter(), sketch.k)
                     .into_iter()
                     .map(|item| {
                         (

@@ -118,7 +118,7 @@ pub fn search(
         // ponytail: ranking compares per-instance memory, which a sketch
         // shared by all groups isn't comparable on; sketch-bench#159.
         .filter(|variant| !crate::family_properties(variant).one_fixed_size_sketch_for_all_groups)
-        .filter_map(|variant| Grid::new(variant, costs))
+        .filter_map(|variant| Grid::new(variant, costs, raqe.topk_k()))
         .collect();
 
     let mut pending = VecDeque::new();
@@ -206,7 +206,9 @@ struct Grid {
 }
 
 impl Grid {
-    fn new(variant: &str, costs: &[AtomicCostEntry]) -> Option<Grid> {
+    /// `k`: a heap top-k variant's grid holds the smallest measured heap
+    /// that answers a top-`k` query.
+    fn new(variant: &str, costs: &[AtomicCostEntry], k: u64) -> Option<Grid> {
         // Two rows at one heap (no heap and heap=k) would be two grid points
         // for one config; the candidates' check refuses them.
         crate::candidates::heap_rows_by_shape(
@@ -215,13 +217,19 @@ impl Grid {
                 .filter(|c| c.sketch == variant)
                 .collect::<Vec<_>>(),
         );
+        let heap = costs
+            .iter()
+            .filter(|c| c.sketch == variant)
+            .filter_map(crate::heap_capacity)
+            .filter(|&h| h >= k)
+            .min();
         let rows: Vec<(usize, BTreeMap<String, f64>)> = costs
             .iter()
             .enumerate()
-            // AutoSketch never merges (x = S), so a heap of k serves it; the
-            // larger heaps only cost more and aren't a search axis.
+            // AutoSketch never merges (x = S), so the smallest heap holding k
+            // serves it; larger heaps only cost more and aren't a search axis.
             .filter(|(_, c)| {
-                c.sketch == variant && crate::heap_capacity(c).is_none_or(|h| h <= crate::TOPK_K)
+                c.sketch == variant && crate::heap_capacity(c).is_none_or(|h| Some(h) == heap)
             })
             .map(|(i, c)| (i, numeric_params(&c.sketch_config)))
             .collect();
@@ -394,6 +402,7 @@ mod tests {
             grouping_labels: LabelSet::new(),
             accuracy_sla: 1.0 - error_budget,
             latency_sla_ms: None,
+            topk_k: None,
         }
     }
 
@@ -579,7 +588,7 @@ mod tests {
     #[test]
     fn lhs_samples_take_distinct_values_on_every_axis() {
         let costs = grid(&[1, 2, 3, 4], &[64, 128, 256, 512, 1024]);
-        let g = Grid::new("cms-heap-topk-fastpath-vector2d", &costs).unwrap();
+        let g = Grid::new("cms-heap-topk-fastpath-vector2d", &costs, crate::TOPK_K).unwrap();
         for seed in 0..10 {
             let samples = g.lhs(seed);
             assert_eq!(samples.len(), 4);

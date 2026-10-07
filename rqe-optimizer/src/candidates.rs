@@ -113,7 +113,7 @@ fn candidate_deployments(
         // interpolating the measured heap sizes. Other rows are used as they are.
         let heaps: BTreeSet<u64> = group
             .iter()
-            .filter_map(|r| heap_needed(r.lookback_ms, window_ms))
+            .filter_map(|r| heap_needed(r.lookback_ms, window_ms, r.topk_k()))
             .collect();
         let configs: Vec<AtomicCostEntry> = family_rows
             .iter()
@@ -472,7 +472,7 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
         && (!properties.one_fixed_size_sketch_for_all_groups
             || measured_at_group_count(&d.config, facts[&d.metric].cardinality[&d.grouping_labels]))
         && heap_capacity(&d.config).is_none_or(|heap| {
-            d.heap_needed(r.lookback_ms)
+            d.heap_needed(r.lookback_ms, r.topk_k())
                 .is_some_and(|need| heap >= need)
         })
         && r.meets_sla(&d.config.sketch, accuracy(r, d))
@@ -495,6 +495,7 @@ mod tests {
             grouping_labels: LabelSet::new(),
             accuracy_sla: 0.5,
             latency_sla_ms: None,
+            topk_k: None,
         }
     }
     fn cost() -> AtomicCostEntry {
@@ -588,6 +589,39 @@ mod tests {
             .unwrap();
         assert!(is_eligible(&raqes[0], d, &facts(1, 1), &table_accuracy));
         assert!(!is_eligible(&raqes[1], d, &facts(1, 1), &table_accuracy));
+    }
+
+    /// A top-10 RAQE needs m · 10: its heaps follow its own k, and a heap
+    /// built for k = 10 doesn't serve a k = 32 RAQE at the same merges.
+    #[test]
+    fn a_heap_candidate_follows_each_raqes_k() {
+        let ten = Raqe {
+            topk_k: Some(10),
+            ..raqe("ten", 240_000, 60_000)
+        };
+        let raqes = vec![ten.clone(), raqe("b", 240_000, 60_000)];
+        let rows = [heap_row(32), heap_row(128), heap_row(512)];
+        let candidates = build_all_candidates_unpruned(&raqes, &rows, &facts(1, 1), false);
+        let at = |heap| {
+            candidates
+                .iter()
+                .find(|d| d.window_ms == 60_000 && heap_capacity(&d.config) == Some(heap))
+                .unwrap()
+        };
+        // x = 60 s merges 4: k = 10 needs 40, k = 32 needs 128.
+        assert!(is_eligible(&ten, at(40), &facts(1, 1), &table_accuracy));
+        assert!(!is_eligible(
+            &raqes[1],
+            at(40),
+            &facts(1, 1),
+            &table_accuracy
+        ));
+        assert!(is_eligible(
+            &raqes[1],
+            at(128),
+            &facts(1, 1),
+            &table_accuracy
+        ));
     }
 
     #[test]

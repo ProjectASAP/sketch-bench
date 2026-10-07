@@ -145,7 +145,8 @@ FAKE_APPROXBENCH = textwrap.dedent("""\
         e = 0.01 * int(a[a.index("--merge-shards") + 1])
         r = {"bench": {"accuracy": {"relative_error": e, "are_top100": e}}}
     elif "accuracy" in a:
-        r = {"bench": {"accuracy": {"relative_error": 0.01, "are_top100": 0.01}}}
+        r = {"bench": {"accuracy": {"relative_error": 0.01, "are_top100": 0.01,
+                                    "precision_at_k": 0.9}}}
     elif lib == "lib":
         r = {"memory_bytes": 1000, "insert_cpu_time_ms": cpu(1.0),
              "query_cpu_time_ms": cpu(0.5), "merge_cpu_time_ms": cpu(0.1)}
@@ -409,6 +410,22 @@ class ResumeSummaryTest(unittest.TestCase):
                 sketches = sorted(r["sketch"] for r in csv.DictReader(f))
         self.assertEqual(sketches, ["cms-fastpath-vector2d", "countsketch-fastpath-vector2d",
                                     "hll"])
+
+
+class TopkKTest(unittest.TestCase):
+    def test_topk_curves_run_at_each_k(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "topk", "--one-config",
+                "--thetas", "1.0", "--cardinalities", "1000", "--n-max", "1e4",
+                "--per-decade", "1", "--seeds", "1", "--no-cost-shape", "--topk-ks", "10,32,100",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation_curve.csv"), newline="") as f:
+                configs = {r["config"] for r in csv.DictReader(f)}
+        # k = 32 keeps the old key; the others carry topk_k.
+        self.assertEqual(configs, {"rows=3 cols=256", "rows=3 cols=256 topk_k=10",
+                                   "rows=3 cols=256 topk_k=100"})
 
 
 class CostShapeTest(unittest.TestCase):
