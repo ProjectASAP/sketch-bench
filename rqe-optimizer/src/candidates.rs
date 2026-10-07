@@ -425,6 +425,33 @@ mod tests {
     }
 
     #[test]
+    fn sum_and_count_never_share_a_deployment() {
+        let sum = Raqe {
+            capability: Capability::Sum,
+            ..raqe("sum", 60_000, 60_000)
+        };
+        let count = Raqe {
+            capability: Capability::Count,
+            ..raqe("count", 60_000, 60_000)
+        };
+        let exact_sum = AtomicCostEntry {
+            sketch: "exact-sum".into(),
+            ..cost()
+        };
+        let candidates = build_all_candidates(
+            &[sum.clone(), count.clone()],
+            &[exact_sum],
+            &facts(1, 1),
+            false,
+        );
+        assert!(candidates.iter().any(|d| is_eligible(&sum, d)));
+        assert!(candidates.iter().any(|d| is_eligible(&count, d)));
+        assert!(candidates
+            .iter()
+            .all(|d| !(is_eligible(&sum, d) && is_eligible(&count, d))));
+    }
+
+    #[test]
     fn a_min_query_is_only_offered_the_min_accumulator() {
         let r = Raqe {
             capability: Capability::Min,

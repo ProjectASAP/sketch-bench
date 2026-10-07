@@ -21,6 +21,7 @@ use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescripti
 /// sweeps. `sketch_config` is `MergedRecord::sketch_config` reused verbatim,
 /// so ASAPQuery's loader keys on it directly instead of re-deriving it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AtomicCostEntry {
     pub sketch: String,
     pub sketch_config: serde_json::Value,
@@ -52,6 +53,7 @@ pub struct AtomicCostEntry {
 /// extrapolating (sketch-bench#147). Read off the record's workload, so a
 /// field the workload doesn't determine is `None`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MeasuredAt {
     /// Items (rows) inserted into the instance.
     pub items_per_instance: u64,
@@ -533,6 +535,21 @@ mod tests {
         let json = r#"{"sketch":"cms","sketch_config":null,"mem_bytes_per_instance":1.0,"insert_cpu_secs":1.0,"merge_cpu_secs":1.0,"query_cpu_secs":1.0,"query_accuracy":{}}"#;
         let entry: AtomicCostEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.measured_at, None);
+    }
+
+    /// A misspelled or newer field is an error, not silently dropped data.
+    #[test]
+    fn a_row_with_an_unknown_field_is_rejected() {
+        let json = r#"{"sketch":"cms","sketch_config":null,"mem_bytes_per_instance":1.0,"insert_cpu_secs":1.0,"merge_cpu_secs":1.0,"query_cpu_secs":1.0,"query_accuracy":{},"merge_acuracy":{}}"#;
+        let err = serde_json::from_str::<AtomicCostEntry>(json).unwrap_err();
+        assert!(err.to_string().contains("merge_acuracy"), "{err}");
+    }
+
+    #[test]
+    fn measured_at_with_an_unknown_field_is_rejected() {
+        let json = r#"{"sketch":"cms","sketch_config":null,"mem_bytes_per_instance":1.0,"insert_cpu_secs":1.0,"merge_cpu_secs":1.0,"query_cpu_secs":1.0,"query_accuracy":{},"measured_at":{"items_per_instance":1,"keys_per_instance":null,"value_rnage":null,"merge_operand_items":null,"distribution":null}}"#;
+        let err = serde_json::from_str::<AtomicCostEntry>(json).unwrap_err();
+        assert!(err.to_string().contains("value_rnage"), "{err}");
     }
 
     #[test]

@@ -36,7 +36,8 @@ pub type LabelSet = BTreeSet<String>;
 /// if it is in both `families()` and [`DEPLOYABLE_FAMILIES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
-    SumOrCount,
+    Sum,
+    Count,
     Min,
     Max,
     RateOrIncrease,
@@ -46,8 +47,9 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 7] = [
-        Capability::SumOrCount,
+    pub const ALL: [Capability; 8] = [
+        Capability::Sum,
+        Capability::Count,
         Capability::Min,
         Capability::Max,
         Capability::RateOrIncrease,
@@ -63,10 +65,11 @@ impl Capability {
     /// an unmeasured name here is harmless, it just matches no row.
     pub fn families(self) -> &'static [&'static str] {
         match self {
-            // Exact multi-subpopulation accumulators, not sketches. Sum also
-            // serves count (sum of 1s). Min and max are separate, so a min
-            // query never lands on, or shares, a max accumulator.
-            Capability::SumOrCount => &["exact-sum"],
+            // Exact multi-subpopulation accumulators, not sketches. Count is
+            // a sum of 1s, so both use `exact-sum`, but as separate
+            // capabilities they never share one accumulator. Likewise min and
+            // max, so a min query never lands on, or shares, a max one.
+            Capability::Sum | Capability::Count => &["exact-sum"],
             Capability::Min => &["exact-min"],
             Capability::Max => &["exact-max"],
             Capability::RateOrIncrease => &["exact-increase"],
