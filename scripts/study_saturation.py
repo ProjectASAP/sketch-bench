@@ -18,8 +18,9 @@ indicative. The optimizer's costs come from --phase optimizer-cost (#174).
 saturation_curve.csv from --out and runs only the serial cost runs, so CPU
 can be timed later on a quiet machine. Both take the same grid arguments.
 Top-k curves run at each k in --topk-ks (default 10, 32, 100); a config at
-k != 32 carries ` topk_k=k` in its config string, so the CSVs key k there and
-older files (k = 32 only) read unchanged.
+k != 32 carries ` topk_k=k` in its config string, so the CSVs key k there.
+Older accuracy files (k = 32 only) read unchanged, but --phase cost and
+crossover over them need --topk-ks 32, so the grid matches the curves.
 --phase optimizer-cost measures each (sketch, config) of the families the
 optimizer plans (OPTIMIZER_FAMILIES) once, serially, at one
 shape (COST_*, the synthetic evaluation's dataset) with a cost and an
@@ -239,7 +240,8 @@ def read_curve(path, points, ns, tolerance, tail):
             sys.exit(f"{path} has no curve over these sizes for {p[1]} ({p[2]}) "
                      f"{p[6]}={p[7]} K={p[8]}; pass the accuracy run's grid arguments "
                      "(an accuracy run without the optimizer-cost shape needs "
-                     "--no-cost-shape)")
+                     "--no-cost-shape; one from before top-k k was a dimension, "
+                     "--topk-ks 32)")
         means = [e for _, e, _ in curve]
         ses = [se for _, _, se in curve]
         results.append((p, n_saturation(ns, means, tolerance, tail, ses), means[-1]))

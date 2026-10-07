@@ -57,12 +57,24 @@ pub fn plan(
     allow_undeployable_families: bool,
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> Result<AutoSketchPlan, Vec<String>> {
+    // One resolution per distinct (k, top-k?), not per RAQE.
+    let keys: Vec<(u64, bool)> = raqes
+        .iter()
+        .map(|r| (r.topk_k(), crate::candidates::is_topk(r.capability)))
+        .collect();
+    let mut resolutions: BTreeMap<(u64, bool), Resolved> = BTreeMap::new();
+    for (raqe, &key) in raqes.iter().zip(&keys) {
+        resolutions
+            .entry(key)
+            .or_insert_with(|| resolve_for(raqe, costs));
+    }
     let searches: Vec<_> = raqes
         .iter()
-        .map(|raqe| {
-            search(
+        .zip(&keys)
+        .map(|(raqe, key)| {
+            search_resolved(
                 raqe,
-                costs,
+                &resolutions[key],
                 seed,
                 allow_undeployable_families,
                 &mut accuracy,
@@ -80,14 +92,15 @@ pub fn plan(
     let deployments = raqes
         .iter()
         .zip(&searches)
-        .map(|(raqe, s)| {
+        .zip(&keys)
+        .map(|((raqe, s), key)| {
             let (window_ms, slide_ms) = window_adapter(raqe);
             Deployment {
                 capability: raqe.capability,
                 metric: raqe.metric.clone(),
                 spatial_filter: raqe.spatial_filter.clone(),
                 grouping_labels: raqe.grouping_labels.clone(),
-                config: resolve_heaps(costs, raqe.topk_k()).0
+                config: resolutions[key].costs
                     [s.selected.expect("unservable RAQEs returned above")]
                 .clone(),
                 window_ms,
@@ -108,26 +121,56 @@ pub fn plan(
 /// (`k`, floored at the smallest measured heap) by the MILP's own
 /// [`crate::candidates::heap_row`], and its other heap rows masked out of
 /// the search. AutoSketch never merges (x = S), so heap is no search axis.
-fn resolve_heaps(costs: &[AtomicCostEntry], k: u64) -> (Vec<AtomicCostEntry>, Vec<bool>) {
+/// For a top-k RAQE (`topk`), rows that can't answer `k` are masked too.
+fn resolve_heaps(costs: &[AtomicCostEntry], k: u64, topk: bool) -> Resolved {
     let mut resolved = costs.to_vec();
     let mut usable = vec![true; costs.len()];
-    let refs: Vec<&AtomicCostEntry> = costs.iter().collect();
-    for rows in crate::candidates::heap_rows_by_shape(&refs).values() {
-        let index = |row: &AtomicCostEntry| costs.iter().position(|c| std::ptr::eq(c, row));
-        let Some((_, &smallest)) = rows.first_key_value() else {
-            continue;
-        };
-        for &row in rows.values() {
-            if let Some(i) = index(row) {
-                usable[i] = false;
+    // Heap rows by family and counter shape, then by heap, with their index.
+    let mut groups: BTreeMap<(String, String), BTreeMap<u64, usize>> = BTreeMap::new();
+    for (i, row) in costs.iter().enumerate() {
+        if let Some(heap) = crate::heap_capacity(row) {
+            let mut shape = row.sketch_config["params"].clone();
+            if let Some(params) = shape.as_object_mut() {
+                params.remove("heap");
             }
-        }
-        if let (Some(i), Some(entry)) = (index(smallest), crate::candidates::heap_row(rows, k, k)) {
-            resolved[i] = entry;
-            usable[i] = true;
+            groups
+                .entry((row.sketch.clone(), shape.to_string()))
+                .or_default()
+                .insert(heap, i);
         }
     }
-    (resolved, usable)
+    for by_heap in groups.values() {
+        let rows: BTreeMap<u64, &AtomicCostEntry> = by_heap
+            .iter()
+            .map(|(&heap, &i)| (heap, &costs[i]))
+            .collect();
+        by_heap.values().for_each(|&i| usable[i] = false);
+        let (Some((_, &smallest)), Some(entry)) = (
+            by_heap.first_key_value(),
+            crate::candidates::heap_row(&rows, k, k),
+        ) else {
+            continue;
+        };
+        resolved[smallest] = entry;
+        usable[smallest] = true;
+    }
+    // A fixed-k top-k family answers TOPK_K only.
+    if topk {
+        for (i, row) in resolved.iter().enumerate() {
+            usable[i] &= crate::serves_topk_k(row, k);
+        }
+    }
+    Resolved {
+        costs: resolved,
+        usable,
+    }
+}
+
+/// `costs` as a RAQE sees them ([`resolve_heaps`]) and which rows the
+/// search may use.
+struct Resolved {
+    costs: Vec<AtomicCostEntry>,
+    usable: Vec<bool>,
 }
 
 /// Algorithm 4 for one RAQE: LHS seeds per sketch variant, then
@@ -138,18 +181,37 @@ pub fn search(
     costs: &[AtomicCostEntry],
     seed: u64,
     allow_undeployable_families: bool,
+    accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
+) -> RaqeSearch {
+    let resolved = resolve_for(raqe, costs);
+    search_resolved(raqe, &resolved, seed, allow_undeployable_families, accuracy)
+}
+
+fn resolve_for(raqe: &Raqe, costs: &[AtomicCostEntry]) -> Resolved {
+    resolve_heaps(
+        costs,
+        raqe.topk_k(),
+        crate::candidates::is_topk(raqe.capability),
+    )
+}
+
+/// [`search`] over costs already resolved for `raqe`.
+fn search_resolved(
+    raqe: &Raqe,
+    resolved: &Resolved,
+    seed: u64,
+    allow_undeployable_families: bool,
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> RaqeSearch {
     let started = Instant::now();
-    let (resolved, usable) = resolve_heaps(costs, raqe.topk_k());
-    let costs = &resolved[..];
+    let (costs, usable) = (&resolved.costs[..], &resolved.usable);
     let grids: Vec<Grid> = raqe
         .capability
         .candidate_families(allow_undeployable_families)
         // ponytail: ranking compares per-instance memory, which a sketch
         // shared by all groups isn't comparable on; sketch-bench#159.
         .filter(|variant| !crate::family_properties(variant).one_fixed_size_sketch_for_all_groups)
-        .filter_map(|variant| Grid::new(variant, costs, &usable))
+        .filter_map(|variant| Grid::new(variant, costs, usable))
         .collect();
 
     let mut pending = VecDeque::new();
@@ -336,6 +398,8 @@ impl Grid {
     }
 }
 
+/// Search axes: numeric params but the heap and k, which
+/// [`resolve_heaps`] fixes per RAQE.
 fn numeric_params(sketch_config: &serde_json::Value) -> BTreeMap<String, f64> {
     sketch_config
         .get("params")
@@ -343,6 +407,7 @@ fn numeric_params(sketch_config: &serde_json::Value) -> BTreeMap<String, f64> {
         .map(|params| {
             params
                 .iter()
+                .filter(|(name, _)| !matches!(name.as_str(), "heap" | "topk_k"))
                 .filter_map(|(name, value)| value.as_f64().map(|v| (name.clone(), v)))
                 .collect()
         })
@@ -602,8 +667,13 @@ mod tests {
     #[test]
     fn lhs_samples_take_distinct_values_on_every_axis() {
         let costs = grid(&[1, 2, 3, 4], &[64, 128, 256, 512, 1024]);
-        let (costs, usable) = resolve_heaps(&costs, crate::TOPK_K);
-        let g = Grid::new("cms-heap-topk-fastpath-vector2d", &costs, &usable).unwrap();
+        let resolved = resolve_heaps(&costs, crate::TOPK_K, true);
+        let g = Grid::new(
+            "cms-heap-topk-fastpath-vector2d",
+            &resolved.costs,
+            &resolved.usable,
+        )
+        .unwrap();
         for seed in 0..10 {
             let samples = g.lhs(seed);
             assert_eq!(samples.len(), 4);
@@ -627,7 +697,10 @@ mod tests {
         };
         let costs = [at(32), at(128)];
         for (k, heap, mem) in [(10, 32, 1032.0), (100, 100, 1100.0), (512, 512, 1512.0)] {
-            let (resolved, usable) = resolve_heaps(&costs, k);
+            let Resolved {
+                costs: resolved,
+                usable,
+            } = resolve_heaps(&costs, k, true);
             assert_eq!(usable, vec![true, false], "k = {k}");
             assert_eq!(crate::heap_capacity(&resolved[0]), Some(heap), "k = {k}");
             assert_eq!(crate::config_topk_k(&resolved[0]), k, "k = {k}");
@@ -636,5 +709,23 @@ mod tests {
                 "k = {k}"
             );
         }
+    }
+
+    /// UnivMon answers TOPK_K only, so a top-10 search can't pick it.
+    #[test]
+    fn a_fixed_k_family_is_masked_off_its_k() {
+        let costs = [AtomicCostEntry {
+            sketch: "univmon-topk".into(),
+            ..cms(3, 256)
+        }];
+        assert_eq!(resolve_heaps(&costs, crate::TOPK_K, true).usable, [true]);
+        assert_eq!(resolve_heaps(&costs, 10, true).usable, [false]);
+        // A non-top-k RAQE never asks for a k.
+        assert_eq!(resolve_heaps(&costs, 10, false).usable, [true]);
+        let ten = Raqe {
+            topk_k: Some(10),
+            ..raqe("r", 60_000, 60_000, 0.1)
+        };
+        assert_eq!(search(&ten, &costs, 0, true, table_accuracy).selected, None);
     }
 }

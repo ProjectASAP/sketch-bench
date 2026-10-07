@@ -161,9 +161,35 @@ pub fn params_topk_k(topk_k: Option<f64>) -> u64 {
     topk_k.map_or(TOPK_K, |k| k.round() as u64)
 }
 
-/// The `k` a top-k cost row or deployment answers.
+/// The `topk_k` param that encodes `k`: none at [`TOPK_K`], which rows and
+/// curves leave implicit, else `k`. The one encoding of the knob.
+pub fn topk_k_param(k: u64) -> Option<u64> {
+    (k != TOPK_K).then_some(k)
+}
+
+/// The `k` a top-k cost row or deployment's `topk_k` param names.
 pub fn config_topk_k(config: &AtomicCostEntry) -> u64 {
     params_topk_k(config.sketch_config["params"]["topk_k"].as_f64())
+}
+
+/// The `k` a top-k config answers: a heap family's `topk_k`; a fixed-k
+/// family (UnivMon's top-k) answers [`TOPK_K`] only.
+pub fn answered_k(config: &AtomicCostEntry) -> u64 {
+    if has_heap(&config.sketch) {
+        config_topk_k(config)
+    } else {
+        TOPK_K
+    }
+}
+
+/// Whether `config` can answer a top-`k` query: a heap family answering at
+/// least `k` (cut to `k`), or a fixed-k family at exactly its `k`.
+pub fn serves_topk_k(config: &AtomicCostEntry, k: u64) -> bool {
+    if has_heap(&config.sketch) {
+        config_topk_k(config) >= k
+    } else {
+        k == TOPK_K
+    }
 }
 
 /// A heap family's capacity: its `heap` param, else its `k` (sketch-bench's

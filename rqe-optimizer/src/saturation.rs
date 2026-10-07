@@ -720,7 +720,7 @@ fn same_but_topk_k(a: &BTreeMap<String, f64>, b: &BTreeMap<String, f64>) -> bool
 fn with_topk_k(params: &BTreeMap<String, f64>, k: u64) -> BTreeMap<String, f64> {
     let mut params = params.clone();
     params.remove("topk_k");
-    if k != TOPK_K {
+    if let Some(k) = crate::topk_k_param(k) {
         params.insert("topk_k".to_string(), k as f64);
     }
     params

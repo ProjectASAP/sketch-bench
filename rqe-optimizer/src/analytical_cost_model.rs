@@ -80,10 +80,17 @@ fn group_count(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
 
 /// The sketch and its key tracker, if any, each with its instances per
 /// window: 1 for a fixed-size sketch shared by all groups, else `card(G)`.
+/// Which part of a deployment a priced config is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Sketch,
+    KeyTracker,
+}
+
 fn priced_parts<'a>(
     deployment: &'a Deployment,
     facts: &WorkloadFacts,
-) -> impl Iterator<Item = (&'a AtomicCostEntry, f64)> {
+) -> impl Iterator<Item = (&'a AtomicCostEntry, f64, Part)> {
     let properties = deployment.properties();
     assert_eq!(
         properties.needs_delta_set_key_tracker,
@@ -97,11 +104,11 @@ fn priced_parts<'a>(
     } else {
         groups
     };
-    std::iter::once((&deployment.config, sketch_instances)).chain(
+    std::iter::once((&deployment.config, sketch_instances, Part::Sketch)).chain(
         deployment
             .key_tracker
             .iter()
-            .map(move |tracker| (tracker, groups)),
+            .map(move |tracker| (tracker, groups, Part::KeyTracker)),
     )
 }
 
@@ -156,7 +163,7 @@ pub(crate) fn ingest(deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCos
     let open_windows = open_window_count(deployment);
     let arrival_rate = facts[&deployment.metric].arrival_rate_per_sec();
     let mut cost = PhaseCost::default();
-    for (config, instances) in priced_parts(deployment, facts) {
+    for (config, instances, _) in priced_parts(deployment, facts) {
         cost += PhaseCost {
             cpu_secs_per_sec: arrival_rate * open_windows * config.insert_cpu_secs,
             memory_bytes: instances
@@ -176,7 +183,7 @@ pub(crate) fn merge(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
         return PhaseCost::default();
     }
     let mut cost = PhaseCost::default();
-    for (config, instances) in priced_parts(deployment, facts) {
+    for (config, instances, _) in priced_parts(deployment, facts) {
         cost += PhaseCost {
             cpu_secs_per_sec: instances * merges_per_instance * config.merge_cpu_secs
                 / secs(raqe.interval_ms),
@@ -187,17 +194,13 @@ pub(crate) fn merge(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
     cost
 }
 
-/// One query's CPU on `config` for `raqe`: the cost table's `c_qry`, which
-/// top-k rows measure at `TOPK_K`, scaled by `k / TOPK_K` for a top-`k` RAQE
-/// on that config (the answer cut and output are linear in `k`; a first
-/// approximation). Other parts (the key tracker) are as measured.
-fn query_cpu_secs(raqe: &Raqe, deployment: &Deployment, config: &AtomicCostEntry) -> f64 {
-    let topk = matches!(
-        raqe.capability,
-        Capability::TopKByValue | Capability::TopKByCount
-    );
-    if topk && std::ptr::eq(config, &deployment.config) {
-        config.query_cpu_secs * raqe.topk_k() as f64 / crate::TOPK_K as f64
+/// One query's CPU on a deployment's `part`: the cost table's `c_qry`. A
+/// top-k sketch's is measured at `TOPK_K` and scaled by the `k` it answers
+/// (its `topk_k`, whatever the query's), since the answer cut and output are
+/// linear in it; a first approximation.
+fn query_cpu_secs(raqe: &Raqe, config: &AtomicCostEntry, part: Part) -> f64 {
+    if part == Part::Sketch && crate::candidates::is_topk(raqe.capability) {
+        config.query_cpu_secs * crate::answered_k(config) as f64 / crate::TOPK_K as f64
     } else {
         config.query_cpu_secs
     }
@@ -209,12 +212,12 @@ pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
     let groups = group_count(deployment, facts);
     let output_bytes_per_group = match raqe.capability {
         Capability::TopKByValue | Capability::TopKByCount => {
-            raqe.topk_k() as f64 * OUTPUT_BYTES_PER_TOPK_ENTRY
+            crate::answered_k(&deployment.config) as f64 * OUTPUT_BYTES_PER_TOPK_ENTRY
         }
         _ => OUTPUT_BYTES_PER_VALUE,
     };
     let query_cpu_secs_per_group: f64 = priced_parts(deployment, facts)
-        .map(|(config, _)| query_cpu_secs(raqe, deployment, config))
+        .map(|(config, _, part)| query_cpu_secs(raqe, config, part))
         .sum();
     PhaseCost {
         cpu_secs_per_sec: groups * query_cpu_secs_per_group / secs(raqe.interval_ms),
@@ -229,7 +232,7 @@ pub(crate) fn storage_bytes(raqe: &Raqe, deployment: &Deployment, facts: &Worklo
         .closed_instance_count(raqe.lookback_ms)
         .expect("only eligible pairs are costed") as f64;
     priced_parts(deployment, facts)
-        .map(|(config, instances)| {
+        .map(|(config, instances, _)| {
             instances
                 * instance_memory_bytes(config, deployment, facts, deployment.window_ms)
                 * closed_windows
@@ -244,8 +247,8 @@ pub(crate) fn query_latency_ms(raqe: &Raqe, deployment: &Deployment, facts: &Wor
     let merges_per_instance = merged_window_count(raqe, deployment) - 1.0;
     1000.0
         * priced_parts(deployment, facts)
-            .map(|(config, instances)| {
-                groups * query_cpu_secs(raqe, deployment, config)
+            .map(|(config, instances, part)| {
+                groups * query_cpu_secs(raqe, config, part)
                     + instances * merges_per_instance * config.merge_cpu_secs
             })
             .sum::<f64>()
@@ -445,6 +448,27 @@ mod tests {
         assert_eq!(result.storage.memory_bytes, 100.0 * 5.0 + 4.0 * 10.0 * 5.0);
         // 4 × (5 + 1) query + 2 × 3 Hydra merges + 4 × 2 × 1 tracker merges, in s.
         assert_eq!(result.query_latency_ms, vec![38_000.0]);
+    }
+
+    /// Query CPU and output scale by the k the deployment answers, not the
+    /// RAQE's: a k = 32 deployment serving a top-10 query still cuts and
+    /// returns 32; one built at `topk_k = 10` cuts and returns 10.
+    #[test]
+    fn query_cost_scales_by_the_deployments_answered_k() {
+        let ten = Raqe {
+            topk_k: Some(10),
+            ..raqe(60_000, 60_000)
+        };
+        let at_32 = deployment(10.0, 1.0, 1.0, 32.0, 60_000, 60_000);
+        let cost = query(&ten, &at_32, &facts(1, 1));
+        assert_eq!(cost.cpu_secs_per_sec, 32.0 / 60.0);
+        assert_eq!(cost.memory_bytes, 32.0 * OUTPUT_BYTES_PER_TOPK_ENTRY);
+
+        let mut at_10 = at_32.clone();
+        at_10.config.sketch_config["params"]["topk_k"] = 10.into();
+        let cost = query(&ten, &at_10, &facts(1, 1));
+        assert_eq!(cost.cpu_secs_per_sec, 10.0 / 60.0);
+        assert_eq!(cost.memory_bytes, 10.0 * OUTPUT_BYTES_PER_TOPK_ENTRY);
     }
 
     #[test]
