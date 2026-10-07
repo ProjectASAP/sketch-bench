@@ -452,55 +452,124 @@
       "description": "A column's distribution. Serialises internally tagged, so a spec file reads\n`distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.",
       "oneOf": [
         {
+          "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "zipf"
+            },
+            "population_size": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "skewness": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/ZipfParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "skewness",
+            "population_size",
+            "seed"
           ]
         },
         {
+          "description": "Flat over `[lower_bound, upper_bound)`.",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "uniform"
+            },
+            "lower_bound": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "upper_bound": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/UniformParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "lower_bound",
+            "upper_bound",
+            "seed"
           ]
         },
         {
+          "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "normal"
+            },
+            "mean": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "standard_deviation": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/NormalParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "mean",
+            "standard_deviation",
+            "seed"
           ]
         },
         {
+          "description": "Pareto: heavy-tailed, `P(X > x) = (scale / x)^alpha` for `x >= scale`.\nUnbounded above, so like Normal it has no domain.",
           "type": "object",
           "properties": {
+            "alpha": {
+              "type": "number",
+              "format": "double"
+            },
             "kind": {
               "type": "string",
               "const": "pareto"
+            },
+            "scale": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
             }
           },
-          "$ref": "#/$defs/ParetoParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "alpha",
+            "scale",
+            "seed"
           ]
         }
       ]
@@ -630,54 +699,6 @@
       "enum": [
         "bench",
         "runtime"
-      ]
-    },
-    "NormalParameter": {
-      "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
-      "type": "object",
-      "properties": {
-        "mean": {
-          "type": "number",
-          "format": "double"
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "standard_deviation": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "mean",
-        "standard_deviation",
-        "seed"
-      ]
-    },
-    "ParetoParameter": {
-      "description": "Pareto: heavy-tailed, `P(X > x) = (scale / x)^alpha` for `x >= scale`.\nUnbounded above, so like Normal it has no domain.",
-      "type": "object",
-      "properties": {
-        "alpha": {
-          "type": "number",
-          "format": "double"
-        },
-        "scale": {
-          "type": "number",
-          "format": "double"
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "alpha",
-        "scale",
-        "seed"
       ]
     },
     "RunStats": {
@@ -820,30 +841,6 @@
         "row_num"
       ]
     },
-    "UniformParameter": {
-      "description": "Flat over `[lower_bound, upper_bound)`.",
-      "type": "object",
-      "properties": {
-        "lower_bound": {
-          "type": "number",
-          "format": "double"
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "upper_bound": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "lower_bound",
-        "upper_bound",
-        "seed"
-      ]
-    },
     "WorkloadDescription": {
       "description": "The provenance and selection semantics of the input records.",
       "oneOf": [
@@ -891,31 +888,6 @@
             "external"
           ]
         }
-      ]
-    },
-    "ZipfParameter": {
-      "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
-      "type": "object",
-      "properties": {
-        "population_size": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "skewness": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "skewness",
-        "population_size",
-        "seed"
       ]
     }
   }

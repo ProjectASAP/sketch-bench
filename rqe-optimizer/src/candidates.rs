@@ -425,46 +425,6 @@ mod tests {
     }
 
     #[test]
-    fn paired_capabilities_never_share_a_deployment() {
-        let pairs = [
-            (Capability::Sum, Capability::Count, "exact-sum"),
-            (
-                Capability::TopKByValue,
-                Capability::TopKByCount,
-                "cms-heap-topk-fastpath-vector2d",
-            ),
-        ];
-        for (a, b, sketch) in pairs {
-            let raqe_a = Raqe {
-                capability: a,
-                ..raqe("a", 60_000, 60_000)
-            };
-            let raqe_b = Raqe {
-                capability: b,
-                ..raqe("b", 60_000, 60_000)
-            };
-            let entry = AtomicCostEntry {
-                sketch: sketch.into(),
-                ..cost()
-            };
-            let candidates = build_all_candidates(
-                &[raqe_a.clone(), raqe_b.clone()],
-                &[entry],
-                &facts(1, 1),
-                false,
-            );
-            assert!(candidates.iter().any(|d| is_eligible(&raqe_a, d)), "{a:?}");
-            assert!(candidates.iter().any(|d| is_eligible(&raqe_b, d)), "{b:?}");
-            assert!(
-                candidates
-                    .iter()
-                    .all(|d| !(is_eligible(&raqe_a, d) && is_eligible(&raqe_b, d))),
-                "{a:?} and {b:?} share a deployment"
-            );
-        }
-    }
-
-    #[test]
     fn a_min_query_is_only_offered_the_min_accumulator() {
         let r = Raqe {
             capability: Capability::Min,

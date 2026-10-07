@@ -553,6 +553,13 @@ mod tests {
     }
 
     #[test]
+    fn a_distribution_with_an_unknown_field_is_rejected() {
+        let json = r#"{"sketch":"cms","sketch_config":null,"mem_bytes_per_instance":1.0,"insert_cpu_secs":1.0,"merge_cpu_secs":1.0,"query_cpu_secs":1.0,"query_accuracy":{},"measured_at":{"items_per_instance":1,"keys_per_instance":null,"value_range":null,"merge_operand_items":null,"distribution":{"kind":"zipf","skewnes":1.1,"skewness":1.1,"population_size":10,"seed":1}}}"#;
+        let err = serde_json::from_str::<AtomicCostEntry>(json).unwrap_err();
+        assert!(err.to_string().contains("skewnes"), "{err}");
+    }
+
+    #[test]
     fn reduces_a_full_record_to_per_op_seconds() {
         let entry = reduce_one(&full_record()).expect("fully populated record");
         assert_eq!(entry.sketch, "cms");
