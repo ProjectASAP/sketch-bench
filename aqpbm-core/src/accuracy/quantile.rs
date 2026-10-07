@@ -74,7 +74,9 @@ impl GroundTruth for RankErrorGT {
 /// Each probe's denominator is the exact quantile value at the zero-based rank
 /// `ceil(q * n) - 1`; `q = 0` names the first item. Both DDSketch backends use
 /// that convention. Exact zeroes have undefined relative error and are
-/// excluded from the mean.
+/// excluded. A probe the sketch could not answer (`NaN`) is excluded too and
+/// counted in `unanswered_points`. DDSketch's bound holds per quantile, so the
+/// worst probe is reported as `max_relative_value_error` beside the mean.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RelativeValueErrorGT {
     pub column: usize,
@@ -100,25 +102,40 @@ impl GroundTruth for RelativeValueErrorGT {
 
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
         if truth.is_empty() || probes.is_empty() {
-            return metrics_from([("items", 0.0), ("grid_points", 0.0), ("scored_points", 0.0)]);
+            return metrics_from([
+                ("items", 0.0),
+                ("grid_points", 0.0),
+                ("scored_points", 0.0),
+                ("unanswered_points", 0.0),
+            ]);
         }
         let mut sum = 0.0;
+        let mut max = 0.0_f64;
         let mut scored = 0usize;
+        let mut unanswered = 0usize;
         for (q, estimate) in probes.iter().zip(answers) {
             let exact = quantile_value(truth, *q);
             if exact == 0.0 {
                 continue;
             }
-            sum += (estimate - exact).abs() / exact.abs();
+            if estimate.is_nan() {
+                unanswered += 1;
+                continue;
+            }
+            let err = (estimate - exact).abs() / exact.abs();
+            sum += err;
+            max = max.max(err);
             scored += 1;
         }
         let mut metrics = metrics_from([
             ("items", truth.len() as f64),
             ("grid_points", probes.len() as f64),
             ("scored_points", scored as f64),
+            ("unanswered_points", unanswered as f64),
         ]);
         if scored > 0 {
             metrics.insert("mean_relative_value_error".into(), sum / scored as f64);
+            metrics.insert("max_relative_value_error".into(), max);
         }
         metrics
     }
@@ -205,7 +222,39 @@ mod tests {
         assert_eq!(scores["grid_points"], 3.0);
         assert_eq!(scores["scored_points"], 2.0);
         assert!((scores["mean_relative_value_error"] - 0.15).abs() < f64::EPSILON);
+        assert!((scores["max_relative_value_error"] - 0.2).abs() < f64::EPSILON);
         assert!(!scores.contains_key("mean_rank_err"));
+    }
+
+    /// One probe far off among accurate ones: the mean passes 1%, the max
+    /// shows the per-quantile guarantee is broken.
+    #[test]
+    fn relative_value_error_reports_the_worst_quantile() {
+        let gt = RelativeValueErrorGT { column: 0 };
+        let truth: Vec<f64> = (1..=100).map(f64::from).collect();
+        let probes: Vec<f64> = (1..=20).map(|i| i as f64 / 20.0).collect();
+        let answers: Vec<f64> = probes
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| {
+                let exact = quantile_value(&truth, q);
+                exact * if i == 0 { 1.05 } else { 1.0 }
+            })
+            .collect();
+        let scores = gt.score(&truth, &probes, &answers);
+        assert!(scores["mean_relative_value_error"] < 0.01);
+        assert!((scores["max_relative_value_error"] - 0.05).abs() < 1e-12);
+    }
+
+    /// A probe the sketch could not answer is counted, not averaged in.
+    #[test]
+    fn relative_value_error_skips_unanswered_probes() {
+        let gt = RelativeValueErrorGT { column: 0 };
+        let scores = gt.score(&vec![10.0, 20.0], &[0.0, 1.0], &[f64::NAN, 22.0]);
+        assert_eq!(scores["scored_points"], 1.0);
+        assert_eq!(scores["unanswered_points"], 1.0);
+        assert!((scores["mean_relative_value_error"] - 0.1).abs() < 1e-12);
+        assert!((scores["max_relative_value_error"] - 0.1).abs() < 1e-12);
     }
 
     #[test]
