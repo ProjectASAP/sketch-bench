@@ -426,6 +426,18 @@ class CostShapeTest(unittest.TestCase):
         self.assertEqual(shapes, {("1.0", "1000"), ("1.0", "10000"),
                                   ("1.1", "1000"), ("1.1", "10000")})
 
+    def test_a_grid_that_already_has_the_cost_shape_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "cardinality", "--one-config",
+                "--thetas", "1.1", "--cardinalities", "10000", "--n-max", "1e4",
+                "--per-decade", "1", "--seeds", "1",
+            ], check=True, capture_output=True)
+            with open(os.path.join(d, "saturation.csv"), newline="") as f:
+                shapes = [(r["param"], r["cardinality"]) for r in csv.DictReader(f)]
+        self.assertEqual(shapes, [("1.1", "10000")])
+
 
 # Logs every call; atomic-costs reports `--rows` rows kept, 0 skipped.
 FAKE_COST_APPROXBENCH = textwrap.dedent("""\

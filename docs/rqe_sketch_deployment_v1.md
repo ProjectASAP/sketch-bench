@@ -279,8 +279,10 @@ row whose `accuracy_metric` is not its family's or not its curve's
 disagrees with the curve at `measured_at` (beyond 3 seed standard errors plus
 5%). The study adds the cost table's shape to the grid as a full row and
 column (θ = 1.1 at every K, K = 1e4 at every θ), so every sketch row has a
-grid point and the grid stays a full cross. A missing bracketing point
-leaves a shape without accuracy. A row without a grid point (a study run
+grid point and the grid stays a full cross. `SaturationCurves::load`
+refuses curves whose Zipf grid isn't a full cross of its θ and K values and
+names the missing points: a hole would leave every shape around it without
+accuracy (for example, curves from `--points-from` or a narrowed `--resume`). A row without a grid point (a study run
 with `--no-cost-shape`) is reported as unchecked. `small_problem` refuses to plan
 when any row disagrees.
 
