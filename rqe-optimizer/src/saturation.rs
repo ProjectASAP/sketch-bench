@@ -95,7 +95,8 @@ impl GridPoint {
         let neighbours = if n < first_n {
             return None;
         } else if n >= last.0 {
-            self.n_sat?;
+            // The plateau, as in `curve_error_at`.
+            self.n_sat.filter(|&sat| sat <= last.0)?;
             [last, last]
         } else {
             let above = self
@@ -121,20 +122,16 @@ impl GridPoint {
 
     /// The error at `n` items of the sketch merged from `merges` instances:
     /// the worse of the measured shard counts either side of `merges` (one
-    /// is the plain sketch), or the largest measured count past it. `None`
-    /// with no merge curve. Past the merge curve's last checkpoint, its last
-    /// value if the plain curve saturated by then.
+    /// is the plain sketch). `None` past the largest measured count, or with
+    /// no merge curve: a merge count the study didn't reach is unmeasured.
+    /// Past the merge curve's last checkpoint, its last value if the plain
+    /// curve saturated by then.
     fn merged_error_at(&self, merges: u64, n: f64, direction: AccuracyDirection) -> Option<f64> {
         if merges <= 1 {
             return self.error_at(n, direction);
         }
-        let (&largest, _) = self.merged.last_key_value()?;
         let below = self.merged.range(..=merges).next_back().map(|(&m, _)| m);
-        let above = self
-            .merged
-            .range(merges..)
-            .next()
-            .map_or(largest, |(&m, _)| m);
+        let (&above, _) = self.merged.range(merges..).next()?;
         let at = |m: u64| match m {
             1 => self.error_at(n, direction),
             m => curve_error_at(&self.merged[&m], self.n_sat, n, direction),
@@ -303,15 +300,19 @@ impl SaturationCurves {
                 points.insert(key, (sketch, point));
             }
         }
-        // A merged KLL or top-k answer needs a merge curve; without one every
-        // such deployment would silently have no accuracy.
-        if let Some(((sketch, config, ..), _)) = points.iter().find(|(_, (sketch, point))| {
-            is_candidate(sketch) && merges_lossily(sketch) && point.merged.is_empty()
-        }) {
-            return Err(invalid(format!(
-                "{sketch} {config} has no merge curve; rerun the study with \
-                 --merge-shards-list"
-            )));
+        // A study run without --merge-shards-list leaves every merged KLL or
+        // top-k deployment silently without accuracy; refuse it. A point
+        // without a merge curve (one only the 1e9 run has) just has no merged
+        // accuracy.
+        let lossy: Vec<&GridPoint> = points
+            .values()
+            .filter(|(sketch, _)| is_candidate(sketch) && merges_lossily(sketch))
+            .map(|(_, point)| point)
+            .collect();
+        if !lossy.is_empty() && lossy.iter().all(|point| point.merged.is_empty()) {
+            return Err(invalid(
+                "no merge curves for KLL or top-k; rerun the study with --merge-shards-list".into(),
+            ));
         }
         let mut points_by_sketch: BTreeMap<String, Vec<GridPoint>> = BTreeMap::new();
         for (sketch, mut point) in points.into_values() {
@@ -714,8 +715,8 @@ mod tests {
         assert!((at(2_500_000).unwrap() - 0.88).abs() < 1e-12);
         // 10 windows sit between 4 and 16 shards: the worse, 16.
         assert!((at(1_000_000).unwrap() - 0.8).abs() < 1e-12);
-        // 100 windows: past the largest measured count, that count.
-        assert!((at(100_000).unwrap() - 0.8).abs() < 1e-12);
+        // 100 windows: past the largest measured count, unmeasured.
+        assert_eq!(at(100_000), None);
     }
 
     /// Past a merge curve's last checkpoint, its plateau only if the point

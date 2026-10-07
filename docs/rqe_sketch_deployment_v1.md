@@ -233,9 +233,12 @@ lookback: series per group times scrapes per lookback.
   KLL and top-k merge lossily (#131): an answer merged from `m = S_i / D.x`
   windows reads the study's merge curve (`saturation_merge_curve.csv`, the
   sketch merged from `m` shards of the same items) at the lookback's item
-  count. Between measured shard counts, the worse; past the largest, the
-  largest. Without a merge curve, a merged KLL or top-k answer has no
-  accuracy (#158).
+  count. Between measured shard counts, the worse. Past the largest
+  measured count, or without a merge curve, a merged KLL or top-k answer has
+  no accuracy: the study must measure the merge counts a workload needs
+  (`--merge-shards-list`). Past the merge curve's last N, its last value only
+  if the plain curve saturated by then (#158). `SaturationCurves::load`
+  refuses a study with no merge curves at all.
 
 The cost table's sketch accuracies are not read, but they are one point on
 each curve: a row's `measured_at` (items, Zipf θ and population, or Pareto
@@ -478,9 +481,8 @@ each phase's CPU and memory, together with the selected deployment mapping.
 
 ## v1 scope and TODOs
 
-- **Accuracy after merging:** KLL and top-k read merge curves up to the
-  largest measured shard count (64) and N = 1e7; past those, the largest
-  count, and the plateau if the plain curve saturated (#158).
+- **Accuracy after merging:** KLL and top-k are planned only up to the
+  largest shard count and N the study measured merge curves at (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
 - **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; the
