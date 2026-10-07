@@ -8,7 +8,7 @@ pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
 // Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
@@ -53,11 +53,14 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built_kll() -> HydraKll {
-        build_hydra_kll(&ParamSet::of(&HydraKllParams {
-            rows: 3,
-            cols: 64,
-            cell_k: 200,
-        }))
+        build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 64,
+                cell_k: 200,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -70,12 +73,13 @@ mod tests {
             &mut sketch.inner,
             &r.0,
             &asap_sketchlib::DataInput::F64(r.1),
+            "hydra-kll",
         );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical())).is_ok());
+        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical()), 2).is_ok());
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one
@@ -135,7 +139,7 @@ mod tests {
             cols: 64,
             cell_k: 0,
         });
-        let Err(err) = build_hydra_kll(&bad) else {
+        let Err(err) = build_hydra_kll(&bad, 2) else {
             panic!("a zero cell_k must be refused, not built");
         };
         assert!(

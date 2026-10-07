@@ -8,7 +8,7 @@ pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
 #[cfg(test)]
@@ -20,12 +20,15 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built() -> HydraCs {
-        build_hydra_cs(&ParamSet::of(&HydraCsParams {
-            rows: 3,
-            cols: 64,
-            cell_rows: 3,
-            cell_cols: 256,
-        }))
+        build_hydra_cs(
+            &ParamSet::of(&HydraCsParams {
+                rows: 3,
+                cols: 64,
+                cell_rows: 3,
+                cell_cols: 256,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -38,6 +41,7 @@ mod tests {
             &mut sketch.inner,
             &r.0,
             &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-cs",
         );
     }
 
@@ -84,7 +88,9 @@ mod tests {
         for _ in 0..4 {
             fed(&mut right, &record("a;x", 10));
         }
-        merge(&mut left.inner, &right.inner);
+        left.inner
+            .merge(&right.inner)
+            .expect("both operands built from one ParamSet, so shapes match");
         assert_eq!(left.estimate_subpop_frequency(&["a"], &10i64), 7.0);
     }
 
@@ -96,7 +102,7 @@ mod tests {
             cell_rows: 3,
             cell_cols: 256,
         });
-        let Err(err) = build_hydra_cs(&bad) else {
+        let Err(err) = build_hydra_cs(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -117,6 +123,6 @@ mod tests {
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_cs(&ParamSet::of(&HydraCsParams::canonical())).is_ok());
+        assert!(build_hydra_cs(&ParamSet::of(&HydraCsParams::canonical()), 2).is_ok());
     }
 }

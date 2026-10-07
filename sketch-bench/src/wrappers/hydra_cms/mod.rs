@@ -8,7 +8,7 @@ pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
 #[cfg(test)]
@@ -20,12 +20,15 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built() -> HydraCms {
-        build_hydra_cms(&ParamSet::of(&HydraCmsParams {
-            rows: 3,
-            cols: 64,
-            cell_rows: 3,
-            cell_cols: 256,
-        }))
+        build_hydra_cms(
+            &ParamSet::of(&HydraCmsParams {
+                rows: 3,
+                cols: 64,
+                cell_rows: 3,
+                cell_cols: 256,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -38,6 +41,7 @@ mod tests {
             &mut sketch.inner,
             &r.0,
             &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-cms",
         );
     }
 
@@ -84,8 +88,28 @@ mod tests {
         for _ in 0..4 {
             fed(&mut right, &record("a;x", 10));
         }
-        merge(&mut left.inner, &right.inner);
+        left.inner
+            .merge(&right.inner)
+            .expect("both operands built from one ParamSet, so shapes match");
         assert_eq!(left.estimate_subpop_frequency(&["a"], &10i64), 7.0);
+    }
+
+    /// The grid's key columns are fixed at construction: a record of another
+    /// width is refused, naming the variant and both widths.
+    #[test]
+    #[should_panic(expected = "hydra-cms: record \"a;x;z\" has 3 label(s), the grid 2")]
+    fn a_record_of_another_width_is_refused() {
+        fed(&mut built(), &record("a;x;z", 10));
+    }
+
+    /// An empty label is a value in its own column: it doesn't shift the
+    /// labels after it.
+    #[test]
+    fn an_empty_label_keeps_its_column() {
+        let mut h = built();
+        fed(&mut h, &record(";x", 10));
+        assert_eq!(h.estimate_subpop_frequency(&[""], &10i64), 1.0);
+        assert_eq!(h.estimate_subpop_frequency(&["x"], &10i64), 0.0);
     }
 
     #[test]
@@ -96,7 +120,7 @@ mod tests {
             cell_rows: 3,
             cell_cols: 256,
         });
-        let Err(err) = build_hydra_cms(&bad) else {
+        let Err(err) = build_hydra_cms(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
@@ -117,6 +141,6 @@ mod tests {
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical())).is_ok());
+        assert!(build_hydra_cms(&ParamSet::of(&HydraCmsParams::canonical()), 2).is_ok());
     }
 }

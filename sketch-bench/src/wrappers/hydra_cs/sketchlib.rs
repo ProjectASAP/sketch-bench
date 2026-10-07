@@ -18,7 +18,8 @@ pub struct HydraCs {
     params: HydraCsParams,
 }
 
-pub fn build_hydra_cs(config: &ParamSet) -> Result<HydraCs, BuildError> {
+/// `label_columns`: the key columns every record carries.
+pub fn build_hydra_cs(config: &ParamSet, label_columns: usize) -> Result<HydraCs, BuildError> {
     let p: HydraCsParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-cs")?;
     for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
@@ -31,7 +32,7 @@ pub fn build_hydra_cs(config: &ParamSet) -> Result<HydraCs, BuildError> {
         p.cell_cols,
     ));
     Ok(HydraCs {
-        inner: new_hydra(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-cs")?,
         params: p,
     })
 }
@@ -43,6 +44,7 @@ impl HydraCs {
             &self.inner,
             labels,
             &HydraQuery::Frequency(value.data_input()),
+            "hydra-cs",
         )
     }
 }
@@ -63,11 +65,11 @@ pub fn insert_hydra_cs<V: FrequencyValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_cs(params)?;
+        let mut sketch = build_hydra_cs(params, label_columns(&items))?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                update(&mut sketch.inner, &v.0, &v.1.data_input());
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
             }
             memory_hydra_cs(&sketch)
         }) as Pass);
@@ -82,7 +84,8 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cs(params)?));
+        let sketch: Shared<_> =
+            Rc::new(RefCell::new(build_hydra_cs(params, label_columns(&items))?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -90,7 +93,7 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                update(&mut sketch.inner, &v.0, &v.1.data_input());
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
             }),
             footprint: Box::new(move || memory_hydra_cs(&read.borrow())),
         });
@@ -121,7 +124,10 @@ pub fn merge_query_hydra_cs<V: FrequencyValue>(
         // Built, fed and folded here: the closure below asks, and only asks.
         let (mut sketch, rest) = hydra_cs_shards(params, &items, shards)?;
         for other in rest.iter() {
-            merge(&mut sketch.inner, &other.inner);
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so grid and cell shapes match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -147,7 +153,9 @@ pub fn merge_hydra_cs<V: FrequencyValue>(
         let (mut acc, rest) = hydra_cs_shards(params, &items, shards)?;
         out.push(Box::new(move || {
             for other in rest.iter() {
-                merge(&mut acc.inner, &other.inner);
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
             }
             memory_hydra_cs(&acc)
         }) as Pass);
@@ -171,7 +179,9 @@ pub fn merge_step_hydra_cs<V: FrequencyValue>(
             step: Box::new(move |i| {
                 let acc = &mut *driven.borrow_mut();
                 let other = &rest[i];
-                merge(&mut acc.inner, &other.inner);
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
             }),
             footprint: Box::new(move || memory_hydra_cs(&read.borrow())),
         });
@@ -189,9 +199,9 @@ fn hydra_cs_shards<V: FrequencyValue>(
 ) -> Result<(HydraCs, Vec<HydraCs>), BuildError> {
     let mut parts: Vec<HydraCs> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_cs(params)?;
+        let mut sketch = build_hydra_cs(params, label_columns(items))?;
         for v in shard {
-            update(&mut sketch.inner, &v.0, &v.1.data_input());
+            update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
         }
         parts.push(sketch);
     }

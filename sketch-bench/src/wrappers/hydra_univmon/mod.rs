@@ -8,7 +8,7 @@ pub mod polars;
 pub mod sketchlib;
 
 pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
 #[cfg(test)]
@@ -20,14 +20,17 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built() -> HydraUnivmon {
-        build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams {
-            rows: 2,
-            cols: 16,
-            cell_heap_size: 32,
-            cell_sketch_row: 5,
-            cell_sketch_col: 256,
-            cell_layer_size: 4,
-        }))
+        build_hydra_univmon(
+            &ParamSet::of(&HydraUnivmonParams {
+                rows: 2,
+                cols: 16,
+                cell_heap_size: 32,
+                cell_sketch_row: 5,
+                cell_sketch_col: 256,
+                cell_layer_size: 4,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -40,12 +43,13 @@ mod tests {
             &mut sketch.inner,
             &r.0,
             &asap_sketchlib::DataInput::I64(r.1),
+            "hydra-univmon",
         );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams::canonical())).is_ok());
+        assert!(build_hydra_univmon(&ParamSet::of(&HydraUnivmonParams::canonical()), 2).is_ok());
     }
 
     #[test]
@@ -109,7 +113,9 @@ mod tests {
         for _ in 0..4 {
             fed(&mut right, &record("a;x", 10));
         }
-        merge(&mut left.inner, &right.inner);
+        left.inner
+            .merge(&right.inner)
+            .expect("both operands built from one ParamSet, so shapes match");
         let est = left.estimate_subpop_l1_norm(&["a"]);
         assert!(
             (est - 7.0).abs() < 0.5,
@@ -127,7 +133,7 @@ mod tests {
             cell_sketch_col: 0,
             cell_layer_size: 4,
         });
-        let Err(err) = build_hydra_univmon(&bad) else {
+        let Err(err) = build_hydra_univmon(&bad, 2) else {
             panic!("a zero dimension must be refused, not built");
         };
         let err = err.to_string();
