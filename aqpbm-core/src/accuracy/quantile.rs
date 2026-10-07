@@ -1,8 +1,8 @@
 //! Quantile-algorithm ground truth comparators, one metric per algorithm, because
 //! each sketch's correctness bound is defined differently in its paper.
 //! [`RankErrorGT`] (KLL) reports rank error in units of `n`, range-based over
-//! tie intervals. [`RelativeValueErrorGT`] (DDSketch) reports the paper's
-//! relative error against the exact value at every grid quantile.
+//! tie intervals. [`RelativeValueErrorGT`] (DDSketch) reports relative value
+//! error against the exact order statistic each DDSketch implementation asks.
 
 use std::collections::BTreeMap;
 
@@ -71,9 +71,10 @@ impl GroundTruth for RankErrorGT {
 
 /// Relative-value-error comparator for DDSketch-style sketches.
 ///
-/// Each probe's denominator is the exact quantile value at zero-based rank
-/// `floor(q * (n - 1))`, the paper's one-based `floor(1 + q * (n - 1))`.
-/// Exact zeroes have undefined relative error and are excluded from the mean.
+/// Each probe's denominator is the exact quantile value at the zero-based rank
+/// `ceil(q * n) - 1`; `q = 0` names the first item. Both DDSketch backends use
+/// that convention. Exact zeroes have undefined relative error and are
+/// excluded from the mean.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RelativeValueErrorGT {
     pub column: usize,
@@ -146,7 +147,12 @@ pub(crate) fn rank_err(sorted: &[f64], est: f64, q: f64) -> f64 {
 }
 
 fn quantile_value(sorted: &[f64], q: f64) -> f64 {
-    sorted[(q * (sorted.len() - 1) as f64).floor() as usize]
+    let rank = if q == 0.0 {
+        1
+    } else {
+        (q * sorted.len() as f64).ceil() as usize
+    };
+    sorted[rank - 1]
 }
 
 /// Count of elements strictly less than `x` in a sorted slice.
@@ -210,11 +216,19 @@ mod tests {
     }
 
     #[test]
-    fn relative_value_error_uses_the_papers_floor_quantile_rank() {
+    fn relative_value_error_uses_ddsketchs_quantile_rank() {
         let gt = RelativeValueErrorGT { column: 0 };
-        let scores = gt.score(&vec![10.0, 20.0, 40.0, 80.0], &[0.5], &[24.0]);
+        let scores = gt.score(&vec![10.0, 20.0, 40.0, 80.0], &[0.3], &[24.0]);
 
-        // floor(0.5 * (4 - 1)) is 1, so the exact value is 20, not 40.
+        // ceil(0.3 * 4) - 1 is 1, so the exact value is 20, not 10.
         assert!((scores["mean_relative_value_error"] - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn relative_value_error_uses_the_first_item_at_zero_quantile() {
+        let gt = RelativeValueErrorGT { column: 0 };
+        let scores = gt.score(&vec![10.0, 20.0, 40.0], &[0.0], &[11.0]);
+
+        assert!((scores["mean_relative_value_error"] - 0.1).abs() < f64::EPSILON);
     }
 }
