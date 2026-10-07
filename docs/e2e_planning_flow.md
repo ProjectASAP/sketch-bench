@@ -8,7 +8,7 @@ How to plan sketch deployments for a query workload over a real trace:
 4. run the optimizer;
 5. read the plan.
 
-This page follows what exists on `main` (through #178 and #179). It names the
+This page follows what exists on `main` (through #183). It names the
 steps that are still manual. The model itself (candidates, cost model,
 eligibility) is in [`rqe_sketch_deployment_v1.md`](rqe_sketch_deployment_v1.md),
 and the saturation study is in [`saturation_study.md`](saturation_study.md).
@@ -91,9 +91,24 @@ python fit_skew.py --data-root /path/to/trace-data   # writes results/skew_summa
 ```
 
 `results/skew_summary.csv` has one row per (dataset, query_id, kind, weight,
-range). Use the worst case over the whole trace, not an average: longer samples
-expose worse cases (`saturation_conclusions.md`). The columns map onto
-`data_shape` as follows:
+range). Those three key columns are:
+- **kind**: `keys` or `values`. A key query (group-by keys: sums, top-k,
+  distinct counts) gets the Zipf fit, which gives `zipf_s` (θ) and
+  `distinct_keys` (K). A value query (quantiles) gets the power-law tail fit,
+  which gives `tail_index` (a).
+- **weight** (key queries only): what each key's rank-frequency counts. With
+  `count` it is the row count per key; with `value`, the value sum per key,
+  negatives clipped. Use the one that matches how the sketch is fed: once per
+  sample (`count`, e.g. `topk` over `count_over_time`) or weighted by the
+  sample value (`value`, e.g. `topk` over `sum` or `rate`).
+- **range**: the query's lookback (`instant`, `5m`, `1h`, ...), i.e. the
+  RAQE's `S`. Each row is that query evaluated at every step with that window.
+
+`data_shape` is keyed by (metric, grouping), not by range. When RAQEs on one
+grouping have different ranges, take the worst case over them: the smallest θ,
+the largest K and the smallest a. Use the worst case over the whole trace too,
+not an average, since longer samples expose worse cases
+(`saturation_conclusions.md`). The columns map onto `data_shape` as follows:
 
 | `skew_summary.csv` | `DataShape` / facts | Note |
 |---|---|---|
@@ -122,7 +137,8 @@ must be the only job on the machine.
 cargo build -p aqpbm-cli --release
 D=SATURATION_DIR
 
-# Accuracy grid to N = 1e7, with merge curves (KLL and top-k need them, #158).
+# Accuracy grid to N = 1e7, with merge curves (KLL needs them, #158; top-k
+# merges with a heap of m·k and reads its plain curve, #182).
 python3 scripts/study_saturation.py --phase accuracy --n-max 1e7 --seeds 3 --jobs 48 \
     --merge-shards-list 1,4,16,64 --out $D/out_grid_1e7_cost
 
@@ -142,16 +158,38 @@ python3 scripts/study_saturation.py --phase optimizer-cost --out $D/optimizer_co
 - **Merge curves:** `--merge-shards-list` also scores the sketch merged from
   `m` shards, into `saturation_merge_curve.csv`. List every `m` the workload's
   merges need (`m = S / x` for the windows `x` the optimizer may pick).
-  Past the largest measured `m`, a merged KLL or top-k answer has no accuracy.
-  `--merge-shards-list` can be restricted to the lossy families with `--families topk,quantile`
-  and `--resume`.
+  Past the largest measured `m`, a merged KLL answer falls back to its
+  guarantee (#180). Restrict `--merge-shards-list` to the quantile family with
+  `--families quantile` and `--resume`.
 - **Cost table:** `--phase optimizer-cost` measures each config of the families
   the optimizer plans (`OPTIMIZER_FAMILIES`: top-k, cardinality, quantile) and
   the exact accumulators, once each at the `COST_*` shape with `COST_N` = 1e6
   items, 5 runs after 3 warm-ups. `atomic-costs` reduces them to
   `rqe_atomic_costs.json`, and every row names its `accuracy_metric`. The
   phase fails if any row is skipped.
-- **Resuming:** `--resume` keeps complete curves after an interruption.
+- **Resuming:** `--resume` keeps complete curves after an interruption, and
+  with a narrower grid it keeps the other points' rows (#182).
+
+### Fanning out over machines
+
+Accuracy runs split cleanly across machines; only the cost table needs a
+machine to itself.
+1. Build `approxbench` once and copy it, with `scripts/` and `configs/`, to
+   each machine. The machines must share the OS and libc.
+2. Give each machine a disjoint set of points: whole families with
+   `--families`, or a CSV of points with `--points-from`. Each machine writes
+   its own run directory.
+3. Concatenate the parts into one run directory:
+
+   ```bash
+   python3 scripts/merge_study_parts.py $D/out_grid_1e7_cost part_a/grid part_b/grid
+   ```
+
+   It refuses a point that appears in two parts and mismatched headers.
+4. Run `--phase optimizer-cost` alone on one machine.
+
+On asap_sketchlib 0.3.0, five 56-core nodes run the default grid and the
+targeted 1e9 points in about 10 minutes.
 
 `SaturationCurves::load` expects exactly this layout:
 
@@ -188,8 +226,7 @@ What is checked before planning:
 - `SaturationCurves::load` refuses a candidate family's curve whose
   `error_metric` isn't the family's accuracy metric. That is a stale study, so
   rerun it.
-- It also refuses a study with no merge curves for a candidate KLL or top-k
-  sketch.
+- It also refuses a study with no merge curves for a candidate KLL sketch.
 - `check_cost_table` refuses to plan when a cost row's `accuracy_metric` isn't
   its family's or its curve's, or when the row disagrees with the curve at its
   `measured_at`. Rows with no grid point at their shape are printed as
@@ -234,12 +271,14 @@ lookback (series per group × scrapes per lookback):
   neighbour. Below the first checkpoint there is no accuracy. Past the last,
   it uses the plateau if the point saturated by then, else there is no accuracy.
 - **Merging `m = S / x` windows:** CMS, CountSketch, HLL and DDSketch merge
-  exactly, so they read the plain curve. KLL and top-k read the merge curve at
-  `m`, taking the worse of the measured counts either side. Past the largest
-  measured `m`, or past the merge curve's last N, there is no accuracy.
-- **No accuracy** means the candidate is not eligible.
-- An open PR, #180 (branch `theory-bounds`), falls back to each sketch's
-  published guarantee where the study measured nothing.
+  exactly, so they read the plain curve. KLL reads the merge curve at `m`,
+  taking the worse of the measured counts either side. Top-k deployments keep
+  a heap of `m·k` (#182), so a merged top-k answer reads the plain curve.
+- **Unmeasured:** past an unsaturated curve, past the measured `m` or N, or
+  with no merge curve, the accuracy falls back to the sketch's published
+  guarantee at 95% (#180), never better than the last measurement it extends.
+- **No accuracy** (below the first checkpoint, or a shape outside the grid)
+  means the candidate is not eligible.
 
 ## 5. Reading the plan
 
