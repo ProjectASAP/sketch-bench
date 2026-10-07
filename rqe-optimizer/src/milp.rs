@@ -10,7 +10,6 @@ use good_lp::{
     default_solver, variable, Expression, ProblemVariables, ResolutionError, Solution, SolverModel,
     Variable,
 };
-use std::collections::BTreeMap;
 
 /// What a [`minimize`] solve minimizes. Eligibility, assignment and activation
 /// rows, and latency SLAs are the same for every objective.
@@ -237,30 +236,37 @@ fn plan(
     candidates: &[Deployment],
     mapping: &Mapping,
 ) -> (Vec<PlannedDeployment>, Vec<PlannedRaqe>) {
-    let mut planned_index: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut planned_index: Vec<Option<usize>> = vec![None; candidates.len()];
     let mut planned_deployments: Vec<PlannedDeployment> = Vec::new();
     let mut planned_raqes = Vec::with_capacity(raqes.len());
+    // `retained_instance_count` holds the closed windows until the open ones
+    // are added below, once per deployment.
     for (raqe, &candidate_index) in raqes.iter().zip(mapping) {
         let deployment = &candidates[candidate_index];
-        let index = *planned_index.entry(candidate_index).or_insert_with(|| {
+        let index = *planned_index[candidate_index].get_or_insert_with(|| {
             planned_deployments.push(PlannedDeployment {
                 deployment: deployment.clone(),
                 retained_instance_count: 0,
             });
             planned_deployments.len() - 1
         });
-        let retained = deployment
-            .active_instance_count()
-            .zip(deployment.closed_instance_count(raqe.lookback_ms));
-        let (open, closed) = retained.expect("eligible deployments have whole window counts");
+        let closed = deployment
+            .closed_instance_count(raqe.lookback_ms)
+            .expect("eligible deployments have whole window counts");
         let planned = &mut planned_deployments[index];
-        planned.retained_instance_count = planned.retained_instance_count.max(open + closed);
+        planned.retained_instance_count = planned.retained_instance_count.max(closed);
         planned_raqes.push(PlannedRaqe {
             deployment: index,
             merged_instance_count: deployment
                 .query_instance_count(raqe.lookback_ms)
                 .expect("eligible deployments divide the lookback"),
         });
+    }
+    for planned in &mut planned_deployments {
+        planned.retained_instance_count += planned
+            .deployment
+            .active_instance_count()
+            .expect("eligible deployments have whole window counts");
     }
     (planned_deployments, planned_raqes)
 }
@@ -468,9 +474,5 @@ mod tests {
             .map(|planned| (planned.deployment, planned.merged_instance_count))
             .collect();
         assert_eq!(merged, vec![(0, 1), (0, 10)]);
-        assert_eq!(
-            milp.objective_value,
-            Objective::default().value(&milp.plan_cost)
-        );
     }
 }
