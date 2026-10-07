@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+};
 
 // Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
 // in the library, reproduced here because a cell's footprint is a function of
@@ -64,9 +66,11 @@ mod tests {
     }
 
     fn fed_kll(sketch: &mut HydraKll, r: &(String, f64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::F64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::F64(r.1),
+        );
     }
 
     #[test]

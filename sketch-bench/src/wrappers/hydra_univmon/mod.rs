@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+};
 
 #[cfg(test)]
 mod tests {
@@ -34,9 +36,11 @@ mod tests {
     }
 
     fn fed(sketch: &mut HydraUnivmon, r: &(String, i64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::I64(r.1),
+        );
     }
 
     #[test]
@@ -105,9 +109,7 @@ mod tests {
         for _ in 0..4 {
             fed(&mut right, &record("a;x", 10));
         }
-        left.inner
-            .merge(&right.inner)
-            .expect("both operands built from one ParamSet, so shapes match");
+        merge(&mut left.inner, &right.inner);
         let est = left.estimate_subpop_l1_norm(&["a"]);
         assert!(
             (est - 7.0).abs() < 0.5,

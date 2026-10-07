@@ -7,7 +7,9 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, labels, merge, new_hydra, query, update,
+};
 
 #[cfg(test)]
 mod tests {
@@ -32,9 +34,11 @@ mod tests {
     }
 
     fn fed(sketch: &mut HydraCms, r: &(String, i64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::I64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::I64(r.1),
+        );
     }
 
     /// The statistic is the frequency of a value *within* a subpopulation, and
@@ -80,9 +84,7 @@ mod tests {
         for _ in 0..4 {
             fed(&mut right, &record("a;x", 10));
         }
-        left.inner
-            .merge(&right.inner)
-            .expect("both operands built from one ParamSet, so shapes match");
+        merge(&mut left.inner, &right.inner);
         assert_eq!(left.estimate_subpop_frequency(&["a"], &10i64), 7.0);
     }
 

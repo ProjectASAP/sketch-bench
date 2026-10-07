@@ -38,7 +38,7 @@ pub fn build_hydra_univmon(config: &ParamSet) -> Result<HydraUnivmon, BuildError
         p.cell_layer_size,
     ));
     Ok(HydraUnivmon {
-        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, cell),
         params: p,
     })
 }
@@ -46,23 +46,22 @@ pub fn build_hydra_univmon(config: &ParamSet) -> Result<HydraUnivmon, BuildError
 impl HydraUnivmon {
     #[inline]
     pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Cardinality)
+        query(&self.inner, labels, &HydraQuery::Cardinality)
     }
 
     #[inline]
     pub fn estimate_subpop_l1_norm(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::L1Norm)
+        query(&self.inner, labels, &HydraQuery::L1Norm)
     }
 
     #[inline]
     pub fn estimate_subpop_l2_norm(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::L2Norm)
+        query(&self.inner, labels, &HydraQuery::L2Norm)
     }
 
     #[inline]
     pub fn estimate_subpop_entropy(&self, labels: &[&str]) -> f64 {
-        self.inner.query_key(labels.to_vec(), &HydraQuery::Entropy)
+        query(&self.inner, labels, &HydraQuery::Entropy)
     }
 }
 
@@ -86,7 +85,7 @@ pub fn insert_hydra_univmon<V: CardinalityValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input());
             }
             memory_hydra_univmon(&sketch)
         }) as Pass);
@@ -109,7 +108,7 @@ pub fn insert_step_hydra_univmon<V: CardinalityValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input());
             }),
             footprint: Box::new(move || memory_hydra_univmon(&read.borrow())),
         });
@@ -130,10 +129,7 @@ fn asked_hydra_univmon<V: CardinalityValue>(
         // Built, fed and folded here: the closure below asks, and only asks.
         let (mut sketch, rest) = hydra_univmon_shards(params, &items, shards)?;
         for other in rest.iter() {
-            sketch
-                .inner
-                .merge(&other.inner)
-                .expect("both operands built from one ParamSet, so grid and cell shapes match");
+            merge(&mut sketch.inner, &other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -299,9 +295,7 @@ pub fn merge_hydra_univmon<V: CardinalityValue>(
         let (mut acc, rest) = hydra_univmon_shards(params, &items, shards)?;
         out.push(Box::new(move || {
             for other in rest.iter() {
-                acc.inner
-                    .merge(&other.inner)
-                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+                merge(&mut acc.inner, &other.inner);
             }
             memory_hydra_univmon(&acc)
         }) as Pass);
@@ -325,9 +319,7 @@ pub fn merge_step_hydra_univmon<V: CardinalityValue>(
             step: Box::new(move |i| {
                 let acc = &mut *driven.borrow_mut();
                 let other = &rest[i];
-                acc.inner
-                    .merge(&other.inner)
-                    .expect("both operands built from one ParamSet, so grid and cell shapes match");
+                merge(&mut acc.inner, &other.inner);
             }),
             footprint: Box::new(move || memory_hydra_univmon(&read.borrow())),
         });
@@ -347,7 +339,7 @@ fn hydra_univmon_shards<V: CardinalityValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_hydra_univmon(params)?;
         for v in shard {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+            update(&mut sketch.inner, &v.0, &v.1.data_input());
         }
         parts.push(sketch);
     }
