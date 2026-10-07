@@ -55,8 +55,8 @@ SKETCHES = [
     ("cardinality", "hll", ["lg_k=12", "lg_k=14", "lg_k=16"], "cardinality", "relative_error"),
     ("quantile", "kll-percall", ["k=50", "k=200", "k=800"], "rank-error", "mean_rank_err"),
     ("quantile", "dd", ["alpha=0.005", "alpha=0.01", "alpha=0.02", "alpha=0.05"],
-     # DDSketch's bound holds per quantile, so its curve is the worst one.
-     "relative-value-error", "max_relative_value_error"),
+     # Mean over probes, like KLL: both answer the same quantile query.
+     "relative-value-error", "mean_relative_value_error"),
 ]
 
 # The exact polars baseline (variant, config) each family is compared with.
