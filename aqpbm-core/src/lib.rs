@@ -20,7 +20,8 @@ pub use aqpbm_datagen::{
     ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
 pub use atomic_costs::{
-    reduce_all, reduce_one, same_cell, AtomicCostEntry, AtomicCostTable, MeasuredAt, SkipReason,
+    reduce_all, reduce_one, same_cell, AtomicCostEntry, AtomicCostTable, MeasuredAt, MeasuredShape,
+    SkipReason,
 };
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,

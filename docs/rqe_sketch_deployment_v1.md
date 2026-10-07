@@ -228,6 +228,15 @@ n(S_i) = card(metric.labels) / card(G) × S_i / scrape_interval
 - Pane size doesn't matter: a merged answer reads the curve at `n(S_i)`.
   KLL and top-k merge lossily; their merge penalty is #158.
 
+The cost table's sketch accuracies are not read, but they are one point on
+each curve: a row's `measured_at` (items, Zipf θ and population, or Pareto
+`a`) is a grid point's key. `SaturationCurves::check_cost_table` reads the
+curve there and reports every row that disagrees (beyond 3 seed standard
+errors plus 5%), whose configuration is not in the grid, or whose table lacks
+the curve's `error_metric`. Rows the study has no point for (KLL: the table
+measures Zipf ranks, the study Pareto values) are reported as unchecked.
+`small_problem` refuses to plan when any row disagrees.
+
 For lower-is-better metrics, passing means `measured <= tol_i`. For
 higher-is-better metrics, passing means `measured >= tol_i`. Direction is
 explicit on the RAQE; it is never inferred from a metric name. A missing metric

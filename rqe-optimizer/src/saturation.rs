@@ -6,6 +6,10 @@
 //! `n(T) = card(L)/card(G) · T / scrape` items per group, merged from `T/x`
 //! panes or not, and the curve is read there. Pane size doesn't matter.
 //! KLL and top-k merge lossily (#131); their merge penalty is #158.
+//!
+//! The cost table's sketch accuracies are not read: each is one point on a
+//! curve, at the row's `measured_at`, and [`SaturationCurves::check_cost_table`]
+//! checks that the two agree there (#171).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -16,6 +20,7 @@ use crate::{
     table_accuracy, AccuracyDirection, AtomicCostEntry, Deployment, LabelSet, MetricFacts, Raqe,
     WorkloadFacts,
 };
+use aqpbm_core::MeasuredShape;
 
 /// The data parameters a saturation curve is keyed by, fitted from the
 /// dataset per (metric, grouping) as the worst case over windows and groups.
@@ -39,23 +44,70 @@ const RUN_DIRS: [&str; 2] = ["out_grid_1e7_cost", "out_1e9"];
 #[derive(Debug, Clone, PartialEq)]
 struct GridPoint {
     params: BTreeMap<String, f64>,
-    /// Zipf θ, or the Pareto tail index for quantile sketches.
-    shape_param: f64,
-    /// `K`; `None` for quantile sketches, whose rows leave it blank.
-    distinct_keys: Option<f64>,
+    shape: MeasuredShape,
     error_metric: String,
     /// `None`: still changing at the largest measured N.
     n_sat: Option<f64>,
-    /// `(n, seed_mean_error)`, ascending in `n`.
-    curve: Vec<(f64, f64)>,
+    /// `(n, seed_mean_error, seed_se)`, ascending in `n`.
+    curve: Vec<(f64, f64, f64)>,
 }
 
+/// How far a cost-table value may sit outside the curve's range at its N:
+/// this many of the curve's seed standard errors, plus [`AGREEMENT_RELATIVE`]
+/// of the curve's value, because the table row is one seed of its own.
+const AGREEMENT_SES: f64 = 3.0;
+const AGREEMENT_RELATIVE: f64 = 0.05;
+
 impl GridPoint {
+    /// Zipf θ, or the Pareto tail index for quantile sketches.
+    fn shape_param(&self) -> f64 {
+        match self.shape {
+            MeasuredShape::Zipf { skew, .. } => skew,
+            MeasuredShape::Pareto { tail_index } => tail_index,
+        }
+    }
+
+    /// `K`; `None` for quantile sketches.
+    fn distinct_keys(&self) -> Option<f64> {
+        match self.shape {
+            MeasuredShape::Zipf { keys, .. } => Some(keys),
+            MeasuredShape::Pareto { .. } => None,
+        }
+    }
+
+    /// Whether a value measured at `n` agrees with the curve: within
+    /// tolerance of the checkpoint at `n`, or of the range between the two
+    /// either side. `None` where the curve can't say (as in
+    /// [`GridPoint::error_at`]).
+    fn agrees_at(&self, n: f64, value: f64) -> Option<bool> {
+        let &(first_n, ..) = self.curve.first()?;
+        let &last = self.curve.last()?;
+        let neighbours = if n < first_n {
+            return None;
+        } else if n >= last.0 {
+            self.n_sat?;
+            [last, last]
+        } else {
+            let above = self
+                .curve
+                .partition_point(|&(checkpoint, ..)| checkpoint < n);
+            if self.curve[above].0 == n {
+                [self.curve[above]; 2]
+            } else {
+                [self.curve[above - 1], self.curve[above]]
+            }
+        };
+        let [(_, a, a_se), (_, b, b_se)] = neighbours;
+        let (low, high) = (a.min(b), a.max(b));
+        let tolerance = AGREEMENT_SES * a_se.max(b_se) + AGREEMENT_RELATIVE * high.abs();
+        Some(value >= low - tolerance && value <= high + tolerance)
+    }
+
     /// Q6 of #156: between checkpoints, the worse neighbour; below the first,
     /// unmeasured; past the last, the plateau only if the point saturated.
     fn error_at(&self, n: f64, direction: AccuracyDirection) -> Option<f64> {
-        let (first_n, _) = *self.curve.first()?;
-        let &(last_n, last_error) = self.curve.last()?;
+        let &(first_n, ..) = self.curve.first()?;
+        let &(last_n, last_error, _) = self.curve.last()?;
         if n < first_n {
             return None;
         }
@@ -64,8 +116,8 @@ impl GridPoint {
         }
         let above = self
             .curve
-            .partition_point(|&(checkpoint, _)| checkpoint < n);
-        let (checkpoint, error) = self.curve[above];
+            .partition_point(|&(checkpoint, ..)| checkpoint < n);
+        let (checkpoint, error, _) = self.curve[above];
         if checkpoint == n {
             Some(error)
         } else {
@@ -79,6 +131,17 @@ fn worse(a: f64, b: f64, direction: AccuracyDirection) -> f64 {
         AccuracyDirection::LowerIsBetter => a.max(b),
         AccuracyDirection::HigherIsBetter => a.min(b),
     }
+}
+
+/// What [`SaturationCurves::check_cost_table`] found, one line per row.
+#[derive(Debug, Default, PartialEq)]
+pub struct CostTableCheck {
+    /// Rows whose accuracy disagrees with the curve at their `measured_at`,
+    /// whose config the grid lacks, or that lack the curve's metric.
+    pub mismatched: Vec<String>,
+    /// Rows with no curve at their measured shape or N, such as KLL: the
+    /// table measures Zipf ranks, the study Pareto values.
+    pub unchecked: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -108,11 +171,7 @@ impl SaturationCurves {
             for row in read_csv(&run_dir.join("saturation.csv"))? {
                 let point = GridPoint {
                     params: parse_config(&row["config"]),
-                    shape_param: parse_number(&row["param"])?,
-                    distinct_keys: match row["cardinality"].as_str() {
-                        "" => None,
-                        keys => Some(parse_number(keys)?),
-                    },
+                    shape: parse_shape(&row)?,
                     error_metric: row["error_metric"].clone(),
                     n_sat: match row["n_sat"].as_str() {
                         "not_saturated" => None,
@@ -131,6 +190,7 @@ impl SaturationCurves {
                 point.curve.push((
                     parse_number(&row["n"])?,
                     parse_number(&row["seed_mean_error"])?,
+                    parse_number(&row["seed_se"])?,
                 ));
             }
             points.extend(run_points);
@@ -196,6 +256,62 @@ impl SaturationCurves {
         self.accuracy(raqe, &deployment, facts)
     }
 
+    /// Checks the cost table against the curves: a sketch row's
+    /// `query_accuracy` is the curve of its config and
+    /// `measured_at.data_shape()`, read at `measured_at.items_per_instance`.
+    /// Rows of sketches the study didn't run (exact accumulators among them)
+    /// are skipped.
+    pub fn check_cost_table(&self, costs: &[AtomicCostEntry]) -> CostTableCheck {
+        let mut check = CostTableCheck::default();
+        for row in costs {
+            let Some(points) = self.points_by_sketch.get(&row.sketch) else {
+                continue;
+            };
+            let name = format!("{} {}", row.sketch, row.sketch_config["params"]);
+            let params = config_params(row);
+            let mut same_config = points
+                .iter()
+                .filter(|point| Some(&point.params) == params.as_ref())
+                .peekable();
+            if same_config.peek().is_none() {
+                check
+                    .mismatched
+                    .push(format!("{name}: config not in the saturation grid"));
+                continue;
+            }
+            let Some(measured_at) = &row.measured_at else {
+                check.unchecked.push(format!("{name}: no measured_at"));
+                continue;
+            };
+            let shape = measured_at.data_shape();
+            let Some(point) = same_config.find(|point| Some(point.shape) == shape) else {
+                check
+                    .unchecked
+                    .push(format!("{name}: no grid point at {shape:?}"));
+                continue;
+            };
+            let metric = &point.error_metric;
+            let Some(&value) = row.query_accuracy.get(metric) else {
+                check
+                    .mismatched
+                    .push(format!("{name}: the table has no {metric}"));
+                continue;
+            };
+            let n = measured_at.items_per_instance as f64;
+            match point.agrees_at(n, value) {
+                None => check
+                    .unchecked
+                    .push(format!("{name}: N = {n} is outside the curve")),
+                Some(false) => check.mismatched.push(format!(
+                    "{name}: {metric} = {value} at N = {n}, curve {:?}",
+                    point.curve
+                )),
+                Some(true) => {}
+            }
+        }
+        check
+    }
+
     /// Every grid point of `config` bracketing `shape` (Q8 of #156), or
     /// `None` when `config` isn't in the grid, `shape` lies outside it, or a
     /// bracketing point is missing.
@@ -211,16 +327,16 @@ impl SaturationCurves {
             .iter()
             .filter(|point| point.params == params)
             .collect();
-        let quantile = points.first()?.distinct_keys.is_none();
+        let quantile = points.first()?.distinct_keys().is_none();
         let shape_params = if quantile {
-            bracket(points.iter().map(|p| p.shape_param), shape.tail_index)?
+            bracket(points.iter().map(|p| p.shape_param()), shape.tail_index)?
         } else {
-            bracket(points.iter().map(|p| p.shape_param), shape.zipf_s)?
+            bracket(points.iter().map(|p| p.shape_param()), shape.zipf_s)?
         };
         let keys = if quantile {
             vec![None]
         } else {
-            let keys = points.iter().filter_map(|p| p.distinct_keys);
+            let keys = points.iter().filter_map(|p| p.distinct_keys());
             bracket(keys, shape.distinct_keys)?
                 .into_iter()
                 .map(Some)
@@ -228,7 +344,9 @@ impl SaturationCurves {
         };
         let bracketing: Vec<&GridPoint> = points
             .into_iter()
-            .filter(|p| shape_params.contains(&p.shape_param) && keys.contains(&p.distinct_keys))
+            .filter(|p| {
+                shape_params.contains(&p.shape_param()) && keys.contains(&p.distinct_keys())
+            })
             .collect();
         (bracketing.len() == shape_params.len() * keys.len()).then_some(bracketing)
     }
@@ -274,6 +392,19 @@ fn parse_config(config: &str) -> BTreeMap<String, f64> {
         .collect()
 }
 
+/// A grid row's `dist`, `param` and `cardinality` as a [`MeasuredShape`].
+fn parse_shape(row: &CsvRow) -> io::Result<MeasuredShape> {
+    let param = parse_number(&row["param"])?;
+    match row["dist"].as_str() {
+        "zipf" => Ok(MeasuredShape::Zipf {
+            skew: param,
+            keys: parse_number(&row["cardinality"])?,
+        }),
+        "pareto" => Ok(MeasuredShape::Pareto { tail_index: param }),
+        dist => Err(invalid(format!("unknown dist {dist:?}"))),
+    }
+}
+
 fn parse_number(text: &str) -> io::Result<f64> {
     text.parse()
         .map_err(|_| invalid(format!("not a number: {text:?}")))
@@ -317,14 +448,13 @@ mod tests {
     fn curves() -> SaturationCurves {
         let point = |theta: f64, keys: f64, offset: f64, n_sat: Option<f64>| GridPoint {
             params: parse_config("rows=3 cols=1024"),
-            shape_param: theta,
-            distinct_keys: Some(keys),
+            shape: MeasuredShape::Zipf { skew: theta, keys },
             error_metric: "precision_at_k".into(),
             n_sat,
             curve: vec![
-                (1e3, 1.0 - offset),
-                (1e4, 0.95 - offset),
-                (1e5, 0.9 - offset),
+                (1e3, 1.0 - offset, 0.0),
+                (1e4, 0.95 - offset, 0.01),
+                (1e5, 0.9 - offset, 0.0),
             ],
         };
         SaturationCurves {
@@ -462,6 +592,66 @@ mod tests {
         assert_eq!(value, Some(1.0));
     }
 
+    /// A top-k row measured at θ = 1.2, K = 1e3 and `items`, scoring
+    /// `precision`.
+    fn measured_row(cols: u64, items: u64, precision: f64) -> AtomicCostEntry {
+        use aqpbm_core::{DataDistribution, MeasuredAt, ZipfParameter};
+        AtomicCostEntry {
+            sketch_config: serde_json::json!({"params": {"rows": 3, "cols": cols}}),
+            query_accuracy: BTreeMap::from([("precision_at_k".into(), precision)]),
+            measured_at: Some(MeasuredAt {
+                items_per_instance: items,
+                keys_per_instance: Some(1_000),
+                value_range: None,
+                merge_operand_items: None,
+                distribution: Some(DataDistribution::Zipf(ZipfParameter {
+                    skewness: 1.2,
+                    population_size: 1_000,
+                    seed: 1,
+                })),
+            }),
+            ..deployment(TOPK, 1).config
+        }
+    }
+
+    #[test]
+    fn the_cost_table_is_a_point_on_the_curve() {
+        let check = |rows: &[AtomicCostEntry]| curves().check_cost_table(rows);
+        // θ = 1.2, K = 1e3 reads 0.95 ± 3 × 0.01 + 5% at N = 1e4.
+        assert_eq!(
+            check(&[measured_row(1024, 10_000, 0.93)]),
+            CostTableCheck::default()
+        );
+        assert_eq!(
+            check(&[measured_row(1024, 10_000, 0.8)]).mismatched.len(),
+            1
+        );
+        // Between checkpoints: the range of the two either side.
+        assert!(check(&[measured_row(1024, 30_000, 0.92)])
+            .mismatched
+            .is_empty());
+        // A config off the grid is a mismatch; a shape or N the study didn't
+        // run is unchecked.
+        assert_eq!(
+            check(&[measured_row(2048, 10_000, 0.95)]).mismatched.len(),
+            1
+        );
+        assert_eq!(check(&[measured_row(1024, 100, 0.95)]).unchecked.len(), 1);
+        let mut pareto = measured_row(1024, 10_000, 0.95);
+        pareto.measured_at.as_mut().unwrap().distribution = None;
+        assert_eq!(check(&[pareto]).unchecked.len(), 1);
+        // A table without the curve's metric is a mismatch.
+        let mut other_metric = measured_row(1024, 10_000, 0.95);
+        other_metric.query_accuracy = BTreeMap::from([("recall_at_k".into(), 0.95)]);
+        assert_eq!(check(&[other_metric]).mismatched.len(), 1);
+        // Sketches the study didn't run, exact ones among them, are skipped.
+        let exact = AtomicCostEntry {
+            sketch: "exact-sum".into(),
+            ..measured_row(1024, 10_000, 0.0)
+        };
+        assert_eq!(check(&[exact]), CostTableCheck::default());
+    }
+
     #[test]
     fn load_takes_a_point_in_both_runs_from_the_1e9_run() {
         let dir = std::env::temp_dir().join(format!("rqe-saturation-{}", std::process::id()));
@@ -490,8 +680,8 @@ mod tests {
         let points = &loaded.points_by_sketch["kll-percall"];
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].n_sat, Some(1e8));
-        assert_eq!(points[0].curve, vec![(1e3, 0.05), (1e9, 0.01)]);
-        assert_eq!(points[0].distinct_keys, None);
+        assert_eq!(points[0].curve, vec![(1e3, 0.05, 0.0), (1e9, 0.01, 0.0)]);
+        assert_eq!(points[0].shape, MeasuredShape::Pareto { tail_index: 2.0 });
         assert_eq!(points[0].params, BTreeMap::from([("k".to_string(), 200.0)]));
     }
 }

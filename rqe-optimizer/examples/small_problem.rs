@@ -414,6 +414,16 @@ fn main() {
     apply_latency_slas(&mut raqes);
     let cost_table = load_cost_table();
     let curves = load_saturation_curves();
+    let check = curves.check_cost_table(&cost_table);
+    for row in &check.unchecked {
+        eprintln!("cost table vs. saturation curves, unchecked: {row}");
+    }
+    if !check.mismatched.is_empty() {
+        panic!(
+            "the cost table disagrees with the saturation curves: {:#?}",
+            check.mismatched
+        );
+    }
     let facts = facts();
     if let Err(problems) = validate_facts(&raqes, &facts) {
         panic!("invalid workload facts: {problems:#?}");
