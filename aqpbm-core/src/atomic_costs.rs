@@ -72,6 +72,36 @@ pub struct MeasuredAt {
     pub distribution: Option<DataDistribution>,
 }
 
+impl MeasuredAt {
+    /// The data shape the row was measured at, keyed the way the saturation
+    /// study keys its grid points, or `None` for a distribution the study
+    /// doesn't sweep. A single-column workload's Zipf population is its `K`.
+    pub fn data_shape(&self) -> Option<MeasuredShape> {
+        match self.distribution.as_ref()? {
+            DataDistribution::Zipf(p) => Some(MeasuredShape::Zipf {
+                skew: p.skewness,
+                keys: p.population_size as f64,
+            }),
+            DataDistribution::Pareto(p) => Some(MeasuredShape::Pareto {
+                tail_index: p.alpha,
+            }),
+            DataDistribution::Uniform(_) | DataDistribution::Normal(_) => None,
+        }
+    }
+}
+
+/// The data parameters a sketch's accuracy was measured at. A cost-table
+/// row ([`MeasuredAt::data_shape`]) and a saturation-study grid point share
+/// this key, so a row is one point on that grid point's curve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MeasuredShape {
+    /// Keys drawn Zipf(`skew`) over `keys` distinct keys (frequency, top-k,
+    /// cardinality).
+    Zipf { skew: f64, keys: f64 },
+    /// Values drawn Pareto with tail index `tail_index` (quantiles).
+    Pareto { tail_index: f64 },
+}
+
 pub type AtomicCostTable = Vec<AtomicCostEntry>;
 
 /// Why one [`MergedRecord`] didn't produce a row. Not an error: the caller
