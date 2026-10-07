@@ -187,6 +187,22 @@ pub(crate) fn merge(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
     cost
 }
 
+/// One query's CPU on `config` for `raqe`: the cost table's `c_qry`, which
+/// top-k rows measure at `TOPK_K`, scaled by `k / TOPK_K` for a top-`k` RAQE
+/// on that config (the answer cut and output are linear in `k`; a first
+/// approximation). Other parts (the key tracker) are as measured.
+fn query_cpu_secs(raqe: &Raqe, deployment: &Deployment, config: &AtomicCostEntry) -> f64 {
+    let topk = matches!(
+        raqe.capability,
+        Capability::TopKByValue | Capability::TopKByCount
+    );
+    if topk && std::ptr::eq(config, &deployment.config) {
+        config.query_cpu_secs * raqe.topk_k() as f64 / crate::TOPK_K as f64
+    } else {
+        config.query_cpu_secs
+    }
+}
+
 /// CPU `card(G) · Σ c_qry / T`, one probe per group of each part; memory
 /// `card(G) ·` output bytes per group.
 pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> PhaseCost {
@@ -198,7 +214,7 @@ pub(crate) fn query(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts)
         _ => OUTPUT_BYTES_PER_VALUE,
     };
     let query_cpu_secs_per_group: f64 = priced_parts(deployment, facts)
-        .map(|(config, _)| config.query_cpu_secs)
+        .map(|(config, _)| query_cpu_secs(raqe, deployment, config))
         .sum();
     PhaseCost {
         cpu_secs_per_sec: groups * query_cpu_secs_per_group / secs(raqe.interval_ms),
@@ -229,7 +245,7 @@ pub(crate) fn query_latency_ms(raqe: &Raqe, deployment: &Deployment, facts: &Wor
     1000.0
         * priced_parts(deployment, facts)
             .map(|(config, instances)| {
-                groups * config.query_cpu_secs
+                groups * query_cpu_secs(raqe, deployment, config)
                     + instances * merges_per_instance * config.merge_cpu_secs
             })
             .sum::<f64>()

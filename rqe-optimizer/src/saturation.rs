@@ -21,8 +21,9 @@ use std::path::Path;
 use crate::autosketch::window_adapter;
 use crate::theory;
 use crate::{
-    accuracy_key, family_properties, has_heap, heap_capacity, table_accuracy, AccuracyDirection,
-    AtomicCostEntry, Capability, Deployment, LabelSet, MetricFacts, Raqe, WorkloadFacts, TOPK_K,
+    accuracy_key, family_properties, has_heap, heap_capacity, params_topk_k, table_accuracy,
+    AccuracyDirection, AtomicCostEntry, Capability, Deployment, LabelSet, MetricFacts, Raqe,
+    WorkloadFacts, TOPK_K,
 };
 use aqpbm_core::MeasuredShape;
 
@@ -449,18 +450,17 @@ impl SaturationCurves {
         let shape = metric_facts.data_shape.get(grouping)?;
         let k = raqe.topk_k();
         let base = with_topk_k(&config_params(&deployment.config)?, TOPK_K);
-        // A heap top-k reads the curve at the RAQE's k, else the next larger
-        // measured k (harder); past every measured k, only the guarantee at k.
-        let (curve_k, past_measured_k) = if has_heap(&deployment.config.sketch) {
-            self.curve_k(&deployment.config.sketch, &base, k)?
+        // A heap top-k reads the curves at the RAQE's k, else at the next
+        // larger measured k whose curves bracket the shape (harder); past every
+        // such k, the guarantee at k, no better than the largest bracketing k.
+        let (points, past_measured_k) = if has_heap(&deployment.config.sketch) {
+            self.curves_at_k(&deployment.config.sketch, &base, k, shape)?
         } else {
-            (TOPK_K, false)
+            (
+                self.bracketing_points(&deployment.config.sketch, &base, shape)?,
+                false,
+            )
         };
-        let points = self.bracketing_points(
-            &deployment.config.sketch,
-            &with_topk_k(&base, curve_k),
-            shape,
-        )?;
         let covered = items_per_group(metric_facts, grouping, raqe.lookback_ms);
         let (_, direction) = accuracy_key(&deployment.config.sketch);
         let merges = if merges_lossily(&deployment.config.sketch) {
@@ -486,22 +486,26 @@ impl SaturationCurves {
                 .flatten();
             let found = match measured {
                 Some(error) => (error, AccuracySource::Measured),
-                // Past every measured k: the guarantee at k, within the
-                // curves' N range as everywhere else.
-                None if past_measured_k => {
+                // Past every measured k as well as past the curve: the
+                // guarantee at k, within the curves' N range as everywhere
+                // else, and no better than what was measured.
+                None if past_measured_k || covered >= point.first_measured_n(merges)? => {
                     if covered < point.first_measured_n(merges)? {
                         return None;
                     }
-                    (
-                        theory::bound(&deployment.config.sketch, &params, point.shape, merges)?,
-                        AccuracySource::Theory,
-                    )
-                }
-                None if covered >= point.first_measured_n(merges)? => {
                     let bound =
                         theory::bound(&deployment.config.sketch, &params, point.shape, merges)?;
-                    // No better than the last measurement it extends.
-                    let error = match point.last_measured_error(merges, direction) {
+                    // No better than the measurement it extends: past every k,
+                    // the largest k's at this N (else its last); past the
+                    // curve, its last.
+                    let floor = if past_measured_k {
+                        point
+                            .merged_error_at(merges, covered, direction)
+                            .or_else(|| point.last_measured_error(merges, direction))
+                    } else {
+                        point.last_measured_error(merges, direction)
+                    };
+                    let error = match floor {
                         Some(last) => worse(bound, last, direction),
                         None => bound,
                     };
@@ -671,23 +675,44 @@ impl SaturationCurves {
 }
 
 impl SaturationCurves {
-    /// The k whose curves a top-`k` answer of `sketch` with `base` params
-    /// reads: the smallest measured k at or above `k`, or, past every
-    /// measured k, the largest with `true` (only the guarantee applies).
-    /// `None` when the config has no curve at any k.
-    fn curve_k(&self, sketch: &str, base: &BTreeMap<String, f64>, k: u64) -> Option<(u64, bool)> {
+    /// The grid points a top-`k` answer of `sketch` with `base` params reads
+    /// on `shape`: those of the smallest measured k at or above `k` whose
+    /// curves bracket `shape`, with `false`; else those of the largest k that
+    /// brackets it, with `true` (only the guarantee at `k` applies, floored
+    /// by them). `None` when no k's curves bracket `shape`.
+    fn curves_at_k(
+        &self,
+        sketch: &str,
+        base: &BTreeMap<String, f64>,
+        k: u64,
+        shape: &DataShape,
+    ) -> Option<(Vec<&GridPoint>, bool)> {
         let measured: BTreeSet<u64> = self
             .points_by_sketch
             .get(sketch)?
             .iter()
-            .filter(|point| &with_topk_k(&point.params, TOPK_K) == base)
-            .map(|point| point.params.get("topk_k").map_or(TOPK_K, |&k| k as u64))
+            .filter(|point| same_but_topk_k(&point.params, base))
+            .map(|point| params_topk_k(point.params.get("topk_k").copied()))
             .collect();
-        match measured.range(k..).next() {
-            Some(&at) => Some((at, false)),
-            None => measured.last().map(|&largest| (largest, true)),
+        let bracket_at = |at: u64| self.bracketing_points(sketch, &with_topk_k(base, at), shape);
+        if let Some(points) = measured.range(k..).find_map(|&at| bracket_at(at)) {
+            return Some((points, false));
         }
+        measured
+            .iter()
+            .rev()
+            .find_map(|&at| bracket_at(at))
+            .map(|points| (points, true))
     }
+}
+
+/// Whether `a` and `b` name the same config, `topk_k` aside.
+fn same_but_topk_k(a: &BTreeMap<String, f64>, b: &BTreeMap<String, f64>) -> bool {
+    let rest = |m: &BTreeMap<String, f64>| m.iter().filter(|(name, _)| *name != "topk_k").count();
+    rest(a) == rest(b)
+        && a.iter()
+            .filter(|(name, _)| *name != "topk_k")
+            .all(|(name, value)| b.get(name) == Some(value))
 }
 
 /// `params` keyed at top-k `k`: a `topk_k` entry unless `k` is [`TOPK_K`],
@@ -1162,8 +1187,41 @@ mod tests {
         // k = 50 reads k = 100's curve.
         close(read(50), 0.7, AccuracySource::Measured);
         close(read(100), 0.7, AccuracySource::Measured);
-        // k = 200: past every measured k, the guarantee at 200.
-        let (_, source) = read(200).unwrap();
+        // k = 200: past every measured k, the guarantee at 200, no better than
+        // k = 100's measured 0.7.
+        let (value, source) = read(200).unwrap();
+        assert_eq!(source, AccuracySource::Theory);
+        assert!(value <= 0.7 + 1e-12, "{value}");
+    }
+
+    /// A larger k whose curves don't bracket the shape is skipped: the
+    /// answer falls to the guarantee, floored by a k that does bracket it.
+    #[test]
+    fn a_k_whose_curves_miss_the_shape_falls_to_the_guarantee() {
+        // k = 100 measured at K = 1e3 only; the shape below needs K = 1e3..1e5.
+        let mut curves = curves();
+        let at_100: Vec<GridPoint> = curves.points_by_sketch[TOPK]
+            .iter()
+            .filter(|p| p.distinct_keys() == Some(1e3))
+            .map(|p| {
+                let mut p = p.clone();
+                p.params.insert("topk_k".into(), 100.0);
+                p
+            })
+            .collect();
+        curves
+            .points_by_sketch
+            .get_mut(TOPK)
+            .unwrap()
+            .extend(at_100);
+        let facts = workload(10, shape(1.2, 1e4));
+        let r = Raqe {
+            topk_k: Some(50),
+            ..topk_raqe(10_000_000)
+        };
+        let mut d = deployment(TOPK, 10_000_000);
+        d.config.sketch_config["params"]["heap"] = 50.into();
+        let (_, source) = curves.accuracy_with_source(&r, &d, &facts).unwrap();
         assert_eq!(source, AccuracySource::Theory);
     }
 

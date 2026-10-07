@@ -2,8 +2,8 @@
 
 use crate::analytical_cost_model;
 use crate::{
-    has_heap, heap_capacity, heap_needed, Accuracy, AtomicCostEntry, Capability, Deployment,
-    LabelSet, MetricFacts, Millis, Raqe, WorkloadFacts, KEY_TRACKER_FAMILY,
+    config_topk_k, has_heap, heap_capacity, heap_needed, Accuracy, AtomicCostEntry, Capability,
+    Deployment, LabelSet, MetricFacts, Millis, Raqe, WorkloadFacts, KEY_TRACKER_FAMILY, TOPK_K,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -108,12 +108,17 @@ fn candidate_deployments(
                 .filter(|r| r.lookback_ms % window_ms == 0)
                 .map(|r| gcd(window_ms, r.interval_ms)),
         );
-        // A heap family keeps one candidate per heap a RAQE on this window
-        // needs, m · k for its m = L / x merged windows, priced by
+        // A heap family keeps one candidate per (heap, k) a RAQE on this
+        // window needs, m · k for its m = L / x merged windows, priced by
         // interpolating the measured heap sizes. Other rows are used as they are.
-        let heaps: BTreeSet<u64> = group
+        let heaps: BTreeSet<(u64, u64)> = group
             .iter()
-            .filter_map(|r| heap_needed(r.lookback_ms, window_ms, r.topk_k()))
+            .filter_map(|r| {
+                Some((
+                    heap_needed(r.lookback_ms, window_ms, r.topk_k())?,
+                    r.topk_k(),
+                ))
+            })
             .collect();
         let configs: Vec<AtomicCostEntry> = family_rows
             .iter()
@@ -121,10 +126,12 @@ fn candidate_deployments(
             .map(|c| (*c).clone())
             .chain(heap_rows.values().flat_map(|rows| {
                 // Needs that one measured row serves collapse onto it.
-                let by_heap: BTreeMap<u64, AtomicCostEntry> = heaps
+                let by_heap: BTreeMap<(u64, u64), AtomicCostEntry> = heaps
                     .iter()
-                    .filter_map(|&heap| at_heap(rows, heap))
-                    .filter_map(|entry| Some((heap_capacity(&entry)?, entry)))
+                    .filter_map(|&(heap, k)| heap_row(rows, heap, k))
+                    .filter_map(|entry| {
+                        Some(((heap_capacity(&entry)?, config_topk_k(&entry)), entry))
+                    })
                     .collect();
                 by_heap.into_values()
             }))
@@ -196,6 +203,27 @@ pub(crate) fn heap_rows_by_shape<'a>(
 /// The accuracy fields are the smallest heap's: curves are measured at
 /// `TOPK_K`. Panics when one measured heap is smaller than `heap`: the
 /// table needs the heap sizes measured.
+/// `rows` (one family and counter shape, by heap) priced for a top-`k`
+/// answer needing `heap`: at `heap`, but never below the smallest measured
+/// heap (nothing is extrapolated below it), with `topk_k` set so the deployed
+/// sketch answers `k`. The MILP's candidates and AutoSketch both price heaps
+/// here.
+pub(crate) fn heap_row(
+    rows: &BTreeMap<u64, &AtomicCostEntry>,
+    heap: u64,
+    k: u64,
+) -> Option<AtomicCostEntry> {
+    let (&smallest, _) = rows.first_key_value()?;
+    let mut entry = at_heap(rows, heap.max(smallest))?;
+    let params = entry.sketch_config["params"].as_object_mut()?;
+    if k == TOPK_K {
+        params.remove("topk_k");
+    } else {
+        params.insert("topk_k".into(), k.into());
+    }
+    Some(entry)
+}
+
 fn at_heap(rows: &BTreeMap<u64, &AtomicCostEntry>, heap: u64) -> Option<AtomicCostEntry> {
     let (_, &base) = rows.first_key_value()?;
     // A measured heap's costs, with the base's accuracy like every other.
@@ -474,7 +502,10 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
         && heap_capacity(&d.config).is_none_or(|heap| {
             d.heap_needed(r.lookback_ms, r.topk_k())
                 .is_some_and(|need| heap >= need)
+                && config_topk_k(&d.config) >= r.topk_k()
         })
+        // UnivMon's top-k answers TOPK_K only.
+        && !(d.config.sketch == "univmon-topk" && r.topk_k() != TOPK_K)
         && r.meets_sla(&d.config.sketch, accuracy(r, d))
 }
 
@@ -609,6 +640,8 @@ mod tests {
                 .unwrap()
         };
         // x = 60 s merges 4: k = 10 needs 40, k = 32 needs 128.
+        assert_eq!(config_topk_k(&at(40).config), 10);
+        assert_eq!(config_topk_k(&at(128).config), TOPK_K);
         assert!(is_eligible(&ten, at(40), &facts(1, 1), &table_accuracy));
         assert!(!is_eligible(
             &raqes[1],
@@ -622,6 +655,48 @@ mod tests {
             &facts(1, 1),
             &table_accuracy
         ));
+    }
+
+    /// A k below the smallest measured heap prices at that heap, never
+    /// extrapolated below it, and the config carries its `topk_k`.
+    #[test]
+    fn a_small_k_is_floored_at_the_smallest_measured_heap() {
+        let rows = [heap_row(32), heap_row(128)];
+        let refs: Vec<&AtomicCostEntry> = rows.iter().collect();
+        let by_shape = heap_rows_by_shape(&refs);
+        let shape = by_shape.values().next().unwrap();
+        let entry = super::heap_row(shape, 10, 10).unwrap();
+        assert_eq!(heap_capacity(&entry), Some(32));
+        assert_eq!(config_topk_k(&entry), 10);
+        assert_eq!(
+            entry.mem_bytes_per_instance,
+            heap_row(32).mem_bytes_per_instance
+        );
+    }
+
+    /// UnivMon's top-k answers TOPK_K only: a top-10 RAQE can't use it.
+    #[test]
+    fn univmon_topk_serves_only_topk_k() {
+        let univmon = Deployment {
+            config: AtomicCostEntry {
+                sketch: "univmon-topk".into(),
+                ..cost()
+            },
+            capability: Capability::TopKByValue,
+            metric: METRIC.into(),
+            spatial_filter: String::new(),
+            grouping_labels: LabelSet::new(),
+            window_ms: 60_000,
+            slide_ms: 60_000,
+            key_tracker: None,
+        };
+        let r = raqe("r", 60_000, 60_000);
+        let ten = Raqe {
+            topk_k: Some(10),
+            ..r.clone()
+        };
+        assert!(is_eligible(&r, &univmon, &facts(1, 1), &table_accuracy));
+        assert!(!is_eligible(&ten, &univmon, &facts(1, 1), &table_accuracy));
     }
 
     #[test]

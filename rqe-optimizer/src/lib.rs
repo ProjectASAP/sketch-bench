@@ -154,13 +154,26 @@ pub fn heap_needed(lookback_ms: Millis, window_ms: Millis, k: u64) -> Option<u64
     (lookback_ms / window_ms).checked_mul(k)
 }
 
-/// A heap family's capacity: its `heap` param, else [`TOPK_K`]. `None` for
-/// other families.
+/// The `k` a top-k `topk_k` param names, in any JSON form (10 or 10.0):
+/// absent means [`TOPK_K`]. The one decoding of the knob, as sketch-bench's
+/// `answered_k` reads it.
+pub fn params_topk_k(topk_k: Option<f64>) -> u64 {
+    topk_k.map_or(TOPK_K, |k| k.round() as u64)
+}
+
+/// The `k` a top-k cost row or deployment answers.
+pub fn config_topk_k(config: &AtomicCostEntry) -> u64 {
+    params_topk_k(config.sketch_config["params"]["topk_k"].as_f64())
+}
+
+/// A heap family's capacity: its `heap` param, else its `k` (sketch-bench's
+/// default). `None` for other families.
 pub fn heap_capacity(config: &AtomicCostEntry) -> Option<u64> {
     has_heap(&config.sketch).then(|| {
         let heap = &config.sketch_config["params"]["heap"];
         // A number in any JSON form (128, 128.0); absent is k.
-        heap.as_f64().map_or(TOPK_K, |h| h.round() as u64)
+        heap.as_f64()
+            .map_or_else(|| config_topk_k(config), |h| h.round() as u64)
     })
 }
 

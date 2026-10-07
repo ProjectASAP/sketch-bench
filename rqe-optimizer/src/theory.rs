@@ -10,8 +10,6 @@ use std::collections::BTreeMap;
 
 use aqpbm_core::MeasuredShape;
 
-use crate::TOPK_K;
-
 /// Confidence the bounds are stated at. Rank and relative errors are
 /// absolute, so their bounds are two-sided; CMS only overestimates, so the
 /// top-k bound is one-sided.
@@ -66,7 +64,7 @@ pub fn bound(
             let MeasuredShape::Zipf { skew, keys } = shape else {
                 return None;
             };
-            let k = params.get("topk_k").map_or(TOPK_K, |&k| k as u64);
+            let k = crate::params_topk_k(params.get("topk_k").copied());
             Some(topk_precision(skew, keys, rows, cols, k as usize))
         }
         _ => None,

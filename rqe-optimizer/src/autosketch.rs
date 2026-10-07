@@ -87,7 +87,9 @@ pub fn plan(
                 metric: raqe.metric.clone(),
                 spatial_filter: raqe.spatial_filter.clone(),
                 grouping_labels: raqe.grouping_labels.clone(),
-                config: costs[s.selected.expect("unservable RAQEs returned above")].clone(),
+                config: resolve_heaps(costs, raqe.topk_k()).0
+                    [s.selected.expect("unservable RAQEs returned above")]
+                .clone(),
                 window_ms,
                 slide_ms,
                 key_tracker: None,
@@ -101,6 +103,33 @@ pub fn plan(
     })
 }
 
+/// `costs` as a top-`k` RAQE sees them, index for index: each heap top-k
+/// config's smallest-heap row priced at the heap a one-window answer needs
+/// (`k`, floored at the smallest measured heap) by the MILP's own
+/// [`crate::candidates::heap_row`], and its other heap rows masked out of
+/// the search. AutoSketch never merges (x = S), so heap is no search axis.
+fn resolve_heaps(costs: &[AtomicCostEntry], k: u64) -> (Vec<AtomicCostEntry>, Vec<bool>) {
+    let mut resolved = costs.to_vec();
+    let mut usable = vec![true; costs.len()];
+    let refs: Vec<&AtomicCostEntry> = costs.iter().collect();
+    for rows in crate::candidates::heap_rows_by_shape(&refs).values() {
+        let index = |row: &AtomicCostEntry| costs.iter().position(|c| std::ptr::eq(c, row));
+        let Some((_, &smallest)) = rows.first_key_value() else {
+            continue;
+        };
+        for &row in rows.values() {
+            if let Some(i) = index(row) {
+                usable[i] = false;
+            }
+        }
+        if let (Some(i), Some(entry)) = (index(smallest), crate::candidates::heap_row(rows, k, k)) {
+            resolved[i] = entry;
+            usable[i] = true;
+        }
+    }
+    (resolved, usable)
+}
+
 /// Algorithm 4 for one RAQE: LHS seeds per sketch variant, then
 /// feasibility-directed neighbor search with the paper's pruning and
 /// stopping rules. Minimizes memory per instance, then insert CPU.
@@ -112,13 +141,15 @@ pub fn search(
     mut accuracy: impl FnMut(&Raqe, &AtomicCostEntry) -> Option<f64>,
 ) -> RaqeSearch {
     let started = Instant::now();
+    let (resolved, usable) = resolve_heaps(costs, raqe.topk_k());
+    let costs = &resolved[..];
     let grids: Vec<Grid> = raqe
         .capability
         .candidate_families(allow_undeployable_families)
         // ponytail: ranking compares per-instance memory, which a sketch
         // shared by all groups isn't comparable on; sketch-bench#159.
         .filter(|variant| !crate::family_properties(variant).one_fixed_size_sketch_for_all_groups)
-        .filter_map(|variant| Grid::new(variant, costs, raqe.topk_k()))
+        .filter_map(|variant| Grid::new(variant, costs, &usable))
         .collect();
 
     let mut pending = VecDeque::new();
@@ -208,29 +239,12 @@ struct Grid {
 impl Grid {
     /// `k`: a heap top-k variant's grid holds the smallest measured heap
     /// that answers a top-`k` query.
-    fn new(variant: &str, costs: &[AtomicCostEntry], k: u64) -> Option<Grid> {
-        // Two rows at one heap (no heap and heap=k) would be two grid points
-        // for one config; the candidates' check refuses them.
-        crate::candidates::heap_rows_by_shape(
-            &costs
-                .iter()
-                .filter(|c| c.sketch == variant)
-                .collect::<Vec<_>>(),
-        );
-        let heap = costs
-            .iter()
-            .filter(|c| c.sketch == variant)
-            .filter_map(crate::heap_capacity)
-            .filter(|&h| h >= k)
-            .min();
+    /// `usable` masks the rows [`resolve_heaps`] set aside.
+    fn new(variant: &str, costs: &[AtomicCostEntry], usable: &[bool]) -> Option<Grid> {
         let rows: Vec<(usize, BTreeMap<String, f64>)> = costs
             .iter()
             .enumerate()
-            // AutoSketch never merges (x = S), so the smallest heap holding k
-            // serves it; larger heaps only cost more and aren't a search axis.
-            .filter(|(_, c)| {
-                c.sketch == variant && crate::heap_capacity(c).is_none_or(|h| Some(h) == heap)
-            })
+            .filter(|&(i, c)| c.sketch == variant && usable[i])
             .map(|(i, c)| (i, numeric_params(&c.sketch_config)))
             .collect();
         if rows.is_empty() {
@@ -588,7 +602,8 @@ mod tests {
     #[test]
     fn lhs_samples_take_distinct_values_on_every_axis() {
         let costs = grid(&[1, 2, 3, 4], &[64, 128, 256, 512, 1024]);
-        let g = Grid::new("cms-heap-topk-fastpath-vector2d", &costs, crate::TOPK_K).unwrap();
+        let (costs, usable) = resolve_heaps(&costs, crate::TOPK_K);
+        let g = Grid::new("cms-heap-topk-fastpath-vector2d", &costs, &usable).unwrap();
         for seed in 0..10 {
             let samples = g.lhs(seed);
             assert_eq!(samples.len(), 4);
@@ -596,6 +611,30 @@ mod tests {
                 let values: BTreeSet<u64> = samples.iter().map(|&i| g.key_of(i)[axis]).collect();
                 assert_eq!(values.len(), samples.len(), "seed {seed} axis {axis}");
             }
+        }
+    }
+
+    /// AutoSketch prices a top-k heap as the MILP does: the smallest heap
+    /// row resolved at k (floored at the smallest measured heap, extended
+    /// past the largest), the other heap rows masked out.
+    #[test]
+    fn heaps_resolve_at_k_like_the_milp() {
+        let at = |heap: u64| {
+            let mut row = cms(3, 256);
+            row.sketch_config["params"]["heap"] = heap.into();
+            row.mem_bytes_per_instance = 1000.0 + heap as f64;
+            row
+        };
+        let costs = [at(32), at(128)];
+        for (k, heap, mem) in [(10, 32, 1032.0), (100, 100, 1100.0), (512, 512, 1512.0)] {
+            let (resolved, usable) = resolve_heaps(&costs, k);
+            assert_eq!(usable, vec![true, false], "k = {k}");
+            assert_eq!(crate::heap_capacity(&resolved[0]), Some(heap), "k = {k}");
+            assert_eq!(crate::config_topk_k(&resolved[0]), k, "k = {k}");
+            assert!(
+                (resolved[0].mem_bytes_per_instance - mem).abs() < 1e-9,
+                "k = {k}"
+            );
         }
     }
 }

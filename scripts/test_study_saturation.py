@@ -428,6 +428,17 @@ class TopkKTest(unittest.TestCase):
                                    "rows=3 cols=256 topk_k=100"})
 
 
+class TopkKsValidationTest(unittest.TestCase):
+    def test_topk_ks_must_include_32(self):
+        with tempfile.TemporaryDirectory() as d:
+            result = subprocess.run([
+                sys.executable, SCRIPT, "--binary", fake_binary(d), "--out", d,
+                "--phase", "accuracy", "--families", "topk", "--topk-ks", "10,100",
+            ], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"must include 32", result.stderr)
+
+
 class CostShapeTest(unittest.TestCase):
     def test_the_grid_also_runs_the_optimizer_cost_shape(self):
         with tempfile.TemporaryDirectory() as d:

@@ -104,7 +104,8 @@ OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
 TOPK_HEAPS = (32, 128, 512, 2048)
 # The k a top-k answer is graded at: curves run at each, a config at k
 # carrying ` topk_k=k` (its heap defaults to k). TOPK_K is left implicit,
-# so its points keep their old keys.
+# so its points keep their old keys. Kept equal to rqe-optimizer's TOPK_K
+# and sketch-bench's (the cost table's top-k rows are graded at it).
 TOPK_K = 32
 TOPK_KS = (10, 32, 100)
 
@@ -448,7 +449,10 @@ def main():
     thetas = [float(t) for t in args.thetas.split(",")]
     cardinalities = [int(k) for k in args.cardinalities.split(",")]
     alphas = [float(a) for a in args.alphas.split(",")]
-    topk_ks = [int(k) for k in args.topk_ks.split(",")]
+    topk_ks = sorted({int(k) for k in args.topk_ks.split(",") if k})
+    if TOPK_K not in topk_ks:
+        sys.exit(f"--topk-ks must include {TOPK_K}, the k the cost table's top-k rows "
+                 "are graded at")
     ns = checkpoints(args.n_min, args.n_max, args.per_decade)
     seeds = list(range(1, args.seeds + 1))
     shard_list = [int(m) for m in args.merge_shards_list.split(",") if m]
