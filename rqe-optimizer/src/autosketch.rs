@@ -354,7 +354,6 @@ mod tests {
             insert_cpu_secs: 1e-8 * rows as f64,
             merge_cpu_secs: 1e-6,
             query_cpu_secs: 1e-6,
-            // Error falls with width and depth, so feasibility is monotone.
             // Precision rises with width and depth, so feasibility is monotone.
             query_accuracy: BTreeMap::from([(
                 "precision_at_k".into(),

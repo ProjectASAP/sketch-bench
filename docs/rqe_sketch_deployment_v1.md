@@ -219,8 +219,8 @@ lookback: series per group times scrapes per lookback.
   accuracy.
 - Between checkpoints, the worse neighbour. Below the first checkpoint, no
   accuracy. Past the last, the plateau if the point saturated, else none.
-- The curve's `error_metric` must be the family's metric; a curve for
-  another metric is a stale study, and the optimizer panics.
+- The curve's `error_metric` must be the family's metric; `SaturationCurves::load`
+  refuses a curve for another metric as a stale study.
 - The window size doesn't matter: a merged answer reads the curve at the
   lookback's item count, like a single sketch. KLL and top-k merge lossily;
   their merge penalty is #158.
