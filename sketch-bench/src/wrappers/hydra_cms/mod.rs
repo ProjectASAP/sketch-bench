@@ -102,6 +102,24 @@ mod tests {
         fed(&mut built(), &record("a;x;z", 10));
     }
 
+    /// A stream of mixed widths is refused at build, naming the variant and
+    /// both widths, before any record is timed.
+    #[test]
+    fn a_stream_of_mixed_widths_is_a_build_error() {
+        let params = ParamSet::of(&HydraCmsParams::canonical());
+        let items = std::rc::Rc::new(vec![record("a;x", 1), record("a;x;z", 1)]);
+        let Err(err) = insert_hydra_cms::<i64>(&params, items, 1) else {
+            panic!("mixed widths must not build");
+        };
+        assert!(
+            err.0.contains("hydra-cms")
+                && err.0.contains("3 label(s)")
+                && err.0.contains("first 2"),
+            "{}",
+            err.0
+        );
+    }
+
     /// An empty label is a value in its own column: it doesn't shift the
     /// labels after it.
     #[test]

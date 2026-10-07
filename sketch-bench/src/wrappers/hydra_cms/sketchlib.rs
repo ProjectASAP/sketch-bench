@@ -65,7 +65,7 @@ pub fn insert_hydra_cms<V: FrequencyValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_cms(params, label_columns(&items))?;
+        let mut sketch = build_hydra_cms(params, label_columns(&items, "hydra-cms")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -86,7 +86,7 @@ pub fn insert_step_hydra_cms<V: FrequencyValue>(
     for _ in 0..passes {
         let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cms(
             params,
-            label_columns(&items),
+            label_columns(&items, "hydra-cms")?,
         )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
@@ -201,7 +201,7 @@ fn hydra_cms_shards<V: FrequencyValue>(
 ) -> Result<(HydraCms, Vec<HydraCms>), BuildError> {
     let mut parts: Vec<HydraCms> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_cms(params, label_columns(items))?;
+        let mut sketch = build_hydra_cms(params, label_columns(items, "hydra-cms")?)?;
         for v in shard {
             update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cms");
         }

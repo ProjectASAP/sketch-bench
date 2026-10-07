@@ -262,9 +262,10 @@ impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     }
 }
 
-/// The `;`-joined key of one label subset, in column order. This is the format
-/// `Hydra::update` builds internally, reproduced so the baseline and the sketch
-/// answer to the same key.
+/// The `;`-joined key of one label subset, in column order: the subset key
+/// asap_sketchlib 0.2.2's `Hydra::update` built, so the baseline matches a
+/// value in any label column. 0.3.0's Hydra keys a subset by column, so the
+/// two differ when label columns share a value domain.
 pub fn subset_key(parts: &[&str], mask: usize) -> String {
     let mut out = String::new();
     for (j, part) in parts.iter().enumerate() {
@@ -279,8 +280,8 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
 }
 
 /// Expand one record into `(subset_key, value)` rows, one per non-empty subset
-/// of its labels. Empty label parts are dropped, matching the library's
-/// `split(';').filter(|s| !s.is_empty())`.
+/// of its labels. Empty label parts are dropped, as asap_sketchlib 0.2.2's
+/// Hydra did (0.3.0's keeps them in their column).
 pub fn fan_out<V: Clone>(key: &str, value: &V, keys: &mut Vec<String>, values: &mut Vec<V>) {
     let parts: Vec<&str> = key.split(';').filter(|s| !s.is_empty()).collect();
     for mask in 1..(1usize << parts.len()) {

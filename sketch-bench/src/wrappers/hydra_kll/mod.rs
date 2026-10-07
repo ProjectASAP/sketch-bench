@@ -28,7 +28,8 @@ const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
 
 /// Retained slots one KLL cell allocates at construction — `KLL::init` boxes a
 /// slice of this length once and never grows it. A line-for-line copy of the
-/// library's private `compute_max_capacity`, so a claim about 0.2.2, not a bound.
+/// library's private `compute_max_capacity` (unchanged from 0.2.2 to 0.3.0), so
+/// a claim about the pinned version, not a bound.
 fn kll_cell_slots(k: u32) -> usize {
     // `init_internal` normalises before sizing: `m` floors `k`, and `k` is
     // capped. Reproduced so an out-of-range `k` reports the footprint the

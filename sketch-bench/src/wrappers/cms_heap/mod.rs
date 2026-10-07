@@ -70,7 +70,7 @@ mod tests {
     }
 
     /// Footprint is `rows * cols` counters at the real width plus a full heap
-    /// of `heap` `HHItem`s, as UnivMon counts its heaps (#146).
+    /// of `heap` residents: items, digests and the position index (#146).
     #[test]
     fn footprint_is_counters_plus_heap() {
         let p = ParamSet::of(&CmsHeapParams {
@@ -78,7 +78,7 @@ mod tests {
             cols: 2048,
             heap: Some(128),
         });
-        let heap = 128 * std::mem::size_of::<asap_sketchlib::input::HHItem>();
+        let heap = crate::wrappers::hh_heap_footprint(128);
         let fast = build_cms_heap_lib_vector2d_fast(&p).expect("5x2048 is a valid shape");
         assert_eq!(
             memory_cms_heap_lib_vector2d_fast(&fast),
@@ -89,6 +89,27 @@ mod tests {
             memory_cms_heap_lib_vector2d_regular(&regular),
             5 * 2048 * std::mem::size_of::<i32>() + heap
         );
+    }
+
+    /// A resident costs more than its `HHItem`: its digest and its share of
+    /// the position index too.
+    #[test]
+    fn the_footprint_grows_by_more_than_an_item_per_resident() {
+        let at = |heap| {
+            let p = ParamSet::of(&CmsHeapParams {
+                rows: 3,
+                cols: 256,
+                heap: Some(heap),
+            });
+            memory_cms_heap_lib_vector2d_fast(&build_cms_heap_lib_vector2d_fast(&p).unwrap())
+        };
+        let item = std::mem::size_of::<asap_sketchlib::input::HHItem>();
+        for (small, large) in [(32, 128), (512, 2048)] {
+            assert!(
+                at(large) - at(small) > (large - small) * item,
+                "{small} -> {large}"
+            );
+        }
     }
 
     /// A heap smaller than the `k` it answers can't answer, and is refused.

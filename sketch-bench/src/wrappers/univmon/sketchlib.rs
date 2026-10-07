@@ -2,7 +2,6 @@ use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::input::HHItem;
 use asap_sketchlib::UnivMon;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -51,7 +50,7 @@ impl UnivMonLib {
 pub fn memory_univmon_lib(sketch: &UnivMonLib) -> usize {
     let p = &sketch.params;
     let counters = (p.sketch_row * p.sketch_col + p.sketch_row) * std::mem::size_of::<i64>();
-    let heap = p.heap_size * std::mem::size_of::<HHItem>();
+    let heap = crate::wrappers::hh_heap_footprint(p.heap_size);
     p.layer_size * (counters + heap)
 }
 

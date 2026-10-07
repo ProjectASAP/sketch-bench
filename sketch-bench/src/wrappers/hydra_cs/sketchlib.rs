@@ -65,7 +65,7 @@ pub fn insert_hydra_cs<V: FrequencyValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_cs(params, label_columns(&items))?;
+        let mut sketch = build_hydra_cs(params, label_columns(&items, "hydra-cs")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -84,8 +84,10 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> =
-            Rc::new(RefCell::new(build_hydra_cs(params, label_columns(&items))?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cs(
+            params,
+            label_columns(&items, "hydra-cs")?,
+        )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -199,7 +201,7 @@ fn hydra_cs_shards<V: FrequencyValue>(
 ) -> Result<(HydraCs, Vec<HydraCs>), BuildError> {
     let mut parts: Vec<HydraCs> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_cs(params, label_columns(items))?;
+        let mut sketch = build_hydra_cs(params, label_columns(items, "hydra-cs")?)?;
         for v in shard {
             update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
         }

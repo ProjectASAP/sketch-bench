@@ -137,7 +137,7 @@ mod tests {
     fn lib_footprint_is_the_layers_times_a_layer() {
         let sketch = build_univmon_lib(&small()).expect("canonical dimensions build");
         let counters = (3 * 1024 + 3) * std::mem::size_of::<i64>();
-        let heap = 1000 * std::mem::size_of::<asap_sketchlib::input::HHItem>();
+        let heap = crate::wrappers::hh_heap_footprint(1000);
         assert_eq!(memory_univmon_lib(&sketch), 4 * (counters + heap));
     }
 

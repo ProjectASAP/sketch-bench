@@ -816,8 +816,6 @@ impl SummaryHandle for CsHeapHandle {
 
 const SKETCHLIB_PREALLOCATED_SLOTS: usize = 1024;
 
-const SKETCHLIB_HEAP_INDEX_ENTRY_BYTES: usize = 8 + 24 + 1;
-
 fn grown_capacity(reserved: usize, len: usize) -> usize {
     let mut capacity = reserved.max(1);
     while capacity < len {
@@ -827,14 +825,6 @@ fn grown_capacity(reserved: usize, len: usize) -> usize {
         return 0;
     }
     capacity
-}
-
-fn hash_buckets(capacity: usize) -> usize {
-    if capacity == 0 {
-        return 0;
-    }
-    let wanted = capacity.div_ceil(7) * 8;
-    wanted.next_power_of_two()
 }
 
 fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
@@ -848,10 +838,7 @@ fn heap_bytes(heap: &HHHeap, heap_size: usize) -> usize {
             _ => 0,
         })
         .sum();
-    capacity * std::mem::size_of::<HHItem>()
-        + capacity * std::mem::size_of::<u64>()
-        + hash_buckets(capacity) * SKETCHLIB_HEAP_INDEX_ENTRY_BYTES
-        + keys
+    aqpbm_core::hh_heap_bytes(capacity, std::mem::size_of::<HHItem>()) + keys
 }
 
 fn heap_topk(node: PostAsapNodeId, heap: &HHHeap, k: usize) -> Result<Answer, EvalError> {
@@ -1225,7 +1212,8 @@ mod tests {
 
         let items = heap_size as usize * std::mem::size_of::<HHItem>();
         let digests = heap_size as usize * std::mem::size_of::<u64>();
-        let index = hash_buckets(heap_size as usize) * SKETCHLIB_HEAP_INDEX_ENTRY_BYTES;
+        let index =
+            aqpbm_core::hash_buckets(heap_size as usize) * aqpbm_core::HH_HEAP_INDEX_ENTRY_BYTES;
         let keys: usize = (0..heap_size as usize).map(|_| "series-000".len()).sum();
         assert!(
             held >= items + digests + index,

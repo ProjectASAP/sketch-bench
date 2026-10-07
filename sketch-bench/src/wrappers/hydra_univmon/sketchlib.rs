@@ -90,7 +90,7 @@ pub fn insert_hydra_univmon<V: CardinalityValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_univmon(params, label_columns(&items))?;
+        let mut sketch = build_hydra_univmon(params, label_columns(&items, "hydra-univmon")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -111,7 +111,7 @@ pub fn insert_step_hydra_univmon<V: CardinalityValue>(
     for _ in 0..passes {
         let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_univmon(
             params,
-            label_columns(&items),
+            label_columns(&items, "hydra-univmon")?,
         )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
@@ -356,7 +356,7 @@ fn hydra_univmon_shards<V: CardinalityValue>(
 ) -> Result<(HydraUnivmon, Vec<HydraUnivmon>), BuildError> {
     let mut parts: Vec<HydraUnivmon> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_univmon(params, label_columns(items))?;
+        let mut sketch = build_hydra_univmon(params, label_columns(items, "hydra-univmon")?)?;
         for v in shard {
             update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-univmon");
         }

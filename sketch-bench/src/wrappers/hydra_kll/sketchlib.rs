@@ -69,7 +69,7 @@ pub fn insert_hydra_kll<V: QuantileValue + 'static>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_kll(params, label_columns(&items))?;
+        let mut sketch = build_hydra_kll(params, label_columns(&items, "hydra-kll")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
@@ -90,7 +90,7 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
     for _ in 0..passes {
         let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(
             params,
-            label_columns(&items),
+            label_columns(&items, "hydra-kll")?,
         )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
@@ -205,7 +205,7 @@ fn hydra_kll_shards<V: QuantileValue>(
 ) -> Result<(HydraKll, Vec<HydraKll>), BuildError> {
     let mut parts: Vec<HydraKll> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_kll(params, label_columns(items))?;
+        let mut sketch = build_hydra_kll(params, label_columns(items, "hydra-kll")?)?;
         for v in shard {
             update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
         }
