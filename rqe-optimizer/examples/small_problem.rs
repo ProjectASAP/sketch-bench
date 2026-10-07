@@ -457,7 +457,7 @@ fn main() {
             .expect("small_problem MILP should be feasible");
         println!(
             "MILP solution for {objective:?}: {:.3e}",
-            solution.objective_value
+            objective.value(&solution.plan_cost)
         );
         print_plan_cost("  totals", &solution.plan_cost);
         for (index, planned) in solution.deployments.iter().enumerate() {

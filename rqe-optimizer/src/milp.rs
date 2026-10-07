@@ -53,8 +53,6 @@ pub struct MilpSolution {
     /// Index-aligned with the input RAQE slice.
     pub raqes: Vec<PlannedRaqe>,
     pub plan_cost: PlanCost,
-    /// The solved objective, `objective.value(&plan_cost)`.
-    pub objective_value: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -224,7 +222,6 @@ pub fn minimize(
     Ok(MilpSolution {
         deployments,
         raqes,
-        objective_value: objective.value(&plan_cost),
         plan_cost,
     })
 }
