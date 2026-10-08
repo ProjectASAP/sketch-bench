@@ -2,15 +2,23 @@
 """Plot the synthetic AutoSketch vs. ASAP evaluation (ProjectASAP/ASAPQuery#777,
 section 7) from the JSON files of `autosketch_vs_asap synthetic`.
 
+Every plan is priced by use (sketch-bench docs/rqe_sketch_deployment_v1.md,
+"Cost by use and batch latency"): w_cpu * AUC(CPU) + w_mem * AUC(memory), with
+CPU elastic, and its query latency (the longest chain) is reported. ASAP and
+PerQuery-CostAware are solved without a bound and for a sweep of latency
+bounds (their cost-latency frontiers); AutoSketch-Adapted is one plan.
+
 Writes, next to the inputs:
-  fig_objective_vs_latency.png   default workload: objective vs. achieved max
-                                 latency over the SLAs every RQE can meet,
-                                 one panel per weights
-  fig_objective_by_dimension.png objective with no SLA, each grid dimension
-                                 varied alone (templates, shared replicas, metrics)
-  fig_planning_time.png          planning time vs. RQEs (metrics: 21 · m RQEs);
-                                 AutoSketch also with its benchmark time
-  summary_synthetic.md           every workload, method, weights and SLA
+  fig_frontier.png        cost vs. query latency, one column per workload, one
+                          row per weight setting; ASAP and PerQuery frontiers
+                          as lines, AutoSketch as a point; every point labeled
+                          with its cost
+  fig_planning_time.png   planning time vs. RQEs over the metrics dimension;
+                          AutoSketch's is its search plus its measured
+                          benchmark (60 s per probe only as a labeled reference)
+  summary_synthetic.md    every workload and weight setting: each method's
+                          unbounded plan, its cost at AutoSketch's latency, and
+                          the frontier points
 
 Usage: scripts/plot_autosketch_vs_asap_synthetic.py DIR
 """
@@ -27,157 +35,184 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 METHODS = ["asap", "perquery", "autosketch"]
 LABELS = {"asap": "ASAP", "perquery": "PerQuery-CostAware", "autosketch": "AutoSketch-Adapted"}
-COLORS = {"asap": "#1f77b4", "perquery": "#ff7f0e", "autosketch": "#2ca02c"}
+# Categorical slots 1-3 of the dataviz reference palette, with marker shapes as
+# a second encoding.
+COLORS = {"asap": "#2a78d6", "perquery": "#eb6834", "autosketch": "#1baf7a"}
+MARKERS = {"asap": "o", "perquery": "s", "autosketch": "D"}
 UNITS = {"cpu": "vCPU", "fargate": "$/hour"}
-DEFAULT = ("dashboard", 1, 1, "p95")
+WEIGHT_TITLES = {"cpu": "CPU only", "fargate": "Fargate prices"}
 
 
 def point(data):
-    """(templates, shared, metrics, target) of a result's workload name."""
-    m = re.search(r"templates=(\w+)/shared=(\d+)(?:/metrics=(\d+))?/t(\w+)", data["workload"])
-    return m.group(1), int(m.group(2)), int(m.group(3) or 1), m.group(4)
+    """(shared, metrics) of a result's workload name."""
+    m = re.search(r"shared=(\d+)(?:/metrics=(\d+))?", data["workload"])
+    return int(m.group(1)), int(m.group(2) or 1)
+
+
+def title(key):
+    shared, metrics = key
+    if shared > 1:
+        return f"mixed, r = {shared}"
+    if metrics > 1:
+        return f"mixed, m = {metrics}"
+    return "mixed"
 
 
 def load(directory):
-    return {point(d): d for d in (json.loads(p.read_text())
-                                  for p in sorted(pathlib.Path(directory).glob("synthetic-*.json")))}
+    runs = {}
+    for path in sorted(pathlib.Path(directory).glob("synthetic-*.json")):
+        data = json.loads(path.read_text())
+        runs[point(data)] = data
+    return dict(sorted(runs.items()))
 
 
-def pick(data, method, weights, sla):
-    for r in data["results"]:
-        if r["method"] == method and r["weights"] == weights and str(r["sla_ms"]) == str(sla):
-            return r if "objective" in r else None
-    return None
+def records(data, method, weights):
+    return [r for r in data["results"]
+            if r["method"] == method and r["weights"] == weights and "objective" in r]
 
 
-def weight_names(runs):
-    return [w["name"] for w in next(iter(runs.values()))["weights"]]
+def unbounded(data, method, weights):
+    return next(r for r in records(data, method, weights) if r["bound_ms"] is None)
 
 
-def fig_objective_vs_latency(runs, out):
-    data = runs.get(DEFAULT)
-    if data is None:
-        return
-    names = weight_names(runs)
-    fig, axes = plt.subplots(1, len(names), figsize=(5 * len(names), 3.6), squeeze=False)
-    for ax, w in zip(axes[0], names):
-        # Only SLAs every RQE can meet: tighter ones exclude RQEs, and
-        # points over different RQE sets are not comparable.
-        for m in METHODS:
-            pts = [(r["max_latency_ms"], r["objective"]) for s in data["sla_grid_ms"]
-                   if (r := pick(data, m, w, s)) and r["rqes"] == data["rqes"]]
-            ax.plot(*zip(*sorted(pts)), marker="o", color=COLORS[m], label=LABELS[m])
-            for x, y in pts:
-                ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
-                            fontsize=6, color=COLORS[m])
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_xlabel("max estimated latency (ms)")
-        ax.set_ylabel(f"objective ({UNITS.get(w, w)})")
-        ax.set_title(f"dashboard ({data['rqes']} RQEs), p95, weights {w}", fontsize=8)
-    axes[0][0].legend(fontsize=7)
-    fig.tight_layout()
-    fig.savefig(out / "fig_objective_vs_latency.png", dpi=150)
-    plt.close(fig)
-
-
-def fig_objective_by_dimension(runs, out):
-    dims = [("templates", 0, ["dashboard", "all"]), ("shared", 1, [1, 8]),
-            ("metrics", 2, [1, 8, 16])]
-    fig, axes = plt.subplots(1, len(dims), figsize=(4.5 * len(dims), 3.4), squeeze=False)
-    for ax, (name, index, values) in zip(axes[0], dims):
-        xs = list(range(len(values)))
-        for i, m in enumerate(METHODS):
-            ys = []
-            for v in values:
-                key = list(DEFAULT)
-                key[index] = v
-                data = runs.get(tuple(key))
-                r = data and pick(data, m, "cpu", "inf")
-                ys.append(r["objective"] if r else 0)
-            bars = ax.bar([x + i * 0.27 for x in xs], ys, 0.27, label=LABELS[m], color=COLORS[m])
-            ax.bar_label(bars, [fmt(y) for y in ys], fontsize=6)
-        ax.set_xticks([x + 0.27 for x in xs], [str(v) for v in values])
-        ax.set_yscale("log")
-        ax.set_title(name, fontsize=9)
-        ax.set_ylabel("CPU (vCPU), no SLA")
-    fig.legend(*axes[0][0].get_legend_handles_labels(), loc="upper center", ncol=3, fontsize=7)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    fig.savefig(out / "fig_objective_by_dimension.png", dpi=150)
-    plt.close(fig)
-
-
-def fig_planning_time(runs, out):
-    fig, ax = plt.subplots(figsize=(4.5, 3.4))
-    for m in METHODS:
-        pts = []
-        bench = {"measured": [], "paper": []}
-        for metrics in (1, 8, 16):
-            data = runs.get(("dashboard", 1, metrics, "p95"))
-            res = data and pick(data, m, "cpu", "inf")
-            if res:
-                pts.append((data["rqes"], res["planning_secs"]))
-                if m == "autosketch":
-                    # #777 section 7: AutoSketch's planning time includes the
-                    # benchmark time of every probed configuration.
-                    a = data["autosketch"]
-                    bench["measured"].append((data["rqes"], res["planning_secs"]
-                                              + a["benchmark_secs_measured"]))
-                    bench["paper"].append((data["rqes"], res["planning_secs"]
-                                           + a["benchmark_secs_paper_rate"]))
-        if pts:
-            ax.plot(*zip(*pts), marker="o", label=LABELS[m] + (" (search only)"
-                    if m == "autosketch" else ""), color=COLORS[m],
-                    linestyle=":" if m == "autosketch" else "-")
-        for kind, style in (("measured", "-"), ("paper", "--")):
-            if bench[kind]:
-                ax.plot(*zip(*bench[kind]), marker="o", color=COLORS[m], linestyle=style,
-                        label=f"{LABELS[m]} + benchmark ({'measured' if kind == 'measured' else '60 s/probe'})")
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("RQEs")
-    ax.set_ylabel("planning time (s)")
-    ax.legend(fontsize=7)
-    fig.tight_layout()
-    fig.savefig(out / "fig_planning_time.png", dpi=150)
-    plt.close(fig)
+def at_autosketch_latency(data, method, weights):
+    """The method's plan at the bound closest to AutoSketch's latency."""
+    target = data["frontier"]["autosketch_latency_ms"]
+    bounded = [r for r in records(data, method, weights) if r["bound_ms"] is not None]
+    return min(bounded, key=lambda r: abs(r["bound_ms"] - target)) if bounded else None
 
 
 def fmt(x, digits=3):
     return "—" if x is None else f"{x:.{digits}g}"
 
 
-def copies(r):
-    """Window / slide summed over the plan's deployments: each deployment
-    writes an item into window / slide overlapping sketches, which is what
-    AutoSketch's one window per query (window = lookback) pays at ingest."""
-    deps = {c["deployment"]: c["window_secs"] / c["slide_secs"] for c in r["chosen"]}
-    return sum(deps.values())
+def frontier(data, method, weights):
+    """Distinct (latency, cost) points of the method, by latency."""
+    return sorted({(r["latency_ms"], r["objective"]) for r in records(data, method, weights)})
+
+
+def fig_frontier(runs, out):
+    weights = [w["name"] for w in next(iter(runs.values()))["weights"]]
+    fig, axes = plt.subplots(len(weights), len(runs),
+                             figsize=(3.6 * len(runs), 3.2 * len(weights)), squeeze=False)
+    for col, (key, data) in enumerate(runs.items()):
+        for row, w in enumerate(weights):
+            ax = axes[row][col]
+            for m in METHODS:
+                pts = frontier(data, m, w)
+                style = dict(color=COLORS[m], marker=MARKERS[m], markersize=4, linewidth=1.5,
+                             label=LABELS[m])
+                if m == "autosketch":
+                    ax.plot(*zip(*pts), linestyle="none", **style)
+                else:
+                    ax.plot(*zip(*pts), **style)
+                for x, y in pts:
+                    ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
+                                fontsize=5, color="#52514e")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.grid(True, which="major", color="#e5e4e0", linewidth=0.5)
+            ax.tick_params(labelsize=6)
+            if row == 0:
+                ax.set_title(f"{title(key)} ({data['rqes']} RQEs)", fontsize=8)
+            if row == len(weights) - 1:
+                ax.set_xlabel("query latency (ms)", fontsize=7)
+            if col == 0:
+                ax.set_ylabel(f"{WEIGHT_TITLES.get(w, w)}: cost by use ({UNITS.get(w, w)})",
+                              fontsize=7)
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=3, fontsize=8)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(out / "fig_frontier.png", dpi=150)
+    plt.close(fig)
+
+
+def fig_planning_time(runs, out):
+    """Over the metrics dimension (shared = 1), CPU-only weights."""
+    series = {"asap": [], "perquery": [], "search": [], "measured": [], "paper": []}
+    for (shared, _), data in runs.items():
+        if shared != 1:
+            continue
+        n = data["rqes"]
+        a = data["autosketch"]
+        auto = unbounded(data, "autosketch", "cpu")
+        series["asap"].append((n, unbounded(data, "asap", "cpu")["planning_secs"]))
+        series["perquery"].append((n, unbounded(data, "perquery", "cpu")["planning_secs"]))
+        series["search"].append((n, auto["planning_secs"]))
+        if "benchmark_secs_measured" in a:
+            series["measured"].append((n, auto["planning_secs"] + a["benchmark_secs_measured"]))
+        series["paper"].append((n, auto["planning_secs"] + a["benchmark_secs_paper_rate"]))
+    fig, ax = plt.subplots(figsize=(6.0, 3.8))
+    lines = [
+        ("asap", "ASAP (candidates + MILP)", COLORS["asap"], MARKERS["asap"], "-"),
+        ("perquery", "PerQuery-CostAware", COLORS["perquery"], MARKERS["perquery"], "-"),
+        ("measured", "AutoSketch-Adapted: search + measured benchmark", COLORS["autosketch"],
+         MARKERS["autosketch"], "-"),
+        ("search", "AutoSketch-Adapted: search only", COLORS["autosketch"],
+         MARKERS["autosketch"], ":"),
+        ("paper", "reference: AutoSketch search + 60 s per probe (paper rate)", "#898781",
+         "x", "--"),
+    ]
+    for key, label, color, marker, style in lines:
+        pts = sorted(series[key])
+        if not pts:
+            continue
+        ax.plot(*zip(*pts), color=color, marker=marker, markersize=4, linestyle=style,
+                linewidth=1.5, label=label)
+        for x, y in pts:
+            ax.annotate(fmt(y) + " s", (x, y), textcoords="offset points", xytext=(3, 3),
+                        fontsize=5, color="#52514e")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.grid(True, which="major", color="#e5e4e0", linewidth=0.5)
+    ax.set_xlabel("RQEs (mixed set, m = 1, 8, 16 metrics)", fontsize=8)
+    ax.set_ylabel("planning time (s)", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=6, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2)
+    fig.tight_layout()
+    fig.savefig(out / "fig_planning_time.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def summary(runs, out):
-    lines = ["# Synthetic workload: AutoSketch vs. ASAP\n"]
-    for key, data in sorted(runs.items(), key=lambda kv: str(kv[0])):
-        lines.append(f"## templates={key[0]}, shared={key[1]}, metrics={key[2]}, "
-                     f"accuracy={key[3]}\n")
-        lines.append(f"{data['rqes']} RQEs on {data['streams']} streams; sanity violations: "
-                     f"{len(data['sanity_violations'])}. AutoSketch probes: "
-                     f"{data['autosketch']['probes']}, benchmark time (measured) "
-                     f"{fmt(data['autosketch']['benchmark_secs_measured'])} s.\n")
-        lines.append("| weights | SLA (ms) | RQEs | method | objective | CPU (vCPU) | "
-                     "GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
-        for w in weight_names(runs):
-            for sla in data["sla_grid_ms"]:
-                for m in METHODS:
-                    r = pick(data, m, w, sla)
-                    if r is None:
-                        continue
-                    lines.append(
-                        f"| {w} | {sla} | {r['rqes']} | {LABELS[m]} | {fmt(r['objective'])} | "
-                        f"{fmt(r['cpu'])} | {fmt(r['gib'])} | "
-                        f"{r['active_deployments']} | {fmt(copies(r))} | {fmt(r['max_latency_ms'])} | "
-                        f"{fmt(r['planning_secs'])} |")
+    lines = ["# Synthetic mixed set: AutoSketch vs. ASAP, cost by use\n",
+             "Cost by use: `w_cpu · AUC(CPU) + w_mem · AUC(memory)` (CPU only, in vCPU; "
+             "Fargate prices, in $/hour). Latency: a plan's query latency (its longest "
+             "chain, compaction then query, CPU elastic), and the median over its RQEs. "
+             "AutoSketch's planning time is its search plus its measured benchmark.\n"]
+    for key, data in runs.items():
+        a = data["autosketch"]
+        lines.append(f"## {title(key)}\n")
+        lines.append(
+            f"{data['rqes']} RQEs on {data['streams']} streams; dropped: "
+            f"{sum(len(v) for v in data['dropped_unservable'].values())}; sanity violations: "
+            f"{len(data['sanity_violations'])}. AutoSketch: {a['probes']} probes, "
+            f"{a['distinct_probes']} distinct (metric, config); measured benchmark "
+            f"{fmt(a.get('benchmark_secs_measured'))} s at N = {fmt(a.get('benchmark_n'))} "
+            f"(paper rate {fmt(a['benchmark_secs_paper_rate'])} s). AutoSketch latency "
+            f"{fmt(data['frontier']['autosketch_latency_ms'])} ms; tightest feasible bound "
+            f"{fmt(data['frontier']['asap_tightest_bound_ms'])} ms.\n")
+        lines.append("| weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | "
+                     "median latency (ms) | planning (s) | cost at AutoSketch's latency |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
+        for w in [x["name"] for x in data["weights"]]:
+            for m in METHODS:
+                r = unbounded(data, m, w)
+                planning = r.get("planning_secs")
+                if m == "autosketch" and "benchmark_secs_measured" in a:
+                    planning = planning + a["benchmark_secs_measured"]
+                at = at_autosketch_latency(data, m, w)
+                at_cost = r["objective"] if m == "autosketch" else (at and at["objective"])
+                lines.append(
+                    f"| {w} | {LABELS[m]} | {fmt(r['objective'])} | {fmt(r['cpu'])} | "
+                    f"{fmt(r['gib'])} | {fmt(r['latency_ms'])} | {fmt(r['median_latency_ms'])} | "
+                    f"{fmt(planning)} | {fmt(at_cost)} |")
+        lines.append("")
+        lines.append("Frontier points (latency ms, cost), by weights:\n")
+        for w in [x["name"] for x in data["weights"]]:
+            for m in ("asap", "perquery"):
+                pts = ", ".join(f"({fmt(x)}, {fmt(y)})" for x, y in frontier(data, m, w))
+                lines.append(f"- {w}, {LABELS[m]}: {pts}")
         lines.append("")
     (out / "summary_synthetic.md").write_text("\n".join(lines))
 
@@ -185,8 +220,7 @@ def summary(runs, out):
 def main():
     out = pathlib.Path(sys.argv[1])
     runs = load(out)
-    fig_objective_vs_latency(runs, out)
-    fig_objective_by_dimension(runs, out)
+    fig_frontier(runs, out)
     fig_planning_time(runs, out)
     summary(runs, out)
 

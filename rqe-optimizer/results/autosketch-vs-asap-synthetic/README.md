@@ -1,58 +1,69 @@
 # Synthetic workload: AutoSketch vs. ASAP
 
-Results of ProjectASAP/ASAPQuery#777's synthetic workload grid (§6 "Workload
-grid"): the dashboard default, the 10 templates, shared replicas r = 8 (on
-one metric) and m = 8 and 16 metrics (one dashboard per metric, 21 · m RQEs),
-all at one accuracy level, p95: 95% in each family's own metric (rank,
-relative value and relative error at most 0.05; top-k precision at least
-0.95). The trace workloads use the same level. Each is solved by ASAP, PerQuery-CostAware and
-AutoSketch-Adapted at both weight settings (CPU only; Fargate prices) and
-across the SLA grid {0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, 10} ms and none. The trace workloads
-alibaba_v2022 and google_2011 run with the same inputs
-(`scripts/run_autosketch_vs_asap.sh`, results under
-`rqe-optimizer/results/autosketch-vs-asap/`); boom is left out for now.
+Results of ProjectASAP/ASAPQuery#777's synthetic workload on the **mixed
+template set** (the 10 templates, 50 RQEs), scaled by shared replicas r = 8
+(on one metric, 92 RQEs) and by m = 8 and 16 metrics (one copy of the
+template set per metric, 50 · m RQEs). One accuracy level, p95: 95% in each
+family's own metric (rank, relative value and relative error at most 0.05;
+top-k precision at least 0.95).
 
-## Results (p95, 2026-10-07)
+**Cost model: cost by use** (sketch-bench `docs/rqe_sketch_deployment_v1.md`,
+"Cost by use and batch latency", #188): `w_cpu · AUC(CPU) + w_mem ·
+AUC(memory)`, CPU elastic, at two weight settings (CPU only, in vCPU; AWS
+Fargate's per-vCPU and per-GB prices, in $/hour). CPU covers ingest (on
+`⌈ρ⌉` workers split by sample), compaction of each closed window, and one
+query job (merge, then estimate) per firing; memory covers ingest, storage,
+compaction and query memory, each counted once.
 
-Run on four identical CloudLab nodes (`machine-*.txt`: dashboard and all templates on clnode155, r = 8 on clnode178, m = 8 on clnode167, m = 16 on clnode138) over the asap_sketchlib 0.3.0
-study (#174, #178–#186), one workload at a time. Files: `synthetic-*.json`
-(raw), `summary_synthetic.md` (every weights and SLA), and the figures
-`fig_objective_vs_latency.png`, `fig_objective_by_dimension.png` and
-`fig_planning_time.png`, and `fig_cost_vs_total_latency.png` (every workload,
-synthetic and traces: cost vs. the sum of the RQEs' estimated latencies across
-the SLA grid, from `scripts/plot_autosketch_vs_asap_workloads.py`). The traces are in `../autosketch-vs-asap/`
-(`traces-*.json`, `summary.md`, `fig1_objective.png`,
-`fig4_objective_vs_sla.png`).
+**Latency is reported, not constrained (version 1, no SLA).** A plan's query
+latency is its worst batch latency, which with elastic CPU is its longest
+chain (the newest window's compaction, then the query). ASAP and
+PerQuery-CostAware are solved without a bound (the cheapest plan) and for 12
+latency bounds log-spaced from the tightest feasible bound to the unbounded
+plan's latency, plus a bound at AutoSketch's latency: each method's
+**cost-latency frontier**. AutoSketch-Adapted ignores latency and is one
+point. AutoSketch's planning time is its search **plus its measured
+benchmark**: `scripts/autosketch_benchmark_time.py` ran approxbench's
+accuracy benchmark (1e8 items, exact baseline and scoring) once per distinct
+probed (config, data shape), serially on idle clnode155
+(`autosketch-benchmark-times.json`, `machine-benchmark-clnode155.txt`), and
+charged it once per probed (metric, config).
 
-With no latency SLA, each method's objective (CPU only, in vCPU; Fargate prices, in $/hour):
+Runs: one workload per CloudLab node (`machine-*.txt`: mixed on clnode155,
+r = 8 on clnode178, m = 8 on clnode167, m = 16 on clnode138), `--runs 3`,
+sketch-bench at #188 + this branch. No RQE was dropped and no sanity check
+failed (ASAP ≤ PerQuery, ASAP ≤ AutoSketch, each frontier monotone).
 
-| Workload | RQEs | ASAP | PerQuery-CostAware | AutoSketch-Adapted | Σ window/slide (ASAP, PerQuery, AutoSketch) | ASAP planning (s) |
-|---|---|---|---|---|---|---|
-| dashboard (default) | 21 | 0.767 vCPU; 0.072 $/h | 2.51 vCPU; 0.265 $/h | 911 vCPU; 37 $/h | 8, 24, 7578 | 0.16 |
-| all templates | 50 | 3.32 vCPU; 0.221 $/h | 9.55 vCPU; 0.721 $/h | 3.41e+03 vCPU; 138 $/h | 12, 57, 20631 | 0.80 |
-| dashboard, shared r = 8 | 52 | 2.35 vCPU; 0.342 $/h | 9.9 vCPU; 1.55 $/h | 6.52e+03 vCPU; 265 $/h | 33, 109, 54243 | 0.88 |
-| dashboard, m = 8 metrics | 168 | 6.14 vCPU; 0.576 $/h | 20.1 vCPU; 2.12 $/h | 7.28e+03 vCPU; 296 $/h | 64, 192, 60624 | 1.26 |
-| dashboard, m = 16 metrics | 336 | 12.3 vCPU; 1.15 $/h | 40.1 vCPU; 4.24 $/h | 1.46e+04 vCPU; 593 $/h | 128, 384, 121248 | 2.63 |
-| traces, alibaba_v2022 | 51 | 2.31 vCPU; 0.303 $/h | 4.48 vCPU; 0.417 $/h | 71.8 vCPU; 3.14 $/h | 17, 51, 1122 | 0.05 |
-| traces, google_2011 | 27 | 0.00484 vCPU; 0.000378 $/h | 0.014 vCPU; 0.000801 $/h | 0.0645 vCPU; 0.00283 $/h | 9, 27, 126 | 0.03 |
+Files: `synthetic-*.json` (raw: every method's plan, unbounded and bounded,
+per weight setting), `summary_synthetic.md` (every point),
+`fig_frontier.png` (cost vs. query latency per workload and weight setting;
+ASAP and PerQuery frontiers as lines, AutoSketch as a point, every point
+labeled), `fig_planning_time.png` (planning time vs. RQEs over m).
 
-No RQE was dropped as unservable, no sanity check failed (ASAP and PerQuery meet
-every SLA; ASAP ≤ PerQuery and ASAP ≤ AutoSketch where they apply), and every RQE's accuracy is read from a
-measured curve (`accuracy_source`). AutoSketch-Adapted's gap is its window
-adapter: a window as long as the query's lookback, sliding every `T`, puts
-each item into window/slide overlapping sketches (Σ window/slide), up to
-1440 for a 24 h lookback at 1 m. PerQuery-CostAware is the strong baseline.
+## Results
 
-AutoSketch-Adapted ignores the SLA but never violates one: it never merges, so each
-RQE's latency is within 1.4% of the lowest any deployment reaches (equal for every
-quantile, exact and trace RQE; top-k picks cols = 1024 at 0.00038 ms vs. 0.00037 ms),
-and RQEs no method can meet are excluded for every method.
+Each method's cheapest plan and its latency, and ASAP's and PerQuery's cost
+at no more than AutoSketch's latency (absolute costs):
 
-AutoSketch-Adapted benchmarks each probed config once per metric, on that metric's data,
-so its benchmark time grows with m (540, 4320 and 8640 s at 60 s per probe for m = 1, 8, 16).
+| Workload | RQEs | Weights | ASAP: cheapest (latency) | PerQuery: cheapest (latency) | AutoSketch (latency) | ASAP at AutoSketch's latency | PerQuery at AutoSketch's latency |
+|---|---|---|---|---|---|---|---|
+| mixed (default) | 50 | cpu | 3.32 vCPU (1.21e+04 ms) | 9.55 vCPU (3.84e+03 ms) | 3.41e+03 vCPU (1.01e+03 ms) | 5.12 vCPU | 12 vCPU |
+| mixed (default) | 50 | fargate | 0.22 $/h (2.94e+03 ms) | 0.72 $/h (2.97e+03 ms) | 163 $/h (1.01e+03 ms) | 0.284 $/h | 0.813 $/h |
+| mixed, m = 8 | 400 | cpu | 26.5 vCPU (1.21e+04 ms) | 76.4 vCPU (3.84e+03 ms) | 2.73e+04 vCPU (1.01e+03 ms) | 41 vCPU | 96.2 vCPU |
+| mixed, m = 8 | 400 | fargate | 1.76 $/h (2.94e+03 ms) | 5.76 $/h (2.97e+03 ms) | 1.31e+03 $/h (1.01e+03 ms) | 2.27 $/h | 6.5 $/h |
+| mixed, m = 16 | 800 | cpu | 53.1 vCPU (1.21e+04 ms) | 153 vCPU (3.84e+03 ms) | 5.46e+04 vCPU (1.01e+03 ms) | 81.9 vCPU | 192 vCPU |
+| mixed, m = 16 | 800 | fargate | 3.52 $/h (2.94e+03 ms) | 11.5 $/h (2.97e+03 ms) | 2.61e+03 $/h (1.01e+03 ms) | 4.54 $/h | 13 $/h |
+| mixed, r = 8 | 92 | cpu | 3.39 vCPU (2.94e+03 ms) | 16.7 vCPU (3.84e+03 ms) | 4.09e+03 vCPU (1.01e+03 ms) | 5.15 vCPU | 19.3 vCPU |
+| mixed, r = 8 | 92 | fargate | 0.223 $/h (2.94e+03 ms) | 1.08 $/h (2.97e+03 ms) | 192 $/h (1.01e+03 ms) | 0.285 $/h | 1.18 $/h |
 
-ASAP's one-time profiling (#777 §7) is `rqe-optimizer/data/profiling-time.json`:
-0.77 h of runs over the whole study, which ran in parallel on five machines.
+Planning time (CPU-only weights; AutoSketch's includes its measured
+benchmark; the paper's 60 s per probe is a reference only):
+
+| RQEs | ASAP (candidates + MILP) | PerQuery-CostAware | AutoSketch: search | AutoSketch: search + measured benchmark | (reference: + 60 s per probe) |
+|---|---|---|---|---|---|
+| 50 | 0.758 s | 0.65 s | 0.00197 s | 212 s | 600 s |
+| 400 | 6.82 s | 5.55 s | 0.0153 s | 1.7e+03 s | 4.8e+03 s |
+| 800 | 14.7 s | 11.7 s | 0.031 s | 3.39e+03 s | 9.6e+03 s |
 
 ## Inputs
 
@@ -79,9 +90,13 @@ python3 scripts/study_saturation.py --phase accuracy --n-max 1e9 --seeds 3 \
 # Cost table, serially on a quiet machine.
 python3 scripts/study_saturation.py --phase optimizer-cost --out DIR/optimizer_cost
 
-# Workload tables and plan.tsv, then the runs and the figures.
+# Workload tables and plan.tsv, then the runs.
 python3 scripts/export_autosketch_eval_table.py --synthetic --out TABLES
 SATURATION_DIR=DIR scripts/run_autosketch_vs_asap_synthetic.sh TABLES run
+# AutoSketch's measured benchmark (serially, on an idle machine; writes
+# benchmark_secs_measured into the results), then the figures.
+python3 scripts/autosketch_benchmark_time.py --binary ./target/release/approxbench \
+    --out OUT/autosketch-benchmark-times.json OUT/synthetic-*.json
 scripts/run_autosketch_vs_asap_synthetic.sh TABLES plot
 # Traces: alibaba_v2022 and google_2011 (rqe-optimizer/data/autosketch-eval/table.json).
 scripts/run_autosketch_vs_asap.sh DIR
