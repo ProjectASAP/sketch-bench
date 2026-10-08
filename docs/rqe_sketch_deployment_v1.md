@@ -361,7 +361,7 @@ never enumerates full mappings.
 
 ### Cost models, batch latency and query placement (design, under review)
 
-Status: agreed design (ProjectASAP/ASAPQuery#777), being implemented in
+Status: agreed design (ProjectASAP/ASAPQuery#777), implemented in
 `placement` (load, cost models, placement) and `milp::minimize_cost_model`.
 
 **Scope.** Evaluated on the synthetic mixed template set (spatial templates
@@ -484,15 +484,31 @@ with SLA L:
           Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ≤ L · (C − Σ_D ρ_D · u_D)           (the aligned batch fits)
 ```
 
-The batch row is linear (`L` is a constant). It is a surrogate: it asks the
-heaviest batch's work to fit the capacity ingest leaves, as if that work were
-divisible. The MILP uses it to choose the mapping. The resource point is then
-sized exactly by the placement, for every method alike: `C` is the smallest at
+The batch row is linear (`L` is a constant). It is a surrogate: it treats the
+heaviest batch's work as divisible, and the memory row holds every query at
+once. So the MILP's `(C, M)` is not what the chosen mapping really needs. The
+placement sizes it exactly, for every method alike: `C` is the smallest at
 which the placement's worst batch meets `L` (binary search; with jobs capped at
 one core, list scheduling ends within `Σ work / K + max chain`, so it exists
-whenever every chain fits), and `M` is the placement's peak memory. Cost model
-2's reported cost is `w1 · C + w2 · M` at that point. Without an SLA, `C` is
-the mean load and the placement reports the latency it gives.
+whenever every chain fits), and `M` is the placement's peak memory. Without an
+SLA, `C` is the mean load and the placement reports the latency it gives.
+
+**Correction passes (cost model 2).** The MILP minimizes the surrogate peaks,
+which may rank mappings differently from their placed peaks. So
+`milp::minimize_cost_model` iterates:
+
+1. Solve the MILP; take its mapping and size its real `(C*, M*)` with the
+   placement. Cost `w1 · C* + w2 · M*`.
+2. Measure the surrogate's error on that mapping: `δ_C = C* − Ĉ`,
+   `δ_M = M* − M̂`, where `Ĉ = max(mean load, ρ_ing + batch work / L)` and
+   `M̂ = ingest + storage + every query's memory` are the rows' values.
+3. Add the errors back to the rows (`C ≥ ρ_ing + batch work / L + δ_C`,
+   `M ≥ … + δ_M`) and solve again.
+4. Keep the mapping with the lowest placed cost; stop when a mapping repeats,
+   or after three corrections.
+
+Cost model 1 needs none of this: with elastic CPU every term is linear and
+exact (CPU and memory by use, latency the longest chain).
 
 - PerQuery: the same MILP over single-RAQE candidates only (no sharing).
 - AutoSketch: fixed configs, chosen by memory; priced by the same functions
