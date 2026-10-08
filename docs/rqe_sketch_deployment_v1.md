@@ -364,8 +364,10 @@ never enumerates full mappings.
 Status: agreed design (ProjectASAP/ASAPQuery#777), implemented in
 `rqe-optimizer/src/usage.rs` (resource use, cost, latency) and
 `milp::minimize_usage_cost`. The MILP minimizes the cost of a plan billed by
-use. It has no latency constraint: the evaluation's message is lower cost and
-lower latency, so latency is reported for every plan, not bounded.
+use, and the plan's latency is reported. The evaluation's message is lower
+cost and lower latency, so instead of an SLA to meet or violate, an optional
+latency bound traces each method's cost–latency Pareto frontier: the
+cheapest plan whose latency is at most `L`, for a sweep of `L`.
 Evaluated first on the synthetic mixed template set; methods: ASAP (this
 MILP, with sharing), PerQuery (the same MILP without sharing) and
 AutoSketch-Adapted (fixed configs chosen by memory).
@@ -479,7 +481,8 @@ In words:
 
 A batch's **latency** is the time from its issue until its last query job
 finishes, compaction included. A plan's **query latency** is its worst batch
-latency. It is reported for every plan, not constrained.
+latency. It is reported for every plan; a latency bound (§6) only traces the
+frontier.
 
 CPU is elastic, so no job waits for a core, and a batch's latency is its
 longest **chain**: the newest window's compaction, then the query, each on a
@@ -490,8 +493,8 @@ latency is the longest chain over its RAQEs. Per-RAQE latency bounds
 In words: the trade-off between cost and latency comes from the plan. A cheap
 plan keeps short windows and merges many of them at query time (long
 chains); a faster one precomputes more at ingest (more open windows, more CPU
-and memory). The MILP picks the cheapest plan; its latency is what that plan
-gives.
+and memory). With no bound the MILP picks the cheapest plan, whatever its
+latency; a bound `L` asks for the cheapest plan at least that fast.
 
 #### 6. MILP formulation
 
@@ -506,6 +509,8 @@ minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) ·
 s.t.      Σ_D z_{i,D} = 1                        for every RAQE i
           z_{i,D} ≤ u_D ≤ Σ_i z_{i,D}             for (i, D) ∈ E
           stored_D ≥ w_D · ((S_i − x_D) / y_D + 1) · z_{i,D}
+with a latency bound L (optional):
+          z_{i,D} = 0  if c_D + ℓ_{i,D} > L
 ```
 
 In words:
@@ -520,10 +525,16 @@ In words:
   paid once, however many RAQEs share it.
 - A deployment stores enough closed windows for the longest lookback it
   serves (a linearized max).
+- With a bound `L`, a pair whose chain (the newest window's compaction, then
+  the query, each on a full core) is longer than `L` is ruled out. Since CPU
+  is elastic, the plan's latency is then at most `L`, exactly. Chains are
+  compared with `L` with a relative slack of `1e-9`, so float error can't rule
+  out a chain equal to `L`.
 
 #### 7. Solution method
 
-Every term is linear in `u` and `z`, so the MILP is solved exactly
+Every term is linear in `u` and `z`, with or without a bound, so the MILP is
+solved exactly
 (`milp::minimize_usage_cost`; costs are scaled by each RAQE's cheapest pair
 so the solver sees magnitudes near 1). The solved plan's cost and latency are
 then computed from its resource use (`usage::usage_cost`).
@@ -535,13 +546,20 @@ then computed from its resource use (`usage::usage_cost`).
   same candidate index (`u_D` is per index), so their copies stay apart and
   each pays its own ingest.
 - **AutoSketch** keeps its memory-chosen configs and is priced by the same
-  function: its cost by use and its latency, the longest chain.
+  function: its cost by use and its latency, the longest chain. It ignores
+  latency, so it is one point, not a frontier.
+- **Frontier:** ASAP and PerQuery are solved for a sweep of bounds `L`, from
+  the smallest feasible one (the largest, over RAQEs, of each RAQE's fastest
+  chain) up to no bound. Each solve gives a (latency, cost) point; together
+  they are the method's frontier. In particular, `L` = AutoSketch's latency
+  gives each method's cost at no more than AutoSketch's latency.
 
 #### 8. Outputs
 
-Per (method, weight setting): cost; mean CPU and memory, by part; query
-latency and per-RAQE latency; planning time. Figure: cost and latency per
-method, for each workload.
+Per (method, weight setting, bound): cost; mean CPU and memory, by part;
+query latency and per-RAQE latency; planning time. Figure: each method's
+cost–latency frontier for each workload (ASAP and PerQuery as lines,
+AutoSketch as a point).
 
 ## Analytical cost model
 

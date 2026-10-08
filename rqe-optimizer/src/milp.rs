@@ -227,6 +227,10 @@ pub fn minimize(
     })
 }
 
+/// Relative slack when comparing a chain with a latency bound, so float error
+/// in summing µs-scale work can't rule out a chain equal to the bound.
+const LATENCY_SLACK: f64 = 1e-9;
+
 /// A [`minimize_usage_cost`] solution, with its cost billed by use and its
 /// latency.
 #[derive(Debug, Clone)]
@@ -239,15 +243,19 @@ pub struct UsageSolution {
 
 /// Minimize the cost billed by use, `w_cpu · AUC(CPU) + w_mem · AUC(memory)`
 /// (per vCPU, per GiB; `docs/rqe_sketch_deployment_v1.md`, "Cost by use and
-/// batch latency"). No latency constraint: the latency is reported, not
-/// bounded, and per-RAQE latency bounds (`Raqe::latency_sla_ms`) are not
-/// used. Every term is linear, so this is exact.
+/// batch latency"). The latency is reported. `latency_bound_ms`, when given,
+/// rules out every pair whose chain (`analytical_cost_model::chain_ms`)
+/// exceeds it, so sweeping it traces the cost–latency Pareto frontier; it is
+/// not an SLA to meet or violate. Per-RAQE latency bounds
+/// (`Raqe::latency_sla_ms`) are not used. Every term is linear, so this is
+/// exact.
 ///
 /// `allowed`, when given, lists for each RAQE the candidate indices it may
 /// use, e.g. only its own candidates for PerQuery (no sharing). Two RAQEs
 /// share a deployment only by choosing the same candidate index, so giving
 /// each RAQE its own copies of identical deployments keeps them apart, each
 /// paying its own ingest.
+#[allow(clippy::too_many_arguments)]
 pub fn minimize_usage_cost(
     raqes: &[Raqe],
     deployments: &[Deployment],
@@ -256,6 +264,7 @@ pub fn minimize_usage_cost(
     w_mem: f64,
     accuracy: &Accuracy,
     allowed: Option<&[Vec<usize>]>,
+    latency_bound_ms: Option<f64>,
 ) -> Result<UsageSolution, ResolutionError> {
     let secs = |ms: u64| ms as f64 / 1000.0;
     let gib = |bytes: f64| bytes / BYTES_PER_GIB;
@@ -287,6 +296,12 @@ pub fn minimize_usage_cost(
             eligible_deployments_for(raqe, deployments, facts, accuracy)
                 .into_iter()
                 .filter(|d| allowed.is_none_or(|allowed| allowed[i].contains(d)))
+                .filter(|&d| {
+                    latency_bound_ms.is_none_or(|bound| {
+                        analytical_cost_model::chain_ms(raqe, &deployments[d], facts)
+                            <= bound * (1.0 + LATENCY_SLACK)
+                    })
+                })
                 .collect()
         })
         .collect();
@@ -617,6 +632,7 @@ mod tests {
                 w_mem,
                 &table_accuracy,
                 None,
+                None,
             )
             .expect("feasible");
             assert!(
@@ -624,6 +640,45 @@ mod tests {
                 "({w_cpu}, {w_mem}): {} vs {best}",
                 got.cost.value
             );
+        }
+    }
+
+    #[test]
+    fn a_latency_bound_gives_the_cheapest_plan_that_fast_by_brute_force() {
+        use crate::usage::{usage_cost, PlanLoad};
+        let (raqes, deployments, facts) = usage_workload();
+        let price = |mapping: &Mapping| {
+            usage_cost(
+                &PlanLoad::new(&raqes, &deployments, mapping, &facts),
+                1.0,
+                0.0,
+            )
+        };
+        let mut previous = (0.0, f64::INFINITY);
+        // Looser bounds never cost more and never give a faster plan.
+        for bound in [300.0, 1e3, 1e4, 1e6] {
+            let best = brute_force(&raqes, &deployments, &facts, &table_accuracy)
+                .iter()
+                .map(price)
+                .filter(|cost| cost.latency_ms <= bound)
+                .map(|cost| cost.value)
+                .min_by(f64::total_cmp)
+                .expect("servable within the bound");
+            let got = minimize_usage_cost(
+                &raqes,
+                &deployments,
+                &facts,
+                1.0,
+                0.0,
+                &table_accuracy,
+                None,
+                Some(bound),
+            )
+            .expect("feasible");
+            assert!((got.cost.value - best).abs() <= 1e-9 * best, "{bound}");
+            assert!(got.cost.latency_ms <= bound);
+            assert!(got.cost.value <= previous.1 * (1.0 + 1e-12));
+            previous = (got.cost.latency_ms, got.cost.value);
         }
     }
 
@@ -643,6 +698,7 @@ mod tests {
                 0.0,
                 &table_accuracy,
                 allowed,
+                None,
             )
             .expect("feasible")
         };
