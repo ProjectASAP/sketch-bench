@@ -272,6 +272,34 @@ pub fn compaction_secs(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
             .sum::<f64>()
 }
 
+/// Bytes a compaction holds while it runs: the closed window's `k` partial
+/// copies, `k · Σ_parts instances · m` (one window's ingest memory per
+/// worker, times `k`). The compacted result takes the storage slot the oldest
+/// window frees, so it is not counted again. Zero with one worker.
+pub fn compaction_bytes(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
+    let workers = ingest_workers(deployment, facts);
+    if workers <= 1.0 {
+        return 0.0;
+    }
+    workers * ingest(deployment, facts).memory_bytes / open_window_count(deployment)
+}
+
+/// One firing's chain on its own cores, ms: the newest window's compaction,
+/// then the query (merge, then estimate). Under elastic CPU this is the
+/// firing's latency; no placement can do better.
+pub fn chain_ms(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
+    1000.0 * compaction_secs(deployment, facts) + query_latency_ms(raqe, deployment, facts)
+}
+
+/// Slack for comparing a latency with an SLA: float error in summing µs-scale
+/// work must not turn a chain equal to `L` into a miss.
+pub const LATENCY_SLACK: f64 = 1e-9;
+
+/// Whether `latency_ms` meets `sla_ms`, with [`LATENCY_SLACK`].
+pub fn meets_sla(latency_ms: f64, sla_ms: f64) -> bool {
+    latency_ms <= sla_ms * (1.0 + LATENCY_SLACK)
+}
+
 pub fn score(
     raqes: &[Raqe],
     deployments: &[Deployment],

@@ -376,10 +376,11 @@ configs chosen by memory).
 | `D`, `i` | a candidate deployment; a RAQE |
 | `x_D`, `y_D` | `D`'s window and slide; a window closes every `y_D` |
 | `S_i`, `T_i` | RAQE `i`'s lookback and interval; it fires at `t = k · T_i` |
-| `card(G)` | groups of `D`'s grouping (one instance per group per window; one for a sketch shared by all groups) |
+| `card(G)` | groups of `D`'s grouping |
+| `inst_D` | instances per window: `card(G)`, or 1 for a sketch shared by all groups, plus `card(G)` for a key tracker if the family needs one |
 | `λ_D` | samples/s arriving for `D`'s metric |
 | `c_ins`, `c_mrg`, `c_qry` | measured CPU-seconds per insert, per pairwise merge, per query of one instance |
-| `m` | measured bytes per instance |
+| `m` | measured bytes per instance; `w_D = Σ_parts inst · m`, one window of all instances |
 | `n_{i,D} = S_i / x_D` | windows a query merges |
 | `H = lcm(T_i, y_D)` | hyperperiod: the pattern of query issues and window closes repeats every `H` |
 | batch | all query jobs issued at one instant; `B0` is the one at `t = 0`, where every RAQE fires |
@@ -439,8 +440,8 @@ Our ingest runs all the time and queries come in periodic bursts.
 | Part | When | CPU-seconds | Mean vCPUs |
 |---|---|---|---|
 | Ingest (the precompute) | continuously, as samples arrive | — | `ρ_D = λ_D · (x_D / y_D) · c_ins` |
-| Compaction | at each window close | `c_D = (k_D − 1) · Σ_parts instances · c_mrg` | `c_D / y_D` |
-| Query job of RAQE `i` | at each firing | `ℓ_{i,D} = card(G) · (c_qry + (n_{i,D} − 1) · c_mrg)` | `ℓ_{i,D} / T_i` |
+| Compaction | at each window close | `c_D = (k_D − 1) · Σ_parts inst · c_mrg` | `c_D / y_D` |
+| Query job of RAQE `i` | at each firing | `ℓ_{i,D} = card(G) · c_qry + Σ_parts inst · (n_{i,D} − 1) · c_mrg` | `ℓ_{i,D} / T_i` |
 
 - Ingest runs on `k_D = ⌈ρ_D⌉` parallel workers (at least one; each uses at
   most one core), **split by sample**: each worker reads a share of the input
@@ -464,9 +465,10 @@ In words:
 - `c_D`: closing a window merges, for every instance, the `k_D` workers'
   partial copies into one, which takes `k_D − 1` merges. This happens once
   per slide.
-- `ℓ_{i,D}`: for each of the `card(G)` groups, a query merges its
-  `n_{i,D}` stored windows (`n − 1` merges), then answers once. This happens
-  once per interval.
+- `ℓ_{i,D}`: a query merges each instance's `n_{i,D}` stored windows
+  (`n − 1` merges per instance), then answers once per group. This happens
+  once per interval. (A sketch shared by all groups merges one instance but
+  still answers every group.)
 - `AUC(CPU)` adds the three rates: work per second, in vCPUs.
 
 #### 4. Memory: parts and how each is computed
@@ -476,13 +478,15 @@ storage once compacted, and a query reads stored instances in place.
 
 | Part | What | Bytes | Held |
 |---|---|---|---|
-| Ingest | open windows, one copy per worker | `I_D = card(G) · m · (x_D / y_D) · k_D` | always |
-| Storage | closed windows for the longest lookback served (one compacted copy) | `stored_D = max_i card(G) · m · ((S_i − x_D) / y_D + 1)` | always |
-| Query | the accumulators the merge creates (none when `n = 1`) and the output | `q_{i,D} = card(G) · m · [n_{i,D} > 1] + output` | while the query job runs |
+| Ingest | open windows, one copy per worker | `I_D = w_D · (x_D / y_D) · k_D` | always |
+| Storage | closed windows for the longest lookback served (one compacted copy) | `stored_D = max_i w_D · ((S_i − x_D) / y_D + 1)` | always |
+| Compaction | the closed window's `k_D` partial copies, until merged | `k_D · w_D` (0 when `k_D = 1`) | while the compaction job runs |
+| Query | the accumulators the merge creates (none when `n = 1`) and the output | `q_{i,D} = w_D · [n_{i,D} > 1] + card(G) · output bytes` | while the query job runs |
 
-`AUC(memory) = Σ_D (I_D + stored_D) + Σ_i q_{i,D} · (run time) / T_i`. Under
-cost model 1 a query job runs on its own core, so its run time is `ℓ_{i,D}`.
-Under cost model 2 memory is the peak the placement reaches.
+`AUC(memory) = Σ_D (I_D + stored_D + k_D · w_D · (compaction run time) / y_D)
++ Σ_i q_{i,D} · (query run time) / T_i`. Under cost model 1 every job runs on
+its own core, so a compaction runs for `c_D` and a query for `ℓ_{i,D}`. Under
+cost model 2 memory is the peak the placement reaches.
 
 In words:
 
@@ -490,17 +494,29 @@ In words:
   `x_D / y_D` windows still open, and there are `k_D` workers.
 - `stored_D`: closed windows are kept until the longest lookback that `D`
   serves no longer needs them. That is `(S − x)/y + 1` windows per group.
-- `q_{i,D}`: a merge builds one accumulator per group (a direct query, with
-  `n = 1`, reads the stored window and needs none), plus the answer.
-- `AUC(memory)`: ingest and storage are held all the time. A query's memory
-  is held only while it runs, a fraction `run time / T_i` of the time.
+- Compaction: when a window closes, a new one opens, so ingest still holds
+  `x_D / y_D` open windows. The closed window's `k_D` partial copies stay in
+  memory until the compaction has merged them. The merged copy takes the
+  storage slot that the oldest window frees at the same moment, so it is not
+  counted twice.
+- `q_{i,D}`: a merge builds one accumulator per instance (a direct query,
+  with `n = 1`, reads the stored window and needs none), plus the answer for
+  every group.
+- `AUC(memory)`: ingest and storage are held all the time. A compaction's
+  and a query's memory are held only while they run, a fraction
+  `run time / y_D` or `run time / T_i` of the time.
 
 #### 5. Batch latency and the SLA
 
 A batch's **latency** is the time from its issue until its last query job
 finishes, compaction included. The **query latency** of a plan is its worst
 batch latency over the hyperperiod. A latency SLA `L` requires query latency
-`≤ L`.
+`≤ L`. The SLA is on the batch only: per-RAQE latency bounds
+(`Raqe::latency_sla_ms`) are not used by these cost models. Latencies are
+compared with `L` with a relative slack of `1e-9`
+(`analytical_cost_model::meets_sla`), so float error in summing µs-scale work
+can't turn a chain equal to `L` into a miss; every check (the MILP's chain
+filter and the placement) uses the same `chain_ms` and the same slack.
 
 Both cost models get the latency from the same job placement (§6); they
 differ only in the CPU capacity it is given:
@@ -532,7 +548,8 @@ simulate 2 hyperperiods, event-driven (events: query issues, window closes, comp
   a job at rate a_j finishes when its remaining work / a_j elapses
   recompute the rates at every event
 outputs: per-RAQE and per-batch latency, worst batch latency,
-         CPU(t) = Σ ρ_D + Σ a_j,  MEM(t) = Σ (I_D + stored_D) + Σ q of running jobs
+         CPU(t) = Σ ρ_D + Σ a_j,
+         MEM(t) = Σ (I_D + stored_D) + memory of the running compactions and queries
 ```
 
 In words:
@@ -560,17 +577,21 @@ In words:
 6. **Read off the results.** A query's latency is its finish minus its
    issue, and a batch's latency is that of its last query. The CPU in use
    is ingest plus the rates; the memory is ingest, storage and the running
-   queries' memory.
+   compactions' and queries' memory.
 
 Two hyperperiods are simulated so that work carried over the wrap-around is
 counted. A job uses at most one core, so with `K ≥ 1` a batch on its own ends
 within `Σ work / K + max chain` (Graham's list-scheduling bound).
 
 With unlimited capacity (cost model 1) the placement has a closed form: every
-job starts when ready on its own core, so a query runs for exactly
-`ℓ_{i,D}`, a batch's latency is its longest chain, and the memory over time
-averages to §4's `AUC(memory)`. That is why cost model 1's MILP below is
-exact.
+job starts when ready on its own core, so a compaction runs for exactly `c_D`
+and a query for exactly `ℓ_{i,D}`, a batch's latency is its longest chain,
+and the memory over time averages to §4's `AUC(memory)`. That is why cost
+model 1's MILP below is exact.
+
+The simulation keeps the issued, unfinished jobs in a pending list, so each
+event looks only at the jobs in flight, not at every job of the two
+hyperperiods.
 
 #### 7. MILP formulation
 
@@ -602,13 +623,15 @@ Cost model 1:
 
 ```text
 minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
-        + w2 · [ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
+        + w2 · [ Σ_D ((I_D + k_D · w_D · c_D / y_D) · u_D + stored_D)
+                 + Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
 ```
 
 In words: the price of the mean vCPUs (ingest and compaction per active
 deployment, plus each RAQE's query work per second), plus the price of the
-mean memory (ingest and storage per active deployment, plus each query's
-memory for the fraction of time it runs). With elastic CPU this is the cost
+mean memory (ingest and storage per active deployment, each compaction's
+partial copies for the fraction of time it runs, and each query's memory for
+the fraction of time it runs). With elastic CPU this is the cost
 exactly, and the SLA is fully handled by the chain row above.
 
 Cost model 2:
@@ -616,7 +639,7 @@ Cost model 2:
 ```text
 minimize  w1 · C + w2 · M
 s.t.      C ≥ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D}       (mean load)
-          M ≥ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D} + δ_M         (memory)
+          M ≥ Σ_D ((I_D + k_D · w_D) · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D} + δ_M   (memory)
 with SLA L:
           C ≥ Σ_D ρ_D · u_D + ( Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ) / L + δ_C   (batch B0)
 ```
@@ -629,8 +652,9 @@ In words:
 - The objective prices the provisioned peak, `C` vCPUs and `M` GiB.
 - **Mean load:** the capacity must at least carry the average work, or a
   backlog grows without bound.
-- **Memory:** the capacity must hold ingest and storage, plus every query's
-  memory as if all ran at once (an upper bound on the peak).
+- **Memory:** the capacity must hold ingest and storage, plus every
+  compaction's and every query's memory as if all ran at once (an upper bound
+  on the peak).
 - **Batch `B0`:** when every RAQE fires together, ingest keeps
   `Σ ρ_D · u_D` vCPUs busy. The rest must finish the batch's queries and
   compactions within `L`, so `C − ingest ≥ batch work / L`. This treats the
@@ -652,8 +676,10 @@ placement:
 
 1. **Solve** the MILP and take its mapping.
 2. **Size** the mapping with the placement: `C*` is the smallest `C` at which
-   the worst batch meets `L` (binary search; it exists whenever every chain
-   fits); `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
+   the worst batch meets `L` (doubling from the mean load, then binary search
+   to a 1e-4 relative gap; it exists whenever every chain fits, and the
+   doubling stops after 64 steps as a guard against float pathologies);
+   `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
    the mean load and the placement reports the latency it gives. The plan's
    cost is `w1 · C* + w2 · M*`.
 3. **Correct:** measure the surrogate's error on that mapping,
@@ -666,7 +692,12 @@ placement:
 4. **Keep** the mapping with the lowest placed cost; stop when a mapping
    repeats, or after three corrections.
 
-**PerQuery** is the same MILP over single-RAQE candidates only (no sharing).
+**PerQuery** is the same MILP with sharing ruled out. `minimize_cost_model`
+takes `allowed`, the candidate indices each RAQE may use. PerQuery gives each
+RAQE its own candidates, with a separate copy of any deployment that two
+RAQEs could both use. Two RAQEs share a deployment only by choosing the same
+candidate index (`u_D` is per index), so their copies stay apart and each
+pays its own ingest.
 **AutoSketch** keeps its memory-chosen configs and is priced by the same
 functions: cost model 1 by use (latency its longest chain); cost model 2 by
 the placement and the binary search on `C`.

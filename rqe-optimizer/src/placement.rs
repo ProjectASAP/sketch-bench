@@ -27,6 +27,9 @@ pub struct DeploymentLoad {
     pub storage_bytes: f64,
     /// CPU-seconds to compact one closed window (0 with one worker).
     pub compaction_secs: f64,
+    /// Bytes a compaction holds while it runs: the closed window's partial
+    /// copies (0 with one worker).
+    pub compaction_bytes: f64,
     /// Windows close every slide.
     pub slide_ms: Millis,
 }
@@ -37,6 +40,9 @@ pub struct QueryLoad {
     /// Index into [`PlanLoad::deployments`].
     pub deployment: usize,
     pub interval_ms: Millis,
+    /// Compaction of the newest window, then this job, on their own cores, ms
+    /// ([`analytical_cost_model::chain_ms`]).
+    pub chain_ms: f64,
     /// Merge then estimate, CPU-seconds (one core at most).
     pub work_secs: f64,
     /// Merge accumulators and output, held while the job runs.
@@ -72,6 +78,7 @@ impl PlanLoad {
                     ingest_bytes: ingest.memory_bytes * workers,
                     storage_bytes: 0.0,
                     compaction_secs: analytical_cost_model::compaction_secs(deployment, facts),
+                    compaction_bytes: analytical_cost_model::compaction_bytes(deployment, facts),
                     slide_ms: deployment.slide_ms,
                 });
                 deployments.len() - 1
@@ -82,6 +89,7 @@ impl PlanLoad {
             queries.push(QueryLoad {
                 deployment: at,
                 interval_ms: raqe.interval_ms,
+                chain_ms: analytical_cost_model::chain_ms(raqe, deployment, facts),
                 work_secs: analytical_cost_model::query_latency_ms(raqe, deployment, facts)
                     / 1000.0,
                 memory_bytes: analytical_cost_model::merge(raqe, deployment, facts).memory_bytes
@@ -122,10 +130,16 @@ impl PlanLoad {
                 .sum::<f64>()
     }
 
-    /// Mean memory, bytes: ingest and storage always, and each query's memory
+    /// Mean memory, bytes: ingest and storage always; each compaction's
+    /// partial copies for its run on one core every slide; each query's memory
     /// for its run on one core (`work_secs`) every interval.
     pub fn auc_bytes(&self) -> f64 {
         self.static_bytes()
+            + self
+                .deployments
+                .iter()
+                .map(|d| d.compaction_bytes * d.compaction_secs / secs(d.slide_ms))
+                .sum::<f64>()
             + self
                 .queries
                 .iter()
@@ -133,20 +147,10 @@ impl PlanLoad {
                 .sum::<f64>()
     }
 
-    /// One firing's chain on its own cores, seconds: the newest window's
-    /// compaction, then the query.
-    pub fn chain_secs(&self, raqe: usize) -> f64 {
-        let q = &self.queries[raqe];
-        self.deployments[q.deployment].compaction_secs + q.work_secs
-    }
-
     /// The longest chain, ms: the batch latency when CPU is elastic (cost
     /// model 1).
     pub fn longest_chain_ms(&self) -> f64 {
-        1000.0
-            * (0..self.queries.len())
-                .map(|i| self.chain_secs(i))
-                .fold(0.0, f64::max)
+        self.queries.iter().map(|q| q.chain_ms).fold(0.0, f64::max)
     }
 
     /// `lcm` of every interval and slide, ms.
@@ -206,7 +210,8 @@ pub fn cost_model_1(load: &PlanLoad, w_cpu: f64, w_mem: f64) -> ModelCost {
 /// Cost model 2: CPU and memory billed at the peak of a provisioned
 /// `(C, M)`. `C` is the smallest at which the placement's worst batch meets
 /// `sla_ms` (the mean CPU with no SLA), `M` the placement's peak memory.
-/// `None` when a chain alone exceeds the SLA.
+/// `None` when a chain alone exceeds the SLA (or, failing float sanity, no
+/// `C` up to `2^MAX_DOUBLINGS` times the mean load meets it).
 pub fn cost_model_2(
     load: &PlanLoad,
     w_cpu: f64,
@@ -218,13 +223,19 @@ pub fn cost_model_2(
     let (cpu, placement) = match sla_ms {
         None => (floor, placed(floor)),
         Some(sla) => {
-            if load.longest_chain_ms() > sla {
+            if !analytical_cost_model::meets_sla(load.longest_chain_ms(), sla) {
                 return None;
             }
-            let meets = |cpu: f64| placed(cpu).worst_batch_ms <= sla;
+            let meets =
+                |cpu: f64| analytical_cost_model::meets_sla(placed(cpu).worst_batch_ms, sla);
             let mut hi = floor.max(f64::MIN_POSITIVE);
+            let mut doublings = 0;
             while !meets(hi) {
+                if doublings == MAX_DOUBLINGS {
+                    return None;
+                }
                 hi *= 2.0;
+                doublings += 1;
             }
             let mut lo = floor;
             if meets(lo) {
@@ -249,6 +260,11 @@ pub fn cost_model_2(
         latency_ms: placement.worst_batch_ms,
     })
 }
+
+/// Doublings of `C` above the mean load before cost model 2 gives up. With
+/// every chain within the SLA a large enough `C` always meets it, so this only
+/// stops a float pathology.
+const MAX_DOUBLINGS: usize = 64;
 
 fn secs(ms: Millis) -> f64 {
     ms as f64 / 1000.0
@@ -310,7 +326,7 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
                 kind: Kind::Compaction,
                 owner: d,
                 remaining: deployment.compaction_secs,
-                memory: 0.0,
+                memory: deployment.compaction_bytes,
                 after: None,
                 done_at: None,
             });
@@ -329,27 +345,28 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
             });
         }
     }
-    let mut issues: Vec<f64> = jobs.iter().map(|j| j.issued).collect();
-    issues.sort_by(f64::total_cmp);
-    issues.dedup();
+    // Jobs by issue time; `pending` holds the issued, unfinished ones, so each
+    // event looks at the jobs in flight, not at every job.
+    let mut order: Vec<usize> = (0..jobs.len()).collect();
+    order.sort_by(|&a, &b| jobs[a].issued.total_cmp(&jobs[b].issued));
+    let mut next_job = 0;
+    let mut pending: Vec<usize> = Vec::new();
 
     let static_bytes = load.static_bytes();
     let (mut peak_cpu, mut peak_bytes) = (load.ingest_cpu(), static_bytes);
     let mut now = 0.0;
-    let mut next_issue = 0;
     loop {
-        while next_issue < issues.len() && issues[next_issue] <= now {
-            next_issue += 1;
+        while next_job < order.len() && jobs[order[next_job]].issued <= now {
+            pending.push(order[next_job]);
+            next_job += 1;
         }
-        let mut ready: Vec<usize> = (0..jobs.len())
-            .filter(|&j| {
-                let job = &jobs[j];
-                job.done_at.is_none()
-                    && job.issued <= now
-                    && job.after.is_none_or(|c| jobs[c].done_at.is_some())
-            })
+        pending.retain(|&j| jobs[j].done_at.is_none());
+        let mut ready: Vec<usize> = pending
+            .iter()
+            .copied()
+            .filter(|&j| jobs[j].after.is_none_or(|c| jobs[c].done_at.is_some()))
             .collect();
-        if ready.is_empty() && next_issue == issues.len() {
+        if pending.is_empty() && next_job == order.len() {
             break;
         }
         // Older first, compaction before queries, then longest first.
@@ -378,7 +395,9 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
             .iter()
             .map(|&(j, r)| jobs[j].remaining / r)
             .fold(f64::INFINITY, f64::min);
-        let issue = issues.get(next_issue).copied().unwrap_or(f64::INFINITY);
+        let issue = order
+            .get(next_job)
+            .map_or(f64::INFINITY, |&j| jobs[j].issued);
         let step = finish.min(issue - now);
         for &(j, r) in &rates {
             let job = &mut jobs[j];
@@ -418,6 +437,7 @@ mod tests {
                 ingest_bytes: 10.0,
                 storage_bytes: 5.0,
                 compaction_secs,
+                compaction_bytes: 0.0,
                 slide_ms: 1_000,
             }],
             queries: queries
@@ -425,6 +445,7 @@ mod tests {
                 .map(|&(interval_ms, work_secs)| QueryLoad {
                     deployment: 0,
                     interval_ms,
+                    chain_ms: 1000.0 * (compaction_secs + work_secs),
                     work_secs,
                     memory_bytes: 100.0,
                 })
@@ -497,6 +518,18 @@ mod tests {
         let placed = plan.place(1e9).unwrap();
         assert!((placed.worst_batch_ms - plan.longest_chain_ms()).abs() < 1e-6);
         assert!((cost_model_1(&plan, 1.0, 0.0).latency_ms - placed.worst_batch_ms).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_compaction_holds_its_partial_copies_while_it_runs() {
+        // Compaction 0.2 s holding 50 bytes, then a 0.1 s query holding 100,
+        // each second, beside 15 bytes of ingest and storage.
+        let mut plan = load(0.0, 0.2, &[(1_000, 0.1)]);
+        plan.deployments[0].compaction_bytes = 50.0;
+        // They run one after the other: the peak is the query's.
+        assert_eq!(plan.place(2.0).unwrap().peak_bytes, 115.0);
+        // By use: 15 + 50 · 0.2 + 100 · 0.1 per second.
+        assert!((plan.auc_bytes() - 35.0).abs() < 1e-12);
     }
 
     #[test]
