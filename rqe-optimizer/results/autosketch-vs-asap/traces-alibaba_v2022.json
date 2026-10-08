@@ -4,13 +4,51 @@
     "benchmark_secs_paper_rate": 360.0,
     "distinct_probes": 6,
     "probes": 99,
-    "search_secs": 0.00032857
+    "search_secs": 0.002303963
   },
   "dropped_unservable": {
     "asap": [],
     "autosketch": []
   },
   "excluded_by_sla": {
+    "0.003": [
+      "alibaba_v2022/mcr_by_msname/keys/instant",
+      "alibaba_v2022/mcr_by_msname/keys/5m",
+      "alibaba_v2022/mcr_by_msname/keys/1h",
+      "alibaba_v2022/mcr_by_nodeid/keys/instant",
+      "alibaba_v2022/mcr_by_nodeid/keys/5m",
+      "alibaba_v2022/mcr_by_nodeid/keys/1h",
+      "alibaba_v2022/rt_p99_by_msname/keys/instant",
+      "alibaba_v2022/rt_p99_by_msname/keys/5m",
+      "alibaba_v2022/rt_p99_by_msname/keys/1h",
+      "alibaba_v2022/calls_by_service/keys/1m",
+      "alibaba_v2022/calls_by_service/keys/5m",
+      "alibaba_v2022/calls_by_service/keys/1h",
+      "alibaba_v2022/calls_by_um/keys/1m",
+      "alibaba_v2022/calls_by_um/keys/5m",
+      "alibaba_v2022/calls_by_um/keys/1h",
+      "alibaba_v2022/calls_by_dm/keys/1m",
+      "alibaba_v2022/calls_by_dm/keys/5m",
+      "alibaba_v2022/calls_by_dm/keys/1h",
+      "alibaba_v2022/calls_by_interface/keys/1m",
+      "alibaba_v2022/calls_by_interface/keys/5m",
+      "alibaba_v2022/calls_by_interface/keys/1h",
+      "alibaba_v2022/calls_by_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_um_dm/keys/1h",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1h",
+      "alibaba_v2022/rt_p99_by_service/keys/1m",
+      "alibaba_v2022/rt_p99_by_service/keys/5m",
+      "alibaba_v2022/rt_p99_by_service/keys/1h",
+      "alibaba_v2022/ms_cpu_by_msname/keys/instant",
+      "alibaba_v2022/ms_cpu_by_msname/keys/5m",
+      "alibaba_v2022/ms_cpu_by_msname/keys/1h",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/instant",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
+    ],
     "0.01": [
       "alibaba_v2022/mcr_by_msname/keys/instant",
       "alibaba_v2022/mcr_by_msname/keys/5m",
@@ -49,7 +87,83 @@
       "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
       "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
     ],
+    "0.03": [
+      "alibaba_v2022/mcr_by_msname/keys/instant",
+      "alibaba_v2022/mcr_by_msname/keys/5m",
+      "alibaba_v2022/mcr_by_msname/keys/1h",
+      "alibaba_v2022/mcr_by_nodeid/keys/instant",
+      "alibaba_v2022/mcr_by_nodeid/keys/5m",
+      "alibaba_v2022/mcr_by_nodeid/keys/1h",
+      "alibaba_v2022/rt_p99_by_msname/keys/instant",
+      "alibaba_v2022/rt_p99_by_msname/keys/5m",
+      "alibaba_v2022/rt_p99_by_msname/keys/1h",
+      "alibaba_v2022/calls_by_service/keys/1m",
+      "alibaba_v2022/calls_by_service/keys/5m",
+      "alibaba_v2022/calls_by_service/keys/1h",
+      "alibaba_v2022/calls_by_um/keys/1m",
+      "alibaba_v2022/calls_by_um/keys/5m",
+      "alibaba_v2022/calls_by_um/keys/1h",
+      "alibaba_v2022/calls_by_dm/keys/1m",
+      "alibaba_v2022/calls_by_dm/keys/5m",
+      "alibaba_v2022/calls_by_dm/keys/1h",
+      "alibaba_v2022/calls_by_interface/keys/1m",
+      "alibaba_v2022/calls_by_interface/keys/5m",
+      "alibaba_v2022/calls_by_interface/keys/1h",
+      "alibaba_v2022/calls_by_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_um_dm/keys/1h",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1h",
+      "alibaba_v2022/rt_p99_by_service/keys/1m",
+      "alibaba_v2022/rt_p99_by_service/keys/5m",
+      "alibaba_v2022/rt_p99_by_service/keys/1h",
+      "alibaba_v2022/ms_cpu_by_msname/keys/instant",
+      "alibaba_v2022/ms_cpu_by_msname/keys/5m",
+      "alibaba_v2022/ms_cpu_by_msname/keys/1h",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/instant",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
+    ],
     "0.1": [
+      "alibaba_v2022/mcr_by_msname/keys/instant",
+      "alibaba_v2022/mcr_by_msname/keys/5m",
+      "alibaba_v2022/mcr_by_msname/keys/1h",
+      "alibaba_v2022/mcr_by_nodeid/keys/instant",
+      "alibaba_v2022/mcr_by_nodeid/keys/5m",
+      "alibaba_v2022/mcr_by_nodeid/keys/1h",
+      "alibaba_v2022/rt_p99_by_msname/keys/instant",
+      "alibaba_v2022/rt_p99_by_msname/keys/5m",
+      "alibaba_v2022/rt_p99_by_msname/keys/1h",
+      "alibaba_v2022/calls_by_service/keys/1m",
+      "alibaba_v2022/calls_by_service/keys/5m",
+      "alibaba_v2022/calls_by_service/keys/1h",
+      "alibaba_v2022/calls_by_um/keys/1m",
+      "alibaba_v2022/calls_by_um/keys/5m",
+      "alibaba_v2022/calls_by_um/keys/1h",
+      "alibaba_v2022/calls_by_dm/keys/1m",
+      "alibaba_v2022/calls_by_dm/keys/5m",
+      "alibaba_v2022/calls_by_dm/keys/1h",
+      "alibaba_v2022/calls_by_interface/keys/1m",
+      "alibaba_v2022/calls_by_interface/keys/5m",
+      "alibaba_v2022/calls_by_interface/keys/1h",
+      "alibaba_v2022/calls_by_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_um_dm/keys/1h",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1h",
+      "alibaba_v2022/rt_p99_by_service/keys/1m",
+      "alibaba_v2022/rt_p99_by_service/keys/5m",
+      "alibaba_v2022/rt_p99_by_service/keys/1h",
+      "alibaba_v2022/ms_cpu_by_msname/keys/instant",
+      "alibaba_v2022/ms_cpu_by_msname/keys/5m",
+      "alibaba_v2022/ms_cpu_by_msname/keys/1h",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/instant",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
+    ],
+    "0.3": [
       "alibaba_v2022/mcr_by_msname/keys/instant",
       "alibaba_v2022/mcr_by_msname/keys/5m",
       "alibaba_v2022/mcr_by_msname/keys/1h",
@@ -160,6 +274,44 @@
       "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
       "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
     ],
+    "3.0": [
+      "alibaba_v2022/mcr_by_msname/keys/instant",
+      "alibaba_v2022/mcr_by_msname/keys/5m",
+      "alibaba_v2022/mcr_by_msname/keys/1h",
+      "alibaba_v2022/mcr_by_nodeid/keys/instant",
+      "alibaba_v2022/mcr_by_nodeid/keys/5m",
+      "alibaba_v2022/mcr_by_nodeid/keys/1h",
+      "alibaba_v2022/rt_p99_by_msname/keys/instant",
+      "alibaba_v2022/rt_p99_by_msname/keys/5m",
+      "alibaba_v2022/rt_p99_by_msname/keys/1h",
+      "alibaba_v2022/calls_by_service/keys/1m",
+      "alibaba_v2022/calls_by_service/keys/5m",
+      "alibaba_v2022/calls_by_service/keys/1h",
+      "alibaba_v2022/calls_by_um/keys/1m",
+      "alibaba_v2022/calls_by_um/keys/5m",
+      "alibaba_v2022/calls_by_um/keys/1h",
+      "alibaba_v2022/calls_by_dm/keys/1m",
+      "alibaba_v2022/calls_by_dm/keys/5m",
+      "alibaba_v2022/calls_by_dm/keys/1h",
+      "alibaba_v2022/calls_by_interface/keys/1m",
+      "alibaba_v2022/calls_by_interface/keys/5m",
+      "alibaba_v2022/calls_by_interface/keys/1h",
+      "alibaba_v2022/calls_by_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_um_dm/keys/1h",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/5m",
+      "alibaba_v2022/calls_by_service_um_dm/keys/1h",
+      "alibaba_v2022/rt_p99_by_service/keys/1m",
+      "alibaba_v2022/rt_p99_by_service/keys/5m",
+      "alibaba_v2022/rt_p99_by_service/keys/1h",
+      "alibaba_v2022/ms_cpu_by_msname/keys/instant",
+      "alibaba_v2022/ms_cpu_by_msname/keys/5m",
+      "alibaba_v2022/ms_cpu_by_msname/keys/1h",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/instant",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/5m",
+      "alibaba_v2022/node_cpu_by_nodeid/keys/1h"
+    ],
     "inf": []
   },
   "min_latency_ms": {
@@ -225,8 +377,1460 @@
   ],
   "results": [
     {
+      "active_deployments": 11,
+      "candidate_build_secs": 0.028001472,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 1,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 5,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 5,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 6,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 7,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 8,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 9,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 0.9975119800116306,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004793055437917086,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0027854785478547855,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.015100338,
+      "objective": 0.9975119800116306,
+      "phases": {
+        "ingest": {
+          "cpu": 0.9975115164784,
+          "gib": 0.00011567467720664325
+        },
+        "merge": {
+          "cpu": 3.2e-7,
+          "gib": 0.00001245737075805664
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.000350949978409101
+        }
+      },
+      "planning_secs": 0.04310181,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 1.167202852777112,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 14,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 0.9995264265380305,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004917629145497653,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0027854785478547855,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.9995264265380305,
+      "phases": {
+        "ingest": {
+          "cpu": 0.9995259630047999,
+          "gib": 0.00012190336258567157
+        },
+        "merge": {
+          "cpu": 3.2e-7,
+          "gib": 0.00001245737075805664
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0003571786637881293
+        }
+      },
+      "planning_secs": 0.070025435,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 11,
+      "candidate_build_secs": 0.028001472,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 1,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 5,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 5,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 6,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 7,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 8,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 9,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 0.9975119800116306,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004793055437917086,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0027854785478547855,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.017211353,
+      "objective": 0.040401368100140916,
+      "phases": {
+        "ingest": {
+          "cpu": 0.9975115164784,
+          "gib": 0.00011567467720664325
+        },
+        "merge": {
+          "cpu": 3.2e-7,
+          "gib": 0.00001245737075805664
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.000350949978409101
+        }
+      },
+      "planning_secs": 0.045212825,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 0.047272704596756775,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 14,
+          "latency_ms": 0.0027854785478547855,
+          "merged_shards": 6,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 0.9995264265380305,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004917629145497653,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0027854785478547855,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.04048300861975998,
+      "phases": {
+        "ingest": {
+          "cpu": 0.9995259630047999,
+          "gib": 0.00012190336258567157
+        },
+        "merge": {
+          "cpu": 3.2e-7,
+          "gib": 0.00001245737075805664
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0003571786637881293
+        }
+      },
+      "planning_secs": 0.070567578,
+      "rqes": 15,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
       "active_deployments": 10,
-      "candidate_build_secs": 0.024922171,
+      "candidate_build_secs": 0.029182229,
       "candidates": 108,
       "chosen": [
         {
@@ -442,7 +2046,7 @@
       "max_latency_ms": 0.0075854785478547855,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.014584462,
+      "milp_solve_secs": 0.014540932,
       "objective": 0.17263193413905967,
       "phases": {
         "ingest": {
@@ -462,7 +2066,7 @@
           "gib": 0.00042619230759203733
         }
       },
-      "planning_secs": 0.039506633,
+      "planning_secs": 0.043723160999999997,
       "rqes": 15,
       "sla_ms": 0.01,
       "weights": "cpu"
@@ -704,7 +2308,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 0.01,
@@ -945,14 +2549,14 @@
           "gib": 0.0004331355253655707
         }
       },
-      "planning_secs": 0.064991798,
+      "planning_secs": 0.07081483,
       "rqes": 15,
       "sla_ms": 0.01,
       "weights": "cpu"
     },
     {
       "active_deployments": 10,
-      "candidate_build_secs": 0.024922171,
+      "candidate_build_secs": 0.029182229,
       "candidates": 108,
       "chosen": [
         {
@@ -1168,7 +2772,7 @@
       "max_latency_ms": 0.007966204620462049,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.016014313,
+      "milp_solve_secs": 0.01602341,
       "objective": 0.006993621085141952,
       "phases": {
         "ingest": {
@@ -1188,7 +2792,7 @@
           "gib": 0.00037373276960909666
         }
       },
-      "planning_secs": 0.040936483999999995,
+      "planning_secs": 0.045205639,
       "rqes": 15,
       "sla_ms": 0.01,
       "weights": "fargate"
@@ -1430,7 +3034,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 0.01,
@@ -1671,14 +3275,1466 @@
           "gib": 0.00038067598738263
         }
       },
-      "planning_secs": 0.06552624700000001,
+      "planning_secs": 0.071343735,
       "rqes": 15,
       "sla_ms": 0.01,
       "weights": "fargate"
     },
     {
+      "active_deployments": 6,
+      "candidate_build_secs": 0.031762629,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 0,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 0,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.021462022110552762,
+          "merged_shards": 20,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 3,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 3,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 3,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 4,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 4,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 4,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 5,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 5,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 5,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.06202136187823062,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00020724014271443811,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02449953795379538,
+      "median_latency_ms": 0.0017662046204620465,
+      "method": "asap",
+      "milp_solve_secs": 0.01437917,
+      "objective": 0.06202136187823062,
+      "phases": {
+        "ingest": {
+          "cpu": 0.062019098855999995,
+          "gib": 5.361524658586511e-6
+        },
+        "merge": {
+          "cpu": 2.1206771189279734e-6,
+          "gib": 6.435854950142865e-6
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00019521924568780103
+        }
+      },
+      "planning_secs": 0.046141799,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 1.167202852777112,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.021462022110552762,
+          "merged_shards": 20,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.08082835749110981,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00026222398083413663,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02449953795379538,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.08082835749110981,
+      "phases": {
+        "ingest": {
+          "cpu": 0.08082606167679998,
+          "gib": 0.000018533427811148178
+        },
+        "merge": {
+          "cpu": 2.1526771189279732e-6,
+          "gib": 0.00001016114524860478
+        },
+        "query": {
+          "cpu": 1.4313719090502026e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00023330589035647597
+        }
+      },
+      "planning_secs": 0.071430693,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 6,
+      "candidate_build_secs": 0.031762629,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 0,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 0,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.021462022110552762,
+          "merged_shards": 20,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 3,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 3,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 3,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 4,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 4,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 4,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 5,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 5,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 5,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.06202136187823062,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00020724014271443811,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02449953795379538,
+      "median_latency_ms": 0.0017662046204620465,
+      "method": "asap",
+      "milp_solve_secs": 0.0167713,
+      "objective": 0.002512787374703419,
+      "phases": {
+        "ingest": {
+          "cpu": 0.062019098855999995,
+          "gib": 5.361524658586511e-6
+        },
+        "merge": {
+          "cpu": 2.1206771189279734e-6,
+          "gib": 6.435854950142865e-6
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00019521924568780103
+        }
+      },
+      "planning_secs": 0.048533929,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 0.047272704596756775,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.021462022110552762,
+          "merged_shards": 20,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.08082835749110981,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00026222398083413663,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02449953795379538,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.0032747153751046592,
+      "phases": {
+        "ingest": {
+          "cpu": 0.08082606167679998,
+          "gib": 0.000018533427811148178
+        },
+        "merge": {
+          "cpu": 2.1526771189279732e-6,
+          "gib": 0.00001016114524860478
+        },
+        "query": {
+          "cpu": 1.4313719090502026e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00023330589035647597
+        }
+      },
+      "planning_secs": 0.07226618700000001,
+      "rqes": 15,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
       "active_deployments": 5,
-      "candidate_build_secs": 0.029355996,
+      "candidate_build_secs": 0.029917334,
       "candidates": 108,
       "chosen": [
         {
@@ -1894,7 +4950,7 @@
       "max_latency_ms": 0.0616022432160804,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.014494289,
+      "milp_solve_secs": 0.014521279,
       "objective": 0.016795953508434526,
       "phases": {
         "ingest": {
@@ -1914,7 +4970,7 @@
           "gib": 0.0004165930664120008
         }
       },
-      "planning_secs": 0.043850285,
+      "planning_secs": 0.044438613,
       "rqes": 15,
       "sla_ms": 0.1,
       "weights": "cpu"
@@ -2156,7 +5212,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 0.1,
@@ -2397,14 +5453,14 @@
           "gib": 0.0004582523730532009
         }
       },
-      "planning_secs": 0.066202907,
+      "planning_secs": 0.071824346,
       "rqes": 15,
       "sla_ms": 0.1,
       "weights": "cpu"
     },
     {
       "active_deployments": 5,
-      "candidate_build_secs": 0.029355996,
+      "candidate_build_secs": 0.029917334,
       "candidates": 108,
       "chosen": [
         {
@@ -2620,7 +5676,7 @@
       "max_latency_ms": 0.0616022432160804,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.016896709,
+      "milp_solve_secs": 0.017058611,
       "objective": 0.0006821214962590219,
       "phases": {
         "ingest": {
@@ -2640,7 +5696,7 @@
           "gib": 0.00036071371193507207
         }
       },
-      "planning_secs": 0.046252705,
+      "planning_secs": 0.046975945000000005,
       "rqes": 15,
       "sla_ms": 0.1,
       "weights": "fargate"
@@ -2882,7 +5938,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 0.1,
@@ -3123,14 +6179,14 @@
           "gib": 0.00040237301857627217
         }
       },
-      "planning_secs": 0.066463981,
+      "planning_secs": 0.072505521,
       "rqes": 15,
       "sla_ms": 0.1,
       "weights": "fargate"
     },
     {
       "active_deployments": 5,
-      "candidate_build_secs": 0.028775517,
+      "candidate_build_secs": 0.029267955,
       "candidates": 108,
       "chosen": [
         {
@@ -3346,7 +6402,7 @@
       "max_latency_ms": 0.0616022432160804,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.014499175,
+      "milp_solve_secs": 0.014542493,
       "objective": 0.016795953508434526,
       "phases": {
         "ingest": {
@@ -3366,7 +6422,1459 @@
           "gib": 0.0004165930664120008
         }
       },
-      "planning_secs": 0.043274692000000003,
+      "planning_secs": 0.043810448,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 1.167202852777112,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 14,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.050380986097234536,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004931919793387754,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.050380986097234536,
+      "phases": {
+        "ingest": {
+          "cpu": 0.05037754888320001,
+          "gib": 0.00002082965332060004
+        },
+        "merge": {
+          "cpu": 3.2936808040201007e-6,
+          "gib": 0.000013886435547066694
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0004582523730532009
+        }
+      },
+      "planning_secs": 0.071890436,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.029267955,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 0,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 2,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 2,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 3,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 3,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 3,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 4,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 4,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 4,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.016800865846604826,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00037897291494973337,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.017037519,
+      "objective": 0.0006821214962590219,
+      "phases": {
+        "ingest": {
+          "cpu": 0.0167975549296,
+          "gib": 6.011895198917868e-6
+        },
+        "merge": {
+          "cpu": 3.1676808040201005e-6,
+          "gib": 0.000012023790397835737
+        },
+        "query": {
+          "cpu": 1.4323620080601036e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00036071371193507207
+        }
+      },
+      "planning_secs": 0.046305474,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 0.047272704596756775,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.050385906633424626,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004354499797126157,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.0020425669710634185,
+      "phases": {
+        "ingest": {
+          "cpu": 0.0503825875184,
+          "gib": 0.00001989833074598456
+        },
+        "merge": {
+          "cpu": 3.1756808040201007e-6,
+          "gib": 0.000012955112972451215
+        },
+        "query": {
+          "cpu": 1.4343422060799055e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00040237301857627217
+        }
+      },
+      "planning_secs": 0.074250882,
+      "rqes": 15,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.028976912,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 0,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 2,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 2,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 3,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 3,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 3,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 4,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 4,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 4,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.016795953508434526,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004376462371505085,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.014548585,
+      "objective": 0.016795953508434526,
+      "phases": {
+        "ingest": {
+          "cpu": 0.016792516294399998,
+          "gib": 6.943217773533347e-6
+        },
+        "merge": {
+          "cpu": 3.2936808040201007e-6,
+          "gib": 0.000013886435547066694
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0004165930664120008
+        }
+      },
+      "planning_secs": 0.043525496999999996,
       "rqes": 15,
       "sla_ms": 1.0,
       "weights": "cpu"
@@ -3608,7 +8116,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 1.0,
@@ -3849,14 +8357,14 @@
           "gib": 0.0004582523730532009
         }
       },
-      "planning_secs": 0.065725249,
+      "planning_secs": 0.072038415,
       "rqes": 15,
       "sla_ms": 1.0,
       "weights": "cpu"
     },
     {
       "active_deployments": 5,
-      "candidate_build_secs": 0.028775517,
+      "candidate_build_secs": 0.028976912,
       "candidates": 108,
       "chosen": [
         {
@@ -4072,7 +8580,7 @@
       "max_latency_ms": 0.0616022432160804,
       "median_latency_ms": 0.002252145214521452,
       "method": "asap",
-      "milp_solve_secs": 0.016946319,
+      "milp_solve_secs": 0.016978122,
       "objective": 0.0006821214962590219,
       "phases": {
         "ingest": {
@@ -4092,7 +8600,7 @@
           "gib": 0.00036071371193507207
         }
       },
-      "planning_secs": 0.045721836,
+      "planning_secs": 0.045955034,
       "rqes": 15,
       "sla_ms": 1.0,
       "weights": "fargate"
@@ -4334,7 +8842,7 @@
           "gib": 9.653782425214297e-6
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 15,
       "sla_ms": 1.0,
@@ -4575,14 +9083,1466 @@
           "gib": 0.00040237301857627217
         }
       },
-      "planning_secs": 0.06635608500000001,
+      "planning_secs": 0.07264067,
       "rqes": 15,
       "sla_ms": 1.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.029145934,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 0,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 2,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 2,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 3,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 3,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 3,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 4,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 4,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 4,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.016795953508434526,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004376462371505085,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.014555391,
+      "objective": 0.016795953508434526,
+      "phases": {
+        "ingest": {
+          "cpu": 0.016792516294399998,
+          "gib": 6.943217773533347e-6
+        },
+        "merge": {
+          "cpu": 3.2936808040201007e-6,
+          "gib": 0.000013886435547066694
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0004165930664120008
+        }
+      },
+      "planning_secs": 0.043701325,
+      "rqes": 15,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 1.167202852777112,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 14,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.050380986097234536,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004931919793387754,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.050380986097234536,
+      "phases": {
+        "ingest": {
+          "cpu": 0.05037754888320001,
+          "gib": 0.00002082965332060004
+        },
+        "merge": {
+          "cpu": 3.2936808040201007e-6,
+          "gib": 0.000013886435547066694
+        },
+        "query": {
+          "cpu": 1.4353323050898065e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0004582523730532009
+        }
+      },
+      "planning_secs": 0.071937089,
+      "rqes": 15,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.029145934,
+      "candidates": 108,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 0,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 0,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 2,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 2,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 3,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 3,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 3,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 4,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 4,
+          "latency_ms": 0.0017662046204620465,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 4,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.016800865846604826,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00037897291494973337,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "asap",
+      "milp_solve_secs": 0.016966266,
+      "objective": 0.0006821214962590219,
+      "phases": {
+        "ingest": {
+          "cpu": 0.0167975549296,
+          "gib": 6.011895198917868e-6
+        },
+        "merge": {
+          "cpu": 3.1676808040201005e-6,
+          "gib": 0.000012023790397835737
+        },
+        "query": {
+          "cpu": 1.4323620080601036e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00036071371193507207
+        }
+      },
+      "planning_secs": 0.0461122,
+      "rqes": 15,
+      "sla_ms": 3.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "benchmark_secs_lower_bound_nbench1e8": 26.995969098246086,
+      "benchmark_secs_paper_rate": 360.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 0,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 1,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 2,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024515803174319496,
+          "deployment": 6,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024517607831075105,
+          "deployment": 7,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024532785099746105,
+          "deployment": 8,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024477689134293285,
+          "deployment": 9,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 10,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024522726125592892,
+          "deployment": 11,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024571370180922935,
+          "deployment": 12,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024473127247962283,
+          "deployment": 13,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.00011287128712871287,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 1.167202852777112,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.00022226051319783655,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0023954170854271362,
+      "median_latency_ms": 0.00011287128712871287,
+      "method": "autosketch",
+      "objective": 0.047272704596756775,
+      "phases": {
+        "ingest": {
+          "cpu": 1.1672027104320004,
+          "gib": 0.00021238321335471455
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 1.4234511169709946e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 9.653782425214297e-6
+        }
+      },
+      "planning_secs": 0.002303963,
+      "probes": 99,
+      "rqes": 15,
+      "sla_ms": 3.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 15,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 0,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 1,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 2,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_msname/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.0023954170854271362,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 4,
+          "latency_ms": 0.0064094391959799,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/5m",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 5,
+          "latency_ms": 0.0616022432160804,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "alibaba_v2022/calls_by_rpctype/keys/1h",
+          "sketch": "exact-sum",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 6,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009761265753527077,
+          "deployment": 7,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009765569868380548,
+          "deployment": 8,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/rt_p99_by_service/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00980210077646841,
+          "deployment": 9,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00976857149703775,
+          "deployment": 10,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009754996439865502,
+          "deployment": 11,
+          "latency_ms": 0.03158547854785479,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/ms_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009744260632427773,
+          "deployment": 12,
+          "latency_ms": 0.0001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/instant",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009797740249154955,
+          "deployment": 13,
+          "latency_ms": 0.002252145214521452,
+          "merged_shards": 5,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/5m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024511203757437098,
+          "deployment": 14,
+          "latency_ms": 0.02449953795379538,
+          "merged_shards": 60,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "alibaba_v2022/node_cpu_p99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 60
+        }
+      ],
+      "cpu": 0.050385906633424626,
+      "excluded_by_sla": 36,
+      "feasible": true,
+      "gib": 0.0004354499797126157,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0616022432160804,
+      "median_latency_ms": 0.002252145214521452,
+      "method": "perquery",
+      "objective": 0.0020425669710634185,
+      "phases": {
+        "ingest": {
+          "cpu": 0.0503825875184,
+          "gib": 0.00001989833074598456
+        },
+        "merge": {
+          "cpu": 3.1756808040201007e-6,
+          "gib": 0.000012955112972451215
+        },
+        "query": {
+          "cpu": 1.4343422060799055e-7,
+          "gib": 2.2351741790771484e-7
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00040237301857627217
+        }
+      },
+      "planning_secs": 0.072707717,
+      "rqes": 15,
+      "sla_ms": 3.0,
       "weights": "fargate"
     },
     {
       "active_deployments": 8,
-      "candidate_build_secs": 0.029682939,
+      "candidate_build_secs": 0.030649225,
       "candidates": 120,
       "chosen": [
         {
@@ -4834,7 +10794,7 @@
       "max_latency_ms": 7.230167236180906,
       "median_latency_ms": 0.0064094391959799,
       "method": "asap",
-      "milp_solve_secs": 0.014348205,
+      "milp_solve_secs": 0.014422289,
       "objective": 0.9925100665582435,
       "phases": {
         "ingest": {
@@ -4854,7 +10814,7 @@
           "gib": 0.006886683898655014
         }
       },
-      "planning_secs": 0.044031143999999994,
+      "planning_secs": 0.045071514,
       "rqes": 18,
       "sla_ms": 10.0,
       "weights": "cpu"
@@ -5132,7 +11092,7 @@
           "gib": 0.006479744614668227
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 18,
       "sla_ms": 10.0,
@@ -5409,14 +11369,14 @@
           "gib": 0.006928343205296214
         }
       },
-      "planning_secs": 0.070885599,
+      "planning_secs": 0.077637731,
       "rqes": 18,
       "sla_ms": 10.0,
       "weights": "cpu"
     },
     {
       "active_deployments": 8,
-      "candidate_build_secs": 0.029682939,
+      "candidate_build_secs": 0.030649225,
       "candidates": 120,
       "chosen": [
         {
@@ -5668,7 +11628,7 @@
       "max_latency_ms": 7.230167236180906,
       "median_latency_ms": 0.0064094391959799,
       "method": "asap",
-      "milp_solve_secs": 0.019394919,
+      "milp_solve_secs": 0.019251064,
       "objective": 0.04086255818715141,
       "phases": {
         "ingest": {
@@ -5688,7 +11648,7 @@
           "gib": 0.006830804544178086
         }
       },
-      "planning_secs": 0.049077858,
+      "planning_secs": 0.049900289,
       "rqes": 18,
       "sla_ms": 10.0,
       "weights": "fargate"
@@ -5966,7 +11926,7 @@
           "gib": 0.006479744614668227
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 18,
       "sla_ms": 10.0,
@@ -6243,14 +12203,14 @@
           "gib": 0.006872463850819285
         }
       },
-      "planning_secs": 0.071707989,
+      "planning_secs": 0.079728042,
       "rqes": 18,
       "sla_ms": 10.0,
       "weights": "fargate"
     },
     {
       "active_deployments": 17,
-      "candidate_build_secs": 0.033574407,
+      "candidate_build_secs": 0.034468925,
       "candidates": 252,
       "chosen": [
         {
@@ -6898,7 +12858,7 @@
       "max_latency_ms": 22813.11766204891,
       "median_latency_ms": 30.107272383249583,
       "method": "asap",
-      "milp_solve_secs": 0.016233347,
+      "milp_solve_secs": 0.01629957,
       "objective": 2.307965448732892,
       "phases": {
         "ingest": {
@@ -6918,7 +12878,7 @@
           "gib": 44.69526101758132
         }
       },
-      "planning_secs": 0.049807753999999996,
+      "planning_secs": 0.050768495,
       "rqes": 51,
       "sla_ms": "inf",
       "weights": "cpu"
@@ -7592,7 +13552,7 @@
           "gib": 2.234751875008171
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 51,
       "sla_ms": "inf",
@@ -8265,14 +14225,14 @@
           "gib": 49.16478711933945
         }
       },
-      "planning_secs": 0.128520072,
+      "planning_secs": 0.135266774,
       "rqes": 51,
       "sla_ms": "inf",
       "weights": "cpu"
     },
     {
       "active_deployments": 17,
-      "candidate_build_secs": 0.033574407,
+      "candidate_build_secs": 0.034468925,
       "candidates": 252,
       "chosen": [
         {
@@ -8920,7 +14880,7 @@
       "max_latency_ms": 22813.11766204891,
       "median_latency_ms": 30.107272383249583,
       "method": "asap",
-      "milp_solve_secs": 0.020697951,
+      "milp_solve_secs": 0.020875682,
       "objective": 0.3029333756546937,
       "phases": {
         "ingest": {
@@ -8940,7 +14900,7 @@
           "gib": 44.69526101758132
         }
       },
-      "planning_secs": 0.054272358,
+      "planning_secs": 0.055344607,
       "rqes": 51,
       "sla_ms": "inf",
       "weights": "fargate"
@@ -9614,7 +15574,7 @@
           "gib": 2.234751875008171
         }
       },
-      "planning_secs": 0.00032857,
+      "planning_secs": 0.002303963,
       "probes": 99,
       "rqes": 51,
       "sla_ms": "inf",
@@ -10287,7 +16247,7 @@
           "gib": 49.164731239984974
         }
       },
-      "planning_secs": 0.130716258,
+      "planning_secs": 0.136646512,
       "rqes": 51,
       "sla_ms": "inf",
       "weights": "fargate"
@@ -10297,9 +16257,13 @@
   "runs": 5,
   "sanity_violations": [],
   "sla_grid_ms": [
+    0.003,
     0.01,
+    0.03,
     0.1,
+    0.3,
     1.0,
+    3.0,
     10.0,
     "inf"
   ],

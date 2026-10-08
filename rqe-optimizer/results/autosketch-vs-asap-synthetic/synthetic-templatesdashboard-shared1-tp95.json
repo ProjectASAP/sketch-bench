@@ -4,13 +4,31 @@
     "benchmark_secs_paper_rate": 540.0,
     "distinct_probes": 9,
     "probes": 85,
-    "search_secs": 0.000845156
+    "search_secs": 0.000875706
   },
   "dropped_unservable": {
     "asap": [],
     "autosketch": []
   },
   "excluded_by_sla": {
+    "0.003": [
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+      "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+      "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+      "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+      "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h"
+    ],
     "0.01": [
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
@@ -25,7 +43,35 @@
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h"
     ],
+    "0.03": [
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h"
+    ],
     "0.1": [
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+      "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h"
+    ],
+    "0.3": [
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
@@ -54,6 +100,7 @@
       "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h"
     ],
     "10.0": [],
+    "3.0": [],
     "inf": []
   },
   "min_latency_ms": {
@@ -89,8 +136,680 @@
   ],
   "results": [
     {
+      "active_deployments": 3,
+      "candidate_build_secs": 0.031862684,
+      "candidates": 53,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 1,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 2,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.2698251769606,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0011934787034988403,
+      "latency_violations": 0,
+      "max_latency_ms": 0.001188118811881188,
+      "median_latency_ms": 0.001188118811881188,
+      "method": "asap",
+      "milp_solve_secs": 0.016977201,
+      "objective": 9.2698251769606,
+      "phases": {
+        "ingest": {
+          "cpu": 9.269821599999998,
+          "gib": 0.001146569848060608
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.5769606023102307e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00004573166370391846
+        }
+      },
+      "planning_secs": 0.048839885,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 0,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 1,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 2,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.37559139874278,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0011998862028121948,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0011287128712871286,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 9.37559139874278,
+      "phases": {
+        "ingest": {
+          "cpu": 9.375587999999999,
+          "gib": 0.0011497735977172852
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.398742780528052e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0000489354133605957
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 1,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.3333683769606,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0012557655572891235,
+      "latency_violations": 0,
+      "max_latency_ms": 0.001188118811881188,
+      "median_latency_ms": 0.001188118811881188,
+      "method": "perquery",
+      "objective": 9.3333683769606,
+      "phases": {
+        "ingest": {
+          "cpu": 9.333364799999998,
+          "gib": 0.0011777132749557495
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.5769606023102307e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00007687509059906006
+        }
+      },
+      "planning_secs": 0.220773635,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 3,
+      "candidate_build_secs": 0.031862684,
+      "candidates": 53,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 1,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 2,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.2698251769606,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0011934787034988403,
+      "latency_violations": 0,
+      "max_latency_ms": 0.001188118811881188,
+      "median_latency_ms": 0.001188118811881188,
+      "method": "asap",
+      "milp_solve_secs": 0.01695179,
+      "objective": 0.37543323064713485,
+      "phases": {
+        "ingest": {
+          "cpu": 9.269821599999998,
+          "gib": 0.001146569848060608
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.5769606023102307e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00004573166370391846
+        }
+      },
+      "planning_secs": 0.048814474000000004,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 5,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 0,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 1,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 2,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.37559139874278,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0011998862028121948,
+      "latency_violations": 0,
+      "max_latency_ms": 0.0011287128712871286,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 0.37971679114268514,
+      "phases": {
+        "ingest": {
+          "cpu": 9.375587999999999,
+          "gib": 0.0011497735977172852
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.398742780528052e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0000489354133605957
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 5,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 1,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 9.3333683769606,
+      "excluded_by_sla": 16,
+      "feasible": true,
+      "gib": 0.0012557655572891235,
+      "latency_violations": 0,
+      "max_latency_ms": 0.001188118811881188,
+      "median_latency_ms": 0.001188118811881188,
+      "method": "perquery",
+      "objective": 0.37800700742363424,
+      "phases": {
+        "ingest": {
+          "cpu": 9.333364799999998,
+          "gib": 0.0011777132749557495
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.5769606023102307e-6,
+          "gib": 1.1771917343139648e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00007687509059906006
+        }
+      },
+      "planning_secs": 0.220857087,
+      "rqes": 5,
+      "sla_ms": 0.003,
+      "weights": "fargate"
+    },
+    {
       "active_deployments": 7,
-      "candidate_build_secs": 0.032430497,
+      "candidate_build_secs": 0.035105802,
       "candidates": 89,
       "chosen": [
         {
@@ -224,7 +943,7 @@
       "max_latency_ms": 0.008431584589614741,
       "median_latency_ms": 0.001188118811881188,
       "method": "asap",
-      "milp_solve_secs": 0.017534579,
+      "milp_solve_secs": 0.017575962,
       "objective": 223.71232573906627,
       "phases": {
         "ingest": {
@@ -244,7 +963,7 @@
           "gib": 0.0026160221603048514
         }
       },
-      "planning_secs": 0.049965076000000004,
+      "planning_secs": 0.052681764,
       "rqes": 9,
       "sla_ms": 0.01,
       "weights": "cpu"
@@ -404,7 +1123,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 0.01,
@@ -563,14 +1282,14 @@
           "gib": 0.002647165587199993
         }
       },
-      "planning_secs": 0.226902871,
+      "planning_secs": 0.228822303,
       "rqes": 9,
       "sla_ms": 0.01,
       "weights": "cpu"
     },
     {
       "active_deployments": 7,
-      "candidate_build_secs": 0.032430497,
+      "candidate_build_secs": 0.035105802,
       "candidates": 89,
       "chosen": [
         {
@@ -704,7 +1423,7 @@
       "max_latency_ms": 0.008431584589614741,
       "median_latency_ms": 0.001188118811881188,
       "method": "asap",
-      "milp_solve_secs": 0.017772948,
+      "milp_solve_secs": 0.017993172,
       "objective": 9.060371679669776,
       "phases": {
         "ingest": {
@@ -724,7 +1443,7 @@
           "gib": 0.0026160221603048514
         }
       },
-      "planning_secs": 0.050203445,
+      "planning_secs": 0.053098974,
       "rqes": 9,
       "sla_ms": 0.01,
       "weights": "fargate"
@@ -884,7 +1603,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 0.01,
@@ -1043,14 +1762,974 @@
           "gib": 0.002647165587199993
         }
       },
-      "planning_secs": 0.22722916399999998,
+      "planning_secs": 0.229154902,
       "rqes": 9,
       "sla_ms": 0.01,
       "weights": "fargate"
     },
     {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.035794066,
+      "candidates": 89,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.008431584589614741,
+          "merged_shards": 3,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.008431584589614741,
+          "merged_shards": 3,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 1200
+        }
+      ],
+      "cpu": 46.00846063401551,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.004885214447376118,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02889,
+      "median_latency_ms": 0.008431584589614741,
+      "method": "asap",
+      "milp_solve_secs": 0.017978774,
+      "objective": 46.00846063401551,
+      "phases": {
+        "ingest": {
+          "cpu": 46.00845493333334,
+          "gib": 0.000830574438500045
+        },
+        "merge": {
+          "cpu": 1.8242068118369627e-6,
+          "gib": 0.000052902177350604955
+        },
+        "query": {
+          "cpu": 3.876475363616764e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0040002626165672765
+        }
+      },
+      "planning_secs": 0.05377284,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 9,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 4,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 5,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 6,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 652.703091689195,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00505152062405294,
+      "latency_violations": 0,
+      "max_latency_ms": 0.004356783919597989,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 652.703091689195,
+      "phases": {
+        "ingest": {
+          "cpu": 652.703088,
+          "gib": 0.004992911301965091
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.689195041834585e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00005713410712965769
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 9,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.01250638525963149,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 1800
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 4,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 6,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 1200
+        }
+      ],
+      "cpu": 57.3945682075389,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.005720228188900493,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02889,
+      "median_latency_ms": 0.026768187604690116,
+      "method": "perquery",
+      "objective": 57.3945682075389,
+      "phases": {
+        "ingest": {
+          "cpu": 57.39456213333334,
+          "gib": 0.000929357088989948
+        },
+        "merge": {
+          "cpu": 2.197730206588498e-6,
+          "gib": 0.000052902177350604955
+        },
+        "query": {
+          "cpu": 3.876475363616764e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.004736493707601749
+        }
+      },
+      "planning_secs": 0.229351691,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.035794066,
+      "candidates": 89,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.008431584589614741,
+          "merged_shards": 3,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.008431584589614741,
+          "merged_shards": 3,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 3,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 4,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 1200
+        }
+      ],
+      "cpu": 46.00846063401551,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.004885214447376118,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02889,
+      "median_latency_ms": 0.008431584589614741,
+      "method": "asap",
+      "milp_solve_secs": 0.022961995,
+      "objective": 1.863364394881919,
+      "phases": {
+        "ingest": {
+          "cpu": 46.00845493333334,
+          "gib": 0.000830574438500045
+        },
+        "merge": {
+          "cpu": 1.8242068118369627e-6,
+          "gib": 0.000052902177350604955
+        },
+        "query": {
+          "cpu": 3.876475363616764e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.0040002626165672765
+        }
+      },
+      "planning_secs": 0.058756061,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 9,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 4,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 5,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 6,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 652.703091689195,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00505152062405294,
+      "latency_violations": 0,
+      "max_latency_ms": 0.004356783919597989,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 26.43449769267918,
+      "phases": {
+        "ingest": {
+          "cpu": 652.703088,
+          "gib": 0.004992911301965091
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.689195041834585e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00005713410712965769
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 9,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.01250638525963149,
+          "merged_shards": 5,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 1800
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.026768187604690116,
+          "merged_shards": 12,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 7200
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 4,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 6,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 300
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.02889,
+          "merged_shards": 3,
+          "params": {
+            "cols": 1024,
+            "heap": 96,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 1200
+        }
+      ],
+      "cpu": 57.3945682075389,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.005720228188900493,
+      "latency_violations": 0,
+      "max_latency_ms": 0.02889,
+      "median_latency_ms": 0.026768187604690116,
+      "method": "perquery",
+      "objective": 2.3245054674207664,
+      "phases": {
+        "ingest": {
+          "cpu": 57.39456213333334,
+          "gib": 0.000929357088989948
+        },
+        "merge": {
+          "cpu": 2.197730206588498e-6,
+          "gib": 0.000052902177350604955
+        },
+        "query": {
+          "cpu": 3.876475363616764e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.004736493707601749
+        }
+      },
+      "planning_secs": 0.229596036,
+      "rqes": 9,
+      "sla_ms": 0.03,
+      "weights": "fargate"
+    },
+    {
       "active_deployments": 4,
-      "candidate_build_secs": 0.035348915,
+      "candidate_build_secs": 0.036156292,
       "candidates": 89,
       "chosen": [
         {
@@ -1184,7 +2863,7 @@
       "max_latency_ms": 0.08381539698492463,
       "median_latency_ms": 0.01250638525963149,
       "method": "asap",
-      "milp_solve_secs": 0.016589015,
+      "milp_solve_secs": 0.016732077,
       "objective": 15.264170909667323,
       "phases": {
         "ingest": {
@@ -1204,7 +2883,7 @@
           "gib": 0.005788959383065976
         }
       },
-      "planning_secs": 0.05193793,
+      "planning_secs": 0.052888369000000005,
       "rqes": 9,
       "sla_ms": 0.1,
       "weights": "cpu"
@@ -1364,7 +3043,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 0.1,
@@ -1523,14 +3202,14 @@
           "gib": 0.0056465731044510505
         }
       },
-      "planning_secs": 0.228254961,
+      "planning_secs": 0.22997373599999998,
       "rqes": 9,
       "sla_ms": 0.1,
       "weights": "cpu"
     },
     {
       "active_deployments": 4,
-      "candidate_build_secs": 0.035348915,
+      "candidate_build_secs": 0.036156292,
       "candidates": 89,
       "chosen": [
         {
@@ -1664,7 +3343,7 @@
       "max_latency_ms": 0.08381539698492463,
       "median_latency_ms": 0.01250638525963149,
       "method": "asap",
-      "milp_solve_secs": 0.024269447,
+      "milp_solve_secs": 0.024480427,
       "objective": 0.6182294455515424,
       "phases": {
         "ingest": {
@@ -1684,7 +3363,7 @@
           "gib": 0.005788959383065976
         }
       },
-      "planning_secs": 0.059618362,
+      "planning_secs": 0.060636719,
       "rqes": 9,
       "sla_ms": 0.1,
       "weights": "fargate"
@@ -1844,7 +3523,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 0.1,
@@ -2003,14 +3682,974 @@
           "gib": 0.0056465731044510505
         }
       },
-      "planning_secs": 0.228658445,
+      "planning_secs": 0.230505173,
       "rqes": 9,
       "sla_ms": 0.1,
       "weights": "fargate"
     },
     {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.03578913,
+      "candidates": 89,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.014543785594639867,
+          "merged_shards": 6,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.07566579564489113,
+          "merged_shards": 36,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.29570503182579566,
+          "merged_shards": 144,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 3,
+          "latency_ms": 0.10133976236979166,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 160,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 4,
+          "latency_ms": 0.15021481119791666,
+          "merged_shards": 6,
+          "params": {
+            "cols": 4096,
+            "heap": 192,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 5.409204103516022,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.008305123231219288,
+      "latency_violations": 0,
+      "max_latency_ms": 0.29570503182579566,
+      "median_latency_ms": 0.03288038860971525,
+      "method": "asap",
+      "milp_solve_secs": 0.016375132,
+      "objective": 5.409204103516022,
+      "phases": {
+        "ingest": {
+          "cpu": 5.409189366666666,
+          "gib": 0.0009059021445974034
+        },
+        "merge": {
+          "cpu": 0.000010856686655499722,
+          "gib": 0.0001397461447883491
+        },
+        "query": {
+          "cpu": 3.880162700856347e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.007257999726875344
+        }
+      },
+      "planning_secs": 0.052164262,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 9,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 4,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 5,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 6,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 652.703091689195,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00505152062405294,
+      "latency_violations": 0,
+      "max_latency_ms": 0.004356783919597989,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 652.703091689195,
+      "phases": {
+        "ingest": {
+          "cpu": 652.703088,
+          "gib": 0.004992911301965091
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.689195041834585e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00005713410712965769
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 9,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.24680742378559464,
+          "merged_shards": 120,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.29570503182579566,
+          "merged_shards": 144,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 4,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 6,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 7,
+          "latency_ms": 0.10133976236979166,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 160,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 8,
+          "latency_ms": 0.15021481119791666,
+          "merged_shards": 6,
+          "params": {
+            "cols": 4096,
+            "heap": 192,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 6.845183989536793,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00923237227764561,
+      "latency_violations": 0,
+      "max_latency_ms": 0.29570503182579566,
+      "median_latency_ms": 0.10133976236979166,
+      "method": "perquery",
+      "objective": 6.845183989536793,
+      "phases": {
+        "ingest": {
+          "cpu": 6.845164566666667,
+          "gib": 0.000945244265261607
+        },
+        "merge": {
+          "cpu": 0.000015542707426018984,
+          "gib": 0.0001397461447883491
+        },
+        "query": {
+          "cpu": 3.880162700856347e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.008145906652637463
+        }
+      },
+      "planning_secs": 0.23042738699999998,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 5,
+      "candidate_build_secs": 0.03578913,
+      "candidates": 89,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.014543785594639867,
+          "merged_shards": 6,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.07566579564489113,
+          "merged_shards": 36,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.29570503182579566,
+          "merged_shards": 144,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 3,
+          "latency_ms": 0.10133976236979166,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 160,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 4,
+          "latency_ms": 0.15021481119791666,
+          "merged_shards": 6,
+          "params": {
+            "cols": 4096,
+            "heap": 192,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 5.409204103516022,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.008305123231219288,
+      "latency_violations": 0,
+      "max_latency_ms": 0.29570503182579566,
+      "median_latency_ms": 0.03288038860971525,
+      "method": "asap",
+      "milp_solve_secs": 0.025310588,
+      "objective": 0.21910972399077783,
+      "phases": {
+        "ingest": {
+          "cpu": 5.409189366666666,
+          "gib": 0.0009059021445974034
+        },
+        "merge": {
+          "cpu": 0.000010856686655499722,
+          "gib": 0.0001397461447883491
+        },
+        "query": {
+          "cpu": 3.880162700856347e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.007257999726875344
+        }
+      },
+      "planning_secs": 0.061099718,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 9,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 4,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 5,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 6,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 7,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 8,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 652.703091689195,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00505152062405294,
+      "latency_violations": 0,
+      "max_latency_ms": 0.004356783919597989,
+      "median_latency_ms": 0.0011287128712871286,
+      "method": "autosketch",
+      "objective": 26.43449769267918,
+      "phases": {
+        "ingest": {
+          "cpu": 652.703088,
+          "gib": 0.004992911301965091
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 3.689195041834585e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.00005713410712965769
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 9,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 0,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 2,
+          "latency_ms": 0.24680742378559464,
+          "merged_shards": 120,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.29570503182579566,
+          "merged_shards": 144,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 4,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 6,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 7,
+          "latency_ms": 0.10133976236979166,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 160,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 8,
+          "latency_ms": 0.15021481119791666,
+          "merged_shards": 6,
+          "params": {
+            "cols": 4096,
+            "heap": 192,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 600
+        }
+      ],
+      "cpu": 6.845183989536793,
+      "excluded_by_sla": 12,
+      "feasible": true,
+      "gib": 0.00923237227764561,
+      "latency_violations": 0,
+      "max_latency_ms": 0.29570503182579566,
+      "median_latency_ms": 0.10133976236979166,
+      "method": "perquery",
+      "objective": 0.27727103563287564,
+      "phases": {
+        "ingest": {
+          "cpu": 6.845164566666667,
+          "gib": 0.000945244265261607
+        },
+        "merge": {
+          "cpu": 0.000015542707426018984,
+          "gib": 0.0001397461447883491
+        },
+        "query": {
+          "cpu": 3.880162700856347e-6,
+          "gib": 1.475214958190918e-6
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.008145906652637463
+        }
+      },
+      "planning_secs": 0.231210536,
+      "rqes": 9,
+      "sla_ms": 0.3,
+      "weights": "fargate"
+    },
+    {
       "active_deployments": 3,
-      "candidate_build_secs": 0.036014557,
+      "candidate_build_secs": 0.035146081,
       "candidates": 89,
       "chosen": [
         {
@@ -2144,7 +4783,7 @@
       "max_latency_ms": 0.9802715443886098,
       "median_latency_ms": 0.043067390284757125,
       "method": "asap",
-      "milp_solve_secs": 0.016881099,
+      "milp_solve_secs": 0.0170187,
       "objective": 1.6762345427389695,
       "phases": {
         "ingest": {
@@ -2164,7 +4803,7 @@
           "gib": 0.007969792284558167
         }
       },
-      "planning_secs": 0.052895656,
+      "planning_secs": 0.05216478100000001,
       "rqes": 9,
       "sla_ms": 1.0,
       "weights": "cpu"
@@ -2324,7 +4963,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 1.0,
@@ -2483,14 +5122,14 @@
           "gib": 0.00863648210488372
         }
       },
-      "planning_secs": 0.229230886,
+      "planning_secs": 0.23111168399999998,
       "rqes": 9,
       "sla_ms": 1.0,
       "weights": "cpu"
     },
     {
       "active_deployments": 3,
-      "candidate_build_secs": 0.036014557,
+      "candidate_build_secs": 0.035146081,
       "candidates": 89,
       "chosen": [
         {
@@ -2624,7 +5263,7 @@
       "max_latency_ms": 0.9802715443886098,
       "median_latency_ms": 0.043067390284757125,
       "method": "asap",
-      "milp_solve_secs": 0.025551526,
+      "milp_solve_secs": 0.025934488,
       "objective": 0.06792588928978081,
       "phases": {
         "ingest": {
@@ -2644,7 +5283,7 @@
           "gib": 0.007969792284558167
         }
       },
-      "planning_secs": 0.06156608300000001,
+      "planning_secs": 0.061080569,
       "rqes": 9,
       "sla_ms": 1.0,
       "weights": "fargate"
@@ -2804,7 +5443,7 @@
           "gib": 0.00005713410712965769
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 9,
       "sla_ms": 1.0,
@@ -2963,14 +5602,1982 @@
           "gib": 0.00863648210488372
         }
       },
-      "planning_secs": 0.22979843,
+      "planning_secs": 0.231709685,
       "rqes": 9,
       "sla_ms": 1.0,
       "weights": "fargate"
     },
     {
       "active_deployments": 7,
-      "candidate_build_secs": 0.120814598,
+      "candidate_build_secs": 0.119590315,
+      "candidates": 161,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.7357835041876049,
+          "merged_shards": 360,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 2.9361758659966504,
+          "merged_shards": 1440,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 6,
+          "latency_ms": 0.40438436957465285,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 6,
+          "latency_ms": 1.91480103624132,
+          "merged_shards": 20,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        }
+      ],
+      "cpu": 60.31851046459495,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 29.270603158553342,
+      "latency_violations": 0,
+      "max_latency_ms": 2.9361758659966504,
+      "median_latency_ms": 1.188118811881188,
+      "method": "asap",
+      "milp_solve_secs": 0.022936115,
+      "objective": 60.31851046459495,
+      "phases": {
+        "ingest": {
+          "cpu": 60.3181668,
+          "gib": 29.19733581768358
+        },
+        "merge": {
+          "cpu": 0.00010213247081704822,
+          "gib": 0.00024518676139601513
+        },
+        "query": {
+          "cpu": 0.00024153212413308348,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.07212660922177473
+        }
+      },
+      "planning_secs": 0.14252643,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 21,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 0,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 1,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 2,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 4,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 5,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 6,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 7,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 8,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 9,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 10,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 11,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 12,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 13,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 14,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 15,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 16,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 17,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 18,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 19,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 20,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 910.5870674317692,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 35.28504076317777,
+      "latency_violations": 0,
+      "max_latency_ms": 1.1287128712871286,
+      "median_latency_ms": 1.1287128712871286,
+      "method": "autosketch",
+      "objective": 910.5870674317692,
+      "phases": {
+        "ingest": {
+          "cpu": 910.586838,
+          "gib": 35.20898623176706
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 0.00022943176929926036,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.07515898652412184
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 21,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 1,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 5,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 6,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 7,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 8,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 9,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 10,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 11,
+          "latency_ms": 0.7357835041876049,
+          "merged_shards": 360,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 12,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 13,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 14,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 15,
+          "latency_ms": 2.9361758659966504,
+          "merged_shards": 1440,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 16,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 17,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 18,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 19,
+          "latency_ms": 1.0163902506510418,
+          "merged_shards": 15,
+          "params": {
+            "cols": 4096,
+            "heap": 480,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 20,
+          "latency_ms": 1.91480103624132,
+          "merged_shards": 20,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        }
+      ],
+      "cpu": 180.67776123135965,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 87.79164919280376,
+      "latency_violations": 0,
+      "max_latency_ms": 2.9361758659966504,
+      "median_latency_ms": 1.188118811881188,
+      "method": "perquery",
+      "objective": 180.67776123135965,
+      "phases": {
+        "ingest": {
+          "cpu": 180.6774073666667,
+          "gib": 87.59139885313846
+        },
+        "merge": {
+          "cpu": 0.00011234006340964082,
+          "gib": 0.00022700734473952096
+        },
+        "query": {
+          "cpu": 0.0002415246295584307,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.19912778743397647
+        }
+      },
+      "planning_secs": 0.257623967,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "cpu"
+    },
+    {
+      "active_deployments": 7,
+      "candidate_build_secs": 0.119590315,
+      "candidates": 161,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 3,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 0.7357835041876049,
+          "merged_shards": 360,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 1,
+          "latency_ms": 2.9361758659966504,
+          "merged_shards": 1440,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 5,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 6,
+          "latency_ms": 0.40438436957465285,
+          "merged_shards": 5,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 6,
+          "latency_ms": 1.91480103624132,
+          "merged_shards": 20,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        }
+      ],
+      "cpu": 60.31851046459495,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 29.270603158553342,
+      "latency_violations": 0,
+      "max_latency_ms": 2.9361758659966504,
+      "median_latency_ms": 1.188118811881188,
+      "method": "asap",
+      "milp_solve_secs": 0.035608441,
+      "objective": 2.5731538578716577,
+      "phases": {
+        "ingest": {
+          "cpu": 60.3181668,
+          "gib": 29.19733581768358
+        },
+        "merge": {
+          "cpu": 0.00010213247081704822,
+          "gib": 0.00024518676139601513
+        },
+        "query": {
+          "cpu": 0.00024153212413308348,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.07212660922177473
+        }
+      },
+      "planning_secs": 0.155198756,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 21,
+      "benchmark_secs_lower_bound_nbench1e8": 48.776610268477356,
+      "benchmark_secs_paper_rate": 540.0,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 0,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 1,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 2,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 4,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 5,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024618048538218917,
+          "deployment": 6,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 7,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 8,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 9,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024617558469977447,
+          "deployment": 10,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 11,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 12,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 13,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024641172123603765,
+          "deployment": 14,
+          "latency_ms": 1.1287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 15,
+          "latency_ms": 0.004356783919597989,
+          "merged_shards": 1,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 16,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 17,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.024612288529129944,
+          "deployment": 18,
+          "latency_ms": 0.0011287128712871286,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.05
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 19,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.96875,
+          "deployment": 20,
+          "latency_ms": 0.0003781250000000001,
+          "merged_shards": 1,
+          "params": {
+            "cols": 1024,
+            "heap": 32,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 3600
+        }
+      ],
+      "cpu": 910.5870674317692,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 35.28504076317777,
+      "latency_violations": 0,
+      "max_latency_ms": 1.1287128712871286,
+      "median_latency_ms": 1.1287128712871286,
+      "method": "autosketch",
+      "objective": 37.03579466238279,
+      "phases": {
+        "ingest": {
+          "cpu": 910.586838,
+          "gib": 35.20898623176706
+        },
+        "merge": {
+          "cpu": 0.0,
+          "gib": 0.0
+        },
+        "query": {
+          "cpu": 0.00022943176929926036,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.07515898652412184
+        }
+      },
+      "planning_secs": 0.000875706,
+      "probes": 85,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 21,
+      "chosen": [
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 0,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 1,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 2,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/15m",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 900
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 3,
+          "latency_ms": 0.03288038860971525,
+          "merged_shards": 15,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/15m",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 4,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 5,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009645356060512198,
+          "deployment": 6,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/1h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 3600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 7,
+          "latency_ms": 0.12456340368509214,
+          "merged_shards": 60,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/1h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 8,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 9,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009652027938045827,
+          "deployment": 10,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/6h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 21600
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 11,
+          "latency_ms": 0.7357835041876049,
+          "merged_shards": 360,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/6h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 12,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.5/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 13,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.9/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.00966367429530464,
+          "deployment": 14,
+          "latency_ms": 1.188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_over_time_p0.99/values/24h",
+          "sketch": "dd",
+          "slide_secs": 60,
+          "window_secs": 86400
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.0,
+          "deployment": 15,
+          "latency_ms": 2.9361758659966504,
+          "merged_shards": 1440,
+          "params": {},
+          "rqe": "synthetic/templates=dashboard/shared=1/sum_by_job_rate/keys/24h",
+          "sketch": "exact-increase",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 16,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.5/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 17,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.9/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 0.009664479186726282,
+          "deployment": 18,
+          "latency_ms": 0.001188118811881188,
+          "merged_shards": 1,
+          "params": {
+            "alpha": 0.02
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/quantile_by_job_p0.99/values/1s",
+          "sketch": "dd",
+          "slide_secs": 1,
+          "window_secs": 1
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 19,
+          "latency_ms": 1.0163902506510418,
+          "merged_shards": 15,
+          "params": {
+            "cols": 4096,
+            "heap": 480,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/15m",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 60
+        },
+        {
+          "accuracy_source": "Measured",
+          "asap_accuracy": 1.0,
+          "deployment": 20,
+          "latency_ms": 1.91480103624132,
+          "merged_shards": 20,
+          "params": {
+            "cols": 4096,
+            "heap": 640,
+            "rows": 3
+          },
+          "rqe": "synthetic/templates=dashboard/shared=1/topk32_sum_by_label0_rate/keys/1h",
+          "sketch": "cms-heap-topk-fastpath-vector2d",
+          "slide_secs": 60,
+          "window_secs": 180
+        }
+      ],
+      "cpu": 180.67776123135965,
+      "excluded_by_sla": 0,
+      "feasible": true,
+      "gib": 87.79164919280376,
+      "latency_violations": 0,
+      "max_latency_ms": 2.9361758659966504,
+      "median_latency_ms": 1.188118811881188,
+      "method": "perquery",
+      "objective": 7.708122168778043,
+      "phases": {
+        "ingest": {
+          "cpu": 180.6774073666667,
+          "gib": 87.59139885313846
+        },
+        "merge": {
+          "cpu": 0.00011234006340964082,
+          "gib": 0.00022700734473952096
+        },
+        "query": {
+          "cpu": 0.0002415246295584307,
+          "gib": 0.0008955448865890503
+        },
+        "storage": {
+          "cpu": 0.0,
+          "gib": 0.19912778743397647
+        }
+      },
+      "planning_secs": 0.259204301,
+      "rqes": 21,
+      "sla_ms": 3.0,
+      "weights": "fargate"
+    },
+    {
+      "active_deployments": 7,
+      "candidate_build_secs": 0.116466319,
       "candidates": 161,
       "chosen": [
         {
@@ -3272,7 +7879,7 @@
       "max_latency_ms": 9.395379537953795,
       "median_latency_ms": 9.395379537953795,
       "method": "asap",
-      "milp_solve_secs": 0.024712563,
+      "milp_solve_secs": 0.024776304,
       "objective": 29.402151916740166,
       "phases": {
         "ingest": {
@@ -3292,7 +7899,7 @@
           "gib": 7.857983333007175
         }
       },
-      "planning_secs": 0.145527161,
+      "planning_secs": 0.141242623,
       "rqes": 21,
       "sla_ms": 10.0,
       "weights": "cpu"
@@ -3620,7 +8227,7 @@
           "gib": 0.07515898652412184
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 21,
       "sla_ms": 10.0,
@@ -3947,14 +8554,14 @@
           "gib": 23.55896162398946
         }
       },
-      "planning_secs": 0.255804394,
+      "planning_secs": 0.258871433,
       "rqes": 21,
       "sla_ms": 10.0,
       "weights": "cpu"
     },
     {
       "active_deployments": 7,
-      "candidate_build_secs": 0.120814598,
+      "candidate_build_secs": 0.116466319,
       "candidates": 161,
       "chosen": [
         {
@@ -4256,7 +8863,7 @@
       "max_latency_ms": 9.395379537953795,
       "median_latency_ms": 9.395379537953795,
       "method": "asap",
-      "milp_solve_secs": 0.026300925,
+      "milp_solve_secs": 0.026600083,
       "objective": 1.2435025371890343,
       "phases": {
         "ingest": {
@@ -4276,7 +8883,7 @@
           "gib": 7.857983333007175
         }
       },
-      "planning_secs": 0.147115523,
+      "planning_secs": 0.143066402,
       "rqes": 21,
       "sla_ms": 10.0,
       "weights": "fargate"
@@ -4604,7 +9211,7 @@
           "gib": 0.07515898652412184
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 21,
       "sla_ms": 10.0,
@@ -4931,14 +9538,14 @@
           "gib": 23.55896162398946
         }
       },
-      "planning_secs": 0.257585773,
+      "planning_secs": 0.260277792,
       "rqes": 21,
       "sla_ms": 10.0,
       "weights": "fargate"
     },
     {
       "active_deployments": 4,
-      "candidate_build_secs": 0.112886582,
+      "candidate_build_secs": 0.117474128,
       "candidates": 161,
       "chosen": [
         {
@@ -5240,7 +9847,7 @@
       "max_latency_ms": 1531.854785478548,
       "median_latency_ms": 11.854785478547853,
       "method": "asap",
-      "milp_solve_secs": 0.047337556,
+      "milp_solve_secs": 0.04734328,
       "objective": 0.7674429128035004,
       "phases": {
         "ingest": {
@@ -5260,7 +9867,7 @@
           "gib": 22.379783374205907
         }
       },
-      "planning_secs": 0.16022413800000002,
+      "planning_secs": 0.164817408,
       "rqes": 21,
       "sla_ms": "inf",
       "weights": "cpu"
@@ -5588,7 +10195,7 @@
           "gib": 0.07515898652412184
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 21,
       "sla_ms": "inf",
@@ -5915,14 +10522,14 @@
           "gib": 87.5654033363689
         }
       },
-      "planning_secs": 0.271666768,
+      "planning_secs": 0.274688383,
       "rqes": 21,
       "sla_ms": "inf",
       "weights": "cpu"
     },
     {
       "active_deployments": 4,
-      "candidate_build_secs": 0.112886582,
+      "candidate_build_secs": 0.117474128,
       "candidates": 161,
       "chosen": [
         {
@@ -6224,7 +10831,7 @@
       "max_latency_ms": 1980.995379537954,
       "median_latency_ms": 17.662046204620463,
       "method": "asap",
-      "milp_solve_secs": 0.057736477,
+      "milp_solve_secs": 0.057913654,
       "objective": 0.07196620575832763,
       "phases": {
         "ingest": {
@@ -6244,7 +10851,7 @@
           "gib": 9.018508178130466
         }
       },
-      "planning_secs": 0.170623059,
+      "planning_secs": 0.175387782,
       "rqes": 21,
       "sla_ms": "inf",
       "weights": "fargate"
@@ -6572,7 +11179,7 @@
           "gib": 0.07515898652412184
         }
       },
-      "planning_secs": 0.000845156,
+      "planning_secs": 0.000875706,
       "probes": 85,
       "rqes": 21,
       "sla_ms": "inf",
@@ -6899,7 +11506,7 @@
           "gib": 35.206448191486714
         }
       },
-      "planning_secs": 0.275276049,
+      "planning_secs": 0.278043048,
       "rqes": 21,
       "sla_ms": "inf",
       "weights": "fargate"
@@ -6909,9 +11516,13 @@
   "runs": 3,
   "sanity_violations": [],
   "sla_grid_ms": [
+    0.003,
     0.01,
+    0.03,
     0.1,
+    0.3,
     1.0,
+    3.0,
     10.0,
     "inf"
   ],

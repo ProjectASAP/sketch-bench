@@ -7,7 +7,7 @@ all at one accuracy level, p95: 95% in each family's own metric (rank,
 relative value and relative error at most 0.05; top-k precision at least
 0.95). The trace workloads use the same level. Each is solved by ASAP, PerQuery-CostAware and
 AutoSketch-Adapted at both weight settings (CPU only; Fargate prices) and
-across the SLA grid {0.01, 0.1, 1, 10} ms and none. The trace workloads
+across the SLA grid {0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, 10} ms and none. The trace workloads
 alibaba_v2022 and google_2011 run with the same inputs
 (`scripts/run_autosketch_vs_asap.sh`, results under
 `rqe-optimizer/results/autosketch-vs-asap/`); boom is left out for now.
@@ -42,6 +42,11 @@ measured curve (`accuracy_source`). AutoSketch-Adapted's gap is its window
 adapter: a window as long as the query's lookback, sliding every `T`, puts
 each item into window/slide overlapping sketches (Σ window/slide), up to
 1440 for a 24 h lookback at 1 m. PerQuery-CostAware is the strong baseline.
+
+AutoSketch-Adapted ignores the SLA but never violates one: it never merges, so each
+RQE's latency is within 1.4% of the lowest any deployment reaches (equal for every
+quantile, exact and trace RQE; top-k picks cols = 1024 at 0.00038 ms vs. 0.00037 ms),
+and RQEs no method can meet are excluded for every method.
 
 AutoSketch-Adapted benchmarks each probed config once per metric, on that metric's data,
 so its benchmark time grows with m (540, 4320 and 8640 s at 60 s per probe for m = 1, 8, 16).

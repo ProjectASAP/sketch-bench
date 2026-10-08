@@ -60,7 +60,7 @@ use serde_json::{json, Value};
 
 const TRACES_TABLE: &str = "rqe-optimizer/data/autosketch-eval/table.json";
 /// Absolute per-RQE latency SLAs in ms (#777 §5), plus no SLA.
-const SLAS_MS: [f64; 5] = [0.01, 0.1, 1.0, 10.0, f64::INFINITY];
+const SLAS_MS: [f64; 9] = [0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, f64::INFINITY];
 /// Objective weights of #777 §4: CPU only, then AWS Fargate (us-east-1,
 /// Linux/x86) $/vCPU-hour and $/GB-hour, so the objective reads in $/hour.
 const WEIGHTS: [(&str, f64, f64); 2] = [("cpu", 1.0, 0.0), ("fargate", 0.0405, 0.00445)];
