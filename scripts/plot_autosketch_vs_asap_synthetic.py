@@ -74,6 +74,9 @@ def fig_objective_vs_latency(runs, out):
                 ax.plot(*zip(*sorted(pts)), marker="o", color=COLORS[m],
                         linestyle="-" if n == full else "--",
                         label=LABELS[m] if n == full else None)
+                for x, y in pts:
+                    ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
+                                fontsize=6, color=COLORS[m])
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("max estimated latency (ms)")
@@ -99,13 +102,14 @@ def fig_objective_by_dimension(runs, out):
                 data = runs.get(tuple(key))
                 r = data and pick(data, m, "cpu", "inf")
                 ys.append(r["objective"] if r else 0)
-            ax.bar([x + i * 0.27 for x in xs], ys, 0.27, label=LABELS[m], color=COLORS[m])
+            bars = ax.bar([x + i * 0.27 for x in xs], ys, 0.27, label=LABELS[m], color=COLORS[m])
+            ax.bar_label(bars, [fmt(y) for y in ys], fontsize=6)
         ax.set_xticks([x + 0.27 for x in xs], [str(v) for v in values])
         ax.set_yscale("log")
         ax.set_title(name, fontsize=9)
         ax.set_ylabel("CPU (vCPU), no SLA")
-    axes[0][0].legend(fontsize=7)
-    fig.tight_layout()
+    fig.legend(*axes[0][0].get_legend_handles_labels(), loc="upper center", ncol=3, fontsize=7)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(out / "fig_objective_by_dimension.png", dpi=150)
     plt.close(fig)
 
@@ -166,20 +170,18 @@ def summary(runs, out):
                      f"{len(data['sanity_violations'])}. AutoSketch probes: "
                      f"{data['autosketch']['probes']}, benchmark time ≥ "
                      f"{fmt(data['autosketch']['benchmark_secs_lower_bound_nbench1e8'])} s.\n")
-        lines.append("| weights | SLA (ms) | RQEs | method | objective | vs ASAP | CPU (vCPU) | "
+        lines.append("| weights | SLA (ms) | RQEs | method | objective | CPU (vCPU) | "
                      "GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |")
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
         for w in weight_names(runs):
             for sla in data["sla_grid_ms"]:
-                base = pick(data, "asap", w, sla)
                 for m in METHODS:
                     r = pick(data, m, w, sla)
                     if r is None:
                         continue
-                    ratio = r["objective"] / base["objective"] if base and base["objective"] else None
                     lines.append(
                         f"| {w} | {sla} | {r['rqes']} | {LABELS[m]} | {fmt(r['objective'])} | "
-                        f"{fmt(ratio)}× | {fmt(r['cpu'])} | {fmt(r['gib'])} | "
+                        f"{fmt(r['cpu'])} | {fmt(r['gib'])} | "
                         f"{r['active_deployments']} | {fmt(copies(r))} | {fmt(r['max_latency_ms'])} | "
                         f"{fmt(r['planning_secs'])} |")
         lines.append("")

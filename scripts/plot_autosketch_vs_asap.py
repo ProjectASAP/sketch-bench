@@ -55,8 +55,9 @@ def fig_objective(runs, out):
         names = list(runs)
         for i, method in enumerate(METHODS):
             ys = [objective(pick(runs[n], method, wname, "inf")) or 0 for n in names]
-            ax.bar([x + i * 0.27 for x in range(len(names))], ys, 0.27,
-                   label=LABELS[method], color=COLORS[method])
+            bars = ax.bar([x + i * 0.27 for x in range(len(names))], ys, 0.27,
+                          label=LABELS[method], color=COLORS[method])
+            ax.bar_label(bars, [fmt(y) for y in ys], fontsize=6)
         ax.set_xticks([x + 0.27 for x in range(len(names))], names, fontsize=8)
         ax.set_yscale("log")
         ax.set_ylabel(f"objective ({WEIGHT_UNITS.get(wname, wname)})")
@@ -78,6 +79,9 @@ def fig_objective_vs_sla(runs, out):
             points = [(x, y) for x, y in points if y is not None]
             if points:
                 ax.plot(*zip(*points), marker="o", label=LABELS[method], color=COLORS[method])
+                for x, y in points:
+                    ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
+                                fontsize=6, color=COLORS[method])
         ax.set_xticks(xs, [sla_text(s) for s in slas], fontsize=7)
         ax.set_yscale("log")
         ax.set_title(name, fontsize=9)
@@ -112,18 +116,16 @@ def summary(runs, out):
                 rows = [pick(run, m, w["name"], sla) for m in METHODS]
                 if not any(rows):
                     continue
-                base = objective(rows[0])
                 lines.append(f"Weights {w['name']}, {sla_text(sla)}:\n")
-                lines.append("| method | objective | vs ASAP | CPU (vCPU) | GiB | deployments | "
+                lines.append("| method | objective | CPU (vCPU) | GiB | deployments | "
                              "Σ window/slide | max latency (ms) | planning (s) |")
-                lines.append("|---|---|---|---|---|---|---|---|---|")
+                lines.append("|---|---|---|---|---|---|---|---|")
                 for method, r in zip(METHODS, rows):
                     if r is None or "error" in r:
-                        lines.append(f"| {LABELS[method]} | {r and r.get('error')} ||||||||")
+                        lines.append(f"| {LABELS[method]} | {r and r.get('error')} |||||||")
                         continue
-                    ratio = r["objective"] / base if base else None
                     lines.append(
-                        f"| {LABELS[method]} | {fmt(r['objective'])} | {fmt(ratio)}× | "
+                        f"| {LABELS[method]} | {fmt(r['objective'])} | "
                         f"{fmt(r['cpu'])} | {fmt(r['gib'])} | {r['active_deployments']} | "
                         f"{fmt(copies(r))} | {fmt(r['max_latency_ms'])} | {fmt(r['planning_secs'])} |")
                 lines.append("")

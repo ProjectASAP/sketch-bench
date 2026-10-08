@@ -21,16 +21,16 @@ study (#174, #178–#186), one workload at a time. Files: `synthetic-*.json`
 (`traces-*.json`, `summary.md`, `fig1_objective.png`,
 `fig4_objective_vs_sla.png`).
 
-With no latency SLA, objective relative to ASAP (CPU only; Fargate):
+With no latency SLA, each method's objective (CPU only, in vCPU; Fargate prices, in $/hour):
 
-| Workload | RQEs | PerQuery / ASAP | AutoSketch / ASAP | Σ window/slide (ASAP, PerQuery, AutoSketch) | ASAP planning (s) |
-|---|---|---|---|---|---|
-| dashboard, r = 1 | 21 | 3.27; 3.68 | 1187; 515 | 8, 24, 7578 | 0.15 |
-| all templates, r = 1 | 50 | 2.88; 3.26 | 1028; 627 | 12, 57, 20631 | 0.70 |
-| dashboard, r = 8 | 52 | 4.21; 4.52 | 2771; 774 | 33, 109, 54243 | 0.84 |
-| dashboard, r = 64 | 57 | 4.43; 4.60 | 2768; 777 | 33, 114, 54543 | 0.92 |
-| traces, alibaba_v2022 | 51 | 1.94; 1.38 | 31; 10 | 17, 51, 1122 | 0.05 |
-| traces, google_2011 | 27 | 2.90; 2.12 | 13; 7 | 9, 27, 126 | 0.03 |
+| Workload | RQEs | ASAP | PerQuery-CostAware | AutoSketch-Adapted | Σ window/slide (ASAP, PerQuery, AutoSketch) | ASAP planning (s) |
+|---|---|---|---|---|---|---|
+| dashboard, r = 1 | 21 | 0.767 vCPU; 0.072 $/h | 2.51 vCPU; 0.265 $/h | 911 vCPU; 37 $/h | 8, 24, 7578 | 0.15 |
+| all templates, r = 1 | 50 | 3.32 vCPU; 0.221 $/h | 9.55 vCPU; 0.721 $/h | 3.41e+03 vCPU; 138 $/h | 12, 57, 20631 | 0.70 |
+| dashboard, r = 8 | 52 | 2.35 vCPU; 0.342 $/h | 9.9 vCPU; 1.55 $/h | 6.52e+03 vCPU; 265 $/h | 33, 109, 54243 | 0.84 |
+| dashboard, r = 64 | 57 | 2.37 vCPU; 0.343 $/h | 10.5 vCPU; 1.58 $/h | 6.56e+03 vCPU; 267 $/h | 33, 114, 54543 | 0.92 |
+| traces, alibaba_v2022 | 51 | 2.31 vCPU; 0.303 $/h | 4.48 vCPU; 0.417 $/h | 71.8 vCPU; 3.14 $/h | 17, 51, 1122 | 0.05 |
+| traces, google_2011 | 27 | 0.00484 vCPU; 0.000378 $/h | 0.014 vCPU; 0.000801 $/h | 0.0645 vCPU; 0.00283 $/h | 9, 27, 126 | 0.03 |
 
 No RQE was dropped as unservable, no sanity check failed (ASAP and PerQuery meet
 every SLA; ASAP ≤ PerQuery and ASAP ≤ AutoSketch where they apply), and every RQE's accuracy is read from a
