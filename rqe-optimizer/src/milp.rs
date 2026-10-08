@@ -285,11 +285,16 @@ pub fn minimize_cost_model(
     allowed: Option<&[Vec<usize>]>,
 ) -> Result<CostModelSolution, ResolutionError> {
     use crate::placement::{cost_model_1, cost_model_2, PlanLoad};
+    assert!(
+        cost_model == CostModel::One || sla_ms.is_some(),
+        "cost model 2 is evaluated with a latency SLA only"
+    );
     let price = |mapping: &Mapping| {
         let load = PlanLoad::new(raqes, deployments, mapping, facts);
-        match cost_model {
-            CostModel::One => Some(cost_model_1(&load, w_cpu, w_mem)),
-            CostModel::Two => cost_model_2(&load, w_cpu, w_mem, sla_ms),
+        match (cost_model, sla_ms) {
+            (CostModel::One, _) => Some(cost_model_1(&load, w_cpu, w_mem)),
+            (CostModel::Two, Some(sla)) => cost_model_2(&load, w_cpu, w_mem, sla),
+            (CostModel::Two, None) => unreachable!("asserted above"),
         }
     };
     let mut corrections = (0.0, 0.0);
@@ -318,7 +323,8 @@ pub fn minimize_cost_model(
             });
         }
         let load = PlanLoad::new(raqes, deployments, &mapping, facts);
-        let (surrogate_cpu, surrogate_bytes) = surrogate_peaks(&load, sla_ms);
+        let (surrogate_cpu, surrogate_bytes) =
+            surrogate_peaks(&load, sla_ms.expect("cost model 2 has an SLA"));
         corrections = (cost.cpu - surrogate_cpu, cost.bytes - surrogate_bytes);
         let repeated = seen.contains(&mapping);
         seen.push(mapping.clone());
@@ -342,20 +348,16 @@ pub fn minimize_cost_model(
 /// Cost model 2's surrogate `(C, M)` of a placed plan, the MILP's rows
 /// without corrections: `C = max(mean load, ingest + batch work / L)`, and `M`
 /// with every query's memory at once.
-fn surrogate_peaks(load: &crate::placement::PlanLoad, sla_ms: Option<f64>) -> (f64, f64) {
-    let mean = load.auc_cpu();
-    let cpu = match sla_ms {
-        Some(sla) => {
-            let batch: f64 = load.queries.iter().map(|q| q.work_secs).sum::<f64>()
-                + load
-                    .deployments
-                    .iter()
-                    .map(|d| d.compaction_secs)
-                    .sum::<f64>();
-            mean.max(load.ingest_cpu() + batch / (sla / 1000.0))
-        }
-        None => mean,
-    };
+fn surrogate_peaks(load: &crate::placement::PlanLoad, sla_ms: f64) -> (f64, f64) {
+    let batch: f64 = load.queries.iter().map(|q| q.work_secs).sum::<f64>()
+        + load
+            .deployments
+            .iter()
+            .map(|d| d.compaction_secs)
+            .sum::<f64>();
+    let cpu = load
+        .auc_cpu()
+        .max(load.ingest_cpu() + batch / (sla_ms / 1000.0));
     let bytes = load.static_bytes()
         + load
             .deployments
@@ -845,7 +847,7 @@ mod tests {
         use crate::placement::{cost_model_2, PlanLoad};
         let (raqes, deployments, facts) = cost_model_workload();
         for (w_cpu, w_mem) in [(1.0, 0.0), (1.0, 4.0)] {
-            for sla_ms in [None, Some(1e5), Some(2_000.0), Some(300.0)] {
+            for sla_ms in [1e5, 2_000.0, 300.0] {
                 let price = |mapping: &Mapping| {
                     cost_model_2(
                         &PlanLoad::new(&raqes, &deployments, mapping, &facts),
@@ -864,14 +866,14 @@ mod tests {
                     w_mem,
                     CostModel::Two,
                     &table_accuracy,
-                    sla_ms,
+                    Some(sla_ms),
                     None,
                 )
                 .expect("feasible");
-                assert!(sla_ms.is_none_or(|l| got.cost.latency_ms <= l));
+                assert!(got.cost.latency_ms <= sla_ms * (1.0 + 1e-9));
                 assert!(
                     (got.cost.value - best).abs() <= 1e-3 * best,
-                    "({w_cpu}, {w_mem}), {sla_ms:?}: {} vs {best} after {} solves",
+                    "({w_cpu}, {w_mem}), {sla_ms}: {} vs {best} after {} solves",
                     got.cost.value,
                     got.solves
                 );

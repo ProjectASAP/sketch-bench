@@ -367,7 +367,9 @@ Status: agreed design (ProjectASAP/ASAPQuery#777), implemented in
 and a latency SLA on a whole batch of queries. Evaluated first on the
 synthetic mixed template set; methods: ASAP (this MILP, with sharing),
 PerQuery (the same MILP without sharing) and AutoSketch-Adapted (fixed
-configs chosen by memory).
+configs chosen by memory). Cost model 1 is evaluated with and without a
+latency SLA; cost model 2 with an SLA only (without one, its provisioned
+capacity, and so its latency, is not pinned down).
 
 #### 1. Definitions
 
@@ -525,8 +527,8 @@ differ only in the CPU capacity it is given:
   and no job waits for a core. A batch's latency is then its longest
   **chain** `c_D + ℓ_{i,D}` (the newest window's compaction, then the query),
   and the SLA requires `c_D + ℓ_{i,D} ≤ L` for every assigned pair.
-- Cost model 2: jobs share the provisioned capacity `C`, so they may queue,
-  and the latency is whatever the placement gives.
+- Cost model 2 (always with an SLA): jobs share the provisioned capacity `C`,
+  so they may queue, and the latency is whatever the placement gives.
 
 #### 6. Job placement algorithm (both cost models)
 
@@ -640,7 +642,6 @@ Cost model 2:
 minimize  w1 · C + w2 · M
 s.t.      C ≥ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D}       (mean load)
           M ≥ Σ_D ((I_D + k_D · w_D) · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D} + δ_M   (memory)
-with SLA L:
           C ≥ Σ_D ρ_D · u_D + ( Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ) / L + δ_C   (batch B0)
 ```
 
@@ -679,9 +680,8 @@ placement:
    the worst batch meets `L` (doubling from the mean load, then binary search
    to a 1e-4 relative gap; it exists whenever every chain fits, and the
    doubling stops after 64 steps as a guard against float pathologies);
-   `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
-   the mean load and the placement reports the latency it gives. The plan's
-   cost is `w1 · C* + w2 · M*`.
+   `M*` is the placement's peak memory at `C*`. The plan's cost is
+   `w1 · C* + w2 · M*`.
 3. **Correct:** measure the surrogate's error on that mapping,
    `δ_C = C* − Ĉ` and `δ_M = M* − M̂` (`Ĉ`, `M̂`: the rows' values for it), add
    them to the rows and solve again. In words: the first solve may favor a

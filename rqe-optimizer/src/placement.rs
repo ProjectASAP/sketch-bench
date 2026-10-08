@@ -208,50 +208,40 @@ pub fn cost_model_1(load: &PlanLoad, w_cpu: f64, w_mem: f64) -> ModelCost {
 }
 
 /// Cost model 2: CPU and memory billed at the peak of a provisioned
-/// `(C, M)`. `C` is the smallest at which the placement's worst batch meets
-/// `sla_ms` (the mean CPU with no SLA), `M` the placement's peak memory.
+/// `(C, M)` under a latency SLA (cost model 2 is evaluated with an SLA only).
+/// `C` is the smallest at which the placement's worst batch meets `sla_ms`,
+/// `M` the placement's peak memory.
 /// `None` when a chain alone exceeds the SLA (or, failing float sanity, no
 /// `C` up to `2^MAX_DOUBLINGS` times the mean load meets it).
-pub fn cost_model_2(
-    load: &PlanLoad,
-    w_cpu: f64,
-    w_mem: f64,
-    sla_ms: Option<f64>,
-) -> Option<ModelCost> {
+pub fn cost_model_2(load: &PlanLoad, w_cpu: f64, w_mem: f64, sla_ms: f64) -> Option<ModelCost> {
     let floor = load.auc_cpu();
     let placed = |cpu: f64| load.place(cpu).expect("at or above the mean load");
-    let (cpu, placement) = match sla_ms {
-        None => (floor, placed(floor)),
-        Some(sla) => {
-            if !analytical_cost_model::meets_sla(load.longest_chain_ms(), sla) {
-                return None;
-            }
-            let meets =
-                |cpu: f64| analytical_cost_model::meets_sla(placed(cpu).worst_batch_ms, sla);
-            let mut hi = floor.max(f64::MIN_POSITIVE);
-            let mut doublings = 0;
-            while !meets(hi) {
-                if doublings == MAX_DOUBLINGS {
-                    return None;
-                }
-                hi *= 2.0;
-                doublings += 1;
-            }
-            let mut lo = floor;
-            if meets(lo) {
-                hi = lo;
-            }
-            while hi - lo > 1e-4 * hi {
-                let mid = 0.5 * (lo + hi);
-                if meets(mid) {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            (hi, placed(hi))
+    if !analytical_cost_model::meets_sla(load.longest_chain_ms(), sla_ms) {
+        return None;
+    }
+    let meets = |cpu: f64| analytical_cost_model::meets_sla(placed(cpu).worst_batch_ms, sla_ms);
+    let mut hi = floor.max(f64::MIN_POSITIVE);
+    let mut doublings = 0;
+    while !meets(hi) {
+        if doublings == MAX_DOUBLINGS {
+            return None;
         }
-    };
+        hi *= 2.0;
+        doublings += 1;
+    }
+    let mut lo = floor;
+    if meets(lo) {
+        hi = lo;
+    }
+    while hi - lo > 1e-4 * hi {
+        let mid = 0.5 * (lo + hi);
+        if meets(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let (cpu, placement) = (hi, placed(hi));
     let bytes = placement.peak_bytes;
     Some(ModelCost {
         cpu,
@@ -540,15 +530,14 @@ mod tests {
         // Memory by use: 15 bytes always, 100 bytes for 0.1 s each second.
         assert!((one.bytes - 25.0).abs() < 1e-12);
         assert!((one.latency_ms - 100.0).abs() < 1e-9);
-        // Cost model 2 with no SLA: the mean CPU, and the queue it gives.
-        let two = cost_model_2(&plan, 1.0, 0.0, None).unwrap();
-        assert!((two.cpu - 0.6).abs() < 1e-12);
-        assert!((two.latency_ms - 1000.0).abs() < 1e-6, "{}", two.latency_ms);
+        // Cost model 2 with a loose SLA: the mean CPU.
+        let loose = cost_model_2(&plan, 1.0, 0.0, 1e6).unwrap();
+        assert!((loose.cpu - 0.6).abs() < 1e-12);
         // A 200 ms SLA: the query needs 0.5 vCPU beside ingest, C = 1.0.
-        let tight = cost_model_2(&plan, 1.0, 0.0, Some(200.0)).unwrap();
+        let tight = cost_model_2(&plan, 1.0, 0.0, 200.0).unwrap();
         assert!((tight.cpu - 1.0).abs() < 1e-3, "{}", tight.cpu);
         assert!(tight.latency_ms <= 200.0);
         // Below the chain, infeasible.
-        assert!(cost_model_2(&plan, 1.0, 0.0, Some(50.0)).is_none());
+        assert!(cost_model_2(&plan, 1.0, 0.0, 50.0).is_none());
     }
 }
