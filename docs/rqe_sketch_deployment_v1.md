@@ -381,8 +381,8 @@ configs chosen by memory).
 | `c_ins`, `c_mrg`, `c_qry` | measured CPU-seconds per insert, per pairwise merge, per query of one instance |
 | `m` | measured bytes per instance |
 | `n_{i,D} = S_i / x_D` | windows a query merges |
-| `H = lcm(T_i, y_D)` | hyperperiod: the release pattern repeats every `H` |
-| batch | all query jobs released at one instant; `B0` is the one at `t = 0`, where every RAQE fires |
+| `H = lcm(T_i, y_D)` | hyperperiod: the pattern of query issues and window closes repeats every `H` |
+| batch | all query jobs issued at one instant; `B0` is the one at `t = 0`, where every RAQE fires |
 
 **Measurement assumption (sketch-bench as is).** Every sketch operation is
 single-threaded and compute-bound: sketch-bench's CPU time equals its wall
@@ -416,7 +416,7 @@ at most one core and, on a full core, takes its CPU time. The cost table's
 - When a window closes (the watermark passes its end), a **compaction** job
   merges the `k_D` partial instances of each group into one stored instance.
   With `k_D = 1` there is none.
-- Each firing of RAQE `i` releases one **query job**: merge the `n_{i,D}`
+- Each firing of RAQE `i` issues one **query job**: merge the `n_{i,D}`
   stored instances of each group for the query window, then estimate. Merging
   is part of the query. It reads the newest window, which closes at the firing
   time, so it starts after that window's compaction.
@@ -464,7 +464,7 @@ In words:
 
 #### 5. Batch latency and the SLA
 
-A batch's **latency** is the time from its release until its last query job
+A batch's **latency** is the time from its issue until its last query job
 finishes, compaction included. The **query latency** of a plan is its worst
 batch latency over the hyperperiod. A latency SLA `L` requires query latency
 `≤ L`.
@@ -490,10 +490,10 @@ sharing).
 ```text
 capacity for jobs  K = C − Σ_D ρ_D        (ingest is steady; K > 0 and the
                                            mean load at most C, else infeasible)
-simulate 2 hyperperiods, event-driven (events: releases, completions):
-  ready = compaction jobs (released at window closes)
+simulate 2 hyperperiods, event-driven (events: query issues, window closes, completions):
+  ready = compaction jobs (triggered at window closes)
         + query jobs whose newest window is compacted
-  order: release time (older first), then compaction before query
+  order: issue / trigger time (older first), then compaction before query
          (it unblocks queries), then longest remaining work first
   give rates in that order: job j gets a_j = min(1, K − rates already given)
   a job at rate a_j finishes when its remaining work / a_j elapses
@@ -508,8 +508,8 @@ In words:
    the top; the rest, `K`, which may be a fraction, is shared by compaction
    and query jobs. If the plan's mean load does not fit in `C`, there is no
    placement.
-2. **Release jobs.** Each window close releases a compaction job for its
-   deployment. Each firing releases a query job, which becomes ready only once
+2. **Issue jobs.** Each window close triggers a compaction job for its
+   deployment. Each firing issues a query job, which becomes ready only once
    its deployment's newest window is compacted.
 3. **Prioritize.** Ready jobs run oldest batch first, so no batch starves.
    Within a batch, compaction runs before queries, because queries wait for
@@ -518,11 +518,11 @@ In words:
 4. **Share capacity as rates.** In that order, each job gets up to one core
    (a single-threaded job can't use more) from the capacity still free. The
    last one served may get only a fraction and runs slower in proportion.
-5. **Advance to the next event.** Time jumps to the next release or the
+5. **Advance to the next event.** Time jumps to the next query issue or window close, or the
    earliest finishing job, everyone's remaining work drops by rate × elapsed
    time, and the rates are recomputed.
 6. **Read off the results.** A query's latency is its finish minus its
-   release, and a batch's latency is that of its last query. The CPU in use
+   issue, and a batch's latency is that of its last query. The CPU in use
    is ingest plus the rates; the memory is ingest, storage and the running
    queries' memory.
 

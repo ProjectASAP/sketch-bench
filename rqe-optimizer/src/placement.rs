@@ -169,7 +169,7 @@ impl PlanLoad {
 /// The outcome of [`PlanLoad::place`].
 #[derive(Debug, Clone)]
 pub struct Placement {
-    /// Over batches: release until the batch's last query finishes, ms.
+    /// Over batches: from the batch's issue until its last query finishes, ms.
     pub worst_batch_ms: f64,
     /// Index-aligned with the RAQEs: its worst firing, ms.
     pub raqe_latency_ms: Vec<f64>,
@@ -275,7 +275,8 @@ enum Kind {
 
 #[derive(Debug, Clone)]
 struct Job {
-    release: f64,
+    /// When the job can start: a query's issue, or a compaction's window close.
+    issued: f64,
     kind: Kind,
     /// Query: its RAQE; compaction: its deployment.
     owner: usize,
@@ -305,7 +306,7 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
         for t in (0..horizon).step_by(deployment.slide_ms as usize) {
             compaction_at.insert((d, t), jobs.len());
             jobs.push(Job {
-                release: secs(t),
+                issued: secs(t),
                 kind: Kind::Compaction,
                 owner: d,
                 remaining: deployment.compaction_secs,
@@ -318,7 +319,7 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
     for (i, query) in load.queries.iter().enumerate() {
         for t in (0..horizon).step_by(query.interval_ms as usize) {
             jobs.push(Job {
-                release: secs(t),
+                issued: secs(t),
                 kind: Kind::Query,
                 owner: i,
                 remaining: query.work_secs,
@@ -328,34 +329,34 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
             });
         }
     }
-    let mut releases: Vec<f64> = jobs.iter().map(|j| j.release).collect();
-    releases.sort_by(f64::total_cmp);
-    releases.dedup();
+    let mut issues: Vec<f64> = jobs.iter().map(|j| j.issued).collect();
+    issues.sort_by(f64::total_cmp);
+    issues.dedup();
 
     let static_bytes = load.static_bytes();
     let (mut peak_cpu, mut peak_bytes) = (load.ingest_cpu(), static_bytes);
     let mut now = 0.0;
-    let mut next_release = 0;
+    let mut next_issue = 0;
     loop {
-        while next_release < releases.len() && releases[next_release] <= now {
-            next_release += 1;
+        while next_issue < issues.len() && issues[next_issue] <= now {
+            next_issue += 1;
         }
         let mut ready: Vec<usize> = (0..jobs.len())
             .filter(|&j| {
                 let job = &jobs[j];
                 job.done_at.is_none()
-                    && job.release <= now
+                    && job.issued <= now
                     && job.after.is_none_or(|c| jobs[c].done_at.is_some())
             })
             .collect();
-        if ready.is_empty() && next_release == releases.len() {
+        if ready.is_empty() && next_issue == issues.len() {
             break;
         }
         // Older first, compaction before queries, then longest first.
         ready.sort_by(|&a, &b| {
             let (a, b) = (&jobs[a], &jobs[b]);
-            a.release
-                .total_cmp(&b.release)
+            a.issued
+                .total_cmp(&b.issued)
                 .then(a.kind.cmp(&b.kind))
                 .then(b.remaining.total_cmp(&a.remaining))
         });
@@ -377,8 +378,8 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
             .iter()
             .map(|&(j, r)| jobs[j].remaining / r)
             .fold(f64::INFINITY, f64::min);
-        let release = releases.get(next_release).copied().unwrap_or(f64::INFINITY);
-        let step = finish.min(release - now);
+        let issue = issues.get(next_issue).copied().unwrap_or(f64::INFINITY);
+        let step = finish.min(issue - now);
         for &(j, r) in &rates {
             let job = &mut jobs[j];
             job.remaining -= r * step;
@@ -393,8 +394,8 @@ fn place(load: &PlanLoad, cpu: f64) -> Option<Placement> {
     let mut batches: BTreeMap<u64, f64> = BTreeMap::new();
     let mut raqe_latency_ms = vec![0.0f64; load.queries.len()];
     for job in jobs.iter().filter(|j| j.kind == Kind::Query) {
-        let latency_ms = 1000.0 * (job.done_at.expect("every job finishes") - job.release);
-        let batch = batches.entry(job.release.to_bits()).or_insert(0.0);
+        let latency_ms = 1000.0 * (job.done_at.expect("every job finishes") - job.issued);
+        let batch = batches.entry(job.issued.to_bits()).or_insert(0.0);
         *batch = batch.max(latency_ms);
         raqe_latency_ms[job.owner] = raqe_latency_ms[job.owner].max(latency_ms);
     }
