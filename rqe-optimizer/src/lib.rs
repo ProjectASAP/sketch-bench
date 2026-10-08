@@ -15,9 +15,9 @@ pub mod candidates;
 pub mod enumerate;
 pub mod milp;
 pub mod pareto;
-pub mod placement;
 pub mod saturation;
 pub mod theory;
+pub mod usage;
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

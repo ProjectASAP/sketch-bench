@@ -285,19 +285,10 @@ pub fn compaction_bytes(deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
 }
 
 /// One firing's chain on its own cores, ms: the newest window's compaction,
-/// then the query (merge, then estimate). Under elastic CPU this is the
-/// firing's latency; no placement can do better.
+/// then the query (merge, then estimate). With elastic CPU this is the
+/// firing's latency.
 pub fn chain_ms(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
     1000.0 * compaction_secs(deployment, facts) + query_latency_ms(raqe, deployment, facts)
-}
-
-/// Slack for comparing a latency with an SLA: float error in summing µs-scale
-/// work must not turn a chain equal to `L` into a miss.
-pub const LATENCY_SLACK: f64 = 1e-9;
-
-/// Whether `latency_ms` meets `sla_ms`, with [`LATENCY_SLACK`].
-pub fn meets_sla(latency_ms: f64, sla_ms: f64) -> bool {
-    latency_ms <= sla_ms * (1.0 + LATENCY_SLACK)
 }
 
 pub fn score(
