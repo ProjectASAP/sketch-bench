@@ -359,43 +359,105 @@ evaluates at once. The default weights are `(1, 0)`: CPU only.
 Per-RAQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
 never enumerates full mappings.
 
-### Batch latency SLA (`milp::minimize_batch_sla`)
+### Cost models, batch latency and query placement (design, under review)
 
-A per-RAQE bound ignores that queries share the machine with ingest and with
-each other. The batch SLA instead bounds when a whole batch finishes: every
-RAQE fires at once (all intervals aligned, as at `t = 0`, the worst case), and
-the plan provisions `V` vCPUs that ingest and the batch share.
+Status: design for review (ProjectASAP/ASAPQuery#777). The code in
+`milp::minimize_batch_sla` implements an earlier variant (CPU priced at a
+provisioned `V`, one fluid batch) and is reworked to this design once it is
+agreed.
 
-- Ingest is a steady load of `ρ_ing = Σ_D ingest_D.cpu × u_D` vCPUs.
-- The batch is `W = Σ_(i,D)∈E latency_{i,D} × z_{i,D}` CPU-seconds of merge
-  and query work (`latency` below). Groups are independent, so the work
-  spreads over the `V − ρ_ing` vCPUs ingest leaves (a fluid queue).
-- The batch finishes at `W / (V − ρ_ing)`, which must be at most the SLA `L`.
-  One group's merge and query can't be split, so a pair whose per-group work
-  `latency_{i,D} / card(G)` exceeds `L` is forbidden (`z_{i,D} = 0`).
-- `V` also covers the mean load, `cpu = Σ_D ingest_D.cpu × u_D +
-  Σ_(i,D)∈E (merge + query)_{i,D}.cpu × z_{i,D}`.
+**Scope.** Evaluated on the synthetic mixed template set (spatial templates
+every 1 s, temporal ones every 1 min, so the hyperperiod is `H = lcm(T_i) =
+60 s`). Methods: ASAP (this MILP, with sharing), PerQuery (the same MILP
+without sharing), AutoSketch-Adapted (fixed configs chosen by memory). Each is
+evaluated under cost model 1 and cost model 2, each with no latency SLA and
+with an SLA `L`.
 
-CPU is priced at the provisioned `V` instead of the mean, as a serverless
-platform bills allocated vCPUs. With `V` continuous:
+**Load over time.**
+
+- Background, continuous: ingest CPU `ρ_ing = Σ_D λ_D · (x/y) · c_ins`, and
+  memory `M_static = Σ_D` (open + closed windows).
+- Each firing of RAQE `i` at `t = k · T_i` releases two jobs, each using at
+  most one core:
+  - precompute `P_i`: merge every group's windows,
+    `card(G) · (S/x − 1) · c_mrg` CPU-seconds (0 when `S = x`);
+  - query `Q_i`: query every group, `card(G) · c_qry`; it starts only after
+    `P_i` finishes.
+- The chain `ℓ_i = P_i + Q_i` is one firing's single-core time, i.e. the
+  per-RAQE `latency_i` below.
+- Memory: the `card(G)` merged accumulators are held from `P_i`'s start until
+  `Q_i` ends, plus `Q_i`'s output while it runs.
+- A batch is all jobs released at one instant; the heaviest, `B0`, is at
+  `t = 0`, when every RAQE fires. A batch's latency is the time from its
+  release until its last `Q_i` finishes; the reported query latency is the
+  worst batch latency.
+
+**Placement algorithm, given a resource point (C vCPU, M GiB).**
 
 ```text
-V ≥ cpu                                    (mean load)
-V ≥ ρ_ing + W / L                          (the batch finishes within L)
-
-minimize  w_cpu × V
-        + w_mem × (Σ_D ingest_D.mem × u_D
-                   + Σ_(i,D)∈E (merge + query)_{i,D}.mem × z_{i,D})
-        + Σ_D stored_D
+query_cores K = floor(C − ρ_ing)      (K ≥ 1, and M ≥ M_static, else infeasible)
+simulate 2 hyperperiods, event-driven:
+  on each release / completion:
+    ready = released P jobs + Q jobs whose P is done
+    order: release time, then Q before P, then longest-first (LPT)
+    while an idle core exists and the next ready job's memory fits:
+        start it (a P job reserves its accumulators until its Q finishes)
+outputs: per-RAQE and per-batch latency, worst batch latency, CPU(t), MEM(t)
 ```
 
-Both rows are linear in `u` and `z`, so the model stays a MILP. When the SLA
-does not bind, `V = cpu` and the plan is `minimize`'s. A tighter SLA trades
-ingest for faster queries, or buys vCPUs: it is always feasible as long as
-every RAQE has a pair whose groups fit `L`. `analytical_cost_model` gives a
-solved plan's `provisioned_vcpus` (`max(cpu, ρ_ing + W / L)`) and
-`batch_makespan_ms` (`W / (V − ρ_ing)`), which also price a plan chosen by
-another method (e.g. AutoSketch) at the same SLA.
+Two hyperperiods are simulated so that work carried over the wrap-around is
+counted.
+
+**Cost models.**
+
+| | CPU term | Memory term |
+|---|---|---|
+| Cost model 1 (AUC) | `w1 · mean_t CPU(t) = w1 · (ρ_ing + Σ_i ℓ_i / T_i)`, independent of the schedule | `w2 · mean_t MEM(t)`, from the schedule |
+| Cost model 2 (max) | `w1 · max_t CPU(t) = w1 · C` | `w2 · max_t MEM(t) = w2 · M` |
+
+Under cost model 2 the resource point `(C, M)` is decided by the MILP; under
+cost model 1 it is an input (open question 1).
+
+**MILP: a linear surrogate, then verify with the scheduler.**
+
+```text
+C ≥ ρ_ing + Σ (merge + query).cpu × z                      (stability, always)
+M ≥ M_static + Σ_{i∈B0} card(G_i) · m_i × z_{i,D}          (memory, conservative)
+with SLA L:
+  z_{i,D} = 0                       if ℓ_{i,D} > L          (the chain fits)
+  Σ_{i∈B0} ℓ_{i,D} × z_{i,D} ≤ (C − ρ_ing) × L              (capacity, necessary)
+```
+
+Graham's list-scheduling bound (`Σ ℓ / K + max ℓ`) gives the sufficient
+margin: the solution is simulated, and if its worst batch exceeds `L`, the
+capacity row's `L` becomes `L − max ℓ` and the MILP is solved again (at most
+two solves). Without an SLA the SLA rows are dropped and the simulated latency
+at the solution is reported.
+
+- Cost model 1 objective: `w1 · AUC(CPU) + w2 · AUC(mem)`, `(C, M)` fixed.
+- Cost model 2 objective: `w1 · C + w2 · M`, `(C, M)` variables.
+- PerQuery: the same MILP over single-RAQE candidates only.
+- AutoSketch: fixed configs. Cost model 2: the smallest `(C, M)` at which the
+  simulation meets `L` (binary search). Cost model 1: its AUC cost, and its
+  simulated latency at the given `(C, M)`, or infeasible if it does not fit.
+
+**Outputs.** Per (method, cost model, SLA): cost; mean and peak CPU and
+memory; the resource point; worst batch and per-RAQE latency; solve and
+verify iterations; planning time. Figure: cost vs. worst batch latency, one
+line per method, one panel per cost model and weight setting.
+
+**Open questions.**
+
+1. Cost model 1 with an SLA: capacity is free under AUC billing, so where
+   does the resource point come from? (a) a fixed `(C, M)` shared by all
+   methods (e.g. cost model 2's ASAP optimum at that SLA, or a sweep), or (b)
+   each method's own smallest `(C, M)` that meets `L`, reported next to its
+   AUC cost.
+2. Early precompute: may `P_i` merge windows that closed before the release
+   ahead of time, or must it start at release (simpler, conservative)?
+3. Integer cores under cost model 2: `C` continuous (fractional ingest plus
+   whole query cores), or an integer?
+4. Scope: synthetic mixed set only, or also the Alibaba and Google traces?
 
 ## Analytical cost model
 
@@ -533,8 +595,8 @@ latency_i = card(G) × c_qry + I × (n_i − 1) × c_mrg
 summed over the sketch and its key tracker, if any.
 
 On its own it is not a wall-clock SLA: it assumes no parallel execution across
-groups and no cheaper k-way merge. The batch SLA above spreads the summed
-`latency_i` of all RAQEs over the vCPUs ingest leaves.
+groups and no cheaper k-way merge. Under the placement design above it is one
+firing's precompute-then-query chain on one core.
 
 ## Procedure
 
@@ -563,11 +625,9 @@ each phase's CPU and memory, together with the selected deployment mapping.
   largest shard count and N the study measured merge curves at (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
-- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds, or one
-  batch SLA with provisioned vCPUs (`minimize_batch_sla`); the enumerator
-  reports latency but does not reject a mapping for it. The batch model is a
-  fluid queue: ingest is steady, groups split evenly across vCPUs, and
-  intervals align; staggered firing and scheduling overhead are not modeled.
+- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; a batch
+  SLA with two cost models and query placement is under review (above). The
+  enumerator reports latency but does not reject a mapping for it.
 - **Memory model:** query memory sums every RAQE's merge and output memory, as
   if all queries run at once; real concurrency is not modeled. Query output
   size is an estimate.
