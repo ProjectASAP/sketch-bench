@@ -77,8 +77,9 @@ const PAPER_SECS_PER_PROBE: f64 = 60.0;
 const N_BENCH: f64 = 1e8;
 
 /// (distinct probed configs, lower-bound seconds) for probes given as
-/// (config name, insert CPU per item, query-phase CPU): each distinct config
-/// is benchmarked once, inserting N_BENCH items and running one query phase.
+/// (metric/config name, insert CPU per item, query-phase CPU): each config is
+/// benchmarked once per metric, on that metric's data, inserting N_BENCH
+/// items and running one query phase.
 fn benchmark_lower_bound(probes: &[(String, f64, f64)]) -> (usize, f64) {
     let mut seen = BTreeSet::new();
     let mut secs = 0.0;
@@ -99,6 +100,9 @@ struct Workload {
     costs: BTreeMap<String, Vec<AtomicCostEntry>>,
     /// q_r: queries one evaluation issues per instance, per stream.
     queries_per_stream: BTreeMap<String, f64>,
+    /// The metric (data) each RQE reads, by RQE id: AutoSketch benchmarks a
+    /// config once per metric. Tables without one read one metric per dataset.
+    metric_of: BTreeMap<String, String>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
@@ -282,10 +286,13 @@ fn from_table(
     let mut facts = WorkloadFacts::new();
     // Queries one evaluation issues per instance, per stream (max over its RQEs).
     let mut queries_per_stream: BTreeMap<String, f64> = BTreeMap::new();
+    let mut metric_of = BTreeMap::new();
     let mut skipped_families = 0;
     let mut rounded_up_streams = BTreeSet::new();
     for r in workload["rqes"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap().to_string();
+        let metric = r["metric"].as_str().unwrap_or(dataset);
+        metric_of.insert(id.clone(), metric.to_string());
         let stream = match r["stream"].as_str() {
             Some(stream) => format!("{dataset}/{stream}"),
             None => format!(
@@ -406,6 +413,7 @@ fn from_table(
         facts,
         costs,
         queries_per_stream,
+        metric_of,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
@@ -662,7 +670,10 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
                 let c = &costs[p];
                 // One query of one instance stands in for the query phase;
                 // the stream's rows charge q_r of them.
-                let name = format!("{}/{}", c.sketch, c.sketch_config["params"]);
+                let name = format!(
+                    "{}/{}/{}",
+                    w.metric_of[&r.id], c.sketch, c.sketch_config["params"]
+                );
                 (name, c.insert_cpu_secs, c.query_cpu_secs / queries)
             })
         })
@@ -879,15 +890,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn benchmark_bound_counts_each_config_once_at_n_bench() {
+    fn benchmark_bound_counts_each_config_once_per_metric_at_n_bench() {
         let probes = [
-            ("cms/a".to_string(), 2e-8, 0.5),
-            ("cms/b".to_string(), 1e-8, 0.25),
-            ("cms/a".to_string(), 2e-8, 0.5),
+            ("data_0/cms/a".to_string(), 2e-8, 0.5),
+            ("data_0/cms/b".to_string(), 1e-8, 0.25),
+            ("data_0/cms/a".to_string(), 2e-8, 0.5),
+            ("data_1/cms/a".to_string(), 2e-8, 0.5),
         ];
         let (distinct, secs) = benchmark_lower_bound(&probes);
-        assert_eq!(distinct, 2);
-        assert!((secs - (1e8 * 2e-8 + 0.5 + 1e8 * 1e-8 + 0.25)).abs() < 1e-12);
+        assert_eq!(distinct, 3);
+        assert!((secs - (2.0 * (1e8 * 2e-8 + 0.5) + 1e8 * 1e-8 + 0.25)).abs() < 1e-12);
     }
 
     #[test]
