@@ -72,7 +72,9 @@ def fig_objective_vs_sla(runs, out):
     """Objective vs. the latency SLA, CPU-only weights, one panel per dataset."""
     fig, axes = plt.subplots(1, len(runs), figsize=(4 * len(runs), 3.2), squeeze=False)
     for ax, (name, run) in zip(axes[0], runs.items()):
-        slas = run["sla_grid_ms"]
+        # Only SLAs every RQE can meet: tighter ones exclude RQEs.
+        slas = [s for s in run["sla_grid_ms"]
+                if (r := pick(run, "asap", "cpu", s)) and r.get("rqes") == run["rqes"]]
         xs = list(range(len(slas)))
         for method in METHODS:
             points = [(x, objective(pick(run, method, "cpu", s))) for x, s in zip(xs, slas)]
@@ -84,7 +86,7 @@ def fig_objective_vs_sla(runs, out):
                                 fontsize=6, color=COLORS[method])
         ax.set_xticks(xs, [sla_text(s) for s in slas], fontsize=7)
         ax.set_yscale("log")
-        ax.set_title(name, fontsize=9)
+        ax.set_title(f"{name} ({run['rqes']} RQEs)", fontsize=9)
         ax.set_ylabel("CPU (vCPU)")
     axes[0][0].legend(fontsize=7)
     fig.tight_layout()

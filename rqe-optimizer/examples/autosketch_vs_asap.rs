@@ -72,24 +72,6 @@ const SEED: u64 = 7;
 /// AutoSketch's benchmark time per evaluated configuration, at the paper's
 /// rate: 1–2 minutes each (NSDI '24, §5.2 and Exp#9); we take 1 minute.
 const PAPER_SECS_PER_PROBE: f64 = 60.0;
-/// Items per benchmark run in AutoSketch's benchmark-time lower bound:
-/// sketch-bench's measurement size.
-const N_BENCH: f64 = 1e8;
-
-/// (distinct probed configs, lower-bound seconds) for probes given as
-/// (metric/config name, insert CPU per item, query-phase CPU): each config is
-/// benchmarked once per metric, on that metric's data, inserting N_BENCH
-/// items and running one query phase.
-fn benchmark_lower_bound(probes: &[(String, f64, f64)]) -> (usize, f64) {
-    let mut seen = BTreeSet::new();
-    let mut secs = 0.0;
-    for (name, insert, phase) in probes {
-        if seen.insert(name) {
-            secs += N_BENCH * insert + phase;
-        }
-    }
-    (seen.len(), secs)
-}
 
 /// One workload: RQEs, one metric per stream, the cost entries each stream
 /// may use, and the curves every accuracy is read from.
@@ -98,11 +80,11 @@ struct Workload {
     raqes: Vec<Raqe>,
     facts: WorkloadFacts,
     costs: BTreeMap<String, Vec<AtomicCostEntry>>,
-    /// q_r: queries one evaluation issues per instance, per stream.
-    queries_per_stream: BTreeMap<String, f64>,
     /// The metric (data) each RQE reads, by RQE id: AutoSketch benchmarks a
     /// config once per metric. Tables without one read one metric per dataset.
     metric_of: BTreeMap<String, String>,
+    /// RQEs of streams with more keys than samples/s, left out.
+    excluded_high_cardinality: Vec<String>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
@@ -288,7 +270,7 @@ fn from_table(
     let mut queries_per_stream: BTreeMap<String, f64> = BTreeMap::new();
     let mut metric_of = BTreeMap::new();
     let mut skipped_families = 0;
-    let mut rounded_up_streams = BTreeSet::new();
+    let mut stream_series: BTreeMap<String, u64> = BTreeMap::new();
     for r in workload["rqes"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap().to_string();
         let metric = r["metric"].as_str().unwrap_or(dataset);
@@ -316,9 +298,8 @@ fn from_table(
         // largest per-RQE rate (conservative). Rates below `groups`
         // samples/s are rounded up so every group has a series.
         let series = (rate * SCRAPE_MS as f64 / 1000.0).round() as u64;
-        if series < groups {
-            rounded_up_streams.insert(stream.clone());
-        }
+        let most = stream_series.entry(stream.clone()).or_default();
+        *most = (*most).max(series);
         let metric = facts.entry(stream.clone()).or_insert_with(|| MetricFacts {
             labels: label_set(&["g", "x"]),
             scrape_interval_ms: SCRAPE_MS,
@@ -402,6 +383,22 @@ fn from_table(
             (stream.clone(), rows)
         })
         .collect();
+    // A stream with more keys than samples per second can't give every key a
+    // series at one scrape a second, and rounding its rate up to its key count
+    // inflates every method's cost (Alibaba's CallGraph keys: up to 436x).
+    // Such streams are left out, and their RQEs listed.
+    let high_cardinality: BTreeSet<String> = facts
+        .iter()
+        .filter(|(stream, m)| m.cardinality[&label_set(&["g"])] > stream_series[*stream])
+        .map(|(stream, _)| stream.clone())
+        .collect();
+    let excluded_high_cardinality: Vec<String> = raqes
+        .iter()
+        .filter(|r| high_cardinality.contains(&r.metric))
+        .map(|r| r.id.clone())
+        .collect();
+    raqes.retain(|r| !high_cardinality.contains(&r.metric));
+    facts.retain(|stream, _| !high_cardinality.contains(stream));
     let name = if dataset.starts_with("synthetic") {
         format!("{dataset}/t{}", target.as_deref().unwrap_or("p95"))
     } else {
@@ -412,13 +409,13 @@ fn from_table(
         raqes,
         facts,
         costs,
-        queries_per_stream,
         metric_of,
+        excluded_high_cardinality,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
             "one metric per stream: groups from the table, samples/s = max over the stream's RQEs, scraped once a second".into(),
-            format!("streams below one sample/s per group, rounded up: {rounded_up_streams:?}"),
+            format!("streams with more keys than samples/s, left out: {high_cardinality:?}"),
             format!("costs: {COST_TABLE} under the saturation dir, one row per config"),
             "data shape per stream: the families' grid_param/grid_K, the harder side over its RQEs".into(),
             "query_cpu_secs = q_r queries per instance per evaluation".into(),
@@ -659,26 +656,35 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
     }
     let plan = plan.unwrap();
     let probes: usize = plan.searches.iter().map(|s| s.probes.len()).sum();
-    let probed: Vec<(String, f64, f64)> = plan
-        .searches
-        .iter()
-        .flat_map(|s| {
-            let r = raqes.iter().find(|r| r.id == s.raqe_id).unwrap();
-            let costs = &w.costs[&r.metric];
-            let queries = w.queries_per_stream[&r.metric];
-            s.probes.iter().map(move |&p| {
-                let c = &costs[p];
-                // One query of one instance stands in for the query phase;
-                // the stream's rows charge q_r of them.
-                let name = format!(
-                    "{}/{}/{}",
-                    w.metric_of[&r.id], c.sketch, c.sketch_config["params"]
-                );
-                (name, c.insert_cpu_secs, c.query_cpu_secs / queries)
-            })
-        })
-        .collect();
-    let (distinct_probes, bench_secs) = benchmark_lower_bound(&probed);
+    // The distinct probed (metric, config) pairs and the data shape each is
+    // benchmarked on: AutoSketch benchmarks a config once per metric, on that
+    // metric's data. scripts/autosketch_benchmark_time.py times them.
+    let mut probed_configs = BTreeMap::new();
+    for s in &plan.searches {
+        let r = raqes.iter().find(|r| r.id == s.raqe_id).unwrap();
+        let shape = w.facts[&r.metric].data_shape.get(&r.grouping_labels);
+        for &p in &s.probes {
+            let c = &w.costs[&r.metric][p];
+            let metric = &w.metric_of[&r.id];
+            probed_configs
+                .entry(format!(
+                    "{metric}/{}/{}",
+                    c.sketch, c.sketch_config["params"]
+                ))
+                .or_insert_with(|| {
+                    json!({
+                        "metric": metric,
+                        "sketch": c.sketch,
+                        "params": c.sketch_config["params"],
+                        "zipf_s": shape.map(|d| d.zipf_s),
+                        "distinct_keys": shape.map(|d| d.distinct_keys),
+                        "tail_index": shape.map(|d| d.tail_index),
+                    })
+                });
+        }
+    }
+
+    let distinct_probes = probed_configs.len();
     let paper_secs = distinct_probes as f64 * PAPER_SECS_PER_PROBE;
 
     // PerQuery-CostAware's candidates: each RQE alone. Solved per SLA below.
@@ -777,7 +783,6 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
             );
             auto["planning_secs"] = json!(median(search_secs.clone()));
             auto["probes"] = json!(probes);
-            auto["benchmark_secs_lower_bound_nbench1e8"] = json!(bench_secs);
             auto["benchmark_secs_paper_rate"] = json!(paper_secs);
             // PerQuery-CostAware: each kept RQE alone under the SLA.
             let started = Instant::now();
@@ -863,6 +868,7 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
         "workload": w.name,
         "rqes": raqes.len(),
         "dropped_unservable": {"asap": asap_unservable, "autosketch": autosketch_unservable},
+        "excluded_high_cardinality": w.excluded_high_cardinality,
         "streams": raqes.iter().map(|r| &r.metric).collect::<BTreeSet<_>>().len(),
         "runs": runs,
         "notes": w.notes,
@@ -876,8 +882,8 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
         "autosketch": {
             "probes": probes,
             "search_secs": median(search_secs),
-            "benchmark_secs_lower_bound_nbench1e8": bench_secs,
             "distinct_probes": distinct_probes,
+            "probed_configs": probed_configs.values().collect::<Vec<_>>(),
             "benchmark_secs_paper_rate": paper_secs,
         },
         "sanity_violations": sanity,
@@ -888,19 +894,6 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn benchmark_bound_counts_each_config_once_per_metric_at_n_bench() {
-        let probes = [
-            ("data_0/cms/a".to_string(), 2e-8, 0.5),
-            ("data_0/cms/b".to_string(), 1e-8, 0.25),
-            ("data_0/cms/a".to_string(), 2e-8, 0.5),
-            ("data_1/cms/a".to_string(), 2e-8, 0.5),
-        ];
-        let (distinct, secs) = benchmark_lower_bound(&probes);
-        assert_eq!(distinct, 3);
-        assert!((secs - (2.0 * (1e8 * 2e-8 + 0.5) + 1e8 * 1e-8 + 0.25)).abs() < 1e-12);
-    }
 
     #[test]
     fn a_trace_key_query_keeps_one_accumulator_per_key() {

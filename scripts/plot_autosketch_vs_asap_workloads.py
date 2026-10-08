@@ -2,9 +2,9 @@
 """Cost vs. total estimated query latency for every workload of the
 AutoSketch vs. ASAP evaluation (ProjectASAP/ASAPQuery#777, section 7): one
 column per workload (synthetic and traces), one row per weight setting, one
-line per method across the SLA grid. Total latency is the sum of the RQEs'
-estimated latencies; only points over one RQE set are joined (dashed: the
-subset tight SLAs keep). Each point is labeled with its cost.
+line per method across the SLAs every RQE can meet (tighter ones exclude
+RQEs, so their points cover fewer queries). Total latency is the sum of the
+RQEs' estimated latencies. Each point is labeled with its cost.
 
 Writes fig_cost_vs_total_latency.png into OUT.
 
@@ -61,18 +61,14 @@ def main():
         for row, w in enumerate(weights):
             ax = axes[row][col]
             for m in METHODS:
-                by_n = {}
-                for r in data["results"]:
-                    if r["method"] == m and r["weights"] == w and "objective" in r:
-                        by_n.setdefault(r["rqes"], []).append(
-                            (total_latency_ms(r), r["objective"]))
-                for n, pts in sorted(by_n.items(), reverse=True):
-                    ax.plot(*zip(*sorted(pts)), marker="o", markersize=3, color=COLORS[m],
-                            linestyle="-" if n == full else "--",
-                            label=LABELS[m] if n == full else None)
-                    for x, y in pts:
-                        ax.annotate(f"{y:.3g}", (x, y), textcoords="offset points",
-                                    xytext=(2, 2), fontsize=5, color=COLORS[m])
+                pts = [(total_latency_ms(r), r["objective"]) for r in data["results"]
+                       if r["method"] == m and r["weights"] == w and "objective" in r
+                       and r["rqes"] == full]
+                ax.plot(*zip(*sorted(pts)), marker="o", markersize=3, color=COLORS[m],
+                        label=LABELS[m])
+                for x, y in pts:
+                    ax.annotate(f"{y:.3g}", (x, y), textcoords="offset points",
+                                xytext=(2, 2), fontsize=5, color=COLORS[m])
             ax.set_xscale("log")
             ax.set_yscale("log")
             ax.tick_params(labelsize=6)

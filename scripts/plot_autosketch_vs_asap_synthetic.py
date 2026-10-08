@@ -4,9 +4,8 @@ section 7) from the JSON files of `autosketch_vs_asap synthetic`.
 
 Writes, next to the inputs:
   fig_objective_vs_latency.png   default workload: objective vs. achieved max
-                                 latency over the SLA grid, one panel per
-                                 weights; only points over one RQE set are
-                                 joined (dashed: the subset tight SLAs keep)
+                                 latency over the SLAs every RQE can meet,
+                                 one panel per weights
   fig_objective_by_dimension.png objective with no SLA, each grid dimension
                                  varied alone (templates, shared replicas, metrics)
   fig_planning_time.png          planning time vs. RQEs (metrics: 21 · m RQEs);
@@ -62,27 +61,20 @@ def fig_objective_vs_latency(runs, out):
     names = weight_names(runs)
     fig, axes = plt.subplots(1, len(names), figsize=(5 * len(names), 3.6), squeeze=False)
     for ax, w in zip(axes[0], names):
-        # Tight SLAs leave fewer RQEs, so only points over one RQE set are
-        # joined: solid for the full set, dashed for the subsets.
-        full = data["rqes"]
+        # Only SLAs every RQE can meet: tighter ones exclude RQEs, and
+        # points over different RQE sets are not comparable.
         for m in METHODS:
-            by_n = {}
-            for s in data["sla_grid_ms"]:
-                if r := pick(data, m, w, s):
-                    by_n.setdefault(r["rqes"], []).append((r["max_latency_ms"], r["objective"]))
-            for n, pts in sorted(by_n.items(), reverse=True):
-                ax.plot(*zip(*sorted(pts)), marker="o", color=COLORS[m],
-                        linestyle="-" if n == full else "--",
-                        label=LABELS[m] if n == full else None)
-                for x, y in pts:
-                    ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
-                                fontsize=6, color=COLORS[m])
+            pts = [(r["max_latency_ms"], r["objective"]) for s in data["sla_grid_ms"]
+                   if (r := pick(data, m, w, s)) and r["rqes"] == data["rqes"]]
+            ax.plot(*zip(*sorted(pts)), marker="o", color=COLORS[m], label=LABELS[m])
+            for x, y in pts:
+                ax.annotate(fmt(y), (x, y), textcoords="offset points", xytext=(3, 3),
+                            fontsize=6, color=COLORS[m])
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("max estimated latency (ms)")
         ax.set_ylabel(f"objective ({UNITS.get(w, w)})")
-        ax.set_title(f"dashboard, p95, weights {w}; dashed: subset meeting tight SLAs",
-                     fontsize=8)
+        ax.set_title(f"dashboard ({data['rqes']} RQEs), p95, weights {w}", fontsize=8)
     axes[0][0].legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(out / "fig_objective_vs_latency.png", dpi=150)
@@ -119,7 +111,7 @@ def fig_planning_time(runs, out):
     fig, ax = plt.subplots(figsize=(4.5, 3.4))
     for m in METHODS:
         pts = []
-        bench = {"lower": [], "paper": []}
+        bench = {"measured": [], "paper": []}
         for metrics in (1, 8, 16):
             data = runs.get(("dashboard", 1, metrics, "p95"))
             res = data and pick(data, m, "cpu", "inf")
@@ -129,18 +121,18 @@ def fig_planning_time(runs, out):
                     # #777 section 7: AutoSketch's planning time includes the
                     # benchmark time of every probed configuration.
                     a = data["autosketch"]
-                    bench["lower"].append((data["rqes"], res["planning_secs"]
-                                           + a["benchmark_secs_lower_bound_nbench1e8"]))
+                    bench["measured"].append((data["rqes"], res["planning_secs"]
+                                              + a["benchmark_secs_measured"]))
                     bench["paper"].append((data["rqes"], res["planning_secs"]
                                            + a["benchmark_secs_paper_rate"]))
         if pts:
             ax.plot(*zip(*pts), marker="o", label=LABELS[m] + (" (search only)"
                     if m == "autosketch" else ""), color=COLORS[m],
                     linestyle=":" if m == "autosketch" else "-")
-        for kind, style in (("lower", "-"), ("paper", "--")):
+        for kind, style in (("measured", "-"), ("paper", "--")):
             if bench[kind]:
                 ax.plot(*zip(*bench[kind]), marker="o", color=COLORS[m], linestyle=style,
-                        label=f"{LABELS[m]} + benchmark ({'lower bound' if kind == 'lower' else '60 s/probe'})")
+                        label=f"{LABELS[m]} + benchmark ({'measured' if kind == 'measured' else '60 s/probe'})")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("RQEs")
@@ -170,8 +162,8 @@ def summary(runs, out):
                      f"accuracy={key[3]}\n")
         lines.append(f"{data['rqes']} RQEs on {data['streams']} streams; sanity violations: "
                      f"{len(data['sanity_violations'])}. AutoSketch probes: "
-                     f"{data['autosketch']['probes']}, benchmark time ≥ "
-                     f"{fmt(data['autosketch']['benchmark_secs_lower_bound_nbench1e8'])} s.\n")
+                     f"{data['autosketch']['probes']}, benchmark time (measured) "
+                     f"{fmt(data['autosketch']['benchmark_secs_measured'])} s.\n")
         lines.append("| weights | SLA (ms) | RQEs | method | objective | CPU (vCPU) | "
                      "GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |")
         lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
