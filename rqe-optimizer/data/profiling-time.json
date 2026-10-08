@@ -1,78 +1,91 @@
 {
  "method": "first-to-last record timestamp per run (see scripts/profiling_time.py)",
  "runs": {
-  "#130 grid accuracy": {
-   "file": "out_grid_1e7/saturation_accuracy.jsonl",
-   "records": 30384,
-   "first": "2026-09-29T20:40:43Z",
-   "last": "2026-09-29T21:18:55Z",
-   "wall_secs": 2292.0
+  "grid top-k": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/grid_topk_main.jsonl",
+   "records": 8976,
+   "first": "2026-10-07T21:06:57Z",
+   "last": "2026-10-07T21:08:35Z",
+   "wall_secs": 98.0
   },
-  "#130 grid cost": {
-   "file": "out_grid_1e7_cost/saturation_cost.jsonl",
-   "records": 343,
-   "first": "2026-09-30T16:49:46Z",
-   "last": "2026-09-30T19:37:05Z",
-   "wall_secs": 10039.0
+  "grid top-k refill": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/grid_topk_fill.jsonl",
+   "records": 4080,
+   "first": "2026-10-07T21:49:43Z",
+   "last": "2026-10-07T21:50:25Z",
+   "wall_secs": 42.0
   },
-  "#130 1e9 subset": {
-   "file": "out_1e9/saturation_accuracy.jsonl",
-   "records": 13875,
-   "first": "2026-09-29T21:24:47Z",
-   "last": "2026-09-30T15:50:56Z",
-   "wall_secs": 66369.0
+  "grid cardinality": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/grid_card_main.jsonl",
+   "records": 3366,
+   "first": "2026-10-07T21:06:57Z",
+   "last": "2026-10-07T21:08:37Z",
+   "wall_secs": 100.0
   },
-  "#131 merge (first config)": {
-   "file": "out_merge/saturation_accuracy.jsonl",
-   "records": 8160,
-   "first": "2026-09-29T21:40:14Z",
-   "last": "2026-09-29T21:52:21Z",
-   "wall_secs": 727.0
+  "grid cardinality refill": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/grid_card_fill.jsonl",
+   "records": 1530,
+   "first": "2026-10-07T21:49:51Z",
+   "last": "2026-10-07T21:50:34Z",
+   "wall_secs": 43.0
   },
-  "#131 merge top-k grid": {
-   "file": "out_merge_topk/saturation_accuracy.jsonl",
-   "records": 34272,
-   "first": "2026-10-02T02:33:13Z",
-   "last": "2026-10-02T03:04:25Z",
-   "wall_secs": 1872.0
+  "grid quantile with merge curves": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/grid_quantile.jsonl",
+   "records": 5712,
+   "first": "2026-10-07T21:08:37Z",
+   "last": "2026-10-07T21:09:09Z",
+   "wall_secs": 32.0
   },
-  "#131 merge quantile grid": {
-   "file": "out_merge_quantile/saturation_accuracy.jsonl",
-   "records": 19040,
-   "first": "2026-10-02T03:04:26Z",
-   "last": "2026-10-02T03:06:14Z",
-   "wall_secs": 108.0
+  "KLL Pareto 2 with merge curves": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/kll_a2.jsonl",
+   "records": 1710,
+   "first": "2026-10-07T21:09:09Z",
+   "last": "2026-10-07T21:09:56Z",
+   "wall_secs": 47.0
   },
-  "#140 accuracy grid": {
-   "file": "grid/saturation_accuracy.jsonl",
-   "records": 30240,
-   "first": "2026-10-05T03:24:53Z",
-   "last": "2026-10-05T05:45:15Z",
-   "wall_secs": 8422.0
+  "KLL Pareto 3 with merge curves": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/kll_a3.jsonl",
+   "records": 1656,
+   "first": "2026-10-07T21:09:56Z",
+   "last": "2026-10-07T21:15:58Z",
+   "wall_secs": 362.0
   },
-  "#140 merge top-k": {
-   "file": "merge_topk/saturation_accuracy.jsonl",
-   "records": 32640,
-   "first": "2026-10-05T03:24:53Z",
-   "last": "2026-10-05T05:11:07Z",
-   "wall_secs": 6374.0
+  "DD Pareto 2": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/dd_a2.jsonl",
+   "records": 228,
+   "first": "2026-10-07T21:09:09Z",
+   "last": "2026-10-07T21:09:21Z",
+   "wall_secs": 12.0
   },
-  "#140 cost (178 points, N 1e8, serial)": {
-   "file": "grid/saturation_cost.serial-178.jsonl",
-   "records": 178,
-   "first": "2026-10-05T05:45:53Z",
-   "last": "2026-10-05T12:33:48Z",
-   "wall_secs": 24475.0
+  "DD Pareto 3": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/dd_a3.jsonl",
+   "records": 276,
+   "first": "2026-10-07T21:09:56Z",
+   "last": "2026-10-07T21:12:22Z",
+   "wall_secs": 146.0
   },
-  "#140 cost (62 top-k points, N 1e7, serial)": {
-   "file": "grid/saturation_cost.serial-1e7-62.jsonl",
-   "records": 62,
-   "first": "2026-10-05T20:40:49Z",
-   "last": "2026-10-05T22:45:37Z",
-   "wall_secs": 7488.0
+  "top-k rows 3 to 1e9": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/topk_1e9_3.jsonl",
+   "records": 300,
+   "first": "2026-10-07T21:06:57Z",
+   "last": "2026-10-07T21:13:26Z",
+   "wall_secs": 389.0
+  },
+  "top-k rows 5 to 1e9": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/topk_1e9_5.jsonl",
+   "records": 300,
+   "first": "2026-10-07T21:06:57Z",
+   "last": "2026-10-07T21:14:14Z",
+   "wall_secs": 437.0
+  },
+  "cost table serial": {
+   "file": "/tmp/claude-20002/-mydata/433ba0bc-4a4b-4657-9d39-8ee55b7854ee/scratchpad/prof/cost.jsonl",
+   "records": 188,
+   "first": "2026-10-07T21:07:08Z",
+   "last": "2026-10-07T21:24:35Z",
+   "wall_secs": 1047.0
   }
  },
- "total_wall_secs": 128166.0,
- "missing": [],
- "note": "Wall spans on the machines that produced each run, with that run's own --jobs. #140's discarded 12-way parallel cost records and its stopped serial N=1e8 rerun are not counted: they did not produce the tables."
+ "total_wall_secs": 2755.0,
+ "missing": []
 }

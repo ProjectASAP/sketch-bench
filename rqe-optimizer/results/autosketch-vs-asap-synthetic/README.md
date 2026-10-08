@@ -11,9 +11,36 @@ alibaba_v2022 and google_2011 run with the same inputs
 (`scripts/run_autosketch_vs_asap.sh`, results under
 `rqe-optimizer/results/autosketch-vs-asap/`); boom is left out for now.
 
-**Pending:** results are committed after the full run on the regenerated
-study (below). `rqe-optimizer/data/profiling-time.json` still holds the
-earlier runs' wall times; it is stale until refilled from the new runs.
+## Results (p95, 2026-10-07)
+
+Run on clnode155 (`machine-clnode155.txt`) over the asap_sketchlib 0.3.0
+study (#174, #178–#186), one workload at a time. Files: `synthetic-*.json`
+(raw), `summary_synthetic.md` (every weights and SLA), and the figures
+`fig_objective_vs_latency.png`, `fig_objective_by_dimension.png` and
+`fig_planning_time.png`. The traces are in `../autosketch-vs-asap/`
+(`traces-*.json`, `summary.md`, `fig1_objective.png`,
+`fig4_objective_vs_sla.png`).
+
+With no latency SLA, objective relative to ASAP (CPU only; Fargate):
+
+| Workload | RQEs | PerQuery / ASAP | AutoSketch / ASAP | Σ window/slide (ASAP, PerQuery, AutoSketch) | ASAP planning (s) |
+|---|---|---|---|---|---|
+| dashboard, r = 1 | 21 | 3.27; 3.68 | 1187; 515 | 8, 24, 7578 | 0.15 |
+| all templates, r = 1 | 50 | 2.88; 3.26 | 1028; 627 | 12, 57, 20631 | 0.70 |
+| dashboard, r = 8 | 52 | 4.21; 4.52 | 2771; 774 | 33, 109, 54243 | 0.84 |
+| dashboard, r = 64 | 57 | 4.43; 4.60 | 2768; 777 | 33, 114, 54543 | 0.92 |
+| traces, alibaba_v2022 | 51 | 1.94; 1.38 | 31; 10 | 17, 51, 1122 | 0.05 |
+| traces, google_2011 | 27 | 2.90; 2.12 | 13; 7 | 9, 27, 126 | 0.03 |
+
+No RQE was dropped as unservable, no sanity check failed (ASAP and PerQuery meet
+every SLA; ASAP ≤ PerQuery and ASAP ≤ AutoSketch where they apply), and every RQE's accuracy is read from a
+measured curve (`accuracy_source`). AutoSketch-Adapted's gap is its window
+adapter: a window as long as the query's lookback, sliding every `T`, puts
+each item into window/slide overlapping sketches (Σ window/slide), up to
+1440 for a 24 h lookback at 1 m. PerQuery-CostAware is the strong baseline.
+
+ASAP's one-time profiling (#777 §7) is `rqe-optimizer/data/profiling-time.json`:
+0.77 h of runs over the whole study, which ran in parallel on five machines.
 
 ## Inputs
 
