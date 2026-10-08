@@ -7,16 +7,28 @@
 //! autosketch_vs_asap synthetic --table FILE --target p95 --saturation-dir DIR --out FILE [--runs 1]
 //!
 //! Options for both: --weights cpu,fargate (a subset of the weight
-//! settings), --no-chosen (drop per-RQE choices). The synthetic --target is
-//! the accuracy level; there is one, p95, which traces use too.
+//! settings), --slas-ms 100,1000 (version 2's SLA grid, in ms), --no-chosen
+//! (drop per-RQE choices). The synthetic --target is the accuracy level;
+//! there is one, p95, which traces use too.
 //! ```
 //!
 //! Every plan is priced by use (`usage::usage_cost`, sketch-bench
 //! `docs/rqe_sketch_deployment_v1.md`, "Cost by use and batch latency"):
 //! `w_cpu · AUC(CPU) + w_mem · AUC(memory)`, CPU elastic, at each weight
-//! setting of #777 §4 (CPU only; Fargate's per-vCPU and per-GB prices). Its
-//! latency is reported, not constrained: a batch's latency is its longest
-//! chain (the newest window's compaction, then the query).
+//! setting of #777 §4 (CPU only; Fargate's per-vCPU and per-GB prices). A
+//! batch's latency is its longest chain (the newest window's compaction,
+//! then the query): the job placement's closed form with elastic CPU. Two
+//! versions, in one output file:
+//!
+//! - **Version 1, no latency constraint** (`results`): each method's cheapest
+//!   plan, its latency reported, and ASAP's and PerQuery's cost–latency
+//!   frontiers (`bound_ms`).
+//! - **Version 2, a batch latency SLA** (`sla_results`): at each SLA of the
+//!   grid, ASAP's and PerQuery's cheapest plan whose batch latency is at most
+//!   the SLA (`milp::minimize_usage_cost` with `latency_bound_ms`, exact).
+//!   An SLA below a method's tightest feasible bound has no plan
+//!   (`infeasible`). AutoSketch ignores the SLA; its plan is recorded at
+//!   each SLA with `meets_sla`.
 //!
 //! Methods:
 //! - **ASAP:** `milp::minimize_usage_cost` over every RQE jointly, with
@@ -70,6 +82,12 @@ const SEED: u64 = 7;
 /// AutoSketch's benchmark time per evaluated configuration, at the paper's
 /// rate: 1–2 minutes each (NSDI '24, §5.2 and Exp#9); we take 1 minute.
 const PAPER_SECS_PER_PROBE: f64 = 60.0;
+/// Version 2's batch latency SLAs, ms (`--slas-ms` overrides).
+const SLAS_MS: [f64; 5] = [100.0, 300.0, 1_000.0, 3_000.0, 10_000.0];
+/// Relative slack for comparing a latency with an SLA. Must equal
+/// `milp::minimize_usage_cost`'s (private) slack for chains vs. its bound, so
+/// "the tightest bound meets the SLA" and "the MILP has a plan" agree.
+const LATENCY_SLACK: f64 = 1e-9;
 
 /// One workload: RQEs, one metric per stream, the cost entries each stream
 /// may use, and the curves every accuracy is read from.
@@ -137,10 +155,13 @@ fn main() {
         "--weights names none of {:?}",
         WEIGHTS.map(|(name, ..)| name)
     );
-    let mut result = evaluate(&workload, runs, &weights);
+    let slas = arg(&args, "--slas-ms").map_or(SLAS_MS.to_vec(), |list| parse_slas(&list));
+    let mut result = evaluate(&workload, runs, &weights, &slas);
     if args.iter().any(|a| a == "--no-chosen") {
-        for r in result["results"].as_array_mut().unwrap() {
-            r.as_object_mut().unwrap().remove("chosen");
+        for key in ["results", "sla_results"] {
+            for r in result[key].as_array_mut().unwrap() {
+                r.as_object_mut().unwrap().remove("chosen");
+            }
         }
     }
     std::fs::write(&out, serde_json::to_string_pretty(&result).unwrap()).unwrap();
@@ -579,6 +600,32 @@ fn summarize(
     })
 }
 
+/// `--slas-ms`: comma-separated SLAs in ms, each positive and finite.
+fn parse_slas(list: &str) -> Vec<f64> {
+    let slas: Vec<f64> = list
+        .split(',')
+        .map(|x| {
+            let sla: f64 = x
+                .trim()
+                .parse()
+                .unwrap_or_else(|_| panic!("--slas-ms: {x:?} is not a number"));
+            assert!(
+                sla.is_finite() && sla > 0.0,
+                "--slas-ms: {x:?} must be positive"
+            );
+            sla
+        })
+        .collect();
+    assert!(!slas.is_empty(), "--slas-ms is empty");
+    slas
+}
+
+/// Whether a latency meets an SLA, with [`LATENCY_SLACK`]. A method has a plan
+/// at an SLA iff its tightest feasible bound meets it.
+fn meets_sla(latency_ms: f64, sla_ms: f64) -> bool {
+    latency_ms <= sla_ms * (1.0 + LATENCY_SLACK)
+}
+
 /// Points on each method's cost–latency frontier: bounds log-spaced from the
 /// tightest feasible one to the unbounded plan's latency.
 const FRONTIER_POINTS: usize = 12;
@@ -624,8 +671,9 @@ fn frontier_bounds(lo: f64, hi: f64, n: usize, extra: f64) -> Vec<f64> {
 
 /// Every method's plan for `w`, priced by use at each weight setting, with
 /// its latency (`docs/rqe_sketch_deployment_v1.md`, "Cost by use and batch
-/// latency"). No latency constraint: latency is reported, not bounded.
-fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)]) -> Value {
+/// latency"): version 1 (no latency constraint; frontier) in `results`,
+/// version 2 (each SLA of `slas`) in `sla_results`.
+fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64]) -> Value {
     let asap_accuracy = |r: &Raqe, d: &Deployment| w.asap_accuracy(r, d);
     // Drop RQEs that either method cannot serve, so both plan the same batch.
     let all_candidates = candidates(w, &w.raqes);
@@ -730,6 +778,7 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)]) -> Value {
     let perquery_tightest = tightest_bound_ms(w, &raqes, &perquery_candidates, Some(&allowed));
 
     let mut results = Vec::new();
+    let mut sla_results = Vec::new();
     let mut sanity = Vec::new();
     for &(weight_name, w_cpu, w_mem) in weights {
         let solve =
@@ -838,6 +887,56 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)]) -> Value {
                 results.push(v);
             }
         }
+        // Version 2: at each SLA, the cheapest plan whose batch latency meets
+        // it; AutoSketch's one plan, with whether it meets it.
+        for &sla in slas {
+            let mut at_sla = Vec::new();
+            for (method, candidates, allowed, tightest) in [
+                ("asap", &asap_candidates, None, asap_tightest),
+                (
+                    "perquery",
+                    &perquery_candidates,
+                    Some(&allowed[..]),
+                    perquery_tightest,
+                ),
+            ] {
+                let mut v = if meets_sla(tightest, sla) {
+                    let (solved, secs) = solve(candidates, allowed, Some(sla));
+                    let mut v = match solved {
+                        Ok(s) => summarize(w, &raqes, candidates, &s.mapping, w_cpu, w_mem),
+                        Err(e) => json!({"error": e.to_string()}),
+                    };
+                    v["milp_solve_secs"] = json!(secs);
+                    v["infeasible"] = json!(false);
+                    if v.get("error").is_some()
+                        || v["latency_ms"].as_f64().is_some_and(|l| !meets_sla(l, sla))
+                    {
+                        sanity.push(json!({"check": "plan meets the SLA", "method": method, "weights": weight_name, "sla_ms": sla, "latency_ms": v.get("latency_ms"), "error": v.get("error")}));
+                    }
+                    v
+                } else {
+                    json!({"infeasible": true, "tightest_bound_ms": tightest})
+                };
+                v["method"] = json!(method);
+                at_sla.push(v);
+            }
+            if let (Some(a), Some(b)) = (cost(&at_sla[0]), cost(&at_sla[1])) {
+                if a > b * (1.0 + 1e-6) {
+                    sanity.push(json!({"check": "asap <= perquery at the SLA", "weights": weight_name, "sla_ms": sla, "asap": a, "perquery": b}));
+                }
+            }
+            let mut v = auto.clone();
+            v["meets_sla"] = json!(meets_sla(auto_latency_ms, sla));
+            v["method"] = json!("autosketch");
+            at_sla.push(v);
+            for mut v in at_sla {
+                v["weights"] = json!(weight_name);
+                v["sla_ms"] = json!(sla);
+                v["rqes"] = json!(raqes.len());
+                sla_results.push(v);
+            }
+        }
+
         for (method, value) in [("asap", asap), ("autosketch", auto), ("perquery", perq)] {
             let mut v = value;
             v["method"] = json!(method);
@@ -872,8 +971,10 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)]) -> Value {
             "probed_configs": probed_configs.values().collect::<Vec<_>>(),
             "benchmark_secs_paper_rate": paper_secs,
         },
+        "sla_grid_ms": slas,
         "sanity_violations": sanity,
         "results": results,
+        "sla_results": sla_results,
     })
 }
 
@@ -900,6 +1001,25 @@ mod tests {
         let r = json!({"query_id": "topk100_x"});
         assert_eq!(topk_k_of(&r, Capability::TopKByValue), Some(100));
         assert_eq!(topk_k_of(&r, Capability::Quantile), None);
+    }
+
+    #[test]
+    fn slas_parse_and_reject_nonsense() {
+        assert_eq!(parse_slas("100, 1000,2.5"), vec![100.0, 1000.0, 2.5]);
+        for bad in ["", "0", "-5", "inf", "fast"] {
+            assert!(
+                std::panic::catch_unwind(|| parse_slas(bad)).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_method_has_a_plan_at_an_sla_iff_its_tightest_bound_meets_it() {
+        assert!(meets_sla(100.0, 100.0));
+        // Float residue in summing µs-scale work is not a miss.
+        assert!(meets_sla(100.0 * (1.0 + 1e-12), 100.0));
+        assert!(!meets_sla(100.1, 100.0));
     }
 
     #[test]
