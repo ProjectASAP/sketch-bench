@@ -401,6 +401,38 @@ at most one core and, on a full core, takes its CPU time. The cost table's
 
 `w1`, `w2` are per vCPU and per GiB (CPU only: `(1, 0)`; Fargate prices).
 
+**How they map to cloud billing.**
+
+| Billing | Examples | Billed for | Cost model |
+|---|---|---|---|
+| Fixed-shape VMs | EC2, GCE instances | the instance shape (vCPU and memory bundled in fixed sizes) × run time, used or not | 2 (peak), but CPU and memory come in discrete bundles, not as two linear terms |
+| Containers billed by allocation | AWS Fargate, GKE Autopilot, Azure Container Instances | the allocated vCPU and GB, priced separately, × run time (per second) | 2: `w1 · C + w2 · M`, separable and linear (our second weights are Fargate's prices) |
+| Autoscaled containers and services | Cloud Run (request-based billing, CPU only while serving), Dataflow streaming, Flink on Kubernetes with an autoscaler | the allocation as it follows the load, × time | 1 (AUC), the closer the finer the scaling |
+| Serverless functions | AWS Lambda, Cloud Functions | configured memory × run time (GB-seconds), CPU proportional to memory | per-job memory × time; not modeled |
+| Managed analytics and streaming | Snowflake (warehouse size × run time), Managed Flink (KPU-hours, 1 vCPU + 4 GB each) | bundled resource units × time | 2 (provisioned), like the first two |
+
+Reserved instances, savings plans and spot change prices, not the billing
+structure.
+
+Our ingest runs all the time and queries come in periodic bursts.
+
+- **Cost model 2** matches the first two rows and is how stream processing is
+  usually deployed: ingest and queries share long-running containers or VMs,
+  billed for what they are allocated. Both scheduling and the plan trade cost
+  for latency: making a job wait for a core or for memory lowers the peaks, so
+  a smaller `(C, M)` costs less at the price of latency.
+- **Cost model 1** matches fine-grained autoscaling, idealized: capacity
+  follows the load at once. Queueing saves nothing here (a job holds its
+  memory only while it runs, so its memory × time is the same whenever it
+  runs, and CPU is billed by use), so every job runs as soon as it is ready.
+  The trade-off comes from the plan instead: a cheap plan keeps short windows
+  and merges many of them at query time (long queries), a fast one precomputes
+  more at ingest (more open windows, more CPU and memory). A tighter SLA rules
+  out the slow chains and forces the dearer plans. Real autoscalers add
+  trade-offs this idealization leaves out (scale-up and cold-start delay,
+  warm minimum instances billed while idle, billing granularity), so cost
+  model 1 is a lower bound for them.
+
 #### 3. CPU: parts and how each is computed
 
 | Part | When | CPU-seconds | Mean vCPUs |
@@ -495,7 +527,10 @@ simulate 2 hyperperiods, event-driven (events: query issues, window closes, comp
         + query jobs whose newest window is compacted
   order: issue / trigger time (older first), then compaction before query
          (it unblocks queries), then longest remaining work first
-  give rates in that order: job j gets a_j = min(1, K − rates already given)
+  give rates in that order: job j gets a_j = min(1, K − rates already given),
+    if it is already running or its memory fits in M − Σ (I_D + stored_D)
+    − the running jobs' memory; otherwise it waits (a running job holds its
+    memory until it finishes)
   a job at rate a_j finishes when its remaining work / a_j elapses
   recompute the rates at every event
 outputs: per-RAQE and per-batch latency, worst batch latency,
@@ -517,7 +552,12 @@ In words:
    up running alone at the end of the batch.
 4. **Share capacity as rates.** In that order, each job gets up to one core
    (a single-threaded job can't use more) from the capacity still free. The
-   last one served may get only a fraction and runs slower in proportion.
+   last one served may get only a fraction and runs slower in proportion. A
+   job that is not yet running starts only if its memory fits in what ingest,
+   storage and the running jobs leave of `M`; otherwise it waits, so a smaller
+   `M` trades latency for a lower memory peak. Once started, a job keeps its
+   memory until it finishes. (Cost model 1 runs the placement with unlimited
+   capacity and memory.)
 5. **Advance to the next event.** Time jumps to the next query issue or window close, or the
    earliest finishing job, everyone's remaining work drops by rate × elapsed
    time, and the rates are recomputed.
@@ -615,11 +655,14 @@ holds every query at once. The plan is then sized and corrected with the
 placement:
 
 1. **Solve** the MILP and take its mapping.
-2. **Size** the mapping with the placement: `C*` is the smallest `C` at which
-   the worst batch meets `L` (binary search; it exists whenever every chain
-   fits); `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
-   the mean load and the placement reports the latency it gives. The plan's
-   cost is `w1 · C* + w2 · M*`.
+2. **Size** the mapping with the placement: search `(C, M)` for the cheapest
+   `w1 · C + w2 · M` at which the worst batch meets `L`. For each memory level
+   `M`, from the unconstrained peak down to ingest + storage + the largest
+   query (a fixed set of levels), binary-search the smallest `C` that meets
+   `L` with jobs waiting for memory above `M`; keep the cheapest pair
+   `(C*, M*)`. A smaller `M` makes jobs wait for memory, so it needs a larger
+   `C` to meet the same `L`. Without an SLA, `C*` is the mean load and `M*`
+   the smallest level, and the placement reports the latency they give.
 3. **Correct:** measure the surrogate's error on that mapping,
    `δ_C = C* − Ĉ` and `δ_M = M* − M̂` (`Ĉ`, `M̂`: the rows' values for it), add
    them to the rows and solve again. In words: the first solve may favor a
