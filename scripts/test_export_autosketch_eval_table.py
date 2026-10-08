@@ -115,7 +115,7 @@ class ExportTest(unittest.TestCase):
             plan = [line.rstrip("\n").split("\t") for line in f]
         self.assertEqual(len(plan), len(synthetic_plan()))
         self.assertEqual(len(os.listdir(out)), len({row[0] for row in plan}) + 1)
-        default = "synthetic-templatesdashboard-shared1.json"
+        default = "synthetic-templatesall-shared1.json"
         self.assertIn([default, "p95", default[:-5] + "-tp95.json"], plan)
         with open(os.path.join(out, "synthetic-templatesall-shared1.json")) as f:
             rqes = {r["query_id"] + "/" + r["range"]: r
@@ -209,7 +209,7 @@ class DashboardAndSharedTest(unittest.TestCase):
     def test_metric_copies_share_nothing_and_grow_linearly(self):
         point = {**SYNTHETIC_DEFAULT, "metrics": 8}
         qs = metric_queries(point)
-        self.assertEqual(len(qs), 8 * 21)
+        self.assertEqual(len(qs), 8 * 50)
         self.assertEqual(len({(q["query_id"], q["range"]) for q in qs}), len(qs))
         streams = {q["stream"].split("/")[0] for q in qs}
         self.assertEqual(streams, {f"data_{i}" for i in range(8)})

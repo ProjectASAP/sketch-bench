@@ -6,27 +6,26 @@
 //! autosketch_vs_asap traces --dataset alibaba_v2022 --saturation-dir DIR --out FILE [--runs 5]
 //! autosketch_vs_asap synthetic --table FILE --target p95 --saturation-dir DIR --out FILE [--runs 1]
 //!
-//! Options for both: --slas-ms 0.01,inf (override the SLA grid), --weights
-//! cpu,fargate (a subset of the objective weights), --no-chosen (drop
-//! per-RQE choices). The synthetic --target is the accuracy level; there is
-//! one, p95, which traces use too.
+//! Options for both: --weights cpu,fargate (a subset of the weight
+//! settings), --no-chosen (drop per-RQE choices). The synthetic --target is
+//! the accuracy level; there is one, p95, which traces use too.
 //! ```
 //!
-//! Every plan is scored by `analytical_cost_model::score` (#145): mean CPU and
-//! memory per phase. ASAP and PerQuery-CostAware minimize
-//! `w_cpu · CPU + w_mem · memory_GiB` at each weight setting of #777 §4:
-//! CPU only, and Fargate's per-vCPU and per-GB prices. AutoSketch's plan does
-//! not depend on the weights and is scored under each.
+//! Every plan is priced by use (`usage::usage_cost`, sketch-bench
+//! `docs/rqe_sketch_deployment_v1.md`, "Cost by use and batch latency"):
+//! `w_cpu · AUC(CPU) + w_mem · AUC(memory)`, CPU elastic, at each weight
+//! setting of #777 §4 (CPU only; Fargate's per-vCPU and per-GB prices). Its
+//! latency is reported, not constrained: a batch's latency is its longest
+//! chain (the newest window's compaction, then the query).
 //!
 //! Methods:
-//! - **ASAP:** `milp::minimize` over every RQE jointly, with one absolute
-//!   latency SLA for every RQE, swept over the SLA grid. RQEs that no eligible
-//!   deployment can serve within an SLA are excluded from every method at
-//!   that SLA, and listed in the output.
+//! - **ASAP:** `milp::minimize_usage_cost` over every RQE jointly, with
+//!   sharing.
 //! - **AutoSketch-Adapted:** `autosketch::plan`, one search and one dedicated
-//!   deployment per RQE, accuracy only.
-//! - **PerQuery-CostAware:** `milp::minimize` on each RQE alone, under the
-//!   same SLA; the per-RQE deployments are kept separate.
+//!   deployment per RQE, accuracy only; its plan does not depend on the
+//!   weights and is priced under each.
+//! - **PerQuery-CostAware:** `milp::minimize_usage_cost` over each RQE's own
+//!   candidates (separate copies, so no sharing).
 //!
 //! `traces` reads `data/autosketch-eval/table.json` (alibaba_v2022 and
 //! google_2011 are evaluated; boom is left out for now); `synthetic` reads one
@@ -47,11 +46,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use rqe_optimizer::analytical_cost_model::{score, PlanCost};
+use rqe_optimizer::analytical_cost_model::chain_ms;
 use rqe_optimizer::autosketch;
 use rqe_optimizer::candidates::{build_all_candidates, eligible_deployments_for, is_eligible};
-use rqe_optimizer::milp::{minimize, MilpSolution, Objective};
+use rqe_optimizer::milp::minimize_usage_cost;
 use rqe_optimizer::saturation::{DataShape, SaturationCurves, COST_TABLE};
+use rqe_optimizer::usage::{usage_cost, PlanLoad};
 use rqe_optimizer::{
     validate_facts, AtomicCostEntry, AtomicCostTable, Capability, Deployment, LabelSet, Mapping,
     MetricFacts, Millis, Raqe, WorkloadFacts,
@@ -59,8 +59,6 @@ use rqe_optimizer::{
 use serde_json::{json, Value};
 
 const TRACES_TABLE: &str = "rqe-optimizer/data/autosketch-eval/table.json";
-/// Absolute per-RQE latency SLAs in ms (#777 §5), plus no SLA.
-const SLAS_MS: [f64; 9] = [0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, f64::INFINITY];
 /// Objective weights of #777 §4: CPU only, then AWS Fargate (us-east-1,
 /// Linux/x86) $/vCPU-hour and $/GB-hour, so the objective reads in $/hour.
 const WEIGHTS: [(&str, f64, f64); 2] = [("cpu", 1.0, 0.0), ("fargate", 0.0405, 0.00445)];
@@ -127,30 +125,19 @@ fn main() {
         ),
         _ => panic!("usage: autosketch_vs_asap (traces|synthetic) ... --out FILE"),
     };
-    let slas: Vec<f64> = arg(&args, "--slas-ms").map_or(SLAS_MS.to_vec(), |list| {
-        list.split(',')
-            .map(|x| {
-                if x == "inf" {
-                    f64::INFINITY
-                } else {
-                    x.parse().unwrap()
-                }
-            })
-            .collect()
-    });
-    let weights: Vec<(&str, Objective)> = WEIGHTS
+    let weights: Vec<(&str, f64, f64)> = WEIGHTS
         .iter()
+        .copied()
         .filter(|(name, ..)| {
             arg(&args, "--weights").is_none_or(|list| list.split(',').any(|w| w == *name))
         })
-        .map(|&(name, w_cpu, w_mem)| (name, Objective::AUCCost { w_cpu, w_mem }))
         .collect();
     assert!(
         !weights.is_empty(),
         "--weights names none of {:?}",
         WEIGHTS.map(|(name, ..)| name)
     );
-    let mut result = evaluate(&workload, runs, &slas, &weights);
+    let mut result = evaluate(&workload, runs, &weights);
     if args.iter().any(|a| a == "--no-chosen") {
         for r in result["results"].as_array_mut().unwrap() {
             r.as_object_mut().unwrap().remove("chosen");
@@ -511,40 +498,49 @@ fn autosketch_plan(
     })
 }
 
-/// Modeled latency of `r` on `d`, in ms.
-fn latency_ms(r: &Raqe, d: &Deployment, facts: &WorkloadFacts) -> f64 {
-    score(
-        std::slice::from_ref(r),
-        std::slice::from_ref(d),
-        &vec![0],
-        facts,
-    )
-    .query_latency_ms[0]
-}
-
-fn phase(p: &rqe_optimizer::analytical_cost_model::PhaseCost) -> Value {
-    json!({"cpu": p.cpu_secs_per_sec, "gib": p.memory_bytes / BYTES_PER_GIB})
-}
-
+/// A plan priced by use (`usage::usage_cost`): its cost, CPU and memory by
+/// part, its latency (the longest chain) and each RQE's choice.
 fn summarize(
     w: &Workload,
     raqes: &[Raqe],
     deployments: &[Deployment],
     mapping: &Mapping,
-    cost: &PlanCost,
-    objective: &Objective,
-    sla_ms: Option<f64>,
+    w_cpu: f64,
+    w_mem: f64,
 ) -> Value {
-    let active: BTreeSet<usize> = mapping.iter().copied().collect();
-    let violations = cost
-        .query_latency_ms
+    let load = PlanLoad::new(raqes, deployments, mapping, &w.facts);
+    let cost = usage_cost(&load, w_cpu, w_mem);
+    let secs = |ms: Millis| ms as f64 / 1000.0;
+    let gib = |bytes: f64| bytes / BYTES_PER_GIB;
+    let ingest_cpu: f64 = load.deployments.iter().map(|d| d.ingest_cpu).sum();
+    let compaction_cpu: f64 = load
+        .deployments
         .iter()
-        .filter(|&&l| sla_ms.is_some_and(|sla| l > sla * (1.0 + 1e-9)))
-        .count();
+        .map(|d| d.compaction_secs / secs(d.slide_ms))
+        .sum();
+    let query_cpu: f64 = load
+        .queries
+        .iter()
+        .map(|q| q.work_secs / secs(q.interval_ms))
+        .sum();
+    let ingest_bytes: f64 = load.deployments.iter().map(|d| d.ingest_bytes).sum();
+    let storage_bytes: f64 = load.deployments.iter().map(|d| d.storage_bytes).sum();
+    let compaction_bytes: f64 = load
+        .deployments
+        .iter()
+        .map(|d| d.compaction_bytes * d.compaction_secs / secs(d.slide_ms))
+        .sum();
+    let query_bytes: f64 = load
+        .queries
+        .iter()
+        .map(|q| q.memory_bytes * q.work_secs / secs(q.interval_ms))
+        .sum();
+    let latencies: Vec<f64> = load.queries.iter().map(|q| q.chain_ms).collect();
+    let active: BTreeSet<usize> = mapping.iter().copied().collect();
     let chosen: Vec<Value> = raqes
         .iter()
         .zip(mapping)
-        .zip(&cost.query_latency_ms)
+        .zip(&latencies)
         .map(|((r, &di), &latency)| {
             let d = &deployments[di];
             json!({
@@ -554,6 +550,7 @@ fn summarize(
                 "window_secs": d.window_ms / 1000,
                 "slide_secs": d.slide_ms / 1000,
                 "merged_shards": r.lookback_ms / d.window_ms,
+                "ingest_workers": rqe_optimizer::analytical_cost_model::ingest_workers(d, &w.facts),
                 "latency_ms": latency,
                 "deployment": di,
                 "asap_accuracy": w.asap_accuracy(r, d),
@@ -565,42 +562,70 @@ fn summarize(
         })
         .collect();
     json!({
-        "objective": objective.value(cost),
-        "cpu": cost.cpu_secs_per_sec(),
-        "gib": cost.memory_bytes() / BYTES_PER_GIB,
-        "phases": {
-            "ingest": phase(&cost.ingest),
-            "merge": phase(&cost.merge),
-            "query": phase(&cost.query),
-            "storage": phase(&cost.storage),
+        "objective": cost.value,
+        "cpu": cost.cpu,
+        "gib": gib(cost.bytes),
+        "cpu_parts": {"ingest": ingest_cpu, "compaction": compaction_cpu, "query": query_cpu},
+        "gib_parts": {
+            "ingest": gib(ingest_bytes),
+            "storage": gib(storage_bytes),
+            "compaction": gib(compaction_bytes),
+            "query": gib(query_bytes),
         },
-        "latency_violations": violations,
-        "max_latency_ms": cost.query_latency_ms.iter().copied().fold(0.0, f64::max),
-        "median_latency_ms": (!cost.query_latency_ms.is_empty())
-            .then(|| median(cost.query_latency_ms.clone())),
-        "feasible": violations == 0,
+        "latency_ms": cost.latency_ms,
+        "median_latency_ms": (!latencies.is_empty()).then(|| median(latencies.clone())),
         "active_deployments": active.len(),
         "chosen": chosen,
     })
 }
 
-/// A MILP solution's active deployments, and which one serves each RQE.
-fn planned(s: &MilpSolution) -> (Vec<Deployment>, Mapping) {
-    (
-        s.deployments.iter().map(|p| p.deployment.clone()).collect(),
-        s.raqes.iter().map(|p| p.deployment).collect(),
-    )
+/// Points on each method's cost–latency frontier: bounds log-spaced from the
+/// tightest feasible one to the unbounded plan's latency.
+const FRONTIER_POINTS: usize = 12;
+
+/// The tightest latency bound any plan over `candidates` can meet: the
+/// largest, over RQEs, of each RQE's fastest chain among its (allowed)
+/// eligible candidates.
+fn tightest_bound_ms(
+    w: &Workload,
+    raqes: &[Raqe],
+    candidates: &[Deployment],
+    allowed: Option<&[Vec<usize>]>,
+) -> f64 {
+    let accuracy = |r: &Raqe, d: &Deployment| w.asap_accuracy(r, d);
+    raqes
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            eligible_deployments_for(r, candidates, &w.facts, &accuracy)
+                .into_iter()
+                .filter(|d| allowed.is_none_or(|allowed| allowed[i].contains(d)))
+                .map(|d| chain_ms(r, &candidates[d], &w.facts))
+                .fold(f64::INFINITY, f64::min)
+        })
+        .fold(0.0, f64::max)
 }
 
-fn sla_label(sla_ms: f64) -> Value {
-    if sla_ms.is_finite() {
-        json!(sla_ms)
+/// `n` bounds log-spaced over `[lo, hi]`, plus `extra` when it falls inside.
+fn frontier_bounds(lo: f64, hi: f64, n: usize, extra: f64) -> Vec<f64> {
+    let mut bounds: Vec<f64> = if hi > lo && lo > 0.0 {
+        (0..n)
+            .map(|k| lo * (hi / lo).powf(k as f64 / (n - 1) as f64))
+            .collect()
     } else {
-        json!("inf")
+        vec![lo]
+    };
+    if extra >= lo && extra < hi {
+        bounds.push(extra);
     }
+    bounds.sort_by(f64::total_cmp);
+    bounds
 }
 
-fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective)]) -> Value {
+/// Every method's plan for `w`, priced by use at each weight setting, with
+/// its latency (`docs/rqe_sketch_deployment_v1.md`, "Cost by use and batch
+/// latency"). No latency constraint: latency is reported, not bounded.
+fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)]) -> Value {
     let asap_accuracy = |r: &Raqe, d: &Deployment| w.asap_accuracy(r, d);
     // Drop RQEs that either method cannot serve, so both plan the same batch.
     let all_candidates = candidates(w, &w.raqes);
@@ -634,19 +659,7 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
         panic!("invalid facts: {problems:?}");
     }
 
-    // Fastest latency each RQE can reach on any eligible deployment. An RQE
-    // over an SLA is excluded from every method at that SLA.
-    let min_latency: Vec<f64> = raqes
-        .iter()
-        .map(|r| {
-            eligible_deployments_for(r, &all_candidates, &w.facts, &asap_accuracy)
-                .into_iter()
-                .map(|di| latency_ms(r, &all_candidates[di], &w.facts))
-                .fold(f64::INFINITY, f64::min)
-        })
-        .collect();
-
-    // AutoSketch: one plan, independent of the weights and the SLA.
+    // AutoSketch: one plan, independent of the weights.
     let mut search_secs = Vec::new();
     let mut plan = None;
     for _ in 0..runs {
@@ -683,185 +696,155 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
                 });
         }
     }
-
     let distinct_probes = probed_configs.len();
     let paper_secs = distinct_probes as f64 * PAPER_SECS_PER_PROBE;
 
-    // PerQuery-CostAware's candidates: each RQE alone. Solved per SLA below.
+    // ASAP's candidates, for the whole batch.
+    let mut build_secs = Vec::new();
+    let mut asap_candidates = Vec::new();
+    for _ in 0..runs {
+        let started = Instant::now();
+        asap_candidates = candidates(w, &raqes);
+        build_secs.push(started.elapsed().as_secs_f64());
+    }
+    // PerQuery's: each RQE's own candidates, as separate copies, so no two
+    // RQEs share a deployment.
     let started = Instant::now();
-    let singles: Vec<Vec<Deployment>> = raqes
-        .iter()
-        .map(|r| candidates(w, std::slice::from_ref(r)))
-        .collect();
-    let singles_build_secs = started.elapsed().as_secs_f64();
+    let mut perquery_candidates: Vec<Deployment> = Vec::new();
+    let mut allowed: Vec<Vec<usize>> = Vec::new();
+    for r in &raqes {
+        let own = candidates(w, std::slice::from_ref(r));
+        allowed.push((perquery_candidates.len()..perquery_candidates.len() + own.len()).collect());
+        perquery_candidates.extend(own);
+    }
+    let perquery_build_secs = started.elapsed().as_secs_f64();
+
+    // AutoSketch's plan ignores the weights and latency: one point.
+    let auto_latency_ms = usage_cost(
+        &PlanLoad::new(&raqes, &plan.deployments, &plan.mapping, &w.facts),
+        1.0,
+        0.0,
+    )
+    .latency_ms;
+    let asap_tightest = tightest_bound_ms(w, &raqes, &asap_candidates, None);
+    let perquery_tightest = tightest_bound_ms(w, &raqes, &perquery_candidates, Some(&allowed));
 
     let mut results = Vec::new();
     let mut sanity = Vec::new();
-    let mut excluded_by_sla = serde_json::Map::new();
-    for &sla in slas {
-        let sla_ms = sla.is_finite().then_some(sla);
-        let kept: Vec<usize> = (0..raqes.len())
-            .filter(|&i| min_latency[i] <= sla)
-            .collect();
-        let excluded: Vec<&str> = (0..raqes.len())
-            .filter(|i| !kept.contains(i))
-            .map(|i| raqes[i].id.as_str())
-            .collect();
-        excluded_by_sla.insert(
-            sla_label(sla).to_string().trim_matches('"').to_string(),
-            json!(excluded),
-        );
-        if kept.is_empty() {
-            continue;
-        }
-        let sla_raqes: Vec<Raqe> = kept
-            .iter()
-            .map(|&i| Raqe {
-                latency_sla_ms: sla_ms,
-                ..raqes[i].clone()
-            })
-            .collect();
-        let identity: Mapping = (0..sla_raqes.len()).collect();
-
-        let mut build_secs = Vec::new();
-        let mut asap_candidates = Vec::new();
-        for _ in 0..runs {
-            let started = Instant::now();
-            asap_candidates = candidates(w, &sla_raqes);
-            build_secs.push(started.elapsed().as_secs_f64());
-        }
-        let auto_deployments: Vec<Deployment> = kept
-            .iter()
-            .map(|&i| plan.deployments[plan.mapping[i]].clone())
-            .collect();
-        let auto_cost = score(&sla_raqes, &auto_deployments, &identity, &w.facts);
-
-        for (weight_name, objective) in weights {
-            let mut solve_secs = Vec::new();
-            let mut solution = None;
-            for _ in 0..runs {
+    for &(weight_name, w_cpu, w_mem) in weights {
+        let solve =
+            |candidates: &[Deployment], allowed: Option<&[Vec<usize>]>, bound: Option<f64>| {
                 let started = Instant::now();
-                let solved = minimize(
-                    &sla_raqes,
-                    &asap_candidates,
+                let solved = minimize_usage_cost(
+                    &raqes,
+                    candidates,
                     &w.facts,
-                    *objective,
+                    w_cpu,
+                    w_mem,
                     &asap_accuracy,
+                    allowed,
+                    bound,
                 );
-                solve_secs.push(started.elapsed().as_secs_f64());
-                solution = Some(solved);
+                (solved, started.elapsed().as_secs_f64())
+            };
+        // ASAP unbounded: the cheapest plan, timed over `runs`.
+        let mut solve_secs = Vec::new();
+        let mut solution = None;
+        for _ in 0..runs {
+            let (solved, secs) = solve(&asap_candidates, None, None);
+            solve_secs.push(secs);
+            solution = Some(solved);
+        }
+        let asap = match solution.unwrap() {
+            Ok(s) => {
+                let mut v = summarize(w, &raqes, &asap_candidates, &s.mapping, w_cpu, w_mem);
+                v["planning_secs"] = json!(median(build_secs.clone()) + median(solve_secs.clone()));
+                v["candidate_build_secs"] = json!(median(build_secs.clone()));
+                v["milp_solve_secs"] = json!(median(solve_secs.clone()));
+                v["candidates"] = json!(asap_candidates.len());
+                v
             }
-            let asap = match solution.unwrap() {
-                Ok(s) => {
-                    let (deployments, mapping) = planned(&s);
-                    let mut v = summarize(
-                        w,
-                        &sla_raqes,
-                        &deployments,
-                        &mapping,
-                        &s.plan_cost,
-                        objective,
-                        sla_ms,
-                    );
-                    v["planning_secs"] =
-                        json!(median(build_secs.clone()) + median(solve_secs.clone()));
-                    v["candidate_build_secs"] = json!(median(build_secs.clone()));
-                    v["milp_solve_secs"] = json!(median(solve_secs.clone()));
-                    v["candidates"] = json!(asap_candidates.len());
-                    v
-                }
-                Err(e) => json!({"error": e.to_string()}),
-            };
-            let mut auto = summarize(
-                w,
-                &sla_raqes,
-                &auto_deployments,
-                &identity,
-                &auto_cost,
-                objective,
-                sla_ms,
-            );
-            auto["planning_secs"] = json!(median(search_secs.clone()));
-            auto["probes"] = json!(probes);
-            auto["benchmark_secs_paper_rate"] = json!(paper_secs);
-            // PerQuery-CostAware: each kept RQE alone under the SLA.
-            let started = Instant::now();
-            let perquery_deployments: Result<Vec<Deployment>, String> = kept
-                .iter()
-                .zip(&sla_raqes)
-                .map(|(&i, r)| {
-                    minimize(
-                        std::slice::from_ref(r),
-                        &singles[i],
-                        &w.facts,
-                        *objective,
-                        &asap_accuracy,
-                    )
-                    .map(|solved| {
-                        let (deployments, mapping) = planned(&solved);
-                        deployments[mapping[0]].clone()
-                    })
-                    .map_err(|e| format!("{}: {e}", r.id))
-                })
-                .collect();
-            let perquery_secs = started.elapsed().as_secs_f64() + singles_build_secs;
-            let mut perq = match perquery_deployments {
-                Ok(deployments) => {
-                    let cost = score(&sla_raqes, &deployments, &identity, &w.facts);
-                    summarize(
-                        w,
-                        &sla_raqes,
-                        &deployments,
-                        &identity,
-                        &cost,
-                        objective,
-                        sla_ms,
-                    )
-                }
-                Err(e) => json!({"error": e}),
-            };
-            perq["planning_secs"] = json!(perquery_secs);
+            Err(e) => json!({"error": e.to_string()}),
+        };
+        let (perquery, perquery_solve_secs) = solve(&perquery_candidates, Some(&allowed), None);
+        let mut perq = match perquery {
+            Ok(s) => summarize(w, &raqes, &perquery_candidates, &s.mapping, w_cpu, w_mem),
+            Err(e) => json!({"error": e.to_string()}),
+        };
+        perq["planning_secs"] = json!(perquery_solve_secs + perquery_build_secs);
+        let mut auto = summarize(w, &raqes, &plan.deployments, &plan.mapping, w_cpu, w_mem);
+        auto["planning_secs"] = json!(median(search_secs.clone()));
+        auto["probes"] = json!(probes);
+        auto["benchmark_secs_paper_rate"] = json!(paper_secs);
 
-            // ASAP meets every SLA, and costs no more than AutoSketch whenever
-            // AutoSketch meets it too, nor than PerQuery.
-            if asap.get("error").is_some() || asap["latency_violations"] != 0 {
-                sanity.push(json!({
-                    "check": "asap meets every SLA", "weights": weight_name,
-                    "sla_ms": sla_label(sla), "asap": asap,
-                }));
+        // ASAP costs no more than PerQuery, nor than AutoSketch when every
+        // AutoSketch choice is one ASAP could make.
+        let cost = |v: &Value| v["objective"].as_f64();
+        if let (Some(a), Some(b)) = (cost(&asap), cost(&perq)) {
+            if a > b * (1.0 + 1e-6) {
+                sanity.push(json!({"check": "asap <= perquery", "weights": weight_name, "asap": a, "perquery": b}));
             }
-            if let (Some(a), Some(b)) = (asap["objective"].as_f64(), auto["objective"].as_f64()) {
-                if auto["feasible"] == true && a > b * (1.0 + 1e-6) {
-                    let not_eligible: Vec<&str> = sla_raqes
-                        .iter()
-                        .zip(&auto_deployments)
-                        .filter(|(r, d)| !is_eligible(r, d, &w.facts, &asap_accuracy))
-                        .map(|(r, _)| r.id.as_str())
-                        .collect();
-                    sanity.push(json!({
-                        "check": "asap <= autosketch", "weights": weight_name,
-                        "sla_ms": sla_label(sla), "asap": a, "autosketch": b,
-                        "autosketch_choices_ineligible_for_asap": not_eligible,
-                    }));
+        }
+        if let (Some(a), Some(b)) = (cost(&asap), cost(&auto)) {
+            let not_eligible: Vec<&str> = raqes
+                .iter()
+                .zip(&plan.mapping)
+                .filter(|(r, &d)| !is_eligible(r, &plan.deployments[d], &w.facts, &asap_accuracy))
+                .map(|(r, _)| r.id.as_str())
+                .collect();
+            if not_eligible.is_empty() && a > b * (1.0 + 1e-6) {
+                sanity.push(json!({"check": "asap <= autosketch", "weights": weight_name, "asap": a, "autosketch": b}));
+            }
+        }
+        if asap.get("error").is_some() || perq.get("error").is_some() {
+            sanity.push(json!({"check": "every method solves", "weights": weight_name, "asap": asap.get("error"), "perquery": perq.get("error")}));
+        }
+
+        // The frontiers: the cheapest plan at most `L` slow, for a sweep of
+        // `L` from the tightest feasible bound to the unbounded latency, and
+        // at AutoSketch's latency.
+        for (method, candidates, allowed, tightest, unbounded) in [
+            ("asap", &asap_candidates, None, asap_tightest, &asap),
+            (
+                "perquery",
+                &perquery_candidates,
+                Some(&allowed[..]),
+                perquery_tightest,
+                &perq,
+            ),
+        ] {
+            let Some(hi) = unbounded["latency_ms"].as_f64() else {
+                continue;
+            };
+            let mut previous: Option<f64> = None;
+            for bound in frontier_bounds(tightest, hi, FRONTIER_POINTS, auto_latency_ms) {
+                let (solved, secs) = solve(candidates, allowed, Some(bound));
+                let mut v = match solved {
+                    Ok(s) => summarize(w, &raqes, candidates, &s.mapping, w_cpu, w_mem),
+                    Err(e) => json!({"error": e.to_string()}),
+                };
+                // A looser bound never costs more.
+                if let (Some(prev), Some(now)) = (previous, cost(&v)) {
+                    if now > prev * (1.0 + 1e-6) {
+                        sanity.push(json!({"check": "frontier is monotone", "method": method, "weights": weight_name, "bound_ms": bound}));
+                    }
                 }
-            }
-            if perq.get("error").is_some() || perq["latency_violations"] != 0 {
-                sanity.push(json!({"check": "perquery meets every SLA", "weights": weight_name, "sla_ms": sla_label(sla), "perquery": perq}));
-            }
-            if let (Some(a), Some(b)) = (asap["objective"].as_f64(), perq["objective"].as_f64()) {
-                if a > b * (1.0 + 1e-6) {
-                    sanity.push(json!({"check": "asap <= perquery", "weights": weight_name, "sla_ms": sla_label(sla), "asap": a, "perquery": b}));
-                }
-            }
-            for (method, value) in [("asap", asap), ("autosketch", auto), ("perquery", perq)] {
-                let mut v = value;
+                previous = cost(&v).or(previous);
                 v["method"] = json!(method);
                 v["weights"] = json!(weight_name);
-                v["sla_ms"] = sla_label(sla);
-                v["rqes"] = json!(sla_raqes.len());
-                v["excluded_by_sla"] = json!(excluded.len());
+                v["bound_ms"] = json!(bound);
+                v["milp_solve_secs"] = json!(secs);
+                v["rqes"] = json!(raqes.len());
                 results.push(v);
             }
+        }
+        for (method, value) in [("asap", asap), ("autosketch", auto), ("perquery", perq)] {
+            let mut v = value;
+            v["method"] = json!(method);
+            v["weights"] = json!(weight_name);
+            v["bound_ms"] = Value::Null;
+            v["rqes"] = json!(raqes.len());
+            results.push(v);
         }
     }
     json!({
@@ -872,13 +855,16 @@ fn evaluate(w: &Workload, runs: usize, slas: &[f64], weights: &[(&str, Objective
         "streams": raqes.iter().map(|r| &r.metric).collect::<BTreeSet<_>>().len(),
         "runs": runs,
         "notes": w.notes,
-        "sla_grid_ms": slas.iter().map(|&l| sla_label(l)).collect::<Vec<_>>(),
-        "weights": weights.iter().map(|(name, o)| {
-            let Objective::AUCCost { w_cpu, w_mem } = o;
+        "cost_model": "w_cpu * AUC(CPU) + w_mem * AUC(memory), billed by use; latency = longest chain, reported",
+        "weights": weights.iter().map(|&(name, w_cpu, w_mem)| {
             json!({"name": name, "w_cpu": w_cpu, "w_mem": w_mem})
         }).collect::<Vec<_>>(),
-        "min_latency_ms": raqes.iter().zip(&min_latency).map(|(r, &l)| (r.id.clone(), json!(l))).collect::<serde_json::Map<_, _>>(),
-        "excluded_by_sla": excluded_by_sla,
+        "frontier": {
+            "points": FRONTIER_POINTS,
+            "asap_tightest_bound_ms": asap_tightest,
+            "perquery_tightest_bound_ms": perquery_tightest,
+            "autosketch_latency_ms": auto_latency_ms,
+        },
         "autosketch": {
             "probes": probes,
             "search_secs": median(search_secs),

@@ -228,14 +228,13 @@ SHARED_QUANTILES = 3
 SHARED_INTERVALS = [10, 60, 300]
 SHARED_SEED = 7
 TEMPLATE_SETS = ["dashboard", "all"]
-# Workload grid (#777 section 6): the default, then one dimension at a time.
-# One accuracy level, 95% in each family's metric (the runner's p95).
-# `shared` replicas read one metric (the sharing benefit; past r = 8 they
-# repeat RQEs already drawn); `metrics` copies of the template set each read
-# their own metric, so RQEs grow as 21 · m (planning time vs. RQEs).
-SYNTHETIC_DEFAULT = {"templates": "dashboard", "shared": 1, "metrics": 1, "target": "p95"}
+# Workload grid (#777 section 6): the mixed template set ("all"), then each
+# scaling dimension alone. One accuracy level, 95% in each family's metric
+# (the runner's p95). `shared` replicas read one metric (the sharing benefit);
+# `metrics` copies of the template set each read their own metric, so RQEs
+# grow as 50 · m (planning time vs. RQEs).
+SYNTHETIC_DEFAULT = {"templates": "all", "shared": 1, "metrics": 1, "target": "p95"}
 SYNTHETIC_GRID = {
-    "templates": TEMPLATE_SETS,
     "shared": [1, 8],
     "metrics": [1, 8, 16],
 }
