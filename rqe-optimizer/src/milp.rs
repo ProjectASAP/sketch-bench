@@ -39,9 +39,32 @@ impl Objective {
         })
     }
 
+    /// The objective with CPU priced at the plan's provisioned vCPUs
+    /// ([`analytical_cost_model::provisioned_vcpus`]) instead of its mean.
+    pub fn value_provisioned(&self, plan_cost: &PlanCost, batch_sla_ms: Option<f64>) -> f64 {
+        self.weigh(PhaseCost {
+            cpu_secs_per_sec: analytical_cost_model::provisioned_vcpus(plan_cost, batch_sla_ms),
+            memory_bytes: plan_cost.memory_bytes(),
+        })
+    }
+
     fn weigh(&self, cost: PhaseCost) -> f64 {
         let Objective::AUCCost { w_cpu, w_mem } = *self;
         w_cpu * cost.cpu_secs_per_sec + w_mem * cost.memory_bytes / BYTES_PER_GIB
+    }
+
+    fn weigh_cpu(&self, cost: PhaseCost) -> f64 {
+        self.weigh(PhaseCost {
+            memory_bytes: 0.0,
+            ..cost
+        })
+    }
+
+    fn weigh_memory(&self, cost: PhaseCost) -> f64 {
+        self.weigh(PhaseCost {
+            cpu_secs_per_sec: 0.0,
+            ..cost
+        })
     }
 }
 
@@ -81,6 +104,40 @@ pub fn minimize(
     facts: &WorkloadFacts,
     objective: Objective,
     accuracy: &Accuracy,
+) -> Result<MilpSolution, ResolutionError> {
+    solve(raqes, deployments, facts, objective, accuracy, None)
+}
+
+/// [`minimize`] under a batch latency SLA instead of per-RAQE bounds: every
+/// RAQE fires at once, ingest and the batch share the plan's provisioned
+/// vCPUs `V`, and the batch must finish within `batch_sla_ms`. CPU is priced
+/// at `V` (see `docs/rqe_sketch_deployment_v1.md`, "Batch latency SLA"),
+/// which equals the mean CPU when the SLA does not bind.
+pub fn minimize_batch_sla(
+    raqes: &[Raqe],
+    deployments: &[Deployment],
+    facts: &WorkloadFacts,
+    objective: Objective,
+    accuracy: &Accuracy,
+    batch_sla_ms: f64,
+) -> Result<MilpSolution, ResolutionError> {
+    solve(
+        raqes,
+        deployments,
+        facts,
+        objective,
+        accuracy,
+        Some(batch_sla_ms),
+    )
+}
+
+fn solve(
+    raqes: &[Raqe],
+    deployments: &[Deployment],
+    facts: &WorkloadFacts,
+    objective: Objective,
+    accuracy: &Accuracy,
+    batch_sla_ms: Option<f64>,
 ) -> Result<MilpSolution, ResolutionError> {
     let eligible: Vec<Vec<usize>> = raqes
         .iter()
@@ -155,20 +212,62 @@ pub fn minimize(
     };
 
     let mut goal: Expression = deployment_storage_cost.iter().sum();
-    for (&cost, &active_variable) in ingest_cost.iter().zip(&active) {
-        goal.add_mul(cost / reference, active_variable);
+    // Under a batch SLA, CPU is priced at the provisioned vCPUs, `cpu` (scaled
+    // by `w_cpu / reference`): at least the mean CPU, and at least ingest plus
+    // the batch's work over the SLA. Memory stays in the goal per phase.
+    let mut mean_cpu = Expression::from(0.0);
+    let mut batch_cpu = Expression::from(0.0);
+    let cpu = batch_sla_ms.map(|_| variables.add(variable().min(0)));
+    for (deployment_index, &active_variable) in active.iter().enumerate() {
+        let deployment = &deployments[deployment_index];
+        if cpu.is_some() {
+            let ingest = analytical_cost_model::ingest(deployment, facts);
+            goal.add_mul(objective.weigh_memory(ingest) / reference, active_variable);
+            let ingest_cpu = objective.weigh_cpu(ingest) / reference;
+            mean_cpu.add_mul(ingest_cpu, active_variable);
+            batch_cpu.add_mul(ingest_cpu, active_variable);
+        } else {
+            goal.add_mul(ingest_cost[deployment_index] / reference, active_variable);
+        }
     }
     for (raqe_index, choices) in assignments.iter().enumerate() {
         for &(deployment_index, assignment) in choices {
-            goal.add_mul(
-                merge_and_query_cost(&raqes[raqe_index], &deployments[deployment_index])
-                    / reference,
-                assignment,
-            );
+            let raqe = &raqes[raqe_index];
+            let deployment = &deployments[deployment_index];
+            match batch_sla_ms {
+                Some(sla_ms) => {
+                    let mut merge_and_query = analytical_cost_model::merge(raqe, deployment, facts);
+                    merge_and_query += analytical_cost_model::query(raqe, deployment, facts);
+                    goal.add_mul(
+                        objective.weigh_memory(merge_and_query) / reference,
+                        assignment,
+                    );
+                    mean_cpu.add_mul(objective.weigh_cpu(merge_and_query) / reference, assignment);
+                    // The batch's work, CPU-sec, as vCPUs held for the SLA.
+                    let work = PhaseCost {
+                        cpu_secs_per_sec: analytical_cost_model::query_latency_ms(
+                            raqe, deployment, facts,
+                        ) / sla_ms,
+                        memory_bytes: 0.0,
+                    };
+                    batch_cpu.add_mul(objective.weigh_cpu(work) / reference, assignment);
+                }
+                None => goal.add_mul(
+                    merge_and_query_cost(raqe, deployment) / reference,
+                    assignment,
+                ),
+            }
         }
+    }
+    if let Some(cpu) = cpu {
+        goal += cpu;
     }
 
     let mut model = variables.minimise(goal).using(default_solver);
+    if let Some(cpu) = cpu {
+        model.add_constraint((mean_cpu - cpu).leq(0));
+        model.add_constraint((batch_cpu - cpu).leq(0));
+    }
     for (raqe_index, choices) in assignments.iter().enumerate() {
         let assignment_sum: Expression = choices.iter().map(|(_, variable)| *variable).sum();
         model.add_constraint(assignment_sum.eq(1));
@@ -190,7 +289,12 @@ pub fn minimize(
             // forbids the choices over it. Comparing in f64 here, not in the
             // solver, keeps µs latencies clear of its feasibility tolerance.
             let latency_ms = analytical_cost_model::query_latency_ms(raqe, deployment, facts);
-            if raqe.latency_sla_ms.is_some_and(|limit| latency_ms > limit) {
+            // Under a batch SLA, one group's merge and query can't be split
+            // across vCPUs, so it alone must fit the SLA.
+            let group_latency_ms = analytical_cost_model::group_latency_ms(raqe, deployment, facts);
+            if raqe.latency_sla_ms.is_some_and(|limit| latency_ms > limit)
+                || batch_sla_ms.is_some_and(|limit| group_latency_ms > limit)
+            {
                 model.add_constraint(Expression::from(assignment).leq(0));
             }
         }
@@ -392,6 +496,117 @@ mod tests {
             ..raqes[0].clone()
         };
         assert_eq!(solve(&[bounded]), vec![1]);
+    }
+
+    /// Under a batch SLA, the MILP's plan, priced at its provisioned vCPUs,
+    /// is the best of every mapping whose groups each fit the SLA.
+    fn assert_batch_sla_matches_brute_force(
+        raqes: &[Raqe],
+        deployments: &[Deployment],
+        objective: Objective,
+        sla_ms: f64,
+    ) {
+        // 100 groups, so a batch's work spreads over vCPUs.
+        let facts = facts(100, 100);
+        let fits = |mapping: &Mapping| {
+            mapping.iter().zip(raqes).all(|(&d, raqe)| {
+                analytical_cost_model::group_latency_ms(raqe, &deployments[d], &facts) <= sla_ms
+            })
+        };
+        let best = brute_force(raqes, deployments, &facts, &table_accuracy)
+            .iter()
+            .filter(|mapping| fits(mapping))
+            .map(|mapping| {
+                objective
+                    .value_provisioned(&score(raqes, deployments, mapping, &facts), Some(sla_ms))
+            })
+            .min_by(f64::total_cmp)
+            .expect("test workload is servable within the SLA");
+        let milp = minimize_batch_sla(
+            raqes,
+            deployments,
+            &facts,
+            objective,
+            &table_accuracy,
+            sla_ms,
+        )
+        .expect("feasible MILP");
+        let got = objective.value_provisioned(&milp.plan_cost, Some(sla_ms));
+        assert!(
+            (got - best).abs() <= 1e-9 * best,
+            "{objective:?}, SLA {sla_ms} ms: {got} vs {best}"
+        );
+    }
+
+    #[test]
+    fn batch_sla_matches_brute_force_at_every_sla() {
+        let raqes = vec![raqe("frequent", 60_000), raqe("long", 600_000)];
+        // Cheap ingest with slow queries, or the reverse.
+        let deployments = vec![
+            deployment(1.0, 0.5 * BYTES_PER_GIB, 400.0),
+            deployment(3.0, 0.1 * BYTES_PER_GIB, 1.0),
+            deployment(0.2, 2.0 * BYTES_PER_GIB, 1.0),
+        ];
+        for objective in [weights(1.0, 0.0), weights(1.0, 4.0)] {
+            // Down to an SLA that rules out the slow-query deployment's groups.
+            for sla_ms in [1e12, 1e7, 1e6, 2e4] {
+                assert_batch_sla_matches_brute_force(&raqes, &deployments, objective, sla_ms);
+            }
+        }
+    }
+
+    #[test]
+    fn a_loose_batch_sla_prices_the_mean_cpu() {
+        let raqes = vec![raqe("frequent", 60_000), raqe("long", 600_000)];
+        let deployments = vec![deployment(1.0, 20.0, 400.0), deployment(3.0, 10.0, 1.0)];
+        let facts = facts(1, 1);
+        let free = minimize(
+            &raqes,
+            &deployments,
+            &facts,
+            Objective::default(),
+            &table_accuracy,
+        )
+        .expect("feasible MILP");
+        let loose = minimize_batch_sla(
+            &raqes,
+            &deployments,
+            &facts,
+            Objective::default(),
+            &table_accuracy,
+            1e12,
+        )
+        .expect("feasible MILP");
+        assert_eq!(chosen(&loose, &deployments), chosen(&free, &deployments));
+        assert_eq!(
+            analytical_cost_model::provisioned_vcpus(&loose.plan_cost, Some(1e12)),
+            loose.plan_cost.cpu_secs_per_sec()
+        );
+    }
+
+    #[test]
+    fn a_tight_batch_sla_provisions_for_the_batch_and_meets_it() {
+        let raqes = vec![raqe("r", 60_000)];
+        // 100 groups at 100 samples/s. Ingest 100 vCPU and 300 s of query
+        // work, or ingest 120 and 100 s: 105 vs. 121.7 mean vCPUs.
+        let deployments = vec![deployment(1.0, 20.0, 3.0), deployment(1.2, 10.0, 1.0)];
+        let facts = facts(100, 100);
+        let sla_ms = 3_000.0;
+        let milp = minimize_batch_sla(
+            &raqes,
+            &deployments,
+            &facts,
+            Objective::default(),
+            &table_accuracy,
+            sla_ms,
+        )
+        .expect("feasible MILP");
+        // Within 3 s: 120 + 100 s / 3 s = 153.3 vCPUs beats 100 + 300 / 3 = 200.
+        assert_eq!(chosen(&milp, &deployments), vec![1]);
+        let vcpus = analytical_cost_model::provisioned_vcpus(&milp.plan_cost, Some(sla_ms));
+        assert!((vcpus - (120.0 + 100.0 / 3.0)).abs() < 1e-9, "{vcpus}");
+        let makespan = analytical_cost_model::batch_makespan_ms(&milp.plan_cost, vcpus);
+        assert!((makespan - sla_ms).abs() < 1e-6, "{makespan}");
     }
 
     #[test]

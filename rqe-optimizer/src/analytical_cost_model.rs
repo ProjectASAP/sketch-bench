@@ -254,6 +254,38 @@ pub(crate) fn query_latency_ms(raqe: &Raqe, deployment: &Deployment, facts: &Wor
             .sum::<f64>()
 }
 
+/// CPU time of one aligned batch, every RAQE evaluated once: `W = Σ_i
+/// latency_i`, in CPU-seconds.
+pub fn batch_work_secs(plan: &PlanCost) -> f64 {
+    plan.query_latency_ms.iter().sum::<f64>() / 1000.0
+}
+
+/// The vCPUs a plan provisions so that ingest and an aligned batch of every
+/// RAQE share them and the batch finishes within `batch_sla_ms`: at least
+/// the mean CPU, and `ρ_ing + W / SLA` (ingest holds `ρ_ing` vCPUs, the batch
+/// runs on the rest). With no SLA, the mean CPU.
+pub fn provisioned_vcpus(plan: &PlanCost, batch_sla_ms: Option<f64>) -> f64 {
+    let mean = plan.cpu_secs_per_sec();
+    match batch_sla_ms {
+        Some(sla_ms) => {
+            mean.max(plan.ingest.cpu_secs_per_sec + batch_work_secs(plan) / (sla_ms / 1000.0))
+        }
+        None => mean,
+    }
+}
+
+/// When an aligned batch of every RAQE finishes on `vcpus`, in ms: its work
+/// spread over the vCPUs ingest leaves, `W / (V − ρ_ing)`.
+pub fn batch_makespan_ms(plan: &PlanCost, vcpus: f64) -> f64 {
+    1000.0 * batch_work_secs(plan) / (vcpus - plan.ingest.cpu_secs_per_sec)
+}
+
+/// The smallest unit of a query's work: one group's merge and query, in ms.
+/// Groups run in parallel, so a batch SLA can't finish faster than this.
+pub(crate) fn group_latency_ms(raqe: &Raqe, deployment: &Deployment, facts: &WorkloadFacts) -> f64 {
+    query_latency_ms(raqe, deployment, facts) / group_count(deployment, facts)
+}
+
 pub fn score(
     raqes: &[Raqe],
     deployments: &[Deployment],

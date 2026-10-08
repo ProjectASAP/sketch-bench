@@ -359,6 +359,44 @@ evaluates at once. The default weights are `(1, 0)`: CPU only.
 Per-RAQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
 never enumerates full mappings.
 
+### Batch latency SLA (`milp::minimize_batch_sla`)
+
+A per-RAQE bound ignores that queries share the machine with ingest and with
+each other. The batch SLA instead bounds when a whole batch finishes: every
+RAQE fires at once (all intervals aligned, as at `t = 0`, the worst case), and
+the plan provisions `V` vCPUs that ingest and the batch share.
+
+- Ingest is a steady load of `ρ_ing = Σ_D ingest_D.cpu × u_D` vCPUs.
+- The batch is `W = Σ_(i,D)∈E latency_{i,D} × z_{i,D}` CPU-seconds of merge
+  and query work (`latency` below). Groups are independent, so the work
+  spreads over the `V − ρ_ing` vCPUs ingest leaves (a fluid queue).
+- The batch finishes at `W / (V − ρ_ing)`, which must be at most the SLA `L`.
+  One group's merge and query can't be split, so a pair whose per-group work
+  `latency_{i,D} / card(G)` exceeds `L` is forbidden (`z_{i,D} = 0`).
+- `V` also covers the mean load, `cpu = Σ_D ingest_D.cpu × u_D +
+  Σ_(i,D)∈E (merge + query)_{i,D}.cpu × z_{i,D}`.
+
+CPU is priced at the provisioned `V` instead of the mean, as a serverless
+platform bills allocated vCPUs. With `V` continuous:
+
+```text
+V ≥ cpu                                    (mean load)
+V ≥ ρ_ing + W / L                          (the batch finishes within L)
+
+minimize  w_cpu × V
+        + w_mem × (Σ_D ingest_D.mem × u_D
+                   + Σ_(i,D)∈E (merge + query)_{i,D}.mem × z_{i,D})
+        + Σ_D stored_D
+```
+
+Both rows are linear in `u` and `z`, so the model stays a MILP. When the SLA
+does not bind, `V = cpu` and the plan is `minimize`'s. A tighter SLA trades
+ingest for faster queries, or buys vCPUs: it is always feasible as long as
+every RAQE has a pair whose groups fit `L`. `analytical_cost_model` gives a
+solved plan's `provisioned_vcpus` (`max(cpu, ρ_ing + W / L)`) and
+`batch_makespan_ms` (`W / (V − ρ_ing)`), which also price a plan chosen by
+another method (e.g. AutoSketch) at the same SLA.
+
 ## Analytical cost model
 
 The analytical model combines the empirical per-operation Sketch Bench
@@ -494,8 +532,9 @@ latency_i = card(G) × c_qry + I × (n_i − 1) × c_mrg
 
 summed over the sketch and its key tracker, if any.
 
-It is not a wall-clock SLA: it assumes no parallel execution across groups and
-no cheaper k-way merge.
+On its own it is not a wall-clock SLA: it assumes no parallel execution across
+groups and no cheaper k-way merge. The batch SLA above spreads the summed
+`latency_i` of all RAQEs over the vCPUs ingest leaves.
 
 ## Procedure
 
@@ -524,8 +563,11 @@ each phase's CPU and memory, together with the selected deployment mapping.
   largest shard count and N the study measured merge curves at (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
-- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; the
-  enumerator reports latency but does not reject a mapping for it.
+- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds, or one
+  batch SLA with provisioned vCPUs (`minimize_batch_sla`); the enumerator
+  reports latency but does not reject a mapping for it. The batch model is a
+  fluid queue: ingest is steady, groups split evenly across vCPUs, and
+  intervals align; staggered firing and scheduling overhead are not modeled.
 - **Memory model:** query memory sums every RAQE's merge and output memory, as
   if all queries run at once; real concurrency is not modeled. Query output
   size is an estimate.
