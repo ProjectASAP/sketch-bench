@@ -419,8 +419,9 @@ Our ingest runs all the time and queries come in periodic bursts.
 - **Cost model 2** matches the first two rows and is how stream processing is
   usually deployed: ingest and queries share long-running containers or VMs,
   billed for what they are allocated. Both scheduling and the plan trade cost
-  for latency: making a job wait for a core or for memory lowers the peaks, so
-  a smaller `(C, M)` costs less at the price of latency.
+  for latency: with fewer cores, jobs wait for one, so a smaller `C` costs
+  less at the price of latency; and a plan that merges less at query time
+  needs less capacity for the same SLA.
 - **Cost model 1** matches fine-grained autoscaling, idealized: capacity
   follows the load at once. Queueing saves nothing here (a job holds its
   memory only while it runs, so its memory × time is the same whenever it
@@ -527,10 +528,7 @@ simulate 2 hyperperiods, event-driven (events: query issues, window closes, comp
         + query jobs whose newest window is compacted
   order: issue / trigger time (older first), then compaction before query
          (it unblocks queries), then longest remaining work first
-  give rates in that order: job j gets a_j = min(1, K − rates already given),
-    if it is already running or its memory fits in M − Σ (I_D + stored_D)
-    − the running jobs' memory; otherwise it waits (a running job holds its
-    memory until it finishes)
+  give rates in that order: job j gets a_j = min(1, K − rates already given)
   a job at rate a_j finishes when its remaining work / a_j elapses
   recompute the rates at every event
 outputs: per-RAQE and per-batch latency, worst batch latency,
@@ -552,12 +550,10 @@ In words:
    up running alone at the end of the batch.
 4. **Share capacity as rates.** In that order, each job gets up to one core
    (a single-threaded job can't use more) from the capacity still free. The
-   last one served may get only a fraction and runs slower in proportion. A
-   job that is not yet running starts only if its memory fits in what ingest,
-   storage and the running jobs leave of `M`; otherwise it waits, so a smaller
-   `M` trades latency for a lower memory peak. Once started, a job keeps its
-   memory until it finishes. (Cost model 1 runs the placement with unlimited
-   capacity and memory.)
+   last one served may get only a fraction and runs slower in proportion.
+   Memory does not limit the placement: billing charges the memory allocated,
+   and `M` is set to the peak the placement reaches. (Cost model 1 runs the
+   placement with unlimited capacity.)
 5. **Advance to the next event.** Time jumps to the next query issue or window close, or the
    earliest finishing job, everyone's remaining work drops by rate × elapsed
    time, and the rates are recomputed.
@@ -655,14 +651,11 @@ holds every query at once. The plan is then sized and corrected with the
 placement:
 
 1. **Solve** the MILP and take its mapping.
-2. **Size** the mapping with the placement: search `(C, M)` for the cheapest
-   `w1 · C + w2 · M` at which the worst batch meets `L`. For each memory level
-   `M`, from the unconstrained peak down to ingest + storage + the largest
-   query (a fixed set of levels), binary-search the smallest `C` that meets
-   `L` with jobs waiting for memory above `M`; keep the cheapest pair
-   `(C*, M*)`. A smaller `M` makes jobs wait for memory, so it needs a larger
-   `C` to meet the same `L`. Without an SLA, `C*` is the mean load and `M*`
-   the smallest level, and the placement reports the latency they give.
+2. **Size** the mapping with the placement: `C*` is the smallest `C` at which
+   the worst batch meets `L` (binary search; it exists whenever every chain
+   fits); `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
+   the mean load and the placement reports the latency it gives. The plan's
+   cost is `w1 · C* + w2 · M*`.
 3. **Correct:** measure the surrogate's error on that mapping,
    `δ_C = C* − Ĉ` and `δ_M = M* − M̂` (`Ĉ`, `M̂`: the rows' values for it), add
    them to the rows and solve again. In words: the first solve may favor a
