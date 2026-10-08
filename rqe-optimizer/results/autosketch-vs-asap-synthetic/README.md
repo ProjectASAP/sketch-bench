@@ -18,7 +18,9 @@ Run on four identical CloudLab nodes (`machine-*.txt`: dashboard and all templat
 study (#174, #178–#186), one workload at a time. Files: `synthetic-*.json`
 (raw), `summary_synthetic.md` (every weights and SLA), and the figures
 `fig_objective_vs_latency.png`, `fig_objective_by_dimension.png` and
-`fig_planning_time.png`. The traces are in `../autosketch-vs-asap/`
+`fig_planning_time.png`, and `fig_cost_vs_total_latency.png` (every workload,
+synthetic and traces: cost vs. the sum of the RQEs' estimated latencies across
+the SLA grid, from `scripts/plot_autosketch_vs_asap_workloads.py`). The traces are in `../autosketch-vs-asap/`
 (`traces-*.json`, `summary.md`, `fig1_objective.png`,
 `fig4_objective_vs_sla.png`).
 
