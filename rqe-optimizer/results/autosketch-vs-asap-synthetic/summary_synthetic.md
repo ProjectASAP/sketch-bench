@@ -1,6 +1,6 @@
 # Synthetic workload: AutoSketch vs. ASAP
 
-## templates=all, shared=1, accuracy=p95
+## templates=all, shared=1, metrics=1, accuracy=p95
 
 50 RQEs on 8 streams; sanity violations: 0. AutoSketch probes: 158, benchmark time ≥ 56.6 s.
 
@@ -37,7 +37,7 @@
 | fargate | inf | 50 | PerQuery-CostAware | 0.721 | 9.97 | 71.2 | 50 | 59 | 2.97e+03 | 0.624 |
 | fargate | inf | 50 | AutoSketch-Adapted | 138 | 3.41e+03 | 65 | 50 | 2.06e+04 | 4.36 | 0.000928 |
 
-## templates=dashboard, shared=1, accuracy=p95
+## templates=dashboard, shared=1, metrics=1, accuracy=p95
 
 21 RQEs on 4 streams; sanity violations: 0. AutoSketch probes: 83, benchmark time ≥ 40.2 s.
 
@@ -74,44 +74,81 @@
 | fargate | inf | 21 | PerQuery-CostAware | 0.265 | 2.65 | 35.4 | 21 | 24 | 2.97e+03 | 0.262 |
 | fargate | inf | 21 | AutoSketch-Adapted | 37 | 911 | 35.3 | 21 | 7.58e+03 | 1.13 | 0.000394 |
 
-## templates=dashboard, shared=64, accuracy=p95
+## templates=dashboard, shared=1, metrics=16, accuracy=p95
 
-57 RQEs on 4 streams; sanity violations: 0. AutoSketch probes: 219, benchmark time ≥ 40.2 s.
+336 RQEs on 64 streams; sanity violations: 0. AutoSketch probes: 1360, benchmark time ≥ 48.8 s.
 
 | weights | SLA (ms) | RQEs | method | objective | CPU (vCPU) | GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| cpu | 0.01 | 21 | ASAP | 1.34e+03 | 1.34e+03 | 0.0299 | 7 | 4.2e+03 | 0.00843 | 0.171 |
-| cpu | 0.01 | 21 | PerQuery-CostAware | 1.61e+03 | 1.61e+03 | 0.0361 | 21 | 5.04e+03 | 0.00843 | 0.638 |
-| cpu | 0.01 | 21 | AutoSketch-Adapted | 4.7e+03 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| cpu | 0.1 | 21 | ASAP | 88.3 | 88.3 | 0.0405 | 4 | 316 | 0.0838 | 0.212 |
-| cpu | 0.1 | 21 | PerQuery-CostAware | 118 | 118 | 0.0447 | 21 | 417 | 0.094 | 0.644 |
-| cpu | 0.1 | 21 | AutoSketch-Adapted | 4.7e+03 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| cpu | 1.0 | 21 | ASAP | 9.9 | 9.9 | 0.0506 | 3 | 49 | 0.98 | 0.267 |
-| cpu | 1.0 | 21 | PerQuery-CostAware | 16.7 | 16.7 | 0.0655 | 21 | 75 | 0.98 | 0.644 |
-| cpu | 1.0 | 21 | AutoSketch-Adapted | 4.7e+03 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| cpu | 10.0 | 57 | ASAP | 174 | 174 | 70.7 | 7 | 3.76e+03 | 9.4 | 0.709 |
-| cpu | 10.0 | 57 | PerQuery-CostAware | 626 | 626 | 254 | 57 | 1.35e+04 | 9.4 | 0.723 |
-| cpu | 10.0 | 57 | AutoSketch-Adapted | 6.56e+03 | 6.56e+03 | 254 | 57 | 5.45e+04 | 1.13 | 0.000954 |
-| cpu | inf | 57 | ASAP | 2.37 | 2.37 | 136 | 4 | 33 | 1.53e+03 | 0.917 |
-| cpu | inf | 57 | PerQuery-CostAware | 10.5 | 10.5 | 632 | 57 | 114 | 3.84e+03 | 0.785 |
-| cpu | inf | 57 | AutoSketch-Adapted | 6.56e+03 | 6.56e+03 | 254 | 57 | 5.45e+04 | 1.13 | 0.000954 |
-| fargate | 0.01 | 21 | ASAP | 54.4 | 1.34e+03 | 0.0299 | 7 | 4.2e+03 | 0.00843 | 0.176 |
-| fargate | 0.01 | 21 | PerQuery-CostAware | 65.2 | 1.61e+03 | 0.0361 | 21 | 5.04e+03 | 0.00843 | 0.639 |
-| fargate | 0.01 | 21 | AutoSketch-Adapted | 190 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| fargate | 0.1 | 21 | ASAP | 3.58 | 88.3 | 0.0405 | 4 | 316 | 0.0838 | 0.227 |
-| fargate | 0.1 | 21 | PerQuery-CostAware | 4.79 | 118 | 0.0447 | 21 | 417 | 0.094 | 0.643 |
-| fargate | 0.1 | 21 | AutoSketch-Adapted | 190 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| fargate | 1.0 | 21 | ASAP | 0.401 | 9.9 | 0.0506 | 3 | 49 | 0.98 | 0.251 |
-| fargate | 1.0 | 21 | PerQuery-CostAware | 0.676 | 16.7 | 0.0655 | 21 | 75 | 0.98 | 0.646 |
-| fargate | 1.0 | 21 | AutoSketch-Adapted | 190 | 4.7e+03 | 0.036 | 21 | 1.4e+04 | 0.00436 | 0.000954 |
-| fargate | 10.0 | 57 | ASAP | 7.35 | 174 | 70.7 | 7 | 3.76e+03 | 9.4 | 0.789 |
-| fargate | 10.0 | 57 | PerQuery-CostAware | 26.5 | 626 | 254 | 57 | 1.35e+04 | 9.4 | 0.729 |
-| fargate | 10.0 | 57 | AutoSketch-Adapted | 267 | 6.56e+03 | 254 | 57 | 5.45e+04 | 1.13 | 0.000954 |
-| fargate | inf | 57 | ASAP | 0.343 | 2.45 | 54.8 | 4 | 21 | 1.98e+03 | 1.26 |
-| fargate | inf | 57 | PerQuery-CostAware | 1.58 | 11 | 255 | 57 | 96 | 3.96e+03 | 0.797 |
-| fargate | inf | 57 | AutoSketch-Adapted | 267 | 6.56e+03 | 254 | 57 | 5.45e+04 | 1.13 | 0.000954 |
+| cpu | 0.01 | 144 | ASAP | 3.58e+03 | 3.58e+03 | 0.0809 | 112 | 1.12e+04 | 0.00843 | 0.63 |
+| cpu | 0.01 | 144 | PerQuery-CostAware | 3.58e+03 | 3.58e+03 | 0.0818 | 144 | 1.12e+04 | 0.00843 | 3.56 |
+| cpu | 0.01 | 144 | AutoSketch-Adapted | 1.04e+04 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| cpu | 0.1 | 144 | ASAP | 244 | 244 | 0.11 | 79 | 880 | 0.0838 | 0.733 |
+| cpu | 0.1 | 144 | PerQuery-CostAware | 267 | 267 | 0.101 | 144 | 976 | 0.094 | 3.58 |
+| cpu | 0.1 | 144 | AutoSketch-Adapted | 1.04e+04 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| cpu | 1.0 | 144 | ASAP | 26.8 | 26.8 | 0.138 | 48 | 144 | 0.98 | 0.778 |
+| cpu | 1.0 | 144 | PerQuery-CostAware | 44.4 | 44.4 | 0.147 | 144 | 224 | 0.98 | 3.6 |
+| cpu | 1.0 | 144 | AutoSketch-Adapted | 1.04e+04 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| cpu | 10.0 | 336 | ASAP | 470 | 470 | 190 | 112 | 1.01e+04 | 9.4 | 2.25 |
+| cpu | 10.0 | 336 | PerQuery-CostAware | 1.4e+03 | 1.4e+03 | 566 | 336 | 3.02e+04 | 9.4 | 4.05 |
+| cpu | 10.0 | 336 | AutoSketch-Adapted | 1.46e+04 | 1.46e+04 | 565 | 336 | 1.21e+05 | 1.13 | 0.0148 |
+| cpu | inf | 336 | ASAP | 12.3 | 12.3 | 362 | 64 | 128 | 1.53e+03 | 2.7 |
+| cpu | inf | 336 | PerQuery-CostAware | 40.1 | 40.1 | 1.41e+03 | 336 | 384 | 3.84e+03 | 4.28 |
+| cpu | inf | 336 | AutoSketch-Adapted | 1.46e+04 | 1.46e+04 | 565 | 336 | 1.21e+05 | 1.13 | 0.0148 |
+| fargate | 0.01 | 144 | ASAP | 145 | 3.58e+03 | 0.0809 | 112 | 1.12e+04 | 0.00843 | 0.635 |
+| fargate | 0.01 | 144 | PerQuery-CostAware | 145 | 3.58e+03 | 0.0818 | 144 | 1.12e+04 | 0.00843 | 3.56 |
+| fargate | 0.01 | 144 | AutoSketch-Adapted | 423 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| fargate | 0.1 | 144 | ASAP | 9.89 | 244 | 0.11 | 64 | 880 | 0.0838 | 0.777 |
+| fargate | 0.1 | 144 | PerQuery-CostAware | 10.8 | 267 | 0.101 | 144 | 976 | 0.094 | 3.59 |
+| fargate | 0.1 | 144 | AutoSketch-Adapted | 423 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| fargate | 1.0 | 144 | ASAP | 1.09 | 26.8 | 0.138 | 48 | 144 | 0.98 | 0.836 |
+| fargate | 1.0 | 144 | PerQuery-CostAware | 1.8 | 44.4 | 0.147 | 144 | 224 | 0.98 | 3.61 |
+| fargate | 1.0 | 144 | AutoSketch-Adapted | 423 | 1.04e+04 | 0.0808 | 144 | 3.12e+04 | 0.00436 | 0.0148 |
+| fargate | 10.0 | 336 | ASAP | 19.9 | 470 | 190 | 112 | 1.01e+04 | 9.4 | 2.3 |
+| fargate | 10.0 | 336 | PerQuery-CostAware | 59.4 | 1.4e+03 | 566 | 336 | 3.02e+04 | 9.4 | 4.05 |
+| fargate | 10.0 | 336 | AutoSketch-Adapted | 593 | 1.46e+04 | 565 | 336 | 1.21e+05 | 1.13 | 0.0148 |
+| fargate | inf | 336 | ASAP | 1.15 | 12.4 | 146 | 64 | 96 | 1.98e+03 | 2.95 |
+| fargate | inf | 336 | PerQuery-CostAware | 4.24 | 42.4 | 566 | 336 | 384 | 2.97e+03 | 4.33 |
+| fargate | inf | 336 | AutoSketch-Adapted | 593 | 1.46e+04 | 565 | 336 | 1.21e+05 | 1.13 | 0.0148 |
 
-## templates=dashboard, shared=8, accuracy=p95
+## templates=dashboard, shared=1, metrics=8, accuracy=p95
+
+168 RQEs on 32 streams; sanity violations: 0. AutoSketch probes: 680, benchmark time ≥ 48.8 s.
+
+| weights | SLA (ms) | RQEs | method | objective | CPU (vCPU) | GiB | deployments | Σ window/slide | max latency (ms) | planning (s) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| cpu | 0.01 | 72 | ASAP | 1.79e+03 | 1.79e+03 | 0.0404 | 56 | 5.61e+03 | 0.00843 | 0.304 |
+| cpu | 0.01 | 72 | PerQuery-CostAware | 1.79e+03 | 1.79e+03 | 0.0409 | 72 | 5.62e+03 | 0.00843 | 1.74 |
+| cpu | 0.01 | 72 | AutoSketch-Adapted | 5.22e+03 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| cpu | 0.1 | 72 | ASAP | 122 | 122 | 0.0551 | 40 | 440 | 0.0838 | 0.348 |
+| cpu | 0.1 | 72 | PerQuery-CostAware | 134 | 134 | 0.0504 | 72 | 488 | 0.094 | 1.75 |
+| cpu | 0.1 | 72 | AutoSketch-Adapted | 5.22e+03 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| cpu | 1.0 | 72 | ASAP | 13.4 | 13.4 | 0.069 | 24 | 72 | 0.98 | 0.368 |
+| cpu | 1.0 | 72 | PerQuery-CostAware | 22.2 | 22.2 | 0.0733 | 72 | 112 | 0.98 | 1.75 |
+| cpu | 1.0 | 72 | AutoSketch-Adapted | 5.22e+03 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| cpu | 10.0 | 168 | ASAP | 235 | 235 | 94.8 | 56 | 5.04e+03 | 9.4 | 1.05 |
+| cpu | 10.0 | 168 | PerQuery-CostAware | 702 | 702 | 283 | 168 | 1.51e+04 | 9.4 | 1.97 |
+| cpu | 10.0 | 168 | AutoSketch-Adapted | 7.28e+03 | 7.28e+03 | 282 | 168 | 6.06e+04 | 1.13 | 0.00728 |
+| cpu | inf | 168 | ASAP | 6.14 | 6.14 | 181 | 32 | 64 | 1.53e+03 | 1.25 |
+| cpu | inf | 168 | PerQuery-CostAware | 20.1 | 20.1 | 704 | 168 | 192 | 3.84e+03 | 2.1 |
+| cpu | inf | 168 | AutoSketch-Adapted | 7.28e+03 | 7.28e+03 | 282 | 168 | 6.06e+04 | 1.13 | 0.00728 |
+| fargate | 0.01 | 72 | ASAP | 72.5 | 1.79e+03 | 0.0404 | 56 | 5.61e+03 | 0.00843 | 0.307 |
+| fargate | 0.01 | 72 | PerQuery-CostAware | 72.5 | 1.79e+03 | 0.0409 | 72 | 5.62e+03 | 0.00843 | 1.74 |
+| fargate | 0.01 | 72 | AutoSketch-Adapted | 211 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| fargate | 0.1 | 72 | ASAP | 4.95 | 122 | 0.0549 | 32 | 440 | 0.0838 | 0.377 |
+| fargate | 0.1 | 72 | PerQuery-CostAware | 5.41 | 134 | 0.0504 | 72 | 488 | 0.094 | 1.76 |
+| fargate | 0.1 | 72 | AutoSketch-Adapted | 211 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| fargate | 1.0 | 72 | ASAP | 0.543 | 13.4 | 0.069 | 24 | 72 | 0.98 | 0.397 |
+| fargate | 1.0 | 72 | PerQuery-CostAware | 0.899 | 22.2 | 0.0733 | 72 | 112 | 0.98 | 1.76 |
+| fargate | 1.0 | 72 | AutoSketch-Adapted | 211 | 5.22e+03 | 0.0404 | 72 | 1.56e+04 | 0.00436 | 0.00728 |
+| fargate | 10.0 | 168 | ASAP | 9.95 | 235 | 94.8 | 56 | 5.04e+03 | 9.4 | 1.08 |
+| fargate | 10.0 | 168 | PerQuery-CostAware | 29.7 | 702 | 283 | 168 | 1.51e+04 | 9.4 | 1.99 |
+| fargate | 10.0 | 168 | AutoSketch-Adapted | 296 | 7.28e+03 | 282 | 168 | 6.06e+04 | 1.13 | 0.00728 |
+| fargate | inf | 168 | ASAP | 0.576 | 6.2 | 72.9 | 32 | 48 | 1.98e+03 | 1.65 |
+| fargate | inf | 168 | PerQuery-CostAware | 2.12 | 21.2 | 283 | 168 | 192 | 2.97e+03 | 2.12 |
+| fargate | inf | 168 | AutoSketch-Adapted | 296 | 7.28e+03 | 282 | 168 | 6.06e+04 | 1.13 | 0.00728 |
+
+## templates=dashboard, shared=8, metrics=1, accuracy=p95
 
 52 RQEs on 4 streams; sanity violations: 0. AutoSketch probes: 201, benchmark time ≥ 40.2 s.
 

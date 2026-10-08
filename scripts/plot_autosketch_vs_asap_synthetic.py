@@ -8,8 +8,8 @@ Writes, next to the inputs:
                                  weights; only points over one RQE set are
                                  joined (dashed: the subset tight SLAs keep)
   fig_objective_by_dimension.png objective with no SLA, each grid dimension
-                                 varied alone (templates, shared replicas)
-  fig_planning_time.png          planning time vs. RQEs (shared replicas);
+                                 varied alone (templates, shared replicas, metrics)
+  fig_planning_time.png          planning time vs. RQEs (metrics: 21 · m RQEs);
                                  AutoSketch also with its benchmark time
   summary_synthetic.md           every workload, method, weights and SLA
 
@@ -30,13 +30,13 @@ METHODS = ["asap", "perquery", "autosketch"]
 LABELS = {"asap": "ASAP", "perquery": "PerQuery-CostAware", "autosketch": "AutoSketch-Adapted"}
 COLORS = {"asap": "#1f77b4", "perquery": "#ff7f0e", "autosketch": "#2ca02c"}
 UNITS = {"cpu": "vCPU", "fargate": "$/hour"}
-DEFAULT = ("dashboard", 1, "p95")
+DEFAULT = ("dashboard", 1, 1, "p95")
 
 
 def point(data):
-    """(templates, shared, target) of a result's workload name."""
-    m = re.search(r"templates=(\w+)/shared=(\d+)/t(\w+)", data["workload"])
-    return m.group(1), int(m.group(2)), m.group(3)
+    """(templates, shared, metrics, target) of a result's workload name."""
+    m = re.search(r"templates=(\w+)/shared=(\d+)(?:/metrics=(\d+))?/t(\w+)", data["workload"])
+    return m.group(1), int(m.group(2)), int(m.group(3) or 1), m.group(4)
 
 
 def load(directory):
@@ -90,7 +90,8 @@ def fig_objective_vs_latency(runs, out):
 
 
 def fig_objective_by_dimension(runs, out):
-    dims = [("templates", 0, ["dashboard", "all"]), ("shared", 1, [1, 8, 64])]
+    dims = [("templates", 0, ["dashboard", "all"]), ("shared", 1, [1, 8]),
+            ("metrics", 2, [1, 8, 16])]
     fig, axes = plt.subplots(1, len(dims), figsize=(4.5 * len(dims), 3.4), squeeze=False)
     for ax, (name, index, values) in zip(axes[0], dims):
         xs = list(range(len(values)))
@@ -119,8 +120,8 @@ def fig_planning_time(runs, out):
     for m in METHODS:
         pts = []
         bench = {"lower": [], "paper": []}
-        for r in (1, 8, 64):
-            data = runs.get(("dashboard", r, "p95"))
+        for metrics in (1, 8, 16):
+            data = runs.get(("dashboard", 1, metrics, "p95"))
             res = data and pick(data, m, "cpu", "inf")
             if res:
                 pts.append((data["rqes"], res["planning_secs"]))
@@ -165,7 +166,8 @@ def copies(r):
 def summary(runs, out):
     lines = ["# Synthetic workload: AutoSketch vs. ASAP\n"]
     for key, data in sorted(runs.items(), key=lambda kv: str(kv[0])):
-        lines.append(f"## templates={key[0]}, shared={key[1]}, accuracy={key[2]}\n")
+        lines.append(f"## templates={key[0]}, shared={key[1]}, metrics={key[2]}, "
+                     f"accuracy={key[3]}\n")
         lines.append(f"{data['rqes']} RQEs on {data['streams']} streams; sanity violations: "
                      f"{len(data['sanity_violations'])}. AutoSketch probes: "
                      f"{data['autosketch']['probes']}, benchmark time ≥ "

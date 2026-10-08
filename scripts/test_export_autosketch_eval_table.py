@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
 from export_autosketch_eval_table import (  # noqa: E402
-    SYNTHETIC_DEFAULT, SYNTHETIC_GRID, boom_query, main, queries_per_instance, shared_queries,
+    SYNTHETIC_DEFAULT, SYNTHETIC_GRID, boom_query, main, metric_queries, queries_per_instance,
+    shared_queries,
     synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -202,9 +203,20 @@ class DashboardAndSharedTest(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(q["dataset"].endswith("shared=4") for q in qs))
         self.assertTrue(all("@" in q["range"] for q in qs if q["range"] != "1s"))
-        sizes = [len(shared_queries({**SYNTHETIC_DEFAULT, "shared": r})) for r in (1, 8, 64)]
+        sizes = [len(shared_queries({**SYNTHETIC_DEFAULT, "shared": r})) for r in (1, 8)]
         self.assertLess(sizes[0], sizes[1])
-        self.assertLess(sizes[2], 8 * sizes[1])
+
+    def test_metric_copies_share_nothing_and_grow_linearly(self):
+        point = {**SYNTHETIC_DEFAULT, "metrics": 8}
+        qs = metric_queries(point)
+        self.assertEqual(len(qs), 8 * 21)
+        self.assertEqual(len({(q["query_id"], q["range"]) for q in qs}), len(qs))
+        streams = {q["stream"].split("/")[0] for q in qs}
+        self.assertEqual(streams, {f"data_{i}" for i in range(8)})
+        self.assertTrue(all(q["dataset"].endswith("metrics=8") for q in qs))
+        # The top-k k stays readable from the query id.
+        self.assertTrue(all(q["query_id"].startswith("topk32_")
+                            for q in qs if q["capability"] == "topk"))
 
 
 if __name__ == "__main__":

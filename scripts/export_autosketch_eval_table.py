@@ -230,10 +230,14 @@ SHARED_SEED = 7
 TEMPLATE_SETS = ["dashboard", "all"]
 # Workload grid (#777 section 6): the default, then one dimension at a time.
 # One accuracy level, 95% in each family's metric (the runner's p95).
-SYNTHETIC_DEFAULT = {"templates": "dashboard", "shared": 1, "target": "p95"}
+# `shared` replicas read one metric (the sharing benefit; past r = 8 they
+# repeat RQEs already drawn); `metrics` copies of the template set each read
+# their own metric, so RQEs grow as 21 · m (planning time vs. RQEs).
+SYNTHETIC_DEFAULT = {"templates": "dashboard", "shared": 1, "metrics": 1, "target": "p95"}
 SYNTHETIC_GRID = {
     "templates": TEMPLATE_SETS,
-    "shared": [1, 8, 64],
+    "shared": [1, 8],
+    "metrics": [1, 8, 16],
 }
 
 
@@ -250,13 +254,16 @@ def synthetic_plan():
 
 
 def point_id(point):
-    """`templates=dashboard/shared=8`: the table's name segments."""
-    return f"templates={point['templates']}/shared={point['shared']}"
+    """`templates=dashboard/shared=8` (plus `/metrics=m` past one metric): the
+    table's name segments."""
+    base = f"templates={point['templates']}/shared={point['shared']}"
+    metrics = point.get("metrics", 1)
+    return base if metrics == 1 else f"{base}/metrics={metrics}"
 
 
 def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                       templates="dashboard", quantiles=None, dataset=None,
-                      range_with_interval=False, seen=None):
+                      range_with_interval=False, seen=None, metric=None):
     """The `synthetic` queries as read_summary-shaped query-ranges, one per RQE.
 
     Streams: `series/*` hold one instance per series (C groups), `job/*` one per
@@ -265,7 +272,8 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     increases. Spatial templates repeat every 1 s and read the last second
     (S = T = 1 s); temporal ones repeat every `interval` seconds over each
     lookback in `windows`. RQEs that repeat another's query and range (template
-    10, D5) are kept once.
+    10, D5) are kept once. With `metric`, every stream and query id names it,
+    so the queries share nothing with another metric's.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
     dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
@@ -277,6 +285,8 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         return f"{rng}@{interval}s" if range_with_interval else rng
 
     def add(query_id, stream, capability, rng, s, t, groups, keys=None):
+        if metric:
+            query_id, stream = f"{query_id}_{metric}", f"{metric}/{stream}"
         if (query_id, rng) in seen:
             return
         seen.add((query_id, rng))
@@ -350,6 +360,15 @@ def shared_queries(point):
     return out
 
 
+def metric_queries(point):
+    """`point["metrics"]` copies of the point's template set, copy i on its own
+    metric `data_i`: nothing is shared across copies."""
+    dataset = "synthetic/" + point_id(point)
+    return [q for i in range(point["metrics"])
+            for q in synthetic_queries(templates=point["templates"], dataset=dataset,
+                                       metric=f"data_{i}")]
+
+
 def synthetic_entry(q):
     """The table entry for one `synthetic` query-range: the workload only.
     Each family names its sketch, target and data shape (θ and K, or the
@@ -406,9 +425,13 @@ def build_synthetic(args):
     for point in synthetic_plan():
         name = "synthetic-" + point_id(point).replace("/", "-").replace("=", "") + ".json"
         if name not in out:
-            qs = (shared_queries(point) if point["shared"] > 1 else
-                  synthetic_queries(templates=point["templates"],
-                                    dataset="synthetic/" + point_id(point)))
+            if point["shared"] > 1:
+                qs = shared_queries(point)
+            elif point["metrics"] > 1:
+                qs = metric_queries(point)
+            else:
+                qs = synthetic_queries(templates=point["templates"],
+                                       dataset="synthetic/" + point_id(point))
             out[name] = {
                 "schema_version": 1,
                 "plan": "ProjectASAP/ASAPQuery#777",

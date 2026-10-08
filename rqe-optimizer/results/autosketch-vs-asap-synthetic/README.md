@@ -1,7 +1,8 @@
 # Synthetic workload: AutoSketch vs. ASAP
 
 Results of ProjectASAP/ASAPQuery#777's synthetic workload grid (§6 "Workload
-grid"): the dashboard default, the 10 templates and shared replicas {8, 64},
+grid"): the dashboard default, the 10 templates, shared replicas r = 8 (on
+one metric) and m = 8 and 16 metrics (one dashboard per metric, 21 · m RQEs),
 all at one accuracy level, p95: 95% in each family's own metric (rank,
 relative value and relative error at most 0.05; top-k precision at least
 0.95). The trace workloads use the same level. Each is solved by ASAP, PerQuery-CostAware and
@@ -13,7 +14,7 @@ alibaba_v2022 and google_2011 run with the same inputs
 
 ## Results (p95, 2026-10-07)
 
-Run on clnode155 (`machine-clnode155.txt`) over the asap_sketchlib 0.3.0
+Run on clnode155 (`machine-clnode155.txt`; the m = 8 and 16 runs on clnode178 and clnode138) over the asap_sketchlib 0.3.0
 study (#174, #178–#186), one workload at a time. Files: `synthetic-*.json`
 (raw), `summary_synthetic.md` (every weights and SLA), and the figures
 `fig_objective_vs_latency.png`, `fig_objective_by_dimension.png` and
@@ -25,10 +26,11 @@ With no latency SLA, each method's objective (CPU only, in vCPU; Fargate prices,
 
 | Workload | RQEs | ASAP | PerQuery-CostAware | AutoSketch-Adapted | Σ window/slide (ASAP, PerQuery, AutoSketch) | ASAP planning (s) |
 |---|---|---|---|---|---|---|
-| dashboard, r = 1 | 21 | 0.767 vCPU; 0.072 $/h | 2.51 vCPU; 0.265 $/h | 911 vCPU; 37 $/h | 8, 24, 7578 | 0.15 |
-| all templates, r = 1 | 50 | 3.32 vCPU; 0.221 $/h | 9.55 vCPU; 0.721 $/h | 3.41e+03 vCPU; 138 $/h | 12, 57, 20631 | 0.70 |
-| dashboard, r = 8 | 52 | 2.35 vCPU; 0.342 $/h | 9.9 vCPU; 1.55 $/h | 6.52e+03 vCPU; 265 $/h | 33, 109, 54243 | 0.84 |
-| dashboard, r = 64 | 57 | 2.37 vCPU; 0.343 $/h | 10.5 vCPU; 1.58 $/h | 6.56e+03 vCPU; 267 $/h | 33, 114, 54543 | 0.92 |
+| dashboard (default) | 21 | 0.767 vCPU; 0.072 $/h | 2.51 vCPU; 0.265 $/h | 911 vCPU; 37 $/h | 8, 24, 7578 | 0.15 |
+| all templates | 50 | 3.32 vCPU; 0.221 $/h | 9.55 vCPU; 0.721 $/h | 3.41e+03 vCPU; 138 $/h | 12, 57, 20631 | 0.70 |
+| dashboard, shared r = 8 | 52 | 2.35 vCPU; 0.342 $/h | 9.9 vCPU; 1.55 $/h | 6.52e+03 vCPU; 265 $/h | 33, 109, 54243 | 0.84 |
+| dashboard, m = 8 metrics | 168 | 6.14 vCPU; 0.576 $/h | 20.1 vCPU; 2.12 $/h | 7.28e+03 vCPU; 296 $/h | 64, 192, 60624 | 1.25 |
+| dashboard, m = 16 metrics | 336 | 12.3 vCPU; 1.15 $/h | 40.1 vCPU; 4.24 $/h | 1.46e+04 vCPU; 593 $/h | 128, 384, 121248 | 2.70 |
 | traces, alibaba_v2022 | 51 | 2.31 vCPU; 0.303 $/h | 4.48 vCPU; 0.417 $/h | 71.8 vCPU; 3.14 $/h | 17, 51, 1122 | 0.05 |
 | traces, google_2011 | 27 | 0.00484 vCPU; 0.000378 $/h | 0.014 vCPU; 0.000801 $/h | 0.0645 vCPU; 0.00283 $/h | 9, 27, 126 | 0.03 |
 
