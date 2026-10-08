@@ -375,33 +375,42 @@ with an SLA `L`.
 
 **Load over time.**
 
-- Background, continuous: ingest CPU `ρ_ing = Σ_D λ_D · (x/y) · c_ins`, and
-  memory `M_static = Σ_D` (open + closed windows).
-- Each firing of RAQE `i` at `t = k · T_i` releases two jobs, each using at
-  most one core:
-  - precompute `P_i`: merge every group's windows,
-    `card(G) · (S/x − 1) · c_mrg` CPU-seconds (0 when `S = x`);
-  - query `Q_i`: query every group, `card(G) · c_qry`; it starts only after
-    `P_i` finishes.
-- The chain `ℓ_i = P_i + Q_i` is one firing's single-core time, i.e. the
-  per-RAQE `latency_i` below.
-- Memory: the `card(G)` merged accumulators are held from `P_i`'s start until
-  `Q_i` ends, plus `Q_i`'s output while it runs.
-- A batch is all jobs released at one instant; the heaviest, `B0`, is at
-  `t = 0`, when every RAQE fires. A batch's latency is the time from its
+- Precompute is ingest: every sample is inserted into its open window
+  instances as it arrives, a steady background load of
+  `ρ_ing = Σ_D λ_D · (x/y) · c_ins` vCPUs (spread over groups, so it may use
+  more than one core). Memory `M_static = Σ_D` (open + closed windows).
+- Each firing of RAQE `i` at `t = k · T_i` releases one query job `Q_i`: merge
+  the `S/x` window instances of each group for the query window, then
+  estimate. Its CPU work is `ℓ_i = card(G) · (c_qry + (S/x − 1) · c_mrg)`,
+  the per-RAQE `latency_i` below; merging is part of the query.
+- `Q_i` needs the newest window, which closes at `t`, to be fully ingested.
+  Ingest keeps up whenever the plan is stable (below), so `Q_i` is ready at
+  `t`.
+- `Q_i` holds its `card(G)` merge accumulators, and its output, while it runs.
+- A batch is all query jobs released at one instant; the heaviest, `B0`, is
+  at `t = 0`, when every RAQE fires. A batch's latency is the time from its
   release until its last `Q_i` finishes; the reported query latency is the
   worst batch latency.
 
-**Placement algorithm, given a resource point (C vCPU, M GiB).**
+**Measurement assumptions (sketch-bench as is).** Every sketch operation is
+single-threaded and compute-bound: sketch-bench's CPU time equals its wall
+time (e.g. an insert phase of 62.65 ms CPU and 62.65 ms wall). So a job uses
+at most one core, and on a full core it takes its CPU time `ℓ_i`; the cost
+table's `*_cpu_secs` are all the placement needs.
+
+**Placement algorithm, given a resource point (C vCPU, M GiB).** Capacity is
+fractional; jobs share it as rates (a fluid, priority-ordered processor
+sharing).
 
 ```text
-query_cores K = floor(C − ρ_ing)      (K ≥ 1, and M ≥ M_static, else infeasible)
-simulate 2 hyperperiods, event-driven:
-  on each release / completion:
-    ready = released P jobs + Q jobs whose P is done
-    order: release time, then Q before P, then longest-first (LPT)
-    while an idle core exists and the next ready job's memory fits:
-        start it (a P job reserves its accumulators until its Q finishes)
+capacity for queries  K = C − ρ_ing      (K > 0, and M ≥ M_static, else infeasible)
+simulate 2 hyperperiods, event-driven (events: releases, completions):
+  ready = released query jobs not yet finished
+  order: release time (older batches first), then longest remaining work first
+  give rates in that order: job j gets a_j = min(1, K − rates already given),
+    as long as its accumulators fit in the free memory
+  a job runs at rate a_j: it finishes when its remaining work / a_j elapses
+  recompute the rates at every event
 outputs: per-RAQE and per-batch latency, worst batch latency, CPU(t), MEM(t)
 ```
 
@@ -424,14 +433,15 @@ cost model 1 it is an input (open question 1).
 C ≥ ρ_ing + Σ (merge + query).cpu × z                      (stability, always)
 M ≥ M_static + Σ_{i∈B0} card(G_i) · m_i × z_{i,D}          (memory, conservative)
 with SLA L:
-  z_{i,D} = 0                       if ℓ_{i,D} > L          (the chain fits)
+  z_{i,D} = 0                       if ℓ_{i,D} > L          (one query job fits)
   Σ_{i∈B0} ℓ_{i,D} × z_{i,D} ≤ (C − ρ_ing) × L              (capacity, necessary)
+  (C − ρ_ing is fractional; under cost model 1, (C, M) is the given point)
 ```
 
-Graham's list-scheduling bound (`Σ ℓ / K + max ℓ`) gives the sufficient
-margin: the solution is simulated, and if its worst batch exceeds `L`, the
-capacity row's `L` becomes `L − max ℓ` and the MILP is solved again (at most
-two solves). Without an SLA the SLA rows are dropped and the simulated latency
+With jobs capped at one core, list scheduling finishes within
+`Σ ℓ / K + max ℓ` (Graham), which gives the sufficient margin: the solution
+is simulated, and if its worst batch exceeds `L`, the capacity row's `L`
+becomes `L − max ℓ` and the MILP is solved again (at most two solves). Without an SLA the SLA rows are dropped and the simulated latency
 at the solution is reported.
 
 - Cost model 1 objective: `w1 · AUC(CPU) + w2 · AUC(mem)`, `(C, M)` fixed.
@@ -453,11 +463,7 @@ line per method, one panel per cost model and weight setting.
    methods (e.g. cost model 2's ASAP optimum at that SLA, or a sweep), or (b)
    each method's own smallest `(C, M)` that meets `L`, reported next to its
    AUC cost.
-2. Early precompute: may `P_i` merge windows that closed before the release
-   ahead of time, or must it start at release (simpler, conservative)?
-3. Integer cores under cost model 2: `C` continuous (fractional ingest plus
-   whole query cores), or an integer?
-4. Scope: synthetic mixed set only, or also the Alibaba and Google traces?
+2. Scope: synthetic mixed set only, or also the Alibaba and Google traces?
 
 ## Analytical cost model
 
@@ -596,7 +602,7 @@ summed over the sketch and its key tracker, if any.
 
 On its own it is not a wall-clock SLA: it assumes no parallel execution across
 groups and no cheaper k-way merge. Under the placement design above it is one
-firing's precompute-then-query chain on one core.
+firing's query job (merge, then estimate) on one core.
 
 ## Procedure
 
