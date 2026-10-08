@@ -364,10 +364,13 @@ never enumerates full mappings.
 Status: agreed design (ProjectASAP/ASAPQuery#777), implemented in
 `rqe-optimizer/src/usage.rs` (resource use, cost, latency) and
 `milp::minimize_usage_cost`. The MILP minimizes the cost of a plan billed by
-use, and the plan's latency is reported. The evaluation's message is lower
-cost and lower latency, so instead of an SLA to meet or violate, an optional
-latency bound traces each method's cost–latency Pareto frontier: the
-cheapest plan whose latency is at most `L`, for a sweep of `L`.
+use, in two versions:
+
+- **Version 1, no latency constraint:** the cheapest plan; its latency is
+  reported. Sweeping an optional latency bound traces each method's
+  cost–latency Pareto frontier.
+- **Version 2, a batch latency SLA:** the cheapest plan whose batch latency,
+  from the job placement (§6), is at most the SLA `L`, for a grid of SLAs.
 Evaluated first on the synthetic mixed template set; methods: ASAP (this
 MILP, with sharing), PerQuery (the same MILP without sharing) and
 AutoSketch-Adapted (fixed configs chosen by memory).
@@ -477,18 +480,18 @@ In words:
   and a query's memory are held only while they run, a fraction
   `run time / y_D` or `run time / T_i` of the time.
 
-#### 5. Batch latency
+#### 5. Batch latency and the SLA
 
 A batch's **latency** is the time from its issue until its last query job
 finishes, compaction included. A plan's **query latency** is its worst batch
-latency. It is reported for every plan; a latency bound (§6) only traces the
-frontier.
+latency, given by the job placement (§6). Version 1 reports it; version 2
+requires it to be at most the SLA `L`. Per-RAQE latency bounds
+(`Raqe::latency_sla_ms`) are not used.
 
 CPU is elastic, so no job waits for a core, and a batch's latency is its
 longest **chain**: the newest window's compaction, then the query, each on a
 full core, `c_D + ℓ_{i,D}` (`analytical_cost_model::chain_ms`). A plan's query
-latency is the longest chain over its RAQEs. Per-RAQE latency bounds
-(`Raqe::latency_sla_ms`) are not used.
+latency is the longest chain over its RAQEs.
 
 In words: the trade-off between cost and latency comes from the plan. A cheap
 plan keeps short windows and merges many of them at query time (long
@@ -496,7 +499,53 @@ chains); a faster one precomputes more at ingest (more open windows, more CPU
 and memory). With no bound the MILP picks the cheapest plan, whatever its
 latency; a bound `L` asks for the cheapest plan at least that fast.
 
-#### 6. MILP formulation
+#### 6. Job placement algorithm
+
+The job placement decides when each job runs on the available CPU, and so
+gives every batch's latency. It is defined for any CPU capacity; billing by
+use makes CPU elastic, so it runs with unlimited capacity.
+
+```text
+capacity for jobs  K = C − Σ_D ρ_D      (C = ∞ when CPU is elastic)
+event-driven, over the hyperperiod H = lcm(T_i, y_D), twice
+(events: query issues, window closes, completions):
+  ready = compaction jobs (triggered at window closes)
+        + query jobs whose newest window is compacted
+  order: issue / trigger time (older first), then compaction before query
+         (it unblocks queries), then longest remaining work first
+  give rates in that order: job j gets a_j = min(1, K − rates already given)
+  a job at rate a_j finishes when its remaining work / a_j elapses
+  recompute the rates at every event
+outputs: per-RAQE and per-batch latency, worst batch latency
+```
+
+In words:
+
+1. **Reserve ingest.** Ingest runs all the time and takes `Σ ρ_D` vCPUs; the
+   rest, `K`, is shared by compaction and query jobs.
+2. **Issue jobs.** Each window close triggers a compaction job for its
+   deployment. Each firing issues a query job, which becomes ready only once
+   its deployment's newest window is compacted.
+3. **Prioritize.** Ready jobs run oldest batch first, so no batch starves.
+   Within a batch, compaction runs before queries, because queries wait for
+   it. Then the longest remaining work runs first, so a long job doesn't end
+   up running alone at the end of the batch.
+4. **Share capacity as rates.** In that order, each job gets up to one core
+   (a single-threaded job can't use more) from the capacity still free. The
+   last one served may get only a fraction and runs slower in proportion.
+5. **Advance to the next event.** Time jumps to the next query issue, window
+   close or completion; remaining work drops by rate × elapsed time, and the
+   rates are recomputed.
+6. **Read off the results.** A query's latency is its finish minus its
+   issue, and a batch's latency is that of its last query.
+
+With elastic CPU (`K = ∞`) every job starts as soon as it is ready on its own
+core, so the placement has a closed form: a compaction runs for `c_D`, a
+query for `ℓ_{i,D}`, and a batch's latency is its longest chain
+`c_D + ℓ_{i,D}`. The code uses this closed form (`usage::usage_cost`), and
+it is what makes both MILP versions exact.
+
+#### 7. MILP formulation
 
 Variables: `z_{i,D} ∈ {0,1}` (RAQE `i` uses `D`, for eligible pairs `E`),
 `u_D ∈ {0,1}` (`D` is active), `stored_D ≥ 0`. Constants per candidate and
@@ -509,7 +558,7 @@ minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) ·
 s.t.      Σ_D z_{i,D} = 1                        for every RAQE i
           z_{i,D} ≤ u_D ≤ Σ_i z_{i,D}             for (i, D) ∈ E
           stored_D ≥ w_D · ((S_i − x_D) / y_D + 1) · z_{i,D}
-with a latency bound L (optional):
+version 2, a batch latency SLA L (or version 1's frontier bound L):
           z_{i,D} = 0  if c_D + ℓ_{i,D} > L
 ```
 
@@ -525,13 +574,14 @@ In words:
   paid once, however many RAQEs share it.
 - A deployment stores enough closed windows for the longest lookback it
   serves (a linearized max).
-- With a bound `L`, a pair whose chain (the newest window's compaction, then
-  the query, each on a full core) is longer than `L` is ruled out. Since CPU
-  is elastic, the plan's latency is then at most `L`, exactly. Chains are
+- Version 2 (and version 1's frontier bound): a pair whose chain (the newest
+  window's compaction, then the query, each on a full core) is longer than
+  `L` is ruled out. By the placement's closed form, the plan's batch latency
+  is then at most `L`, exactly: the SLA is met. Chains are
   compared with `L` with a relative slack of `1e-9`, so float error can't rule
   out a chain equal to `L`.
 
-#### 7. Solution method
+#### 8. Solution method
 
 Every term is linear in `u` and `z`, with or without a bound, so the MILP is
 solved exactly
@@ -548,18 +598,22 @@ then computed from its resource use (`usage::usage_cost`).
 - **AutoSketch** keeps its memory-chosen configs and is priced by the same
   function: its cost by use and its latency, the longest chain. It ignores
   latency, so it is one point, not a frontier.
-- **Frontier:** ASAP and PerQuery are solved for a sweep of bounds `L`, from
-  the smallest feasible one (the largest, over RAQEs, of each RAQE's fastest
-  chain) up to no bound. Each solve gives a (latency, cost) point; together
-  they are the method's frontier. In particular, `L` = AutoSketch's latency
-  gives each method's cost at no more than AutoSketch's latency.
+- **Version 1:** ASAP and PerQuery are solved with no bound (the cheapest
+  plan), and for a sweep of bounds `L` from the smallest feasible one (the
+  largest, over RAQEs, of each RAQE's fastest chain) up to the unbounded
+  plan's latency. Each solve gives a (latency, cost) point; together they are
+  the method's frontier. `L` = AutoSketch's latency gives each method's cost
+  at no more than AutoSketch's latency.
+- **Version 2:** ASAP and PerQuery are solved at each SLA of a fixed grid;
+  an SLA below the smallest feasible bound has no plan. AutoSketch ignores
+  the SLA; its latency either meets it or not.
 
-#### 8. Outputs
+#### 9. Outputs
 
-Per (method, weight setting, bound): cost; mean CPU and memory, by part;
-query latency and per-RAQE latency; planning time. Figure: each method's
-cost–latency frontier for each workload (ASAP and PerQuery as lines,
-AutoSketch as a point).
+Per (method, weight setting, bound or SLA): cost; mean CPU and memory, by
+part; query latency and per-RAQE latency; planning time. Figures: version 1,
+each method's cost–latency frontier for each workload (ASAP and PerQuery as
+lines, AutoSketch as a point); version 2, each method's cost at each SLA.
 
 ## Analytical cost model
 
