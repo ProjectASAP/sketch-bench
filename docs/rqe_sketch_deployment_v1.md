@@ -359,167 +359,197 @@ evaluates at once. The default weights are `(1, 0)`: CPU only.
 Per-RAQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
 never enumerates full mappings.
 
-### Cost models, batch latency and query placement (design, under review)
+### MILP with latency SLA constraints: cost models, query placement and batch latency
 
 Status: agreed design (ProjectASAP/ASAPQuery#777), implemented in
-`placement` (load, cost models, placement) and `milp::minimize_cost_model`.
+`rqe-optimizer/src/placement.rs` (load, cost models, placement) and
+`milp::minimize_cost_model`. It extends the MILP above with two cost models
+and a latency SLA on a whole batch of queries. Evaluated first on the
+synthetic mixed template set; methods: ASAP (this MILP, with sharing),
+PerQuery (the same MILP without sharing) and AutoSketch-Adapted (fixed
+configs chosen by memory).
 
-**Scope.** Evaluated on the synthetic mixed template set (spatial templates
-every 1 s, temporal ones every 1 min, so the hyperperiod is `H = lcm(T_i) =
-60 s`). Methods: ASAP (this MILP, with sharing), PerQuery (the same MILP
-without sharing), AutoSketch-Adapted (fixed configs chosen by memory). Each is
-evaluated under cost model 1 and cost model 2, each with no latency SLA and
-with an SLA `L`.
+#### 1. Definitions
 
-**Load over time.**
+| Symbol | Meaning |
+|---|---|
+| `D`, `i` | a candidate deployment; a RAQE |
+| `x_D`, `y_D` | `D`'s window and slide; a window closes every `y_D` |
+| `S_i`, `T_i` | RAQE `i`'s lookback and interval; it fires at `t = k · T_i` |
+| `card(G)` | groups of `D`'s grouping (one instance per group per window; one for a sketch shared by all groups) |
+| `λ_D` | samples/s arriving for `D`'s metric |
+| `c_ins`, `c_mrg`, `c_qry` | measured CPU-seconds per insert, per pairwise merge, per query of one instance |
+| `m` | measured bytes per instance |
+| `n_{i,D} = S_i / x_D` | windows a query merges |
+| `H = lcm(T_i, y_D)` | hyperperiod: the release pattern repeats every `H` |
+| batch | all query jobs released at one instant; `B0` is the one at `t = 0`, where every RAQE fires |
 
-- Ingest is the precompute: every sample is inserted into its open window
-  instances as it arrives. Deployment `D`'s ingest is
-  `ρ_D = λ_D · (x/y) · c_ins` vCPUs.
-- Ingest runs on `k_D = ⌈ρ_D⌉` parallel workers, at most one core each, split
-  by sample: each worker reads a share of the input (e.g. some Kafka
-  partitions or scrape targets) with no shuffle by group, so it keeps its own
-  open window instance of every group it sees. When a window closes (the
-  watermark passes its end), a compaction job merges the `k_D` partial
-  instances of each group into one stored instance:
-  `(k_D − 1) · card(G) · c_mrg` CPU-seconds, at most one core. With
-  `k_D = 1` there is no compaction.
-- Each firing of RAQE `i` at `t = k · T_i` releases one query job `Q_i`: merge
-  the `S/x` stored instances of each group for the query window, then
-  estimate, at most one core. Its CPU work is
-  `ℓ_i = card(G) · (c_qry + (S/x − 1) · c_mrg)`, the per-RAQE `latency_i`
-  below; merging is part of the query.
-- `Q_i` reads the newest window, which closes at `t`, so it starts only after
-  that window's compaction finishes.
-- A batch is all query jobs released at one instant; the heaviest, `B0`, is
-  at `t = 0`, when every RAQE fires. A batch's latency is the time from its
-  release until its last `Q_i` finishes; the reported query latency is the
-  worst batch latency.
+**Measurement assumption (sketch-bench as is).** Every sketch operation is
+single-threaded and compute-bound: sketch-bench's CPU time equals its wall
+time (e.g. an insert phase of 62.65 ms CPU and 62.65 ms wall). So a job uses
+at most one core and, on a full core, takes its CPU time. The cost table's
+`*_cpu_secs` are all the model needs.
 
-**Memory, three parts, each counted once.** For deployment `D` with `m` bytes
-per instance:
+#### 2. Cost models
+
+- **Cost model 1 (by use):** `w1 · AUC(CPU) + w2 · AUC(memory)`, the mean
+  vCPUs and GiB over time. CPU is elastic: a job gets a core whenever it is
+  ready.
+- **Cost model 2 (by peak):** `w1 · max(CPU) + w2 · max(memory)`. The plan
+  provisions a resource point `(C vCPU, M GiB)`, billed at that peak, and all
+  of its work shares it.
+
+`w1`, `w2` are per vCPU and per GiB (CPU only: `(1, 0)`; Fargate prices).
+
+#### 3. CPU: parts and how each is computed
+
+| Part | When | CPU-seconds | Mean vCPUs |
+|---|---|---|---|
+| Ingest (the precompute) | continuously, as samples arrive | — | `ρ_D = λ_D · (x_D / y_D) · c_ins` |
+| Compaction | at each window close | `c_D = (k_D − 1) · Σ_parts instances · c_mrg` | `c_D / y_D` |
+| Query job of RAQE `i` | at each firing | `ℓ_{i,D} = card(G) · (c_qry + (n_{i,D} − 1) · c_mrg)` | `ℓ_{i,D} / T_i` |
+
+- Ingest runs on `k_D = ⌈ρ_D⌉` parallel workers (at least one; each uses at
+  most one core), **split by sample**: each worker reads a share of the input
+  (e.g. some Kafka partitions or scrape targets) with no shuffle by group, so
+  it keeps its own open window instance of every group it sees.
+- When a window closes (the watermark passes its end), a **compaction** job
+  merges the `k_D` partial instances of each group into one stored instance.
+  With `k_D = 1` there is none.
+- Each firing of RAQE `i` releases one **query job**: merge the `n_{i,D}`
+  stored instances of each group for the query window, then estimate. Merging
+  is part of the query. It reads the newest window, which closes at the firing
+  time, so it starts after that window's compaction.
+
+`AUC(CPU) = Σ_D (ρ_D + c_D / y_D) + Σ_i ℓ_{i,D} / T_i`. It is fixed by the
+plan, whatever the schedule.
+
+#### 4. Memory: parts and how each is computed
+
+Each part is counted once: a window counts as ingest memory while open and as
+storage once compacted, and a query reads stored instances in place.
 
 | Part | What | Bytes | Held |
 |---|---|---|---|
-| Ingest | open windows, one copy per worker | `card(G) · m · (x/y) · k_D` | always |
-| Storage | closed windows kept for lookbacks (compacted, one copy) | `card(G) · m · ((max S − x)/y + 1)` | always |
-| Query | the merge accumulators `Q_i` creates (none for a direct query), and its output | `card(G) · m` + output | while `Q_i` runs |
+| Ingest | open windows, one copy per worker | `I_D = card(G) · m · (x_D / y_D) · k_D` | always |
+| Storage | closed windows for the longest lookback served (one compacted copy) | `stored_D = max_i card(G) · m · ((S_i − x_D) / y_D + 1)` | always |
+| Query | the accumulators the merge creates (none when `n = 1`) and the output | `q_{i,D} = card(G) · m · [n_{i,D} > 1] + output` | while the query job runs |
 
-A window counts as ingest memory while open and as storage once compacted.
-A query reads stored instances in place; only the accumulators its merge
-creates are query memory.
+`AUC(memory) = Σ_D (I_D + stored_D) + Σ_i q_{i,D} · (run time) / T_i`. Under
+cost model 1 a query job runs on its own core, so its run time is `ℓ_{i,D}`.
+Under cost model 2 memory is the peak the placement reaches.
 
-**Measurement assumptions (sketch-bench as is).** Every sketch operation is
-single-threaded and compute-bound: sketch-bench's CPU time equals its wall
-time (e.g. an insert phase of 62.65 ms CPU and 62.65 ms wall). So a job uses
-at most one core, and on a full core it takes its CPU time; the cost table's
-`*_cpu_secs` are all the model needs.
+#### 5. Batch latency and the SLA
 
-**Cost model 1 (AUC: `w1 · AUC(CPU) + w2 · AUC(mem)`).** CPU is elastic and
-billed by use, so every job starts when it is ready, on its own core:
+A batch's **latency** is the time from its release until its last query job
+finishes, compaction included. The **query latency** of a plan is its worst
+batch latency over the hyperperiod. A latency SLA `L` requires query latency
+`≤ L`.
 
-- `AUC(CPU) = Σ_D ρ_D + Σ_D compaction_D / y + Σ_i ℓ_i / T_i`, fixed by the
-  plan (compaction is the only addition, from parallel ingest).
-- `AUC(mem) = Σ_D (ingest + storage)_D + Σ_i (query memory_i × duration_i) / T_i`.
-  Parallel ingest raises it through the `k_D` open copies.
-- A batch's latency is its longest `compaction + Q_i` chain, so an SLA `L`
-  only forbids pairs with `(k_D − 1) · card(G) · c_mrg + ℓ_{i,D} > L`
-  (`z_{i,D} = 0`). No resource point is needed.
+- Cost model 1: CPU is elastic, so no job waits for a core. A batch's latency
+  is its longest **chain** `c_D + ℓ_{i,D}` (the newest window's compaction,
+  then the query), and the SLA requires `c_D + ℓ_{i,D} ≤ L` for every
+  assigned pair.
+- Cost model 2: jobs share the provisioned capacity, so the latency comes from
+  the placement (§6).
 
-**Cost model 2 (max: `w1 · max(CPU) + w2 · max(mem)`).** The plan provisions
-a resource point `(C vCPU, M GiB)`, billed at its peak; ingest, compaction and
-queries share it. The placement below gives the latency.
+#### 6. Job placement algorithm (cost model 2)
 
-**Placement algorithm, given a resource point (C vCPU, M GiB).** Capacity is
-fractional; jobs share it as rates (fluid, priority-ordered processor
+Given a resource point `(C, M)`, the placement finds when each job runs and
+gives every batch's latency and the CPU and memory over time. Capacity is
+fractional; running jobs share it as rates (fluid, priority-ordered processor
 sharing).
 
 ```text
-capacity for jobs  K = C − Σ_D ρ_D     (ingest is steady; K > 0 and the mean load
-                                        at most C, else infeasible)
+capacity for jobs  K = C − Σ_D ρ_D        (ingest is steady; K > 0 and the
+                                           mean load at most C, else infeasible)
 simulate 2 hyperperiods, event-driven (events: releases, completions):
   ready = compaction jobs (released at window closes)
         + query jobs whose newest window is compacted
   order: release time (older first), then compaction before query
          (it unblocks queries), then longest remaining work first
   give rates in that order: job j gets a_j = min(1, K − rates already given)
-    (memory is not a limit here: `M` is set to the peak the placement reaches)
   a job at rate a_j finishes when its remaining work / a_j elapses
   recompute the rates at every event
-outputs: per-RAQE and per-batch latency, worst batch latency, CPU(t), MEM(t)
+outputs: per-RAQE and per-batch latency, worst batch latency,
+         CPU(t) = Σ ρ_D + Σ a_j,  MEM(t) = Σ (I_D + stored_D) + Σ q of running jobs
 ```
 
 Two hyperperiods are simulated so that work carried over the wrap-around is
-counted.
+counted. A job uses at most one core, so with `K ≥ 1` a batch on its own ends
+within `Σ work / K + max chain` (Graham's list-scheduling bound).
 
-**MILP.** The variables are the existing `z_{i,D}` (RAQE `i` uses candidate
-`D`), `u_D` (`D` is active) and `stored_D`; cost model 2 adds `C` and `M`
-(continuous). Per candidate the model reads constants: ingest CPU `ρ_D`,
-workers `k_D = ⌈ρ_D⌉`, ingest memory `I_D` (open windows × `k_D`), compaction
-`c_D = (k_D − 1) · Σ instances · c_mrg` per closed window, every `y_D`; per
-pair: the query job's work `ℓ_{i,D}`, its memory `q_{i,D}` (merge
-accumulators and output) and storage `s_{i,D}`.
+#### 7. MILP formulation
 
-Cost model 1 (by use; CPU elastic):
+Variables: `z_{i,D} ∈ {0,1}` (RAQE `i` uses `D`, for eligible pairs `E`),
+`u_D ∈ {0,1}` (`D` is active), `stored_D ≥ 0`; cost model 2 adds `C, M ≥ 0`.
+Constants per candidate and pair are §3 and §4's.
+
+Common rows:
 
 ```text
-minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D  +  Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
-        + w2 · [ Σ_D I_D · u_D  +  Σ_D stored_D  +  Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
-s.t.      the assignment rows above;  stored_D ≥ s_{i,D} · z_{i,D}
-with SLA L:  z_{i,D} = 0  if c_D + ℓ_{i,D} > L                     (the chain fits)
+Σ_D z_{i,D} = 1                       for every RAQE i
+z_{i,D} ≤ u_D ≤ Σ_i z_{i,D}            for (i, D) ∈ E
+stored_D ≥ card(G)·m·((S_i − x_D)/y_D + 1) · z_{i,D}
+with SLA L:  z_{i,D} = 0  if c_D + ℓ_{i,D} > L          (the chain fits)
 ```
 
-Every term is linear, so this is exact: with elastic CPU a batch's latency is
-its longest chain `c_D + ℓ_{i,D}`.
+Cost model 1:
 
-Cost model 2 (provisioned `(C, M)`, billed at the peak):
+```text
+minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
+        + w2 · [ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
+```
+
+Cost model 2:
 
 ```text
 minimize  w1 · C + w2 · M
-s.t.      the assignment rows;  stored_D ≥ s_{i,D} · z_{i,D}
-          C ≥ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D}          (mean load)
-          M ≥ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D}                    (every query at once)
+s.t.      C ≥ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D}       (mean load)
+          M ≥ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D} + δ_M         (memory)
 with SLA L:
-          z_{i,D} = 0  if c_D + ℓ_{i,D} > L                                             (the chain fits)
-          Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ≤ L · (C − Σ_D ρ_D · u_D)           (the aligned batch fits)
+          C ≥ Σ_D ρ_D · u_D + ( Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ) / L + δ_C   (batch B0)
 ```
 
-The batch row is linear (`L` is a constant). It is a surrogate: it treats the
-heaviest batch's work as divisible, and the memory row holds every query at
-once. So the MILP's `(C, M)` is not what the chosen mapping really needs. The
-placement sizes it exactly, for every method alike: `C` is the smallest at
-which the placement's worst batch meets `L` (binary search; with jobs capped at
-one core, list scheduling ends within `Σ work / K + max chain`, so it exists
-whenever every chain fits), and `M` is the placement's peak memory. Without an
-SLA, `C` is the mean load and the placement reports the latency it gives.
+`δ_C = δ_M = 0` in the first solve (§8). Every row is linear: `L` is a
+constant.
 
-**Correction passes (cost model 2).** The MILP minimizes the surrogate peaks,
-which may rank mappings differently from their placed peaks. So
-`milp::minimize_cost_model` iterates:
+#### 8. Solution method
 
-1. Solve the MILP; take its mapping and size its real `(C*, M*)` with the
-   placement. Cost `w1 · C* + w2 · M*`.
-2. Measure the surrogate's error on that mapping: `δ_C = C* − Ĉ`,
-   `δ_M = M* − M̂`, where `Ĉ = max(mean load, ρ_ing + batch work / L)` and
-   `M̂ = ingest + storage + every query's memory` are the rows' values.
-3. Add the errors back to the rows (`C ≥ ρ_ing + batch work / L + δ_C`,
-   `M ≥ … + δ_M`) and solve again.
-4. Keep the mapping with the lowest placed cost; stop when a mapping repeats,
-   or after three corrections.
+**Cost model 1** is solved exactly: with elastic CPU every term is linear,
+and the SLA is a filter on pairs.
 
-Cost model 1 needs none of this: with elastic CPU every term is linear and
-exact (CPU and memory by use, latency the longest chain).
+**Cost model 2** cannot be solved exactly by this MILP: a peak depends on when
+jobs run, which is a scheduling problem. A time-indexed MILP (a variable per
+job per time slot) would be exact, but µs–ms jobs over a 60 s hyperperiod
+make it far too large. So the MILP is a linear surrogate: its batch row treats
+`B0`'s work as divisible over the capacity ingest leaves, and its memory row
+holds every query at once. The plan is then sized and corrected with the
+placement:
 
-- PerQuery: the same MILP over single-RAQE candidates only (no sharing).
-- AutoSketch: fixed configs, chosen by memory; priced by the same functions
-  (cost model 1 by use; cost model 2 by the placement and binary search).
+1. **Solve** the MILP and take its mapping.
+2. **Size** the mapping with the placement: `C*` is the smallest `C` at which
+   the worst batch meets `L` (binary search; it exists whenever every chain
+   fits); `M*` is the placement's peak memory at `C*`. Without an SLA, `C*` is
+   the mean load and the placement reports the latency it gives. The plan's
+   cost is `w1 · C* + w2 · M*`.
+3. **Correct:** measure the surrogate's error on that mapping,
+   `δ_C = C* − Ĉ` and `δ_M = M* − M̂` (`Ĉ`, `M̂`: the rows' values for it), add
+   them to the rows and solve again.
+4. **Keep** the mapping with the lowest placed cost; stop when a mapping
+   repeats, or after three corrections.
 
-**Outputs.** Per (method, cost model, SLA): cost; mean and peak CPU and
-memory; the resource point; worst batch and per-RAQE latency; solve and
-verify iterations; planning time. Figure: cost vs. worst batch latency, one
-line per method, one panel per cost model and weight setting.
+**PerQuery** is the same MILP over single-RAQE candidates only (no sharing).
+**AutoSketch** keeps its memory-chosen configs and is priced by the same
+functions: cost model 1 by use (latency its longest chain); cost model 2 by
+the placement and the binary search on `C`.
 
-**Decided.** Synthetic mixed set first; the Alibaba and Google traces later.
+#### 9. Outputs
+
+Per (method, cost model, SLA): cost; mean and peak CPU and memory; the
+resource point; worst batch and per-RAQE latency; MILP solves; planning time.
+Figure: cost vs. query latency, one line per method, one panel per cost model
+and weight setting.
 
 ## Analytical cost model
 
@@ -657,8 +687,8 @@ latency_i = card(G) × c_qry + I × (n_i − 1) × c_mrg
 summed over the sketch and its key tracker, if any.
 
 On its own it is not a wall-clock SLA: it assumes no parallel execution across
-groups and no cheaper k-way merge. Under the placement design above it is one
-firing's query job (merge, then estimate) on one core.
+groups and no cheaper k-way merge. In the cost-model section above it is one
+firing's query job `ℓ_{i,D}` (merge, then estimate) on one core.
 
 ## Procedure
 
@@ -687,8 +717,8 @@ each phase's CPU and memory, together with the selected deployment mapping.
   largest shard count and N the study measured merge curves at (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
-- **Latency SLAs:** the MILP takes optional per-RAQE latency bounds; a batch
-  SLA with two cost models and query placement is under review (above). The
+- **Latency SLAs:** `minimize` takes optional per-RAQE latency bounds;
+  `minimize_cost_model` takes a batch SLA under cost model 1 or 2 (above). The
   enumerator reports latency but does not reject a mapping for it.
 - **Memory model:** query memory sums every RAQE's merge and output memory, as
   if all queries run at once; real concurrency is not modeled. Query output
