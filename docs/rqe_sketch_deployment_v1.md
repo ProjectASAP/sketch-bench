@@ -469,17 +469,21 @@ finishes, compaction included. The **query latency** of a plan is its worst
 batch latency over the hyperperiod. A latency SLA `L` requires query latency
 `≤ L`.
 
-- Cost model 1: CPU is elastic, so no job waits for a core. A batch's latency
-  is its longest **chain** `c_D + ℓ_{i,D}` (the newest window's compaction,
-  then the query), and the SLA requires `c_D + ℓ_{i,D} ≤ L` for every
-  assigned pair.
-- Cost model 2: jobs share the provisioned capacity, so the latency comes from
-  the placement (§6).
+Both cost models get the latency from the same job placement (§6); they
+differ only in the CPU capacity it is given:
 
-#### 6. Job placement algorithm (cost model 2)
+- Cost model 1: CPU is elastic, so the placement runs with unlimited capacity
+  and no job waits for a core. A batch's latency is then its longest
+  **chain** `c_D + ℓ_{i,D}` (the newest window's compaction, then the query),
+  and the SLA requires `c_D + ℓ_{i,D} ≤ L` for every assigned pair.
+- Cost model 2: jobs share the provisioned capacity `C`, so they may queue,
+  and the latency is whatever the placement gives.
 
-Given a resource point `(C, M)`, the placement finds when each job runs and
-gives every batch's latency and the CPU and memory over time. Capacity is
+#### 6. Job placement algorithm (both cost models)
+
+Given a CPU capacity, the placement finds when each job runs and gives every
+batch's latency and the CPU and memory over time. Cost model 1 runs it with
+unlimited capacity (elastic CPU); cost model 2 with the provisioned `C`. Capacity is
 fractional; running jobs share it as rates (fluid, priority-ordered processor
 sharing).
 
@@ -525,6 +529,12 @@ In words:
 Two hyperperiods are simulated so that work carried over the wrap-around is
 counted. A job uses at most one core, so with `K ≥ 1` a batch on its own ends
 within `Σ work / K + max chain` (Graham's list-scheduling bound).
+
+With unlimited capacity (cost model 1) the placement has a closed form: every
+job starts when ready on its own core, so a query runs for exactly
+`ℓ_{i,D}`, a batch's latency is its longest chain, and the memory over time
+averages to §4's `AUC(memory)`. That is why cost model 1's MILP below is
+exact.
 
 #### 7. MILP formulation
 

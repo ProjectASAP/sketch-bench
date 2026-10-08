@@ -1,6 +1,9 @@
 //! A plan's load over time, its cost under cost models 1 and 2, and the query
 //! placement that gives its batch latency (`docs/rqe_sketch_deployment_v1.md`,
-//! "Cost models, batch latency and query placement").
+//! "MILP with latency SLA constraints: cost models, query placement and batch
+//! latency"). Both cost models use the placement: cost model 1 with unlimited
+//! capacity, which has the closed form [`cost_model_1`] uses, and cost model 2
+//! with the provisioned `C`.
 //!
 //! Ingest is a steady load on `⌈ρ⌉` workers per deployment, split by sample.
 //! Each closed window is compacted (the workers' partials merged into one), and
@@ -187,8 +190,9 @@ pub struct ModelCost {
     pub latency_ms: f64,
 }
 
-/// Cost model 1: CPU and memory billed by use. CPU is elastic, so every job
-/// starts when ready and the latency is the longest chain.
+/// Cost model 1: CPU and memory billed by use. CPU is elastic: the placement
+/// with unlimited capacity, where every job starts when ready on its own core,
+/// so the latency is the longest chain and each query runs for its work.
 pub fn cost_model_1(load: &PlanLoad, w_cpu: f64, w_mem: f64) -> ModelCost {
     let (cpu, bytes) = (load.auc_cpu(), load.auc_bytes());
     ModelCost {
@@ -483,6 +487,15 @@ mod tests {
         );
         // Below the mean load (0.75 vCPU) there is no placement.
         assert!(plan.place(0.7).is_none());
+    }
+
+    #[test]
+    fn unlimited_capacity_gives_cost_model_1s_closed_form() {
+        // Compaction 0.2 s each second; queries of 0.1 s, 0.5 s and 0.3 s.
+        let plan = load(0.5, 0.2, &[(1_000, 0.1), (2_000, 0.5), (1_000, 0.3)]);
+        let placed = plan.place(1e9).unwrap();
+        assert!((placed.worst_batch_ms - plan.longest_chain_ms()).abs() < 1e-6);
+        assert!((cost_model_1(&plan, 1.0, 0.0).latency_ms - placed.worst_batch_ms).abs() < 1e-6);
     }
 
     #[test]
