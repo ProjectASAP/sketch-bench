@@ -424,6 +424,18 @@ at most one core and, on a full core, takes its CPU time. The cost table's
 `AUC(CPU) = Σ_D (ρ_D + c_D / y_D) + Σ_i ℓ_{i,D} / T_i`. It is fixed by the
 plan, whatever the schedule.
 
+In words:
+
+- `ρ_D`: every second, `λ_D` samples arrive, and each is inserted into the
+  `x_D / y_D` windows still open, at `c_ins` each.
+- `c_D`: closing a window merges, for every instance, the `k_D` workers'
+  partial copies into one, which takes `k_D − 1` merges. This happens once
+  per slide.
+- `ℓ_{i,D}`: for each of the `card(G)` groups, a query merges its
+  `n_{i,D}` stored windows (`n − 1` merges), then answers once. This happens
+  once per interval.
+- `AUC(CPU)` adds the three rates: work per second, in vCPUs.
+
 #### 4. Memory: parts and how each is computed
 
 Each part is counted once: a window counts as ingest memory while open and as
@@ -438,6 +450,17 @@ storage once compacted, and a query reads stored instances in place.
 `AUC(memory) = Σ_D (I_D + stored_D) + Σ_i q_{i,D} · (run time) / T_i`. Under
 cost model 1 a query job runs on its own core, so its run time is `ℓ_{i,D}`.
 Under cost model 2 memory is the peak the placement reaches.
+
+In words:
+
+- `I_D`: every worker keeps one instance per group for each of the
+  `x_D / y_D` windows still open, and there are `k_D` workers.
+- `stored_D`: closed windows are kept until the longest lookback that `D`
+  serves no longer needs them. That is `(S − x)/y + 1` windows per group.
+- `q_{i,D}`: a merge builds one accumulator per group (a direct query, with
+  `n = 1`, reads the stored window and needs none), plus the answer.
+- `AUC(memory)`: ingest and storage are held all the time. A query's memory
+  is held only while it runs, a fraction `run time / T_i` of the time.
 
 #### 5. Batch latency and the SLA
 
@@ -475,6 +498,30 @@ outputs: per-RAQE and per-batch latency, worst batch latency,
          CPU(t) = Σ ρ_D + Σ a_j,  MEM(t) = Σ (I_D + stored_D) + Σ q of running jobs
 ```
 
+In words:
+
+1. **Reserve ingest.** Ingest runs all the time and takes `Σ ρ_D` vCPUs off
+   the top; the rest, `K`, which may be a fraction, is shared by compaction
+   and query jobs. If the plan's mean load does not fit in `C`, there is no
+   placement.
+2. **Release jobs.** Each window close releases a compaction job for its
+   deployment. Each firing releases a query job, which becomes ready only once
+   its deployment's newest window is compacted.
+3. **Prioritize.** Ready jobs run oldest batch first, so no batch starves.
+   Within a batch, compaction runs before queries, because queries wait for
+   it. Then the longest remaining work runs first, so a long job doesn't end
+   up running alone at the end of the batch.
+4. **Share capacity as rates.** In that order, each job gets up to one core
+   (a single-threaded job can't use more) from the capacity still free. The
+   last one served may get only a fraction and runs slower in proportion.
+5. **Advance to the next event.** Time jumps to the next release or the
+   earliest finishing job, everyone's remaining work drops by rate × elapsed
+   time, and the rates are recomputed.
+6. **Read off the results.** A query's latency is its finish minus its
+   release, and a batch's latency is that of its last query. The CPU in use
+   is ingest plus the rates; the memory is ingest, storage and the running
+   queries' memory.
+
 Two hyperperiods are simulated so that work carried over the wrap-around is
 counted. A job uses at most one core, so with `K ≥ 1` a batch on its own ends
 within `Σ work / K + max chain` (Graham's list-scheduling bound).
@@ -494,12 +541,29 @@ stored_D ≥ card(G)·m·((S_i − x_D)/y_D + 1) · z_{i,D}
 with SLA L:  z_{i,D} = 0  if c_D + ℓ_{i,D} > L          (the chain fits)
 ```
 
+In words:
+
+- Every RAQE is served by exactly one eligible deployment.
+- A deployment is active if and only if some RAQE uses it, so its ingest is
+  paid once, however many RAQEs share it.
+- A deployment stores enough closed windows for the longest lookback it
+  serves (a linearized max).
+- Under an SLA, a pair whose own chain (the newest window's compaction, then
+  the query, each on a full core) is longer than `L` can never meet it, so it
+  is ruled out.
+
 Cost model 1:
 
 ```text
 minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
         + w2 · [ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
 ```
+
+In words: the price of the mean vCPUs (ingest and compaction per active
+deployment, plus each RAQE's query work per second), plus the price of the
+mean memory (ingest and storage per active deployment, plus each query's
+memory for the fraction of time it runs). With elastic CPU this is the cost
+exactly, and the SLA is fully handled by the chain row above.
 
 Cost model 2:
 
@@ -513,6 +577,19 @@ with SLA L:
 
 `δ_C = δ_M = 0` in the first solve (§8). Every row is linear: `L` is a
 constant.
+
+In words:
+
+- The objective prices the provisioned peak, `C` vCPUs and `M` GiB.
+- **Mean load:** the capacity must at least carry the average work, or a
+  backlog grows without bound.
+- **Memory:** the capacity must hold ingest and storage, plus every query's
+  memory as if all ran at once (an upper bound on the peak).
+- **Batch `B0`:** when every RAQE fires together, ingest keeps
+  `Σ ρ_D · u_D` vCPUs busy. The rest must finish the batch's queries and
+  compactions within `L`, so `C − ingest ≥ batch work / L`. This treats the
+  batch as divisible over the free capacity, which is a necessary condition.
+  §8 corrects it.
 
 #### 8. Solution method
 
@@ -535,7 +612,11 @@ placement:
    cost is `w1 · C* + w2 · M*`.
 3. **Correct:** measure the surrogate's error on that mapping,
    `δ_C = C* − Ĉ` and `δ_M = M* − M̂` (`Ĉ`, `M̂`: the rows' values for it), add
-   them to the rows and solve again.
+   them to the rows and solve again. In words: the first solve may favor a
+   mapping whose real peak is higher than the rows said (jobs can't be split,
+   and queries wait for compaction), or penalize one whose real memory peak is
+   lower (not every query runs at once). Adding the observed gap lets the
+   next solve rank mappings closer to their placed cost.
 4. **Keep** the mapping with the lowest placed cost; stop when a mapping
    repeats, or after three corrections.
 
