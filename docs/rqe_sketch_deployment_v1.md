@@ -361,10 +361,8 @@ never enumerates full mappings.
 
 ### Cost models, batch latency and query placement (design, under review)
 
-Status: design for review (ProjectASAP/ASAPQuery#777). The code in
-`milp::minimize_batch_sla` implements an earlier variant (CPU priced at a
-provisioned `V`, one fluid batch) and is reworked to this design once it is
-agreed.
+Status: agreed design (ProjectASAP/ASAPQuery#777), being implemented in
+`placement` (load, cost models, placement) and `milp::minimize_cost_model`.
 
 **Scope.** Evaluated on the synthetic mixed template set (spatial templates
 every 1 s, temporal ones every 1 min, so the hyperperiod is `H = lcm(T_i) =
@@ -437,15 +435,15 @@ fractional; jobs share it as rates (fluid, priority-ordered processor
 sharing).
 
 ```text
-capacity for jobs  K = C − Σ_D ρ_D     (ingest is steady; K > 0, and M covers
-                                        ingest + storage memory, else infeasible)
+capacity for jobs  K = C − Σ_D ρ_D     (ingest is steady; K > 0 and the mean load
+                                        at most C, else infeasible)
 simulate 2 hyperperiods, event-driven (events: releases, completions):
   ready = compaction jobs (released at window closes)
         + query jobs whose newest window is compacted
   order: release time (older first), then compaction before query
          (it unblocks queries), then longest remaining work first
-  give rates in that order: job j gets a_j = min(1, K − rates already given),
-    as long as its memory fits in what ingest and storage leave
+  give rates in that order: job j gets a_j = min(1, K − rates already given)
+    (memory is not a limit here: `M` is set to the peak the placement reaches)
   a job at rate a_j finishes when its remaining work / a_j elapses
   recompute the rates at every event
 outputs: per-RAQE and per-batch latency, worst batch latency, CPU(t), MEM(t)
@@ -454,35 +452,51 @@ outputs: per-RAQE and per-batch latency, worst batch latency, CPU(t), MEM(t)
 Two hyperperiods are simulated so that work carried over the wrap-around is
 counted.
 
-**MILP: a linear surrogate, then verify with the placement.** `k_D` is fixed
-by `D` (`⌈ρ_D⌉`), so its memory and compaction are constants per candidate.
+**MILP.** The variables are the existing `z_{i,D}` (RAQE `i` uses candidate
+`D`), `u_D` (`D` is active) and `stored_D`; cost model 2 adds `C` and `M`
+(continuous). Per candidate the model reads constants: ingest CPU `ρ_D`,
+workers `k_D = ⌈ρ_D⌉`, ingest memory `I_D` (open windows × `k_D`), compaction
+`c_D = (k_D − 1) · Σ instances · c_mrg` per closed window, every `y_D`; per
+pair: the query job's work `ℓ_{i,D}`, its memory `q_{i,D}` (merge
+accumulators and output) and storage `s_{i,D}`.
+
+Cost model 1 (by use; CPU elastic):
 
 ```text
-cost model 1:
-  minimize  w1 · AUC(CPU) + w2 · AUC(mem)        (linear in u_D, z_{i,D})
-  with SLA L:  z_{i,D} = 0  if (k_D − 1)·card(G)·c_mrg + ℓ_{i,D} > L
-
-cost model 2:
-  minimize  w1 · C + w2 · M
-  C ≥ Σ_D ρ_D·u_D + Σ (compaction + query).cpu × z          (stability)
-  M ≥ Σ_D (ingest + storage)_D·u_D + Σ_{i∈B0} card(G_i)·m_i × z_{i,D}   (memory, conservative)
-  with SLA L:
-    z_{i,D} = 0  if (k_D − 1)·card(G)·c_mrg + ℓ_{i,D} > L    (one chain fits)
-    Σ_{i∈B0} ℓ_{i,D} × z_{i,D} + Σ_D compaction_D·u_D ≤ (C − Σ_D ρ_D·u_D) × L   (capacity, necessary)
+minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D  +  Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
+        + w2 · [ Σ_D I_D · u_D  +  Σ_D stored_D  +  Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
+s.t.      the assignment rows above;  stored_D ≥ s_{i,D} · z_{i,D}
+with SLA L:  z_{i,D} = 0  if c_D + ℓ_{i,D} > L                     (the chain fits)
 ```
 
-Under cost model 2, with jobs capped at one core, list scheduling finishes
-within `Σ work / K + max chain` (Graham), which gives the sufficient margin:
-the solution is simulated, and if its worst batch exceeds `L`, the capacity
-row's `L` becomes `L − max chain` and the MILP is solved again (at most two
-solves). Without an SLA the SLA rows are dropped and the latency is reported
-(cost model 1: the longest chain; cost model 2: the placement at the
-solution's `(C, M)`).
+Every term is linear, so this is exact: with elastic CPU a batch's latency is
+its longest chain `c_D + ℓ_{i,D}`.
 
-- PerQuery: the same MILP over single-RAQE candidates only.
-- AutoSketch: fixed configs, chosen by memory. Cost model 1: its AUC cost and
-  longest chain. Cost model 2: the smallest `(C, M)` at which the placement
-  meets `L` (binary search on `C`, `M` at its peak need).
+Cost model 2 (provisioned `(C, M)`, billed at the peak):
+
+```text
+minimize  w1 · C + w2 · M
+s.t.      the assignment rows;  stored_D ≥ s_{i,D} · z_{i,D}
+          C ≥ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D}          (mean load)
+          M ≥ Σ_D (I_D · u_D + stored_D) + Σ_(i,D) q_{i,D} · z_{i,D}                    (every query at once)
+with SLA L:
+          z_{i,D} = 0  if c_D + ℓ_{i,D} > L                                             (the chain fits)
+          Σ_(i,D) ℓ_{i,D} · z_{i,D} + Σ_D c_D · u_D ≤ L · (C − Σ_D ρ_D · u_D)           (the aligned batch fits)
+```
+
+The batch row is linear (`L` is a constant). It is a surrogate: it asks the
+heaviest batch's work to fit the capacity ingest leaves, as if that work were
+divisible. The MILP uses it to choose the mapping. The resource point is then
+sized exactly by the placement, for every method alike: `C` is the smallest at
+which the placement's worst batch meets `L` (binary search; with jobs capped at
+one core, list scheduling ends within `Σ work / K + max chain`, so it exists
+whenever every chain fits), and `M` is the placement's peak memory. Cost model
+2's reported cost is `w1 · C + w2 · M` at that point. Without an SLA, `C` is
+the mean load and the placement reports the latency it gives.
+
+- PerQuery: the same MILP over single-RAQE candidates only (no sharing).
+- AutoSketch: fixed configs, chosen by memory; priced by the same functions
+  (cost model 1 by use; cost model 2 by the placement and binary search).
 
 **Outputs.** Per (method, cost model, SLA): cost; mean and peak CPU and
 memory; the resource point; worst batch and per-RAQE latency; solve and
