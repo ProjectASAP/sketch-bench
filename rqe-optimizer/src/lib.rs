@@ -1,10 +1,11 @@
 //! v1 brute-force solver for the RAQE -> sketch-deployment mapping problem.
-//! `docs/rqe_sketch_deployment_v1.md` is the problem statement; doc comments
-//! cite its section numbers.
+//! `docs/rqe_sketch_deployment_v1.md` is the problem statement;
+//! `rqe_optimizer_candidates.md` and `rqe_optimizer_cost_model.md` hold the
+//! detailed planning design.
 //!
 //! Three independent stages, so an ILP can replace [`enumerate`] alone:
-//! [`candidates`] builds 𝒟 and per-RAQE eligibility (§3), [`enumerate`]
-//! searches (§4), [`analytical_cost_model`] scores (§5).
+//! [`candidates`] builds 𝒟 and per-RAQE eligibility, [`enumerate`] searches,
+//! and [`analytical_cost_model`] scores.
 //!
 //! Every number the algorithm uses is caller-supplied, except the query
 //! output size estimates in [`analytical_cost_model`].
