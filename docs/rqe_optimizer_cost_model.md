@@ -1,6 +1,26 @@
 # RQE optimizer: cost models
 
-This document is the canonical design for cost-by-use, batch latency, the analytical phase model, and the measurements required before Hydra can participate.
+This document distinguishes the optimizer's canonical cost-by-use design from
+its still-supported snapshot-AUC objective, and records the measurements
+required before Hydra can participate.
+
+## Model status and relationship
+
+- **Cost by use and batch latency** is the canonical model for the current
+  ASAP-versus-AutoSketch evaluation. It accounts for ingest workers,
+  window-close compaction, transient memory over its holding time, elastic CPU,
+  and a batch-latency bound.
+- **Resource primitives and the snapshot-AUC objective** remain supported for
+  the original generic optimizer. They define the measured per-operation and
+  per-instance inputs used everywhere, then use the older snapshot accounting:
+  query memory is summed as if concurrent, there is no worker fan-out or
+  compaction, and latency is serial query work. It is not the evaluation's
+  billing model.
+- **Hydra** is future work. Its proposed accuracy and cost contract below is
+  not admitted by #190 or the current optimizer.
+
+The two implemented objectives share the same resource primitives; they differ
+only in how they account for those primitives over time.
 
 ## Cost by use and batch latency
 
@@ -267,7 +287,13 @@ part; query latency and per-RAQE latency; planning time. Figures: version 1,
 each method's cost–latency frontier for each workload (ASAP and PerQuery as
 lines, AutoSketch as a point); version 2, each method's cost at each SLA.
 
-## Analytical cost model
+## Resource primitives and supported snapshot-AUC objective
+
+This section supplies the common per-operation resource primitives—instance
+memory and insert, merge, and query CPU—and documents the supported older
+snapshot-AUC objective. The cost-by-use model above consumes the same
+primitives, but adds worker fan-out, compaction, time-weighted transient
+memory, and batch latency instead of the accounting below.
 
 The analytical model combines the empirical per-operation Sketch Bench
 measurements with workload properties such as group cardinality, arrival rate,
@@ -408,6 +434,9 @@ is one firing's query job `ℓ_{i,D}` (merge, then estimate) on one core.
 
 
 ## Future Hydra cost and measurement requirements
+
+This is a future admission contract, not a model used by either implemented
+optimizer objective. Hydra remains outside #190.
 
 It does not make sense to apply the "fine-to-coarse rollup strategy" to Hydra.
 

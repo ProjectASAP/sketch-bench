@@ -144,7 +144,9 @@ modeled.
 The optimizer has two companion design documents:
 
 - [Candidate generation and mapping](rqe_optimizer_candidates.md): candidate construction, eligibility, finer-to-coarser roll-ups, dominance pruning, and the assignment MILP.
-- [Cost models](rqe_optimizer_cost_model.md): cost-by-use, batch latency, the analytical phase model, and the measurements required before Hydra can participate.
+- [Cost models](rqe_optimizer_cost_model.md): the canonical cost-by-use and
+  batch-latency model, the supported snapshot-AUC objective and shared
+  resource primitives, and the future Hydra admission requirements.
 
 The v1 implementation supports only the conventional roll-up path described in the candidate and cost-model documents. Hydra is not part of #190.
 
