@@ -38,7 +38,7 @@ pub(crate) fn secs(ms: Millis) -> f64 {
 /// [`mergeable_across_groups`](FamilyProperties::mergeable_across_groups).
 pub type LabelSet = BTreeSet<String>;
 
-/// What an RAQE's statistic needs (§1). A variant becomes a candidate only
+/// What an RAQE's statistic needs. A variant becomes a candidate only
 /// if it is in both `families()` and [`DEPLOYABLE_FAMILIES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
@@ -252,7 +252,9 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
     };
     match variant {
         "exact-sum" | "exact-min" | "exact-max" => exact,
-        // A rate rolled up to a coarser grouping is not a meaningful query.
+        // Not rolled up, conservatively: summing per-series increases would
+        // give the coarse answer, but whether ASAPQuery's increase
+        // accumulator keeps them per series is unconfirmed.
         "exact-increase" => FamilyProperties {
             mergeable_across_groups: false,
             ..exact
@@ -418,7 +420,7 @@ pub enum AccuracyDirection {
     HigherIsBetter,
 }
 
-/// One repeating query expression (§1).
+/// One repeating query expression.
 #[derive(Debug, Clone)]
 pub struct Raqe {
     pub id: String,
@@ -508,7 +510,7 @@ pub fn row_accuracy(config: &AtomicCostEntry) -> f64 {
     })
 }
 
-/// A candidate deployment (§3): one configuration, one grouped stream, and a
+/// A candidate deployment (`docs/rqe_optimizer_candidates.md`): one configuration, one grouped stream, and a
 /// sliding sketch window. Retention is an execution/storage concern, not an
 /// optimizer candidate dimension.
 #[derive(Debug, Clone, PartialEq)]
@@ -569,7 +571,7 @@ impl Deployment {
 /// A full mapping: one deployment index (into the `deployments` slice passed
 /// to `enumerate::brute_force`) per RAQE, aligned with the `raqes` slice's
 /// order. `z_{i,D} = 1 <=> mapping[i] == D`'s index; `u_D = 1 <=>` `D`'s
-/// index appears anywhere in `mapping` (§4) -- `y` is never stored
+/// index appears anywhere in `mapping` -- `y` is never stored
 /// separately, it's always derived from `mapping`.
 pub type Mapping = Vec<usize>;
 

@@ -1,4 +1,4 @@
-//! MILP solver for one scalarized RAQE deployment optimization (§4).
+//! MILP solver for one scalarized RAQE deployment optimization.
 //!
 //! Candidate construction is documented in `docs/rqe_optimizer_candidates.md`
 //! and the cost model in `docs/rqe_optimizer_cost_model.md`. It avoids
@@ -69,6 +69,8 @@ pub struct PlannedRaqe {
     /// Index into [`MilpSolution::deployments`].
     pub deployment: usize,
     /// `n = L/x` windows merged per query; 1 means Direct, more means Merge.
+    /// A roll-up (the RAQE's grouping differs from its deployment's) also
+    /// merges each coarse group's fine groups, even when `n = 1`.
     pub merged_instance_count: u64,
 }
 

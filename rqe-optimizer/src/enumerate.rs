@@ -1,6 +1,6 @@
-//! Brute-force search over full mappings (§4, §7 step 2).
+//! Brute-force search over full mappings.
 //!
-//! A mapping is one deployment choice per RAQE (§4's only constraint is
+//! A mapping is one deployment choice per RAQE (the MILP's only constraint is
 //! `Σ_D x_{i,D} = 1`; `y_D` is derived). Choices are independent, so the
 //! search space is exactly the cartesian product of the per-RAQE eligible
 //! lists -- nothing to prune against. Sharing falls out when two choices land
@@ -14,7 +14,7 @@ use crate::{
     candidates::eligible_deployments_for, Accuracy, Deployment, Mapping, Raqe, WorkloadFacts,
 };
 
-/// RAQEs nothing in `deployments` can serve (§3.4). Surfaced separately from
+/// RAQEs nothing in `deployments` can serve. Surfaced separately from
 /// `brute_force`: an unservable RAQE is a modeling gap (tolerance too tight,
 /// no such config), not a normal empty result.
 pub fn unservable(

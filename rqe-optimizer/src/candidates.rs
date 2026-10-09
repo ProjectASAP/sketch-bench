@@ -1,4 +1,4 @@
-//! Candidate generation and eligibility (§3).
+//! Candidate generation and eligibility (`docs/rqe_optimizer_candidates.md`).
 
 use crate::analytical_cost_model;
 use crate::{
@@ -63,7 +63,7 @@ fn measured_at_group_count(config: &AtomicCostEntry, groups: u64) -> bool {
 ///
 /// Deployments are grouped by `grouping` and built from the families whose
 /// [`mergeable_across_groups`](crate::FamilyProperties::mergeable_across_groups)
-/// is `mergeable_across_groups`. Their windows, slides and heaps come from
+/// equals `mergeable_across_groups`. Their windows, slides and heaps come from
 /// `group`, the RAQEs they may serve.
 fn candidate_deployments(
     group: &[&Raqe],
@@ -364,10 +364,12 @@ pub fn build_all_candidates_unpruned(
 /// mapping without making any modeled objective worse.
 ///
 /// This comparison is local to a (capability, metric, spatial_filter,
-/// grouping) group, where query output size is common. It compares ingest CPU
-/// and memory, then latency (merge and query CPU), merge memory and stored
-/// memory for each RAQE the dominated candidate can serve, all as the
-/// analytical cost model prices them: a sketch shared by all groups and a
+/// grouping) group. It compares ingest CPU and memory; compaction per window
+/// (it starts every chain) and per second (CPU-seconds and byte-seconds per
+/// slide, as cost by use bills it); then, for each RAQE the dominated
+/// candidate can serve, the query job's CPU (merge and query, its latency),
+/// its memory (merge accumulators and output) and stored memory. All are as
+/// the analytical cost model prices them: a sketch shared by all groups and a
 /// sketch per group don't scale alike with `card(G)`.
 pub fn prune_dominated_candidates(
     raqes: &[Raqe],
@@ -408,10 +410,12 @@ pub fn prune_dominated_candidates(
 
 /// One candidate's costs, computed once for every pairwise comparison.
 struct CandidateCosts {
-    /// Ingest CPU and memory.
-    ingest: [f64; 2],
-    /// Per RAQE: latency, merge memory and stored memory if the candidate
-    /// serves it, else `None`.
+    /// Per deployment: ingest CPU and memory; compaction CPU-seconds per
+    /// window (it starts every chain); and compaction CPU and byte-seconds
+    /// per second, as cost by use bills them every slide.
+    ingest: [f64; 5],
+    /// Per RAQE: latency, query memory (merge and output) and stored memory
+    /// if the candidate serves it, else `None`.
     per_raqe: Vec<Option<[f64; 3]>>,
 }
 
@@ -423,20 +427,30 @@ impl CandidateCosts {
         accuracy: &Accuracy,
     ) -> Self {
         let ingest = analytical_cost_model::ingest(candidate, facts);
+        let compaction_secs = analytical_cost_model::compaction_secs(candidate, facts);
+        let slide_secs = crate::secs(candidate.slide_ms);
         let per_raqe = raqes
             .iter()
             .map(|raqe| {
                 is_eligible(raqe, candidate, facts, accuracy).then(|| {
                     [
                         analytical_cost_model::query_latency_ms(raqe, candidate, facts),
-                        analytical_cost_model::merge(raqe, candidate, facts).memory_bytes,
+                        analytical_cost_model::merge(raqe, candidate, facts).memory_bytes
+                            + analytical_cost_model::query(raqe, candidate, facts).memory_bytes,
                         analytical_cost_model::storage_bytes(raqe, candidate, facts),
                     ]
                 })
             })
             .collect();
         Self {
-            ingest: [ingest.cpu_secs_per_sec, ingest.memory_bytes],
+            ingest: [
+                ingest.cpu_secs_per_sec,
+                ingest.memory_bytes,
+                compaction_secs,
+                compaction_secs / slide_secs,
+                analytical_cost_model::compaction_bytes(candidate, facts) * compaction_secs
+                    / slide_secs,
+            ],
             per_raqe,
         }
     }
@@ -923,6 +937,26 @@ mod tests {
         );
 
         assert_eq!(retained, vec![coarse]);
+    }
+
+    #[test]
+    fn retains_candidate_with_cheaper_compaction() {
+        // A direct RAQE never merges at query time, so merge CPU shows up only
+        // in compaction. `cheap_ingest` ingests on 2 workers (ρ = 2) and
+        // compacts for 100 s; `cheap_compaction` ingests on 3 (ρ = 3) and
+        // compacts for 2 s. Neither is no worse on every cost.
+        let r = raqe("r", 60_000, 60_000);
+        let cheap_ingest = crate::test_support::deployment(1.0, 1.0, 100.0, 1.0, 60_000, 60_000);
+        let cheap_compaction = crate::test_support::deployment(1.0, 1.5, 1.0, 1.0, 60_000, 60_000);
+
+        let retained = prune_dominated_candidates(
+            &[r],
+            &facts(1, 2),
+            vec![cheap_ingest.clone(), cheap_compaction.clone()],
+            &table_accuracy,
+        );
+
+        assert_eq!(retained, vec![cheap_ingest, cheap_compaction]);
     }
 
     #[test]
