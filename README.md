@@ -492,3 +492,5 @@ separate by crates may not be necessary at this moments -->
 [Data Generation](./docs/aqpbm-datagen.md)
 
 [Sketch benchmark wrapper](./docs/sketch-bench.md)
+
+[End-to-end planning flow: traces to an rqe-optimizer plan](./docs/e2e_planning_flow.md)
