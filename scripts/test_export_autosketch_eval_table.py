@@ -13,7 +13,11 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from export_autosketch_eval_table import boom_query, main  # noqa: E402
+from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
+from export_autosketch_eval_table import (  # noqa: E402
+    SYNTHETIC_DEFAULT, SYNTHETIC_GRID, boom_query, main, metric_queries, queries_per_instance,
+    shared_queries,
+    synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
 SUMMARY_HEADER = [
@@ -104,6 +108,32 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(r["label_set"]["groups"], 1)
         self.assertAlmostEqual(r["label_set"]["arrival_rate_per_sec"], 5000 / 3600)
 
+    def test_synthetic_mode_writes_one_table_per_grid_point_and_a_plan(self):
+        out = self.path("synthetic")
+        main(["--synthetic", "--revision", "test", "--out", out])
+        with open(os.path.join(out, "plan.tsv")) as f:
+            plan = [line.rstrip("\n").split("\t") for line in f]
+        self.assertEqual(len(plan), len(synthetic_plan()))
+        self.assertEqual(len(os.listdir(out)), len({row[0] for row in plan}) + 1)
+        default = "synthetic-templatesall-shared1.json"
+        self.assertIn([default, "p95", default[:-5] + "-tp95.json"], plan)
+        with open(os.path.join(out, "synthetic-templatesall-shared1.json")) as f:
+            rqes = {r["query_id"] + "/" + r["range"]: r
+                    for r in json.load(f)["workloads"][0]["rqes"]}
+        # The tables hold the workload only: sums name the exact accumulator
+        # with no data shape; sketches carry the cost table's shape.
+        family = rqes["sum_by_job/1s"]["families"][0]
+        self.assertEqual((family["sketch"], family["target"], family["grid_param"]),
+                         ("exact-sum", 0.0, None))
+        self.assertNotIn("configs", family)
+        self.assertEqual(rqes["sum_by_job/1s"]["label_set"]["groups"], 10)
+        top = rqes["topk32_sum_by_label0_rate/15m"]["families"][0]
+        self.assertEqual((top["grid_param"], top["grid_K"]), (COST_THETA, COST_KEYS))
+        kll, dd = rqes["quantile_over_time_p0.5/15m"]["families"]
+        self.assertEqual((kll["sketch"], kll["grid_param"], kll["grid_K"]),
+                         ("kll-percall", COST_PARETO_ALPHA, None))
+        self.assertEqual(dd["sketch"], "dd")
+
 
 class BoomTest(unittest.TestCase):
     def test_chunk_defines_n_and_window(self):
@@ -115,6 +145,78 @@ class BoomTest(unittest.TestCase):
         # 2000 rows / 10 variates / 20 chunks = 10 steps of 300 s.
         self.assertEqual((q["range_s"], q["step_s"]), (3000, 3000))
         self.assertEqual(q["alpha_rank"], float("inf"))
+
+
+class SyntheticQueriesTest(unittest.TestCase):
+    def test_ten_templates_give_50_distinct_rqes(self):
+        qs = synthetic_queries(templates="all")
+        # 1 + 5 spatial; per window 1 + 1 + 5 + 1 + 1 + 1 + 1 temporal, and
+        # template 10's operands repeat template 5's.
+        self.assertEqual(len(qs), 6 + 11 * 4)
+        streams = {(q["stream"], q["capability"], q["groups"]) for q in qs}
+        self.assertEqual(streams, {
+            ("job/value", "sum", 10), ("job/increment", "rate", 10),
+            ("job/dist", "quantile", 10), ("series/value", "sum", 10_000),
+            ("series/increment", "rate", 10_000), ("series/dist", "quantile", 10_000),
+            ("label_0/value", "topk", 1), ("label_0/increment", "topk", 1)})
+
+    def test_items_per_instance_follow_the_data_model(self):
+        qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="all")}
+        # 1e4 series x 200 samples/s = 2e6 samples/s.
+        self.assertEqual(qs[("quantile_by_job_p0.5", "1s")]["max_N"], 2e5)
+        self.assertEqual(qs[("quantile_over_time_p0.5", "15m")]["max_N"], 200 * 900)
+        top = qs[("topk32_sum_by_label0_rate", "24h")]
+        self.assertEqual((top["K"], top["groups"], top["max_N"]), (10_000, 1, 2e6 * 86400))
+
+    def test_every_template_issues_one_query_per_instance(self):
+        self.assertEqual({queries_per_instance(q) for q in synthetic_queries(templates="all")},
+                         {1})
+
+
+class SyntheticPlanTest(unittest.TestCase):
+    def test_plan_is_the_default_and_each_dimension_alone(self):
+        plan = synthetic_plan()
+        self.assertEqual(plan[0], SYNTHETIC_DEFAULT)
+        for dim, values in SYNTHETIC_GRID.items():
+            for v in values:
+                self.assertIn({**SYNTHETIC_DEFAULT, dim: v}, plan)
+        self.assertEqual(len(plan), 1 + sum(len(v) - 1 for v in SYNTHETIC_GRID.values()))
+
+
+class DashboardAndSharedTest(unittest.TestCase):
+    def test_dashboard_has_21_distinct_rqes(self):
+        qs = synthetic_queries(templates="dashboard")
+        count = {}
+        for q in qs:
+            name = q["query_id"].split("_p")[0]
+            count[name] = count.get(name, 0) + 1
+        # D1 3 q x 4 windows, D2 3, D3 4, D4 2; D5 repeats D1.
+        self.assertEqual(count, {"quantile_over_time": 12, "quantile_by_job": 3,
+                                 "sum_by_job_rate": 4, "topk32_sum_by_label0_rate": 2})
+        self.assertTrue(all(q["step_s"] == 60 for q in qs if q["range"] != "1s"))
+
+    def test_shared_replicas_read_one_stream_and_dedupe(self):
+        point = {**SYNTHETIC_DEFAULT, "shared": 4}
+        qs = shared_queries(point)
+        self.assertEqual(qs, shared_queries(point))  # seeded
+        ids = [(q["query_id"], q["range"]) for q in qs]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(q["dataset"].endswith("shared=4") for q in qs))
+        self.assertTrue(all("@" in q["range"] for q in qs if q["range"] != "1s"))
+        sizes = [len(shared_queries({**SYNTHETIC_DEFAULT, "shared": r})) for r in (1, 8)]
+        self.assertLess(sizes[0], sizes[1])
+
+    def test_metric_copies_share_nothing_and_grow_linearly(self):
+        point = {**SYNTHETIC_DEFAULT, "metrics": 8}
+        qs = metric_queries(point)
+        self.assertEqual(len(qs), 8 * 50)
+        self.assertEqual(len({(q["query_id"], q["range"]) for q in qs}), len(qs))
+        streams = {q["stream"].split("/")[0] for q in qs}
+        self.assertEqual(streams, {f"data_{i}" for i in range(8)})
+        self.assertTrue(all(q["dataset"].endswith("metrics=8") for q in qs))
+        # The top-k k stays readable from the query id.
+        self.assertTrue(all(q["query_id"].startswith("topk32_")
+                            for q in qs if q["capability"] == "topk"))
 
 
 if __name__ == "__main__":
