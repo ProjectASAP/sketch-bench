@@ -69,7 +69,9 @@ benchmark; the paper's 60 s per probe is a reference only):
 ## Inputs
 
 Costs and accuracy come from one saturation-study directory `DIR`, the same
-inputs the planner reads (#174, #178, #179):
+inputs the planner reads (#174, #178, #179). The one these results used is
+committed in `../autosketch-vs-asap-inputs/saturation/`, and the tables in
+`../autosketch-vs-asap-inputs/tables/`:
 - `DIR/out_grid_1e7_cost/`: the accuracy grid to N = 1e7, including the
   cost table's shape (Zipf 1.1 over 1e4 keys, Pareto a = 2), with merge
   curves for the lossy sketches;
@@ -93,6 +95,8 @@ python3 scripts/study_saturation.py --phase optimizer-cost --out DIR/optimizer_c
 
 # Workload tables and plan.tsv, then the runs.
 python3 scripts/export_autosketch_eval_table.py --synthetic --out TABLES
+# Or use the committed inputs: TABLES=rqe-optimizer/results/autosketch-vs-asap-inputs/tables,
+# DIR=rqe-optimizer/results/autosketch-vs-asap-inputs/saturation.
 SATURATION_DIR=DIR scripts/run_autosketch_vs_asap_synthetic.sh TABLES run
 # AutoSketch's measured benchmark (serially, on an idle machine; writes
 # benchmark_secs_measured into the results), then the figures.
