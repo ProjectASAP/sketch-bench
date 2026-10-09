@@ -350,13 +350,16 @@ Memory per window is instances × instance size:
 The same factor scales merge and query CPU. Insert CPU is per sample and does
 not scale.
 
-Quantile sketches have no keys, but are not strictly fixed either: KLL grows
-slowly with the number of values inserted (about `k × log(n / k)`), and
-DDSketch with the range of values. The model treats KLL as Fixed at the size
-the export measured (1,000,000 values per instance), so it misstates instances
-that see far fewer or far more values. DDSketch is sized from the metric's
-`value_range` when given (capped by values per instance), else from the
-measured size.
+Quantile sketches have no keys. KLL's `m` is Fixed exactly as reported:
+sketch-bench reports a nominal footprint, `4 · k · sizeof(T)` bytes
+(`kll_footprint`; 1600 B at `k = 50`, 6400 B at `k = 200`), the same at every
+item count (the cost table's rows were run at 1e6 items, and the same `k`
+reports the same bytes at 1e3 and 1e8). It is not the allocation:
+`asap_sketchlib::KLL` preallocates its maximum capacity over 61 levels, about
+2.9× the nominal footprint at `k = 50`, 1.25× at `k = 200` and 0.87× at
+`k = 800`, as `aqpbm-planeval`'s `kll_max_capacity` replica computes it.
+DDSketch is sized from the metric's `value_range` when given (capped by
+values per instance), else from the measured size.
 
 The model uses `I_d × m`, where `I_d` is instances per window:
 
