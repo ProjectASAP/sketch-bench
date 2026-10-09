@@ -99,14 +99,6 @@ SATURATION_DIR=DIR scripts/run_autosketch_vs_asap_synthetic.sh TABLES run
 python3 scripts/autosketch_benchmark_time.py --binary ./target/release/approxbench \
     --out OUT/autosketch-benchmark-times.json OUT/synthetic-*.json
 scripts/run_autosketch_vs_asap_synthetic.sh TABLES plot
-# Traces (alibaba_v2022, google_2011; rqe-optimizer/data/autosketch-eval/table.json)
-# are to be rerun on cost by use.
-
-# ASAP's one-time profiling time (#777 §7): the wall time of the study runs.
-scripts/profiling_time.py rqe-optimizer/data/profiling-time.json \
-    grid=DIR/out_grid_1e7_cost/saturation_accuracy.jsonl \
-    subset=DIR/out_1e9/saturation_accuracy.jsonl \
-    cost=DIR/optimizer_cost/rqe_atomic_costs_raw.jsonl
 ```
 
 `--merge-shards-list` and `POINTS.csv` follow the workloads' queries: the
