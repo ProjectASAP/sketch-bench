@@ -11,39 +11,9 @@ pub(crate) use super::hydra_shared::{
     check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
-// Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
-// in the library, reproduced here because a cell's footprint is a function of
-// them and the library exposes no accessor for its own capacity.
-const KLL_MAX_LEVELS: usize = 61;
-
-const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
-
-/// The `m` the library's `init_kll` passes, its minimum level capacity, and the
-/// floor it silently raises a smaller `k` to. Same cell as the `kll` rows, so
-/// the bound is theirs: see [`crate::wrappers::kll::LIB_K_MIN`].
-const KLL_MIN_LEVEL: usize = crate::wrappers::kll::LIB_K_MIN as usize;
-
-/// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
-const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
-
-/// Retained slots one KLL cell allocates at construction — `KLL::init` boxes a
-/// slice of this length once and never grows it. A line-for-line copy of the
-/// library's private `compute_max_capacity` (unchanged from 0.2.2 to 0.3.0), so
-/// a claim about the pinned version, not a bound.
-fn kll_cell_slots(k: u32) -> usize {
-    // `init_internal` normalises before sizing: `m` floors `k`, and `k` is
-    // capped. Reproduced so an out-of-range `k` reports the footprint the
-    // library actually allocates.
-    let m = KLL_MIN_LEVEL;
-    let k = (k as usize).max(m).min(KLL_MAX_CACHEABLE_K) as f64;
-    let mut total = 0usize;
-    let mut scale = 1.0f64;
-    for _ in 0..KLL_MAX_LEVELS {
-        total += (k * scale).ceil().max(m as f64) as usize;
-        scale *= KLL_CAPACITY_DECAY;
-    }
-    total
-}
+pub(crate) use crate::wrappers::kll::{kll_lib_slots as kll_cell_slots, KLL_LIB_MAX_LEVELS};
+#[cfg(test)]
+use crate::wrappers::kll::{KLL_LIB_MAX_CACHEABLE_K, KLL_LIB_MIN_LEVEL};
 
 #[cfg(test)]
 mod tests {
@@ -125,11 +95,11 @@ mod tests {
         assert_eq!(kll_cell_slots(200), 580 + 424);
         // Monotone in k, and never below the floor times the level count.
         assert!(kll_cell_slots(400) > kll_cell_slots(200));
-        assert_eq!(kll_cell_slots(1), KLL_MIN_LEVEL * KLL_MAX_LEVELS);
+        assert_eq!(kll_cell_slots(1), KLL_LIB_MIN_LEVEL * KLL_LIB_MAX_LEVELS);
         // Past the library's clamp, a larger k buys no more slots.
         assert_eq!(
-            kll_cell_slots(KLL_MAX_CACHEABLE_K as u32),
-            kll_cell_slots(KLL_MAX_CACHEABLE_K as u32 + 5_000)
+            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32),
+            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32 + 5_000)
         );
     }
 

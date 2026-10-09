@@ -53,11 +53,11 @@ impl HydraKll {
 
 /// Retained slots per cell times the grid area, plus the level index every
 /// cell carries. Analytic because the cell allocates once — see
-/// `kll_cell_slots` in this crate's `hydra_kll` module for the per-cell count.
+/// `kll_lib_slots` in this crate's `kll` module for the per-cell count.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     let p = &sketch.params;
     let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
-        + (KLL_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
+        + (KLL_LIB_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
     p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
 }
 
