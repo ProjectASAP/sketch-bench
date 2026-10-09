@@ -11,16 +11,16 @@
 //!
 //! Run:
 //! `cargo run --release -p rqe-optimizer --example workload_scenarios --
-//!  --cost-dir DIR --saturation-dir DIR [--w-cpu X] [--w-mem Y]
+//!  --saturation-dir DIR [--w-cpu X] [--w-mem Y]
 //!  [--allow-undeployable-families] [--sweep NAME]`
 
 use rqe_optimizer::candidates::build_all_candidates;
 use rqe_optimizer::enumerate::unservable;
 use rqe_optimizer::milp::{minimize, Objective};
-use rqe_optimizer::saturation::{DataShape, SaturationCurves};
+use rqe_optimizer::saturation::{DataShape, SaturationCurves, COST_TABLE};
 use rqe_optimizer::{
-    validate_facts, AccuracyDirection, AtomicCostTable, Capability, Deployment, LabelSet,
-    MetricFacts, Raqe, WorkloadFacts,
+    accuracy_key, validate_facts, AtomicCostTable, Capability, Deployment, LabelSet, MetricFacts,
+    Raqe, WorkloadFacts,
 };
 
 const MINUTE_MS: u64 = 60_000;
@@ -49,8 +49,9 @@ fn by_service_endpoint() -> LabelSet {
     label_set(&["service", "endpoint"])
 }
 
-/// One query, with the accuracy metric, SLA and direction its capability
-/// reports. Sweeps adjust the returned value.
+/// One query, with a default accuracy SLA for its capability. Each candidate
+/// checks the SLA against its own family's accuracy metric
+/// (`rqe_optimizer::accuracy_key`). Sweeps adjust the returned value.
 fn query(
     id: &str,
     capability: Capability,
@@ -59,10 +60,10 @@ fn query(
     lookback_ms: u64,
     interval_ms: u64,
 ) -> Raqe {
-    let (accuracy_metric, accuracy_sla, accuracy_direction) = match capability {
-        Capability::Quantile => ("mean_rank_err", 0.05, AccuracyDirection::LowerIsBetter),
-        Capability::TopKByValue => ("precision_at_k", 0.9, AccuracyDirection::HigherIsBetter),
-        _ => ("relative_error", 0.1, AccuracyDirection::LowerIsBetter),
+    let accuracy_sla = match capability {
+        Capability::Quantile => 0.05,
+        Capability::TopKByValue => 0.9,
+        _ => 0.1,
     };
     Raqe {
         id: id.to_string(),
@@ -72,10 +73,9 @@ fn query(
         metric: metric.to_string(),
         spatial_filter: String::new(),
         grouping_labels,
-        accuracy_metric: accuracy_metric.to_string(),
         accuracy_sla,
-        accuracy_direction,
         latency_sla_ms: None,
+        topk_k: None,
     }
 }
 
@@ -270,10 +270,7 @@ fn accuracy_sla_sweep() -> Sweep {
     let tightened = |mut raqes: Vec<Raqe>, accuracy_sla: f64| {
         raqes[0].accuracy_sla = accuracy_sla;
         Scenario {
-            label: format!(
-                "{} {} <= {accuracy_sla}",
-                raqes[0].id, raqes[0].accuracy_metric
-            ),
+            label: format!("{} accuracy SLA {accuracy_sla}", raqes[0].id),
             raqes,
         }
     };
@@ -356,13 +353,7 @@ fn weight_flag(flag: &str, default: f64) -> f64 {
 
 fn reject_unknown_args() {
     const SWITCHES: &[&str] = &["--allow-undeployable-families"];
-    const WITH_VALUE: &[&str] = &[
-        "--cost-dir",
-        "--saturation-dir",
-        "--sweep",
-        "--w-cpu",
-        "--w-mem",
-    ];
+    const WITH_VALUE: &[&str] = &["--saturation-dir", "--sweep", "--w-cpu", "--w-mem"];
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if WITH_VALUE.contains(&arg.as_str()) {
@@ -373,9 +364,12 @@ fn reject_unknown_args() {
     }
 }
 
+fn saturation_dir() -> String {
+    flag_value("--saturation-dir").expect("--saturation-dir DIR is required")
+}
+
 fn load_cost_table() -> AtomicCostTable {
-    let cost_dir = flag_value("--cost-dir").expect("--cost-dir DIR is required");
-    let path = std::path::Path::new(&cost_dir).join("rqe_atomic_costs.json");
+    let path = std::path::Path::new(&saturation_dir()).join(COST_TABLE);
     let raw = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("couldn't read {} ({e})", path.display()));
     serde_json::from_str(&raw)
@@ -383,8 +377,7 @@ fn load_cost_table() -> AtomicCostTable {
 }
 
 fn load_saturation_curves(cost_table: &AtomicCostTable) -> SaturationCurves {
-    let dir = flag_value("--saturation-dir").expect("--saturation-dir DIR is required");
-    let curves = SaturationCurves::load(std::path::Path::new(&dir))
+    let curves = SaturationCurves::load(std::path::Path::new(&saturation_dir()))
         .unwrap_or_else(|e| panic!("couldn't load saturation curves: {e}"));
     // ponytail: warn rather than panic, since a config with no curve is never
     // eligible; panic like small_problem once the cost export matches the grid.
@@ -458,14 +451,12 @@ fn solve_and_print(
             .zip(&plan_cost.query_latency_ms)
             .filter(|((_, planned_raqe), _)| planned_raqe.deployment == deployment_index)
         {
+            let (accuracy_metric, _) = accuracy_key(&planned.deployment.config.sketch);
             let achieved = accuracy(raqe, &planned.deployment)
                 .map_or("unknown".to_string(), |value| format!("{value:.4}"));
             println!(
                 "      {:<22} merged={:<4} latency={latency_ms:.3e} ms {}={achieved} (sla {})",
-                raqe.id,
-                planned_raqe.merged_instance_count,
-                raqe.accuracy_metric,
-                raqe.accuracy_sla,
+                raqe.id, planned_raqe.merged_instance_count, accuracy_metric, raqe.accuracy_sla,
             );
         }
     }
