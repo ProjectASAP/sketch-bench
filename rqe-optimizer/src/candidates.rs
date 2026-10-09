@@ -60,8 +60,15 @@ fn measured_at_group_count(config: &AtomicCostEntry, groups: u64) -> bool {
 
 /// Windows and slides are multiples of the metric's scrape interval: anything
 /// finer only splits one scrape's samples.
+///
+/// Deployments are grouped by `grouping` and built from the families whose
+/// [`mergeable_across_groups`](crate::FamilyProperties::mergeable_across_groups)
+/// is `mergeable_across_groups`. Their windows, slides and heaps come from
+/// `group`, the RAQEs they may serve.
 fn candidate_deployments(
     group: &[&Raqe],
+    grouping: &LabelSet,
+    mergeable_across_groups: bool,
     costs: &[AtomicCostEntry],
     metric_facts: &MetricFacts,
     allow_undeployable_families: bool,
@@ -89,6 +96,8 @@ fn candidate_deployments(
             capability
                 .candidate_families(allow_undeployable_families)
                 .any(|family| family == c.sketch)
+                && crate::family_properties(&c.sketch).mergeable_across_groups
+                    == mergeable_across_groups
         })
         .collect();
     let heap_rows = heap_rows_by_shape(&family_rows);
@@ -152,7 +161,7 @@ fn candidate_deployments(
                         capability,
                         metric: group[0].metric.clone(),
                         spatial_filter: group[0].spatial_filter.clone(),
-                        grouping_labels: group[0].grouping_labels.clone(),
+                        grouping_labels: grouping.clone(),
                         config: config.clone(),
                         window_ms,
                         slide_ms,
@@ -319,8 +328,34 @@ pub fn build_all_candidates_unpruned(
     }
     groups
         .iter()
-        .flat_map(|(&(_, metric, _, _), group)| {
-            candidate_deployments(group, costs, &facts[metric], allow_undeployable_families)
+        .flat_map(|(&(capability, metric, filter, grouping), exact_group)| {
+            // A family that rolls up may also serve RAQEs grouped by a subset,
+            // so its windows must suit theirs too.
+            let subset_group: Vec<&Raqe> = raqes
+                .iter()
+                .filter(|r| {
+                    r.capability == capability
+                        && r.metric == metric
+                        && r.spatial_filter == filter
+                        && r.grouping_labels.is_subset(grouping)
+                })
+                .collect();
+            [
+                (exact_group.as_slice(), false),
+                (subset_group.as_slice(), true),
+            ]
+            .into_iter()
+            .flat_map(|(group, mergeable_across_groups)| {
+                candidate_deployments(
+                    group,
+                    grouping,
+                    mergeable_across_groups,
+                    costs,
+                    &facts[metric],
+                    allow_undeployable_families,
+                )
+            })
+            .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -502,7 +537,9 @@ pub fn is_eligible(r: &Raqe, d: &Deployment, facts: &WorkloadFacts, accuracy: &A
     r.capability == d.capability
         && r.metric == d.metric
         && r.spatial_filter == d.spatial_filter
-        && r.grouping_labels == d.grouping_labels
+        && (r.grouping_labels == d.grouping_labels
+            || (properties.mergeable_across_groups
+                && r.grouping_labels.is_subset(&d.grouping_labels)))
         && d.window_ms != 0
         && d.slide_ms != 0
         && d.window_ms.is_multiple_of(d.slide_ms)
@@ -1036,5 +1073,109 @@ mod tests {
             true,
             &table_accuracy,
         );
+    }
+
+    #[test]
+    fn a_mergeable_deployment_serves_a_coarser_grouping_only() {
+        use crate::test_support::{kll_by, quantile_by, service_endpoint_facts};
+        let facts = service_endpoint_facts();
+        let serves = |d: &Deployment, grouping: &[&str]| {
+            is_eligible(
+                &quantile_by(grouping, 60_000, 60_000),
+                d,
+                &facts,
+                &table_accuracy,
+            )
+        };
+        let by_endpoint = kll_by(&["service", "endpoint"], 60_000);
+        assert!(serves(&by_endpoint, &["service", "endpoint"]));
+        assert!(serves(&by_endpoint, &["service"]));
+        assert!(serves(&by_endpoint, &[]));
+        assert!(!serves(&by_endpoint, &["pod"]));
+        assert!(!serves(
+            &kll_by(&["service"], 60_000),
+            &["service", "endpoint"]
+        ));
+    }
+
+    #[test]
+    fn a_rate_serves_only_its_own_grouping() {
+        use crate::test_support::{kll_by, quantile_by, service_endpoint_facts};
+        let facts = service_endpoint_facts();
+        let by_endpoint = kll_by(&["service", "endpoint"], 60_000);
+        let increase_by_endpoint = Deployment {
+            capability: Capability::RateOrIncrease,
+            config: AtomicCostEntry {
+                sketch: "exact-increase".into(),
+                accuracy_metric: metric_of("exact-increase"),
+                ..by_endpoint.config.clone()
+            },
+            ..by_endpoint
+        };
+        let rate_by = |grouping: &[&str]| Raqe {
+            capability: Capability::RateOrIncrease,
+            ..quantile_by(grouping, 60_000, 60_000)
+        };
+        let serves = |r: &Raqe| is_eligible(r, &increase_by_endpoint, &facts, &table_accuracy);
+        assert!(serves(&rate_by(&["service", "endpoint"])));
+        assert!(!serves(&rate_by(&["service"])));
+    }
+
+    #[test]
+    fn top_k_serves_only_its_own_grouping() {
+        use crate::test_support::{deployment, label_set, service_endpoint_facts};
+        let facts = service_endpoint_facts();
+        let by_endpoint = Deployment {
+            grouping_labels: label_set(&["service", "endpoint"]),
+            ..deployment(1.0, 1.0, 1.0, 1.0, 60_000, 60_000)
+        };
+        let serves = |grouping: &[&str]| {
+            let r = Raqe {
+                grouping_labels: label_set(grouping),
+                ..raqe("r", 60_000, 60_000)
+            };
+            is_eligible(&r, &by_endpoint, &facts, &table_accuracy)
+        };
+        assert!(serves(&["service", "endpoint"]));
+        assert!(!serves(&["service"]));
+    }
+
+    /// A 1 h fine RAQE alone never yields a 90 min window. Its 90 min coarse
+    /// sibling does, but only for the family that can serve both.
+    #[test]
+    fn fine_candidates_take_windows_from_coarser_raqes() {
+        use crate::test_support::{label_set, quantile_by, service_endpoint_facts};
+        const HOUR: Millis = 3_600_000;
+        const NINETY_MINUTES: Millis = 5_400_000;
+        let fine = ["service", "endpoint"];
+        let topk_by = |grouping: &[&str], lookback_ms| Raqe {
+            grouping_labels: label_set(grouping),
+            ..raqe("r", lookback_ms, lookback_ms)
+        };
+        let raqes = [
+            quantile_by(&fine, HOUR, HOUR),
+            quantile_by(&["service"], NINETY_MINUTES, NINETY_MINUTES),
+            topk_by(&fine, HOUR),
+            topk_by(&["service"], NINETY_MINUTES),
+        ];
+        let kll = AtomicCostEntry {
+            sketch: "kll-percall".into(),
+            sketch_config: serde_json::json!({"params": {"k": 200}}),
+            accuracy_metric: metric_of("kll-percall"),
+            ..cost()
+        };
+        let candidates =
+            build_all_candidates_unpruned(&raqes, &[kll, cost()], &service_endpoint_facts(), false);
+        let fine_windows = |sketch: &str| {
+            candidates
+                .iter()
+                .filter(|d| d.config.sketch == sketch && d.grouping_labels == label_set(&fine))
+                .map(|d| d.window_ms)
+                .collect::<BTreeSet<_>>()
+        };
+        assert!(fine_windows("kll-percall").contains(&NINETY_MINUTES));
+        let topk_windows = fine_windows("cms-heap-topk-fastpath-vector2d");
+        assert!(topk_windows.contains(&HOUR));
+        assert!(!topk_windows.contains(&NINETY_MINUTES));
     }
 }

@@ -32,7 +32,9 @@ pub(crate) fn secs(ms: Millis) -> f64 {
     ms as f64 / 1000.0
 }
 
-/// A group-by key, compared as a set (§3's `labels_i == labels_D` rule).
+/// A group-by key, compared as a set: a deployment serves a RAQE with the
+/// same one, or a subset of it when the family is
+/// [`mergeable_across_groups`](FamilyProperties::mergeable_across_groups).
 pub type LabelSet = BTreeSet<String>;
 
 /// What an RAQE's statistic needs (§1). A variant becomes a candidate only
@@ -209,6 +211,10 @@ pub fn heap_capacity(config: &AtomicCostEntry) -> Option<u64> {
 pub struct FamilyProperties {
     /// Windows fold into one. A family without it only serves `L == x`.
     pub mergeable_across_windows: bool,
+    /// Groups' states fold into their parent group's: a deployment grouped by
+    /// `G` serves a RAQE grouped by any subset of `G` (a roll-up). Not top-k,
+    /// whose heaps drop items that are in the parent's top k but no child's.
+    pub mergeable_across_groups: bool,
     /// One sketch of fixed size holds every group: the design doc's Shared +
     /// Fixed cell. Memory, merge and storage don't scale with `card(G)`.
     /// Exact accumulators are Shared + PerKey and `false` here, because the
@@ -232,6 +238,7 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
     use AccuracyDirection::{HigherIsBetter, LowerIsBetter};
     let one_sketch_per_group = |metric, direction| FamilyProperties {
         mergeable_across_windows: true,
+        mergeable_across_groups: true,
         one_fixed_size_sketch_for_all_groups: false,
         needs_delta_set_key_tracker: false,
         exact: false,
@@ -243,7 +250,12 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
         ..one_sketch_per_group("relative_error", LowerIsBetter)
     };
     match variant {
-        "exact-sum" | "exact-min" | "exact-max" | "exact-increase" => exact,
+        "exact-sum" | "exact-min" | "exact-max" => exact,
+        // A rate rolled up to a coarser grouping is not a meaningful query.
+        "exact-increase" => FamilyProperties {
+            mergeable_across_groups: false,
+            ..exact
+        },
         KEY_TRACKER_FAMILY => FamilyProperties {
             accuracy: None,
             ..exact
@@ -253,9 +265,13 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
         "dd" => one_sketch_per_group("mean_relative_value_error", LowerIsBetter),
         "cms-heap-topk-fastpath-vector2d"
         | "countsketch-heap-topk-fastpath-vector2d"
-        | "univmon-topk" => one_sketch_per_group("precision_at_k", HigherIsBetter),
+        | "univmon-topk" => FamilyProperties {
+            mergeable_across_groups: false,
+            ..one_sketch_per_group("precision_at_k", HigherIsBetter)
+        },
         "hydra-kll" => FamilyProperties {
             mergeable_across_windows: true,
+            mergeable_across_groups: false,
             one_fixed_size_sketch_for_all_groups: true,
             needs_delta_set_key_tracker: true,
             exact: false,
@@ -275,6 +291,7 @@ pub struct MetricFacts {
     pub scrape_interval_ms: Millis,
     /// `card(X)`: distinct value combinations of each label set `X` in use.
     /// Must include `labels` itself, whose cardinality is the series count.
+    /// A label set never has more groups than any superset of it.
     pub cardinality: BTreeMap<LabelSet, u64>,
     /// `(lo, hi)`: smallest and largest positive sample value, if known.
     /// Sizes DDSketch; without it, DDSketch keeps the measured memory.
@@ -365,13 +382,16 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
                 Some(_) => false,
             };
         }
-        if let (Some(&groups), Some(&series)) =
-            (cardinality.get(grouping), cardinality.get(all_labels))
-        {
-            if groups > series {
-                problems.insert(format!(
-                    "{metric}: {grouping:?} has {groups} groups but only {series} series"
-                ));
+        // Dropping labels never adds groups. A roll-up's merge count,
+        // `card(G_d) · L/x − card(G_r)`, relies on it.
+        for (coarse, &coarse_groups) in cardinality {
+            for (fine, &fine_groups) in cardinality {
+                if coarse.is_subset(fine) && coarse_groups > fine_groups {
+                    problems.insert(format!(
+                        "{metric}: {coarse:?} has {coarse_groups} groups but its superset \
+                         {fine:?} only {fine_groups}"
+                    ));
+                }
             }
         }
     }
@@ -652,6 +672,51 @@ pub(crate) mod test_support {
             key_tracker: None,
         }
     }
+
+    pub fn label_set(names: &[&str]) -> LabelSet {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    /// 5 services × 10 endpoints, one series per endpoint, scraped every
+    /// second: the coarse and fine groupings of a roll-up.
+    pub fn service_endpoint_facts() -> WorkloadFacts {
+        let service = label_set(&["service"]);
+        let service_endpoint = label_set(&["service", "endpoint"]);
+        WorkloadFacts::from([(
+            METRIC.to_string(),
+            MetricFacts {
+                labels: service_endpoint.clone(),
+                scrape_interval_ms: 1_000,
+                cardinality: BTreeMap::from([(service, 5), (service_endpoint, 50)]),
+                value_range: None,
+                data_shape: BTreeMap::new(),
+            },
+        )])
+    }
+
+    /// A per-group KLL deployment by `grouping`, every per-instance cost 1.
+    pub fn kll_by(grouping: &[&str], window_ms: Millis) -> Deployment {
+        let base = deployment(1.0, 1.0, 1.0, 1.0, window_ms, window_ms);
+        Deployment {
+            capability: Capability::Quantile,
+            grouping_labels: label_set(grouping),
+            config: AtomicCostEntry {
+                sketch: "kll-percall".into(),
+                sketch_config: serde_json::json!({"params": {"k": 200}}),
+                accuracy_metric: metric_of("kll-percall"),
+                ..base.config
+            },
+            ..base
+        }
+    }
+
+    pub fn quantile_by(grouping: &[&str], lookback_ms: Millis, interval_ms: Millis) -> Raqe {
+        Raqe {
+            capability: Capability::Quantile,
+            grouping_labels: label_set(grouping),
+            ..raqe(lookback_ms, interval_ms)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -865,16 +930,18 @@ mod tests {
         );
     }
 
+    /// Every label set, not just the full one, bounds its subsets' groups.
     #[test]
-    fn rejects_more_groups_than_series() {
+    fn rejects_a_label_set_with_more_groups_than_its_superset() {
         let facts = WorkloadFacts::from([(
             METRIC.to_string(),
             MetricFacts {
-                labels: labels(&["service", "endpoint"]),
+                labels: labels(&["service", "endpoint", "pod"]),
                 scrape_interval_ms: 15_000,
                 cardinality: BTreeMap::from([
                     (labels(&["service"]), 60),
                     (labels(&["service", "endpoint"]), 50),
+                    (labels(&["service", "endpoint", "pod"]), 30_000),
                 ]),
                 value_range: None,
                 data_shape: BTreeMap::new(),
@@ -884,7 +951,12 @@ mod tests {
             grouping_labels: labels(&["service"]),
             ..raqe(60_000, 60_000)
         };
-        let problems = validate_facts(&[r], &facts).unwrap_err();
-        assert!(problems[0].contains("60 groups but only 50 series"));
+        assert_eq!(
+            validate_facts(&[r], &facts).unwrap_err(),
+            [format!(
+                "{METRIC}: {{\"service\"}} has 60 groups but its superset \
+                 {{\"endpoint\", \"service\"}} only 50"
+            )]
+        );
     }
 }
