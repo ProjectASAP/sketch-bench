@@ -44,13 +44,18 @@ AutoSketch-Adapted (fixed configs chosen by memory).
 |---|---|
 | `D`, `i` | a candidate deployment; a RAQE |
 | `x_D`, `y_D` | `D`'s window and slide; a window closes every `y_D` |
+| `a_D = x_D / y_D` | open windows; each sample is inserted into `a_D` instances |
 | `S_i`, `T_i` | RAQE `i`'s lookback and interval; it fires at `t = k · T_i` |
-| `card(G)` | groups of `D`'s grouping |
-| `inst_D` | instances per window: `card(G)`, or 1 for a sketch shared by all groups, plus `card(G)` for a key tracker if the family needs one |
+| `G_d`, `G_r` | `D`'s grouping; RAQE `i`'s grouping, equal to `G_d` or, for a family that merges across groups, a subset of it (a **roll-up**) |
+| `card(G)` | groups of grouping `G` |
+| part | the sketch, plus a key tracker if the family needs one; every cost below is summed over parts |
+| `I_d` | a part's instances per window: `card(G_d)`, or 1 for a sketch shared by all groups |
+| `I_r` | the states a query of `i` ends with: `card(G_r)`, or 1 for a sketch shared by all groups |
 | `λ_D` | samples/s arriving for `D`'s metric: `card(series) / scrape interval`, already a rate |
 | `c_ins`, `c_mrg`, `c_qry` | measured CPU-seconds per insert, per pairwise merge, per query of one instance |
-| `m` | measured bytes per instance; `w_D = Σ_parts inst · m`, one window of all instances |
+| `m` | measured bytes per instance; `w_D = Σ_parts I_d · m`, one window of all instances |
 | `n_{i,D} = S_i / x_D` | windows a query merges |
+| `k_D = ⌈ρ_D⌉` | ingest workers (at least one), from ingest CPU `ρ_D` (§3) |
 | batch | all query jobs issued at one instant |
 
 **Measurement assumption (sketch-bench as is).** Every sketch operation is
@@ -73,84 +78,90 @@ Fargate) is not modeled. Since a job holds its memory only while it runs, its
 memory × time is the same whenever it runs, and queueing a job would save
 nothing.
 
-#### 3. CPU: parts and how each is computed
+#### 3. Cost of each phase: CPU and memory
 
-Every "mean vCPUs" below is a long-run average rate, CPU-seconds per second,
-over the same period: a whole number of hyperperiods `H = lcm(T_i, y_D)`,
-over which every job pattern repeats exactly. A part with `w` CPU-seconds per
-event every `P` seconds runs `H / P` times per hyperperiod, so its mean is
-`(H / P) · w / H = w / P`; ingest is already a rate. So the three columns add.
+This is the one cost table: every phase, with its CPU and its memory. Each
+cell is per part; a phase's cost is the sum over parts.
 
-| Part | When | CPU-seconds | Mean vCPUs |
-|---|---|---|---|
-| Ingest (the precompute) | continuously, as samples arrive | — | `ρ_D = λ_D · (x_D / y_D) · c_ins` |
-| Compaction | at each window close | `c_D = (k_D − 1) · Σ_parts inst · c_mrg` | `c_D / y_D` |
-| Query job of RAQE `i` | at each firing | `ℓ_{i,D} = card(G) · c_qry + Σ_parts inst · (n_{i,D} − 1) · c_mrg` | `ℓ_{i,D} / T_i` |
+| Phase | When | CPU-seconds per event | Mean vCPUs | Memory (bytes) | Held |
+|---|---|---|---|---|---|
+| Ingest (the precompute) | continuously, as samples arrive | — | `ρ_D = λ_D · a_D · c_ins` | `ingest_D = I_d · m · a_D · k_D` (open windows, one copy per worker) | always |
+| Compaction | at each window close | `c_D = (k_D − 1) · I_d · c_mrg` | `c_D / y_D` | `k_D · I_d · m` (the closed window's partial copies; 0 when `k_D = 1`) | while it runs: `c_D` |
+| Query job of RAQE `i` (merge, then estimate) | at each firing | `ℓ_{i,D} = card(G_r) · c_qry + (I_d · n_{i,D} − I_r) · c_mrg` | `ℓ_{i,D} / T_i` | `q_{i,D} = I_r · m(S_i) · [merges > 0] + card(G_r) · output bytes` | while it runs: `ℓ_{i,D}` |
+| Storage | always | — | 0 | `stored_D = max_i I_d · m · ((S_i − x_D) / y_D + 1)` (closed windows, one compacted copy) | always |
 
-- Ingest runs on `k_D = ⌈ρ_D⌉` parallel workers (at least one; each uses at
-  most one core), **split by sample**: each worker reads a share of the input
-  (e.g. some Kafka partitions or scrape targets) with no shuffle by group, so
-  it keeps its own open window instance of every group it sees.
+- **No roll-up** (`G_r = G_d`, so `I_r = I_d`): the query merges
+  `I_d · (n − 1)` times, and a direct query (`n = 1`) merges nothing and
+  holds no accumulator.
+- **Roll-up** (`G_r ⊂ G_d`): a query reads `I_d · n` states and ends with
+  `I_r`, and each merge folds two into one, so it merges `I_d · n − I_r`
+  times, even when direct. Ingest, compaction and storage stay at `G_d`;
+  the query's accumulators, answers and output are at `G_r`.
+- `m(S_i)` is an accumulator holding the lookback of one `G_r` group (it
+  differs from `m` only for DDSketch on a metric with a value range, which is
+  sized from the values it holds).
+- Ingest runs on `k_D` parallel workers (each uses at most one core),
+  **split by sample**: each worker reads a share of the input (e.g. some
+  Kafka partitions or scrape targets) with no shuffle by group, so it keeps
+  its own open window instance of every group it sees.
 - When a window closes (the watermark passes its end), a **compaction** job
   merges the `k_D` partial instances of each group into one stored instance.
-  With `k_D = 1` there is none.
+  With `k_D = 1` there is none. The merged copy takes the storage slot that
+  the oldest window frees at the same moment, so it is not counted twice.
 - Each firing of RAQE `i` issues one **query job**: merge the `n_{i,D}`
-  stored instances of each group for the query window, then estimate. Merging
-  is part of the query. It reads the newest window, which closes at the firing
-  time, so it starts after that window's compaction.
-
-`AUC(CPU) = Σ_D ρ_D + Σ_D c_D / y_D + Σ_i ℓ_{i,D} / T_i`: ingest is already
-a rate; only compaction (per window close, every `y_D`) and queries (per
-firing, every `T_i`) are divided by their period. It is fixed by the plan,
-whatever the schedule.
+  stored instances of each group for the query window, then estimate.
+  Merging is part of the query. It reads the newest window, which closes at
+  the firing time, so it starts after that window's compaction. It reads
+  stored instances in place.
+- Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
+  `(S − x) / y + 1` of them; storage takes the longest lookback `D` serves.
+- Query output is estimated at 8 bytes per group, or 32 × 16 bytes per group
+  for top-k (sketch-bench's heap size, with 64-bit key hashes); it is not
+  measured.
 
 In words:
 
 - `ρ_D`: every second, `λ_D` samples arrive (the scrape interval is already
-  inside `λ_D`), and each is inserted into the `x_D / y_D` windows still
-  open, at `c_ins` CPU-seconds each: CPU-seconds per second.
+  inside `λ_D`), and each is inserted into the `a_D` windows still open, at
+  `c_ins` CPU-seconds each: CPU-seconds per second.
 - `c_D`: closing a window merges, for every instance, the `k_D` workers'
   partial copies into one, which takes `k_D − 1` merges. This happens once
   per slide.
-- `ℓ_{i,D}`: a query merges each instance's `n_{i,D}` stored windows
-  (`n − 1` merges per instance), then answers once per group. This happens
-  once per interval. (A sketch shared by all groups merges one instance but
-  still answers every group.)
-- `AUC(CPU)` adds the three rates: work per second, in vCPUs.
-
-#### 4. Memory: parts and how each is computed
-
-Each part is counted once: a window counts as ingest memory while open and as
-storage once compacted, and a query reads stored instances in place.
-
-| Part | What | Bytes | Held |
-|---|---|---|---|
-| Ingest | open windows, one copy per worker | `I_D = w_D · (x_D / y_D) · k_D` | always |
-| Storage | closed windows for the longest lookback served (one compacted copy) | `stored_D = max_i w_D · ((S_i − x_D) / y_D + 1)` | always |
-| Compaction | the closed window's `k_D` partial copies, until merged | `k_D · w_D` (0 when `k_D = 1`) | while the compaction job runs |
-| Query | the accumulators the merge creates (none when `n = 1`) and the output | `q_{i,D} = w_D · [n_{i,D} > 1] + card(G) · output bytes` | while the query job runs |
-
-`AUC(memory) = Σ_D (I_D + stored_D + k_D · w_D · (compaction run time) / y_D)
-+ Σ_i q_{i,D} · (query run time) / T_i`. CPU is elastic, so every job runs on its
-own core: a compaction runs for `c_D` and a query for `ℓ_{i,D}`.
-
-In words:
-
-- `I_D`: every worker keeps one instance per group for each of the
-  `x_D / y_D` windows still open, and there are `k_D` workers.
+- `ℓ_{i,D}`: a query merges the stored windows it reads down to one state per
+  answered group, then answers once per `G_r` group. This happens once per
+  interval. (A sketch shared by all groups merges one instance but still
+  answers every group.)
+- `ingest_D`: every worker keeps one instance per group for each of the `a_D`
+  windows still open, and there are `k_D` workers.
 - `stored_D`: closed windows are kept until the longest lookback that `D`
-  serves no longer needs them. That is `(S − x)/y + 1` windows per group.
-- Compaction: when a window closes, a new one opens, so ingest still holds
-  `x_D / y_D` open windows. The closed window's `k_D` partial copies stay in
-  memory until the compaction has merged them. The merged copy takes the
-  storage slot that the oldest window frees at the same moment, so it is not
-  counted twice.
-- `q_{i,D}`: a merge builds one accumulator per instance (a direct query,
-  with `n = 1`, reads the stored window and needs none), plus the answer for
-  every group.
-- `AUC(memory)`: ingest and storage are held all the time. A compaction's
-  and a query's memory are held only while they run, a fraction
-  `run time / y_D` or `run time / T_i` of the time.
+  serves no longer needs them.
+- `q_{i,D}`: a merge builds one accumulator per answered group, plus the
+  answer for every group.
+
+#### 4. AUC(CPU) and AUC(memory)
+
+Every "mean vCPUs" is a long-run average rate, CPU-seconds per second, over
+the same period: a whole number of hyperperiods `H = lcm(T_i, y_D)`, over
+which every job pattern repeats exactly. A part with `w` CPU-seconds per
+event every `P` seconds runs `H / P` times per hyperperiod, so its mean is
+`(H / P) · w / H = w / P`; ingest is already a rate. So the columns add.
+
+```text
+AUC(CPU)    = Σ_D ρ_D + Σ_D c_D / y_D + Σ_i ℓ_{i,D} / T_i
+AUC(memory) = Σ_D (ingest_D + stored_D + k_D · w_D · c_D / y_D)
+            + Σ_i q_{i,D} · ℓ_{i,D} / T_i
+```
+
+CPU is elastic, so every job runs on its own core: a compaction runs for
+`c_D` and a query for `ℓ_{i,D}`. Both AUCs are fixed by the plan, whatever
+the schedule.
+
+In words: `AUC(CPU)` adds the three rates, work per second in vCPUs; ingest
+is already a rate, and only compaction (per window close, every `y_D`) and
+queries (per firing, every `T_i`) are divided by their period.
+`AUC(memory)` holds ingest and storage all the time, and a compaction's and
+a query's memory only while they run, a fraction `run time / y_D` or
+`run time / T_i` of the time.
 
 #### 5. Batch latency and the SLA
 
@@ -225,7 +236,7 @@ pair are §3 and §4's.
 
 ```text
 minimize  w1 · [ Σ_D (ρ_D + c_D / y_D) · u_D + Σ_(i,D) (ℓ_{i,D} / T_i) · z_{i,D} ]
-        + w2 · [ Σ_D ((I_D + k_D · w_D · c_D / y_D) · u_D + stored_D)
+        + w2 · [ Σ_D ((ingest_D + k_D · w_D · c_D / y_D) · u_D + stored_D)
                  + Σ_(i,D) (q_{i,D} · ℓ_{i,D} / T_i) · z_{i,D} ]
 s.t.      Σ_D z_{i,D} = 1                        for every RAQE i
           z_{i,D} ≤ u_D ≤ Σ_i z_{i,D}             for (i, D) ∈ E
@@ -287,50 +298,32 @@ part; query latency and per-RAQE latency; planning time. Figures: version 1,
 each method's cost–latency frontier for each workload (ASAP and PerQuery as
 lines, AutoSketch as a point); version 2, each method's cost at each SLA.
 
-## Resource primitives and supported snapshot-AUC objective
+## Resource primitives and the snapshot-AUC objective
 
-This section supplies the common per-operation resource primitives—instance
-memory and insert, merge, and query CPU—and documents the supported older
-snapshot-AUC objective. The cost-by-use model above consumes the same
-primitives, but adds worker fan-out, compaction, time-weighted transient
-memory, and batch latency instead of the accounting below.
+The measured per-operation primitives (`m`, `c_ins`, `c_mrg`, `c_qry`, from
+the cost table) and how they scale with a deployment (instance shape and size
+law, below) are shared by both objectives; the one cost table is §3's.
 
-The analytical model combines the empirical per-operation Sketch Bench
-measurements with workload properties such as group cardinality, arrival rate,
-window size, and query frequency.
+`m` is measured per instance, except for DDSketch on a metric with a
+`value_range`: `m = (floor(ln(hi / lo) / ln((1 + alpha) / (1 - alpha))) + 1) × 8`
+bytes, one bucket count per `gamma`-power in the range, capped by the values
+one instance holds (`λ · x / card(G_d)` for a window, `λ · S / card(G_r)` for
+a query's merge accumulator), as sketch-bench's `dd_footprint` counts them.
+The range is the metric's, so `m` is an upper bound for a group whose own
+values span less.
 
-For deployment `D` serving RAQE `i`:
+**Snapshot-AUC objective** (`milp::minimize`, `analytical_cost_model::score`;
+still supported). It prices §3's table with older accounting:
 
-- `lambda`: samples/sec arriving for `D`'s metric, `card(metric.labels) / scrape_interval`.
-- `card(G)`: cardinality of `G`, so the number of parallel accumulator instances per window (one for a shared fixed-size sketch; see below).
-- `x`, `y`: `D`'s window and slide.
-- `a_D = x / y`: open windows; each sample is inserted into `a_D` instances of its group.
-- `S_i`, `T_i`: RAQE `i`'s lookback and interval.
-- `n_i = S_i / x`: windows merged per query.
-- `m`: memory per instance, measured. For DDSketch on a metric with a
-  `value_range`, `m = (floor(ln(hi / lo) / ln((1 + alpha) / (1 - alpha))) + 1) × 8`
-  bytes instead: one bucket count per `gamma`-power in the range, capped by
-  the values one instance sees (`λ · x / card(G)` for a window, `λ · L / card(G)`
-  for a query's merge accumulator), as sketch-bench's `dd_footprint` counts them. The range is the metric's, so `m` is an upper
-  bound for a group whose own values span less.
-- `c_ins`: CPU per insert, measured.
-- `c_mrg`: CPU per pairwise merge, measured.
-- `c_qry`: CPU per query of one instance, measured.
+- one ingest worker (`k_D = 1`), so no compaction;
+- each RAQE's merge and query memory (`q_{i,D}`) held all the time, as if
+  every query ran at once, instead of for `ℓ_{i,D} / T_i` of the time;
+- a RAQE's latency is its query job's serial CPU time `ℓ_{i,D}`, with no
+  compaction before it, checked against the RAQE's own
+  `latency_sla_ms` (no batch latency).
 
-Costs split into four phases, each with CPU (mean CPU-sec/sec) and memory
-(bytes):
-
-| Phase | CPU | Memory |
-|---|---|---|
-| Ingest, per active `D` | `lambda × a_D × c_ins` | `card(G) × m × a_D` (open windows) |
-| Merge, per RAQE | `card(G) × (n_i − 1) × c_mrg / T_i` | `card(G) × m` (one accumulator per group); 0 when `n_i = 1` |
-| Query, per RAQE | `card(G) × c_qry / T_i` | `card(G) ×` output bytes |
-| Storage, per active `D` | 0 | `card(G) × m × ((max_i S_i − x) / y + 1)` (closed windows) |
-
-Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
-`(S − x) / y + 1` of them; storage takes the longest lookback `D` serves.
-Query output is estimated at 8 bytes per group, or 32 × 16 bytes per group for
-top-k (sketch-bench's heap size, with 64-bit key hashes); it is not measured.
+Its CPU (`ρ_D`, `ℓ_{i,D} / T_i`) and its ingest and storage memory are §3's
+with `k_D = 1`, roll-ups included.
 
 ### Instance shape and size law
 
@@ -342,7 +335,7 @@ such as one group's running sum in an exact accumulator. Turning a row into a
 deployment's cost needs two properties of the family:
 
 - **Shape**: instances per window. `PerGroup` keeps one per group, so
-  `card(G)`; `Shared` keeps one for all groups.
+  `card(G_d)`; `Shared` keeps one for all groups.
 - **Law**: how one instance's size grows. `Fixed` is set by the configuration
   (e.g. CMS rows × columns); `PerKey` stores one entry per key, so it grows
   linearly with keys.
@@ -351,8 +344,8 @@ Memory per window is instances × instance size:
 
 | | Fixed | PerKey |
 |---|---|---|
-| **PerGroup** | `card(G) × m`: CMS, CountSketch, KLL, DDSketch, HLL, UnivMon, top-k (heap `m · k`) | `card(G) × m × keys_per_group / measured_keys`: none yet (e.g. an exact top-k map) |
-| **Shared** | `m`: HydraKLL and other Hydra sketches | `m × card(G) / measured_keys`: exact sum, min, max, increase (one value per group, so keys = groups) |
+| **PerGroup** | `card(G_d) × m`: CMS, CountSketch, KLL, DDSketch, HLL, UnivMon, top-k (heap `m · k`) | `card(G_d) × m × keys_per_group / measured_keys`: none yet (e.g. an exact top-k map) |
+| **Shared** | `m`: HydraKLL and other Hydra sketches | `m × card(G_d) / measured_keys`: exact sum, min, max, increase (one value per group, so keys = groups) |
 
 The same factor scales merge and query CPU. Insert CPU is per sample and does
 not scale.
@@ -365,18 +358,18 @@ that see far fewer or far more values. DDSketch is sized from the metric's
 `value_range` when given (capped by values per instance), else from the
 measured size.
 
-The model uses `I × m`, where `I` is instances per window:
+The model uses `I_d × m`, where `I_d` is instances per window:
 
-- PerGroup + Fixed: `I = card(G)`.
-- Shared + PerKey reduces to `I = card(G)` because the export divides the
+- PerGroup + Fixed: `I_d = card(G_d)`.
+- Shared + PerKey reduces to `I_d = card(G_d)` because the export divides the
   exact accumulators' memory and merge cost by `measured_keys`
   (`groups_per_instance`), making `m` a per-group cost. Their query cost is
   already per group.
-- Shared + Fixed: `I = 1`. In code this is the family property
+- Shared + Fixed: `I_d = 1`. In code this is the family property
   `one_fixed_size_sketch_for_all_groups`, true only for HydraKLL. It applies
-  to memory and merge; query stays `card(G) × c_qry`, one probe per group.
+  to memory and merge; query stays `card(G_r) × c_qry`, one probe per answered group.
   A fixed-size sketch degrades as groups grow, so it is eligible only when
-  `card(G)` is at most the `subpopulations` its row was measured at. This
+  `card(G_d)` is at most the `subpopulations` its row was measured at. This
   models a sketch keyed by the joined `G` value alone; the current rows fan
   out to every label subset (sketch-bench#165), and merging several windows
   is not yet measured (sketch-bench#166).
@@ -386,19 +379,20 @@ PerGroup + PerKey is deferred until a family needs it: it needs the key labels
 with keys below the group: a per-service top-k CMS costs the same however
 many endpoints it counts.
 
-Side by side, with `G = card(G)` and `C` closed windows:
+Side by side, what each family puts into §3's table (every phase then
+follows from it):
 
 | | KLL (per group) | exact-sum (per-group normalized) | HydraKLL (shared, fixed) |
 |---|---|---|---|
 | `m`, `c_mrg` in the row | one group's | whole ÷ groups | whole sketch |
-| Ingest CPU | `λ·a_D·c_ins` | `λ·a_D·c_ins` | `λ·a_D·c_ins` |
-| Ingest memory | `G·m·a_D` | `G·m·a_D` | `m·a_D` |
-| Merge CPU | `G·(n_i−1)·c_mrg/T_i` | same | `(n_i−1)·c_mrg/T_i` |
-| Merge memory | `G·m` | same | `m` |
-| Query CPU | `G·c_qry/T_i` | same | `G·c_qry/T_i` |
-| Query memory | `G ×` output bytes | same | `G ×` output bytes |
-| Storage memory | `G·m·C` | same | `m·C` |
-| Latency | `G·(c_qry + (n_i−1)·c_mrg)` | same | `(n_i−1)·c_mrg + G·c_qry` |
+| `I_d` (instances per window) | `card(G_d)` | `card(G_d)` | 1 |
+| `I_r` (states a query ends with) | `card(G_r)` | `card(G_r)` | 1 |
+| probes per query (`c_qry`) | `card(G_r)` | `card(G_r)` | `card(G_r)` |
+| key tracker part | none | none | DeltaSet, `I_d = card(G_d)` |
+| rolls up (`G_r ⊂ G_d`) | yes | yes | no |
+
+HydraKLL is in the code but not in the evaluation; admitting it needs the
+measurements in "Future Hydra cost and measurement requirements".
 
 ### Family properties and key tracker
 
@@ -416,22 +410,15 @@ Each family has properties, hardcoded by variant in `family_properties`
 
 The tracker is priced as an exact accumulator on the same `x`, `y` and `G`,
 in every phase: ingest, merge (union of the `n_i` windows' key sets), query
-(enumerate keys) and storage. Its `m` is per key, so it adds `card(G) × m_ds`
+(enumerate keys) and storage. Its `m` is per key, so it adds `card(G_d) × m_ds`
 per window. The AutoSketch baseline skips shared fixed-size families for now
 (sketch-bench#159).
 
-Per-RAQE latency is the serial CPU time of one query:
-
-```text
-latency_i = card(G) × c_qry + I × (n_i − 1) × c_mrg
-```
-
-summed over the sketch and its key tracker, if any.
-
-On its own it is not a wall-clock SLA: it assumes no parallel execution across
-groups and no cheaper k-way merge. In "Cost by use and batch latency" above it
-is one firing's query job `ℓ_{i,D}` (merge, then estimate) on one core.
-
+A query job's serial CPU time, `ℓ_{i,D}` (§3), summed over the sketch and
+its key tracker, is a RAQE's latency in the snapshot-AUC objective and the
+query half of its chain in cost by use. On its own it is not a wall-clock
+SLA: it assumes no parallel execution across groups and no cheaper k-way
+merge.
 
 ## Future Hydra cost and measurement requirements
 
@@ -453,18 +440,25 @@ The result must be reported in the family metric (for Hydra-KLL, `mean_rank_err`
 
 ### Proposed Hydra cost model
 
-Let `m_h`, `c_ins,h`, `c_mrg,h`, and `c_probe,h(G_r)` be measured for a particular Hydra configuration and label schema. Hydra's shared grid has one state per open window, so for slide `y` it has `a = x/y` live states.
+Hydra is priced by §3's table, with no separate formula. Let `m_h`,
+`c_ins,h`, `c_mrg,h` and `c_probe,h(G_r)` be measured for one Hydra
+configuration and label schema. Its shared grid is one instance per window,
+so `I_d = I_r = 1`, and a query probes it once per `card(G_r)` group:
 
-| Phase | CPU | Memory |
-| --- | --- | --- |
-| Ingest | `lambda * a * c_ins,h` | `a * m_h` |
-| Merge a RAQE | `(L/x - 1) * c_mrg,h / T` | `m_h` when `L/x > 1` |
-| Query a RAQE | `C_r * c_probe,h(G_r) / T` | `C_r * output_bytes` |
-| Storage | `0` | `ceil((max L - x)/y + 1) * m_h` |
+| Phase | CPU-seconds per event | Mean vCPUs | Memory (bytes) |
+|---|---|---|---|
+| Ingest | — | `λ · a_D · c_ins,h` | `m_h · a_D · k_D` |
+| Compaction | `(k_D − 1) · c_mrg,h` | `/ y_D` | `k_D · m_h`, while it runs |
+| Query job | `card(G_r) · c_probe,h(G_r) + (n_{i,D} − 1) · c_mrg,h` | `/ T_i` | `m_h · [n_{i,D} > 1] + card(G_r) · output bytes`, while it runs |
+| Storage | — | 0 | `m_h · ((max_i S_i − x_D) / y_D + 1)` |
 
-This is deliberately not the #190 formula: a Hydra merge combines whole windows, not `C_d` independently addressable states. It assumes the measured merge cost does not depend on the number of requested probes; Sketch Bench must confirm that assumption or report a probe-count term.
+plus the key tracker's part, if any (below). A Hydra merge combines whole
+windows, not `card(G_d)` independently addressable states, which is what
+`I_d = 1` says. It assumes the measured merge cost does not depend on the
+number of requested probes; Sketch Bench must confirm that assumption or
+report a probe-count term.
 
-Hydra also needs a way to enumerate the groups to query. If it still relies on `exact-delta-set`, the plan must add that tracker's ingest, merge, query, and storage costs. A fine-group tracker used to derive coarse group keys may cost `C_d`, not `C_r`; alternatively, a per-requested-group tracker must be specified and measured. This is a design choice, not a free operation.
+Hydra also needs a way to enumerate the groups to query. If it still relies on `exact-delta-set`, the plan must add that tracker's ingest, merge, query, and storage costs. A fine-group tracker used to derive coarse group keys may cost `card(G_d)`, not `card(G_r)`; alternatively, a per-requested-group tracker must be specified and measured. This is a design choice, not a free operation.
 
 ### Sketch Bench requirements before admitting Hydra
 
