@@ -384,7 +384,7 @@ AutoSketch-Adapted (fixed configs chosen by memory).
 | `S_i`, `T_i` | RAQE `i`'s lookback and interval; it fires at `t = k · T_i` |
 | `card(G)` | groups of `D`'s grouping |
 | `inst_D` | instances per window: `card(G)`, or 1 for a sketch shared by all groups, plus `card(G)` for a key tracker if the family needs one |
-| `λ_D` | samples/s arriving for `D`'s metric |
+| `λ_D` | samples/s arriving for `D`'s metric: `card(series) / scrape interval`, already a rate |
 | `c_ins`, `c_mrg`, `c_qry` | measured CPU-seconds per insert, per pairwise merge, per query of one instance |
 | `m` | measured bytes per instance; `w_D = Σ_parts inst · m`, one window of all instances |
 | `n_{i,D} = S_i / x_D` | windows a query merges |
@@ -412,6 +412,12 @@ nothing.
 
 #### 3. CPU: parts and how each is computed
 
+Every "mean vCPUs" below is a long-run average rate, CPU-seconds per second,
+over the same period: a whole number of hyperperiods `H = lcm(T_i, y_D)`,
+over which every job pattern repeats exactly. A part with `w` CPU-seconds per
+event every `P` seconds runs `H / P` times per hyperperiod, so its mean is
+`(H / P) · w / H = w / P`; ingest is already a rate. So the three columns add.
+
 | Part | When | CPU-seconds | Mean vCPUs |
 |---|---|---|---|
 | Ingest (the precompute) | continuously, as samples arrive | — | `ρ_D = λ_D · (x_D / y_D) · c_ins` |
@@ -430,13 +436,16 @@ nothing.
   is part of the query. It reads the newest window, which closes at the firing
   time, so it starts after that window's compaction.
 
-`AUC(CPU) = Σ_D (ρ_D + c_D / y_D) + Σ_i ℓ_{i,D} / T_i`. It is fixed by the
-plan, whatever the schedule.
+`AUC(CPU) = Σ_D ρ_D + Σ_D c_D / y_D + Σ_i ℓ_{i,D} / T_i`: ingest is already
+a rate; only compaction (per window close, every `y_D`) and queries (per
+firing, every `T_i`) are divided by their period. It is fixed by the plan,
+whatever the schedule.
 
 In words:
 
-- `ρ_D`: every second, `λ_D` samples arrive, and each is inserted into the
-  `x_D / y_D` windows still open, at `c_ins` each.
+- `ρ_D`: every second, `λ_D` samples arrive (the scrape interval is already
+  inside `λ_D`), and each is inserted into the `x_D / y_D` windows still
+  open, at `c_ins` CPU-seconds each: CPU-seconds per second.
 - `c_D`: closing a window merges, for every instance, the `k_D` workers'
   partial copies into one, which takes `k_D − 1` merges. This happens once
   per slide.
