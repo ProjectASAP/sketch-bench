@@ -1,3 +1,0 @@
-host: node0.scratch2.cloudmigration-pg0.clemson.cloudlab.us
-cpu: Intel(R) Xeon(R) CPU E5-2683 v3 @ 2.00GHz
-started: 2026-10-08T20:18:40Z

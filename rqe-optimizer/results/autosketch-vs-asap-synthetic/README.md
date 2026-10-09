@@ -26,16 +26,17 @@ point. AutoSketch's planning time is its search **plus its measured
 benchmark**: `scripts/autosketch_benchmark_time.py` ran approxbench's
 accuracy benchmark (1e8 items, exact baseline and scoring) once per distinct
 probed (config, data shape), serially on idle clnode155
-(`autosketch-benchmark-times.json`, `machine-benchmark-clnode155.txt`), and
-charged it once per probed (metric, config).
+(`autosketch-benchmark-times.json`), and charged it once per probed
+(metric, config).
 
-Runs: one workload per CloudLab node (`machine-*.txt`: mixed on clnode155,
-r = 8 on clnode178, m = 8 on clnode167, m = 16 on clnode138), `--runs 3`,
+Runs: one workload per CloudLab node, all Intel Xeon E5-2683 v3 @ 2.00 GHz
+with 56 cores (mixed on clnode155, r = 8 on clnode178, m = 8 on clnode167,
+m = 16 on clnode138), 2026-10-08, `--runs 3`,
 sketch-bench at #188 + this branch. No RQE was dropped and no sanity check
 failed (ASAP ≤ PerQuery, ASAP ≤ AutoSketch, each frontier monotone).
 
 Files: `synthetic-*.json` (raw: every method's plan, unbounded and bounded,
-per weight setting), `summary_synthetic.md` (every point),
+per weight setting, without per-RQE choices; rerun with the runner for them), `summary_synthetic.md` (every point),
 `fig_frontier.png` (cost vs. query latency per workload and weight setting;
 ASAP and PerQuery frontiers as lines, AutoSketch as a point, every point
 labeled), `fig_planning_time.png` (planning time vs. RQEs over m).
@@ -98,8 +99,8 @@ SATURATION_DIR=DIR scripts/run_autosketch_vs_asap_synthetic.sh TABLES run
 python3 scripts/autosketch_benchmark_time.py --binary ./target/release/approxbench \
     --out OUT/autosketch-benchmark-times.json OUT/synthetic-*.json
 scripts/run_autosketch_vs_asap_synthetic.sh TABLES plot
-# Traces: alibaba_v2022 and google_2011 (rqe-optimizer/data/autosketch-eval/table.json).
-scripts/run_autosketch_vs_asap.sh DIR
+# Traces (alibaba_v2022, google_2011; rqe-optimizer/data/autosketch-eval/table.json)
+# are to be rerun on cost by use.
 
 # ASAP's one-time profiling time (#777 §7): the wall time of the study runs.
 scripts/profiling_time.py rqe-optimizer/data/profiling-time.json \

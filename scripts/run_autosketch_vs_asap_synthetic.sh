@@ -12,7 +12,7 @@
 # same inputs the planner reads. `run` evaluates every plan.tsv
 # row, JOBS at a time, at every weight setting and SLA of #777; a run over
 # JOB_TIMEOUT seconds is stopped and listed in failed.txt. RUNS timing runs
-# each. The machine is recorded in machine-<host>.txt.
+# each.
 
 set -euo pipefail
 
@@ -30,13 +30,6 @@ run)
     : "${SATURATION_DIR:?set SATURATION_DIR to the saturation study output directory}"
     export SATURATION_DIR JOB_TIMEOUT RUNS OUT
     cargo build --release -p rqe-optimizer --example autosketch_vs_asap
-    {
-        echo "host: $(hostname)"
-        echo "cpu: $(lscpu | sed -n 's/^Model name: *//p')"
-        echo "nproc: $(nproc)"
-        echo "started: $(date -u +%FT%TZ)"
-        echo "jobs: $JOBS"
-    } > "$OUT/machine-$(hostname -s).txt"
     : > "$OUT/failed.txt"
     while IFS=$'\t' read -r table target result; do
         [[ -s "$OUT/$result" ]] || echo "$TABLES/$table $target $OUT/$result"

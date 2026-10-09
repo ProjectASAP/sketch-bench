@@ -23,7 +23,8 @@ the JSON files here hold version 2 in `sla_results`.
 
 ## Results
 
-Run on clnode109 (`machine-clnode109.txt`), `--runs 3`, over the asap_sketchlib
+Run on clnode109 (Intel Xeon E5-2683 v3 @ 2.00 GHz, 56 cores, 2026-10-08),
+`--runs 3`, without per-RQE choices in the JSON files, over the asap_sketchlib
 0.3.0 study. `fig_cost_vs_sla.png` plots each method's cost at each SLA;
 `summary_sla.md` has every number.
 
