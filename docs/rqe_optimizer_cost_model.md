@@ -1,8 +1,10 @@
 # RQE optimizer: cost models
 
-This document distinguishes the optimizer's canonical cost-by-use design from
-its still-supported snapshot-AUC objective, and records the measurements
-required before Hydra can participate.
+This document is the one home for what a candidate costs (§3's table), the
+canonical cost-by-use model with its MILP, and the still-supported
+snapshot-AUC objective. Candidates and eligibility are in
+[Candidate generation and eligibility](rqe_optimizer_candidates.md); Hydra
+is in [Hydra](rqe_optimizer_hydra.md).
 
 ## Model status and relationship
 
@@ -16,11 +18,12 @@ required before Hydra can participate.
   query memory is summed as if concurrent, there is no worker fan-out or
   compaction, and latency is serial query work. It is not the evaluation's
   billing model.
-- **Hydra** is future work. Its proposed accuracy and cost contract below is
-  not admitted by #190 or the current optimizer.
+- **Hydra** is future work, not a candidate today; see
+  [Hydra](rqe_optimizer_hydra.md).
 
-The two implemented objectives share the same resource primitives; they differ
-only in how they account for those primitives over time.
+The two implemented objectives share the same resource primitives and §3's
+table; they differ in how they account for them over time, and in latency
+(a batch's longest chain vs. each RAQE's serial query time).
 
 ## Cost by use and batch latency
 
@@ -115,9 +118,12 @@ cell is per part; a phase's cost is the sum over parts.
   stored instances in place.
 - Closed windows wholly inside a lookback start in `[t − S, t − x]`, hence
   `(S − x) / y + 1` of them; storage takes the longest lookback `D` serves.
-- Query output is estimated at 8 bytes per group, or 32 × 16 bytes per group
-  for top-k (sketch-bench's heap size, with 64-bit key hashes); it is not
-  measured.
+- Query output is estimated at 8 bytes per group, or `k` × 16 bytes per group
+  for top-k (`k` the deployment's answered top-k, 32 by default, with 64-bit
+  key hashes); it is not measured. A top-k sketch's `c_qry` is measured at
+  `k = 32` and scaled by `k / 32`.
+- `k_D = ⌈ρ_D⌉` takes the deployment's whole ingest CPU, summed over its
+  parts (sketch and key tracker).
 
 In words:
 
@@ -268,8 +274,8 @@ In words:
 
 Every term is linear in `u` and `z`, with or without a bound, so the MILP is
 solved exactly
-(`milp::minimize_usage_cost`; costs are scaled by each RAQE's cheapest pair
-so the solver sees magnitudes near 1). The solved plan's cost and latency are
+(`milp::minimize_usage_cost`; costs are divided by the sum, over RAQEs, of
+each RAQE's cheapest pair on its own, so the solver sees magnitudes near 1). The solved plan's cost and latency are
 then computed from its resource use (`usage::usage_cost`).
 
 - **PerQuery** is the same MILP with sharing ruled out. `minimize_usage_cost`
@@ -350,14 +356,12 @@ Memory per window is instances × instance size:
 The same factor scales merge and query CPU. Insert CPU is per sample and does
 not scale.
 
-Quantile sketches have no keys. KLL's `m` is Fixed exactly as reported:
-sketch-bench reports a nominal footprint, `4 · k · sizeof(T)` bytes
-(`kll_footprint`; 1600 B at `k = 50`, 6400 B at `k = 200`), the same at every
-item count (the cost table's rows were run at 1e6 items, and the same `k`
-reports the same bytes at 1e3 and 1e8). It is not the allocation:
-`asap_sketchlib::KLL` preallocates its maximum capacity over 61 levels, about
-2.9× the nominal footprint at `k = 50`, 1.25× at `k = 200` and 0.87× at
-`k = 800`, as `aqpbm-planeval`'s `kll_max_capacity` replica computes it.
+Quantile sketches have no keys. KLL's `m` is Fixed, and the same at every
+item count, because `asap_sketchlib::KLL` allocates once at construction.
+Until #192 the cost table's KLL rows report a nominal `4 · k · sizeof(T)`
+(1600 B at `k = 50`), not that allocation (5536 B at `k = 50`: item slots,
+level index and merge buffer; 1.58× at `k = 200`, 1.14× at `k = 800`), so
+KLL memory is understated (#191).
 DDSketch is sized from the metric's `value_range` when given (capped by
 values per instance), else from the measured size.
 
@@ -394,8 +398,8 @@ follows from it):
 | key tracker part | none | none | DeltaSet, `I_d = card(G_d)` |
 | rolls up (`G_r ⊂ G_d`) | yes | yes | no |
 
-HydraKLL is in the code but not in the evaluation; admitting it needs the
-measurements in "Future Hydra cost and measurement requirements".
+HydraKLL has `FamilyProperties` but is in no capability's family list, so it
+is never a candidate; see [Hydra](rqe_optimizer_hydra.md).
 
 ### Family properties and key tracker
 
@@ -404,6 +408,9 @@ Each family has properties, hardcoded by variant in `family_properties`
 
 - `mergeable_across_windows`: a family without it only serves `S_i = x`.
   Every family in use merges.
+- `mergeable_across_groups`: it can serve a RAQE at a subset grouping (a
+  roll-up, [candidates](rqe_optimizer_candidates.md#fine-to-coarse-group-roll-ups)).
+  True for exact sum/min/max, HLL, univmon-cardinality, KLL and DDSketch.
 - `one_fixed_size_sketch_for_all_groups`: the Shared + Fixed cell above.
 - `needs_delta_set_key_tracker`: the sketch can't list its groups, so a
   DeltaSet (`exact-delta-set`) records each window's keys for the query to
@@ -422,53 +429,3 @@ its key tracker, is a RAQE's latency in the snapshot-AUC objective and the
 query half of its chain in cost by use. On its own it is not a wall-clock
 SLA: it assumes no parallel execution across groups and no cheaper k-way
 merge.
-
-## Future Hydra cost and measurement requirements
-
-This is a future admission contract, not a model used by either implemented
-optimizer objective. Hydra remains outside #190.
-
-It does not make sense to apply the "fine-to-coarse rollup strategy" to Hydra.
-
-The required accuracy contract is an empirical predicate:
-
-```text
-hydra_error(config, schema H, requested grouping G_r,
-            target-shape(G_r), items per target group,
-            subpopulation population/fan-out, merged_windows)
-    <= RAQE accuracy SLA
-```
-
-The result must be reported in the family metric (for Hydra-KLL, `mean_rank_err`) with the same direction as the RAQE SLA. It is insufficient to record only a single `subpopulations` ceiling: two target groupings with the same cardinality can have different skew, fan-out, and query selectivity. No analytic composition from the KLL cell's guarantee to the Hydra grid's error is assumed. In particular, cross-window Hydra merge accuracy must be measured for every allowed merge depth; until then a Hydra candidate may serve only `L == x`.
-
-### Proposed Hydra cost model
-
-Hydra is priced by §3's table, with no separate formula. Let `m_h`,
-`c_ins,h`, `c_mrg,h` and `c_probe,h(G_r)` be measured for one Hydra
-configuration and label schema. Its shared grid is one instance per window,
-so `I_d = I_r = 1`, and a query probes it once per `card(G_r)` group:
-
-| Phase | CPU-seconds per event | Mean vCPUs | Memory (bytes) |
-|---|---|---|---|
-| Ingest | — | `λ · a_D · c_ins,h` | `m_h · a_D · k_D` |
-| Compaction | `(k_D − 1) · c_mrg,h` | `/ y_D` | `k_D · m_h`, while it runs |
-| Query job | `card(G_r) · c_probe,h(G_r) + (n_{i,D} − 1) · c_mrg,h` | `/ T_i` | `m_h · [n_{i,D} > 1] + card(G_r) · output bytes`, while it runs |
-| Storage | — | 0 | `m_h · ((max_i S_i − x_D) / y_D + 1)` |
-
-plus the key tracker's part, if any (below). A Hydra merge combines whole
-windows, not `card(G_d)` independently addressable states, which is what
-`I_d = 1` says. It assumes the measured merge cost does not depend on the
-number of requested probes; Sketch Bench must confirm that assumption or
-report a probe-count term.
-
-Hydra also needs a way to enumerate the groups to query. If it still relies on `exact-delta-set`, the plan must add that tracker's ingest, merge, query, and storage costs. A fine-group tracker used to derive coarse group keys may cost `card(G_d)`, not `card(G_r)`; alternatively, a per-requested-group tracker must be specified and measured. This is a design choice, not a free operation.
-
-### Sketch Bench requirements before admitting Hydra
-
-1. Accept a named label schema and query grouping/predicate, rather than interpreting semicolon position as the meaning of a grouping. Preserve label names and their order in the emitted record.
-2. Generate hierarchical data with exact answers for every queried grouping; include cardinality, per-parent fan-out, skew, total items, and each target group's item count in the result metadata.
-3. Sweep Hydra configuration (outer grid and cell parameters), schema width, target grouping, cardinality/fan-out, and distribution shape. Measure accuracy separately for each target grouping.
-4. Measure insert, footprint, one-window query, and merges over the intended shard counts. For a merged query, measure both sketch merge and the requested number of probes, so the planner can distinguish a whole-sketch merge from per-group probe work.
-5. Benchmark and export the key-enumeration path. State whether it uses a DeltaSet, what grouping it stores, and its exact input/output cardinality.
-6. Emit a machine-readable saturation key containing the fields in the accuracy contract above. The optimizer must reject a Hydra candidate when no matching point (or explicitly approved interpolation) exists; it must not borrow a KLL or a different-grouping curve.
-7. Add regression fixtures for equal grouping, a direct coarse predicate, and a multi-window coarse predicate. Each fixture must compare to exact answers and assert the exported accuracy and cost dimensions.

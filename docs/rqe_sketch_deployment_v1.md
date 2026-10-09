@@ -31,11 +31,16 @@ and per-RAQE latency.
 - **Deployment**: a configuration run over one metric, grouped by `G`, with
   window `x` and slide `y`. A **candidate** is a deployment the optimizer may
   choose.
-- **Phase**: one of the four kinds of work a deployment does, each costed in
-  CPU and memory: **ingest** (inserting samples into open instances),
-  **merge** (folding a query's windows into an accumulator), **query**
-  (reading the merged result) and **storage** (keeping closed instances, no
-  CPU). See [Cost model](rqe_optimizer_cost_model.md).
+- **Phase**: one of the kinds of work a deployment does, each costed in CPU
+  and memory: **ingest** (inserting samples into open instances),
+  **compaction** (merging the ingest workers' copies of a closed window),
+  the **query job** (merging a query's windows, and on a roll-up its fine
+  groups, then reading the result) and **storage** (keeping closed
+  instances, no CPU). The snapshot objective and `PlanCost` report the query
+  job as two phases, **merge** and **query**, and have no compaction. See
+  [Cost models](rqe_optimizer_cost_model.md).
+- **Roll-up**: a deployment grouped by `G_d` serving a RAQE grouped by a
+  subset `G_r`, by merging each coarse group's fine instances at query time.
 
 ## Inputs
 
@@ -141,21 +146,25 @@ modeled.
 
 ## Planning design
 
-The optimizer has two companion design documents:
+The optimizer has three companion design documents:
 
-- [Candidate generation and mapping](rqe_optimizer_candidates.md): candidate construction, eligibility, finer-to-coarser roll-ups, dominance pruning, and the assignment MILP.
-- [Cost models](rqe_optimizer_cost_model.md): the canonical cost-by-use and
-  batch-latency model, the supported snapshot-AUC objective and shared
-  resource primitives, and the future Hydra admission requirements.
-
-The v1 implementation supports only the conventional roll-up path described in the candidate and cost-model documents. Hydra is not part of #190.
+- [Candidate generation and eligibility](rqe_optimizer_candidates.md):
+  candidate construction, eligibility (accuracy included), finer-to-coarser
+  roll-ups and dominance pruning.
+- [Cost models](rqe_optimizer_cost_model.md): the one cost table, the
+  canonical cost-by-use and batch-latency model with its MILP, and the
+  supported snapshot-AUC objective.
+- [Hydra](rqe_optimizer_hydra.md): what admitting Hydra needs (accuracy
+  guarantees per combination, cost model, candidates and MILP edges, and
+  sketch-bench measurements). Not implemented.
 
 
 ## Procedure
 
 1. Generate candidate deployments for each input RAQE, then deduplicate them.
 2. Build the eligible candidate–RAQE pairs. Reject pairs that fail capability,
-   metric, grouping, window alignment, or empirical accuracy.
+   metric, grouping (equal, or a subset for a roll-up), window alignment, or
+   accuracy.
 3. Enumerate feasible workload mappings. Every RAQE must select one eligible
    candidate; a single selected candidate may serve multiple RAQEs. Small
    instances may retain every mapping eagerly; larger ones stream mappings
@@ -169,25 +178,29 @@ The Pareto vector is:
 (CPU, memory, {latency_i})
 ```
 
-CPU and memory are the sums over the four phases. The report also includes
+CPU and memory are the sums over the snapshot objective's phases (ingest, merge, query, storage). The report also includes
 each phase's CPU and memory, together with the selected deployment mapping.
 
 ## v1 scope and TODOs
 
-- **Accuracy after merging:** KLL and top-k are planned only up to the
-  largest shard count and N the study measured merge curves at (#158).
+- **Accuracy after merging:** KLL reads its merge curves up to the largest
+  shard count and N the study measured; past them, the guarantee, no better
+  than the last measurement. Roll-ups multiply the merge count by the
+  fan-out, so they reach the guarantee sooner. Heap top-k reads its plain
+  curve (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.
   Revisit when RAQE semantics and execution timing identify safe reuse cases.
 - **Latency SLAs:** `minimize` takes optional per-RAQE latency bounds;
-  `minimize_usage_cost` has none and reports the batch latency (above). The
-  enumerator reports latency but does not reject a mapping for it.
-- **Memory model:** query memory sums every RAQE's merge and output memory, as
-  if all queries run at once; real concurrency is not modeled. Query output
-  size is an estimate.
+  `minimize_usage_cost` takes an optional batch-latency bound and reports the
+  batch latency. The enumerator reports latency but does not reject a
+  mapping for it.
+- **Memory model:** cost by use holds query memory only while a query runs;
+  the snapshot objective sums every RAQE's merge and output memory as if all
+  queries ran at once. Query output size is an estimate.
 - **Bursts:** CPU is a mean over time, so plans are sized for average load.
 - **Static planning:** no RAQE churn, replanning, or migration cost.
-- **Rollups:** v1 does not precompute merged rollups. Queries merge their
-  selected base instances when they run.
+- **Temporal pre-merging:** v1 does not precompute merged windows. Queries
+  merge their selected base instances when they run.
 - **Selection policy:** the enumerator reports the Pareto frontier; the MILP
   selects one point by the `w_cpu`/`w_mem` weights.
 
@@ -197,9 +210,8 @@ each phase's CPU and memory, together with the selected deployment mapping.
 generation and pruning, eligibility checks, analytical objectives, and
 streaming Pareto filtering. The separation between candidate generation,
 enumeration, objectives, and Pareto filtering remains the intended boundary
-for future solver work. The candidate and cost-model documents also distinguish
-these conventional fine-state roll-ups from the future Hydra
-shared-subpopulation deployment.
+for future solver work. Hydra, a shared-subpopulation deployment rather than
+a fine-state roll-up, is designed in [Hydra](rqe_optimizer_hydra.md).
 
 Exporter bugs, benchmark-dataset choices, and historic run counts belong in
 `rqe_optimizer_TODO.md` or issue tracking, not in this problem statement.

@@ -53,11 +53,11 @@ implemented, what is next, and what is intentionally deferred.
 ## Explicitly deferred
 
 - Query-result sharing across RQEs.
-- Real query concurrency; memory assumes every query runs at once.
+- Real query concurrency in the snapshot objective, whose memory assumes every
+  query runs at once (cost by use holds query memory only while it runs).
 - Bursty load; CPU is a mean over time.
-- A per-family instance shape for families holding every group in one
-  fixed-size instance (HydraKLL, sketch-bench#142).
-- Top-k `k` other than the benchmark's 32, and key labels `K`.
+- Admitting Hydra ([rqe_optimizer_hydra.md](rqe_optimizer_hydra.md)).
+- Key labels `K` (PerGroup + PerKey sizes).
 - RQE churn, replanning, and migration cost.
 - Precomputed rollups; v1 merges selected base instances at query time.
 - A policy for choosing one mapping from the reported Pareto frontier.

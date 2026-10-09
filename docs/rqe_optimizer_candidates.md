@@ -1,6 +1,10 @@
 # RQE optimizer: candidate generation and mapping
 
-This document is the canonical design for candidate construction, eligibility, dominance pruning, finer-to-coarser roll-ups, and the assignment MILP.
+This document is the canonical design for candidate construction, eligibility
+(accuracy included), finer-to-coarser roll-ups and dominance pruning. What a
+candidate costs, and the MILP that maps RAQEs to candidates, are in
+[Cost models](rqe_optimizer_cost_model.md); Hydra is in
+[Hydra](rqe_optimizer_hydra.md).
 
 ## Candidate deployments
 
@@ -21,10 +25,16 @@ slides that a coarser slide beats for the same RAQEs. Pruning then attaches the
 measured costs and drops a candidate when another serves all of its RAQEs and
 is no worse on every cost.
 
-For each (capability, metric, G) group, generate candidates as follows:
+Deployments exist only at groupings some RAQE asks for. For each (capability,
+metric, spatial filter, grouping `G`), let `R(G)` be the RAQEs a deployment at
+`G` may serve: those grouped exactly by `G` for a family that does not merge
+across groups, and those grouped by any subset of `G` (roll-ups included) for
+a family that does (`mergeable_across_groups`). A coarse RAQE so contributes
+its lookback and interval to the fine deployment's windows and slides. Top-k
+doesn't roll up, so its heaps come from exact-grouping RAQEs only. Then:
 
 ```text
-for each window x that divides some S_i and is a multiple of the scrape interval:
+for each RAQE set R(G), and each window x that divides some S_i in it and is a multiple of the scrape interval:
     g = { g_i = gcd(x, T_i) : RAQE i with S_i divisible by x }
     slides = { gcd(A) : A is a non-empty subset of g }
     for each y in slides that is a multiple of the scrape interval:
@@ -72,7 +82,10 @@ far, and for each new `g` add `g` and `gcd(found, g)` for every `found`. For
 
 An RAQE `r_i` is eligible for a candidate `D` when:
 
-1. `cap_i = D.capability`, `metric_i = D.metric` and `G_i = D.G`.
+1. `cap_i = D.capability`, `metric_i = D.metric`, the same spatial filter,
+   and `G_i = D.G`, or `G_i ⊂ D.G` when `D`'s family has
+   `mergeable_across_groups` (a roll-up; see below). A coarse deployment never
+   serves a finer RAQE.
 2. `D.x % D.y = 0`, `S_i % D.x = 0`, and `T_i % D.y = 0`.
 3. The accuracy of `D` for `r_i`, in the accuracy metric of `D`'s family
    (`family_properties`, which also gives the direction), clears `tol_i`.
@@ -80,11 +93,13 @@ An RAQE `r_i` is eligible for a candidate `D` when:
 Exact accumulators take that accuracy from the cost table; they merge without
 loss, so the window size doesn't matter. Sketches take it
 from the saturation study's error-vs-N curves (`SaturationCurves`, #156),
-read at the number of items one group receives over the RAQE's whole
-lookback: series per group times scrapes per lookback.
+read at the number of items one answered group receives over the RAQE's
+whole lookback: series per `G_i` group times scrapes per lookback. On a
+roll-up the answered group is the RAQE's coarse one.
 
 - The curve is the configuration's at the metric's fitted `data_shape` for
-  `G` (zipf θ and keys `K`, or tail index `a` for quantiles). Between grid
+  the RAQE's grouping `G_i` (zipf θ and keys `K`, or tail index `a` for
+  quantiles). Between grid
   points, the worst bracketing point; outside the grid, or with no fit, no
   accuracy.
 - Between checkpoints, the worse neighbour. Below the first checkpoint, no
@@ -93,21 +108,22 @@ lookback: series per group times scrapes per lookback.
   refuses a curve for another metric as a stale study.
 - For sketches that merge exactly, the window size doesn't matter: a merged
   answer reads the curve at the lookback's item count, like a single sketch.
-  KLL and top-k merge lossily (#131): an answer merged from `m = S_i / D.x`
-  windows reads the study's merge curve (`saturation_merge_curve.csv`, the
-  sketch merged from `m` shards of the same items) at the lookback's item
-  count. Between measured shard counts, the worse. Past the largest
-  measured count, or without a merge curve, a merged KLL or top-k answer has
-  no accuracy: the study must measure the merge counts a workload needs
-  (`--merge-shards-list`) up to the N it reads at: past the merge curve's
-  last N, the merged answer has no accuracy either (#158).
-  `SaturationCurves::load` refuses a study with no merge curves for a
-  candidate KLL sketch.
+  KLL merges lossily (#131): an answer merged from `n = S_i / D.x` windows,
+  times the average fan-out `⌈card(D.G) / card(G_i)⌉` on a roll-up, reads
+  the study's merge curve (`saturation_merge_curve.csv`, the sketch merged
+  from `n` shards of the same items) at the lookback's item count. Between
+  measured shard counts, the worse. Past the largest measured count, or past
+  a merge curve's last N, the curves say nothing, so the answer takes the
+  guarantee below, no better than the largest count's last measurement; the
+  study should measure the merge counts a workload needs
+  (`--merge-shards-list`) so the guarantee isn't what decides (#158). `SaturationCurves::load` refuses a study with no merge curves for
+  a candidate KLL sketch. The fan-out is the average; the largest group's is
+  #189.
 - A top-k RAQE asks for its own `k` (`Raqe::topk_k`, default 32). Heap
-  top-k (CMS-heap, CountSketch-heap) keeps a heap of `m · k` in a deployment
-  answering from `m = S_i / D.x` merged windows (`m = 1` gives `k`).
-  Candidates carry one heap per distinct `m · k` among the RAQEs on a window,
-  and a RAQE is eligible only where the heap holds its `m · k`. Such a merged answer reads as one sketch: the
+  top-k (CMS-heap, CountSketch-heap) keeps a heap of `n · k` in a deployment
+  answering from `n = S_i / D.x` merged windows (`n = 1` gives `k`).
+  Candidates carry one heap per distinct `n · k` among the RAQEs on a window,
+  and a RAQE is eligible only where the heap holds its `n · k`. Such a merged answer reads as one sketch: the
   plain curve, then the guarantee fallback. It assumes the merged heaps still
   hold the true top `k`; it is not a guarantee. So heap top-k needs no merge
   curves. Costs come from the cost table's rows at heaps 32, 128, 512 and
@@ -158,110 +174,50 @@ higher-is-better metrics, passing means `measured >= tol_i`. Direction is
 explicit on the RAQE; it is never inferred from a metric name. A missing metric
 does not pass.
 
-Before mapping, prune a candidate only if another candidate can serve every
-RAQE it can and is no worse in ingest CPU and memory, and in latency, merge
-memory and stored memory for each such RAQE. This is safe because any mapping using
-the removed candidate can substitute the remaining one without weakening a
-modeled objective.
+Before mapping, prune a candidate only if another candidate with the same
+capability, metric, spatial filter and grouping can serve every RAQE it can,
+and is no worse in ingest CPU and memory, in compaction (CPU-seconds per
+window, and CPU and byte-seconds per second), and, for each RAQE it serves,
+in query-job CPU (`ℓ`), query memory (merge accumulators and output) and
+stored memory. Every cost in both objectives, and every chain (compaction, then
+query), is monotone in these, so any mapping using the removed candidate can
+substitute the remaining one without raising cost or latency.
 
 Closed instances must be stored long enough to answer the RAQEs assigned to a
 deployment. Retention is not a candidate parameter: a deployment stores the
 history needed by the largest assigned query window, costed as the storage
-phase (below).
+phase ([Cost models](rqe_optimizer_cost_model.md), §3).
 
 ## Workload mapping
 
-Let `z_{i,D}` be 1 when RAQE `i` uses candidate deployment `D`; let `u_D` be 1
-when deployment `D` is active.
-
-```text
-Σ_D z_{i,D} = 1       for every RAQE i
-z_{i,D} <= u_D        for every eligible pair (i, D)
-```
-
-Every RAQE selects exactly one eligible deployment. Multiple RAQEs may select
-the same deployment and therefore share its ingest work. A query may merge
-multiple instances from its selected deployment, but v1 does not combine
-results from several deployments to satisfy one RAQE.
-
-### MILP formulation
-
-Let `E` be the eligible `(i, D)` pairs. The solver has one binary `z_{i,D}`
-for each pair in `E`, one binary `u_D` for each candidate, and a continuous
-`stored_D` for each candidate's closed-window storage.
-
-```text
-z_{i,D}  ∈ {0, 1}    for (i, D) ∈ E
-u_D      ∈ {0, 1}    for D ∈ candidates
-stored_D ≥ 0
-
-Σ_{D: (i,D) ∈ E} z_{i,D} = 1                    for every RAQE i
-z_{i,D} ≤ u_D                                    for (i, D) ∈ E
-u_D ≤ Σ_{i: (i,D) ∈ E} z_{i,D}                   for every candidate D
-stored_D ≥ w(storage_{i,D}) × z_{i,D}            for (i, D) ∈ E
-```
-
-The `u_D ≤ Σ z` constraint prevents a deployment from becoming active when no
-RAQE selected it. It is not required for feasibility, but makes ingest cost
-unambiguous. `stored_D` is a linearized max: a deployment stores enough for
-the longest lookback it serves.
-
-The only objective, `Objective::AUCCost { w_cpu, w_mem }`, weighs each phase
-cost (below) as `w(c) = w_cpu × c.cpu + w_mem × c.memory_GiB`:
-
-```text
-minimize  Σ_D w(ingest_D) × u_D
-        + Σ_(i,D)∈E (w(merge_{i,D}) + w(query_{i,D})) × z_{i,D}
-        + Σ_D stored_D
-```
-
-CPU is the area under the CPU curve (mean CPU-sec/sec), so plans are sized
-for the mean load, not for bursts. Memory sums every phase, as if every query
-evaluates at once. The default weights are `(1, 0)`: CPU only.
-
-Per-RAQE latency bounds forbid the pairs over them (`z_{i,D} = 0`). The solver
+Every RAQE selects exactly one eligible candidate; several RAQEs may select
+the same one and so share its ingest. A query may merge several instances
+of its candidate, but v1 never combines results from several deployments to
+answer one RAQE. The MILP over the eligible pairs, its objective and its
+latency bound are in [Cost models](rqe_optimizer_cost_model.md) (§7 for cost
+by use; the snapshot objective changes only its coefficients). The solver
 never enumerates full mappings.
 
+## Fine-to-coarse group roll-ups
 
-## Fine-to-coarse group roll-ups (#190)
+A deployment grouped by `G_d` can answer a RAQE grouped by `G_r ⊂ G_d` when
+its family merges across groups (`mergeable_across_groups`): at query time,
+the fine instances of each coarse group are merged into one, then answered.
+This is a **roll-up**. Families that do: exact sum/min/max, HLL,
+univmon-cardinality, KLL and DDSketch. Rate/increase and top-k (CMS-heap,
+CountSketch-heap, univmon-topk) serve only `G_r = G_d`. Hydra never rolls
+up: it would answer subsets of its schema directly
+([Hydra](rqe_optimizer_hydra.md)).
 
-### Vocabulary
-
-A deployment has a source grouping `G_d`; a RAQE asks for a result grouped by `G_r`. `C_d = card(G_d)` and `C_r = card(G_r)`. A conventional, per-group sketch can answer `G_r subseteq G_d` by merging the fine states that belong to each coarse group. We call that operation a *roll-up*.
-
-Hydra is different. It ingests a labelled record into one shared grid and answers a subpopulation predicate from that grid. It does not expose one KLL per fine group for the optimizer to merge. A coarse Hydra answer, if the Hydra layout supports its predicate, is a direct query of the shared sketch, not the generic roll-up operation.
-
-### What #190 guarantees today
-
-For the families marked `mergeable_across_groups`, #190 permits `G_r subseteq G_d`. Thus, one can never use a coarse deployment for a fine RAQE. The eligible families are exact sum/min/max, HLL, cardinality UnivMon, KLL, and DDSketch. Rate/increase and top-k remain exact-grouping only i.e. `G_r == G_d`.
-
-For a conventional per-group sketch, a query over `L` using base windows `x` folds this many states:
-
-```text
-M = C_d * L/x - C_r
-```
-
-Thus merge CPU is `M * c_mrg / T`, merge memory is `C_r * m(L)`, and query CPU and output are priced at `C_r`. Ingest and retained base-window storage remain priced at `C_d`. This reduces to the old model when the groupings are equal, and it correctly charges a direct roll-up (`L = x`) for `C_d - C_r` merges.
-
-Eligibility also reads accuracy at the requested grouping: its data shape and item count are those of `G_r`. For KLL, the measured merge curve is read at the average fan-out `ceil(C_d / C_r) * L/x`. That is an empirical estimate, not a worst-group bound.
-This is a known cost-modeling issue caused due to uneven fan-out, logged in #189.
-
-### Future Hydra candidate strategy
-
-The existing candidate map remains the right shape for conventional roll-ups: generate a deployment at every RAQE grouping already present; for a mergeable family let that deployment consider RAQEs at subset groupings when choosing windows and slides; then add one eligible edge `(RAQE, deployment)` for every SLA-valid subset relation. The MILP itself is unchanged: one `z[i,D]` per eligible edge, one `u[D]` per deployment, and the same assignment and activation constraints. Its coefficients use the roll-up costs above.
-
-Hydra should enter through a distinct candidate/read strategy, for example `DirectSubpopulationQuery`, with these properties:
-
-- candidate identity includes the complete label schema `H`, Hydra config, window and slide, plus its group-enumeration strategy;
-- it may cover a RAQE only when `G_r` is a supported predicate/grouping of `H`, its exact measurement clears the RAQE SLA, and its merge depth was measured;
-- its edge coefficients use the [Hydra cost model](rqe_optimizer_cost_model.md#proposed-hydra-cost-model) plus any tracker costs;
-- it is not marked `mergeable_across_groups`, and is never charged or validated as a fine-state roll-up.
-
-This keeps candidate generation, eligibility, cost scoring, enumeration, and the MILP on one shared edge set while making the meaning of an edge explicit. The first Hydra implementation can conservatively support only `G_r = H` (or only explicitly benchmarked prefix groupings), then expand the supported predicate relation as measurements land.
-
-### Decisions needed
-
-1. Is coarse Hydra group enumeration derived from a fine DeltaSet, or do we store keys at every requested grouping?
-2. Which predicates are legal: only prefix label groupings, or arbitrary subsets once the IR has a label-to-layout mapping?
-3. Do we require an observed worst-parent fan-out curve (issue #189) before admitting Hydra, or accept an average-fan-out planning estimate like #190's KLL model?
-4. What interpolation/extrapolation, if any, is permitted between measured Hydra saturation points?
+- **Cost**: ingest, compaction and storage stay at `G_d`; the query job merges
+  `I_d · n − I_r` times and answers `card(G_r)` groups
+  ([Cost models](rqe_optimizer_cost_model.md), §3). A direct roll-up
+  (`n = 1`) still merges `card(G_d) − card(G_r)` instances.
+- **Accuracy**: read at `G_r`: its `data_shape`, and its items per group over
+  the lookback. KLL's merge curve is read at `⌈card(G_d)/card(G_r)⌉ · n`
+  merged instances, the average fan-out, an estimate rather than a
+  worst-group bound (uneven fan-out is #189).
+- **Facts**: `validate_facts` requires `card(X) ≤ card(Y)` for every pair
+  `X ⊂ Y` of label sets, so a merge count is never negative.
+- **Plan output**: a RAQE rolls up exactly when its grouping differs from its
+  deployment's.
