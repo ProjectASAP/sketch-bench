@@ -54,6 +54,7 @@ Writes, under --out:
 
 import argparse
 import csv
+import io
 import itertools
 import json
 import math
@@ -612,6 +613,31 @@ def hydra_row(job, labels, record, groups):
     }
 
 
+# hydra_saturation.csv's integer columns; the error columns are numbers or
+# "" (no scored group), merge_split is "" for a query run, the rest are text.
+HYDRA_INT_COLUMNS = ["R", "W", "schema_width", "records", "fanned_mass", "merge_shards",
+                     "seed", "groups_scored"]
+
+
+def hydra_row_parses(row):
+    """Whether every column of a hydra_saturation.csv row holds a value of
+    its type (a row cut off mid-write does not)."""
+    try:
+        for c in HYDRA_COLUMNS:
+            if row.get(c) is None:
+                return False
+            if c in HYDRA_INT_COLUMNS:
+                int(row[c])
+            elif c.startswith("err_"):
+                if row[c] != "":
+                    float(row[c])
+            elif c != "merge_split" and not row[c]:
+                return False
+    except ValueError:
+        return False
+    return True
+
+
 def hydra_key(row):
     """A hydra_saturation.csv row's identity, from a row dict (values as the
     CSV holds them)."""
@@ -668,8 +694,11 @@ def hydra(args):
     kept = []
     if args.resume and os.path.exists(table):
         with open(table, newline="") as f:
-            # A row cut off mid-write has empty trailing fields; it reruns.
-            kept = [r for r in csv.DictReader(f) if r.get(HYDRA_COLUMNS[-1]) is not None]
+            text = f.read()
+        # A row cut off mid-write (no line end, or a field that does not
+        # parse) reruns.
+        kept = [r for r in csv.DictReader(io.StringIO(text[:text.rfind("\n") + 1]))
+                if hydra_row_parses(r)]
     done = {hydra_key(r) for r in kept}
     todo = [j for j in jobs if hydra_key({
         "variant": j[2], "config": j[3], "dataset": j[0], "group_columns": ",".join(j[5]),
@@ -710,12 +739,16 @@ def hydra(args):
         os.remove(per_group)
         return record, hydra_row(job, labels, record, groups)
 
-    with open(table, "w", newline="") as f, \
+    # The kept rows go to a new file that then replaces the table, so a
+    # crash mid-rewrite cannot lose them; new rows append to it.
+    with open(table + ".tmp", "w", newline="") as f, \
             open(os.path.join(args.out, "hydra_accuracy.jsonl"), "a") as raw:
         writer = csv.DictWriter(f, HYDRA_COLUMNS)
         writer.writeheader()
         writer.writerows(kept)
         f.flush()
+        os.fsync(f.fileno())
+        os.replace(table + ".tmp", table)
         failed = 0
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             futures = {pool.submit(measure, i, j): j for i, j in enumerate(todo)}

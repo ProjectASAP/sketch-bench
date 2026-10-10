@@ -8,6 +8,7 @@ Run: python3 scripts/test_study_saturation.py
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -669,6 +670,33 @@ class HydraSpecTest(unittest.TestCase):
         self.assertEqual(hydra_labels(read("hydra_flows")), ["dst_subnet", "dst_port", "proto"])
         self.assertEqual(len(hydra_groupings(http)), 15)
 
+        def labels(stem):
+            """Each label column's (cardinality, skew, child_of), as datagen
+            reads them; a uniform column's cardinality is its upper bound."""
+            text = read(stem).split("column_spec:")[1]
+            out = []
+            for column in text.split("\n  - ")[1:]:
+                field = dict(re.findall(r"(\w+): ([\w.]+)\n", column + "\n"))
+                if field["data_type"] != "string":
+                    continue
+                if field["kind"] == "uniform":
+                    out.append((int(float(field["upper_bound"])), 0.0, None))
+                else:
+                    child_of = field.get("child_of")
+                    out.append((int(field["population_size"]), float(field["skewness"]),
+                                int(child_of) if child_of else None))
+                    if child_of:
+                        self.assertEqual(field["fan_out"], field["population_size"])
+            return out
+        # PR #196's SCHEMAS (origin/eval/hydra-workload,
+        # scripts/export_autosketch_eval_table.py): (cardinality, skew,
+        # child_of as a column index) per label, in schema order.
+        http_schema = [(4, 0.5, None), (25, 1.1, None), (25, 1.1, 1), (4, 2.0, None)]
+        self.assertEqual(labels("hydra_http"), http_schema)
+        self.assertEqual(labels("hydra_http_latency"), http_schema)
+        self.assertEqual(labels("hydra_flows"), [(1000, 1.1, None), (1000, 1.2, None),
+                                                 (3, 0.0, None)])
+
 
 # A Hydra run: writes a fixed per-group file for the grouping asked, and a
 # record of N = 100 records over 2 labels. Merged runs score 0.1 worse.
@@ -768,6 +796,31 @@ class HydraPhaseTest(unittest.TestCase):
         self.assertFalse({key(r) for r in first} & {key(r) for r in other})
         # The rerun runs the 6 runs shard 0 lacked; the 2 failures fail again.
         self.assertEqual(len(calls), 12 - len(first))
+        self.assertEqual(len(rows), 10)
+
+    def test_resume_reruns_a_cut_off_row_and_replaces_the_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.run_phase(d)
+            os.remove(os.path.join(d, "log.jsonl"))
+            table = os.path.join(d, "out", "hydra_saturation.csv")
+            with open(table, newline="") as f:
+                lines = f.read().splitlines(keepends=True)
+            # Two rows cut off mid-write: one with every field there but an
+            # empty groups_scored, and the last one with no line end.
+            fields = lines[1].split(",")
+            fields[HYDRA_COLUMNS.index("groups_scored")] = ""
+            lines[1] = ",".join(fields)
+            lines[-1] = lines[-1].rstrip("\r\n")
+            with open(table, "w", newline="") as f:
+                f.writelines(lines)
+            # The rewrite goes to a new file, so the old one survives.
+            os.link(table, table + ".old")
+            _, rows, _, calls = self.run_phase(d, "--resume")
+            with open(table + ".old", newline="") as f:
+                self.assertEqual(f.read(), "".join(lines))
+            self.assertFalse(os.path.exists(table + ".tmp"))
+        # Those 2 rerun, and the 2 failures again.
+        self.assertEqual(len(calls), 4)
         self.assertEqual(len(rows), 10)
 
 
