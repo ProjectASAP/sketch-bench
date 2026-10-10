@@ -386,15 +386,32 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
                 Some(_) => false,
             };
         }
-        // Dropping labels never adds groups. A roll-up's merge count,
-        // `card(G_d) · L/x − card(G_r)`, relies on it.
-        for (coarse, &coarse_groups) in cardinality {
-            for (fine, &fine_groups) in cardinality {
-                if coarse.is_subset(fine) && coarse_groups > fine_groups {
-                    problems.insert(format!(
-                        "{metric}: {coarse:?} has {coarse_groups} groups but its superset \
-                         {fine:?} only {fine_groups}"
-                    ));
+    }
+    // Dropping labels never adds groups. A roll-up's merge count,
+    // `card(G_d) · L/x − card(G_r)`, relies on it, so it is checked between
+    // the label sets a plan can use: every RAQE grouping on the metric, and
+    // its full label set. A label set no RAQE groups by is never read.
+    let mut used: BTreeMap<&str, BTreeSet<&LabelSet>> = BTreeMap::new();
+    for raqe in raqes {
+        if let Some(metric_facts) = facts.get(&raqe.metric) {
+            used.entry(&raqe.metric)
+                .or_insert_with(|| BTreeSet::from([&metric_facts.labels]))
+                .insert(&raqe.grouping_labels);
+        }
+    }
+    for (metric, label_sets) in &used {
+        let cardinality = &facts[*metric].cardinality;
+        for coarse in label_sets {
+            for fine in label_sets {
+                if let (Some(&coarse_groups), Some(&fine_groups)) =
+                    (cardinality.get(*coarse), cardinality.get(*fine))
+                {
+                    if coarse.is_subset(fine) && coarse_groups > fine_groups {
+                        problems.insert(format!(
+                            "{metric}: {coarse:?} has {coarse_groups} groups but its superset \
+                             {fine:?} only {fine_groups}"
+                        ));
+                    }
                 }
             }
         }
@@ -934,10 +951,10 @@ mod tests {
         );
     }
 
-    /// Every label set, not just the full one, bounds its subsets' groups.
-    #[test]
-    fn rejects_a_label_set_with_more_groups_than_its_superset() {
-        let facts = WorkloadFacts::from([(
+    /// Facts where `(service)` has more groups than its superset
+    /// `(service, endpoint)`, and `(pod)` has none at all.
+    fn inconsistent_facts() -> WorkloadFacts {
+        WorkloadFacts::from([(
             METRIC.to_string(),
             MetricFacts {
                 labels: labels(&["service", "endpoint", "pod"]),
@@ -945,22 +962,43 @@ mod tests {
                 cardinality: BTreeMap::from([
                     (labels(&["service"]), 60),
                     (labels(&["service", "endpoint"]), 50),
+                    (labels(&["pod"]), 0),
                     (labels(&["service", "endpoint", "pod"]), 30_000),
                 ]),
                 value_range: None,
                 data_shape: BTreeMap::new(),
             },
-        )]);
-        let r = Raqe {
-            grouping_labels: labels(&["service"]),
+        )])
+    }
+
+    /// Between two RAQE groupings, the subset may not have more groups.
+    #[test]
+    fn rejects_a_used_label_set_with_more_groups_than_a_used_superset() {
+        let grouped = |l: &[&str]| Raqe {
+            grouping_labels: labels(l),
             ..raqe(60_000, 60_000)
         };
         assert_eq!(
-            validate_facts(&[r], &facts).unwrap_err(),
+            validate_facts(
+                &[grouped(&["service"]), grouped(&["service", "endpoint"])],
+                &inconsistent_facts()
+            )
+            .unwrap_err(),
             [format!(
                 "{METRIC}: {{\"service\"}} has 60 groups but its superset \
                  {{\"endpoint\", \"service\"}} only 50"
             )]
         );
+    }
+
+    /// Label sets no RAQE groups by are never read, so inconsistencies there
+    /// don't reject the workload.
+    #[test]
+    fn ignores_label_sets_no_raqe_uses() {
+        let r = Raqe {
+            grouping_labels: labels(&["service"]),
+            ..raqe(60_000, 60_000)
+        };
+        assert_eq!(validate_facts(&[r], &inconsistent_facts()), Ok(()));
     }
 }

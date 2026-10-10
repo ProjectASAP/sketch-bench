@@ -205,10 +205,24 @@ A deployment grouped by `G_d` can answer a RAQE grouped by `G_r ⊂ G_d` when
 its family merges across groups (`mergeable_across_groups`): at query time,
 the fine instances of each coarse group are merged into one, then answered.
 This is a **roll-up**. Families that do: exact sum/min/max, HLL,
-univmon-cardinality, KLL and DDSketch. Rate/increase and top-k (CMS-heap,
-CountSketch-heap, univmon-topk) serve only `G_r = G_d`. Hydra never rolls
-up: it would answer subsets of its schema directly
-([Hydra](rqe_optimizer_hydra.md)).
+univmon-cardinality, KLL and DDSketch. These don't, and serve only
+`G_r = G_d`:
+
+- **Rate/increase** (`exact-increase`). A coarse increase is the sum of its
+  series' increases, `Σ_s increase_s`, so it is not the increase of the
+  summed counter: a reset in one series is hidden by the others' growth.
+  The accumulator tracks one counter, and its merge joins two pieces of it
+  in time (a drop at the seam is a reset), so merging two groups' counters
+  is wrong: A going 100 → 110 and B going 5 → 8 over the same minute merge
+  to 10, not 13. A roll-up would need per-series state and a sum of values,
+  not this merge. (ASAPQuery keys `MultipleIncrease` per series: it plans
+  only bare `rate`/`increase`, which keep every label.)
+- **Top-k** (CMS-heap, CountSketch-heap, univmon-topk). A coarse group's top
+  `k` can hold keys that are in none of its fine groups' heaps.
+- **Hydra**. It inserts every label subset of its schema, so a coarse
+  grouping inside the schema is answered directly from the grid, never by
+  merging fine groups; it is not a candidate today
+  ([Hydra](rqe_optimizer_hydra.md)).
 
 - **Cost**: ingest, compaction and storage stay at `G_d`; the query job merges
   `I_d · n − I_r` times and answers `card(G_r)` groups
@@ -219,6 +233,8 @@ up: it would answer subsets of its schema directly
   merged instances, the average fan-out, an estimate rather than a
   worst-group bound (uneven fan-out is #189).
 - **Facts**: `validate_facts` requires `card(X) ≤ card(Y)` for every pair
-  `X ⊂ Y` of label sets, so a merge count is never negative.
+  `X ⊂ Y` among the label sets a plan can use (every RAQE grouping on the
+  metric, and its full label set), so a merge count is never negative.
+  Label sets no RAQE groups by are not checked.
 - **Plan output**: a RAQE rolls up exactly when its grouping differs from its
   deployment's.
