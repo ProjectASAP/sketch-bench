@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
-use super::frequency_vector::{probes_over, score_over, truth_over, SubpopVectorTruth};
-use super::Group;
-use crate::accuracy::GroundTruth;
+use super::frequency_vector::{
+    per_group_over, probes_over, score_over, truth_over, SubpopVectorTruth,
+};
+use super::GroupKey;
+use crate::accuracy::{GroundTruth, GroupError};
 
 pub struct SubpopL2NormGT {
     /// Which label columns the subpopulation is taken over.
@@ -22,24 +24,33 @@ pub fn l2_norm(counts: &[u64]) -> f64 {
 
 impl GroundTruth for SubpopL2NormGT {
     type Truth = SubpopVectorTruth;
-    type Probe = Group;
+    type Probe = GroupKey;
     type Answer = f64;
 
     fn truth(&self, table: &GeneratedTable) -> Result<SubpopVectorTruth, DataGenError> {
         truth_over(table, &self.group_columns, self.value_column, l2_norm)
     }
 
-    fn probes(&self, truth: &SubpopVectorTruth) -> Vec<Group> {
+    fn probes(&self, truth: &SubpopVectorTruth) -> Vec<GroupKey> {
         probes_over(truth)
     }
 
     fn score(
         &self,
         truth: &SubpopVectorTruth,
-        probes: &[Group],
+        probes: &[GroupKey],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
         score_over(truth, probes, answers, self.group_columns.len())
+    }
+
+    fn per_group(
+        &self,
+        truth: &SubpopVectorTruth,
+        probes: &[GroupKey],
+        answers: &[f64],
+    ) -> Vec<GroupError> {
+        per_group_over(truth, probes, answers)
     }
 }
 
@@ -60,8 +71,8 @@ mod tests {
         let truth = over(vec![0])
             .truth(&records())
             .expect("the table has the named columns");
-        assert!((truth.exact[&vec!["a".to_string()]] - 5.0f64.sqrt()).abs() < 1e-12);
-        assert_eq!(truth.exact[&vec!["b".to_string()]], 3.0);
+        assert!((truth.exact[&vec![Some("a".to_string())]] - 5.0f64.sqrt()).abs() < 1e-12);
+        assert_eq!(truth.exact[&vec![Some("b".to_string())]], 3.0);
     }
 
     #[test]

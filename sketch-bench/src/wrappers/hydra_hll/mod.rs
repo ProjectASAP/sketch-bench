@@ -58,7 +58,7 @@ mod tests {
         }
         fed_hll(&mut h, &record("a;y", 20));
         // Two distinct values under label `a`, seen four times.
-        let est = h.estimate_subpop_cardinality(&["a"]);
+        let est = h.estimate_subpop_cardinality(&[Some("a")]);
         assert!(
             (est - 2.0).abs() < 0.5,
             "two distinct values under `a`, estimated {est}"
@@ -69,7 +69,7 @@ mod tests {
     fn hll_absent_group_estimates_zero() {
         let mut h = built_hll();
         fed_hll(&mut h, &record("a;x", 10));
-        assert_eq!(h.estimate_subpop_cardinality(&["zzz"]), 0.0);
+        assert_eq!(h.estimate_subpop_cardinality(&[Some("zzz")]), 0.0);
     }
 
     /// A HyperLogLog is register-wise mergeable, so two shards fold without
@@ -84,7 +84,7 @@ mod tests {
         left.inner
             .merge(&right.inner)
             .expect("both operands built from one ParamSet, so shapes match");
-        let est = left.estimate_subpop_cardinality(&["a"]);
+        let est = left.estimate_subpop_cardinality(&[Some("a")]);
         assert!(
             (est - 3.0).abs() < 0.5,
             "three distinct values across both shards, estimated {est}"

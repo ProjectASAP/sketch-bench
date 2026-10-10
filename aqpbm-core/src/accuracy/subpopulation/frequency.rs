@@ -6,8 +6,8 @@ use std::marker::PhantomData;
 
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
-use super::{group_labels, owned, Group};
-use crate::accuracy::{curve, CountedValue, GroundTruth};
+use super::{group_errors, group_labels, owned, write_groups, GroupKey};
+use crate::accuracy::{curve, CountedValue, GroundTruth, GroupError};
 
 pub struct SubpopFrequencyGT<V: CountedValue> {
     /// Which label columns the subpopulation is taken over. A grouped sketch
@@ -28,19 +28,23 @@ impl<V: CountedValue> SubpopFrequencyGT<V> {
     }
 }
 
-/// The exact per-(group, value) counts, the ranking, and the unfiltered
-/// population. Owned: the truth outlives the borrow of the table.
+/// The exact per-(group, value) counts, the ranking, the unfiltered
+/// population, each group's record count and the stream's shape. Owned: the
+/// truth outlives the borrow of the table.
 pub struct SubpopFreqTruth<V: CountedValue> {
-    exact: HashMap<(Group, V::CountKey), u64>,
-    ranked: Vec<(Group, V)>,
-    all: Vec<(Group, V)>,
+    exact: HashMap<(GroupKey, V::CountKey), u64>,
+    ranked: Vec<(GroupKey, V)>,
+    all: Vec<(GroupKey, V)>,
     subpopulations: usize,
+    sizes: HashMap<GroupKey, u64>,
+    records: u64,
+    schema_width: usize,
 }
 
 type CountedByGroup<'a, V> =
     HashMap<Vec<&'a str>, HashMap<<V as CountedValue>::CountKey, (u64, V)>>;
 
-fn counted_key<V: CountedValue>(pair: &(Group, V)) -> (Group, V::CountKey) {
+fn counted_key<V: CountedValue>(pair: &(GroupKey, V)) -> (GroupKey, V::CountKey) {
     (pair.0.clone(), pair.1.count_key())
 }
 
@@ -49,7 +53,7 @@ where
     V: CountedValue,
 {
     type Truth = SubpopFreqTruth<V>;
-    type Probe = (Group, V);
+    type Probe = (GroupKey, V);
     type Answer = f64;
 
     fn truth(&self, table: &GeneratedTable) -> Result<SubpopFreqTruth<V>, DataGenError> {
@@ -76,10 +80,12 @@ where
             }
         }
         let subpopulations = counted.len();
-        let mut exact: HashMap<(Group, V::CountKey), u64> = HashMap::new();
-        let mut by_count: Vec<((Group, V), u64)> = Vec::new();
+        let mut exact: HashMap<(GroupKey, V::CountKey), u64> = HashMap::new();
+        let mut by_count: Vec<((GroupKey, V), u64)> = Vec::new();
+        let mut sizes: HashMap<GroupKey, u64> = HashMap::with_capacity(subpopulations);
         for (group, seen) in counted {
-            let group = owned(&group);
+            let group = owned(&group, &self.group_columns);
+            sizes.insert(group.clone(), seen.values().map(|(count, _)| count).sum());
             for (key, (count, value)) in seen {
                 exact.insert((group.clone(), key), count);
                 by_count.push(((group.clone(), value), count));
@@ -99,20 +105,23 @@ where
             ranked,
             all,
             subpopulations,
+            sizes,
+            records: table.row_num,
+            schema_width: self.value_column,
         })
     }
 
-    fn probes(&self, truth: &SubpopFreqTruth<V>) -> Vec<(Group, V)> {
+    fn probes(&self, truth: &SubpopFreqTruth<V>) -> Vec<(GroupKey, V)> {
         curve::union_of(&truth.all, &truth.ranked, counted_key)
     }
 
     fn score(
         &self,
         truth: &SubpopFreqTruth<V>,
-        probes: &[(Group, V)],
+        probes: &[(GroupKey, V)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let est: HashMap<(Group, V::CountKey), f64> = probes
+        let est: HashMap<(GroupKey, V::CountKey), f64> = probes
             .iter()
             .zip(answers)
             .map(|(p, a)| (counted_key(p), *a))
@@ -136,7 +145,36 @@ where
         // be read.
         metrics.insert("subpopulations".into(), truth.subpopulations as f64);
         metrics.insert("group_columns".into(), self.group_columns.len() as f64);
+        let groups = self.per_group(truth, probes, answers);
+        write_groups(&groups, truth.records, truth.schema_width, &mut metrics);
         metrics
+    }
+
+    /// A group's error is the relative error of its (group, value) pairs,
+    /// averaged over the group's pairs as `are_all` averages over every pair.
+    fn per_group(
+        &self,
+        truth: &SubpopFreqTruth<V>,
+        probes: &[(GroupKey, V)],
+        answers: &[f64],
+    ) -> Vec<GroupError> {
+        let est: HashMap<(GroupKey, V::CountKey), f64> = probes
+            .iter()
+            .zip(answers)
+            .map(|(p, a)| (counted_key(p), *a))
+            .collect();
+        let mut per_group: HashMap<&GroupKey, (f64, usize)> = HashMap::new();
+        for (key, &count) in &truth.exact {
+            let err = (est.get(key).copied().unwrap_or(0.0) - count as f64).abs() / count as f64;
+            let held = per_group.entry(&key.0).or_insert((0.0, 0));
+            held.0 += err;
+            held.1 += 1;
+        }
+        group_errors(
+            per_group
+                .into_iter()
+                .map(|(g, (sum, pairs))| (g.clone(), truth.sizes[g], sum / pairs as f64)),
+        )
     }
 }
 
@@ -151,31 +189,17 @@ mod tests {
     /// and this double answers 0 whatever it was fed, so nothing needs to go
     /// into it.
     struct NullSubpop;
-    impl NullSubpop {
-        fn estimate_subpop_frequency(&self, _: &[&str], _: &i64) -> f64 {
-            0.0
-        }
-    }
-    fn query_null(s: &mut NullSubpop, p: &(Group, i64)) -> f64 {
-        s.estimate_subpop_frequency(&labels(&p.0), &p.1)
-    }
-
-    fn labels(group: &Group) -> Vec<&str> {
-        group.iter().map(String::as_str).collect()
+    fn query_null(_: &mut NullSubpop, _: &(GroupKey, i64)) -> f64 {
+        0.0
     }
 
     /// The estimator that is exactly right, built from the same rows the
     /// comparator reads. Pins that the comparator's own truth is self-consistent.
     struct ExactSubpop {
-        counts: HashMap<(Group, i64), u64>,
+        counts: HashMap<(GroupKey, i64), u64>,
     }
-    impl ExactSubpop {
-        fn estimate_subpop_frequency(&self, group: &[&str], value: &i64) -> f64 {
-            *self.counts.get(&(owned(group), *value)).unwrap_or(&0) as f64
-        }
-    }
-    fn query_exact(s: &mut ExactSubpop, p: &(Group, i64)) -> f64 {
-        s.estimate_subpop_frequency(&labels(&p.0), &p.1)
+    fn query_exact(s: &mut ExactSubpop, p: &(GroupKey, i64)) -> f64 {
+        *s.counts.get(p).unwrap_or(&0) as f64
     }
 
     fn over(group_columns: Vec<usize>) -> SubpopFrequencyGT<i64> {
@@ -256,6 +280,27 @@ mod tests {
         // (a,x,10) (a,y,10) (a,x,20) (b,x,30) (b,y,30) → 5 pairs.
         assert_eq!(cmp["probes_all"], 5.0);
         assert_eq!(cmp["group_columns"], 2.0);
+    }
+
+    /// A group's error averages its own pairs: `a` holds (a,10) twice and
+    /// (a,20) once, so overcounting (a,10) by one misses that pair by 0.5 and
+    /// group `a` by 0.25, while `b` is exact. Over groups the mean is 0.125,
+    /// not `are_all`'s 0.5 / 3 over pairs.
+    #[test]
+    fn a_group_error_is_the_mean_over_its_pairs() {
+        let table = records();
+        let gt = over(vec![0]);
+        let truth = gt.truth(&table).expect("the table has the named columns");
+        let mut counts = truth.exact.clone();
+        *counts
+            .get_mut(&(vec![Some("a".to_string())], 10))
+            .expect("(a, 10) occurs") += 1;
+        let cmp =
+            crate::accuracy::score_with(&gt, &query_exact, &mut ExactSubpop { counts }, &table);
+        assert_eq!(cmp["err_mean"], 0.125);
+        assert_eq!(cmp["err_max"], 0.25);
+        assert_eq!(cmp["groups_scored"], 2.0);
+        assert!((cmp["are_all"] - 0.5 / 3.0).abs() < 1e-12);
     }
 
     #[test]

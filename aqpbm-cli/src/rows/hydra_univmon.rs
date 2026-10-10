@@ -77,7 +77,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_lib(
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -114,7 +114,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_polars(
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_l1_norm::<$t>,
@@ -147,7 +147,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_lib(
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -184,7 +184,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_polars(
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_l2_norm::<$t>,
@@ -217,7 +217,7 @@ pub(crate) fn row_hydra_univmon_entropy_lib(
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -254,7 +254,7 @@ pub(crate) fn row_hydra_univmon_entropy_polars(
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_entropy::<$t>,

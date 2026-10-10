@@ -17,9 +17,20 @@ pub use l1_norm::{l1_norm, SubpopL1NormGT};
 pub use l2_norm::{l2_norm, SubpopL2NormGT};
 pub use rank_error::{SubpopRankErrorGT, SubpopRankTruth};
 
+use std::collections::BTreeMap;
+
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
+use crate::accuracy::curve::percentile;
+use crate::accuracy::GroupError;
+
 pub type Group = Vec<String>;
+
+/// A subpopulation as a grid is asked for it: one slot per label column up to
+/// the last one grouped on, `Some` at the grouped columns and `None` at the
+/// rest. Grouping on column 1 alone asks `[None, Some(v)]`, which a wrapper
+/// can tell apart from grouping on column 0.
+pub type GroupKey = Vec<Option<String>>;
 
 pub(crate) fn group_labels<'a>(
     table: &'a GeneratedTable,
@@ -45,8 +56,67 @@ pub(crate) fn group_labels<'a>(
     Ok(flat)
 }
 
-fn owned(group: &[&str]) -> Group {
-    group.iter().map(|label| (*label).to_string()).collect()
+/// `group` holds one label per entry of `columns`, in that order.
+fn owned(group: &[&str], columns: &[usize]) -> GroupKey {
+    let mut key = vec![None; columns.iter().max().map_or(0, |last| last + 1)];
+    for (label, &column) in group.iter().zip(columns) {
+        key[column] = Some((*label).to_string());
+    }
+    key
+}
+
+/// How a group is named in `--per-group-out`: each grouped column's value
+/// tagged with its column, as the grid's subkeys are (`label1:x`).
+fn rendered(key: &GroupKey) -> String {
+    key.iter()
+        .enumerate()
+        .filter_map(|(j, label)| label.as_ref().map(|l| format!("label{j}:{l}")))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// One [`GroupError`] per group, heaviest first (ties on the key), so the
+/// per-group file reads the same across runs.
+fn group_errors(errors: impl Iterator<Item = (GroupKey, u64, f64)>) -> Vec<GroupError> {
+    let mut out: Vec<GroupError> = errors
+        .map(|(key, n_q, error)| GroupError {
+            group: rendered(&key),
+            n_q,
+            error,
+        })
+        .collect();
+    out.sort_by(|a, b| b.n_q.cmp(&a.n_q).then_with(|| a.group.cmp(&b.group)));
+    out
+}
+
+/// The per-group summary every grouped comparator reports, in its own metric:
+/// `err_mean` / `err_p50` / `err_p90` / `err_max` over the scored groups (none
+/// written when no group was scored), `groups_scored`, and the stream's shape
+/// against which a group's error is read: `schema_width` (`d`, the label
+/// columns before the value), `records` (`N`) and `fanned_mass`
+/// (`N·(2^d − 1)`, every subset a record is inserted into).
+fn write_groups(
+    groups: &[GroupError],
+    records: u64,
+    schema_width: usize,
+    metrics: &mut BTreeMap<String, f64>,
+) {
+    let mut errs: Vec<f64> = groups.iter().map(|g| g.error).collect();
+    errs.sort_by(f64::total_cmp);
+    if let Some(&max) = errs.last() {
+        metrics.insert(
+            "err_mean".into(),
+            errs.iter().sum::<f64>() / errs.len() as f64,
+        );
+        metrics.insert("err_p50".into(), percentile(&errs, 0.5));
+        metrics.insert("err_p90".into(), percentile(&errs, 0.9));
+        metrics.insert("err_max".into(), max);
+    }
+    metrics.insert("groups_scored".into(), errs.len() as f64);
+    metrics.insert("schema_width".into(), schema_width as f64);
+    metrics.insert("records".into(), records as f64);
+    let subsets = 2f64.powi(schema_width as i32) - 1.0;
+    metrics.insert("fanned_mass".into(), records as f64 * subsets);
 }
 
 /// key1 ∈ {a, b}, key2 ∈ {x, y}; the value column is what gets counted.
@@ -76,15 +146,15 @@ fn records() -> GeneratedTable {
 #[cfg(test)]
 fn null_over<G>(gt: &G, table: &GeneratedTable) -> std::collections::BTreeMap<String, f64>
 where
-    G: crate::accuracy::GroundTruth<Probe = Group, Answer = f64>,
+    G: crate::accuracy::GroundTruth<Probe = GroupKey, Answer = f64>,
 {
-    crate::accuracy::score_with(gt, &|_: &mut (), _: &Group| 0.0, &mut (), table)
+    crate::accuracy::score_with(gt, &|_: &mut (), _: &GroupKey| 0.0, &mut (), table)
 }
 
 #[cfg(test)]
 fn exact_over<G>(gt: &G, table: &GeneratedTable) -> std::collections::BTreeMap<String, f64>
 where
-    G: crate::accuracy::GroundTruth<Truth = SubpopVectorTruth, Probe = Group, Answer = f64>,
+    G: crate::accuracy::GroundTruth<Truth = SubpopVectorTruth, Probe = GroupKey, Answer = f64>,
 {
     let mut exact = gt
         .truth(table)
@@ -92,7 +162,7 @@ where
         .exact;
     crate::accuracy::score_with(
         gt,
-        &|held: &mut std::collections::HashMap<Group, f64>, p: &Group| {
+        &|held: &mut std::collections::HashMap<GroupKey, f64>, p: &GroupKey| {
             held.get(p).copied().unwrap_or(0.0)
         },
         &mut exact,

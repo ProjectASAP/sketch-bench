@@ -33,7 +33,7 @@ pub fn build_polars_subpop_frequency_cs<T: PolarsFrequencyItem>(
 }
 
 impl<T: PolarsFrequencyItem> PolarsSubpopFrequencyCs<T> {
-    pub fn estimate_subpop_frequency(&self, labels: &[&str], value: &T) -> f64 {
+    pub fn estimate_subpop_frequency(&self, labels: &[Option<&str>], value: &T) -> f64 {
         self.0.query(labels, value)
     }
 }
@@ -91,7 +91,7 @@ pub fn insert_step_polars_subpop_frequency_cs<T: PolarsFrequencyItem>(
 pub fn query_polars_subpop_frequency_cs<T: PolarsFrequencyItem>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<(Vec<String>, T)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, T)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);

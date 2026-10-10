@@ -25,7 +25,8 @@ column_label: [key1, key2, value]
 row_num: 20000
 
 column_spec:
-  # key1: the column the comparator groups by.
+  # key1: the column the comparator groups by unless `--group-columns` names
+  # another subset (`1`, `0,1`).
   - data_type: string
     distribution:
       kind: uniform

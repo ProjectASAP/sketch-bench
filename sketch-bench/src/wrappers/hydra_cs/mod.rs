@@ -60,11 +60,14 @@ mod tests {
             fed(&mut h, &r);
         }
         // (a, 10) occurs twice, under two different second labels.
-        assert_eq!(h.estimate_subpop_frequency(&["a"], &10i64), 2.0);
-        assert_eq!(h.estimate_subpop_frequency(&["a"], &20i64), 1.0);
-        assert_eq!(h.estimate_subpop_frequency(&["b"], &30i64), 1.0);
+        assert_eq!(h.estimate_subpop_frequency(&[Some("a")], &10i64), 2.0);
+        assert_eq!(h.estimate_subpop_frequency(&[Some("a")], &20i64), 1.0);
+        assert_eq!(h.estimate_subpop_frequency(&[Some("b")], &30i64), 1.0);
         // The full key is its own subpopulation and is stored too.
-        assert_eq!(h.estimate_subpop_frequency(&["a", "x"], &10i64), 1.0);
+        assert_eq!(
+            h.estimate_subpop_frequency(&[Some("a"), Some("x")], &10i64),
+            1.0
+        );
     }
 
     /// A group that never occurred must estimate zero. This is the failure mode
@@ -74,7 +77,7 @@ mod tests {
     fn an_absent_group_estimates_zero() {
         let mut h = built();
         fed(&mut h, &record("a;x", 10));
-        assert_eq!(h.estimate_subpop_frequency(&["zzz"], &10i64), 0.0);
+        assert_eq!(h.estimate_subpop_frequency(&[Some("zzz")], &10i64), 0.0);
     }
 
     /// Count Sketch is linear and the grid is cell-wise, so folding two shards is
@@ -91,7 +94,7 @@ mod tests {
         left.inner
             .merge(&right.inner)
             .expect("both operands built from one ParamSet, so shapes match");
-        assert_eq!(left.estimate_subpop_frequency(&["a"], &10i64), 7.0);
+        assert_eq!(left.estimate_subpop_frequency(&[Some("a")], &10i64), 7.0);
     }
 
     #[test]
