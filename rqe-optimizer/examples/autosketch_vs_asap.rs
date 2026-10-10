@@ -21,10 +21,10 @@
 //! versions, in one output file:
 //!
 //! - **Version 1, no latency constraint** (`results`): each method's cheapest
-//!   plan, its latency reported, and ASAP's and PerQuery's cost–latency
-//!   frontiers (`bound_ms`).
+//!   plan, its latency reported, and ASAP's (with and without roll-ups) and
+//!   PerQuery's cost–latency frontiers (`bound_ms`).
 //! - **Version 2, a batch latency SLA** (`sla_results`): at each SLA of the
-//!   grid, ASAP's and PerQuery's cheapest plan whose batch latency is at most
+//!   grid, ASAP's (both) and PerQuery's cheapest plan whose batch latency is at most
 //!   the SLA (`milp::minimize_usage_cost` with `latency_bound_ms`, exact).
 //!   An SLA below a method's tightest feasible bound has no plan
 //!   (`infeasible`). AutoSketch ignores the SLA; its plan is recorded at
@@ -38,6 +38,10 @@
 //!   weights and is priced under each.
 //! - **PerQuery-CostAware:** `milp::minimize_usage_cost` over each RQE's own
 //!   candidates (separate copies, so no sharing).
+//! - **ASAP (no roll-ups)** (`asap-norollup`), an ablation: ASAP's MILP and
+//!   candidates, with each RQE allowed only deployments at its own grouping
+//!   or Hydra grids (not a roll-up). Every result counts `rolled_up_rqes`,
+//!   the RQEs served from a strictly finer non-Hydra deployment.
 //!
 //! `traces` reads `data/autosketch-eval/table.json` (alibaba_v2022 and
 //! google_2011 are evaluated; boom is left out for now); `synthetic` reads one
@@ -664,6 +668,13 @@ fn autosketch_plan(
     })
 }
 
+/// Whether `d` serves `r` as a roll-up: a non-Hydra deployment at another
+/// grouping (one that serves `r` is strictly finer). A Hydra grid answers any
+/// subgrouping directly.
+fn is_rollup(r: &Raqe, d: &Deployment) -> bool {
+    !d.properties().answers_any_subgrouping && d.grouping_labels != r.grouping_labels
+}
+
 /// A plan priced by use (`usage::usage_cost`): its cost, CPU and memory by
 /// part, its latency (the longest chain) and each RQE's choice.
 fn summarize(
@@ -706,6 +717,11 @@ fn summarize(
     let hydra_rqes = mapping
         .iter()
         .filter(|&&d| deployments[d].properties().answers_any_subgrouping)
+        .count();
+    let rolled_up_rqes = raqes
+        .iter()
+        .zip(mapping)
+        .filter(|(r, &d)| is_rollup(r, &deployments[d]))
         .count();
     let chosen: Vec<Value> = raqes
         .iter()
@@ -753,6 +769,7 @@ fn summarize(
         "latency_ms": cost.latency_ms,
         "median_latency_ms": (!latencies.is_empty()).then(|| median(latencies.clone())),
         "active_deployments": active.len(),
+        "rolled_up_rqes": rolled_up_rqes,
         "chosen": chosen,
     });
     // Only workloads Hydra may serve report it, so others read as before.
@@ -937,6 +954,16 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         perquery_candidates.extend(own);
     }
     let perquery_build_secs = started.elapsed().as_secs_f64();
+    // ASAP without roll-ups: ASAP's candidates, each RQE kept off any finer
+    // non-Hydra deployment.
+    let norollup_allowed: Vec<Vec<usize>> = raqes
+        .iter()
+        .map(|r| {
+            (0..asap_candidates.len())
+                .filter(|&d| !is_rollup(r, &asap_candidates[d]))
+                .collect()
+        })
+        .collect();
 
     // AutoSketch's plan ignores the weights and latency: one point.
     let auto_latency_ms = usage_cost(
@@ -947,6 +974,7 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
     .latency_ms;
     let asap_tightest = tightest_bound_ms(w, &raqes, &asap_candidates, None);
     let perquery_tightest = tightest_bound_ms(w, &raqes, &perquery_candidates, Some(&allowed));
+    let norollup_tightest = tightest_bound_ms(w, &raqes, &asap_candidates, Some(&norollup_allowed));
 
     let mut results = Vec::new();
     let mut sla_results = Vec::new();
@@ -986,6 +1014,17 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             }
             Err(e) => json!({"error": e.to_string()}),
         };
+        let (norollup, norollup_solve_secs) =
+            solve(&asap_candidates, Some(&norollup_allowed), None);
+        let norollup = match norollup {
+            Ok(s) => {
+                let mut v = summarize(w, &raqes, &asap_candidates, &s.mapping, w_cpu, w_mem);
+                v["planning_secs"] = json!(median(build_secs.clone()) + norollup_solve_secs);
+                v["candidates"] = json!(asap_candidates.len());
+                v
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        };
         let (perquery, perquery_solve_secs) = solve(&perquery_candidates, Some(&allowed), None);
         let mut perq = match perquery {
             Ok(s) => summarize(w, &raqes, &perquery_candidates, &s.mapping, w_cpu, w_mem),
@@ -997,13 +1036,32 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         auto["probes"] = json!(probes);
         auto["benchmark_secs_paper_rate"] = json!(paper_secs);
 
-        // ASAP costs no more than PerQuery, nor than AutoSketch when every
-        // AutoSketch choice is one ASAP could make.
+        // ASAP costs no more than without roll-ups, which costs no more than
+        // PerQuery (whose own candidates are at each RQE's grouping or
+        // Hydra), nor than AutoSketch when every AutoSketch choice is one ASAP
+        // could make.
         let cost = |v: &Value| v["objective"].as_f64();
-        if let (Some(a), Some(b)) = (cost(&asap), cost(&perq)) {
-            if a > b * (1.0 + 1e-6) {
-                sanity.push(json!({"check": "asap <= perquery", "weights": weight_name, "asap": a, "perquery": b}));
+        // `sanity` gets a violation of `cheaper <= dearer`, both solved.
+        let ordered = |sanity: &mut Vec<Value>,
+                       at: Value,
+                       cheaper: (&str, &Value),
+                       dearer: (&str, &Value)| {
+            if let (Some(a), Some(b)) = (cost(cheaper.1), cost(dearer.1)) {
+                if a > b * (1.0 + 1e-6) {
+                    let mut v = json!({"check": format!("{} <= {}", cheaper.0, dearer.0), "weights": weight_name, (cheaper.0): a, (dearer.0): b});
+                    v.as_object_mut()
+                        .unwrap()
+                        .extend(at.as_object().unwrap().clone());
+                    sanity.push(v);
+                }
             }
+        };
+        for (cheaper, dearer) in [
+            (("asap", &asap), ("asap-norollup", &norollup)),
+            (("asap-norollup", &norollup), ("perquery", &perq)),
+            (("asap", &asap), ("perquery", &perq)),
+        ] {
+            ordered(&mut sanity, json!({}), cheaper, dearer);
         }
         if let (Some(a), Some(b)) = (cost(&asap), cost(&auto)) {
             let not_eligible: Vec<&str> = raqes
@@ -1016,8 +1074,11 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
                 sanity.push(json!({"check": "asap <= autosketch", "weights": weight_name, "asap": a, "autosketch": b}));
             }
         }
-        if asap.get("error").is_some() || perq.get("error").is_some() {
-            sanity.push(json!({"check": "every method solves", "weights": weight_name, "asap": asap.get("error"), "perquery": perq.get("error")}));
+        if [&asap, &norollup, &perq]
+            .iter()
+            .any(|v| v.get("error").is_some())
+        {
+            sanity.push(json!({"check": "every method solves", "weights": weight_name, "asap": asap.get("error"), "asap-norollup": norollup.get("error"), "perquery": perq.get("error")}));
         }
 
         // The frontiers: the cheapest plan at most `L` slow, for a sweep of
@@ -1025,6 +1086,13 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         // at AutoSketch's latency.
         for (method, candidates, allowed, tightest, unbounded) in [
             ("asap", &asap_candidates, None, asap_tightest, &asap),
+            (
+                "asap-norollup",
+                &asap_candidates,
+                Some(&norollup_allowed[..]),
+                norollup_tightest,
+                &norollup,
+            ),
             (
                 "perquery",
                 &perquery_candidates,
@@ -1065,6 +1133,12 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             for (method, candidates, allowed, tightest) in [
                 ("asap", &asap_candidates, None, asap_tightest),
                 (
+                    "asap-norollup",
+                    &asap_candidates,
+                    Some(&norollup_allowed[..]),
+                    norollup_tightest,
+                ),
+                (
                     "perquery",
                     &perquery_candidates,
                     Some(&allowed[..]),
@@ -1091,10 +1165,13 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
                 v["method"] = json!(method);
                 at_sla.push(v);
             }
-            if let (Some(a), Some(b)) = (cost(&at_sla[0]), cost(&at_sla[1])) {
-                if a > b * (1.0 + 1e-6) {
-                    sanity.push(json!({"check": "asap <= perquery at the SLA", "weights": weight_name, "sla_ms": sla, "asap": a, "perquery": b}));
-                }
+            for (i, j) in [(0, 1), (1, 2), (0, 2)] {
+                ordered(
+                    &mut sanity,
+                    json!({"sla_ms": sla}),
+                    (at_sla[i]["method"].as_str().unwrap(), &at_sla[i]),
+                    (at_sla[j]["method"].as_str().unwrap(), &at_sla[j]),
+                );
             }
             let mut v = auto.clone();
             v["meets_sla"] = json!(meets_sla(auto_latency_ms, sla));
@@ -1108,7 +1185,12 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             }
         }
 
-        for (method, value) in [("asap", asap), ("autosketch", auto), ("perquery", perq)] {
+        for (method, value) in [
+            ("asap", asap),
+            ("asap-norollup", norollup),
+            ("autosketch", auto),
+            ("perquery", perq),
+        ] {
             let mut v = value;
             v["method"] = json!(method);
             v["weights"] = json!(weight_name);
@@ -1133,6 +1215,7 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             "points": FRONTIER_POINTS,
             "asap_tightest_bound_ms": asap_tightest,
             "perquery_tightest_bound_ms": perquery_tightest,
+            "asap_norollup_tightest_bound_ms": norollup_tightest,
             "autosketch_latency_ms": auto_latency_ms,
         },
         "autosketch": {
@@ -1225,39 +1308,59 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn a_schema_stream_carries_every_grouping_and_rolls_up() {
-        let rqe = |grouping: &[&str], groups: u64, covers: Option<f64>, smallest: f64| {
-            json!({
-                "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
-                "capability": "cardinality", "metric": "http", "stream": "http/user_id",
-                "grouping": grouping, "covers_share": covers, "min_covered_share": smallest,
-                "max_covered_share": 0.5,
-                "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
-                "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
-                "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
-                              "grid_param": 0.0, "grid_K": 1e6}],
-            })
-        };
+    /// An HLL RQE on `http`'s user ids, grouped by `grouping`.
+    fn http_rqe(grouping: &[&str], groups: u64, covers: Option<f64>, smallest: f64) -> Value {
+        json!({
+            "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
+            "capability": "cardinality", "metric": "http", "stream": "http/user_id",
+            "grouping": grouping, "covers_share": covers, "min_covered_share": smallest,
+            "max_covered_share": 0.5,
+            "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
+            "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
+            "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
+                          "grid_param": 0.0, "grid_K": 1e6}],
+        })
+    }
+
+    /// A workload of `rqes` on the `http` schema, on [`hll_saturation_dir`].
+    fn http_workload(tag: &str, rqes: Vec<Value>) -> Workload {
         let table = json!({"workloads": [{
             "dataset": "synthetic/test",
             "schemas": {"http": http_schema()},
-            "rqes": [
-                rqe(&["region"], 4, Some(0.05), 0.05),
-                rqe(&["region", "service"], 100, None, 0.001),
-            ],
+            "rqes": rqes,
         }]});
-        let path = std::env::temp_dir().join(format!("schema-table-{}.json", std::process::id()));
+        let inputs = hll_saturation_dir(tag);
+        let path = inputs.join("table.json");
         std::fs::write(&path, table.to_string()).unwrap();
-        let inputs = hll_saturation_dir("schema");
         let w = from_table(
             path.to_str().unwrap(),
             None,
             Some("p95".into()),
             inputs.to_str().unwrap(),
         );
-        std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir_all(&inputs).unwrap();
+        w
+    }
+
+    /// The unbounded plan of `method` at the first weight setting.
+    fn unbounded<'a>(result: &'a Value, method: &str) -> &'a Value {
+        result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["method"] == method && r["bound_ms"].is_null())
+            .unwrap()
+    }
+
+    #[test]
+    fn a_schema_stream_carries_every_grouping_and_rolls_up() {
+        let w = http_workload(
+            "schema",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["region", "service"], 100, None, 0.001),
+            ],
+        );
         let facts = &w.facts["synthetic/test/http/user_id"];
         assert_eq!(
             facts.labels,
@@ -1286,12 +1389,7 @@ mod tests {
         assert_eq!(every.cardinality[&every.labels], 200_000);
         // One {region, service} deployment serves both RQEs.
         let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
-        let asap = result["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|r| r["method"] == "asap" && r["bound_ms"].is_null())
-            .unwrap();
+        let asap = unbounded(&result, "asap");
         assert_eq!(asap["active_deployments"], 1);
         let coarse = &asap["chosen"][0];
         assert_eq!(coarse["rqe"], "t/region");
@@ -1299,6 +1397,55 @@ mod tests {
         assert_eq!(coarse["covers_share"], 0.05);
         // No hydra_saturation.csv: Hydra serves nothing, and says so.
         assert_eq!(asap["hydra_rqes"], 0);
+    }
+
+    /// Without roll-ups, the coarse RQE needs its own deployment, which costs
+    /// more than reading the fine one; every method counts its roll-ups.
+    #[test]
+    fn forbidding_roll_ups_costs_more_only_where_one_applies() {
+        let cost = |v: &Value| v["objective"].as_f64().unwrap();
+        let w = http_workload(
+            "rollup",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["region", "service"], 100, None, 0.001),
+            ],
+        );
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        assert_eq!(result["sanity_violations"], json!([]));
+        let [asap, norollup, perquery] =
+            ["asap", "asap-norollup", "perquery"].map(|m| unbounded(&result, m));
+        assert_eq!(asap["rolled_up_rqes"], 1);
+        assert_eq!(norollup["rolled_up_rqes"], 0);
+        assert_eq!(perquery["rolled_up_rqes"], 0);
+        assert_eq!(norollup["active_deployments"], 2);
+        assert!(cost(asap) < cost(norollup), "{asap} vs {norollup}");
+        assert!(cost(norollup) <= cost(perquery) * (1.0 + 1e-6));
+        // The ablation has a frontier and a plan at each SLA, like ASAP.
+        let norollup_rows = |key: &str| {
+            result[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["method"] == "asap-norollup")
+                .count()
+        };
+        assert!(norollup_rows("results") > 1);
+        assert_eq!(norollup_rows("sla_results"), 1);
+
+        // {region} and {service}: neither serves the other, so the two agree.
+        let w = http_workload(
+            "no-rollup",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["service"], 25, Some(0.05), 0.01),
+            ],
+        );
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        assert_eq!(result["sanity_violations"], json!([]));
+        let [asap, norollup] = ["asap", "asap-norollup"].map(|m| unbounded(&result, m));
+        assert_eq!(asap["rolled_up_rqes"], 0);
+        assert_eq!(cost(asap), cost(norollup));
     }
 
     /// The generator's `http` schema: endpoint fans out under service.
@@ -1384,12 +1531,23 @@ mod tests {
         let flows_facts = &w.facts["synthetic/test/flows/src_ip"];
         let full = label_set(&["dst_subnet", "dst_port", "proto"]);
         assert_eq!(flows_facts.cardinality[&full], 1_000_000);
-        let grids: BTreeSet<(String, LabelSet)> = group_by_stream(&w.raqes)
+        let hydra: Vec<Deployment> = group_by_stream(&w.raqes)
             .into_iter()
             .flat_map(|(stream, group)| {
                 build_all_candidates_unpruned(&group, &w.costs[stream], &w.facts, true)
             })
             .filter(|d| d.properties().answers_any_subgrouping)
+            .collect();
+        // A grid finer than its RQE is not a roll-up; a per-group sketch there
+        // would be.
+        let t11 = &w.raqes[0];
+        let grid = hydra.iter().find(|d| d.metric == t11.metric).unwrap();
+        assert!(!is_rollup(t11, grid));
+        let mut per_group = grid.clone();
+        per_group.config.sketch = "hll".into();
+        assert!(is_rollup(t11, &per_group));
+        let grids: BTreeSet<(String, LabelSet)> = hydra
+            .into_iter()
             .map(|d| (d.config.sketch, d.grouping_labels))
             .collect();
         assert_eq!(
