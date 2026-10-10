@@ -173,7 +173,7 @@ where
         group_errors(
             per_group
                 .into_iter()
-                .map(|(g, (sum, pairs))| (g.clone(), truth.sizes[g], sum / pairs as f64)),
+                .map(|(g, (sum, pairs))| (g.clone(), truth.sizes[g], Some(sum / pairs as f64))),
         )
     }
 }

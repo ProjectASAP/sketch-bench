@@ -120,16 +120,16 @@ pub(super) fn score_over(
 }
 
 /// Relative error per group, as `are_all` averages it: a group whose true
-/// statistic is zero (entropy over one value) has no relative error and is
-/// not scored.
+/// statistic is zero (entropy over one value) has no relative error, so it is
+/// listed unscored.
 pub(super) fn per_group_over(
     truth: &SubpopVectorTruth,
     probes: &[GroupKey],
     answers: &[f64],
 ) -> Vec<GroupError> {
     let est: HashMap<&GroupKey, f64> = probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
-    group_errors(truth.exact.iter().filter(|(_, &v)| v > 0.0).map(|(g, &v)| {
-        let err = (est.get(g).copied().unwrap_or(0.0) - v).abs() / v;
+    group_errors(truth.exact.iter().map(|(g, &v)| {
+        let err = (v > 0.0).then(|| (est.get(g).copied().unwrap_or(0.0) - v).abs() / v);
         (g.clone(), truth.sizes[g], err)
     }))
 }

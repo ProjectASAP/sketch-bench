@@ -66,18 +66,30 @@ fn owned(group: &[&str], columns: &[usize]) -> GroupKey {
 }
 
 /// How a group is named in `--per-group-out`: each grouped column's value
-/// tagged with its column, as the grid's subkeys are (`label1:x`).
+/// tagged with its column, as the grid's subkeys are (`label1:x`), with `\`,
+/// `:` and `;` escaped. The same encoding as sketch-bench's
+/// `polars_shared::subset_key`, which this crate cannot depend on.
 fn rendered(key: &GroupKey) -> String {
-    key.iter()
-        .enumerate()
-        .filter_map(|(j, label)| label.as_ref().map(|l| format!("label{j}:{l}")))
-        .collect::<Vec<_>>()
-        .join(";")
+    let mut out = String::new();
+    for (j, label) in key.iter().enumerate() {
+        let Some(label) = label else { continue };
+        if !out.is_empty() {
+            out.push(';');
+        }
+        out.push_str(&format!("label{j}:"));
+        for ch in label.chars() {
+            if matches!(ch, '\\' | ':' | ';') {
+                out.push('\\');
+            }
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// One [`GroupError`] per group, heaviest first (ties on the key), so the
 /// per-group file reads the same across runs.
-fn group_errors(errors: impl Iterator<Item = (GroupKey, u64, f64)>) -> Vec<GroupError> {
+fn group_errors(errors: impl Iterator<Item = (GroupKey, u64, Option<f64>)>) -> Vec<GroupError> {
     let mut out: Vec<GroupError> = errors
         .map(|(key, n_q, error)| GroupError {
             group: rendered(&key),
@@ -101,7 +113,7 @@ fn write_groups(
     schema_width: usize,
     metrics: &mut BTreeMap<String, f64>,
 ) {
-    let mut errs: Vec<f64> = groups.iter().map(|g| g.error).collect();
+    let mut errs: Vec<f64> = groups.iter().filter_map(|g| g.error).collect();
     errs.sort_by(f64::total_cmp);
     if let Some(&max) = errs.last() {
         metrics.insert(
@@ -168,4 +180,17 @@ where
         &mut exact,
         table,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A label holding the separators is escaped as the grid's subkeys are,
+    /// so it cannot be read as two columns.
+    #[test]
+    fn rendered_keys_escape_the_separators() {
+        let key = vec![None, Some(r"x:y;z\".to_string()), Some(String::new())];
+        assert_eq!(rendered(&key), r"label1:x\:y\;z\\;label2:");
+    }
 }

@@ -123,7 +123,8 @@ impl GroundTruth for SubpopCardinalityGT {
         metrics
     }
 
-    /// Relative error per group, as `are_all` averages it.
+    /// Relative error per group, as `are_all` averages it; a group with no
+    /// distinct value is listed unscored.
     fn per_group(
         &self,
         truth: &SubpopCardTruth,
@@ -132,8 +133,9 @@ impl GroundTruth for SubpopCardinalityGT {
     ) -> Vec<GroupError> {
         let est: HashMap<&GroupKey, f64> =
             probes.iter().zip(answers).map(|(p, a)| (p, *a)).collect();
-        group_errors(truth.exact.iter().filter(|(_, &d)| d > 0).map(|(g, &d)| {
-            let err = (est.get(g).copied().unwrap_or(0.0) - d as f64).abs() / d as f64;
+        group_errors(truth.exact.iter().map(|(g, &d)| {
+            let err =
+                (d > 0).then(|| (est.get(g).copied().unwrap_or(0.0) - d as f64).abs() / d as f64);
             (g.clone(), truth.sizes[g], err)
         }))
     }

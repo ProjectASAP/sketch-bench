@@ -103,9 +103,9 @@ pub trait GroundTruth {
         answers: &[Self::Answer],
     ) -> BTreeMap<String, f64>;
 
-    /// ④ Each scored group's error, for a comparator whose population is
+    /// ④ Every group with its error, for a comparator whose population is
     /// subpopulations; empty for every other. [`score`](Self::score) summarises
-    /// the same rows, and `--per-group-out` writes them.
+    /// the scored rows, and `--per-group-out` writes them all.
     fn per_group(
         &self,
         _truth: &Self::Truth,
@@ -116,13 +116,15 @@ pub trait GroundTruth {
     }
 }
 
-/// One scored subpopulation: its key, how many records it carried (`n_q`), and
-/// its error in the comparator's own metric, lower is better.
+/// One subpopulation: its key, how many records it carried (`n_q`), and its
+/// error in the comparator's own metric, lower is better. `None` when the group
+/// cannot be scored (its true statistic is zero, so it has no relative error);
+/// it is still listed, so the groups' `n_q` sum to the stream's records.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupError {
     pub group: String,
     pub n_q: u64,
-    pub error: f64,
+    pub error: Option<f64>,
 }
 
 /// How a row's answers turn into the named error metrics: the scorer

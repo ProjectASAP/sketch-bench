@@ -102,6 +102,34 @@ mod tests {
         assert_eq!(cmp["aae_all"], 0.0);
     }
 
+    /// Over both columns only (a, x) holds two values; the other groups have
+    /// zero entropy and no relative error, but are still listed, so `n_q`
+    /// sums to the stream's 6 records.
+    #[test]
+    fn a_zero_entropy_group_is_listed_unscored() {
+        let gt = over(vec![0, 1]);
+        let truth = gt
+            .truth(&records())
+            .expect("the table has the named columns");
+        let probes = gt.probes(&truth);
+        let rows: Vec<(String, u64, Option<f64>)> = gt
+            .per_group(&truth, &probes, &vec![0.0; probes.len()])
+            .into_iter()
+            .map(|g| (g.group, g.n_q, g.error))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("label0:a;label1:x".to_string(), 2, Some(1.0)),
+                ("label0:b;label1:y".to_string(), 2, None),
+                ("label0:a;label1:y".to_string(), 1, None),
+                ("label0:b;label1:x".to_string(), 1, None),
+            ]
+        );
+        let cmp = null_over(&gt, &records());
+        assert_eq!(cmp["groups_scored"], 1.0);
+    }
+
     #[test]
     fn a_different_grouping_is_a_different_population() {
         let cmp = null_over(&over(vec![0, 1]), &records());
