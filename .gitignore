@@ -10,6 +10,8 @@
 
 # data
 *.csv
+# The Hydra eval's study table is an input, committed so it reruns from the repo.
+!rqe-optimizer/results/autosketch-vs-asap-hydra/inputs/**/*.csv
 *.pcap
 
 # Rust target directories
