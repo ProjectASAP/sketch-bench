@@ -13,6 +13,10 @@
 //! curve, at the row's `measured_at`, and [`SaturationCurves::check_cost_table`]
 //! checks that the two agree there (#171). Both come from one study run
 //! (`study_saturation.py --phase optimizer-cost`, #174).
+//!
+//! Hydra reads none of these curves: its accuracy is measured per dataset
+//! and grouping (`hydra_saturation.csv`, `docs/rqe_optimizer_hydra.md`
+//! §2.4), see [`SaturationCurves::accuracy`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -48,6 +52,26 @@ const RUN_DIRS: [&str; 2] = ["out_grid_1e7_cost", "out_1e9"];
 /// The cost table under the same directory, written by
 /// `study_saturation.py --phase optimizer-cost --out DIR/optimizer_cost`.
 pub const COST_TABLE: &str = "optimizer_cost/rqe_atomic_costs.json";
+
+/// Hydra's measurements under the same directory, written by
+/// `study_saturation.py --phase hydra` on datasets shaped like the
+/// workload's metrics. Optional: without it no Hydra deployment has an
+/// accuracy.
+pub const HYDRA_SATURATION: &str = "hydra_saturation.csv";
+
+/// `hydra_saturation.csv`'s error columns, by the share of records a group
+/// must hold to be covered (the largest group always is): every group, then
+/// the two measured thresholds.
+const HYDRA_COVERAGE: [(f64, &str); 3] = [
+    (0.0, "err_max"),
+    (0.01, "err_max_cov_0.01"),
+    (0.05, "err_max_cov_0.05"),
+];
+
+/// Hydra measurements of one (variant, config, dataset, grouping), by merge
+/// shards: each [`HYDRA_COVERAGE`] column's worst over records and seeds,
+/// `None` where a row left it empty.
+type HydraErrors = BTreeMap<u64, [Option<f64>; 3]>;
 
 /// One (sketch, config, data shape) point of the study.
 #[derive(Debug, Clone, PartialEq)]
@@ -217,12 +241,14 @@ fn curve_error_at(
 /// (#131): a merged answer reads their merge curve. UnivMon's counters add
 /// exactly, but each level's heavy-hitter heap is rebuilt from the union of
 /// the two heaps, so a key heavy only in the union is lost. The other
-/// sketches merge exactly.
+/// sketches merge exactly. Hydra's cells merge as their sketch does.
 fn merges_lossily(sketch: &str) -> bool {
     matches!(
         sketch,
         "kll-percall"
             | "univmon-cardinality"
+            | "hydra-kll"
+            | "hydra-univmon-cardinality"
             | "cms-heap-topk-fastpath-vector2d"
             | "countsketch-heap-topk-fastpath-vector2d"
             | "univmon-topk"
@@ -266,6 +292,9 @@ pub struct CostTableCheck {
 #[derive(Debug, Clone, Default)]
 pub struct SaturationCurves {
     points_by_sketch: BTreeMap<String, Vec<GridPoint>>,
+    /// [`HYDRA_SATURATION`], keyed by variant, config params (as
+    /// [`config_params`] prints them), dataset and grouping.
+    hydra: BTreeMap<(String, String, String, LabelSet), HydraErrors>,
 }
 
 impl SaturationCurves {
@@ -416,7 +445,58 @@ impl SaturationCurves {
                 }
             }
         }
-        Ok(Self { points_by_sketch })
+        let hydra_path = dir.join(HYDRA_SATURATION);
+        let hydra = if hydra_path.exists() {
+            load_hydra(&hydra_path)?
+        } else {
+            BTreeMap::new()
+        };
+        Ok(Self {
+            points_by_sketch,
+            hydra,
+        })
+    }
+
+    /// Hydra's accuracy for `raqe` on `deployment`: the measurement at the
+    /// metric's [`MetricFacts::hydra_dataset`], the deployment's config and the
+    /// RAQE's grouping, in the column of the RAQE's
+    /// [`Raqe::accuracy_covers_share`] (a share between the measured ones
+    /// reads the next stricter column), worst over records and seeds. A
+    /// lossy merge of `L / x` windows reads the worse of the measured shard
+    /// counts either side; past the largest, or with no measurement, it is
+    /// unknown.
+    // Assumes error depends on group shares, not on N, at fixed shares; the
+    // study's N sweep backs it.
+    fn hydra_accuracy(
+        &self,
+        raqe: &Raqe,
+        deployment: &Deployment,
+        facts: &WorkloadFacts,
+    ) -> Option<f64> {
+        let sketch = &deployment.config.sketch;
+        let key = (
+            sketch.clone(),
+            format!("{:?}", config_params(&deployment.config)?),
+            facts[&deployment.metric].hydra_dataset.clone()?,
+            raqe.grouping_labels.clone(),
+        );
+        let by_shards = self.hydra.get(&key)?;
+        let merges = if merges_lossily(sketch) {
+            deployment.query_instance_count(raqe.lookback_ms)?
+        } else {
+            1
+        };
+        let column = HYDRA_COVERAGE
+            .iter()
+            .rposition(|&(share, _)| raqe.accuracy_covers_share.is_some_and(|t| t >= share))
+            .unwrap_or(0);
+        let (_, below) = by_shards.range(..=merges).next_back()?;
+        let (_, above) = by_shards.range(merges..).next()?;
+        Some(worse(
+            below[column]?,
+            above[column]?,
+            accuracy_key(sketch).1,
+        ))
     }
 
     /// The accuracy `raqe` gets from `deployment`, or `None` when it can't be
@@ -447,8 +527,14 @@ impl SaturationCurves {
         deployment: &Deployment,
         facts: &WorkloadFacts,
     ) -> Option<(f64, AccuracySource)> {
-        if family_properties(&deployment.config.sketch).exact {
+        let properties = family_properties(&deployment.config.sketch);
+        if properties.exact {
             return table_accuracy(raqe, deployment).map(|v| (v, AccuracySource::Measured));
+        }
+        if properties.answers_any_subgrouping {
+            return self
+                .hydra_accuracy(raqe, deployment, facts)
+                .map(|v| (v, AccuracySource::Measured));
         }
         let metric_facts = &facts[&deployment.metric];
         // The answered groups: the RAQE's, coarser than the deployment's on a
@@ -771,6 +857,52 @@ fn config_params(config: &AtomicCostEntry) -> Option<BTreeMap<String, f64>> {
         .collect()
 }
 
+/// [`HYDRA_SATURATION`]'s rows of the Hydra variants some capability plans
+/// (the rest, such as hydra-cms, are skipped), each column's worst over
+/// records and seeds.
+fn load_hydra(
+    path: &Path,
+) -> io::Result<BTreeMap<(String, String, String, LabelSet), HydraErrors>> {
+    let mut out: BTreeMap<_, HydraErrors> = BTreeMap::new();
+    for row in read_csv(path)? {
+        let variant = row["variant"].as_str();
+        if !is_candidate(variant) || !family_properties(variant).answers_any_subgrouping {
+            continue;
+        }
+        let shards: u64 = row["merge_shards"]
+            .parse()
+            .map_err(|_| invalid(format!("{HYDRA_SATURATION}: merge_shards: {row:?}")))?;
+        let mut errors = [None; 3];
+        for (error, (_, column)) in errors.iter_mut().zip(HYDRA_COVERAGE) {
+            if !row[column].is_empty() {
+                *error = Some(parse_number(&row[column])?);
+            }
+        }
+        let key = (
+            variant.to_string(),
+            format!("{:?}", parse_config(&row["config"])),
+            row["dataset"].clone(),
+            row["group_columns"]
+                .split(',')
+                .map(str::to_string)
+                .collect(),
+        );
+        let direction = accuracy_key(variant).1;
+        let by_shards = out.entry(key).or_default();
+        match by_shards.get_mut(&shards) {
+            None => {
+                by_shards.insert(shards, errors);
+            }
+            Some(worst) => {
+                for (worst, error) in worst.iter_mut().zip(errors) {
+                    *worst = worst.zip(error).map(|(a, b)| worse(a, b, direction));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// `"rows=3 cols=1024"` → `{rows: 3, cols: 1024}`; the grid's config strings.
 fn parse_config(config: &str) -> BTreeMap<String, f64> {
     config
@@ -806,23 +938,25 @@ fn invalid(message: String) -> io::Error {
 
 type CsvRow = BTreeMap<String, String>;
 
-// ponytail: plain comma split; the study's CSVs quote nothing (configs hold
-// spaces, never commas). Use the csv crate if that changes.
+/// Fields may be quoted: `hydra_saturation.csv`'s groupings hold commas.
 fn read_csv(path: &Path) -> io::Result<Vec<CsvRow>> {
+    let failed = |e: csv::Error| invalid(format!("{}: {e}", path.display()));
     let text = std::fs::read_to_string(path)
         .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
-    let mut lines = text.lines();
-    let header: Vec<&str> = lines.next().unwrap_or_default().split(',').collect();
-    Ok(lines
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            header
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(text.as_bytes());
+    let header = reader.headers().map_err(failed)?.clone();
+    reader
+        .records()
+        .map(|record| {
+            Ok(header
                 .iter()
-                .zip(line.split(','))
+                .zip(record.map_err(failed)?.iter())
                 .map(|(name, value)| (name.to_string(), value.to_string()))
-                .collect()
+                .collect())
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -872,6 +1006,7 @@ mod tests {
                     point(1.2, 1e5, 0.08, None),
                 ],
             )]),
+            ..SaturationCurves::default()
         }
     }
 
@@ -1022,6 +1157,7 @@ mod tests {
         };
         let curves = SaturationCurves {
             points_by_sketch: BTreeMap::from([("kll-percall".to_string(), vec![kll])]),
+            ..SaturationCurves::default()
         };
         let mut facts = service_endpoint_facts();
         let metric = facts.get_mut(METRIC).unwrap();
@@ -1582,5 +1718,254 @@ mod tests {
             error.contains("dd curve measured max_relative_value_error"),
             "{error}"
         );
+    }
+
+    const HYDRA_HEADER: &str = "variant,config,R,W,dataset,group_columns,schema_width,\
+        records,fanned_mass,merge_shards,seed,err_mean,err_p50,err_p90,err_max,groups_scored,\
+        err_max_cov_0.01,err_max_cov_0.05";
+
+    /// A `hydra_saturation.csv` row on `hydra_http` at rows=3 cols=1024:
+    /// `variant`, `grouping` (label names), records, merge shards, seed, then
+    /// err_max, err_max_cov_0.01 and err_max_cov_0.05 as written.
+    fn hydra_row(
+        variant: &str,
+        grouping: &str,
+        records: f64,
+        shards: u64,
+        seed: u64,
+        errors: [&str; 3],
+    ) -> String {
+        let [all, cov_1, cov_5] = errors;
+        format!(
+            "{variant},rows=3 cols=1024,3,1024,hydra_http,\"{grouping}\",2,{records},0,{shards},\
+             {seed},0,0,0,{all},10,{cov_1},{cov_5}"
+        )
+    }
+
+    /// A saturation dir with empty curves and, when `rows` is `Some`, a
+    /// `hydra_saturation.csv` of them, loaded. `tag` keeps parallel tests'
+    /// dirs apart.
+    fn hydra_curves(tag: &str, rows: Option<&[String]>) -> SaturationCurves {
+        let dir = std::env::temp_dir().join(format!("rqe-hydra-{tag}-{}", std::process::id()));
+        for run in RUN_DIRS {
+            std::fs::create_dir_all(dir.join(run)).unwrap();
+            let header = "family,sketch,config,dist,param,cardinality";
+            std::fs::write(
+                dir.join(run).join("saturation.csv"),
+                format!("{header},n_sat,final_error,error_metric\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                dir.join(run).join("saturation_curve.csv"),
+                format!("{header},n,seed_mean_error,seed_se\n"),
+            )
+            .unwrap();
+        }
+        if let Some(rows) = rows {
+            let csv = format!("{HYDRA_HEADER}\n{}\n", rows.join("\n"));
+            std::fs::write(dir.join(HYDRA_SATURATION), csv).unwrap();
+        }
+        let loaded = SaturationCurves::load(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        loaded.unwrap()
+    }
+
+    /// 5 services × 10 endpoints, measured as `hydra_http`.
+    fn hydra_facts() -> WorkloadFacts {
+        let mut facts = crate::test_support::service_endpoint_facts();
+        facts.get_mut(METRIC).unwrap().hydra_dataset = Some("hydra_http".into());
+        facts
+    }
+
+    fn tracker() -> AtomicCostEntry {
+        AtomicCostEntry {
+            sketch: crate::KEY_TRACKER_FAMILY.into(),
+            sketch_config: serde_json::json!({"params": {}}),
+            mem_bytes_per_instance: 10.0,
+            accuracy_metric: "relative_error".into(),
+            ..deployment(TOPK, 60_000).config
+        }
+    }
+
+    /// A `sketch` grid at rows=3 cols=1024 over (service, endpoint), with
+    /// its key tracker.
+    fn hydra(sketch: &str, window_ms: u64) -> Deployment {
+        let base = deployment(sketch, window_ms);
+        Deployment {
+            capability: if sketch == "hydra-kll" {
+                Capability::Quantile
+            } else {
+                Capability::Cardinality
+            },
+            grouping_labels: crate::test_support::label_set(&["service", "endpoint"]),
+            config: AtomicCostEntry {
+                mem_bytes_per_instance: 2_000.0,
+                ..base.config.clone()
+            },
+            key_tracker: Some(tracker()),
+            ..base
+        }
+    }
+
+    /// A distinct count by `grouping` over `lookback_ms` within 5%, covering
+    /// groups of share `covers` (`None`: every group).
+    fn distinct_by(grouping: &[&str], lookback_ms: u64, covers: Option<f64>) -> Raqe {
+        Raqe {
+            capability: Capability::Cardinality,
+            accuracy_sla: 0.05,
+            accuracy_covers_share: covers,
+            ..crate::test_support::quantile_by(grouping, lookback_ms, lookback_ms)
+        }
+    }
+
+    #[test]
+    fn hydra_reads_the_column_its_coverage_selects() {
+        let rows = [hydra_row(
+            "hydra-hll",
+            "service",
+            1e5,
+            1,
+            0,
+            ["0.3", "0.2", "0.1"],
+        )];
+        let curves = hydra_curves("coverage", Some(&rows));
+        let at = |covers| {
+            curves.accuracy(
+                &distinct_by(&["service"], 60_000, covers),
+                &hydra("hydra-hll", 60_000),
+                &hydra_facts(),
+            )
+        };
+        assert_eq!(at(None), Some(0.3));
+        assert_eq!(at(Some(0.01)), Some(0.2));
+        assert_eq!(at(Some(0.05)), Some(0.1));
+        assert_eq!(at(Some(0.5)), Some(0.1));
+        // Between the measured shares, the next stricter column; below the
+        // smallest, every group's.
+        assert_eq!(at(Some(0.03)), Some(0.2));
+        assert_eq!(at(Some(0.001)), Some(0.3));
+    }
+
+    /// Error is taken to depend on shares, not N: the worst over the
+    /// measured records and seeds. An empty cell leaves its column unknown.
+    #[test]
+    fn hydra_takes_the_worst_over_records_and_seeds() {
+        let rows = [
+            hydra_row("hydra-hll", "service", 1e5, 1, 0, ["0.1", "0.1", ""]),
+            hydra_row("hydra-hll", "service", 1e6, 1, 0, ["0.15", "0.1", "0.1"]),
+            hydra_row("hydra-hll", "service", 1e6, 1, 1, ["0.12", "0.1", "0.1"]),
+        ];
+        let curves = hydra_curves("worst", Some(&rows));
+        let at = |covers| {
+            curves.accuracy(
+                &distinct_by(&["service"], 60_000, covers),
+                &hydra("hydra-hll", 60_000),
+                &hydra_facts(),
+            )
+        };
+        assert_eq!(at(None), Some(0.15));
+        assert_eq!(at(Some(0.05)), None);
+    }
+
+    /// hydra-kll merges lossily: `L / x` windows read the worse of the
+    /// measured shard counts either side, and past the largest nothing.
+    /// hydra-hll merges exactly and reads one shard at any merge count.
+    #[test]
+    fn a_lossy_hydra_merge_reads_the_worse_bracketing_shard_count() {
+        let rows: Vec<String> = ["hydra-kll", "hydra-hll"]
+            .iter()
+            .flat_map(|variant| {
+                [(1, "0.01"), (4, "0.02"), (16, "0.05")]
+                    .map(|(shards, err)| hydra_row(variant, "service", 1e5, shards, 0, [err; 3]))
+            })
+            .collect();
+        let curves = hydra_curves("merges", Some(&rows));
+        let at = |sketch: &str, merges: u64| {
+            let mut r = distinct_by(&["service"], 60_000 * merges, None);
+            if sketch == "hydra-kll" {
+                r.capability = Capability::Quantile;
+            }
+            curves.accuracy(&r, &hydra(sketch, 60_000), &hydra_facts())
+        };
+        assert_eq!(at("hydra-kll", 1), Some(0.01));
+        assert_eq!(at("hydra-kll", 2), Some(0.02));
+        assert_eq!(at("hydra-kll", 4), Some(0.02));
+        assert_eq!(at("hydra-kll", 8), Some(0.05));
+        assert_eq!(at("hydra-kll", 16), Some(0.05));
+        assert_eq!(at("hydra-kll", 32), None);
+        assert_eq!(at("hydra-hll", 32), Some(0.01));
+    }
+
+    /// Hydra's accuracy is its own measurement or nothing: no file, no
+    /// dataset for the metric, or an unmeasured grouping leaves it unknown.
+    #[test]
+    fn without_a_hydra_measurement_no_hydra_deployment_has_accuracy() {
+        let r = distinct_by(&["service"], 60_000, None);
+        let d = hydra("hydra-hll", 60_000);
+        let rows = [hydra_row("hydra-hll", "service", 1e5, 1, 0, ["0.01"; 3])];
+        let measured = hydra_curves("measured", Some(&rows));
+        assert_eq!(measured.accuracy(&r, &d, &hydra_facts()), Some(0.01));
+        let absent = hydra_curves("absent", None);
+        assert_eq!(absent.accuracy(&r, &d, &hydra_facts()), None);
+        let no_dataset = crate::test_support::service_endpoint_facts();
+        assert_eq!(measured.accuracy(&r, &d, &no_dataset), None);
+        let by_endpoint = distinct_by(&["service", "endpoint"], 60_000, None);
+        assert_eq!(measured.accuracy(&by_endpoint, &d, &hydra_facts()), None);
+    }
+
+    /// Distinct counts by (service) and (service, endpoint). Per-group HLL
+    /// at (service, endpoint) serves both, a roll-up for (service), at
+    /// 50 · 1000 B per window; one Hydra grid over the same schema holds
+    /// them in 2000 B plus a 10 B tracker key per group. Memory-priced, the
+    /// grid wins while its measured error clears the SLA, and loses
+    /// otherwise.
+    #[test]
+    fn a_hydra_grid_beats_per_group_hll_on_memory_only_when_accurate() {
+        use crate::candidates::build_all_candidates;
+        use crate::milp::minimize_usage_cost;
+        let facts = hydra_facts();
+        let raqes = [
+            distinct_by(&["service"], 60_000, None),
+            distinct_by(&["service", "endpoint"], 60_000, None),
+        ];
+        let named = |sketch: &str, memory: f64| AtomicCostEntry {
+            mem_bytes_per_instance: memory,
+            accuracy_metric: "relative_error".into(),
+            ..deployment(sketch, 60_000).config
+        };
+        let costs = [
+            named("hll", 1_000.0),
+            named("hydra-hll", 2_000.0),
+            tracker(),
+        ];
+        let plan = |error: &str| {
+            let rows = ["service", "service,endpoint"]
+                .map(|grouping| hydra_row("hydra-hll", grouping, 1e5, 1, 0, [error; 3]));
+            let curves = hydra_curves(&format!("milp-{error}"), Some(&rows));
+            // HLL passes everywhere; Hydra reads its measurement.
+            let accuracy = |r: &Raqe, d: &Deployment| {
+                if d.properties().answers_any_subgrouping {
+                    curves.accuracy(r, d, &facts)
+                } else {
+                    Some(0.0)
+                }
+            };
+            let without = build_all_candidates(&raqes, &costs, &facts, false, &accuracy);
+            assert!(without.iter().all(|d| d.config.sketch == "hll"));
+            let candidates = build_all_candidates(&raqes, &costs, &facts, true, &accuracy);
+            let solved =
+                minimize_usage_cost(&raqes, &candidates, &facts, 0.0, 1.0, &accuracy, None, None)
+                    .unwrap();
+            solved
+                .mapping
+                .iter()
+                .map(|&d| candidates[d].clone())
+                .collect::<Vec<_>>()
+        };
+        let accurate = plan("0.01");
+        assert!(accurate.iter().all(|d| d.config.sketch == "hydra-hll"));
+        assert_eq!(accurate[0], accurate[1], "one grid serves both");
+        let inaccurate = plan("0.2");
+        assert!(inaccurate.iter().all(|d| d.config.sketch == "hll"));
     }
 }

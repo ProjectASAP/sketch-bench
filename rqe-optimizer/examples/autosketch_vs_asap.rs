@@ -62,6 +62,13 @@
 //! lookback's items; KLL and top-k merged from `L/x` shards read the merge
 //! curve, #158); AutoSketch reads `autosketch_accuracy` (one unmerged sketch
 //! per query window, no saturation requirement).
+//!
+//! Hydra: ASAP and PerQuery plan with undeployable families allowed, so a
+//! Hydra grid over a schema metric's groupings competes with per-group
+//! sketches (sketch-bench `docs/rqe_optimizer_hydra.md`). Its accuracy is
+//! `hydra_saturation.csv` under the saturation dir, measured on the
+//! dataset shaped like the stream's metric ([`hydra_dataset`]); without the
+//! file no Hydra deployment is eligible. AutoSketch skips Hydra (#159).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -293,6 +300,20 @@ fn groups_of(r: &Value, capability: Capability) -> u64 {
     }
 }
 
+/// The `hydra_saturation.csv` dataset measured with a schema metric's
+/// labels, shares and values (`configs/datagen/hydra_*.yaml`): `http`'s
+/// latency for quantiles, its user ids otherwise, and `flows`' sources.
+/// `None` for any other metric, which no Hydra deployment serves.
+fn hydra_dataset(metric: &str, capability: Capability) -> Option<String> {
+    let dataset = match (metric.rsplit('/').next()?, capability) {
+        ("http", Capability::Quantile) => "hydra_http_latency",
+        ("http", _) => "hydra_http",
+        ("flows", _) => "hydra_flows",
+        _ => return None,
+    };
+    Some(dataset.to_string())
+}
+
 fn label_set(names: &[&str]) -> LabelSet {
     names.iter().map(|s| s.to_string()).collect()
 }
@@ -392,6 +413,11 @@ fn from_table(
                 scrape_interval_ms: SCRAPE_MS,
                 value_range: None,
                 data_shape: BTreeMap::new(),
+                // A stream is one value of its metric, so one capability.
+                hydra_dataset: schema
+                    .is_object()
+                    .then(|| hydra_dataset(metric, capability))
+                    .flatten(),
             }
         });
         // A stream's RQEs may see different group counts (keys per window
@@ -448,6 +474,7 @@ fn from_table(
             accuracy_sla: rqe_target.unwrap_or(0.0),
             latency_sla_ms: None,
             topk_k: topk_k_of(r, capability),
+            accuracy_covers_share: r.get("covers_share").and_then(Value::as_f64),
         });
     }
     // Every stream may use every row; one evaluation runs q_r queries per
@@ -566,15 +593,14 @@ fn group_by_stream(raqes: &[Raqe]) -> BTreeMap<&str, Vec<Raqe>> {
     out
 }
 
-/// ASAP candidates, built per stream from that stream's entries.
+/// ASAP candidates, built per stream from that stream's entries, with
+/// undeployable families (Hydra) allowed.
 fn candidates(w: &Workload, raqes: &[Raqe]) -> Vec<Deployment> {
     group_by_stream(raqes)
         .into_iter()
         .flat_map(|(stream, group)| {
             let costs = w.costs.get(stream).map_or(&[][..], Vec::as_slice);
-            build_all_candidates(&group, costs, &w.facts, false, &|r, d| {
-                w.asap_accuracy(r, d)
-            })
+            build_all_candidates(&group, costs, &w.facts, true, &|r, d| w.asap_accuracy(r, d))
         })
         .collect()
 }
@@ -656,6 +682,10 @@ fn summarize(
         .sum();
     let latencies: Vec<f64> = load.queries.iter().map(|q| q.chain_ms).collect();
     let active: BTreeSet<usize> = mapping.iter().copied().collect();
+    let hydra_rqes = mapping
+        .iter()
+        .filter(|&&d| deployments[d].properties().answers_any_subgrouping)
+        .count();
     let chosen: Vec<Value> = raqes
         .iter()
         .zip(mapping)
@@ -677,7 +707,8 @@ fn summarize(
                     .accuracy_with_source(r, d)
                     .map(|(_, source)| format!("{source:?}")),
             });
-            // A roll-up: the deployment is grouped finer than the RQE.
+            // A roll-up or a Hydra grid: the deployment is grouped finer than
+            // the RQE.
             if d.grouping_labels != r.grouping_labels {
                 choice["deployment_grouping"] = json!(d.grouping_labels);
             }
@@ -687,7 +718,7 @@ fn summarize(
             choice
         })
         .collect();
-    json!({
+    let mut v = json!({
         "objective": cost.value,
         "cpu": cost.cpu,
         "gib": gib(cost.bytes),
@@ -702,7 +733,12 @@ fn summarize(
         "median_latency_ms": (!latencies.is_empty()).then(|| median(latencies.clone())),
         "active_deployments": active.len(),
         "chosen": chosen,
-    })
+    });
+    // Only workloads Hydra may serve report it, so others read as before.
+    if w.facts.values().any(|m| m.hydra_dataset.is_some()) {
+        v["hydra_rqes"] = json!(hydra_rqes);
+    }
+    v
 }
 
 /// `--slas-ms`: comma-separated SLAs in ms, each positive and finite.
@@ -1210,6 +1246,10 @@ mod tests {
         assert_eq!(facts.cardinality[&label_set(&["region"])], 4);
         assert_eq!(facts.cardinality[&label_set(&["region", "service"])], 100);
         assert_eq!(facts.cardinality[&facts.labels], 2_000_000);
+        // Hydra reads `http`'s user ids, at each RQE's coverage.
+        assert_eq!(facts.hydra_dataset.as_deref(), Some("hydra_http"));
+        let covers: Vec<_> = w.raqes.iter().map(|r| r.accuracy_covers_share).collect();
+        assert_eq!(covers, [Some(0.05), None]);
         // Accuracy is read at the smallest covered group's items: 5% of the
         // stream's, so 4 · 5% of the series for {region}'s mean group.
         let covered = &w.covered_facts["t/region"]["synthetic/test/http/user_id"];
@@ -1230,6 +1270,21 @@ mod tests {
         assert_eq!(coarse["rqe"], "t/region");
         assert_eq!(coarse["deployment_grouping"], json!(["region", "service"]));
         assert_eq!(coarse["covers_share"], 0.05);
+        // No hydra_saturation.csv: Hydra serves nothing, and says so.
+        assert_eq!(asap["hydra_rqes"], 0);
+    }
+
+    #[test]
+    fn hydra_reads_the_dataset_shaped_like_the_metric() {
+        let at = |metric| hydra_dataset(metric, Capability::Cardinality);
+        assert_eq!(at("http").as_deref(), Some("hydra_http"));
+        assert_eq!(at("data_1/http").as_deref(), Some("hydra_http"));
+        assert_eq!(at("flows").as_deref(), Some("hydra_flows"));
+        assert_eq!(
+            hydra_dataset("http", Capability::Quantile).as_deref(),
+            Some("hydra_http_latency")
+        );
+        assert_eq!(at("data"), None);
     }
 
     /// `r`'s HLL accuracy (ASAP's, AutoSketch's) and the reads at its
