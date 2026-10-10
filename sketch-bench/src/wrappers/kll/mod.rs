@@ -13,11 +13,63 @@ pub mod oxide;
 pub mod polars;
 pub mod sketchlib;
 
-/// figure is `heap_bytes_net`, which the tracking allocator measures; this is
-/// the derived upper bound beside it, and the two are meant to be compared.
-/// One rule for all four rows, so the column answers one question.
+/// A nominal footprint for the `oxide` rows, `4 · k` items: `sketch_oxide`'s
+/// KLL grows its buffers as it fills, so there is no fixed allocation to
+/// report. The `lib` rows report the allocation instead ([`kll_lib_bytes`]).
 fn kll_footprint<T>(k: u32) -> usize {
     (k as usize) * std::mem::size_of::<T>() * 4
+}
+
+// Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
+// in the library, reproduced here because its footprint is a function of them
+// and the library exposes no accessor for its own capacity.
+pub(crate) const KLL_LIB_MAX_LEVELS: usize = 61;
+
+const KLL_LIB_CAPACITY_DECAY: f64 = 2.0 / 3.0;
+
+/// The `m` the library's `init_kll` passes (`init(k, 8)`), its minimum level
+/// capacity, and the floor it silently raises a smaller `k` to.
+pub(crate) const KLL_LIB_MIN_LEVEL: usize = 8;
+
+// The lib rows refuse a `k` below the library's floor rather than let it be
+// raised silently, so the two must agree.
+const _: () = assert!(LIB_K_MIN as usize == KLL_LIB_MIN_LEVEL);
+
+/// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
+pub(crate) const KLL_LIB_MAX_CACHEABLE_K: usize = LIB_K_MAX as usize;
+
+/// The `k` the library sizes with: `init_internal` floors it at `m` and caps it.
+fn kll_lib_k(k: u32) -> usize {
+    (k as usize).clamp(KLL_LIB_MIN_LEVEL, KLL_LIB_MAX_CACHEABLE_K)
+}
+
+/// Retained slots an `asap_sketchlib::KLL` allocates at construction:
+/// `KLL::init` boxes a slice of this length once and never grows it. A
+/// line-for-line copy of the library's private `compute_max_capacity`
+/// (unchanged from 0.2.2 to 0.3.0), so a claim about the pinned version, not a
+/// bound.
+pub(crate) fn kll_lib_slots(k: u32) -> usize {
+    let m = KLL_LIB_MIN_LEVEL;
+    let k = kll_lib_k(k) as f64;
+    let mut total = 0usize;
+    let mut scale = 1.0f64;
+    for _ in 0..KLL_LIB_MAX_LEVELS {
+        total += (k * scale).ceil().max(m as f64) as usize;
+        scale *= KLL_LIB_CAPACITY_DECAY;
+    }
+    total
+}
+
+/// Bytes an `asap_sketchlib::KLL<T>` allocates at construction, whatever it
+/// holds later (`init_internal`): the retained-item slice, the level index,
+/// and the merge buffer's capacity of `k` items. Independent of the item count,
+/// so a window's sketch costs the same however many values it sees. The
+/// sketch's own allocation only: the cdf row's prepared CDF table, built for
+/// queries, is not counted (nor is the oxide cdf row's).
+fn kll_lib_bytes<T>(k: u32) -> usize {
+    kll_lib_slots(k) * std::mem::size_of::<T>()
+        + (KLL_LIB_MAX_LEVELS + 1) * std::mem::size_of::<usize>()
+        + kll_lib_k(k) * std::mem::size_of::<T>()
 }
 
 /// The range `asap_sketchlib::KLL::init` keeps a `k` in. Below the floor it
@@ -47,4 +99,21 @@ fn query_cdf(table: &[(f64, f64)], phi: f64, min: f64, max: f64) -> f64 {
     // point of this path is that the arrangement is already done.
     let idx = table.partition_point(|(_, cum)| *cum < phi);
     table[idx.min(table.len() - 1)].0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `lib` footprint is what `init_internal` allocates. At k = 269 that
+    /// is 9648 + 496 + 2152 = 12296 B, the figure `aqpbm-planeval` derives for
+    /// the same library independently.
+    #[test]
+    fn lib_footprint_is_the_library_allocation() {
+        assert_eq!(kll_lib_bytes::<f64>(269), 9648 + 496 + 2152);
+        // ceil(50 · (2/3)^i) is 50, 34, 23, 15, 10, then 56 levels at m = 8.
+        assert_eq!(kll_lib_slots(50), 132 + 56 * 8);
+        // Below the floor, the library sizes as k = m.
+        assert_eq!(kll_lib_bytes::<i64>(1), kll_lib_bytes::<i64>(LIB_K_MIN));
+    }
 }

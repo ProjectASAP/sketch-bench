@@ -48,7 +48,7 @@ pub fn memory_kll_lib_per_call<T>(sketch: &KllLibPerCall<T>) -> usize
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    kll_footprint::<T>(sketch.k)
+    kll_lib_bytes::<T>(sketch.k)
 }
 
 pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
@@ -73,7 +73,7 @@ pub fn memory_kll_lib_cdf<T>(sketch: &KllLibCdf<T>) -> usize
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    kll_footprint::<T>(sketch.k)
+    kll_lib_bytes::<T>(sketch.k)
 }
 
 pub fn insert_kll_lib_per_call<T>(
