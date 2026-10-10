@@ -610,6 +610,19 @@ mod tests {
         assert_eq!(children_by_parent(col(1), col(2), 25).len(), 100);
     }
 
+    /// The schema-width cuts keep the first labels and the value column.
+    #[test]
+    fn hydra_hier_cuts_keep_their_leading_labels() {
+        for (file, labels) in [("hydra_hier_d2.yaml", 2), ("hydra_hier_d3.yaml", 3)] {
+            let path = format!("../configs/datagen/{file}");
+            let d = TableDescription::from_path(std::path::Path::new(&path)).unwrap();
+            assert_eq!(d.column_num, labels + 1, "{file}");
+            let t = d.generate().unwrap();
+            let col = |i: usize| t.data[i].as_string().unwrap();
+            assert_eq!(children_by_parent(col(0), col(1), 25).len(), 4, "{file}");
+        }
+    }
+
     #[test]
     fn bad_child_columns_are_refused_by_name() {
         type Edit = fn(&mut TableDescription);
@@ -632,6 +645,9 @@ mod tests {
             }),
             ("has to be `string`", |d| {
                 d.column_spec[1].data_type = "u64".into()
+            }),
+            ("whole numbers", |d| {
+                d.column_spec[2].distribution = uniform(0.0, 5.9, 3)
             }),
             ("cardinality", |d| d.column_spec[1].cardinality = Some(25)),
             ("`string:` block", |d| {

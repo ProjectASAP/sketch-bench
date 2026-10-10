@@ -134,6 +134,16 @@ impl ColumnSpec {
         if fan_out == 0 {
             return Err(DataGenError::BadParam("fan_out must be > 0".into()));
         }
+        // A uniform draw is continuous; only whole bounds keep its index in
+        // `[0, fan_out)` (`uniform{0.0, 2.9}` would draw 0, 1 and 2).
+        if let DataDistribution::Uniform(p) = &self.distribution {
+            if p.lower_bound.fract() != 0.0 || p.upper_bound.fract() != 0.0 {
+                return Err(DataGenError::BadParam(format!(
+                    "child_of: uniform bounds must be whole numbers, got [{}, {})",
+                    p.lower_bound, p.upper_bound
+                )));
+            }
+        }
         match self.distribution.domain() {
             Some(domain) if domain.size == fan_out => {}
             Some(domain) => {
