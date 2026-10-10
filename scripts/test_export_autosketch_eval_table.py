@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
-    all_subsets, boom_query, grouping_cardinality, main, metric_queries, queries_per_instance,
+    all_subsets, boom_query, group_coverage, grouping_cardinality, label_shares, main, metric_queries, queries_per_instance,
     shared_queries, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -261,6 +261,44 @@ class SchemaTemplatesTest(unittest.TestCase):
         kll, dd = rqes["t16_p99_latency_by_service,status/5m"]["families"]
         self.assertEqual((kll["grid_param"], kll["grid_K"]), (COST_PARETO_ALPHA, None))
         self.assertEqual(rqes["t11_distinct_src_by_dst_subnet/5m"]["covers_share"], 0.05)
+        self.assertEqual((r["covered_groups"], r["min_covered_share"], r["covered_min_N"]),
+                         group_coverage("http", ["region", "service"], 0.01)
+                         + (2e6 * 300 * r["min_covered_share"],))
+
+    def test_label_shares_are_skewed_and_the_burst_lifts_a_tail_subnet(self):
+        for metric, schema in SCHEMAS.items():
+            for label in schema["labels"]:
+                self.assertAlmostEqual(sum(label_shares(metric, label)), 1.0)
+        service = label_shares("http", SCHEMAS["http"]["labels"][1])
+        self.assertGreater(service[0], 5 * service[-1])
+        subnets = label_shares("flows", SCHEMAS["flows"]["labels"][0])
+        self.assertGreaterEqual(subnets[999], 0.05)
+
+    def test_coverage_is_the_groups_over_the_share_plus_the_largest(self):
+        # Brute force over every group: shares are products of the labels'.
+        http = {label["name"]: label for label in SCHEMAS["http"]["labels"]}
+        region, status = (label_shares("http", http[n]) for n in ["region", "status"])
+        shares = [r * s for r in region for s in status]
+        for tau in [0.01, 0.05, 0.2]:
+            covered = [x for x in shares if x >= tau]
+            self.assertEqual(group_coverage("http", ["region", "status"], tau),
+                             (len(covered), min(covered)))
+        # No group holds 50%: the largest alone is covered.
+        self.assertEqual(group_coverage("http", ["region", "status"], 0.5), (1, max(shares)))
+        self.assertEqual(group_coverage("http", ["region", "status"], None),
+                         (16, min(shares)))
+        # The DDoS subnet is one of template 11's covered groups.
+        n, smallest = group_coverage("flows", ["dst_subnet"], 0.05)
+        self.assertGreater(n, 1)
+        self.assertAlmostEqual(smallest, label_shares("flows", SCHEMAS["flows"]["labels"][0])[999])
+
+    def test_every_covered_rqe_names_its_covered_groups_and_their_items(self):
+        for q in synthetic_queries(templates="all"):
+            if q.get("covers_share") is not None:
+                self.assertGreaterEqual(q["covered_groups"], 1)
+                self.assertEqual(q["covered_min_N"],
+                                 q["arrival_rate"] * q["range_s"] * q["min_covered_share"])
+                self.assertGreaterEqual(q["covered_min_N"], 1000)
 
     def test_metric_copies_name_their_schema_metrics(self):
         qs = metric_queries({**SYNTHETIC_DEFAULT, "metrics": 2})

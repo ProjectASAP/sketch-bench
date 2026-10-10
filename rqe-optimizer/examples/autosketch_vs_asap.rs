@@ -49,6 +49,9 @@
 //! metric with a label schema (the table's `schemas`) has the schema's labels,
 //! and its RQEs name their `grouping`, so one stream carries several
 //! groupings and a fine deployment can serve a coarse RQE (a roll-up).
+//! Accuracy is read at the mean group's items per window, or, for an RQE with
+//! a `covers_share`, at its smallest covered group's (`min_covered_share` of
+//! the stream's): the hardest group its target covers.
 //!
 //! Costs and accuracy come from `--saturation-dir`, the same inputs the
 //! planner reads (#174): the cost table `optimizer_cost/rqe_atomic_costs.json`
@@ -105,21 +108,31 @@ struct Workload {
     /// RQEs of streams with more keys than samples/s, left out.
     excluded_high_cardinality: Vec<String>,
     /// The table's `covers_share` by RQE id, for RQEs that name one (`None`:
-    /// every group). Reported only: the planner reads every group's accuracy.
+    /// every group).
     covers_share: BTreeMap<String, Option<f64>>,
+    /// Facts for reading an RQE's accuracy at its smallest covered group, by
+    /// RQE id, for RQEs with a `covers_share`: its stream's, with the series
+    /// scaled so the mean group gets that group's items.
+    covered_facts: BTreeMap<String, WorkloadFacts>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
 
 impl Workload {
+    /// The facts `r`'s accuracy is read with.
+    fn accuracy_facts(&self, r: &Raqe) -> &WorkloadFacts {
+        self.covered_facts.get(&r.id).unwrap_or(&self.facts)
+    }
+
     /// ASAP's accuracy: the planner's own lookup.
     fn asap_accuracy(&self, r: &Raqe, d: &Deployment) -> Option<f64> {
-        self.curves.accuracy(r, d, &self.facts)
+        self.curves.accuracy(r, d, self.accuracy_facts(r))
     }
 
     /// AutoSketch's: one unmerged sketch per query window.
     fn autosketch_accuracy(&self, r: &Raqe, c: &AtomicCostEntry) -> Option<f64> {
-        self.curves.autosketch_accuracy(r, c, &self.facts)
+        self.curves
+            .autosketch_accuracy(r, c, self.accuracy_facts(r))
     }
 }
 
@@ -287,6 +300,7 @@ fn from_table(
     let mut skipped_families = 0;
     let mut stream_series: BTreeMap<String, u64> = BTreeMap::new();
     let mut covers_share = BTreeMap::new();
+    let mut min_covered_share = BTreeMap::new();
     for r in workload["rqes"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap().to_string();
         let metric = r["metric"].as_str().unwrap_or(dataset);
@@ -316,6 +330,9 @@ fn from_table(
         };
         if let Some(share) = r.get("covers_share") {
             covers_share.insert(id.clone(), share.as_f64());
+            if !share.is_null() {
+                min_covered_share.insert(id.clone(), r["min_covered_share"].as_f64().unwrap());
+            }
         }
         // One metric per stream, labels {g, x} (or the schema's and x), and
         // with one scrape a second the full label set has one series per
@@ -433,6 +450,19 @@ fn from_table(
         .collect();
     raqes.retain(|r| !high_cardinality.contains(&r.metric));
     facts.retain(|stream, _| !high_cardinality.contains(stream));
+    // Only the items per group read the series count: scaled by share·groups,
+    // the mean group gets the smallest covered group's items.
+    let covered_facts = raqes
+        .iter()
+        .filter_map(|r| {
+            let share = min_covered_share.get(&r.id)?;
+            let mut m = facts[&r.metric].clone();
+            let groups = m.cardinality[&r.grouping_labels] as f64;
+            let series = m.cardinality.get_mut(&m.labels).unwrap();
+            *series = (*series as f64 * share * groups).round() as u64;
+            Some((r.id.clone(), [(r.metric.clone(), m)].into()))
+        })
+        .collect();
     let name = if dataset.starts_with("synthetic") {
         format!("{dataset}/t{}", target.as_deref().unwrap_or("p95"))
     } else {
@@ -446,6 +476,7 @@ fn from_table(
         metric_of,
         excluded_high_cardinality,
         covers_share,
+        covered_facts,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
@@ -604,7 +635,7 @@ fn summarize(
                 "asap_accuracy": w.asap_accuracy(r, d),
                 "accuracy_source": w
                     .curves
-                    .accuracy_with_source(r, d, &w.facts)
+                    .accuracy_with_source(r, d, w.accuracy_facts(r))
                     .map(|(_, source)| format!("{source:?}")),
             });
             // A roll-up: the deployment is grouped finer than the RQE.
@@ -1057,18 +1088,49 @@ mod tests {
         assert!(!meets_sla(100.1, 100.0));
     }
 
-    /// Runs on the committed eval inputs, whose curves are #194's.
+    /// A saturation dir with the committed cost table and inline HLL curves
+    /// (each lg_k, uniform over 1e6 keys), so the test runs without the
+    /// study's (gitignored) curves.
+    fn hll_saturation_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hll-saturation-{}", std::process::id()));
+        let costs = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/results/autosketch-vs-asap-inputs/saturation/optimizer_cost/rqe_atomic_costs.json"
+        );
+        std::fs::create_dir_all(dir.join("optimizer_cost")).unwrap();
+        std::fs::copy(costs, dir.join(COST_TABLE)).unwrap();
+        for run in ["out_grid_1e7_cost", "out_1e9"] {
+            let mut summary = "family,sketch,config,dist,param,cardinality,n_sat,final_error,\
+                               error_metric,insert_cpu_secs,merge_cpu_secs,query_cpu_secs,memory_bytes\n"
+                .to_string();
+            let mut curve =
+                "family,sketch,config,dist,param,cardinality,n,seed_mean_error,seed_se\n"
+                    .to_string();
+            for lg_k in [12, 14, 16].iter().filter(|_| run == "out_grid_1e7_cost") {
+                let point = format!("cardinality,hll,lg_k={lg_k},zipf,0.0,1000000");
+                summary += &format!("{point},1000,0.01,relative_error,,,,\n");
+                for n in ["1000", "100000", "10000000"] {
+                    curve += &format!("{point},{n},0.01,0.0\n");
+                }
+            }
+            std::fs::create_dir_all(dir.join(run)).unwrap();
+            std::fs::write(dir.join(run).join("saturation.csv"), summary).unwrap();
+            std::fs::write(dir.join(run).join("saturation_curve.csv"), curve).unwrap();
+        }
+        dir
+    }
+
     #[test]
     fn a_schema_stream_carries_every_grouping_and_rolls_up() {
         let rqe = |grouping: &[&str], groups: u64| {
             json!({
                 "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
                 "capability": "cardinality", "metric": "http", "stream": "http/user_id",
-                "grouping": grouping, "covers_share": 0.05,
+                "grouping": grouping, "covers_share": 0.05, "min_covered_share": 0.05,
                 "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
                 "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
                 "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
-                              "grid_param": 0.8, "grid_K": 1e6}],
+                              "grid_param": 0.0, "grid_K": 1e6}],
             })
         };
         let names = ["region", "service", "endpoint", "status"];
@@ -1079,12 +1141,15 @@ mod tests {
         }]});
         let path = std::env::temp_dir().join(format!("schema-table-{}.json", std::process::id()));
         std::fs::write(&path, table.to_string()).unwrap();
-        let inputs = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/results/autosketch-vs-asap-inputs/saturation"
+        let inputs = hll_saturation_dir();
+        let w = from_table(
+            path.to_str().unwrap(),
+            None,
+            Some("p95".into()),
+            inputs.to_str().unwrap(),
         );
-        let w = from_table(path.to_str().unwrap(), None, Some("p95".into()), inputs);
         std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&inputs).unwrap();
         let facts = &w.facts["synthetic/test/http/user_id"];
         assert_eq!(
             facts.labels,
@@ -1093,6 +1158,10 @@ mod tests {
         assert_eq!(facts.cardinality[&label_set(&["region"])], 4);
         assert_eq!(facts.cardinality[&label_set(&["region", "service"])], 100);
         assert_eq!(facts.cardinality[&facts.labels], 2_000_000);
+        // Accuracy is read at the smallest covered group's items: 5% of the
+        // stream's, so 4 · 5% of the series for {region}'s mean group.
+        let covered = &w.covered_facts["t/region"]["synthetic/test/http/user_id"];
+        assert_eq!(covered.cardinality[&covered.labels], 400_000);
         // One {region, service} deployment serves both RQEs.
         let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
         let asap = result["results"]

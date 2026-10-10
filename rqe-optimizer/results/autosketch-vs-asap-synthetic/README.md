@@ -75,37 +75,55 @@ exactly today's `classic` tables). `all` is `classic` plus six
 multi-grouping templates on two metrics with an ordered label schema. Each
 metric value is one stream read at several groupings, so a fine deployment
 can serve a coarse RQE (a roll-up) and one Hydra grid can serve them all.
-Every RQE of these templates names its `grouping` and `covers_share` (the
-accuracy target covers only groups holding at least that share of the items;
-`null`: every group); the table's `schemas` gives each metric's labels.
+Every RQE of these templates names its `grouping` and `covers_share` τ: the
+accuracy target covers the groups holding at least τ of the stream's records,
+plus always the largest group (`null`: every group). The generator computes
+each group's share as the product of its labels' shares (labels are drawn
+independently given their parents) and writes each RQE's `covered_groups`,
+`min_covered_share` and `covered_min_N` (the smallest covered group's items
+per window); the table's `schemas` gives each metric's labels.
 
 | Metric | Labels (values, Zipf skew) | Rate | Values |
 |---|---|---|---|
-| `http` | region 4, service 25, endpoint 25 per service (625), status 4; uniform; 1e4 label combinations | 2e6 samples/s (as `classic`) | `user_id`: Zipf 0.8 over 1e6; `latency`: Pareto a = 2, scaled per service, one endpoint 10x slower |
-| `flows` | dst_subnet 1e3 (1.1), dst_port 1e3 (1.2), proto 3 (uniform) | 4e6 samples/s | `src_ip`: uniform over 1e6, plus a DDoS burst: one subnet gets 5% of the traffic from 1e4 sources |
+| `http` | region 4 (0.5), service 25 (1.1), endpoint 25 per service (1.1; 625 in all), status 4 (2.0); 1e4 label combinations | 2e6 samples/s (as `classic`) | `user_id`: Zipf 0.8 over 1e6; `latency`: Pareto a = 2, scaled per service, one endpoint 10x slower |
+| `flows` | dst_subnet 1e3 (1.1), dst_port 1e3 (1.2), proto 3 (uniform) | 4e6 samples/s | `src_ip`: uniform over 1e6, plus a DDoS burst: the least popular subnet (999) gets 5% of the traffic from 1e4 sources |
 
 `flows` runs at twice the rate so its finest grouping, {dst_subnet,
 dst_port} (1e6 groups), holds 1,200 items per group in 5m, above the
-curves' first N (1e3).
+curves' first N (1e3). The burst targets a tail subnet so that it is
+visible: its share rises to just over 5%, so template 11 covers it.
 
-| # | Query | Groupings | Covers | Groups (items per group in 5m) |
-|---|---|---|---|---|
-| 11 | distinct src_ip | {dst_subnet} | share ≥ 5% | 1e3 (1.2e6) |
-| 12 | distinct src_ip | {dst_port}, {dst_subnet, dst_port}, {dst_port, proto} | share ≥ 5% | 1e3, 1e6, 3e3 (1.2e6, 1.2e3, 4e5) |
-| 14 | distinct user_id | {region}, {service}, {region, service}, {service, endpoint} | share ≥ 1% | 4, 25, 100, 625 (1.5e8 to 9.6e5) |
-| 15 | distinct user_id | all 15 non-empty subsets of http's labels | share ≥ 5% | 4 to 1e4 (1.5e8 to 6e4) |
-| 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) |
-| 17 | distinct user_id | {region, service, endpoint, status} (negative control) | all groups | 1e4 (6e4) |
+The runner reads each value's data shape (Zipf θ and K, or the Pareto a), the
+groups per grouping and the coverage; the other fields (label skew beyond the
+shares, latency scaling, the anomaly, the burst's sources) describe the data
+and are not modeled. Accuracy is read at N items per group per window: the
+mean group's (`max_N`) for `covers_share` = `null`, else the smallest
+covered group's (`covered_min_N`), the hardest group the target covers. The
+skew of the counted value is the same in every group; label skew changes only
+the group sizes.
+
+| # | Query | Groupings | Covers | Groups (mean items per group in 5m) | Covered groups (smallest covered group's items in 5m) |
+|---|---|---|---|---|---|
+| 11 | distinct src_ip | {dst_subnet} | share ≥ 5% | 1e3 (1.2e6) | 4, the burst subnet among them (6e7) |
+| 12 | distinct src_ip | {dst_port}, {dst_subnet, dst_port}, {dst_port, proto} | share ≥ 5% | 1e3, 1e6, 3e3 (1.2e6, 1.2e3, 4e5) | 3, 1, 3 (7.4e7, 4.7e7, 9.2e7) |
+| 14 | distinct user_id | {region}, {service}, {region, service}, {service, endpoint} | share ≥ 1% | 4, 25, 100, 625 (1.5e8 to 9.6e5) | 4, 21, 23, 16 (1.1e8, 6.3e6, 6.3e6, 6.3e6) |
+| 15 | distinct user_id | all 15 non-empty subsets of http's labels | share ≥ 5% | 4 to 1e4 (1.5e8 to 6e4) | 1 to 5 (1.3e7 to 1.1e8) |
+| 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) | all |
+| 17 | distinct user_id | {region, service, endpoint, status} (negative control) | all groups | 1e4 (6e4) | all |
+
+The plot scripts title `classic` "mixed" and `all` "mixed + multi-grouping"
+(so the committed `templatesall` results, which are `classic`'s, need
+regenerating under their new name before they are re-plotted).
 
 Each repeats every minute over 5m and 15m windows: 54 RQEs, so `all` has
 104 (shared replicas repeat them at their own interval; each of the `m`
 metrics has its own `data_i/http` and `data_i/flows`). Distinct counts are
 HLL (Zipf θ and K of the value), the p99 KLL and DDSketch (Pareto a = 2),
-at the p95 level. The planner reads every group's accuracy for now;
-`covers_share` is carried through to each choice in the runner's output.
+at the p95 level. `covers_share` is carried through to each choice in the
+runner's output.
 
 On the committed inputs (`all`, r = 1, CPU weights, `--runs 1`), no RQE is
-dropped and no sanity check fails; ASAP serves 38 of the 54 new RQEs from a
+dropped and no sanity check fails (the same numbers as with uniform labels); ASAP serves 38 of the 54 new RQEs from a
 finer deployment: every RQE of templates 14 and 15 from an HLL at
 {region, service, status} or at the full label set (bar the RQEs at those
 two groupings), {dst_port} from {dst_port, proto}, and the p99 by

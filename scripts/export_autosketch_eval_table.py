@@ -249,18 +249,21 @@ SYNTHETIC_TEMPLATE_SETS = ["all", "classic"]
 # on one stream, so a fine deployment can serve a coarse RQE (a roll-up) and
 # one Hydra grid can serve them all. A label has `cardinality` values, or,
 # with `child_of`, that many under each parent value (aqpbm-datagen's fan-out:
-# the value is "parent.i"), drawn Zipf(`skew`). A value names its families'
-# data shape: Zipf θ over `keys` distinct values (distinct counts), or the
-# Pareto tail index (quantiles). Rates are the classic set's 2e6 samples/s,
+# the value is "parent.i"), drawn Zipf(`skew`) independently of the other
+# labels given its parent. A value names its families' data shape: Zipf θ over
+# `keys` distinct values (distinct counts), or the Pareto tail index
+# (quantiles). The runner reads the shape, the groups and their shares
+# (group_coverage()); the rest (latency scaling, the anomaly, the burst's
+# sources) describes the data and is not modeled. Rates are the classic set's 2e6 samples/s,
 # doubled for flows so its finest grouping (1e6 groups) holds the curves'
 # first N (1e3 items) in a 5m window.
 SCHEMAS = {
     "http": {
         "labels": [
-            {"name": "region", "cardinality": 4, "skew": 0.0},
-            {"name": "service", "cardinality": 25, "skew": 0.0},
-            {"name": "endpoint", "cardinality": 25, "child_of": "service", "skew": 0.0},
-            {"name": "status", "cardinality": 4, "skew": 0.0},
+            {"name": "region", "cardinality": 4, "skew": 0.5},
+            {"name": "service", "cardinality": 25, "skew": 1.1},
+            {"name": "endpoint", "cardinality": 25, "child_of": "service", "skew": 1.1},
+            {"name": "status", "cardinality": 4, "skew": 2.0},
         ],
         "rate": SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
         "values": {
@@ -279,10 +282,12 @@ SCHEMAS = {
         ],
         "rate": 2 * SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
         "values": {
-            # Uniform background sources, plus a DDoS burst: one subnet gets
-            # 5% of the traffic from 1e4 distinct sources.
+            # Uniform background sources, plus a DDoS burst: a tail subnet
+            # (the least popular, value 999) gets 5% of the traffic from 1e4
+            # distinct sources, which makes it a group of share >= 5%.
             "src_ip": {"zipf": 0.0, "keys": 1_000_000,
-                       "burst": {"label": "dst_subnet", "share": 0.05, "keys": 10_000}},
+                       "burst": {"label": "dst_subnet", "value": 999, "share": 0.05,
+                                 "keys": 10_000}},
         },
     },
 }
@@ -313,9 +318,9 @@ SCHEMA_TEMPLATES = [
 ]
 
 
-def grouping_cardinality(metric, grouping):
-    """Groups of `grouping` on `metric`: the product of its labels' fan-outs,
-    with every child's ancestors included (a child value names its parent)."""
+def closed_labels(metric, grouping):
+    """`grouping`'s labels with every child's ancestors (a child value names
+    its parent), in schema order."""
     labels = {label["name"]: label for label in SCHEMAS[metric]["labels"]}
     closed, todo = set(), list(grouping)
     while todo:
@@ -323,7 +328,56 @@ def grouping_cardinality(metric, grouping):
         if name not in closed:
             closed.add(name)
             todo += [labels[name]["child_of"]] if "child_of" in labels[name] else []
-    return math.prod(labels[name]["cardinality"] for name in closed)
+    return [labels[name] for name in labels if name in closed]
+
+
+def grouping_cardinality(metric, grouping):
+    """Groups of `grouping` on `metric`: the product of its labels' fan-outs,
+    with every child's ancestors included."""
+    return math.prod(label["cardinality"] for label in closed_labels(metric, grouping))
+
+
+def label_shares(metric, label):
+    """Each value's share of `metric`'s records (a child's: given its parent):
+    Zipf(`skew`), mixed with a value's burst."""
+    weights = [(i + 1) ** -label["skew"] for i in range(label["cardinality"])]
+    shares = [w / sum(weights) for w in weights]
+    for value in SCHEMAS[metric]["values"].values():
+        burst = value.get("burst")
+        if burst and burst["label"] == label["name"]:
+            shares = [(1 - burst["share"]) * p for p in shares]
+            shares[burst["value"]] += burst["share"]
+    return shares
+
+
+def group_coverage(metric, grouping, covers_share):
+    """(covered groups, smallest covered group's share of the records) of an
+    RQE at `grouping` covering groups of share >= `covers_share`, plus always
+    the largest group (None: every group). A group's share is the product of
+    its labels' shares: labels are drawn independently given their parents."""
+    marginals = [sorted(label_shares(metric, label), reverse=True)
+                 for label in closed_labels(metric, grouping)]
+    largest = math.prod(m[0] for m in marginals)
+    if covers_share is None:
+        return grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals)
+    # Enumerate the groups of share >= covers_share, largest values first;
+    # a prefix whose best completion falls short ends its loop.
+    best_rest = [math.prod(m[0] for m in marginals[i:]) for i in range(len(marginals) + 1)]
+    covered = []
+
+    def walk(i, share):
+        if i == len(marginals):
+            covered.append(share)
+            return
+        for p in marginals[i]:
+            if share * p * best_rest[i + 1] < covers_share:
+                break
+            walk(i + 1, share * p)
+
+    walk(0, 1.0)
+    covered = covered or [largest]
+    assert covered, (metric, grouping)
+    return len(covered), min(covered)
 
 
 def synthetic_plan():
@@ -458,6 +512,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     continue
                 seen.add((query_id, rng))
                 n_items = schema["rate"] * s / groups
+                covered, min_share = group_coverage(name, grouping, covers)
                 out.append({
                     "dataset": dataset, "query_id": query_id,
                     "kind": "values" if capability == "quantile" else "keys",
@@ -470,6 +525,8 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     "stream": f"{full}/{value}", "metric": full, "groups": groups,
                     "arrival_rate": schema["rate"],
                     "grouping": grouping, "covers_share": covers, "schema": schema,
+                    "covered_groups": covered, "min_covered_share": min_share,
+                    "covered_min_N": schema["rate"] * s * min_share,
                     "assumptions": [],
                     **DEFAULT_TARGETS,
                 })
@@ -508,7 +565,8 @@ def synthetic_entry(q):
     """The table entry for one `synthetic` query-range: the workload only.
     Each family names its sketch, target and data shape (θ and K, or the
     Pareto a for quantiles); exact accumulators need no shape. A
-    schema_queries() RQE also names its `grouping` and `covers_share`."""
+    schema_queries() RQE also names its `grouping`, `covers_share` and its
+    coverage (group_coverage())."""
     families = []
     for family in q["families"]:
         if family in EXACT_SKETCH:
@@ -530,13 +588,18 @@ def synthetic_entry(q):
         "min_N": q["min_N"], "max_N": q["max_N"],
         "queries_per_instance": queries_per_instance(q),
         "stream": q["stream"], "metric": q["metric"], "capability": q["capability"],
+        # keys_per_window: the value's universe K (the families' grid_K), not
+        # the distinct keys one group sees in a window.
         "label_set": {"groups": q["groups"], "arrival_rate_per_sec": q["arrival_rate"],
                       "keys_per_window": q["K"]},
         "assumptions": q["assumptions"],
         "families": families,
     }
     if "grouping" in q:
-        entry.update(grouping=q["grouping"], covers_share=q["covers_share"])
+        # max_N is the mean group's items per window; covered_min_N the
+        # smallest covered group's (min_covered_share of the stream's).
+        entry.update({k: q[k] for k in ["grouping", "covers_share", "covered_groups",
+                                        "min_covered_share", "covered_min_N"]})
     return entry
 
 
