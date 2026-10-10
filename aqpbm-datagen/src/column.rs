@@ -36,6 +36,15 @@ pub struct ColumnSpec {
     /// Rendering options for `data_type: string`. Absent means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub string: Option<StringOpts>,
+    /// Index of an earlier `string` column this one nests under, for
+    /// hierarchical labels. A value is the parent row's value, a `.`, and a
+    /// child index in `[0, fan_out)` drawn from this column's distribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_of: Option<usize>,
+    /// How many children each parent value has. Required with `child_of`, and
+    /// checked against the distribution's domain like `cardinality` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_out: Option<u64>,
 }
 
 impl ColumnSpec {
@@ -51,6 +60,21 @@ impl ColumnSpec {
                 self.data_type,
                 DATA_TYPES.join(", "),
             )));
+        }
+
+        match (self.child_of, self.fan_out) {
+            (None, None) => {}
+            (Some(_), None) => {
+                return Err(DataGenError::BadParam(
+                    "child_of: needs fan_out, the number of children per parent value".into(),
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(DataGenError::BadParam(
+                    "fan_out: applies only to a child_of column".into(),
+                ))
+            }
+            (Some(_), Some(fan_out)) => self.validate_child(fan_out)?,
         }
 
         // `cardinality` restates the domain. Silently preferring one over the
@@ -95,6 +119,54 @@ impl ColumnSpec {
             }
         }
 
+        Ok(())
+    }
+
+    /// The checks a `child_of` column adds. Its index of the parent is checked
+    /// by the table, which knows the other columns.
+    fn validate_child(&self, fan_out: u64) -> Result<(), DataGenError> {
+        if self.data_type != "string" {
+            return Err(DataGenError::BadParam(format!(
+                "child_of: a child value is text, so data_type has to be `string`, not '{}'",
+                self.data_type
+            )));
+        }
+        if fan_out == 0 {
+            return Err(DataGenError::BadParam("fan_out must be > 0".into()));
+        }
+        match self.distribution.domain() {
+            Some(domain) if domain.size == fan_out => {}
+            Some(domain) => {
+                return Err(DataGenError::BadParam(format!(
+                    "fan_out {fan_out} disagrees with the {} domain, which holds {}; the \
+                     distribution draws the child index",
+                    self.distribution.tag(),
+                    domain.size,
+                )))
+            }
+            None => {
+                return Err(DataGenError::BadParam(format!(
+                    "child_of: the child index needs a bounded domain, and {} has none",
+                    self.distribution.tag(),
+                )))
+            }
+        }
+        // A child column holds parent cardinality × fan_out values and is not
+        // rendered from a rank, so neither field would mean what it says.
+        if self.cardinality.is_some() {
+            return Err(DataGenError::BadParam(
+                "child_of: cardinality would restate fan_out, not the column's distinct \
+                 count (parent cardinality × fan_out); drop it"
+                    .into(),
+            ));
+        }
+        if self.string.is_some() {
+            return Err(DataGenError::BadParam(
+                "child_of: a child value is its parent's plus an index, so a `string:` \
+                 block has nothing to render; drop it"
+                    .into(),
+            ));
+        }
         Ok(())
     }
 
@@ -162,5 +234,24 @@ impl ColumnSpec {
                 "data_type: unknown type '{other}'"
             ))),
         }
+    }
+
+    /// Render a `child_of` column: each row's parent value, a `.`, and the
+    /// draw's 0-based rank in the domain as the child index.
+    pub(crate) fn render_child(
+        &self,
+        raw: &[f64],
+        parents: &[String],
+    ) -> Result<ColumnData, DataGenError> {
+        let domain = self
+            .distribution
+            .domain()
+            .expect("child domains were validated above");
+        Ok(ColumnData::String(
+            raw.iter()
+                .zip(parents)
+                .map(|(draw, parent)| format!("{parent}.{}", (draw - domain.lower) as u64))
+                .collect(),
+        ))
     }
 }

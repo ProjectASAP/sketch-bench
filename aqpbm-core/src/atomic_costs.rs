@@ -418,6 +418,8 @@ mod tests {
                 special_rule: aqpbm_datagen::RULE_NONE,
                 data_type: "i64".into(),
                 string: None,
+                child_of: None,
+                fan_out: None,
             },
             1_000_000,
         )
