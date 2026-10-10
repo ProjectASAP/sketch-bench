@@ -322,9 +322,11 @@ pub struct MetricFacts {
     /// off the saturation curves. Without one, no sketch serves `G`.
     pub data_shape: BTreeMap<LabelSet, saturation::DataShape>,
     /// The `hydra_saturation.csv` dataset whose schema and shares match this
-    /// metric's, for reading Hydra's accuracy. Without one, no Hydra
-    /// candidate is built on it.
-    pub hydra_dataset: Option<String>,
+    /// metric's, and that schema `Λ` (its labels; `cardinality` must hold
+    /// it). Hydra grids are built only over `Λ`, the width the study
+    /// measures, from cost rows measured on the dataset. Without one, no
+    /// Hydra candidate is built on the metric.
+    pub hydra_dataset: Option<(String, LabelSet)>,
 }
 
 impl MetricFacts {
@@ -654,6 +656,8 @@ pub(crate) mod test_support {
             value_range: None,
             merge_operand_items: None,
             distribution: None,
+            dataset: None,
+            schema_width: None,
         }
     }
 

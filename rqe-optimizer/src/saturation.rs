@@ -318,9 +318,18 @@ impl SaturationCurves {
         for run in RUN_DIRS {
             let run_dir = dir.join(run);
             let mut run_points = BTreeMap::new();
-            for row in read_csv(&run_dir.join("saturation.csv"))? {
+            let columns = [
+                "sketch",
+                "config",
+                "dist",
+                "param",
+                "cardinality",
+                "n_sat",
+                "error_metric",
+            ];
+            for row in read_csv(&run_dir.join("saturation.csv"), &columns)? {
                 let point = GridPoint {
-                    params: parse_config(&row["config"]),
+                    params: parse_config(&row["config"])?,
                     shape: parse_shape(&row)?,
                     error_metric: row["error_metric"].clone(),
                     n_sat: match row["n_sat"].as_str() {
@@ -341,7 +350,17 @@ impl SaturationCurves {
                 }
                 run_points.insert(key(&row), (row["sketch"].clone(), point));
             }
-            for row in read_csv(&run_dir.join("saturation_curve.csv"))? {
+            let columns = [
+                "sketch",
+                "config",
+                "dist",
+                "param",
+                "cardinality",
+                "n",
+                "seed_mean_error",
+                "seed_se",
+            ];
+            for row in read_csv(&run_dir.join("saturation_curve.csv"), &columns)? {
                 let Some((_, point)) = run_points.get_mut(&key(&row)) else {
                     return Err(invalid(format!(
                         "{run}: curve row for a point not in saturation.csv: {row:?}"
@@ -355,7 +374,18 @@ impl SaturationCurves {
             }
             let merge_path = run_dir.join("saturation_merge_curve.csv");
             if merge_path.exists() {
-                for row in read_csv(&merge_path)? {
+                let columns = [
+                    "sketch",
+                    "config",
+                    "dist",
+                    "param",
+                    "cardinality",
+                    "shards",
+                    "n",
+                    "seed_mean_error",
+                    "seed_se",
+                ];
+                for row in read_csv(&merge_path, &columns)? {
                     let Some((_, point)) = run_points.get_mut(&key(&row)) else {
                         return Err(invalid(format!(
                             "{run}: merge curve row for a point not in saturation.csv: {row:?}"
@@ -477,7 +507,7 @@ impl SaturationCurves {
         let key = (
             sketch.clone(),
             format!("{:?}", config_params(&deployment.config)?),
-            facts[&deployment.metric].hydra_dataset.clone()?,
+            facts[&deployment.metric].hydra_dataset.as_ref()?.0.clone(),
             raqe.grouping_labels.clone(),
         );
         let by_shards = self.hydra.get(&key)?;
@@ -864,7 +894,17 @@ fn load_hydra(
     path: &Path,
 ) -> io::Result<BTreeMap<(String, String, String, LabelSet), HydraErrors>> {
     let mut out: BTreeMap<_, HydraErrors> = BTreeMap::new();
-    for row in read_csv(path)? {
+    let columns = [
+        "variant",
+        "config",
+        "dataset",
+        "group_columns",
+        "merge_shards",
+        HYDRA_COVERAGE[0].1,
+        HYDRA_COVERAGE[1].1,
+        HYDRA_COVERAGE[2].1,
+    ];
+    for row in read_csv(path, &columns)? {
         let variant = row["variant"].as_str();
         if !is_candidate(variant) || !family_properties(variant).answers_any_subgrouping {
             continue;
@@ -880,7 +920,7 @@ fn load_hydra(
         }
         let key = (
             variant.to_string(),
-            format!("{:?}", parse_config(&row["config"])),
+            format!("{:?}", parse_config(&row["config"])?),
             row["dataset"].clone(),
             row["group_columns"]
                 .split(',')
@@ -904,12 +944,18 @@ fn load_hydra(
 }
 
 /// `"rows=3 cols=1024"` → `{rows: 3, cols: 1024}`; the grid's config strings.
-fn parse_config(config: &str) -> BTreeMap<String, f64> {
+/// Fails on a pair that isn't `name=number`.
+fn parse_config(config: &str) -> io::Result<BTreeMap<String, f64>> {
     config
         .split_whitespace()
-        .filter_map(|pair| {
-            let (name, value) = pair.split_once('=')?;
-            Some((name.to_string(), value.parse().ok()?))
+        .map(|pair| {
+            let (name, value) = pair
+                .split_once('=')
+                .ok_or_else(|| invalid(format!("config {config:?}: {pair:?} is not name=value")))?;
+            let value = value
+                .parse()
+                .map_err(|_| invalid(format!("config {config:?}: {name} is not a number")))?;
+            Ok((name.to_string(), value))
         })
         .collect()
 }
@@ -939,7 +985,9 @@ fn invalid(message: String) -> io::Error {
 type CsvRow = BTreeMap<String, String>;
 
 /// Fields may be quoted: `hydra_saturation.csv`'s groupings hold commas.
-fn read_csv(path: &Path) -> io::Result<Vec<CsvRow>> {
+/// Fails unless the header has every `required` column and every row a
+/// field for each header column.
+fn read_csv(path: &Path, required: &[&str]) -> io::Result<Vec<CsvRow>> {
     let failed = |e: csv::Error| invalid(format!("{}: {e}", path.display()));
     let text = std::fs::read_to_string(path)
         .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
@@ -947,12 +995,32 @@ fn read_csv(path: &Path) -> io::Result<Vec<CsvRow>> {
         .flexible(true)
         .from_reader(text.as_bytes());
     let header = reader.headers().map_err(failed)?.clone();
+    let missing: Vec<_> = required
+        .iter()
+        .filter(|&&column| !header.iter().any(|name| name == column))
+        .collect();
+    if !missing.is_empty() {
+        return Err(invalid(format!(
+            "{}: missing columns {missing:?}",
+            path.display()
+        )));
+    }
     reader
         .records()
         .map(|record| {
+            let record = record.map_err(failed)?;
+            if record.len() < header.len() {
+                return Err(invalid(format!(
+                    "{}: line {}: {} fields, the header has {}",
+                    path.display(),
+                    record.position().map_or(0, |p| p.line()),
+                    record.len(),
+                    header.len()
+                )));
+            }
             Ok(header
                 .iter()
-                .zip(record.map_err(failed)?.iter())
+                .zip(record.iter())
                 .map(|(name, value)| (name.to_string(), value.to_string()))
                 .collect())
         })
@@ -989,7 +1057,7 @@ mod tests {
             ]
         };
         let point = |theta: f64, keys: f64, offset: f64, n_sat: Option<f64>| GridPoint {
-            params: parse_config("rows=3 cols=1024"),
+            params: parse_config("rows=3 cols=1024").unwrap(),
             shape: MeasuredShape::Zipf { skew: theta, keys },
             error_metric: "precision_at_k".into(),
             n_sat,
@@ -1148,7 +1216,7 @@ mod tests {
         use crate::test_support::{kll_by, label_set, quantile_by, service_endpoint_facts};
         let curve = |error: f64| vec![(1e3, error, 0.0), (1e4, error + 0.01, 0.0)];
         let kll = GridPoint {
-            params: parse_config("k=200"),
+            params: parse_config("k=200").unwrap(),
             shape: MeasuredShape::Pareto { tail_index: 2.0 },
             error_metric: "mean_rank_err".into(),
             n_sat: None,
@@ -1456,6 +1524,8 @@ mod tests {
                     population_size: 1_000,
                     seed: 1,
                 })),
+                dataset: None,
+                schema_width: None,
             },
             ..deployment(TOPK, 1).config
         }
@@ -1746,6 +1816,12 @@ mod tests {
     /// `hydra_saturation.csv` of them, loaded. `tag` keeps parallel tests'
     /// dirs apart.
     fn hydra_curves(tag: &str, rows: Option<&[String]>) -> SaturationCurves {
+        let csv = rows.map(|rows| format!("{HYDRA_HEADER}\n{}\n", rows.join("\n")));
+        load_hydra_csv(tag, csv).unwrap()
+    }
+
+    /// [`hydra_curves`] with `csv`, when `Some`, as `hydra_saturation.csv`.
+    fn load_hydra_csv(tag: &str, csv: Option<String>) -> io::Result<SaturationCurves> {
         let dir = std::env::temp_dir().join(format!("rqe-hydra-{tag}-{}", std::process::id()));
         for run in RUN_DIRS {
             std::fs::create_dir_all(dir.join(run)).unwrap();
@@ -1761,19 +1837,43 @@ mod tests {
             )
             .unwrap();
         }
-        if let Some(rows) = rows {
-            let csv = format!("{HYDRA_HEADER}\n{}\n", rows.join("\n"));
+        if let Some(csv) = csv {
             std::fs::write(dir.join(HYDRA_SATURATION), csv).unwrap();
         }
         let loaded = SaturationCurves::load(&dir);
         std::fs::remove_dir_all(&dir).unwrap();
-        loaded.unwrap()
+        loaded
+    }
+
+    /// A malformed `hydra_saturation.csv` fails the load, naming the
+    /// problem, rather than leaving Hydra silently without accuracy.
+    #[test]
+    fn a_malformed_hydra_csv_is_an_error() {
+        let row = hydra_row("hydra-hll", "service", 1e5, 1, 0, ["0.1"; 3]);
+        let error =
+            |tag: &str, csv: String| load_hydra_csv(tag, Some(csv)).unwrap_err().to_string();
+        let no_cov = HYDRA_HEADER.trim_end_matches(",err_max_cov_0.05");
+        let missing = error("missing", format!("{no_cov}\n{row}\n"));
+        assert!(
+            missing.contains("missing columns [\"err_max_cov_0.05\"]"),
+            "{missing}"
+        );
+        let (short_row, _) = row.rsplit_once(',').unwrap();
+        let short = error("short", format!("{HYDRA_HEADER}\n{short_row}\n"));
+        assert!(
+            short.contains("line 2: 17 fields, the header has 18"),
+            "{short}"
+        );
+        let wide = row.replace("cols=1024", "cols=wide");
+        let config = error("config", format!("{HYDRA_HEADER}\n{wide}\n"));
+        assert!(config.contains("cols is not a number"), "{config}");
     }
 
     /// 5 services × 10 endpoints, measured as `hydra_http`.
     fn hydra_facts() -> WorkloadFacts {
         let mut facts = crate::test_support::service_endpoint_facts();
-        facts.get_mut(METRIC).unwrap().hydra_dataset = Some("hydra_http".into());
+        let schema = crate::test_support::label_set(&["service", "endpoint"]);
+        facts.get_mut(METRIC).unwrap().hydra_dataset = Some(("hydra_http".into(), schema));
         facts
     }
 
@@ -1931,6 +2031,10 @@ mod tests {
         let named = |sketch: &str, memory: f64| AtomicCostEntry {
             mem_bytes_per_instance: memory,
             accuracy_metric: "relative_error".into(),
+            measured_at: aqpbm_core::MeasuredAt {
+                dataset: Some("hydra_http".into()),
+                ..crate::test_support::measured_at()
+            },
             ..deployment(sketch, 60_000).config
         };
         let costs = [

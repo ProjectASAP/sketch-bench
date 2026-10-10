@@ -74,6 +74,14 @@ pub struct MeasuredAt {
     pub merge_operand_items: Option<u64>,
     /// The value column's distribution as generated, e.g. Zipf with its skew.
     pub distribution: Option<DataDistribution>,
+    /// The datagen config (yaml stem, e.g. `hydra_http`) a Hydra row was
+    /// measured on; `None` on other rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset: Option<String>,
+    /// The label schema width a Hydra row's grid fanned out over; `None` on
+    /// other rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_width: Option<u32>,
 }
 
 impl MeasuredAt {
@@ -320,6 +328,8 @@ fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredA
             .filter(|&m| m > 0)
             .map(|m| items / m as u64),
         distribution: value.map(|c| c.distribution.clone()),
+        dataset: None,
+        schema_width: None,
     }
 }
 
@@ -719,6 +729,8 @@ mod tests {
                 value_range: None,
                 merge_operand_items: None,
                 distribution: None,
+                dataset: None,
+                schema_width: None,
             },
         };
         let json = serde_json::to_string(&entry).unwrap();
@@ -726,5 +738,15 @@ mod tests {
             json,
             r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01},"accuracy_metric":"relative_error_mean","measured_at":{"items_per_instance":1000000,"keys_per_instance":10000,"value_range":null,"merge_operand_items":null,"distribution":null}}"#
         );
+        // A Hydra row also names its dataset and schema width; other rows
+        // leave both out, and rows written before them still load.
+        let hydra = MeasuredAt {
+            dataset: Some("hydra_http".into()),
+            schema_width: Some(4),
+            ..entry.measured_at.clone()
+        };
+        let json = serde_json::to_string(&hydra).unwrap();
+        assert!(json.ends_with(r#""distribution":null,"dataset":"hydra_http","schema_width":4}"#));
+        assert_eq!(serde_json::from_str::<MeasuredAt>(&json).unwrap(), hydra);
     }
 }

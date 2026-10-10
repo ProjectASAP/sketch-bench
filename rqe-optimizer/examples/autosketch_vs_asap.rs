@@ -64,11 +64,14 @@
 //! per query window, no saturation requirement).
 //!
 //! Hydra: ASAP and PerQuery plan with undeployable families allowed, so a
-//! Hydra grid over a schema metric's groupings competes with per-group
-//! sketches (sketch-bench `docs/rqe_optimizer_hydra.md`). Its accuracy is
-//! `hydra_saturation.csv` under the saturation dir, measured on the
-//! dataset shaped like the stream's metric ([`hydra_dataset`]); without the
-//! file no Hydra deployment is eligible. AutoSketch skips Hydra (#159).
+//! Hydra grid over a schema metric's full schema competes with per-group
+//! sketches (sketch-bench `docs/rqe_optimizer_hydra.md`). Its cost rows and
+//! accuracy (`hydra_saturation.csv` under the saturation dir) are measured
+//! on the dataset shaped like the stream's metric ([`hydra_dataset`]), at
+//! that full schema; without them no Hydra deployment is eligible. Hydra is
+//! held to the worst case (max over covered groups, worst over N and seeds),
+//! per-group sketches to seed-mean curves. AutoSketch allows undeployable
+//! families too but skips Hydra itself (#159).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -398,14 +401,25 @@ fn from_table(
         let series = (rate * SCRAPE_MS as f64 / 1000.0).round() as u64;
         let most = stream_series.entry(stream.clone()).or_default();
         *most = (*most).max(series);
+        let most = *most;
+        // A schema metric's full schema (its labels without `x`) and its
+        // groups: the product of every label's fan-out, as the generator's
+        // grouping_cardinality (the full set holds every child's parent).
+        let full_schema: Option<(LabelSet, u64)> = schema["labels"].as_array().map(|labels| {
+            let names = labels
+                .iter()
+                .map(|l| l["name"].as_str().unwrap().to_string())
+                .collect();
+            let groups = labels
+                .iter()
+                .map(|l| l["cardinality"].as_u64().unwrap())
+                .product();
+            (names, groups)
+        });
         let metric = facts.entry(stream.clone()).or_insert_with(|| {
-            let mut labels: LabelSet = match schema["labels"].as_array() {
-                Some(labels) => labels
-                    .iter()
-                    .map(|l| l["name"].as_str().unwrap().to_string())
-                    .collect(),
-                None => label_set(&["g"]),
-            };
+            let mut labels = full_schema
+                .as_ref()
+                .map_or_else(|| label_set(&["g"]), |(names, _)| names.clone());
             labels.insert("x".to_string());
             MetricFacts {
                 cardinality: [(labels.clone(), 0), (LabelSet::new(), 1)].into(),
@@ -414,10 +428,9 @@ fn from_table(
                 value_range: None,
                 data_shape: BTreeMap::new(),
                 // A stream is one value of its metric, so one capability.
-                hydra_dataset: schema
-                    .is_object()
-                    .then(|| hydra_dataset(metric, capability))
-                    .flatten(),
+                hydra_dataset: full_schema.as_ref().and_then(|(names, _)| {
+                    Some((hydra_dataset(metric, capability)?, names.clone()))
+                }),
             }
         });
         // A stream's RQEs may see different group counts (keys per window
@@ -426,6 +439,12 @@ fn from_table(
         *card = (*card).max(groups);
         let total = metric.cardinality.get_mut(&metric.labels).unwrap();
         *total = (*total).max(series).max(groups);
+        // The full schema (a Hydra grid's, and its tracker's keys), capped at
+        // the stream's series so it doesn't make the stream high-cardinality.
+        if let Some((names, groups)) = full_schema {
+            let card = metric.cardinality.entry(names).or_default();
+            *card = (*card).max(groups.min(most));
+        }
         // Queries one evaluation issues per instance (the table's q_r); tables
         // written before it existed charge one query phase per evaluation.
         let queries = r["queries_per_instance"].as_f64().unwrap_or(1.0);
@@ -617,7 +636,9 @@ fn autosketch_plan(
     for (stream, group) in group_by_stream(raqes) {
         let costs = w.costs.get(stream).map_or(&[][..], Vec::as_slice);
         let oracle = |r: &Raqe, c: &AtomicCostEntry| w.autosketch_accuracy(r, c);
-        match autosketch::plan(&group, costs, SEED, false, oracle) {
+        // Undeployable families allowed, as for ASAP: AutoSketch skips
+        // Hydra itself (#159), so every method sees the same other families.
+        match autosketch::plan(&group, costs, SEED, true, oracle) {
             Ok(plan) => {
                 deployments.extend(plan.deployments);
                 searches.extend(plan.searches);
@@ -1218,10 +1239,9 @@ mod tests {
                               "grid_param": 0.0, "grid_K": 1e6}],
             })
         };
-        let names = ["region", "service", "endpoint", "status"];
         let table = json!({"workloads": [{
             "dataset": "synthetic/test",
-            "schemas": {"http": {"labels": names.map(|n| json!({"name": n}))}},
+            "schemas": {"http": http_schema()},
             "rqes": [
                 rqe(&["region"], 4, Some(0.05), 0.05),
                 rqe(&["region", "service"], 100, None, 0.001),
@@ -1246,8 +1266,15 @@ mod tests {
         assert_eq!(facts.cardinality[&label_set(&["region"])], 4);
         assert_eq!(facts.cardinality[&label_set(&["region", "service"])], 100);
         assert_eq!(facts.cardinality[&facts.labels], 2_000_000);
-        // Hydra reads `http`'s user ids, at each RQE's coverage.
-        assert_eq!(facts.hydra_dataset.as_deref(), Some("hydra_http"));
+        // Hydra reads `http`'s user ids over its full schema, at each RQE's
+        // coverage.
+        let (dataset, schema) = facts.hydra_dataset.as_ref().unwrap();
+        assert_eq!(dataset, "hydra_http");
+        assert_eq!(
+            schema,
+            &label_set(&["region", "service", "endpoint", "status"])
+        );
+        assert_eq!(facts.cardinality[schema], 4 * 25 * 25 * 4);
         let covers: Vec<_> = w.raqes.iter().map(|r| r.accuracy_covers_share).collect();
         assert_eq!(covers, [Some(0.05), None]);
         // Accuracy is read at the smallest covered group's items: 5% of the
@@ -1272,6 +1299,109 @@ mod tests {
         assert_eq!(coarse["covers_share"], 0.05);
         // No hydra_saturation.csv: Hydra serves nothing, and says so.
         assert_eq!(asap["hydra_rqes"], 0);
+    }
+
+    /// The generator's `http` schema: endpoint fans out under service.
+    fn http_schema() -> Value {
+        json!({"labels": [
+            {"name": "region", "cardinality": 4},
+            {"name": "service", "cardinality": 25},
+            {"name": "endpoint", "cardinality": 25, "child_of": "service"},
+            {"name": "status", "cardinality": 4},
+        ]})
+    }
+
+    /// `flows`' distinct sources and `http`'s p99 latency each get a Hydra
+    /// grid over their full schema, from the cost rows measured on their own
+    /// dataset. `flows`' 3e6 schema groups exceed its 1e6 series, so its
+    /// cardinality is capped there and the stream kept.
+    #[test]
+    fn flows_and_http_latency_get_a_full_schema_hydra_grid() {
+        use rqe_optimizer::candidates::build_all_candidates_unpruned;
+        let rqe = |id: &str,
+                   metric: &str,
+                   value: &str,
+                   capability: &str,
+                   grouping: &[&str],
+                   groups: u64,
+                   rate: f64| {
+            let (sketch, target) = if capability == "quantile" {
+                ("kll-percall", 0.05)
+            } else {
+                ("hll", 0.02)
+            };
+            json!({
+                "id": id, "query_id": "q", "kind": "keys", "capability": capability,
+                "metric": metric, "stream": format!("{metric}/{value}"), "grouping": grouping,
+                "covers_share": null, "min_covered_share": 0.01,
+                "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
+                "label_set": {"groups": groups, "arrival_rate_per_sec": rate},
+                "families": [{"sketch": sketch, "target": target}],
+            })
+        };
+        let flows = json!({"labels": [
+            {"name": "dst_subnet", "cardinality": 1000},
+            {"name": "dst_port", "cardinality": 1000},
+            {"name": "proto", "cardinality": 3},
+        ]});
+        let table = json!({"workloads": [{
+            "dataset": "synthetic/test",
+            "schemas": {"flows": flows, "http": http_schema()},
+            "rqes": [
+                rqe("t11", "flows", "src_ip", "cardinality", &["dst_subnet"], 1000, 1e6),
+                rqe("t16", "http", "latency", "quantile", &["service"], 25, 2e6),
+            ],
+        }]});
+        let path = std::env::temp_dir().join(format!("hydra-table-{}.json", std::process::id()));
+        std::fs::write(&path, table.to_string()).unwrap();
+        // The committed cost table plus a Hydra row per (variant, dataset),
+        // one measured on `http`'s user ids, which `flows` must not use.
+        let inputs = hll_saturation_dir("hydra");
+        let mut costs: AtomicCostTable =
+            serde_json::from_str(&std::fs::read_to_string(inputs.join(COST_TABLE)).unwrap())
+                .unwrap();
+        let hydra = |from: &str, sketch: &str, dataset: &str| {
+            let mut row = costs.iter().find(|c| c.sketch == from).unwrap().clone();
+            row.sketch = sketch.into();
+            row.measured_at.dataset = Some(dataset.into());
+            row
+        };
+        let rows = [
+            hydra("hll", "hydra-hll", "hydra_flows"),
+            hydra("hll", "hydra-univmon-cardinality", "hydra_http"),
+            hydra("kll-percall", "hydra-kll", "hydra_http_latency"),
+        ];
+        costs.extend(rows);
+        std::fs::write(
+            inputs.join(COST_TABLE),
+            serde_json::to_string(&costs).unwrap(),
+        )
+        .unwrap();
+        let w = from_table(path.to_str().unwrap(), None, None, inputs.to_str().unwrap());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&inputs).unwrap();
+        assert!(w.excluded_high_cardinality.is_empty());
+        let flows_facts = &w.facts["synthetic/test/flows/src_ip"];
+        let full = label_set(&["dst_subnet", "dst_port", "proto"]);
+        assert_eq!(flows_facts.cardinality[&full], 1_000_000);
+        let grids: BTreeSet<(String, LabelSet)> = group_by_stream(&w.raqes)
+            .into_iter()
+            .flat_map(|(stream, group)| {
+                build_all_candidates_unpruned(&group, &w.costs[stream], &w.facts, true)
+            })
+            .filter(|d| d.properties().answers_any_subgrouping)
+            .map(|d| (d.config.sketch, d.grouping_labels))
+            .collect();
+        assert_eq!(
+            grids,
+            BTreeSet::from([
+                ("hydra-hll".to_string(), full),
+                (
+                    "hydra-kll".to_string(),
+                    label_set(&["region", "service", "endpoint", "status"])
+                ),
+            ])
+        );
     }
 
     #[test]
