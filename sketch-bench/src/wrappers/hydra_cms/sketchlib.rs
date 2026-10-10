@@ -39,7 +39,11 @@ pub fn build_hydra_cms(config: &ParamSet, label_columns: usize) -> Result<HydraC
 
 impl HydraCms {
     #[inline]
-    pub fn estimate_subpop_frequency<V: FrequencyValue>(&self, labels: &[&str], value: &V) -> f64 {
+    pub fn estimate_subpop_frequency<V: FrequencyValue>(
+        &self,
+        labels: &[Option<&str>],
+        value: &V,
+    ) -> f64 {
         query(
             &self.inner,
             labels,
@@ -106,7 +110,7 @@ pub fn insert_step_hydra_cms<V: FrequencyValue>(
 pub fn query_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, V)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     merge_query_hydra_cms(params, items, probes, 1, passes)
@@ -117,7 +121,7 @@ pub fn query_hydra_cms<V: FrequencyValue>(
 pub fn merge_query_hydra_cms<V: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, V)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {

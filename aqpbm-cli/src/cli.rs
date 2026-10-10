@@ -234,10 +234,29 @@ pub struct SketchbenchArgs {
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,
+    /// Which label columns the `hydra-*` rows group by, comma-separated
+    /// indices into the columns before the value column: any non-empty subset
+    /// (`0`, `1`, `0,1`). The grid stores every subset, so this picks the one
+    /// asked and scored. Every other target ignores it.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "0",
+        help_heading = "Measurement content"
+    )]
+    pub group_columns: Vec<usize>,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
+    /// Write a `hydra-*` row's per-group errors to this CSV, one row per group:
+    /// `group_key,n_q,error` (`n_q` is the group's record count, `error` the
+    /// row's own metric, empty for a group that cannot be scored, such as one
+    /// with zero entropy). The `n_q` sum to the stream's records; the record's
+    /// `err_*` fields summarise the scored rows. Takes exactly one accuracy
+    /// measurement: query or merge.
+    #[arg(long, help_heading = "Output")]
+    pub per_group_out: Option<String>,
     /// Write one line for the whole invocation instead of one per measurement,
     /// folding its records into a single flattened row: one slot per operation,
     /// one field per metric. One record per measurement is the default; this is the

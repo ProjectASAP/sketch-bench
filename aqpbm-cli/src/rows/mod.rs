@@ -23,12 +23,12 @@ use aqpbm_core::accuracy::keyed::{
 };
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeValueErrorGT};
 use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT, SubpopL2NormGT,
-    SubpopRankErrorGT,
+    GroupKey, SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT,
+    SubpopL2NormGT, SubpopRankErrorGT,
 };
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::Score;
-use aqpbm_core::accuracy::{questions, CountedValue, GroundTruth};
+use aqpbm_core::accuracy::{questions, CountedValue, GroundTruth, PerGroup};
 use aqpbm_core::error::RunError;
 use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
@@ -36,9 +36,6 @@ use aqpbm_core::measure::{
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
 use sketch_bench::wrappers::frequency_value::FrequencyValue;
-
-/// The label column every subpopulation comparator scores over.
-const SCORED_LABEL_COLUMN: usize = 0;
 
 const KEYED_KEY_COLUMN: usize = 0;
 

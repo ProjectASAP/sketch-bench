@@ -102,6 +102,29 @@ pub trait GroundTruth {
         probes: &[Self::Probe],
         answers: &[Self::Answer],
     ) -> BTreeMap<String, f64>;
+
+    /// ④ Every group with its error, for a comparator whose population is
+    /// subpopulations; empty for every other. [`score`](Self::score) summarises
+    /// the scored rows, and `--per-group-out` writes them all.
+    fn per_group(
+        &self,
+        _truth: &Self::Truth,
+        _probes: &[Self::Probe],
+        _answers: &[Self::Answer],
+    ) -> Vec<GroupError> {
+        Vec::new()
+    }
+}
+
+/// One subpopulation: its key, how many records it carried (`n_q`), and its
+/// error in the comparator's own metric, lower is better. `None` when the group
+/// cannot be scored (its true statistic is zero, so it has no relative error);
+/// it is still listed, so the groups' `n_q` sum to the stream's records.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupError {
+    pub group: String,
+    pub n_q: u64,
+    pub error: Option<f64>,
 }
 
 /// How a row's answers turn into the named error metrics: the scorer
@@ -109,14 +132,18 @@ pub trait GroundTruth {
 /// comparator type.
 pub type Score<A> = Rc<dyn Fn(&[A]) -> BTreeMap<String, f64>>;
 
+/// The same answers, read back group by group: [`GroundTruth::per_group`].
+pub type PerGroup<A> = Rc<dyn Fn(&[A]) -> Vec<GroupError>>;
+
 /// Draw the questions: the exact answer over the generated table, the probes
-/// off it, and a scorer holding both. Run once per row, outside every clock,
-/// so no comparator type reaches a measurement.
+/// off it, and a scorer holding both (and the per-group reader beside it). Run
+/// once per row, outside every clock, so no comparator type reaches a
+/// measurement.
 #[allow(clippy::type_complexity)]
 pub fn questions<G>(
     gt: G,
     table: &GeneratedTable,
-) -> Result<(Rc<Vec<G::Probe>>, Score<G::Answer>), RunError>
+) -> Result<(Rc<Vec<G::Probe>>, Score<G::Answer>, PerGroup<G::Answer>), RunError>
 where
     G: GroundTruth + 'static,
     G::Truth: 'static,
@@ -133,7 +160,11 @@ where
         let (gt, truth, probes) = (gt.clone(), truth.clone(), probes.clone());
         Rc::new(move |answers: &[G::Answer]| gt.score(&truth, &probes, answers))
     };
-    Ok((probes, score))
+    let per_group: PerGroup<G::Answer> = {
+        let (gt, truth, probes) = (gt.clone(), truth.clone(), probes.clone());
+        Rc::new(move |answers: &[G::Answer]| gt.per_group(&truth, &probes, answers))
+    };
+    Ok((probes, score, per_group))
 }
 
 pub(crate) fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64> {
