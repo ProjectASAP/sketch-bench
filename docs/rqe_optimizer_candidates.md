@@ -119,7 +119,8 @@ roll-up the answered group is the RAQE's coarse one.
   (`--merge-shards-list`) so the guarantee isn't what decides (#158);
   univmon-cardinality has no guarantee, so past its curves it has no
   accuracy. `SaturationCurves::load` refuses a study with no merge curves
-  for a lossy candidate sketch (KLL, univmon-cardinality). The fan-out is the average; the largest group's is
+  for a lossy non-heap candidate sketch (KLL, univmon-cardinality,
+  univmon-topk). The fan-out is the average; the largest group's is
   #189.
 - A top-k RAQE asks for its own `k` (`Raqe::topk_k`, default 32). Heap
   top-k (CMS-heap, CountSketch-heap) keeps a heap of `n · k` in a deployment

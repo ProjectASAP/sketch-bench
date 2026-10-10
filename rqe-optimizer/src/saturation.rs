@@ -366,8 +366,9 @@ impl SaturationCurves {
         // accuracy.
         let mut lossy: BTreeMap<&str, bool> = BTreeMap::new();
         for (sketch, point) in points.values() {
-            // Heap top-k merges as one sketch when sized m · k, so only KLL
-            // needs the curves.
+            // Heap top-k merges as one sketch when sized m · k, so only the
+            // non-heap lossy sketches (KLL, univmon-cardinality, univmon-topk)
+            // need the curves.
             if is_candidate(sketch) && merges_lossily(sketch) && !has_heap(sketch) {
                 *lossy.entry(sketch).or_default() |= !point.merged.is_empty();
             }
