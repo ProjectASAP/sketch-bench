@@ -25,6 +25,13 @@ fn sums_per_group(
 ) -> Result<SubpopVectorTruth, DataGenError> {
     let labels = group_labels(table, group_columns)?;
     let values: Vec<f64> = match table.column(value_column)? {
+        // The lib row inserts each value as a UnivMon count, which can't be
+        // negative, so the truth refuses negatives too.
+        ColumnData::Int64(v) if v.iter().any(|&x| x < 0) => {
+            return Err(DataGenError::BadParam(
+                "a sum's values are UnivMon counts, so they can't be negative".into(),
+            ))
+        }
         ColumnData::Int64(v) => v.iter().map(|&x| x as f64).collect(),
         ColumnData::Unsigned64(v) => v.iter().map(|&x| x as f64).collect(),
         other => {
@@ -128,6 +135,27 @@ mod tests {
     }
 
     /// A group whose values sum to zero has no relative error: it is listed
+    /// Negative values are refused, as the lib row refuses them.
+    #[test]
+    fn a_negative_value_is_refused() {
+        use crate::accuracy::table_of;
+        let table = table_of(
+            &["key1", "value"],
+            vec![
+                ColumnData::String(vec!["a".into()]),
+                ColumnData::Int64(vec![-1]),
+            ],
+        );
+        let gt = SubpopSumGT {
+            group_columns: vec![0],
+            value_column: 1,
+        };
+        let Err(err) = gt.truth(&table) else {
+            panic!("a negative value must be refused");
+        };
+        assert!(err.to_string().contains("negative"), "{err}");
+    }
+
     /// unscored, as a group with no distinct value is for cardinality.
     #[test]
     fn a_zero_sum_group_is_listed_unscored() {
