@@ -307,7 +307,7 @@ def all_subsets(metric):
 SCHEMA_TEMPLATES = [
     (11, "distinct_src", "flows", "src_ip", "cardinality", [["dst_subnet"]], 0.05),
     (12, "distinct_src", "flows", "src_ip", "cardinality",
-     [["dst_port"], ["dst_subnet", "dst_port"], ["dst_port", "proto"]], 0.05),
+     [["dst_port"], ["dst_subnet", "proto"], ["dst_port", "proto"]], 0.05),
     (14, "distinct_users", "http", "user_id", "cardinality",
      [["region"], ["service"], ["region", "service"], ["service", "endpoint"]], 0.01),
     (15, "distinct_users", "http", "user_id", "cardinality", all_subsets("http"), 0.05),

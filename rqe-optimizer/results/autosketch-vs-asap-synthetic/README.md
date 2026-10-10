@@ -110,7 +110,7 @@ read at the mean group's items, `max_N`, as before.)
 | # | Query | Groupings | Covers | Groups (mean items per group in 5m) | Covered groups (smallest covered group's items in 5m) |
 |---|---|---|---|---|---|
 | 11 | distinct src_ip | {dst_subnet} | share ≥ 5% | 1e3 (1.2e6) | 4, the burst subnet among them (6e7) |
-| 12 | distinct src_ip | {dst_port}, {dst_subnet, dst_port}, {dst_port, proto} | share ≥ 5% | 1e3, 1e6, 3e3 (1.2e6, 1.2e3, 4e5) | 3, 1, 3 (7.4e7, 4.7e7, 9.2e7) |
+| 12 | distinct src_ip | {dst_port}, {dst_subnet, proto}, {dst_port, proto} | share ≥ 5% | 1e3, 3e3, 3e3 (1.2e6, 4e5, 4e5) | 3, 3, 3 (7.4e7, 6.8e7, 9.2e7) |
 | 14 | distinct user_id | {region}, {service}, {region, service}, {service, endpoint} | share ≥ 1% | 4, 25, 100, 625 (1.5e8 to 9.6e5) | 4, 21, 23, 16 (1.1e8, 6.3e6, 6.3e6, 6.3e6) |
 | 15 | distinct user_id | all 15 non-empty subsets of http's labels | share ≥ 5% | 4 to 1e4 (1.5e8 to 6e4) | 1 to 5 (1.3e7 to 1.1e8) |
 | 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) | all (5.2e6, 9.3e5, 2.3e5) |
