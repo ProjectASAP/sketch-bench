@@ -393,12 +393,30 @@
           "format": "uint64",
           "minimum": 0
         },
+        "child_of": {
+          "description": "Index of an earlier `string` column this one nests under, for\nhierarchical labels. A value is the parent row's value, a `.`, and a\nchild index in `[0, fan_out)` drawn from this column's distribution.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
         "data_type": {
           "description": "Which [`ColumnData`] variant this column renders into.",
           "type": "string"
         },
         "distribution": {
           "$ref": "#/$defs/DataDistribution"
+        },
+        "fan_out": {
+          "description": "How many children each parent value has. Required with `child_of`, and\nchecked against the distribution's domain like `cardinality` is.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "shift": {
           "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",

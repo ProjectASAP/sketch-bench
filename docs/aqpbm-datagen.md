@@ -35,6 +35,8 @@ pub struct ColumnSpec {
     pub special_rule: u32, // bit mask about special_rule; 0 means no special rules
     pub data_type: String, // defines which case of enum ColumnData should be chosen from
     pub string: Option<StringOpts>, // if this column is about string data, description about how string looks like
+    pub child_of: Option<usize>, // index of an earlier string column this one nests under; see child_of below
+    pub fan_out: Option<u64>, // children per parent value; required with child_of
 }
 
 enum DataDistribution {
@@ -82,6 +84,31 @@ Thus, the field `column_connected` is used to describe such relation.
 `column_connected` use label to describe which columns are related to each other.
 The requirement is: columns related to each other needs to have identical distribution and distribution parameter.
 They will be generated once, and processed to meet the need.
+
+### child_of
+
+Labels are often hierarchical: a service lives in one region, an endpoint in one service.
+A column with `child_of: <index>` and `fan_out: f` nests under the earlier column at that index:
+its value is the parent row's value, a `.`, and a child index in `[0, f)`.
+The child index is drawn from the column's own `distribution` (its 0-based rank in the domain), so the usual skew and seed options pick it,
+independently of the parent: every parent value shares one child distribution and has at most `f` distinct children.
+
+```yaml
+- data_type: string
+  child_of: 0        # nests under column 0, e.g. "abcd" -> "abcd.7"
+  fan_out: 25
+  distribution: {kind: zipf, skewness: 1.1, population_size: 25, seed: 2}
+```
+
+Each of the following is a description error:
+
+- `child_of` without `fan_out`, or `fan_out` without `child_of`
+- `child_of` naming the column itself, a later column, or no column (a parent is generated first)
+- a parent that is not `data_type: string`, or a child that is not
+- `fan_out` of 0, or one that disagrees with the distribution's domain size (an unbounded distribution has none)
+- `cardinality` or a `string:` block on a child column (its distinct count is the parent's times `fan_out`, and it is not rendered from a rank)
+
+`configs/datagen/hydra_hier.yaml` uses it for a region → service → endpoint hierarchy.
 
 ## Output
 

@@ -1,0 +1,74 @@
+# Hierarchical labels for the record-ingesting rows (the `hydra-*` algorithms):
+# region → service → endpoint, plus an independent status label, then the value
+# column. As in `hydra_columns.yaml`, the last column is the value and the ones
+# before it are labels.
+#
+#   approxbench sketchbench --variant hydra-cms --library lib \
+#     --spec configs/datagen/hydra_hier.yaml --dtype i64 \
+#     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
+#     --operations query --metrics accuracy
+#
+# A `child_of` column nests under an earlier label: its value is the parent row's
+# value, a `.`, and a child index in `[0, fan_out)` drawn from its own
+# distribution. So a service reads `<region>.7` and an endpoint `<region>.7.3`,
+# and each parent value has at most `fan_out` children. The index is drawn
+# independently of the parent, so every region shares the same service skew.
+#
+# Four labels cost `2^4 - 1 = 15` cell insertions per record. Distinct label
+# values: region 4, service 4 × 25 = 100, endpoint 100 × 25 = 2500, status 4.
+
+column_num: 5
+column_label: [region, service, endpoint, status, user_id]
+row_num: 200000
+
+column_spec:
+  # region: 4 values, equally likely.
+  - data_type: string
+    string:
+      min_len: 4
+      max_len: 4
+    distribution:
+      kind: uniform
+      lower_bound: 0.0
+      upper_bound: 4.0
+      seed: 1
+
+  # service: 25 per region, skewed, so a few services carry most traffic.
+  - data_type: string
+    child_of: 0
+    fan_out: 25
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 25
+      seed: 2
+
+  # endpoint: 25 per service, skewed.
+  - data_type: string
+    child_of: 1
+    fan_out: 25
+    distribution:
+      kind: zipf
+      skewness: 1.2
+      population_size: 25
+      seed: 3
+
+  # status: 4 values, heavily skewed toward the first (the "200").
+  - data_type: string
+    string:
+      min_len: 3
+      max_len: 3
+    distribution:
+      kind: zipf
+      skewness: 2.0
+      population_size: 4
+      seed: 4
+
+  # user_id: the value. Count-Min counts its occurrences per group,
+  # HyperLogLog counts how many are distinct.
+  - data_type: i64
+    distribution:
+      kind: zipf
+      skewness: 0.8
+      population_size: 1000000
+      seed: 5
