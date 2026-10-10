@@ -392,6 +392,7 @@ approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"r
     ]
   },
   "merge_shards": 8,
+  "merge_split": "contiguous",
   "merge_supported": true,
   "merge_cpu_time_ms": {
     "user_ms": {
@@ -446,6 +447,20 @@ approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"r
 **`--spec`**: Alternatively, the input data configuration can be provided with a `yaml` file.
 `--spec configs/datagen/hydra_columns.yaml` is how user can define the synthetic table for insertion.
 The file can be found [under configs directory](./configs/datagen/hydra_columns.yaml).
+
+**`--merge-shards`**: how many shards `merge` folds: the stream is split that
+many ways, one sketch is fed per shard, and the sketches are folded into one.
+
+**`--merge-split`**: how the stream is split into those shards. `contiguous`
+(the default) cuts it into consecutive stretches; `interleaved` deals it
+round-robin by record, so each shard is a sample of the whole stream. The
+round-robin runs over the contiguous split's shard sizes (`ceil(N/k)` each,
+the last one short), skipping a shard once it is full. So when `k` divides
+`N`, shard 0 gets records `0, k, 2k, ...`; with a short last shard the
+pattern shifts once that shard fills (N = 10, k = 4: shard 0 gets `0, 4, 7`).
+The record's `merge_split` says which split ran. CMS, CountSketch and HLL cells (and their Hydra grids) merge
+exactly, so they answer identically under both; KLL and UnivMon merges are
+lossy and can differ.
 
 **`--flat`**: flatten record such that output data of multiple experiments is flatten into one json file.
 

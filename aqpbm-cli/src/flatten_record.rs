@@ -4,7 +4,8 @@
 //! named by both. Grouping records by identity is the caller's job.
 
 use aqpbm_core::{
-    BenchSection, InsertMetrics, MergeMetrics, MergedRecord, PrepareMetrics, QueryMetrics, Record,
+    BenchSection, InsertMetrics, MergeMetrics, MergeSplit, MergedRecord, PrepareMetrics,
+    QueryMetrics, Record,
 };
 
 /// Which slot a `Record` lands in, per its own `bench.operation` field. Every
@@ -84,6 +85,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             accuracy,
             merge_folds_per_sec,
             merge_shards,
+            merge_split,
             merge_supported,
         } = bench;
 
@@ -113,7 +115,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 }
             };
         }
-        // `merge_shards`/`merge_supported` describe the merge setup, which
+        // `merge_shards`/`merge_split`/`merge_supported` describe the merge setup, which
         // every merge square of one invocation stamps — equal values agree,
         // different ones mean two setups were folded together.
         macro_rules! keep_same {
@@ -183,6 +185,12 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                     "merge_folds_per_sec"
                 );
                 keep_same!(out.merge.merge_shards, *merge_shards, "merge_shards");
+                // A record from before `merge_split` existed split contiguously.
+                keep_same!(
+                    out.merge.merge_split,
+                    merge_split.or(Some(MergeSplit::Contiguous)),
+                    "merge_split"
+                );
                 keep_same!(
                     out.merge.merge_supported,
                     *merge_supported,
@@ -420,6 +428,30 @@ mod tests {
         let err = flatten_record(&[merge("throughput", 4), merge("accuracy", 16)])
             .expect_err("two setups in one row");
         assert!(err.contains("merge_shards"), "{err}");
+    }
+
+    /// Two splits are two setups; a record without the field split
+    /// contiguously, so it agrees with a contiguous one.
+    #[test]
+    fn merge_split_on_two_squares_must_agree() {
+        let merge = |metric, split| {
+            record(
+                "merge",
+                metric,
+                BenchSection {
+                    merge_split: split,
+                    ..Default::default()
+                },
+            )
+        };
+        let out = flatten_record(&[merge("throughput", None)]).expect("one setup");
+        assert_eq!(out.merge.merge_split, Some(MergeSplit::Contiguous));
+        let err = flatten_record(&[
+            merge("throughput", Some(MergeSplit::Interleaved)),
+            merge("accuracy", None),
+        ])
+        .expect_err("two splits in one row");
+        assert!(err.contains("merge_split"), "{err}");
     }
 
     /// `throughput_items_per_sec` is owned by exactly one metric-pass per

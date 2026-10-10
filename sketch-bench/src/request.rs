@@ -118,6 +118,8 @@ pub struct Requirement {
     pub workers: usize,
     /// How many shards a merge measurement folds
     pub merge_shards: usize,
+    /// How a merge measurement splits the stream into those shards
+    pub merge_split: crate::wrappers::MergeSplit,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
     /// Measured runs, and the warm-ups run and discarded before them
