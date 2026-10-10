@@ -226,8 +226,10 @@ rows. AutoSketch keeps skipping Hydra (#159).
 
 ## 5. What sketch-bench must add
 
-Each item names what is missing today. These apply when Hydra admission is
-taken up: current sketch-bench work does not measure or model `hydra-kll`.
+Each item names what is missing today. Every Hydra measurement sketch-bench
+has today predates these requirements, so admitting Hydra means rerunning
+them all; `hydra-kll` is measured in that same run, alongside `hydra-cms`,
+`hydra-cs`, `hydra-hll` and `hydra-univmon`, under every item below.
 
 1. **Target grouping.** Comparators score only column 0
    (`aqpbm-cli/src/rows/mod.rs`); they must score any named subset of the
