@@ -213,12 +213,16 @@ fn curve_error_at(
     }
 }
 
-/// KLL and the heap top-k sketches lose accuracy when merged (#131): a
-/// merged answer reads their merge curve. The other sketches merge exactly.
+/// KLL, the heap top-k sketches and UnivMon lose accuracy when merged
+/// (#131): a merged answer reads their merge curve. UnivMon's counters add
+/// exactly, but each level's heavy-hitter heap is rebuilt from the union of
+/// the two heaps, so a key heavy only in the union is lost. The other
+/// sketches merge exactly.
 fn merges_lossily(sketch: &str) -> bool {
     matches!(
         sketch,
         "kll-percall"
+            | "univmon-cardinality"
             | "cms-heap-topk-fastpath-vector2d"
             | "countsketch-heap-topk-fastpath-vector2d"
             | "univmon-topk"
@@ -827,6 +831,16 @@ mod tests {
     use crate::Capability;
 
     const TOPK: &str = "cms-heap-topk-fastpath-vector2d";
+
+    /// UnivMon's heaps are rebuilt on merge, so its cardinality reads merge
+    /// curves like KLL; HLL's register max and DDSketch's bucket sums are
+    /// exact.
+    #[test]
+    fn univmon_cardinality_merges_lossily_hll_and_dd_do_not() {
+        assert!(merges_lossily("univmon-cardinality"));
+        assert!(!merges_lossily("hll"));
+        assert!(!merges_lossily("dd"));
+    }
 
     /// Top-k rows=3 cols=1024 at θ ∈ {1.0, 1.2}, K ∈ {1e3, 1e5}. Precision
     /// falls with N; θ = 1.0 is worse, and K = 1e5 never saturates. Merged

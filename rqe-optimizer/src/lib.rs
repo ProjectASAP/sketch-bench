@@ -252,9 +252,10 @@ pub fn family_properties(variant: &str) -> FamilyProperties {
     };
     match variant {
         "exact-sum" | "exact-min" | "exact-max" => exact,
-        // Not rolled up, conservatively: summing per-series increases would
-        // give the coarse answer, but whether ASAPQuery's increase
-        // accumulator keeps them per series is unconfirmed.
+        // Not rolled up: its merge joins two pieces of one counter in time
+        // (the later start after a drop is a reset), so merging two groups'
+        // counters is wrong. A coarse increase is the sum of per-series
+        // increases, which needs per-series state and a sum, not this merge.
         "exact-increase" => FamilyProperties {
             mergeable_across_groups: false,
             ..exact

@@ -108,7 +108,8 @@ roll-up the answered group is the RAQE's coarse one.
   refuses a curve for another metric as a stale study.
 - For sketches that merge exactly, the window size doesn't matter: a merged
   answer reads the curve at the lookback's item count, like a single sketch.
-  KLL merges lossily (#131): an answer merged from `n = S_i / D.x` windows,
+  KLL and univmon-cardinality merge lossily (#131; UnivMon rebuilds its
+  heavy-hitter heaps from the union of the merged heaps): an answer merged from `n = S_i / D.x` windows,
   times the average fan-out `⌈card(D.G) / card(G_i)⌉` on a roll-up, reads
   the study's merge curve (`saturation_merge_curve.csv`, the sketch merged
   from `n` shards of the same items) at the lookback's item count. Between
