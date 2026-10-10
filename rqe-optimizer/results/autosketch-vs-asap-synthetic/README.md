@@ -81,7 +81,7 @@ plus always the largest group (`null`: every group). The generator computes
 each group's share as the product of its labels' shares (labels are drawn
 independently given their parents) and writes each RQE's `covered_groups`,
 `min_covered_share` and `covered_min_N` (the smallest covered group's items
-per window); the table's `schemas` gives each metric's labels.
+per window), and `max_covered_share` and `covered_max_N` (the largest's); the table's `schemas` gives each metric's labels.
 
 | Metric | Labels (values, Zipf skew) | Rate | Values |
 |---|---|---|---|
@@ -96,9 +96,12 @@ visible: its share rises to just over 5%, so template 11 covers it.
 The runner reads each value's data shape (Zipf θ and K, or the Pareto a), the
 groups per grouping and the coverage; the other fields (label skew beyond the
 shares, latency scaling, the anomaly, the burst's sources) describe the data
-and are not modeled. Accuracy is read at N items per group per window: the
-smallest covered group's (`covered_min_N`), the hardest group the target
-covers; for `covers_share` = `null` that is the smallest group of all. The
+and are not modeled. Accuracy is read at N items per group per window at
+both the smallest covered group (`covered_min_N`; for `covers_share` =
+`null` the smallest group of all) and the largest (`covered_max_N`), and
+the worse of the two reads holds (unknown if either is): KLL, DD and HLL
+error does not fall as N grows, so the largest group can be the hardest
+(sketch-bench#189). The
 generator fails if any RQE's `covered_min_N` is below the curves' first N
 (1e3). The skew of the counted value is the same in every group; label skew
 changes only the group sizes. (RQEs without a `grouping`, `classic`'s, are

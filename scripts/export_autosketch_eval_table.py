@@ -351,15 +351,16 @@ def label_shares(metric, label):
 
 
 def group_coverage(metric, grouping, covers_share):
-    """(covered groups, smallest covered group's share of the records) of an
-    RQE at `grouping` covering groups of share >= `covers_share`, plus always
-    the largest group (None: every group). A group's share is the product of
+    """(covered groups, smallest and largest covered group's share of the
+    records) of an RQE at `grouping` covering groups of share >=
+    `covers_share`, plus always the largest group (None: every group). A group's share is the product of
     its labels' shares: labels are drawn independently given their parents."""
     marginals = [sorted(label_shares(metric, label), reverse=True)
                  for label in closed_labels(metric, grouping)]
     largest = math.prod(m[0] for m in marginals)
     if covers_share is None:
-        return grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals)
+        return (grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals),
+                largest)
     # Enumerate the groups of share >= covers_share, largest values first;
     # a prefix whose best completion falls short ends its loop.
     best_rest = [math.prod(m[0] for m in marginals[i:]) for i in range(len(marginals) + 1)]
@@ -376,7 +377,7 @@ def group_coverage(metric, grouping, covers_share):
 
     walk(0, 1.0)
     covered = covered or [largest]
-    return len(covered), min(covered)
+    return len(covered), min(covered), largest
 
 
 def synthetic_plan():
@@ -511,7 +512,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     continue
                 seen.add((query_id, rng))
                 n_items = schema["rate"] * s / groups
-                covered, min_share = group_coverage(name, grouping, covers)
+                covered, min_share, max_share = group_coverage(name, grouping, covers)
                 covered_min_n = schema["rate"] * s * min_share
                 # Accuracy is read at the smallest covered group: keep it on
                 # the curves (their first N is 1e3).
@@ -529,7 +530,8 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     "arrival_rate": schema["rate"],
                     "grouping": grouping, "covers_share": covers, "schema": schema,
                     "covered_groups": covered, "min_covered_share": min_share,
-                    "covered_min_N": covered_min_n,
+                    "covered_min_N": covered_min_n, "max_covered_share": max_share,
+                    "covered_max_N": schema["rate"] * s * max_share,
                     "assumptions": [],
                     **DEFAULT_TARGETS,
                 })
@@ -599,10 +601,12 @@ def synthetic_entry(q):
         "families": families,
     }
     if "grouping" in q:
-        # max_N is the mean group's items per window; covered_min_N the
-        # smallest covered group's (min_covered_share of the stream's).
+        # max_N is the mean group's items per window; covered_min_N and
+        # covered_max_N the smallest and largest covered group's
+        # (min_covered_share and max_covered_share of the stream's).
         entry.update({k: q[k] for k in ["grouping", "covers_share", "covered_groups",
-                                        "min_covered_share", "covered_min_N"]})
+                                        "min_covered_share", "covered_min_N",
+                                        "max_covered_share", "covered_max_N"]})
     return entry
 
 

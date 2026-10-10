@@ -262,9 +262,11 @@ class SchemaTemplatesTest(unittest.TestCase):
         kll, dd = rqes["t16_p99_latency_by_service,status/5m"]["families"]
         self.assertEqual((kll["grid_param"], kll["grid_K"]), (COST_PARETO_ALPHA, None))
         self.assertEqual(rqes["t11_distinct_src_by_dst_subnet/5m"]["covers_share"], 0.05)
-        self.assertEqual((r["covered_groups"], r["min_covered_share"], r["covered_min_N"]),
+        self.assertEqual((r["covered_groups"], r["min_covered_share"], r["max_covered_share"],
+                          r["covered_min_N"], r["covered_max_N"]),
                          group_coverage("http", ["region", "service"], 0.01)
-                         + (2e6 * 300 * r["min_covered_share"],))
+                         + (2e6 * 300 * r["min_covered_share"],
+                            2e6 * 300 * r["max_covered_share"]))
 
     def test_label_shares_are_skewed_and_the_burst_lifts_a_tail_subnet(self):
         for metric, schema in SCHEMAS.items():
@@ -283,13 +285,13 @@ class SchemaTemplatesTest(unittest.TestCase):
         for tau in [0.01, 0.05, 0.2]:
             covered = [x for x in shares if x >= tau]
             self.assertEqual(group_coverage("http", ["region", "status"], tau),
-                             (len(covered), min(covered)))
+                             (len(covered), min(covered), max(shares)))
         # No group holds 50%: the largest alone is covered.
-        self.assertEqual(group_coverage("http", ["region", "status"], 0.5), (1, max(shares)))
+        self.assertEqual(group_coverage("http", ["region", "status"], 0.5), (1, max(shares), max(shares)))
         self.assertEqual(group_coverage("http", ["region", "status"], None),
-                         (16, min(shares)))
+                         (16, min(shares), max(shares)))
         # The DDoS subnet is one of template 11's covered groups.
-        n, smallest = group_coverage("flows", ["dst_subnet"], 0.05)
+        n, smallest, _ = group_coverage("flows", ["dst_subnet"], 0.05)
         self.assertGreater(n, 1)
         self.assertAlmostEqual(smallest, label_shares("flows", SCHEMAS["flows"]["labels"][0])[999])
 
@@ -300,6 +302,9 @@ class SchemaTemplatesTest(unittest.TestCase):
                 self.assertEqual(q["covered_min_N"],
                                  q["arrival_rate"] * q["range_s"] * q["min_covered_share"])
                 self.assertGreaterEqual(q["covered_min_N"], 1000)
+                self.assertEqual(q["covered_max_N"],
+                                 q["arrival_rate"] * q["range_s"] * q["max_covered_share"])
+                self.assertGreaterEqual(q["max_covered_share"], q["min_covered_share"])
 
     def test_a_covered_group_below_the_curves_first_n_fails_loudly(self):
         # Every group of the full label set: the smallest has ~350 items in 5m.
