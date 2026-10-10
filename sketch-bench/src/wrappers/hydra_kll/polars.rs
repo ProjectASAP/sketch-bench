@@ -46,8 +46,8 @@ impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// `floor(phi * n)`, clamped to the last index. That is the index whose
     /// rank interval contains `phi * n`, which is what the rank-error
     /// comparator scores against, so an exact answer scores zero.
-    pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        let Some(values) = self.sorted.get(&prefix_key(labels)) else {
+    pub fn estimate_subpop_quantile(&self, labels: &[Option<&str>], phi: f64) -> f64 {
+        let Some(values) = self.sorted.get(&group_key(labels)) else {
             return f64::NAN;
         };
         if values.is_empty() {
@@ -157,7 +157,7 @@ pub fn insert_step_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 
 pub fn query_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'static>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<(Vec<String>, f64)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);

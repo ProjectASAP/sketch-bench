@@ -6,8 +6,8 @@ use crate::wrappers::BuildError;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{DataInput, Hydra};
 
-pub(crate) fn labels(group: &[String]) -> Vec<&str> {
-    group.iter().map(String::as_str).collect()
+pub(crate) fn labels(group: &[Option<String>]) -> Vec<Option<&str>> {
+    group.iter().map(Option::as_deref).collect()
 }
 
 /// The label columns of a `;`-joined record stream, which every record must
@@ -54,10 +54,11 @@ pub(crate) fn update(h: &mut Hydra, key: &str, value: &DataInput, variant: &str)
     }
 }
 
-/// Asks `query` of the subpopulation `group` constrains: its values are the
-/// leading key columns' (the scored subpopulations group by column 0), the
-/// rest unconstrained. A probe wider than the grid is refused.
-pub(crate) fn query(h: &Hydra, group: &[&str], query: &HydraQuery, variant: &str) -> f64 {
+/// Asks `query` of the subpopulation `group` constrains: a value at each
+/// grouped column, `None` (unconstrained) at the rest and past its end, so any
+/// non-empty subset of the key columns can be asked. A probe wider than the
+/// grid is refused.
+pub(crate) fn query(h: &Hydra, group: &[Option<&str>], query: &HydraQuery, variant: &str) -> f64 {
     let width = h.schema().len();
     if group.len() > width {
         panic!(
@@ -65,7 +66,9 @@ pub(crate) fn query(h: &Hydra, group: &[&str], query: &HydraQuery, variant: &str
             group.len()
         );
     }
-    let key: Vec<Option<&str>> = (0..width).map(|i| group.get(i).copied()).collect();
+    let key: Vec<Option<&str>> = (0..width)
+        .map(|i| group.get(i).copied().flatten())
+        .collect();
     h.query_key(&key, query)
         .unwrap_or_else(|e| panic!("{variant}: probe {group:?}: {e}"))
 }

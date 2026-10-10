@@ -49,7 +49,7 @@ pub fn build_hydra_univmon(
 
 impl HydraUnivmon {
     #[inline]
-    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[Option<&str>]) -> f64 {
         query(
             &self.inner,
             labels,
@@ -59,17 +59,17 @@ impl HydraUnivmon {
     }
 
     #[inline]
-    pub fn estimate_subpop_l1_norm(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_l1_norm(&self, labels: &[Option<&str>]) -> f64 {
         query(&self.inner, labels, &HydraQuery::L1Norm, "hydra-univmon")
     }
 
     #[inline]
-    pub fn estimate_subpop_l2_norm(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_l2_norm(&self, labels: &[Option<&str>]) -> f64 {
         query(&self.inner, labels, &HydraQuery::L2Norm, "hydra-univmon")
     }
 
     #[inline]
-    pub fn estimate_subpop_entropy(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_entropy(&self, labels: &[Option<&str>]) -> f64 {
         query(&self.inner, labels, &HydraQuery::Entropy, "hydra-univmon")
     }
 }
@@ -131,10 +131,10 @@ pub fn insert_step_hydra_univmon<V: CardinalityValue>(
 fn asked_hydra_univmon<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
-    estimate: fn(&HydraUnivmon, &[&str]) -> f64,
+    estimate: fn(&HydraUnivmon, &[Option<&str>]) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
@@ -162,7 +162,7 @@ fn asked_hydra_univmon<V: CardinalityValue>(
 pub fn query_hydra_univmon_cardinality<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_hydra_univmon(
@@ -180,7 +180,7 @@ pub fn query_hydra_univmon_cardinality<V: CardinalityValue>(
 pub fn merge_query_hydra_univmon_cardinality<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -197,7 +197,7 @@ pub fn merge_query_hydra_univmon_cardinality<V: CardinalityValue>(
 pub fn query_hydra_univmon_l1_norm<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_hydra_univmon(
@@ -215,7 +215,7 @@ pub fn query_hydra_univmon_l1_norm<V: CardinalityValue>(
 pub fn merge_query_hydra_univmon_l1_norm<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -232,7 +232,7 @@ pub fn merge_query_hydra_univmon_l1_norm<V: CardinalityValue>(
 pub fn query_hydra_univmon_l2_norm<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_hydra_univmon(
@@ -250,7 +250,7 @@ pub fn query_hydra_univmon_l2_norm<V: CardinalityValue>(
 pub fn merge_query_hydra_univmon_l2_norm<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -267,7 +267,7 @@ pub fn merge_query_hydra_univmon_l2_norm<V: CardinalityValue>(
 pub fn query_hydra_univmon_entropy<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     asked_hydra_univmon(
@@ -285,7 +285,7 @@ pub fn query_hydra_univmon_entropy<V: CardinalityValue>(
 pub fn merge_query_hydra_univmon_entropy<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {

@@ -46,7 +46,7 @@ impl HydraKll {
     /// at a rank, which is what rank error is defined over. The `Cdf` variant
     /// answers the inverse question.
     #[inline]
-    pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
+    pub fn estimate_subpop_quantile(&self, labels: &[Option<&str>], phi: f64) -> f64 {
         query(&self.inner, labels, &HydraQuery::Quantile(phi), "hydra-kll")
     }
 }
@@ -112,7 +112,7 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
 pub fn query_hydra_kll<V: QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, f64)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     merge_query_hydra_kll(params, items, probes, 1, passes)
@@ -123,7 +123,7 @@ pub fn query_hydra_kll<V: QuantileValue + 'static>(
 pub fn merge_query_hydra_kll<V: QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, f64)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
