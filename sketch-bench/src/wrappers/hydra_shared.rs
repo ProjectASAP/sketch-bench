@@ -311,6 +311,11 @@ mod tests {
         }
     }
 
+    /// The tightest of the three: on this stream it passes from `BETA` about
+    /// 4.8, so 8 leaves less than 2x, and it fails with `BETA = 0` or `eps = 0`.
+    /// A wider cell does not buy slack: at `cell_cols` 1024 the worst group
+    /// needs `BETA` about 14, because `eps` shrinks while the colliders' share
+    /// of the error does not.
     #[test]
     fn hydra_cs_within_its_bound() {
         let items = records(N);

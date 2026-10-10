@@ -2,6 +2,8 @@
 //! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
 //! `scripts/dump_cli_reference.sh` diffs the built binary against.
 
+use aqpbm_core::MergeSplit;
+use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand};
 
 use crate::atomic_costs_cmd;
@@ -252,10 +254,11 @@ pub struct SketchbenchArgs {
     #[arg(
         long,
         default_value = "contiguous",
-        value_parser = ["contiguous", "interleaved"],
+        value_parser = clap::builder::PossibleValuesParser::new(["contiguous", "interleaved"])
+            .try_map(|s| s.parse::<MergeSplit>()),
         help_heading = "Measurement content"
     )]
-    pub merge_split: String,
+    pub merge_split: MergeSplit,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
