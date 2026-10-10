@@ -74,6 +74,15 @@ pub struct MeasuredAt {
     pub merge_operand_items: Option<u64>,
     /// The value column's distribution as generated, e.g. Zipf with its skew.
     pub distribution: Option<DataDistribution>,
+    /// The datagen spec (yaml stem) a `hydra-*` row was measured on, named by
+    /// the driver: the record carries the description, not its name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset: Option<String>,
+    /// A `hydra-*` row's label columns `d`: each record is inserted into
+    /// `2^d - 1` subsets, so its insert cost holds at this width only. Absent
+    /// for every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_width: Option<u32>,
 }
 
 impl MeasuredAt {
@@ -275,7 +284,10 @@ pub(crate) fn reduce_scores(record: &MergedRecord) -> Result<AtomicCostEntry, Sk
         insert_cpu_secs,
         merge_cpu_secs,
         query_cpu_secs,
-        measured_at: measured_at(record, groups_measured),
+        measured_at: MeasuredAt {
+            schema_width: query_accuracy.get("schema_width").map(|&d| d as u32),
+            ..measured_at(record, groups_measured)
+        },
         query_accuracy,
         accuracy_metric: String::new(),
     })
@@ -320,6 +332,8 @@ fn measured_at(record: &MergedRecord, groups_measured: Option<f64>) -> MeasuredA
             .filter(|&m| m > 0)
             .map(|m| items / m as u64),
         distribution: value.map(|c| c.distribution.clone()),
+        dataset: None,
+        schema_width: None,
     }
 }
 
@@ -483,6 +497,25 @@ mod tests {
 
     /// A one-column table: its column gives the keys and the values, and the
     /// merge operand is the stream split `merge_shards` ways.
+    /// A Hydra row's insert is per record at its schema width, which the
+    /// row names; a row without the score names none.
+    #[test]
+    fn measured_at_carries_a_hydra_rows_schema_width() {
+        let mut record = full_record();
+        assert_eq!(
+            reduce_one(&record, METRIC)
+                .unwrap()
+                .measured_at
+                .schema_width,
+            None
+        );
+        record.query.accuracy =
+            Some(serde_json::json!({"relative_error_mean": 0.1, "schema_width": 4.0}));
+        let entry = reduce_one(&record, METRIC).expect("fully populated record");
+        assert_eq!(entry.measured_at.schema_width, Some(4));
+        assert!((entry.insert_cpu_secs - 0.5e-6).abs() < 1e-12);
+    }
+
     #[test]
     fn measured_at_reads_a_single_column_workload() {
         let mut record = full_record();
@@ -721,6 +754,8 @@ mod tests {
                 value_range: None,
                 merge_operand_items: None,
                 distribution: None,
+                dataset: None,
+                schema_width: None,
             },
         };
         let json = serde_json::to_string(&entry).unwrap();

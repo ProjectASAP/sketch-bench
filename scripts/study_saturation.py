@@ -30,6 +30,8 @@ accuracy_metric. It runs no curves and ignores the grid arguments.
 The grid also holds every config at the optimizer-cost shape unless
 --no-cost-shape: θ = 1.1 and K = 1e4 join --thetas and --cardinalities (a full
 row and column, so the grid stays a full cross) and a = 2 joins --alphas.
+--phase hydra measures Hydra's per-group error on the eval's datasets and a
+generic hierarchy (HYDRA_SWEEPS) into hydra_saturation.csv; see `hydra`.
 --resume keeps the complete curves of an interrupted accuracy run;
 --cost-rows 3 times only the rows=3 Vector2D configs.
 
@@ -46,16 +48,21 @@ Writes, under --out:
       seed-mean error per N of the sketch merged from m contiguous shards
       (m=1 is the plain single-sketch query)
   rqe_atomic_costs.json (+ _raw, _grid .jsonl)       --phase optimizer-cost only
+  hydra_saturation.csv (+ hydra_accuracy.jsonl)      --phase hydra only: one row
+      per run, HYDRA_COLUMNS
 """
 
 import argparse
 import csv
+import itertools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 FREQ_CONFIGS = [f"rows={r} cols={c}" for r in (3, 5) for c in (256, 1024, 4096, 16384)]
 
@@ -121,6 +128,75 @@ EXACT_COST_ROWS = [
     ("exact-delta-set", "key-set", "configs/datagen/hydra_columns.yaml"),
 ]
 EXACT_METRIC = "relative_error"
+
+# --phase hydra (docs/rqe_optimizer_hydra.md; ASAPQuery#777 §6.3): Hydra's
+# per-group error depends on the group's share of the fanned-out mass, so the
+# eval reads accuracy measured on datasets with its own schemas
+# (configs/datagen/hydra_http*.yaml, hydra_flows.yaml, matching
+# export_autosketch_eval_table.py's SCHEMAS). Each run asks one grouping (by
+# label name, every non-empty subset of the schema) at grid R x W, N records,
+# merged from m interleaved shards (1 = the plain query), one seed, and writes
+# its per-group errors (--per-group-out), from which the coverage columns are
+# read. The other statistics run on the generic hydra_hier*.yaml sweep
+# (schema width 2, 3, 4).
+HYDRA_R = 3
+# Inner cells: the canonical ones (docs/rqe_optimizer_hydra.md §1), except
+# UnivMon's, whose 5 x 2048 x 8-layer cell (~650 KB) makes a 3 x 16384 grid
+# 32 GB; this one is ~100 KB.
+HYDRA_UNIVMON_CELL = "cell_heap_size=64 cell_sketch_row=3 cell_sketch_col=256 cell_layer_size=8"
+HYDRA_CELLS = {
+    "hydra-cms": "cell_rows=3 cell_cols=512",
+    "hydra-cs": "cell_rows=3 cell_cols=512",
+    "hydra-hll": "",
+    "hydra-kll": "cell_k=200",
+    "hydra-kll-cdf": "cell_k=200",
+    **{f"hydra-univmon-{s}": HYDRA_UNIVMON_CELL
+       for s in ("cardinality", "l1-norm", "l2-norm", "entropy", "sum")},
+}
+# The statistic each variant answers, a column of hydra_saturation.csv.
+HYDRA_STATISTICS = {
+    "hydra-cms": "frequency", "hydra-cs": "frequency", "hydra-hll": "cardinality",
+    "hydra-kll": "quantile", "hydra-kll-cdf": "cdf",
+    "hydra-univmon-cardinality": "cardinality", "hydra-univmon-l1-norm": "l1_norm",
+    "hydra-univmon-l2-norm": "l2_norm", "hydra-univmon-entropy": "entropy",
+    "hydra-univmon-sum": "sum",
+}
+# Bytes per grid cell, measured at N = 1e6 (data and truth excluded), and per
+# record of generated data plus its exact per-group truth: --hydra-mem-gb
+# admits a run only while the running ones' estimates fit. A merge holds all
+# m shard grids at once.
+HYDRA_CELL_BYTES = {"hydra-cms": 6_500, "hydra-cs": 6_500, "hydra-hll": 17_000,
+                    "hydra-kll": 10_000, "hydra-kll-cdf": 10_000}
+HYDRA_UNIVMON_CELL_BYTES = 100_000
+HYDRA_RECORD_BYTES = 250
+# (sweep, datasets as (yaml stem, value dtype, variants), W, N, merge shards,
+# seeds).
+HYDRA_SWEEPS = {
+    "eval": ([("hydra_http", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),
+              ("hydra_flows", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),
+              ("hydra_http_latency", "f64", ["hydra-kll"])],
+             (1024, 4096, 16384), (100_000, 1_000_000, 10_000_000), (1, 4, 16), 3),
+    "generic": ([(stem, "i64", list(HYDRA_CELLS))
+                 for stem in ("hydra_hier_d2", "hydra_hier_d3", "hydra_hier")],
+                (1024, 4096), (1_000_000,), (1, 4), 2),
+}
+HYDRA_DATAGEN = "configs/datagen"
+HYDRA_TABLE = "hydra_saturation.csv"
+# Coverage thresholds τ: err_max_cov_τ is the worst error over the groups of
+# share >= τ plus the largest group (the eval's covers_share rule).
+HYDRA_COVERS = (0.01, 0.05)
+HYDRA_COLUMNS = [
+    "variant", "statistic", "config", "R", "W", "dataset", "group_columns", "schema_width",
+    "records", "fanned_mass", "merge_shards", "merge_split", "seed", "err_mean", "err_p50",
+    "err_p90", "err_max", "groups_scored",
+] + [f"err_max_cov_{tau}" for tau in HYDRA_COVERS]
+# What makes a row the same measurement, for --resume.
+HYDRA_KEY = ["variant", "config", "dataset", "group_columns", "records", "merge_shards",
+             "seed"]
+# The optimizer-cost table's Hydra rows: the eval's variants on its datasets
+# at each eval W. Their accuracy column is the default grouping's err_max; the
+# optimizer reads Hydra accuracy from hydra_saturation.csv.
+HYDRA_COST_METRIC = "err_max"
 
 SUMMARY_COLUMNS = [
     "family", "sketch", "config", "dist", "param", "cardinality", "n_sat",
@@ -333,6 +409,32 @@ def optimizer_cost(args, families):
     for variant, comparator, spec in EXACT_COST_ROWS:
         metrics[variant] = EXACT_METRIC
         rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
+    # Hydra: each eval variant on its datasets at the full schema, at each
+    # eval W, COST_N records (the spec as written, seed 1). Insert is per
+    # record at that schema width, merge per grid, query per probe, memory
+    # per grid; measured_at names the dataset.
+    hydra_datasets = {}
+    if "hydra" in families:
+        datasets, ws = HYDRA_SWEEPS["eval"][0], HYDRA_SWEEPS["eval"][1]
+        for stem, dtype, variants in datasets:
+            with open(os.path.join(args.datagen, f"{stem}.yaml")) as f:
+                text = f.read()
+            spec = os.path.join(args.out, f"{stem}_n{COST_N}.yaml")
+            with open(spec, "w") as f:
+                f.write(hydra_spec(text, COST_N, 1))
+            for variant in variants:
+                metrics[variant] = HYDRA_COST_METRIC
+                for w in ws[:1] if args.one_config else ws:
+                    config = hydra_config(variant, w)
+                    rows.append((variant, "lib", ["--config", config], None,
+                                 ["--spec", spec, "--dtype", dtype]))
+                    # The reducer reads the schema width off the scores; the
+                    # dataset is the one thing the record cannot name.
+                    key = (variant, w, len(hydra_labels(text)))
+                    if key in hydra_datasets:
+                        sys.exit(f"Hydra cost rows {key} on {hydra_datasets[key]} and {stem} "
+                                 "cannot be told apart")
+                    hydra_datasets[key] = stem
 
     def sketchbench(variant, library, config, data, passes):
         subprocess.run(
@@ -348,8 +450,8 @@ def optimizer_cost(args, families):
             "--merge-shards", str(MERGE_SHARDS), "--runs", str(COST_RUNS),
             "--warmup-runs", str(COST_WARMUP)])
         sketchbench(variant, library, config, data, [
-            "--operations", "query", "--metrics", "accuracy", "--comparator", comparator,
-            "--runs", "1", "--warmup-runs", "0"])
+            "--operations", "query", "--metrics", "accuracy", "--runs", "1",
+            "--warmup-runs", "0"] + (["--comparator", comparator] if comparator else []))
 
     subprocess.run([args.binary, "flatten", raw, "--output", grid], check=True)
     reduce = subprocess.run(
@@ -367,6 +469,17 @@ def optimizer_cost(args, families):
     if summary != expected:
         sys.exit(f"atomic-costs did not keep all {len(rows)} rows: {summary!r}")
     seed_mean_accuracy(args, table, rows, metrics)
+    if hydra_datasets:
+        with open(table) as f:
+            entries = json.load(f)
+        for entry in entries:
+            at = entry["measured_at"]
+            if entry["sketch"].startswith("hydra-"):
+                at["dataset"] = hydra_datasets[(
+                    entry["sketch"], int(entry["sketch_config"]["params"]["cols"]),
+                    at["schema_width"])]
+        with open(table, "w") as f:
+            json.dump(entries, f, indent=2)
     print(f"Done. {table}", file=sys.stderr)
     return 0
 
@@ -380,8 +493,10 @@ def seed_mean_accuracy(args, table, rows, metrics):
 
     means = {}
     for variant, library, config, comparator, data in rows:
-        if library == "exact" or float(params(config[1]).get("heap", TOPK_HEAPS[0])) != \
-                TOPK_HEAPS[0]:
+        # Hydra rows keep their one pass: the optimizer reads Hydra's accuracy
+        # from hydra_saturation.csv.
+        if library == "exact" or variant.startswith("hydra-") or \
+                float(params(config[1]).get("heap", TOPK_HEAPS[0])) != TOPK_HEAPS[0]:
             continue
         errors = [error(run(args.binary, [
             "--variant", variant, "--library", library, *config,
@@ -401,13 +516,232 @@ def seed_mean_accuracy(args, table, rows, metrics):
         json.dump(entries, f, indent=2)
 
 
+def hydra_labels(spec_text):
+    """The label names of a Hydra datagen spec: its column_label before the
+    value column, in schema order."""
+    match = re.search(r"^column_label:\s*\[(.*)\]", spec_text, re.M)
+    return [name.strip() for name in match.group(1).split(",")][:-1]
+
+
+def hydra_spec(spec_text, records, seed):
+    """`spec_text` at `records` rows, every distribution seed offset by
+    1000 · (seed − 1), so seed 1 is the file as written and each study seed
+    draws every column afresh. Plain text edits: the specs are this repo's."""
+    text = re.sub(r"^row_num:.*$", f"row_num: {records}", spec_text, flags=re.M)
+    return re.sub(r"^(\s*seed:\s*)(\d+)\s*$",
+                  lambda m: f"{m.group(1)}{int(m.group(2)) + 1000 * (seed - 1)}", text,
+                  flags=re.M)
+
+
+def hydra_groupings(labels):
+    """Every non-empty subset of `labels`, in schema order, smallest first."""
+    return [list(c) for n in range(1, len(labels) + 1)
+            for c in itertools.combinations(labels, n)]
+
+
+def hydra_config(variant, w):
+    return " ".join(filter(None, [f"rows={HYDRA_R} cols={w}", HYDRA_CELLS[variant]]))
+
+
+def hydra_jobs(sweeps, specs, records=None):
+    """Every run of `sweeps`, in one fixed order (so `--hydra-shard i/n` picks
+    the same runs on every node): (dataset, dtype, variant, config, W,
+    grouping, records, merge shards, seed). `specs` maps a yaml stem to its
+    text; `records`, if given, replaces each sweep's record counts."""
+    jobs = []
+    for sweep in sweeps:
+        datasets, ws, ns, shards, seeds = HYDRA_SWEEPS[sweep]
+        ns = records or ns
+        for stem, dtype, variants in datasets:
+            groupings = hydra_groupings(hydra_labels(specs[stem]))
+            for variant, w, grouping, n, m, seed in itertools.product(
+                    variants, ws, groupings, ns, shards, range(1, seeds + 1)):
+                jobs.append((stem, dtype, variant, hydra_config(variant, w), w, grouping, n,
+                             m, seed))
+    return jobs
+
+
+def hydra_mem_bytes(job):
+    """A run's estimated peak memory: its m shard grids plus the data."""
+    _, _, variant, _, w, _, n, m, _ = job
+    cell = HYDRA_CELL_BYTES.get(variant, HYDRA_UNIVMON_CELL_BYTES)
+    return m * HYDRA_R * w * cell + n * HYDRA_RECORD_BYTES
+
+
+def read_per_group(path):
+    """[(n_q, error or None)] from a --per-group-out CSV; an empty error is a
+    group the comparator could not score."""
+    with open(path, newline="") as f:
+        return [(int(r["n_q"]), float(r["error"]) if r["error"] else None)
+                for r in csv.DictReader(f)]
+
+
+def covered_max(groups, records, tau):
+    """The worst error over the groups holding >= `tau` of the `records`,
+    plus always the largest group (so no coverage is empty): the eval's
+    covers_share rule. Unscored groups count for "largest" but have no
+    error; "" when no covered group was scored."""
+    if not groups:
+        return ""
+    largest = max(range(len(groups)), key=lambda i: groups[i][0])
+    errors = [e for i, (n_q, e) in enumerate(groups)
+              if e is not None and (i == largest or n_q / records >= tau)]
+    return max(errors) if errors else ""
+
+
+def hydra_row(job, labels, record, groups):
+    """One hydra_saturation.csv row from a run's record and per-group file."""
+    stem, _, variant, config, w, grouping, n, m, seed = job
+    acc = record["bench"]["accuracy"]
+    records = int(acc["records"])
+    return {
+        "variant": variant, "statistic": HYDRA_STATISTICS[variant], "config": config,
+        "R": HYDRA_R, "W": w, "dataset": stem, "group_columns": ",".join(grouping),
+        "schema_width": int(acc["schema_width"]), "records": records,
+        "fanned_mass": int(acc["fanned_mass"]), "merge_shards": m,
+        "merge_split": record["bench"].get("merge_split", ""), "seed": seed,
+        **{k: acc.get(k, "") for k in ("err_mean", "err_p50", "err_p90", "err_max")},
+        "groups_scored": int(acc["groups_scored"]),
+        **{f"err_max_cov_{tau}": covered_max(groups, records, tau) for tau in HYDRA_COVERS},
+    }
+
+
+def hydra_key(row):
+    """A hydra_saturation.csv row's identity, from a row dict (values as the
+    CSV holds them)."""
+    return tuple(str(row[c]) for c in HYDRA_KEY)
+
+
+class MemoryBudget:
+    """Admits a run while the running runs' estimates fit in `total` bytes;
+    a run larger than the whole budget runs alone."""
+
+    def __init__(self, total):
+        self.total, self.used, self.cond = total, 0, threading.Condition()
+
+    def acquire(self, n):
+        with self.cond:
+            self.cond.wait_for(lambda: self.used == 0 or self.used + n <= self.total)
+            self.used += n
+
+    def release(self, n):
+        with self.cond:
+            self.used -= n
+            self.cond.notify_all()
+
+
+def hydra(args):
+    """--phase hydra: every run of --hydra-sweeps (this node's share with
+    --hydra-shard i/n), one row each in --out/hydra_saturation.csv, rows
+    written as runs finish. --resume keeps the rows already there and runs
+    the rest; a failed run is reported and the phase exits 1 at the end."""
+    os.environ.setdefault("BENCH_WARMUP_SECS", "0")
+    # --jobs runs share the cores; polars' own pool would oversubscribe them.
+    os.environ.setdefault("POLARS_MAX_THREADS", "1")
+    os.makedirs(args.out, exist_ok=True)
+    specs = {}
+    for sweep in args.hydra_sweeps.split(","):
+        for stem, _, _ in HYDRA_SWEEPS[sweep][0]:
+            with open(os.path.join(args.datagen, f"{stem}.yaml")) as f:
+                specs[stem] = f.read()
+    ns = [int(float(n)) for n in args.hydra_ns.split(",")] if args.hydra_ns else None
+    jobs = hydra_jobs(args.hydra_sweeps.split(","), specs, ns)
+    ws = {int(w) for w in args.hydra_ws.split(",")} if args.hydra_ws else None
+    groupings = ({tuple(g.split(",")) for g in args.hydra_groupings.split(";")}
+                 if args.hydra_groupings else None)
+    jobs = [j for j in jobs
+            if (ws is None or j[4] in ws)
+            and (groupings is None or tuple(j[5]) in groupings)
+            and j[8] <= (args.hydra_seeds or j[8])
+            and (not args.hydra_variants or j[2] in args.hydra_variants.split(","))
+            and (not args.hydra_datasets or j[0] in args.hydra_datasets.split(","))]
+    shard, n_shards = (int(x) for x in args.hydra_shard.split("/"))
+    jobs = jobs[shard::n_shards]
+
+    table = os.path.join(args.out, HYDRA_TABLE)
+    kept = []
+    if args.resume and os.path.exists(table):
+        with open(table, newline="") as f:
+            # A row cut off mid-write has empty trailing fields; it reruns.
+            kept = [r for r in csv.DictReader(f) if r.get(HYDRA_COLUMNS[-1]) is not None]
+    done = {hydra_key(r) for r in kept}
+    todo = [j for j in jobs if hydra_key({
+        "variant": j[2], "config": j[3], "dataset": j[0], "group_columns": ",".join(j[5]),
+        "records": j[6], "merge_shards": j[7], "seed": j[8]}) not in done]
+    # Largest first, so the long runs do not trail the pool.
+    todo.sort(key=lambda j: (j[6], j[7], j[4]), reverse=True)
+    print(f"{len(jobs)} runs in shard {shard}/{n_shards}, {len(jobs) - len(todo)} kept, "
+          f"{len(todo)} to run", file=sys.stderr)
+
+    spec_dir = os.path.join(args.out, "hydra_specs")
+    group_dir = os.path.join(args.out, "hydra_groups")
+    os.makedirs(spec_dir, exist_ok=True)
+    os.makedirs(group_dir, exist_ok=True)
+    for stem, n, seed in {(j[0], j[6], j[8]) for j in todo}:
+        with open(os.path.join(spec_dir, f"{stem}_n{n}_s{seed}.yaml"), "w") as f:
+            f.write(hydra_spec(specs[stem], n, seed))
+    budget = MemoryBudget(args.hydra_mem_gb * 1e9)
+
+    def measure(i, job):
+        stem, dtype, variant, config, _, grouping, n, m, seed = job
+        labels = hydra_labels(specs[stem])
+        per_group = os.path.join(group_dir, f"{shard}_{i}.csv")
+        operation = ["query"] if m == 1 else [
+            "merge", "--merge-shards", str(m), "--merge-split", "interleaved"]
+        need = hydra_mem_bytes(job)
+        budget.acquire(need)
+        try:
+            record = run(args.binary, [
+                "--variant", variant, "--library", "lib", "--config", config,
+                "--spec", os.path.join(spec_dir, f"{stem}_n{n}_s{seed}.yaml"),
+                "--dtype", dtype,
+                "--group-columns", ",".join(str(labels.index(g)) for g in grouping),
+                "--per-group-out", per_group, "--operations", *operation,
+                "--metrics", "accuracy", "--runs", "1", "--warmup-runs", "0"])
+        finally:
+            budget.release(need)
+        groups = read_per_group(per_group)
+        os.remove(per_group)
+        return record, hydra_row(job, labels, record, groups)
+
+    with open(table, "w", newline="") as f, \
+            open(os.path.join(args.out, "hydra_accuracy.jsonl"), "a") as raw:
+        writer = csv.DictWriter(f, HYDRA_COLUMNS)
+        writer.writeheader()
+        writer.writerows(kept)
+        f.flush()
+        failed = 0
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            futures = {pool.submit(measure, i, j): j for i, j in enumerate(todo)}
+            for k, future in enumerate(as_completed(futures), 1):
+                job = futures[future]
+                try:
+                    record, row = future.result()
+                except (subprocess.CalledProcessError, OSError, KeyError, ValueError) as e:
+                    failed += 1
+                    detail = getattr(e, "stderr", "") or e
+                    print(f"  FAILED {job}: {str(detail).strip()[-500:]}", file=sys.stderr)
+                    continue
+                raw.write(json.dumps(record) + "\n")
+                writer.writerow(row)
+                f.flush()
+                if k % 50 == 0 or k == len(todo):
+                    print(f"  {k}/{len(todo)} runs", file=sys.stderr)
+    print(f"Done. {table}", file=sys.stderr)
+    if failed:
+        print(f"{failed} run(s) failed; --resume reruns them", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--binary", default="./target/release/approxbench")
     parser.add_argument("--out", default="out")
-    parser.add_argument("--families", default="frequency,topk,cardinality,quantile")
+    parser.add_argument("--families", default="frequency,topk,cardinality,quantile,hydra",
+                        help="hydra: --phase optimizer-cost's Hydra rows")
     parser.add_argument("--one-config", action="store_true",
                         help="only the first config of each sketch")
     parser.add_argument("--thetas", default="0,0.5,0.8,1.0,1.2,1.5,2.0")
@@ -427,12 +761,14 @@ def main():
     parser.add_argument("--jobs", type=int, default=1,
                         help="parallel accuracy runs (cost runs are always serial)")
     parser.add_argument("--phase",
-                        choices=["accuracy", "cost", "crossover", "all", "optimizer-cost"],
+                        choices=["accuracy", "cost", "crossover", "all", "optimizer-cost",
+                                 "hydra"],
                         default="all",
                         help="cost reads saturation_curve.csv from --out; crossover "
                              "recomputes crossover.csv from the cost phase's JSONL in --out; "
                              "optimizer-cost writes the optimizer's cost table to --out "
-                             "(the grid's configs at one shape, no curves)")
+                             "(the grid's configs at one shape, no curves); hydra writes "
+                             "hydra_saturation.csv (HYDRA_SWEEPS, its own grid)")
     parser.add_argument("--points-from",
                         help="CSV with sketch,config,dist,param,cardinality columns "
                              "(e.g. a filtered saturation.csv): run only those points")
@@ -445,7 +781,28 @@ def main():
     parser.add_argument("--merge-shards-list", default="",
                         help="accuracy: e.g. 1,4,16,64: also score the sketch merged from "
                              "m shards, for each m>1, into saturation_merge_curve.csv")
+    parser.add_argument("--datagen", default=HYDRA_DATAGEN,
+                        help="hydra: where the sweeps' datagen specs are")
+    parser.add_argument("--hydra-sweeps", default="eval,generic",
+                        help="hydra: which of HYDRA_SWEEPS to run")
+    parser.add_argument("--hydra-shard", default="0/1",
+                        help="hydra: i/n runs every n-th run from the i-th (0-based), "
+                             "to split one sweep across n machines")
+    parser.add_argument("--hydra-mem-gb", type=float, default=200,
+                        help="hydra: start a run only while the running runs' estimated "
+                             "memory fits")
+    # Narrow the sweeps (smoke runs, reruns); each keeps only what it names.
+    parser.add_argument("--hydra-ns", help="hydra: these record counts instead")
+    parser.add_argument("--hydra-ws", help="hydra: only these grid widths")
+    parser.add_argument("--hydra-seeds", type=int, help="hydra: only seeds 1..this")
+    parser.add_argument("--hydra-variants", help="hydra: only these variants")
+    parser.add_argument("--hydra-datasets", help="hydra: only these yaml stems")
+    parser.add_argument("--hydra-groupings",
+                        help="hydra: only these groupings, ';'-separated, labels by name "
+                             "joined by ',' in schema order")
     args = parser.parse_args()
+    if args.phase == "hydra":
+        return hydra(args)
 
     families = args.families.split(",")
     thetas = [float(t) for t in args.thetas.split(",")]

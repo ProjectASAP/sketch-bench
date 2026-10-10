@@ -1,0 +1,65 @@
+# `hydra_http.yaml` with the latency value instead of user_id, for the eval's
+# quantile RQEs (template 16, p99 latency): the same labels, skews and seeds,
+# and an f64 value drawn Pareto(a = 2, scale 1000), the classic set's tail
+# (COST_PARETO_ALPHA).
+#
+# Not modeled, as #196's runner does not model it either: #196 scales each
+# service's latencies by its own factor and makes one endpoint 10x slower.
+# Scaling keeps the tail index, and datagen draws a column independently of
+# the labels, so here every group shares one latency distribution.
+#
+#   approxbench sketchbench --variant hydra-kll --library lib \
+#     --spec configs/datagen/hydra_http_latency.yaml --dtype f64 \
+#     --config "rows=3 cols=1024 cell_k=200" --group-columns 1 \
+#     --operations query --metrics accuracy
+
+column_num: 5
+column_label: [region, service, endpoint, status, latency]
+row_num: 1000000
+
+column_spec:
+  - data_type: string
+    string:
+      min_len: 4
+      max_len: 4
+    distribution:
+      kind: zipf
+      skewness: 0.5
+      population_size: 4
+      seed: 1
+
+  - data_type: string
+    string:
+      min_len: 4
+      max_len: 4
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 25
+      seed: 2
+
+  - data_type: string
+    child_of: 1
+    fan_out: 25
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 25
+      seed: 3
+
+  - data_type: string
+    string:
+      min_len: 3
+      max_len: 3
+    distribution:
+      kind: zipf
+      skewness: 2.0
+      population_size: 4
+      seed: 4
+
+  - data_type: f64
+    distribution:
+      kind: pareto
+      alpha: 2.0
+      scale: 1000.0
+      seed: 5
