@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -241,7 +242,7 @@ class SchemaTemplatesTest(unittest.TestCase):
             self.assertEqual(len(groupings), len({tuple(g) for g in groupings}), n)
         groupings = {n: g for n, *_, g, _ in SCHEMA_TEMPLATES}
         self.assertEqual(len(groupings[15]), 15)
-        self.assertEqual(groupings[17], [["region", "service", "endpoint", "status"]])
+        self.assertEqual(groupings[17], [["service", "endpoint"]])
 
     def test_rqe_entries_name_grouping_coverage_and_shape(self):
         with tempfile.TemporaryDirectory() as out:
@@ -256,7 +257,7 @@ class SchemaTemplatesTest(unittest.TestCase):
         self.assertEqual(r["families"][0]["sketch"], "hll")
         self.assertEqual((r["families"][0]["grid_param"], r["families"][0]["grid_K"]),
                          (0.8, 1_000_000))
-        self.assertIsNone(rqes["t17_distinct_users_by_region,service,endpoint,status/15m"]
+        self.assertIsNone(rqes["t17_distinct_users_by_service,endpoint/15m"]
                           ["covers_share"])
         kll, dd = rqes["t16_p99_latency_by_service,status/5m"]["families"]
         self.assertEqual((kll["grid_param"], kll["grid_K"]), (COST_PARETO_ALPHA, None))
@@ -294,11 +295,19 @@ class SchemaTemplatesTest(unittest.TestCase):
 
     def test_every_covered_rqe_names_its_covered_groups_and_their_items(self):
         for q in synthetic_queries(templates="all"):
-            if q.get("covers_share") is not None:
+            if "grouping" in q:
                 self.assertGreaterEqual(q["covered_groups"], 1)
                 self.assertEqual(q["covered_min_N"],
                                  q["arrival_rate"] * q["range_s"] * q["min_covered_share"])
                 self.assertGreaterEqual(q["covered_min_N"], 1000)
+
+    def test_a_covered_group_below_the_curves_first_n_fails_loudly(self):
+        # Every group of the full label set: the smallest has ~350 items in 5m.
+        full = (17, "distinct_users", "http", "user_id", "cardinality",
+                [all_subsets("http")[-1]], None)
+        with mock.patch("export_autosketch_eval_table.SCHEMA_TEMPLATES", [full]):
+            with self.assertRaises(AssertionError):
+                synthetic_queries(templates="all")
 
     def test_metric_copies_name_their_schema_metrics(self):
         qs = metric_queries({**SYNTHETIC_DEFAULT, "metrics": 2})

@@ -97,10 +97,12 @@ The runner reads each value's data shape (Zipf θ and K, or the Pareto a), the
 groups per grouping and the coverage; the other fields (label skew beyond the
 shares, latency scaling, the anomaly, the burst's sources) describe the data
 and are not modeled. Accuracy is read at N items per group per window: the
-mean group's (`max_N`) for `covers_share` = `null`, else the smallest
-covered group's (`covered_min_N`), the hardest group the target covers. The
-skew of the counted value is the same in every group; label skew changes only
-the group sizes.
+smallest covered group's (`covered_min_N`), the hardest group the target
+covers; for `covers_share` = `null` that is the smallest group of all. The
+generator fails if any RQE's `covered_min_N` is below the curves' first N
+(1e3). The skew of the counted value is the same in every group; label skew
+changes only the group sizes. (RQEs without a `grouping`, `classic`'s, are
+read at the mean group's items, `max_N`, as before.)
 
 | # | Query | Groupings | Covers | Groups (mean items per group in 5m) | Covered groups (smallest covered group's items in 5m) |
 |---|---|---|---|---|---|
@@ -108,8 +110,8 @@ the group sizes.
 | 12 | distinct src_ip | {dst_port}, {dst_subnet, dst_port}, {dst_port, proto} | share ≥ 5% | 1e3, 1e6, 3e3 (1.2e6, 1.2e3, 4e5) | 3, 1, 3 (7.4e7, 4.7e7, 9.2e7) |
 | 14 | distinct user_id | {region}, {service}, {region, service}, {service, endpoint} | share ≥ 1% | 4, 25, 100, 625 (1.5e8 to 9.6e5) | 4, 21, 23, 16 (1.1e8, 6.3e6, 6.3e6, 6.3e6) |
 | 15 | distinct user_id | all 15 non-empty subsets of http's labels | share ≥ 5% | 4 to 1e4 (1.5e8 to 6e4) | 1 to 5 (1.3e7 to 1.1e8) |
-| 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) | all |
-| 17 | distinct user_id | {region, service, endpoint, status} (negative control) | all groups | 1e4 (6e4) | all |
+| 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) | all (5.2e6, 9.3e5, 2.3e5) |
+| 17 | distinct user_id | {service, endpoint} (negative control) | all groups | 625 (9.6e5) | all (4.5e4) |
 
 The plot scripts title `classic` "mixed" and `all` "mixed + multi-grouping"
 (so the committed `templatesall` results, which are `classic`'s, need
@@ -122,13 +124,15 @@ HLL (Zipf θ and K of the value), the p99 KLL and DDSketch (Pareto a = 2),
 at the p95 level. `covers_share` is carried through to each choice in the
 runner's output.
 
-On the committed inputs (`all`, r = 1, CPU weights, `--runs 1`), no RQE is
-dropped and no sanity check fails (the same numbers as with uniform labels); ASAP serves 38 of the 54 new RQEs from a
-finer deployment: every RQE of templates 14 and 15 from an HLL at
-{region, service, status} or at the full label set (bar the RQEs at those
-two groupings), {dst_port} from {dst_port, proto}, and the p99 by
-{service} from DDSketch at {service, status}. 15 active deployments in
-all, 5.06 vCPU; PerQuery-CostAware 11.8 vCPU; AutoSketch 3.42e+03 vCPU.
+On a freshly generated `all` table (`--synthetic`; r = 1, p95, CPU
+weights, `--runs 1`) with the committed saturation inputs (the committed
+`templatesall` tables are `classic`'s), no RQE is dropped and no sanity
+check fails; ASAP serves 40 of the 54 new RQEs from a finer deployment:
+every RQE of templates 14, 15 and 17 from an HLL at {region, service,
+status} or at the full label set (bar the RQEs at those two groupings),
+{dst_port} from {dst_port, proto}, and the p99 by {service} from DDSketch
+at {region, service} or {service, status}. 15 active deployments in all,
+5.05 vCPU; PerQuery-CostAware 11.8 vCPU; AutoSketch 3.42e+03 vCPU.
 
 ## Inputs
 

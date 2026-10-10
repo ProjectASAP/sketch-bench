@@ -292,6 +292,7 @@ SCHEMAS = {
     },
 }
 SCHEMA_WINDOWS = "5m,15m"
+SCHEMA_MIN_COVERED_N = 1e3
 
 
 def all_subsets(metric):
@@ -312,9 +313,8 @@ SCHEMA_TEMPLATES = [
     (15, "distinct_users", "http", "user_id", "cardinality", all_subsets("http"), 0.05),
     (16, "p99_latency", "http", "latency", "quantile",
      [["service"], ["region", "service"], ["service", "status"]], None),
-    # Negative control: the full label set, every group.
-    (17, "distinct_users", "http", "user_id", "cardinality",
-     [all_subsets("http")[-1]], None),
+    # Negative control: every group, the smallest included.
+    (17, "distinct_users", "http", "user_id", "cardinality", [["service", "endpoint"]], None),
 ]
 
 
@@ -376,7 +376,6 @@ def group_coverage(metric, grouping, covers_share):
 
     walk(0, 1.0)
     covered = covered or [largest]
-    assert covered, (metric, grouping)
     return len(covered), min(covered)
 
 
@@ -513,6 +512,10 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                 seen.add((query_id, rng))
                 n_items = schema["rate"] * s / groups
                 covered, min_share = group_coverage(name, grouping, covers)
+                covered_min_n = schema["rate"] * s * min_share
+                # Accuracy is read at the smallest covered group: keep it on
+                # the curves (their first N is 1e3).
+                assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
                 out.append({
                     "dataset": dataset, "query_id": query_id,
                     "kind": "values" if capability == "quantile" else "keys",
@@ -526,7 +529,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     "arrival_rate": schema["rate"],
                     "grouping": grouping, "covers_share": covers, "schema": schema,
                     "covered_groups": covered, "min_covered_share": min_share,
-                    "covered_min_N": schema["rate"] * s * min_share,
+                    "covered_min_N": covered_min_n,
                     "assumptions": [],
                     **DEFAULT_TARGETS,
                 })

@@ -50,8 +50,8 @@
 //! and its RQEs name their `grouping`, so one stream carries several
 //! groupings and a fine deployment can serve a coarse RQE (a roll-up).
 //! Accuracy is read at the mean group's items per window, or, for an RQE with
-//! a `covers_share`, at its smallest covered group's (`min_covered_share` of
-//! the stream's): the hardest group its target covers.
+//! a `covers_share` (`null`: every group), at its smallest covered group's
+//! (`min_covered_share` of the stream's): the hardest group its target covers.
 //!
 //! Costs and accuracy come from `--saturation-dir`, the same inputs the
 //! planner reads (#174): the cost table `optimizer_cost/rqe_atomic_costs.json`
@@ -111,8 +111,8 @@ struct Workload {
     /// every group).
     covers_share: BTreeMap<String, Option<f64>>,
     /// Facts for reading an RQE's accuracy at its smallest covered group, by
-    /// RQE id, for RQEs with a `covers_share`: its stream's, with the series
-    /// scaled so the mean group gets that group's items.
+    /// RQE id, for RQEs with a `covers_share` (`null` too): its stream's,
+    /// with the series scaled so the mean group gets that group's items.
     covered_facts: BTreeMap<String, WorkloadFacts>,
     curves: SaturationCurves,
     notes: Vec<String>,
@@ -328,11 +328,10 @@ fn from_table(
             None if groups > 1 => label_set(&["g"]),
             None => LabelSet::new(),
         };
+        // `null` covers every group, so its smallest is read too.
         if let Some(share) = r.get("covers_share") {
             covers_share.insert(id.clone(), share.as_f64());
-            if !share.is_null() {
-                min_covered_share.insert(id.clone(), r["min_covered_share"].as_f64().unwrap());
-            }
+            min_covered_share.insert(id.clone(), r["min_covered_share"].as_f64().unwrap());
         }
         // One metric per stream, labels {g, x} (or the schema's and x), and
         // with one scrape a second the full label set has one series per
@@ -772,6 +771,14 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
     if let Err(problems) = validate_facts(&raqes, &w.facts) {
         panic!("invalid facts: {problems:?}");
     }
+    for (r, facts) in raqes
+        .iter()
+        .filter_map(|r| Some((r, w.covered_facts.get(&r.id)?)))
+    {
+        if let Err(problems) = validate_facts(std::slice::from_ref(r), facts) {
+            panic!("invalid covered facts: {problems:?}");
+        }
+    }
 
     // AutoSketch: one plan, independent of the weights.
     let mut search_secs = Vec::new();
@@ -1122,11 +1129,11 @@ mod tests {
 
     #[test]
     fn a_schema_stream_carries_every_grouping_and_rolls_up() {
-        let rqe = |grouping: &[&str], groups: u64| {
+        let rqe = |grouping: &[&str], groups: u64, covers: Option<f64>, smallest: f64| {
             json!({
                 "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
                 "capability": "cardinality", "metric": "http", "stream": "http/user_id",
-                "grouping": grouping, "covers_share": 0.05, "min_covered_share": 0.05,
+                "grouping": grouping, "covers_share": covers, "min_covered_share": smallest,
                 "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
                 "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
                 "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
@@ -1137,7 +1144,10 @@ mod tests {
         let table = json!({"workloads": [{
             "dataset": "synthetic/test",
             "schemas": {"http": {"labels": names.map(|n| json!({"name": n}))}},
-            "rqes": [rqe(&["region"], 4), rqe(&["region", "service"], 100)],
+            "rqes": [
+                rqe(&["region"], 4, Some(0.05), 0.05),
+                rqe(&["region", "service"], 100, None, 0.001),
+            ],
         }]});
         let path = std::env::temp_dir().join(format!("schema-table-{}.json", std::process::id()));
         std::fs::write(&path, table.to_string()).unwrap();
@@ -1162,6 +1172,9 @@ mod tests {
         // stream's, so 4 · 5% of the series for {region}'s mean group.
         let covered = &w.covered_facts["t/region"]["synthetic/test/http/user_id"];
         assert_eq!(covered.cardinality[&covered.labels], 400_000);
+        // `null` covers every group: 100 · 0.1% of the series.
+        let every = &w.covered_facts["t/region,service"]["synthetic/test/http/user_id"];
+        assert_eq!(every.cardinality[&every.labels], 200_000);
         // One {region, service} deployment serves both RQEs.
         let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
         let asap = result["results"]
