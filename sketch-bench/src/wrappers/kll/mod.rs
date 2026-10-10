@@ -27,9 +27,13 @@ pub(crate) const KLL_LIB_MAX_LEVELS: usize = 61;
 
 const KLL_LIB_CAPACITY_DECAY: f64 = 2.0 / 3.0;
 
-/// The `m` the library's `init_kll` passes, its minimum level capacity, and the
-/// floor it silently raises a smaller `k` to.
-pub(crate) const KLL_LIB_MIN_LEVEL: usize = LIB_K_MIN as usize;
+/// The `m` the library's `init_kll` passes (`init(k, 8)`), its minimum level
+/// capacity, and the floor it silently raises a smaller `k` to.
+pub(crate) const KLL_LIB_MIN_LEVEL: usize = 8;
+
+// The lib rows refuse a `k` below the library's floor rather than let it be
+// raised silently, so the two must agree.
+const _: () = assert!(LIB_K_MIN as usize == KLL_LIB_MIN_LEVEL);
 
 /// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
 pub(crate) const KLL_LIB_MAX_CACHEABLE_K: usize = LIB_K_MAX as usize;
@@ -59,7 +63,9 @@ pub(crate) fn kll_lib_slots(k: u32) -> usize {
 /// Bytes an `asap_sketchlib::KLL<T>` allocates at construction, whatever it
 /// holds later (`init_internal`): the retained-item slice, the level index,
 /// and the merge buffer's capacity of `k` items. Independent of the item count,
-/// so a window's sketch costs the same however many values it sees.
+/// so a window's sketch costs the same however many values it sees. The
+/// sketch's own allocation only: the cdf row's prepared CDF table, built for
+/// queries, is not counted (nor is the oxide cdf row's).
 fn kll_lib_bytes<T>(k: u32) -> usize {
     kll_lib_slots(k) * std::mem::size_of::<T>()
         + (KLL_LIB_MAX_LEVELS + 1) * std::mem::size_of::<usize>()
