@@ -428,8 +428,16 @@ def optimizer_cost(args, families):
             with open(spec, "w") as f:
                 f.write(hydra_spec(text, COST_N, 1))
             for variant in variants:
+                # --hydra-variants / --hydra-ws narrow these rows as they do
+                # the hydra phase (e.g. to leave out a variant whose 16-shard
+                # merge at the largest W outgrows the machine).
+                if args.hydra_variants and variant not in args.hydra_variants.split(","):
+                    continue
                 metrics[variant] = HYDRA_COST_METRIC
+                hydra_ws = {int(x) for x in args.hydra_ws.split(",")} if args.hydra_ws else None
                 for w in ws[:1] if args.one_config else ws:
+                    if hydra_ws and w not in hydra_ws:
+                        continue
                     config = hydra_config(variant, w)
                     rows.append((variant, "lib", ["--config", config], None,
                                  ["--spec", spec, "--dtype", dtype]))
