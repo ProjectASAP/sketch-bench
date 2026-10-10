@@ -100,7 +100,7 @@ impl GroundTruth for SubpopRankErrorGT {
         metrics.insert(
             "mean_rank_err".into(),
             if scored_groups > 0 {
-                groups.iter().map(|g| g.error).sum::<f64>() / scored_groups as f64
+                groups.iter().filter_map(|g| g.error).sum::<f64>() / scored_groups as f64
             } else {
                 0.0
             },
@@ -164,7 +164,7 @@ fn rank_errors(
         groups.push((
             group.clone(),
             sorted.len() as u64,
-            group_sum / GROUP_GRID_POINTS as f64,
+            Some(group_sum / GROUP_GRID_POINTS as f64),
         ));
     }
     (group_errors(groups.into_iter()), max_err)

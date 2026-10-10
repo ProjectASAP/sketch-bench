@@ -65,8 +65,8 @@ fn scored(
 
 /// Every Hydra family, lib at a grid far larger than its 19 subkeys and the
 /// polars baseline, grouped by column 1 alone and by both columns: both score
-/// (about) zero, and the per-group file has one row per scored group, keyed by
-/// the columns asked.
+/// (about) zero, and the per-group file has one row per group, keyed by the
+/// columns asked.
 #[test]
 fn any_label_subset_is_asked_where_it_was_inserted() {
     let rows = [
@@ -93,7 +93,8 @@ fn any_label_subset_is_asked_where_it_was_inserted() {
                 let mut lines = csv.lines();
                 assert_eq!(lines.next(), Some("group_key,n_q,error"), "{at}");
                 let rows: Vec<&str> = lines.collect();
-                assert_eq!(rows.len() as f64, acc["groups_scored"].as_f64().expect(&at));
+                let scored = rows.iter().filter(|r| !r.ends_with(',')).count();
+                assert_eq!(scored as f64, acc["groups_scored"].as_f64().expect(&at));
                 let n_q: u64 = rows
                     .iter()
                     .map(|r| r.split(',').nth(1).and_then(|n| n.parse::<u64>().ok()))
@@ -134,4 +135,29 @@ fn a_group_column_past_the_labels_is_refused() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--group-columns 2"), "{err}");
+}
+
+/// `--per-group-out` writes an accuracy measurement, so a run that asks for
+/// none is refused rather than leaving an empty file.
+#[test]
+fn per_group_out_without_accuracy_is_refused() {
+    let spec = spec("i64");
+    let csv = spec.with_extension("no-accuracy.csv");
+    let out = Command::new(env!("CARGO_BIN_EXE_approxbench"))
+        .args(["sketchbench", "--variant", "hydra-cms", "--library", "lib"])
+        .args([
+            "--spec",
+            spec.to_str().expect("utf-8 path"),
+            "--dtype",
+            "i64",
+        ])
+        .args(["--per-group-out", csv.to_str().expect("utf-8 path")])
+        .args(["--operations", "query", "--metrics", "throughput"])
+        .args(["--runs", "1", "--warmup-runs", "0"])
+        .output()
+        .expect("approxbench runs");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("none was asked for"), "{err}");
+    assert!(!csv.exists(), "no file is left behind");
 }

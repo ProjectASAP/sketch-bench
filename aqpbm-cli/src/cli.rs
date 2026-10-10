@@ -249,10 +249,12 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Write a `hydra-*` row's per-group errors to this CSV, one row per scored
-    /// group: `group_key,n_q,error` (`n_q` is the group's record count, `error`
-    /// the row's own metric). The record's `err_*` fields summarise the same
-    /// rows. Takes one accuracy measurement: query or merge, not both.
+    /// Write a `hydra-*` row's per-group errors to this CSV, one row per group:
+    /// `group_key,n_q,error` (`n_q` is the group's record count, `error` the
+    /// row's own metric, empty for a group that cannot be scored, such as one
+    /// with zero entropy). The `n_q` sum to the stream's records; the record's
+    /// `err_*` fields summarise the scored rows. Takes exactly one accuracy
+    /// measurement: query or merge.
     #[arg(long, help_heading = "Output")]
     pub per_group_out: Option<String>,
     /// Write one line for the whole invocation instead of one per measurement,

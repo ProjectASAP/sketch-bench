@@ -428,8 +428,8 @@ where
     Ok(bodies)
 }
 
-/// The scorer, also writing each scored group's error to `path` as
-/// `group_key,n_q,error` whenever it scores. Every pass answers the same, so
+/// The scorer, also writing every group to `path` as `group_key,n_q,error`
+/// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
 /// each rewrites the same rows. The file is created here, so a path that
 /// cannot be written fails before anything is measured.
 fn per_group_written<A: 'static>(
@@ -450,7 +450,8 @@ fn per_group_written<A: 'static>(
             } else {
                 g.group
             };
-            csv.push_str(&format!("{key},{},{}\n", g.n_q, g.error));
+            let error = g.error.map_or(String::new(), |e| e.to_string());
+            csv.push_str(&format!("{key},{},{error}\n", g.n_q));
         }
         std::fs::write(&path, csv)
             .unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));

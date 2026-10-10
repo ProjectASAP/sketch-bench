@@ -357,10 +357,12 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         if !variant.starts_with("hydra-") {
             bail!("--per-group-out: only the hydra-* rows score groups, and {variant} is not one");
         }
-        if want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() > 1 {
-            bail!(
+        match want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() {
+            0 => bail!("--per-group-out writes an accuracy measurement, and none was asked for"),
+            1 => {}
+            _ => bail!(
                 "--per-group-out writes one accuracy measurement; ask for query or merge, not both"
-            );
+            ),
         }
     }
     let req = Requirement {

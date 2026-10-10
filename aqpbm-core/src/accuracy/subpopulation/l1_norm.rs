@@ -114,7 +114,7 @@ mod tests {
         let truth = gt.truth(&table).expect("the table has the named columns");
         let probes = gt.probes(&truth);
         let asked: Vec<f64> = probes.iter().map(|p| answers[p]).collect();
-        let rows: Vec<(String, u64, f64)> = gt
+        let rows: Vec<(String, u64, Option<f64>)> = gt
             .per_group(&truth, &probes, &asked)
             .into_iter()
             .map(|g| (g.group, g.n_q, g.error))
@@ -122,10 +122,10 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                ("label0:a;label1:x".to_string(), 2, 0.0),
-                ("label0:b;label1:y".to_string(), 2, 0.5),
-                ("label0:a;label1:y".to_string(), 1, 1.0),
-                ("label0:b;label1:x".to_string(), 1, 0.5),
+                ("label0:a;label1:x".to_string(), 2, Some(0.0)),
+                ("label0:b;label1:y".to_string(), 2, Some(0.5)),
+                ("label0:a;label1:y".to_string(), 1, Some(1.0)),
+                ("label0:b;label1:x".to_string(), 1, Some(0.5)),
             ]
         );
     }
