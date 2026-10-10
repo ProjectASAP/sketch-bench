@@ -148,6 +148,36 @@ pub fn partition<T>(items: &[T], n: usize) -> Vec<&[T]> {
     items.chunks(chunk).collect()
 }
 
+/// How a merge run splits the stream into its shards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MergeSplit {
+    /// Each shard a stretch of the stream, as [`partition`] cuts it.
+    #[default]
+    Contiguous,
+    /// Round-robin by record, so each shard is a sample of the whole stream:
+    /// the stream is first reordered by [`interleave`].
+    Interleaved,
+}
+
+/// The stream reordered so that [`partition`] into `n` hands out a round-robin
+/// split: record `j` goes to the next shard with room, so each shard holds
+/// every `n`-th record, in stream order, and the shard sizes are exactly the
+/// contiguous split's.
+pub fn interleave<T: Clone>(items: &[T], n: usize) -> Vec<T> {
+    let sizes: Vec<usize> = partition(items, n).iter().map(|p| p.len()).collect();
+    let mut shards: Vec<Vec<T>> = sizes.iter().map(|&len| Vec::with_capacity(len)).collect();
+    let mut next = 0;
+    for item in items {
+        // Only the last shard can be short, so this skips at most once a round.
+        while shards[next].len() == sizes[next] {
+            next = (next + 1) % sizes.len();
+        }
+        shards[next].push(item.clone());
+        next = (next + 1) % sizes.len();
+    }
+    shards.concat()
+}
+
 // All four helpers below exist for one rule: a row that cannot build at the
 // requested parameters says so, and never builds at different ones under the
 // requested label — so `sketch_config` is always the config that ran.
@@ -231,4 +261,34 @@ pub fn hh_heap_footprint(capacity: usize) -> usize {
         capacity,
         std::mem::size_of::<asap_sketchlib::input::HHItem>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cut by [`partition`], the interleaved stream deals record `j` to shard
+    /// `j mod n` while every shard has room, and keeps the contiguous split's
+    /// sizes, including its short last shard.
+    #[test]
+    fn interleave_deals_round_robin_at_the_contiguous_sizes() {
+        let items: Vec<usize> = (0..10).collect();
+        let shards: Vec<Vec<usize>> = partition(&interleave(&items, 4), 4)
+            .iter()
+            .map(|s| s.to_vec())
+            .collect();
+        // Contiguous: chunks of 3, so sizes 3, 3, 3, 1; record 7 skips the
+        // full last shard.
+        assert_eq!(
+            shards,
+            vec![vec![0, 4, 7], vec![1, 5, 8], vec![2, 6, 9], vec![3]]
+        );
+        // Divisible: every shard is one residue class.
+        let shards = partition(&interleave(&items, 5), 5)
+            .iter()
+            .map(|s| s.to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(shards, (0..5).map(|r| vec![r, r + 5]).collect::<Vec<_>>());
+        assert!(interleave::<usize>(&[], 4).is_empty());
+    }
 }

@@ -234,6 +234,17 @@ pub struct SketchbenchArgs {
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,
+    /// How the merge operation splits the stream into its shards: `contiguous`
+    /// cuts it into stretches, `interleaved` deals it round-robin by record, so
+    /// each shard is a sample of the whole stream. The shard sizes are the same
+    /// either way.
+    #[arg(
+        long,
+        default_value = "contiguous",
+        value_parser = ["contiguous", "interleaved"],
+        help_heading = "Measurement content"
+    )]
+    pub merge_split: String,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]

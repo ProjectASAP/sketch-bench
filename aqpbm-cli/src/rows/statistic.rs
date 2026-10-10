@@ -343,6 +343,7 @@ pub(super) fn scored_row<G, I>(
     prepare: Option<PrepareBody<I>>,
 ) -> Result<Measurements, RunError>
 where
+    I: Clone,
     G: GroundTruth + 'static,
     G::Truth: 'static,
     G::Probe: 'static,
@@ -350,6 +351,12 @@ where
 {
     let (probes, score) = questions(ground_truth, &table)?;
     let items = materialise(description, table)?;
+    // What the folds cut into shards: the stream itself, or reordered so the
+    // same cut deals it round-robin.
+    let merged = match req.merge_split {
+        MergeSplit::Contiguous => items.clone(),
+        MergeSplit::Interleaved => Rc::new(interleave(&items, shards(req))),
+    };
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {
         let n = passes(req, metric);
@@ -371,7 +378,7 @@ where
             (Operation::Merge, Metric::Accuracy) => answered(
                 merge.expect(SUPPORTED).2(
                     &req.params,
-                    items.clone(),
+                    merged.clone(),
                     probes.clone(),
                     shards(req),
                     n,
@@ -381,11 +388,11 @@ where
                 metric,
             ),
             (Operation::Merge, Metric::Latency) => stepped(
-                merge.expect(SUPPORTED).1(&req.params, items.clone(), shards(req), n)
+                merge.expect(SUPPORTED).1(&req.params, merged.clone(), shards(req), n)
                     .map_err(cannot_build)?,
             ),
             (Operation::Merge, _) => timed(
-                merge.expect(SUPPORTED).0(&req.params, items.clone(), shards(req), n)
+                merge.expect(SUPPORTED).0(&req.params, merged.clone(), shards(req), n)
                     .map_err(cannot_build)?,
                 (shards(req) - 1) as u64,
             ),
