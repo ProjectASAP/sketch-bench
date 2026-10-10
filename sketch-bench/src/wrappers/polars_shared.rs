@@ -5,6 +5,7 @@
 use crate::wrappers::hll::CardinalityValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
@@ -274,7 +275,7 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
             if !out.is_empty() {
                 out.push(';');
             }
-            out.push_str(&format!("label{j}:"));
+            let _ = write!(out, "label{j}:");
             for ch in part.chars() {
                 if matches!(ch, '\\' | ':' | ';') {
                     out.push('\\');
@@ -544,8 +545,8 @@ mod tests {
         assert_eq!(prefix_key(&["a", "b"]), "label0:a;label1:b");
     }
 
-    /// #74: with both columns holding `a`, the column-0 group `a` saw one
-    /// record. The old untagged keys counted it twice, once per column.
+    /// #74: the column-0 group `a` holds 2 records (`a;a`, `a;b`). The old
+    /// untagged key counted 3: `a;a`'s `a` once per column.
     #[test]
     fn a_value_shared_by_two_columns_is_counted_once() {
         let mut core = PolarsSubpopFrequencyCore::<i64>::default();

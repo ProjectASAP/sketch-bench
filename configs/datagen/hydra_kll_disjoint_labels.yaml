@@ -1,8 +1,9 @@
 # `hydra_columns_f64.yaml` with a separate alphabet per label column, so a key1
 # value can never render the same as a key2 value. Since #74 the sketch and the
 # `polars` baseline both key subsets by column, so the shared alphabet no longer
-# aliases either; this file stays as the disjoint-domain case. `export_rqe_optimizer_costs.sh` priced `hydra-kll` on it
-# until #174; HydraKLL has no saturation curve, so nothing measures it now.
+# aliases either; this file stays as the disjoint-domain case.
+# `export_rqe_optimizer_costs.sh` priced `hydra-kll` on it until #174; HydraKLL
+# has no saturation curve, so nothing measures it now.
 
 column_num: 3
 column_label: [key1, key2, value]
