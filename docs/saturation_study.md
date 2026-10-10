@@ -315,7 +315,8 @@ awk 'FNR > 1 || NR == 1' out_hydra_*/hydra_saturation.csv > hydra_saturation.csv
 ```
 
 `--phase optimizer-cost` also measures the eval variants at each eval `W` on
-their datasets (full schema, `COST_N` records, `--families` includes `hydra`):
+their datasets (full schema, `COST_N` records, 3 runs after 1 warm-up, `--families`
+includes `hydra`):
 `insert_cpu_secs` per record at that schema width, `merge_cpu_secs` per grid
 merge, `query_cpu_secs` per probe (a group, or a group and quantile), memory
 per grid; `measured_at` names the `dataset` and `schema_width`. Their accuracy
