@@ -50,7 +50,6 @@ use report_sink::ReportSink;
 // not know the set; it asks.
 use sketch_bench::registry;
 use sketch_bench::request::Requirement;
-use sketch_bench::wrappers::MergeSplit;
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -358,10 +357,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         width,
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
-        merge_split: match args.merge_split.as_str() {
-            "interleaved" => MergeSplit::Interleaved,
-            _ => MergeSplit::Contiguous,
-        },
+        merge_split: args.merge_split,
         comparator: args.comparator.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
@@ -444,6 +440,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // and a record states what ran rather than what was asked for.
         if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+            report.bench.merge_split = Some(args.merge_split);
         }
         reports.push(report);
     }

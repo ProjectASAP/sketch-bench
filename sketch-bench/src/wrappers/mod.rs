@@ -148,16 +148,9 @@ pub fn partition<T>(items: &[T], n: usize) -> Vec<&[T]> {
     items.chunks(chunk).collect()
 }
 
-/// How a merge run splits the stream into its shards.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MergeSplit {
-    /// Each shard a stretch of the stream, as [`partition`] cuts it.
-    #[default]
-    Contiguous,
-    /// Round-robin by record, so each shard is a sample of the whole stream:
-    /// the stream is first reordered by [`interleave`].
-    Interleaved,
-}
+/// How a merge run splits the stream into its shards: `Contiguous` as
+/// [`partition`] cuts it, `Interleaved` reordered first by [`interleave`].
+pub use aqpbm_core::MergeSplit;
 
 /// The stream reordered so that [`partition`] into `n` hands out a round-robin
 /// split: record `j` goes to the next shard with room, so each shard holds

@@ -352,10 +352,13 @@ where
     let (probes, score) = questions(ground_truth, &table)?;
     let items = materialise(description, table)?;
     // What the folds cut into shards: the stream itself, or reordered so the
-    // same cut deals it round-robin.
+    // same cut deals it round-robin. Copied only when a merge will use it.
+    let merging = want
+        .iter()
+        .any(|&(operation, _)| operation == Operation::Merge);
     let merged = match req.merge_split {
-        MergeSplit::Contiguous => items.clone(),
-        MergeSplit::Interleaved => Rc::new(interleave(&items, shards(req))),
+        MergeSplit::Interleaved if merging => Rc::new(interleave(&items, shards(req))),
+        _ => items.clone(),
     };
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {

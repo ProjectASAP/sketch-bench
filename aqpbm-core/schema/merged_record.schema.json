@@ -100,7 +100,7 @@
       "minimum": 0
     },
     "merge_accuracy": {
-      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` contiguous\nshards. A linear sketch should match `query_accuracy` exactly."
+      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` shards split\nas `merge_split` says. A linear sketch should match `query_accuracy`\nexactly under either split."
     },
     "merge_cpu_time_ms": {
       "anyOf": [
@@ -146,6 +146,18 @@
       ],
       "format": "uint",
       "minimum": 0
+    },
+    "merge_split": {
+      "description": "How the stream was split into the `merge_shards` shards.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MergeSplit"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "merge_supported": {
       "type": [
@@ -322,6 +334,7 @@
     "merge_heap_allocated_kb",
     "merge_rss_peak_kb",
     "merge_shards",
+    "merge_split",
     "merge_supported",
     "merge_timestamp",
     "merge_wall_time_ms",
@@ -692,6 +705,21 @@
         "p999",
         "max",
         "count"
+      ]
+    },
+    "MergeSplit": {
+      "description": "How a merge run split the stream into its shards.",
+      "oneOf": [
+        {
+          "description": "Each shard a consecutive stretch of the stream.",
+          "type": "string",
+          "const": "contiguous"
+        },
+        {
+          "description": "Round-robin by record over the contiguous split's shard sizes, so each\nshard is a sample of the whole stream.",
+          "type": "string",
+          "const": "interleaved"
+        }
       ]
     },
     "Mode": {

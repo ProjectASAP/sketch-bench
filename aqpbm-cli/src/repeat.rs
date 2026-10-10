@@ -220,6 +220,7 @@ mod tests {
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_folds_per_sec: Some(stats(mean * 0.5)),
             merge_shards: Some(4),
+            merge_split: None,
             merge_supported: Some(true),
         });
         rec
