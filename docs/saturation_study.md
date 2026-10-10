@@ -548,7 +548,8 @@ Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
 - **Accuracy after merging** is now measured (`--operations merge --metrics
   accuracy --merge-shards m`, or `--merge-shards-list 1,4,16,64` here, into
   `saturation_merge_curve.csv`): the N-item stream is split into m contiguous
-  shards, one sketch per shard is folded into one, and it is scored with the
+  shards (approxbench `--merge-split interleaved` deals it round-robin), one
+  sketch per shard is folded into one, and it is scored with the
   query's comparator against the whole-stream truth. A bounded run (first
   config per sketch, N up to 1e7, 3 seeds, theta 0.5/1.0/1.5, K 1e3/1e5/1e7,
   alpha 1.1/2) found:

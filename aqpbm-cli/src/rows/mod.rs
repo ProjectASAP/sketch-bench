@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use sketch_bench::request::{Dtype, Requirement};
 use sketch_bench::wrappers::{
-    BuildError, Folds, InsertBody, InsertStepBody, ParallelInsertBody, PrepareBody, QueryBody,
-    QueryPass, StepPass,
+    interleave, BuildError, Folds, InsertBody, InsertStepBody, MergeSplit, ParallelInsertBody,
+    PrepareBody, QueryBody, QueryPass, StepPass,
 };
 
 /// A row that cannot be built at the requested config says so in its own words;

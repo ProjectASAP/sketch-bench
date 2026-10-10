@@ -447,6 +447,17 @@ approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"r
 `--spec configs/datagen/hydra_columns.yaml` is how user can define the synthetic table for insertion.
 The file can be found [under configs directory](./configs/datagen/hydra_columns.yaml).
 
+**`--merge-shards`**: how many shards `merge` folds: the stream is split that
+many ways, one sketch is fed per shard, and the sketches are folded into one.
+
+**`--merge-split`**: how the stream is split into those shards. `contiguous`
+(the default) cuts it into consecutive stretches; `interleaved` deals it
+round-robin by record, so each shard is a sample of the whole stream (records
+`0, k, 2k, ...` go to the first of `k` shards). The shard sizes are the same
+either way. CMS, CountSketch and HLL cells (and their Hydra grids) merge
+exactly, so they answer identically under both; KLL and UnivMon merges are
+lossy and can differ.
+
 **`--flat`**: flatten record such that output data of multiple experiments is flatten into one json file.
 
 **`--group-columns`** (Hydra rows only): which label columns the subpopulation is taken over, as comma-separated indices into the columns before the value column, e.g. `1` or `0,1`; default `0`.
