@@ -1,5 +1,5 @@
 # `hydra_columns.yaml` at a row count the UnivMon-celled rows can run:
-# `hydra-univmon-cardinality`, `-l1-norm`, `-l2-norm` and `-entropy`. The label
+# `hydra-univmon-cardinality`, `-l1-norm`, `-l2-norm`, `-entropy` and `-sum`. The label
 # columns and every distribution parameter match that file exactly, so the
 # workload is the same shape read at a smaller size.
 #

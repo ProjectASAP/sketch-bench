@@ -519,7 +519,7 @@ impl<T: CardinalityValue> PolarsSubpopVectorCore<T> {
     }
 }
 
-fn grouped_values<T: CardinalityValue>(
+pub(crate) fn grouped_values<T: CardinalityValue>(
     buf: &[(String, T)],
     aggregate: impl Fn(LazyFrame) -> LazyFrame,
 ) -> Option<DataFrame> {

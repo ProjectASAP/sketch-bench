@@ -11,9 +11,11 @@ pub(crate) use super::hydra_shared::{
     check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
 };
 
-pub(crate) use crate::wrappers::kll::{kll_lib_slots as kll_cell_slots, KLL_LIB_MAX_LEVELS};
+pub(crate) use crate::wrappers::kll::kll_lib_bytes as kll_cell_bytes;
 #[cfg(test)]
-use crate::wrappers::kll::{KLL_LIB_MAX_CACHEABLE_K, KLL_LIB_MIN_LEVEL};
+use crate::wrappers::kll::{
+    kll_lib_slots as kll_cell_slots, KLL_LIB_MAX_CACHEABLE_K, KLL_LIB_MAX_LEVELS, KLL_LIB_MIN_LEVEL,
+};
 
 #[cfg(test)]
 mod tests {
@@ -103,6 +105,34 @@ mod tests {
         );
     }
 
+    /// A cell is a whole `KLL`, merge buffer included, as the `kll-*` lib rows
+    /// count it. Hand-derived: at `k = 200`, 1004 retained slots (above) plus
+    /// 200 buffer items, 8 bytes each, plus 62 level offsets.
+    #[test]
+    fn kll_footprint_counts_each_cells_merge_buffer() {
+        let per_cell = (1004 + 200) * 8 + 62 * std::mem::size_of::<usize>();
+        assert_eq!(
+            memory_hydra_kll(&built_kll()),
+            3 * 64 * per_cell + grid_overhead_bytes(3, 64)
+        );
+    }
+
+    /// Below `k` the cell keeps every value, so `Cdf(x)` is the exact share at
+    /// or below `x`, inside the group only.
+    #[test]
+    fn kll_cdf_is_the_share_at_or_below_inside_the_group() {
+        let mut h = built_kll();
+        for v in 1..=100 {
+            fed_kll(&mut h, &frecord("a;x", v as f64));
+        }
+        for _ in 0..300 {
+            fed_kll(&mut h, &frecord("b;x", 0.5));
+        }
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 25.0), 0.25);
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 100.0), 1.0);
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 0.9), 0.0);
+    }
+
     #[test]
     fn kll_zero_cell_k_is_refused_by_name() {
         let bad = ParamSet::of(&HydraKllParams {
@@ -117,5 +147,32 @@ mod tests {
             err.to_string().contains("cell_k"),
             "error should name the field: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::polars::*;
+    use crate::params::{ParamSet, SketchParams};
+    use crate::wrappers::hydra_kll::HydraKllParams;
+    use std::rc::Rc;
+
+    /// `a` holds 10, 10, 20: `F_a(10)` counts both tens, `F_a(15)` too, and
+    /// `F_a(5)` nothing. A group never seen answers NaN, not a share.
+    #[test]
+    fn the_cdf_baseline_answers_the_share_at_or_below() {
+        let stream = Rc::new(vec![
+            ("a;x".to_string(), 10.0),
+            ("a;y".to_string(), 10.0),
+            ("a;x".to_string(), 20.0),
+            ("b;x".to_string(), 30.0),
+        ]);
+        let a = || vec![Some("a".to_string())];
+        let probes = Rc::new(vec![(a(), 10.0), (a(), 15.0), (a(), 5.0), (a(), 20.0)]);
+        let params = ParamSet::of(&HydraKllParams::canonical());
+        let mut passes =
+            query_polars_subpop_cdf::<f64>(&params, stream, probes, 1).expect("baseline builds");
+        let answers = passes.pop().expect("one pass")().0;
+        assert_eq!(answers, vec![2.0 / 3.0, 2.0 / 3.0, 0.0, 1.0]);
     }
 }

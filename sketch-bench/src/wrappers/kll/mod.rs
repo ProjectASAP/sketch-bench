@@ -65,8 +65,9 @@ pub(crate) fn kll_lib_slots(k: u32) -> usize {
 /// and the merge buffer's capacity of `k` items. Independent of the item count,
 /// so a window's sketch costs the same however many values it sees. The
 /// sketch's own allocation only: the cdf row's prepared CDF table, built for
-/// queries, is not counted (nor is the oxide cdf row's).
-fn kll_lib_bytes<T>(k: u32) -> usize {
+/// queries, is not counted (nor is the oxide cdf row's). Each `hydra-kll`
+/// cell is one of these.
+pub(crate) fn kll_lib_bytes<T>(k: u32) -> usize {
     kll_lib_slots(k) * std::mem::size_of::<T>()
         + (KLL_LIB_MAX_LEVELS + 1) * std::mem::size_of::<usize>()
         + kll_lib_k(k) * std::mem::size_of::<T>()

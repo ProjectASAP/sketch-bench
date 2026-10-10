@@ -253,3 +253,65 @@ pub(crate) fn row_hydra_kll_polars(
         other => Err(no_build_at(req, other)),
     }
 }
+
+pub(crate) fn row_hydra_kll_cdf_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            subpop_cdf_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hks::insert_hydra_kll::<$t>,
+                hks::insert_step_hydra_kll::<$t>,
+                hks::query_hydra_kll_cdf::<$t>,
+                Some((
+                    hks::merge_hydra_kll::<$t>,
+                    hks::merge_step_hydra_kll::<$t>,
+                    hks::merge_query_hydra_kll_cdf::<$t>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_hydra_kll_cdf_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            subpop_cdf_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hkp::insert_polars_subpop_quantile::<$t>,
+                hkp::insert_step_polars_subpop_quantile::<$t>,
+                hkp::query_polars_subpop_cdf::<$t>,
+                None,
+                Some(hkp::prepare_polars_subpop_quantile::<$t>),
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        other => Err(no_build_at(req, other)),
+    }
+}

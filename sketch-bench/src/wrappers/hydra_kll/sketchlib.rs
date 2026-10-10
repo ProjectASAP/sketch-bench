@@ -49,18 +49,21 @@ impl HydraKll {
     pub fn estimate_subpop_quantile(&self, labels: &[Option<&str>], phi: f64) -> f64 {
         query(&self.inner, labels, &HydraQuery::Quantile(phi), "hydra-kll")
     }
+
+    /// `HydraQuery::Cdf`: the share of the group at or below `x`, the question
+    /// the `hydra-kll-cdf` row asks.
+    #[inline]
+    pub fn estimate_subpop_cdf(&self, labels: &[Option<&str>], x: f64) -> f64 {
+        query(&self.inner, labels, &HydraQuery::Cdf(x), "hydra-kll")
+    }
 }
 
-/// Retained slots per cell times the grid area, plus the level index every
-/// cell carries. Analytic because the cell allocates once — see
-/// `kll_lib_slots` in this crate's `kll` module for the per-cell count. Unlike
-/// the `kll-percall` lib rows (`kll_lib_bytes`), each cell's merge buffer of
-/// `cell_k` items is not counted.
+/// One `asap_sketchlib::KLL` per cell times the grid area: its retained
+/// slots, level index and merge buffer of `cell_k` items, as the `kll-*` lib
+/// rows count them (`kll_lib_bytes`). Analytic because the cell allocates once.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     let p = &sketch.params;
-    let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
-        + (KLL_LIB_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
-    p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
+    p.rows * p.cols * kll_cell_bytes::<f64>(p.cell_k) + grid_overhead_bytes(p.rows, p.cols)
 }
 
 pub fn insert_hydra_kll<V: QuantileValue + 'static>(
@@ -127,6 +130,52 @@ pub fn merge_query_hydra_kll<V: QuantileValue + 'static>(
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_kll(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        HydraKll::estimate_subpop_quantile,
+    )
+}
+
+pub fn query_hydra_kll_cdf<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hydra_kll_cdf(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_kll_cdf<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_kll(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        HydraKll::estimate_subpop_cdf,
+    )
+}
+
+fn asked_hydra_kll<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    shards: usize,
+    passes: usize,
+    estimate: fn(&HydraKll, &[Option<&str>], f64) -> f64,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built, fed and folded here: the closure below asks, and only asks.
@@ -141,7 +190,7 @@ pub fn merge_query_hydra_kll<V: QuantileValue + 'static>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.estimate_subpop_quantile(&labels(&p.0), p.1));
+                answers.push(estimate(&sketch, &labels(&p.0), p.1));
             }
             let footprint = memory_hydra_kll(&sketch);
             (answers, footprint)
