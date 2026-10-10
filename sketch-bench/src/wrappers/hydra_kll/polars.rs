@@ -56,6 +56,18 @@ impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
         let idx = ((phi * values.len() as f64).floor() as usize).min(values.len() - 1);
         values[idx]
     }
+
+    /// The share of the group at or below `x`: exact, so the CDF-error
+    /// comparator scores it zero.
+    pub fn estimate_subpop_cdf(&self, labels: &[Option<&str>], x: f64) -> f64 {
+        let Some(values) = self.sorted.get(&group_key(labels)) else {
+            return f64::NAN;
+        };
+        if values.is_empty() {
+            return f64::NAN;
+        }
+        values.partition_point(|v| *v <= x) as f64 / values.len() as f64
+    }
 }
 
 pub fn memory_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem>(
@@ -160,6 +172,38 @@ pub fn query_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'stati
     probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_polars_subpop(
+        params,
+        items,
+        probes,
+        passes,
+        PolarsSubpopQuantile::estimate_subpop_quantile,
+    )
+}
+
+/// The `hydra-kll-cdf` baseline: the same sorted groups, asked at a value.
+pub fn query_polars_subpop_cdf<T: QuantileValue + PolarsColumnItem + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, T)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_polars_subpop(
+        params,
+        items,
+        probes,
+        passes,
+        PolarsSubpopQuantile::estimate_subpop_cdf,
+    )
+}
+
+fn asked_polars_subpop<T: QuantileValue + PolarsColumnItem + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, T)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    passes: usize,
+    estimate: fn(&PolarsSubpopQuantile<T>, &[Option<&str>], f64) -> f64,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built and fed here: the closure below asks, and only asks.
@@ -172,7 +216,7 @@ pub fn query_polars_subpop_quantile<T: QuantileValue + PolarsColumnItem + 'stati
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.estimate_subpop_quantile(&labels(&p.0), p.1));
+                answers.push(estimate(&sketch, &labels(&p.0), p.1));
             }
             let footprint = memory_polars_subpop_quantile(&sketch);
             (answers, footprint)

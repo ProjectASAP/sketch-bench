@@ -24,12 +24,12 @@ pub struct SubpopRankErrorGT {
 
 /// The ordered statistic inside each group, plus the groups worth probing.
 pub struct SubpopRankTruth {
-    per_group: HashMap<GroupKey, Vec<f64>>,
+    pub(super) per_group: HashMap<GroupKey, Vec<f64>>,
     /// Every group, shuffled: probe order must not hand the baseline the
     /// locality the encounter order would.
-    probed: Vec<GroupKey>,
-    items: usize,
-    schema_width: usize,
+    pub(super) probed: Vec<GroupKey>,
+    pub(super) items: usize,
+    pub(super) schema_width: usize,
 }
 
 impl GroundTruth for SubpopRankErrorGT {

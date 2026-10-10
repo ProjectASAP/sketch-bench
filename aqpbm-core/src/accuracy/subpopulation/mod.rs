@@ -2,20 +2,24 @@
 //! subpopulation, one comparator per statistic.
 
 mod cardinality;
+mod cdf_error;
 mod entropy;
 mod frequency;
 mod frequency_vector;
 mod l1_norm;
 mod l2_norm;
 mod rank_error;
+mod sum;
 
 pub use cardinality::{SubpopCardTruth, SubpopCardinalityGT};
+pub use cdf_error::SubpopCdfErrorGT;
 pub use entropy::{entropy, SubpopEntropyGT};
 pub use frequency::{SubpopFreqTruth, SubpopFrequencyGT};
 pub use frequency_vector::SubpopVectorTruth;
 pub use l1_norm::{l1_norm, SubpopL1NormGT};
 pub use l2_norm::{l2_norm, SubpopL2NormGT};
 pub use rank_error::{SubpopRankErrorGT, SubpopRankTruth};
+pub use sum::SubpopSumGT;
 
 use std::collections::BTreeMap;
 

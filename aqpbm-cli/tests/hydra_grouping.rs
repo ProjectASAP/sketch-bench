@@ -74,8 +74,14 @@ fn any_label_subset_is_asked_where_it_was_inserted() {
         ("hydra-cs", "rows=3 cols=1024 cell_rows=3 cell_cols=256", "i64"),
         ("hydra-hll", "rows=3 cols=1024", "i64"),
         ("hydra-kll", "rows=3 cols=1024 cell_k=4096", "f64"),
+        ("hydra-kll-cdf", "rows=3 cols=1024 cell_k=4096", "f64"),
         (
             "hydra-univmon-l1-norm",
+            "rows=3 cols=1024 cell_heap_size=64 cell_sketch_row=3 cell_sketch_col=256 cell_layer_size=4",
+            "i64",
+        ),
+        (
+            "hydra-univmon-sum",
             "rows=3 cols=1024 cell_heap_size=64 cell_sketch_row=3 cell_sketch_col=256 cell_layer_size=4",
             "i64",
         ),
@@ -160,4 +166,27 @@ fn per_group_out_without_accuracy_is_refused() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("none was asked for"), "{err}");
     assert!(!csv.exists(), "no file is left behind");
+}
+
+/// The sum rows count each value by itself, an integer weight: an `f64`
+/// value column is refused by name, at both libraries.
+#[test]
+fn a_float_sum_is_refused_by_name() {
+    let spec = spec("f64");
+    for library in ["lib", "polars"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_approxbench"))
+            .args(["sketchbench", "--variant", "hydra-univmon-sum"])
+            .args(["--library", library, "--dtype", "f64"])
+            .args(["--spec", spec.to_str().expect("utf-8 path")])
+            .args(["--operations", "query", "--metrics", "accuracy"])
+            .args(["--runs", "1", "--warmup-runs", "0"])
+            .output()
+            .expect("approxbench runs");
+        assert!(!out.status.success(), "{library}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("f64") && err.contains("integer"),
+            "{library}: {err}"
+        );
+    }
 }

@@ -61,32 +61,39 @@ pub(super) fn truth_over(
     fold: impl Fn(&[u64]) -> f64,
 ) -> Result<SubpopVectorTruth, DataGenError> {
     let counts = counts_per_group(table, group_columns, value_column)?;
-    let exact: HashMap<GroupKey, f64> = counts
+    let exact = counts.iter().map(|(g, c)| (g.clone(), fold(c))).collect();
+    let sizes = counts
         .iter()
-        .map(|(group, counts)| (group.clone(), fold(counts)))
+        .map(|(g, c)| (g.clone(), c.iter().sum()))
         .collect();
+    Ok(truth_of(exact, sizes, table.row_num, value_column))
+}
 
+/// The truth over each group's exact statistic and record count, however the
+/// statistic was taken. `schema_width` is the label columns before the value.
+pub(super) fn truth_of(
+    exact: HashMap<GroupKey, f64>,
+    sizes: HashMap<GroupKey, u64>,
+    records: u64,
+    schema_width: usize,
+) -> SubpopVectorTruth {
     let mut by_statistic: Vec<(GroupKey, f64)> =
         exact.iter().map(|(g, v)| (g.clone(), *v)).collect();
     by_statistic.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let sized: Vec<(GroupKey, u64)> = by_statistic
         .iter()
-        .map(|(g, _)| {
-            let size = counts.get(g).map(|c| c.iter().sum()).unwrap_or(0);
-            (g.clone(), size)
-        })
+        .map(|(g, _)| (g.clone(), sizes.get(g).copied().unwrap_or(0)))
         .collect();
     let all = curve::shuffled(&sized);
-    let sizes = sized.into_iter().collect();
     let ranked = by_statistic.into_iter().map(|(g, _)| g).collect();
-    Ok(SubpopVectorTruth {
+    SubpopVectorTruth {
         exact,
         ranked,
         all,
         sizes,
-        records: table.row_num,
-        schema_width: value_column,
-    })
+        records,
+        schema_width,
+    }
 }
 
 pub(super) fn probes_over(truth: &SubpopVectorTruth) -> Vec<GroupKey> {
