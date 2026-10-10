@@ -59,8 +59,11 @@ impl HydraKll {
 }
 
 /// One `asap_sketchlib::KLL` per cell times the grid area: its retained
-/// slots, level index and merge buffer of `cell_k` items, as the `kll-*` lib
-/// rows count them (`kll_lib_bytes`). Analytic because the cell allocates once.
+/// slots and level index, allocated with the grid, plus its merge buffer at
+/// its `cell_k`-item bound (`kll_lib_bytes`). The grid clones its cells from
+/// one template and a cloned `Vec` keeps no capacity, so a cell's buffer is
+/// empty at build and grows to about `cell_k` items once its level 0 first
+/// compacts: this is the steady-state footprint, not the one at build.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     let p = &sketch.params;
     p.rows * p.cols * kll_cell_bytes::<f64>(p.cell_k) + grid_overhead_bytes(p.rows, p.cols)
