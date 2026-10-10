@@ -131,6 +131,25 @@ mod tests {
         assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 25.0), 0.25);
         assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 100.0), 1.0);
         assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 0.9), 0.0);
+        // Ties count as at or below: every one of b's values is 0.5.
+        assert_eq!(h.estimate_subpop_cdf(&[Some("b")], 0.5), 1.0);
+
+        // Mixed ties, on a grid wide enough that `c` shares no cell: its 2s
+        // are three of its five values.
+        let mut wide = build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 4096,
+                cell_k: 200,
+            }),
+            2,
+        )
+        .expect("canonical dimensions build");
+        for v in [1.0, 2.0, 2.0, 2.0, 3.0] {
+            fed_kll(&mut wide, &frecord("c;y", v));
+        }
+        assert_eq!(wide.estimate_subpop_cdf(&[Some("c")], 2.0), 0.8);
+        assert_eq!(wide.estimate_subpop_cdf(&[Some("c")], 1.0), 0.2);
     }
 
     #[test]
