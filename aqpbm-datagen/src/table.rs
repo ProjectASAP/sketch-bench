@@ -16,9 +16,9 @@ use crate::{inject_interval_bursts, BurstSpec};
 
 /// Scramble a latent rank before dividing it among connected columns. This
 /// SplitMix64 finalizer spreads nearby ranks across the word while keeping the
-/// mapping deterministic.
+/// mapping deterministic. Also hashes a `scale_by` label to its factor.
 #[inline]
-fn mix_connected_bits(mut x: u64) -> u64 {
+pub(crate) fn mix_connected_bits(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -119,6 +119,46 @@ impl TableDescription {
             })?;
         }
 
+        // A child is generated after its parent, which an earlier index
+        // guarantees and which also rules out a column nesting under itself.
+        for (i, spec) in self.column_spec.iter().enumerate() {
+            let Some(parent) = spec.child_of else {
+                continue;
+            };
+            let label = &self.column_label[i];
+            if parent >= i {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': child_of {parent} has to name an earlier column, \
+                     one of 0..{i}"
+                )));
+            }
+            if self.column_spec[parent].data_type != "string" {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': child_of names '{}', which is not a string column",
+                    self.column_label[parent]
+                )));
+            }
+        }
+
+        // Like a parent, the scaling label is generated first.
+        for (i, spec) in self.column_spec.iter().enumerate() {
+            let Some(by) = spec.scale_by else {
+                continue;
+            };
+            let label = &self.column_label[i];
+            if by >= i {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': scale_by {by} has to name an earlier column, one of 0..{i}"
+                )));
+            }
+            if self.column_spec[by].data_type != "string" {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': scale_by names '{}', which is not a string column",
+                    self.column_label[by]
+                )));
+            }
+        }
+
         let mut claimed: HashMap<&str, usize> = HashMap::new();
         for (g, group) in self.column_connected.iter().enumerate() {
             if group.len() < 2 {
@@ -217,7 +257,7 @@ impl TableDescription {
             group_bits.insert(g, bits);
         }
 
-        let mut data = Vec::with_capacity(self.column_spec.len());
+        let mut data: Vec<ColumnData> = Vec::with_capacity(self.column_spec.len());
         for (i, spec) in self.column_spec.iter().enumerate() {
             // Only one of these buffers is initialized. Either one lives just
             // long enough for this column's render pass.
@@ -244,7 +284,19 @@ impl TableDescription {
                     &own_draw
                 }
             };
-            data.push(spec.render(raw).map_err(|e| {
+            let mut rendered = match spec.child_of {
+                Some(parent) => spec.render_child(raw, data[parent].as_string()?),
+                None => spec.render(raw),
+            };
+            if let (Some(by), Ok(ColumnData::Float64(values))) = (spec.scale_by, &mut rendered) {
+                let mut factors: HashMap<&str, f64> = HashMap::new();
+                for (v, label) in values.iter_mut().zip(data[by].as_string()?) {
+                    *v *= *factors
+                        .entry(label)
+                        .or_insert_with(|| spec.scale_factor(label));
+                }
+            }
+            data.push(rendered.map_err(|e| {
                 DataGenError::BadParam(format!("column '{}': {e}", self.column_label[i]))
             })?);
         }

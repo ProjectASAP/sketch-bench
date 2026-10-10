@@ -36,6 +36,24 @@ pub struct ColumnSpec {
     /// Rendering options for `data_type: string`. Absent means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub string: Option<StringOpts>,
+    /// Index of an earlier `string` column this one nests under, for
+    /// hierarchical labels. A value is the parent row's value, a `.`, and a
+    /// child index in `[0, fan_out)` drawn from this column's distribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_of: Option<usize>,
+    /// How many children each parent value has. Required with `child_of`, and
+    /// checked against the distribution's domain like `cardinality` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_out: Option<u64>,
+    /// Index of an earlier `string` column whose values scale this one. Each
+    /// distinct label value gets a fixed factor in `scale_range`, and every
+    /// row's value is multiplied by its label's factor. `f64` columns only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_by: Option<usize>,
+    /// `[lo, hi]` with `0 < lo <= hi`: the factors are log-uniform in it.
+    /// Required with `scale_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_range: Option<[f64; 2]>,
 }
 
 impl ColumnSpec {
@@ -51,6 +69,50 @@ impl ColumnSpec {
                 self.data_type,
                 DATA_TYPES.join(", "),
             )));
+        }
+
+        match (self.child_of, self.fan_out) {
+            (None, None) => {}
+            (Some(_), None) => {
+                return Err(DataGenError::BadParam(
+                    "child_of: needs fan_out, the number of children per parent value".into(),
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(DataGenError::BadParam(
+                    "fan_out: applies only to a child_of column".into(),
+                ))
+            }
+            (Some(_), Some(fan_out)) => self.validate_child(fan_out)?,
+        }
+
+        match (self.scale_by, self.scale_range) {
+            (None, None) => {}
+            (Some(_), None) => {
+                return Err(DataGenError::BadParam(
+                    "scale_by: needs scale_range, the [lo, hi] the factors are drawn from".into(),
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(DataGenError::BadParam(
+                    "scale_range: applies only to a scale_by column".into(),
+                ))
+            }
+            (Some(_), Some([lo, hi])) => {
+                // An integer column would round the scaled value back down.
+                if self.data_type != "f64" {
+                    return Err(DataGenError::BadParam(format!(
+                        "scale_by: a scaled value is fractional, so data_type has to be \
+                         `f64`, not '{}'",
+                        self.data_type
+                    )));
+                }
+                if !(lo > 0.0 && hi >= lo && hi.is_finite()) {
+                    return Err(DataGenError::BadParam(format!(
+                        "scale_range [{lo}, {hi}] needs 0 < lo <= hi"
+                    )));
+                }
+            }
         }
 
         // `cardinality` restates the domain. Silently preferring one over the
@@ -95,6 +157,64 @@ impl ColumnSpec {
             }
         }
 
+        Ok(())
+    }
+
+    /// The checks a `child_of` column adds. Its index of the parent is checked
+    /// by the table, which knows the other columns.
+    fn validate_child(&self, fan_out: u64) -> Result<(), DataGenError> {
+        if self.data_type != "string" {
+            return Err(DataGenError::BadParam(format!(
+                "child_of: a child value is text, so data_type has to be `string`, not '{}'",
+                self.data_type
+            )));
+        }
+        if fan_out == 0 {
+            return Err(DataGenError::BadParam("fan_out must be > 0".into()));
+        }
+        // A uniform draw is continuous; only whole bounds keep its index in
+        // `[0, fan_out)` (`uniform{0.0, 2.9}` would draw 0, 1 and 2).
+        if let DataDistribution::Uniform(p) = &self.distribution {
+            if p.lower_bound.fract() != 0.0 || p.upper_bound.fract() != 0.0 {
+                return Err(DataGenError::BadParam(format!(
+                    "child_of: uniform bounds must be whole numbers, got [{}, {})",
+                    p.lower_bound, p.upper_bound
+                )));
+            }
+        }
+        match self.distribution.domain() {
+            Some(domain) if domain.size == fan_out => {}
+            Some(domain) => {
+                return Err(DataGenError::BadParam(format!(
+                    "fan_out {fan_out} disagrees with the {} domain, which holds {}; the \
+                     distribution draws the child index",
+                    self.distribution.tag(),
+                    domain.size,
+                )))
+            }
+            None => {
+                return Err(DataGenError::BadParam(format!(
+                    "child_of: the child index needs a bounded domain, and {} has none",
+                    self.distribution.tag(),
+                )))
+            }
+        }
+        // A child column holds parent cardinality × fan_out values and is not
+        // rendered from a rank, so neither field would mean what it says.
+        if self.cardinality.is_some() {
+            return Err(DataGenError::BadParam(
+                "child_of: cardinality would restate fan_out, not the column's distinct \
+                 count (parent cardinality × fan_out); drop it"
+                    .into(),
+            ));
+        }
+        if self.string.is_some() {
+            return Err(DataGenError::BadParam(
+                "child_of: a child value is its parent's plus an index, so a `string:` \
+                 block has nothing to render; drop it"
+                    .into(),
+            ));
+        }
         Ok(())
     }
 
@@ -162,5 +282,37 @@ impl ColumnSpec {
                 "data_type: unknown type '{other}'"
             ))),
         }
+    }
+
+    /// The fixed factor of one `scale_by` label value: a SplitMix64 hash of
+    /// the value's FNV-1a and this column's seed, as `u` in `[0, 1)`, mapped to
+    /// `lo·(hi/lo)^u`.
+    pub(crate) fn scale_factor(&self, label: &str) -> f64 {
+        let [lo, hi] = self.scale_range.expect("scale_range was validated above");
+        let fnv = label.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
+        });
+        let x = crate::table::mix_connected_bits(fnv ^ self.distribution.seed());
+        let u = (x >> 11) as f64 / (1u64 << 53) as f64;
+        lo * (hi / lo).powf(u)
+    }
+
+    /// Render a `child_of` column: each row's parent value, a `.`, and the
+    /// draw's 0-based rank in the domain as the child index.
+    pub(crate) fn render_child(
+        &self,
+        raw: &[f64],
+        parents: &[String],
+    ) -> Result<ColumnData, DataGenError> {
+        let domain = self
+            .distribution
+            .domain()
+            .expect("child domains were validated above");
+        Ok(ColumnData::String(
+            raw.iter()
+                .zip(parents)
+                .map(|(draw, parent)| format!("{parent}.{}", (draw - domain.lower) as u64))
+                .collect(),
+        ))
     }
 }

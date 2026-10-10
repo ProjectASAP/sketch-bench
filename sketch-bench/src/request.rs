@@ -126,6 +126,8 @@ pub struct Requirement {
     pub group_columns: Vec<usize>,
     /// Where a grouped row writes each scored group's error, if anywhere
     pub per_group_out: Option<std::path::PathBuf>,
+    /// How a merge measurement splits the stream into those shards
+    pub merge_split: crate::wrappers::MergeSplit,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
     /// Measured runs, and the warm-ups run and discarded before them

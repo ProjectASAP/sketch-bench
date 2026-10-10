@@ -1,0 +1,69 @@
+# The §6.3 eval's `http` metric (export_autosketch_eval_table.py SCHEMAS, #196),
+# for `study_saturation.py --phase hydra`: the eval reads Hydra's accuracy on
+# data with its own label schema and skews, since a group's error depends on
+# its share of the fanned-out mass. Labels in schema order, then the value:
+#
+#   region 4 values, Zipf 0.5
+#   service 25 values, Zipf 1.1 (independent of region, as #196 has it)
+#   endpoint 25 per service (child_of service), Zipf 1.1
+#   status 4 values, Zipf 2.0
+#   user_id Zipf 0.8 over 1e6 (distinct users)
+#
+#   approxbench sketchbench --variant hydra-hll --library lib \
+#     --spec configs/datagen/hydra_http.yaml --dtype i64 \
+#     --config "rows=3 cols=1024" --group-columns 0,1 \
+#     --operations query --metrics accuracy
+#
+# Four labels cost `2^4 - 1 = 15` cell insertions per record. The study sets
+# `row_num` per N and offsets every seed per study seed.
+
+column_num: 5
+column_label: [region, service, endpoint, status, user_id]
+row_num: 1000000
+
+column_spec:
+  - data_type: string
+    string:
+      min_len: 4
+      max_len: 4
+    distribution:
+      kind: zipf
+      skewness: 0.5
+      population_size: 4
+      seed: 1
+
+  - data_type: string
+    string:
+      min_len: 4
+      max_len: 4
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 25
+      seed: 2
+
+  - data_type: string
+    child_of: 1
+    fan_out: 25
+    distribution:
+      kind: zipf
+      skewness: 1.1
+      population_size: 25
+      seed: 3
+
+  - data_type: string
+    string:
+      min_len: 3
+      max_len: 3
+    distribution:
+      kind: zipf
+      skewness: 2.0
+      population_size: 4
+      seed: 4
+
+  - data_type: i64
+    distribution:
+      kind: zipf
+      skewness: 0.8
+      population_size: 1000000
+      seed: 5

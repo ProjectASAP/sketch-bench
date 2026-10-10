@@ -264,6 +264,68 @@ point in `crossover.csv`. The plotting scripts draw one config per sketch
 (rows=3 cols=1024, lg_k=12, k=200, alpha=0.01, the configs their bounds are
 written for).
 
+## Hydra (`--phase hydra`)
+
+A Hydra grid's error for a group depends on the group's share of the
+fanned-out mass `N·(2^d − 1)`, not on a per-key shape, so it is measured on
+data with the §6.3 eval's own schemas rather than on the Zipf grid above
+(docs/rqe_optimizer_hydra.md). `HYDRA_SWEEPS` holds two sweeps:
+
+- `eval`: `hydra-hll` and `hydra-univmon-cardinality` on
+  `configs/datagen/hydra_http.yaml` and `hydra_flows.yaml`, `hydra-kll` on
+  `hydra_http_latency.yaml` (the specs follow `export_autosketch_eval_table.py`'s
+  `SCHEMAS`; their headers say what is not modelled). Latency is Pareto(a = 2,
+  scale 1000) times a fixed per-service factor, log-uniform in `[1, 10]`
+  (`scale_by`, docs/aqpbm-datagen.md; the factors follow the study seed); no
+  endpoint anomaly is injected. Grid `R = 3`,
+  `W ∈ {1024, 4096, 16384}`, every non-empty label subset (15 for http, 7 for
+  flows), `N ∈ {1e5, 1e6, 1e7}`, merged from `{1, 4, 16}` interleaved shards,
+  seeds 1..3.
+- `generic`: every statistic (`HYDRA_CELLS`) on `hydra_hier_d2.yaml`,
+  `hydra_hier_d3.yaml`, `hydra_hier.yaml` (`d` = 2, 3, 4), every subset,
+  `W ∈ {1024, 4096}`, `N = 1e6`, shards `{1, 4}`, seeds 1..2.
+
+Inner cells are the canonical ones, except UnivMon's (`HYDRA_UNIVMON_CELL`,
+3 × 256 × 8 layers, heap 64): the canonical 5 × 2048 cell makes a
+3 × 16384 grid 32 GB. A study seed `s` rewrites the spec's `row_num` and adds
+`1000·(s − 1)` to every seed, so seed 1 is the file as written.
+
+Each run asks one grouping with `--group-columns` and `--per-group-out`, and
+adds one row to `hydra_saturation.csv`: `variant, statistic, config, R, W,
+dataset, group_columns` (label names joined by `,`, in schema order; quoted),
+`schema_width, records, fanned_mass, merge_shards, merge_split` (empty for
+the plain query), `seed`, the record's `err_mean, err_p50, err_p90, err_max,
+groups_scored` (in the family's own metric), and `err_max_cov_0.01`,
+`err_max_cov_0.05`: the worst error over the groups holding at least that
+share `n_q / records` of the records, plus always the largest group (an
+unscored group has no error but can be the largest). Rows are written as runs
+finish; `--resume` keeps them and runs the rest, and a failed run is reported
+and rerun by the next `--resume`.
+
+`--jobs` runs in parallel, admitted while the running runs' estimated memory
+(`m` shard grids plus the data, `hydra_mem_bytes`) fits `--hydra-mem-gb`.
+`--hydra-shard i/n` takes every `n`-th run of the fixed run list from the
+`i`-th, so `n` machines split a sweep; concatenate their tables afterwards.
+`--hydra-ns`, `--hydra-ws`, `--hydra-seeds`, `--hydra-variants`,
+`--hydra-datasets` and `--hydra-groupings` narrow the sweeps.
+
+```sh
+# Node i of 5 (0-based), 48 parallel runs:
+python3 scripts/study_saturation.py --phase hydra --jobs 48 \
+    --hydra-shard i/5 --out out_hydra_i         # add --resume after an interruption
+# Then, in one place:
+awk 'FNR > 1 || NR == 1' out_hydra_*/hydra_saturation.csv > hydra_saturation.csv
+```
+
+`--phase optimizer-cost` also measures the eval variants at each eval `W` on
+their datasets (full schema, `COST_N` records, 3 runs after 1 warm-up, `--families`
+includes `hydra`):
+`insert_cpu_secs` per record at that schema width, `merge_cpu_secs` per grid
+merge, `query_cpu_secs` per probe (a group, or a group and quantile), memory
+per grid; `measured_at` names the `dataset` and `schema_width`. Their accuracy
+column is one pass's `err_max` at the default grouping; the optimizer reads
+Hydra accuracy from `hydra_saturation.csv`.
+
 ## Results (config grid, N up to 1e7)
 
 `--phase accuracy --n-max 1e7 --seeds 3 --jobs 16 --out out_grid_1e7`: 595
@@ -548,7 +610,8 @@ Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
 - **Accuracy after merging** is now measured (`--operations merge --metrics
   accuracy --merge-shards m`, or `--merge-shards-list 1,4,16,64` here, into
   `saturation_merge_curve.csv`): the N-item stream is split into m contiguous
-  shards, one sketch per shard is folded into one, and it is scored with the
+  shards (approxbench `--merge-split interleaved` deals it round-robin), one
+  sketch per shard is folded into one, and it is scored with the
   query's comparator against the whole-stream truth. A bounded run (first
   config per sketch, N up to 1e7, 3 seeds, theta 0.5/1.0/1.5, K 1e3/1e5/1e7,
   alpha 1.1/2) found:

@@ -258,6 +258,10 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
                 };
                 (opts != StringOpts::default()).then_some(opts)
             },
+            child_of: None,
+            fan_out: None,
+            scale_by: None,
+            scale_range: None,
         },
         args.size.expect("clap requires --size") as u64,
     )))
@@ -374,6 +378,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         merge_shards: args.merge_shards,
         group_columns,
         per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
+        merge_split: args.merge_split,
         comparator: args.comparator.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
@@ -456,6 +461,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // and a record states what ran rather than what was asked for.
         if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+            report.bench.merge_split = Some(args.merge_split);
         }
         reports.push(report);
     }

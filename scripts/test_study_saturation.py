@@ -8,6 +8,7 @@ Run: python3 scripts/test_study_saturation.py
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -16,7 +17,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from study_saturation import checkpoints, n_saturation, n_star, read_curve  # noqa: E402
+from study_saturation import (  # noqa: E402
+    HYDRA_COLUMNS, checkpoints, covered_max, hydra_groupings, hydra_labels, hydra_spec,
+    n_saturation, n_star, read_curve, read_per_group)
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_saturation.py")
 
@@ -484,8 +487,14 @@ FAKE_COST_APPROXBENCH = textwrap.dedent("""\
                 v = c[c.index("--variant") + 1]
                 cfg = c[c.index("--config") + 1] if "--config" in c else ""
                 params = {k: float(x) for k, x in (kv.split("=") for kv in cfg.split())}
+                # The reducer reads a Hydra row's width off its scores.
+                at = {}
+                if v.startswith("hydra-"):
+                    labels = open(c[c.index("--spec") + 1]).read().split("column_label: [")[1]
+                    at = {"schema_width": labels.split("]")[0].count(",")}
                 rows.append({"sketch": v, "sketch_config": {"params": params},
-                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v]})
+                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v],
+                             "measured_at": at})
         json.dump(rows, open(value("--output"), "w"))
         kept = int(os.environ["FAKE_KEPT"])
         sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
@@ -498,7 +507,7 @@ FAKE_COST_APPROXBENCH = textwrap.dedent("""\
 
 
 class OptimizerCostTest(unittest.TestCase):
-    def run_phase(self, d, kept):
+    def run_phase(self, d, kept, families="topk,quantile"):
         binary = os.path.join(d, "approxbench")
         with open(binary, "w") as f:
             f.write("#!" + sys.executable + "\n" + FAKE_COST_APPROXBENCH)
@@ -506,7 +515,7 @@ class OptimizerCostTest(unittest.TestCase):
         log = os.path.join(d, "log.jsonl")
         result = subprocess.run([
             sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
-            "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+            "--phase", "optimizer-cost", "--families", families, "--one-config",
             "--seeds", "3",
         ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
         with open(log) as f:
@@ -558,11 +567,261 @@ class OptimizerCostTest(unittest.TestCase):
             if row["sketch"].startswith("exact-"):
                 self.assertEqual(row["query_accuracy"][row["accuracy_metric"]], 0.5)
 
+    def test_hydra_rows_on_the_eval_datasets_name_their_dataset(self):
+        with tempfile.TemporaryDirectory() as d:
+            # hydra-hll and hydra-univmon-cardinality on http and flows,
+            # hydra-kll on http_latency, at the first W; plus 5 exact.
+            result, calls = self.run_phase(d, 10, families="hydra")
+            with open(os.path.join(d, "out", "rqe_atomic_costs.json")) as f:
+                rows = json.load(f)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = lambda c, flag: c[c.index(flag) + 1]
+        hydra = [c for c in calls if c[0] == "sketchbench" and "--report" in c
+                 and value(c, "--variant").startswith("hydra-")]
+        self.assertEqual(len(hydra), 10)
+        cost = hydra[0]
+        self.assertEqual((value(cost, "--runs"), value(cost, "--warmup-runs"),
+                          value(cost, "--merge-shards")), ("3", "1", "16"))
+        self.assertEqual(value(cost, "--config"), "rows=3 cols=1024")
+        self.assertTrue(value(cost, "--spec").endswith("hydra_http_n1000000.yaml"))
+        self.assertNotIn("--comparator", hydra[1])
+        # No seed runs: Hydra accuracy comes from hydra_saturation.csv.
+        self.assertFalse([c for c in calls if c[0] == "sketchbench" and "--report" not in c])
+        at = {(r["sketch"], r["measured_at"]["schema_width"]): r["measured_at"]["dataset"]
+              for r in rows if r["sketch"].startswith("hydra-")}
+        self.assertEqual(at, {
+            ("hydra-hll", 4): "hydra_http", ("hydra-hll", 3): "hydra_flows",
+            ("hydra-univmon-cardinality", 4): "hydra_http",
+            ("hydra-univmon-cardinality", 3): "hydra_flows",
+            ("hydra-kll", 4): "hydra_http_latency"})
+
     def test_a_skipped_row_fails(self):
         with tempfile.TemporaryDirectory() as d:
             result, _ = self.run_phase(d, 10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"did not keep all 11 rows", result.stderr)
+
+
+class CoveredMaxTest(unittest.TestCase):
+    # (n_q, error) of 100 records: shares 0.6, 0.3, 0.06, 0.04.
+    GROUPS = [(60, 0.1), (30, 0.2), (6, 0.5), (4, 0.9)]
+
+    def test_groups_at_or_above_the_share_count(self):
+        self.assertEqual(covered_max(self.GROUPS, 100, 0.05), 0.5)
+        self.assertEqual(covered_max(self.GROUPS, 100, 0.04), 0.9)
+        self.assertEqual(covered_max(self.GROUPS, 100, 0.3), 0.2)
+
+    def test_the_largest_group_is_always_covered(self):
+        self.assertEqual(covered_max(self.GROUPS, 100, 0.9), 0.1)
+        # Wherever it sits in the file.
+        self.assertEqual(covered_max(self.GROUPS[::-1], 100, 0.9), 0.1)
+
+    def test_unscored_groups_have_no_error_but_can_be_the_largest(self):
+        groups = [(60, None), (30, 0.2), (6, 0.5)]
+        self.assertEqual(covered_max(groups, 100, 0.05), 0.5)
+        # The largest is unscored, so nothing covered has an error.
+        self.assertEqual(covered_max(groups, 100, 0.9), "")
+        # An unscored group does not hand "largest" to the next one.
+        self.assertEqual(covered_max([(60, None), (30, 0.2)], 100, 0.5), "")
+
+    def test_no_groups(self):
+        self.assertEqual(covered_max([], 100, 0.01), "")
+
+
+SPEC = textwrap.dedent("""\
+    column_num: 3
+    column_label: [region, service, user_id]
+    row_num: 200000
+    column_spec:
+      - data_type: string
+        distribution:
+          kind: uniform
+          seed: 1
+      - data_type: i64
+        distribution: {kind: zipf, skewness: 0.8, population_size: 10, seed: 5}
+""")
+
+
+class HydraSpecTest(unittest.TestCase):
+    def test_rows_and_seeds(self):
+        self.assertEqual(hydra_spec(SPEC, 1000, 1).replace("row_num: 1000", "row_num: 200000"),
+                         SPEC)
+        text = hydra_spec(SPEC, 1000, 3)
+        self.assertIn("row_num: 1000\n", text)
+        self.assertIn("      seed: 2001\n", text)
+        # A flow mapping's seed is not a line of its own; it stays.
+        self.assertIn("seed: 5}", text)
+
+    def test_labels_and_groupings_in_schema_order(self):
+        self.assertEqual(hydra_labels(SPEC), ["region", "service"])
+        self.assertEqual(hydra_groupings(["a", "b", "c"]),
+                         [["a"], ["b"], ["c"], ["a", "b"], ["a", "c"], ["b", "c"],
+                          ["a", "b", "c"]])
+
+    def test_the_eval_specs_match_their_schemas(self):
+        root = os.path.join(os.path.dirname(SCRIPT), "..", "configs", "datagen")
+
+        def read(stem):
+            with open(os.path.join(root, f"{stem}.yaml")) as f:
+                return f.read()
+        http = ["region", "service", "endpoint", "status"]
+        self.assertEqual(hydra_labels(read("hydra_http")), http)
+        self.assertEqual(hydra_labels(read("hydra_http_latency")), http)
+        self.assertEqual(hydra_labels(read("hydra_flows")), ["dst_subnet", "dst_port", "proto"])
+        self.assertEqual(len(hydra_groupings(http)), 15)
+
+        def labels(stem):
+            """Each label column's (cardinality, skew, child_of), as datagen
+            reads them; a uniform column's cardinality is its upper bound."""
+            text = read(stem).split("column_spec:")[1]
+            out = []
+            for column in text.split("\n  - ")[1:]:
+                field = dict(re.findall(r"(\w+): ([\w.]+)\n", column + "\n"))
+                if field["data_type"] != "string":
+                    continue
+                if field["kind"] == "uniform":
+                    out.append((int(float(field["upper_bound"])), 0.0, None))
+                else:
+                    child_of = field.get("child_of")
+                    out.append((int(field["population_size"]), float(field["skewness"]),
+                                int(child_of) if child_of else None))
+                    if child_of:
+                        self.assertEqual(field["fan_out"], field["population_size"])
+            return out
+        # PR #196's SCHEMAS (origin/eval/hydra-workload,
+        # scripts/export_autosketch_eval_table.py): (cardinality, skew,
+        # child_of as a column index) per label, in schema order.
+        http_schema = [(4, 0.5, None), (25, 1.1, None), (25, 1.1, 1), (4, 2.0, None)]
+        self.assertEqual(labels("hydra_http"), http_schema)
+        self.assertEqual(labels("hydra_http_latency"), http_schema)
+        self.assertEqual(labels("hydra_flows"), [(1000, 1.1, None), (1000, 1.2, None),
+                                                 (3, 0.0, None)])
+
+
+# A Hydra run: writes a fixed per-group file for the grouping asked, and a
+# record of N = 100 records over 2 labels. Merged runs score 0.1 worse.
+FAKE_HYDRA_APPROXBENCH = textwrap.dedent("""\
+    import json, os, sys
+    a = sys.argv
+    value = lambda flag: a[a.index(flag) + 1] if flag in a else None
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps(a[1:]) + "\\n")
+    if value("--variant") == "hydra-cms" and value("--group-columns") == "1":
+        sys.exit("boom")
+    m = int(value("--merge-shards") or 1)
+    worse = 0.1 if m > 1 else 0.0
+    groups = [(60, 0.1 + worse), (30, None), (6, 0.5 + worse), (4, 0.9 + worse)]
+    with open(value("--per-group-out"), "w") as f:
+        f.write("group_key,n_q,error\\n")
+        for i, (n, e) in enumerate(groups):
+            f.write(f'"label0:g{i},x",{n},{"" if e is None else e}\\n')
+    errs = sorted(e for _, e in groups if e is not None)
+    bench = {"accuracy": {"err_mean": sum(errs) / 3, "err_p50": errs[1], "err_p90": errs[2],
+                          "err_max": errs[2], "groups_scored": 3.0, "schema_width": 2.0,
+                          "records": 100.0, "fanned_mass": 300.0}}
+    if m > 1:
+        bench.update(merge_shards=m, merge_split=value("--merge-split"))
+    print(json.dumps({"bench": bench}))
+""")
+
+
+class HydraPhaseTest(unittest.TestCase):
+    def run_phase(self, d, *extra, out="out"):
+        binary = os.path.join(d, "approxbench")
+        with open(binary, "w") as f:
+            f.write("#!" + sys.executable + "\n" + FAKE_HYDRA_APPROXBENCH)
+        os.chmod(binary, 0o755)
+        datagen = os.path.join(d, "datagen")
+        os.makedirs(datagen, exist_ok=True)
+        for stem in ("hydra_hier_d2", "hydra_hier_d3", "hydra_hier"):
+            with open(os.path.join(datagen, f"{stem}.yaml"), "w") as f:
+                f.write(SPEC)
+        log = os.path.join(d, "log.jsonl")
+        result = subprocess.run([
+            sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, out),
+            "--phase", "hydra", "--datagen", datagen, "--hydra-sweeps", "generic",
+            "--hydra-datasets", "hydra_hier_d2", "--hydra-variants", "hydra-hll,hydra-cms",
+            "--hydra-ws", "1024", "--hydra-ns", "100", "--hydra-seeds", "1", "--jobs", "2",
+            *extra,
+        ], capture_output=True, env={**os.environ, "FAKE_LOG": log})
+        table = os.path.join(d, out, "hydra_saturation.csv")
+        with open(table, newline="") as f:
+            header = next(csv.reader(f))
+        with open(table, newline="") as f:
+            rows = list(csv.DictReader(f))
+        with open(log) as f:
+            return result, rows, header, [json.loads(line) for line in f]
+
+    def test_one_row_per_run_with_coverage_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            result, rows, header, calls = self.run_phase(d)
+        # 2 variants x 3 groupings x shards {1, 4}; hydra-cms at {service}
+        # fails (2 runs), is reported, and the phase exits 1.
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(b"2 run(s) failed", result.stderr)
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(header, HYDRA_COLUMNS)
+        self.assertEqual(len(rows), 10)
+        row = {(r["variant"], r["group_columns"], r["merge_shards"]): r for r in rows}
+        query = row[("hydra-hll", "region,service", "1")]
+        self.assertEqual(
+            {k: query[k] for k in ("statistic", "config", "R", "W", "dataset", "schema_width",
+                                   "records", "fanned_mass", "merge_split", "seed",
+                                   "err_max", "groups_scored")},
+            {"statistic": "cardinality", "config": "rows=3 cols=1024", "R": "3",
+             "W": "1024", "dataset": "hydra_hier_d2", "schema_width": "2", "records": "100",
+             "fanned_mass": "300", "merge_split": "", "seed": "1", "err_max": "0.9",
+             "groups_scored": "3"})
+        # Shares 0.6, 0.3 (unscored), 0.06, 0.04.
+        self.assertEqual((query["err_max_cov_0.01"], query["err_max_cov_0.05"]), ("0.9", "0.5"))
+        merged = row[("hydra-hll", "region,service", "4")]
+        self.assertEqual((merged["merge_split"], merged["err_max_cov_0.05"]),
+                         ("interleaved", "0.6"))
+        # Groupings are asked by column index, in schema order.
+        hll = [c for c in calls if c[c.index("--variant") + 1] == "hydra-hll"]
+        self.assertEqual(sorted({c[c.index("--group-columns") + 1] for c in hll}),
+                         ["0", "0,1", "1"])
+        spec = hll[0][hll[0].index("--spec") + 1]
+        self.assertTrue(spec.endswith("hydra_hier_d2_n100_s1.yaml"))
+
+    def test_shards_split_the_runs_and_resume_reruns_only_the_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, first, _, _ = self.run_phase(d, "--hydra-shard", "0/2")
+            os.remove(os.path.join(d, "log.jsonl"))
+            _, other, _, _ = self.run_phase(d, "--hydra-shard", "1/2", out="other")
+            os.remove(os.path.join(d, "log.jsonl"))
+            _, rows, _, calls = self.run_phase(d, "--resume")
+        self.assertEqual(len(first) + len(other), 10)
+        key = lambda r: (r["variant"], r["group_columns"], r["merge_shards"])
+        self.assertFalse({key(r) for r in first} & {key(r) for r in other})
+        # The rerun runs the 6 runs shard 0 lacked; the 2 failures fail again.
+        self.assertEqual(len(calls), 12 - len(first))
+        self.assertEqual(len(rows), 10)
+
+    def test_resume_reruns_a_cut_off_row_and_replaces_the_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.run_phase(d)
+            os.remove(os.path.join(d, "log.jsonl"))
+            table = os.path.join(d, "out", "hydra_saturation.csv")
+            with open(table, newline="") as f:
+                lines = f.read().splitlines(keepends=True)
+            # Two rows cut off mid-write: one with every field there but an
+            # empty groups_scored, and the last one with no line end.
+            fields = lines[1].split(",")
+            fields[HYDRA_COLUMNS.index("groups_scored")] = ""
+            lines[1] = ",".join(fields)
+            lines[-1] = lines[-1].rstrip("\r\n")
+            with open(table, "w", newline="") as f:
+                f.writelines(lines)
+            # The rewrite goes to a new file, so the old one survives.
+            os.link(table, table + ".old")
+            _, rows, _, calls = self.run_phase(d, "--resume")
+            with open(table + ".old", newline="") as f:
+                self.assertEqual(f.read(), "".join(lines))
+            self.assertFalse(os.path.exists(table + ".tmp"))
+        # Those 2 rerun, and the 2 failures again.
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(rows), 10)
 
 
 if __name__ == "__main__":
