@@ -3,8 +3,7 @@
 This document is the one home for what a candidate costs (§3's table), the
 canonical cost-by-use model with its MILP, and the still-supported
 snapshot-AUC objective. Candidates and eligibility are in
-[Candidate generation and eligibility](rqe_optimizer_candidates.md); Hydra
-is in [Hydra](rqe_optimizer_hydra.md).
+[Candidate generation and eligibility](rqe_optimizer_candidates.md).
 
 ## Model status and relationship
 
@@ -18,8 +17,7 @@ is in [Hydra](rqe_optimizer_hydra.md).
   query memory is summed as if concurrent, there is no worker fan-out or
   compaction, and latency is serial query work. It is not the evaluation's
   billing model.
-- **Hydra** is future work, not a candidate today; see
-  [Hydra](rqe_optimizer_hydra.md).
+- **Hydra** is future work, not a candidate today.
 
 The two implemented objectives share the same resource primitives and §3's
 table; they differ in how they account for them over time, and in latency
@@ -399,7 +397,7 @@ follows from it):
 | rolls up (`G_r ⊂ G_d`) | yes | yes | no |
 
 HydraKLL has `FamilyProperties` but is in no capability's family list, so it
-is never a candidate; see [Hydra](rqe_optimizer_hydra.md).
+is never a candidate.
 
 ### Family properties and key tracker
 
