@@ -679,6 +679,38 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
+        algorithm: "hydra-kll",
+        variant: "hydra-kll-cdf",
+        library: "lib",
+        description: "asap_sketchlib::Hydra over KLL cells: Cdf(x) per subpopulation",
+        capability: Capability::SubpopCdf,
+        comparator: Some("subpop-cdf-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-kll",
+        variant: "hydra-kll-cdf",
+        library: "polars",
+        description: "polars exact: sorted values per label subset, share at or below x",
+        capability: Capability::SubpopCdf,
+        comparator: Some("subpop-cdf-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-cardinality",
         library: "lib",
@@ -797,6 +829,38 @@ pub const REGISTRY: &[SketchId] = &[
         description: "polars exact: the entropy of each label subset's value-frequency vector",
         capability: Capability::SubpopEntropy,
         comparator: Some("subpop-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-univmon",
+        variant: "hydra-univmon-sum",
+        library: "lib",
+        description: "asap_sketchlib::Hydra over UnivMon cells, each value inserted with itself as count: calc_l1 per subpopulation",
+        capability: Capability::SubpopSum,
+        comparator: Some("subpop-sum"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-univmon",
+        variant: "hydra-univmon-sum",
+        library: "polars",
+        description: "polars exact: group_by(subset).agg(v.sum()) over every label subset",
+        capability: Capability::SubpopSum,
+        comparator: Some("subpop-sum"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::PREPARE),
@@ -1360,9 +1424,11 @@ mod tests {
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
+            "subpop-cdf-error",
             "subpop-l1-norm",
             "subpop-l2-norm",
             "subpop-entropy",
+            "subpop-sum",
             "keyed-cardinality",
             "keyed-l1-norm",
             "keyed-l2-norm",
