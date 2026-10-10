@@ -940,6 +940,26 @@ mod tests {
     }
 
     #[test]
+    fn prunes_the_candidate_with_larger_query_output() {
+        // Two heaps that differ only in the `k` they answer: the larger one
+        // outputs 100 entries per group, not 32, at the same CPU.
+        let r = raqe("r", 60_000, 60_000);
+        let answering = |k: u64| {
+            let mut d = crate::test_support::deployment(1.0, 1.0, 1.0, 0.0, 60_000, 60_000);
+            d.config.sketch_config =
+                serde_json::json!({"params": {"heap": 1u64 << 40, "topk_k": k}});
+            d
+        };
+        let retained = prune_dominated_candidates(
+            &[r],
+            &facts(1, 1),
+            vec![answering(100), answering(32)],
+            &table_accuracy,
+        );
+        assert_eq!(retained, vec![answering(32)]);
+    }
+
+    #[test]
     fn retains_candidate_with_cheaper_compaction() {
         // A direct RAQE never merges at query time, so merge CPU shows up only
         // in compaction. `cheap_ingest` ingests on 2 workers (ρ = 2) and

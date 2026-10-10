@@ -116,8 +116,10 @@ roll-up the answered group is the RAQE's coarse one.
   a merge curve's last N, the curves say nothing, so the answer takes the
   guarantee below, no better than the largest count's last measurement; the
   study should measure the merge counts a workload needs
-  (`--merge-shards-list`) so the guarantee isn't what decides (#158). `SaturationCurves::load` refuses a study with no merge curves for
-  a candidate KLL sketch. The fan-out is the average; the largest group's is
+  (`--merge-shards-list`) so the guarantee isn't what decides (#158);
+  univmon-cardinality has no guarantee, so past its curves it has no
+  accuracy. `SaturationCurves::load` refuses a study with no merge curves
+  for a lossy candidate sketch (KLL, univmon-cardinality). The fan-out is the average; the largest group's is
   #189.
 - A top-k RAQE asks for its own `k` (`Raqe::topk_k`, default 32). Heap
   top-k (CMS-heap, CountSketch-heap) keeps a heap of `n · k` in a deployment
@@ -227,8 +229,8 @@ univmon-cardinality, KLL and DDSketch. These don't, and serve only
   ([Cost models](rqe_optimizer_cost_model.md), §3). A direct roll-up
   (`n = 1`) still merges `card(G_d) − card(G_r)` instances.
 - **Accuracy**: read at `G_r`: its `data_shape`, and its items per group over
-  the lookback. KLL's merge curve is read at `⌈card(G_d)/card(G_r)⌉ · n`
-  merged instances, the average fan-out, an estimate rather than a
+  the lookback. KLL's and univmon-cardinality's merge curves are read at
+  `⌈card(G_d)/card(G_r)⌉ · n` merged instances, the average fan-out, an estimate rather than a
   worst-group bound (uneven fan-out is #189).
 - **Facts**: `validate_facts` requires `card(X) ≤ card(Y)` for every pair
   `X ⊂ Y` among the label sets a plan can use (every RAQE grouping on the

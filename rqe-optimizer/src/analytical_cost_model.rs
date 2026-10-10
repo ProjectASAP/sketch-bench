@@ -612,4 +612,26 @@ mod tests {
             45.0 / 60.0
         );
     }
+
+    /// A roll-up's DDSketch accumulator holds a coarse group's values: 50
+    /// samples/s over a 2 s lookback into 5 services is 20 values each, past
+    /// the 10-bucket range, so 80 B per service, not the 16 B two per-endpoint
+    /// values would need.
+    #[test]
+    fn a_dd_roll_up_sizes_its_accumulator_at_the_coarse_grouping() {
+        use crate::test_support::{kll_by, quantile_by, service_endpoint_facts};
+        let mut facts = service_endpoint_facts();
+        facts
+            .get_mut(crate::test_support::METRIC)
+            .unwrap()
+            .value_range = Some((1.0, 1000.0));
+        let mut by_endpoint = kll_by(&["service", "endpoint"], 1_000);
+        by_endpoint.config.sketch = "dd".into();
+        by_endpoint.config.sketch_config = serde_json::json!({"params": {"alpha": 1.0 / 3.0}});
+        let by_service = quantile_by(&["service"], 2_000, 2_000);
+        assert_eq!(
+            merge(&by_service, &by_endpoint, &facts).memory_bytes,
+            5.0 * 80.0
+        );
+    }
 }

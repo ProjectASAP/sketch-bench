@@ -180,9 +180,10 @@ each phase's CPU and memory, together with the selected deployment mapping.
 
 ## v1 scope and TODOs
 
-- **Accuracy after merging:** KLL reads its merge curves up to the largest
-  shard count and N the study measured; past them, the guarantee, no better
-  than the last measurement. Roll-ups multiply the merge count by the
+- **Accuracy after merging:** KLL and univmon-cardinality read their merge
+  curves up to the largest shard count and N the study measured; past them,
+  KLL's guarantee, no better than the last measurement (univmon-cardinality
+  has none, so no accuracy). Roll-ups multiply the merge count by the
   fan-out, so they reach the guarantee sooner. Heap top-k reads its plain
   curve (#158).
 - **Query-result sharing:** v1 charges every RAQE its own query and merge CPU.

@@ -356,10 +356,12 @@ not scale.
 
 Quantile sketches have no keys. KLL's `m` is Fixed, and the same at every
 item count, because `asap_sketchlib::KLL` allocates once at construction.
-Until #192 the cost table's KLL rows report a nominal `4 · k · sizeof(T)`
-(1600 B at `k = 50`), not that allocation (5536 B at `k = 50`: item slots,
-level index and merge buffer; 1.58× at `k = 200`, 1.14× at `k = 800`), so
-KLL memory is understated (#191).
+Since #192 the cost table's KLL rows report that allocation: item slots,
+level index and merge buffer, 5536 B at `k = 50`. Cost tables measured
+before it, including the committed `autosketch-vs-asap-inputs`, carry a
+nominal `4 · k · sizeof(T)` instead (1600 B at `k = 50`; the allocation is
+1.58× that at `k = 200`, 1.14× at `k = 800`), so they understate KLL
+memory (#191).
 DDSketch is sized from the metric's `value_range` when given (capped by
 values per instance), else from the measured size.
 

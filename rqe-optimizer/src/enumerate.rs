@@ -1,14 +1,14 @@
 //! Brute-force search over full mappings.
 //!
 //! A mapping is one deployment choice per RAQE (the MILP's only constraint is
-//! `Σ_D x_{i,D} = 1`; `y_D` is derived). Choices are independent, so the
+//! `Σ_D z_{i,D} = 1`; `u_D` is derived). Choices are independent, so the
 //! search space is exactly the cartesian product of the per-RAQE eligible
 //! lists -- nothing to prune against. Sharing falls out when two choices land
 //! on the same index, including a fine deployment chosen by a RAQE that rolls
 //! up to a coarser grouping.
 //!
 //! An ILP would replace this module alone: `Mapping` already encodes
-//! `x_{i,D}` and `y_D`.
+//! `z_{i,D}` and `u_D`.
 
 use crate::{
     candidates::eligible_deployments_for, Accuracy, Deployment, Mapping, Raqe, WorkloadFacts,

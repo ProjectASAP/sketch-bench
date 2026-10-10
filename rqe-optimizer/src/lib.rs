@@ -991,6 +991,25 @@ mod tests {
         );
     }
 
+    /// A RAQE grouping may not have more groups than the series.
+    #[test]
+    fn rejects_a_grouping_with_more_groups_than_series() {
+        let mut facts = inconsistent_facts();
+        let cardinality = &mut facts.get_mut(METRIC).unwrap().cardinality;
+        cardinality.insert(labels(&["service", "endpoint", "pod"]), 40);
+        let r = Raqe {
+            grouping_labels: labels(&["service"]),
+            ..raqe(60_000, 60_000)
+        };
+        assert_eq!(
+            validate_facts(&[r], &facts).unwrap_err(),
+            [format!(
+                "{METRIC}: {{\"service\"}} has 60 groups but its superset \
+                 {{\"endpoint\", \"pod\", \"service\"}} only 40"
+            )]
+        );
+    }
+
     /// Label sets no RAQE groups by are never read, so inconsistencies there
     /// don't reject the workload.
     #[test]
