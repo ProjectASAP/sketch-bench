@@ -69,8 +69,8 @@ const HYDRA_COVERAGE: [(f64, &str); 3] = [
 ];
 
 /// Hydra measurements of one (variant, config, dataset, grouping), by merge
-/// shards: each [`HYDRA_COVERAGE`] column's worst over records and seeds,
-/// `None` where a row left it empty.
+/// shards: each [`HYDRA_COVERAGE`] column's worst over the records and seeds
+/// that filled it, `None` where every row left it empty.
 type HydraErrors = BTreeMap<u64, [Option<f64>; 3]>;
 
 /// One (sketch, config, data shape) point of the study.
@@ -934,8 +934,13 @@ fn load_hydra(
                 by_shards.insert(shards, errors);
             }
             Some(worst) => {
+                // An empty cell means no covered group was scored in that
+                // run (say, all had zero truth): it bounds nothing.
                 for (worst, error) in worst.iter_mut().zip(errors) {
-                    *worst = worst.zip(error).map(|(a, b)| worse(a, b, direction));
+                    *worst = match (*worst, error) {
+                        (Some(a), Some(b)) => Some(worse(a, b, direction)),
+                        (a, b) => a.or(b),
+                    };
                 }
             }
         }
@@ -985,8 +990,8 @@ fn invalid(message: String) -> io::Error {
 type CsvRow = BTreeMap<String, String>;
 
 /// Fields may be quoted: `hydra_saturation.csv`'s groupings hold commas.
-/// Fails unless the header has every `required` column and every row a
-/// field for each header column.
+/// Fails unless the header has every `required` column and every row
+/// exactly one field per header column.
 fn read_csv(path: &Path, required: &[&str]) -> io::Result<Vec<CsvRow>> {
     let failed = |e: csv::Error| invalid(format!("{}: {e}", path.display()));
     let text = std::fs::read_to_string(path)
@@ -1009,7 +1014,7 @@ fn read_csv(path: &Path, required: &[&str]) -> io::Result<Vec<CsvRow>> {
         .records()
         .map(|record| {
             let record = record.map_err(failed)?;
-            if record.len() < header.len() {
+            if record.len() != header.len() {
                 return Err(invalid(format!(
                     "{}: line {}: {} fields, the header has {}",
                     path.display(),
@@ -1864,6 +1869,11 @@ mod tests {
             short.contains("line 2: 17 fields, the header has 18"),
             "{short}"
         );
+        let long = error("long", format!("{HYDRA_HEADER}\n{row},extra\n"));
+        assert!(
+            long.contains("line 2: 19 fields, the header has 18"),
+            "{long}"
+        );
         let wide = row.replace("cols=1024", "cols=wide");
         let config = error("config", format!("{HYDRA_HEADER}\n{wide}\n"));
         assert!(config.contains("cols is not a number"), "{config}");
@@ -1947,13 +1957,14 @@ mod tests {
     }
 
     /// Error is taken to depend on shares, not N: the worst over the
-    /// measured records and seeds. An empty cell leaves its column unknown.
+    /// measured records and seeds. An empty cell (no covered group scored)
+    /// is skipped; a column every row left empty is unknown.
     #[test]
     fn hydra_takes_the_worst_over_records_and_seeds() {
         let rows = [
-            hydra_row("hydra-hll", "service", 1e5, 1, 0, ["0.1", "0.1", ""]),
-            hydra_row("hydra-hll", "service", 1e6, 1, 0, ["0.15", "0.1", "0.1"]),
-            hydra_row("hydra-hll", "service", 1e6, 1, 1, ["0.12", "0.1", "0.1"]),
+            hydra_row("hydra-hll", "service", 1e5, 1, 0, ["0.1", "", "0.1"]),
+            hydra_row("hydra-hll", "service", 1e6, 1, 0, ["0.15", "0.1", ""]),
+            hydra_row("hydra-hll", "service", 1e6, 1, 1, ["0.12", "", ""]),
         ];
         let curves = hydra_curves("worst", Some(&rows));
         let at = |covers| {
@@ -1964,7 +1975,23 @@ mod tests {
             )
         };
         assert_eq!(at(None), Some(0.15));
-        assert_eq!(at(Some(0.05)), None);
+        assert_eq!(at(Some(0.01)), Some(0.1));
+        assert_eq!(at(Some(0.05)), Some(0.1));
+        let rows = [hydra_row(
+            "hydra-hll",
+            "service",
+            1e5,
+            1,
+            0,
+            ["0.1", "0.1", ""],
+        )];
+        let curves = hydra_curves("all_empty", Some(&rows));
+        let at_5pct = curves.accuracy(
+            &distinct_by(&["service"], 60_000, Some(0.05)),
+            &hydra("hydra-hll", 60_000),
+            &hydra_facts(),
+        );
+        assert_eq!(at_5pct, None);
     }
 
     /// hydra-kll merges lossily: `L / x` windows read the worse of the

@@ -410,6 +410,18 @@ pub fn validate_facts(raqes: &[Raqe], facts: &WorkloadFacts) -> Result<(), Vec<S
                 Some(_) => false,
             };
         }
+        if let Some((_, schema)) = &metric_facts.hydra_dataset {
+            if !schema.is_subset(all_labels) {
+                problems.insert(format!(
+                    "{metric}: Hydra schema {schema:?} is not a subset of its labels {all_labels:?}"
+                ));
+            }
+            if cardinality.get(schema).is_none_or(|&groups| groups == 0) {
+                problems.insert(format!(
+                    "{metric}: Hydra schema {schema:?} needs a nonzero cardinality"
+                ));
+            }
+        }
     }
     // Dropping labels never adds groups. A roll-up's merge count,
     // `card(G_d) · L/x − card(G_r)`, relies on it, so it is checked between
@@ -1055,5 +1067,35 @@ mod tests {
             ..raqe(60_000, 60_000)
         };
         assert_eq!(validate_facts(&[r], &inconsistent_facts()), Ok(()));
+    }
+
+    /// Hydra's schema must be the metric's labels with a known group count.
+    #[test]
+    fn rejects_a_hydra_schema_outside_the_labels_or_without_cardinality() {
+        let mut facts = test_support::facts(1, 1);
+        let metric_facts = facts.get_mut(METRIC).unwrap();
+        let mut outside = metric_facts.labels.clone();
+        outside.insert("pod".into());
+        metric_facts.hydra_dataset = Some(("hydra_test".into(), outside.clone()));
+        let problems = validate_facts(&[raqe(60_000, 60_000)], &facts).unwrap_err();
+        assert_eq!(
+            problems,
+            [
+                format!(
+                    "{METRIC}: Hydra schema {outside:?} is not a subset of its labels {:?}",
+                    facts[METRIC].labels
+                ),
+                format!("{METRIC}: Hydra schema {outside:?} needs a nonzero cardinality"),
+            ]
+        );
+        let metric_facts = facts.get_mut(METRIC).unwrap();
+        let schema = metric_facts.labels.clone();
+        metric_facts.cardinality.insert(schema.clone(), 0);
+        metric_facts.hydra_dataset = Some(("hydra_test".into(), schema));
+        let problems = validate_facts(&[raqe(60_000, 60_000)], &facts).unwrap_err();
+        assert!(
+            problems.iter().any(|p| p.contains("Hydra schema")),
+            "{problems:?}"
+        );
     }
 }
