@@ -29,12 +29,11 @@
 # Reported throughput is records per second, which is the denominator that stays
 # comparable as `d` changes.
 #
-# The columns here share the default alphabet, so their value domains overlap: a
-# query for label `"abc"` cannot distinguish the key1 group from the key2 group,
-# and the estimate absorbs both. This is #74, and it is the reason the `polars`
-# rows do not score zero on this file. Give each column its own
-# `string.alphabet` to make the domains disjoint, and the baselines drop to
-# exactly zero.
+# The columns here share the default alphabet, so their value domains overlap.
+# Neither side aliases them: asap_sketchlib 0.3.0 keys each subset by column
+# (`label0:abc`), and the `polars` exact baselines build the same tagged keys
+# (`polars_shared::subset_key`), so a key1 value never matches the same key2
+# value and the baselines score exactly zero (#74).
 
 column_num: 3
 column_label: [key1, key2, value]
