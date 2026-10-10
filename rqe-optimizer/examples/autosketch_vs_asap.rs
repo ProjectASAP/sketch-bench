@@ -1333,7 +1333,7 @@ mod tests {
             json!({
                 "id": id, "query_id": "q", "kind": "keys", "capability": capability,
                 "metric": metric, "stream": format!("{metric}/{value}"), "grouping": grouping,
-                "covers_share": null, "min_covered_share": 0.01,
+                "covers_share": null, "min_covered_share": 0.01, "max_covered_share": 0.5,
                 "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
                 "label_set": {"groups": groups, "arrival_rate_per_sec": rate},
                 "families": [{"sketch": sketch, "target": target}],
@@ -1452,7 +1452,7 @@ mod tests {
         };
         let table = json!({"workloads": [{
             "dataset": "synthetic/test",
-            "schemas": {"http": {"labels": [{"name": "region"}]}},
+            "schemas": {"http": {"labels": [{"name": "region", "cardinality": 4}]}},
             "rqes": [
                 rqe("covered", "http/user_id", json!({
                     "metric": "http", "grouping": ["region"], "covers_share": 0.01,
