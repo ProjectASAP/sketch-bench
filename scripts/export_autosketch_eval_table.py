@@ -38,6 +38,7 @@ rate queries name exact accumulators.
 import argparse
 import csv
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -216,7 +217,8 @@ SYNTHETIC_WINDOWS = "15m,1h,6h,24h"
 SYNTHETIC_INTERVAL = 60
 SYNTHETIC_QUANTILES = ["0.5", "0.75", "0.9", "0.95", "0.99"]
 SYNTHETIC_FAMILIES = {"sum": ["exact-sum"], "rate": ["exact-increase"], "topk": ["topk"],
-                      "quantile": ["kll", "dd"]}
+                      "quantile": ["kll", "dd"], "cardinality": ["hll"]}
+SYNTHETIC_SKETCHES = {**FAMILIES, "hll": ("hll", "target_hll_rel_err", False)}
 EXACT_SKETCH = {"exact-sum": "exact-sum", "exact-increase": "exact-increase"}
 WINDOW_SECS = {"1m": 60, "5m": 300, "10m": 600, "15m": 900, "1h": 3600, "6h": 21600,
                "24h": 86400}
@@ -227,9 +229,11 @@ SHARED_WINDOWS = 3
 SHARED_QUANTILES = 3
 SHARED_INTERVALS = [10, 60, 300]
 SHARED_SEED = 7
-TEMPLATE_SETS = ["dashboard", "all"]
-# Workload grid (#777 section 6): the mixed template set ("all"), then each
-# scaling dimension alone. One accuracy level, 95% in each family's metric
+# "classic" is the 10-template mixed set; "all" adds the multi-grouping
+# templates below.
+TEMPLATE_SETS = ["dashboard", "classic", "all"]
+# Workload grid (#777 section 6): for each of SYNTHETIC_TEMPLATE_SETS, the
+# default point, then each scaling dimension alone. One accuracy level, 95% in each family's metric
 # (the runner's p95). `shared` replicas read one metric (the sharing benefit);
 # `metrics` copies of the template set each read their own metric, so RQEs
 # grow as 50 · m (planning time vs. RQEs).
@@ -238,13 +242,153 @@ SYNTHETIC_GRID = {
     "shared": [1, 8],
     "metrics": [1, 8, 16],
 }
+SYNTHETIC_TEMPLATE_SETS = ["all", "classic"]
+
+# Multi-grouping templates (sketch-bench docs/rqe_optimizer_hydra.md): two
+# metrics with an ordered label schema, each value read at several groupings
+# on one stream, so a fine deployment can serve a coarse RQE (a roll-up) and
+# one Hydra grid can serve them all. A label has `cardinality` values, or,
+# with `child_of`, that many under each parent value (aqpbm-datagen's fan-out:
+# the value is "parent.i"), drawn Zipf(`skew`) independently of the other
+# labels given its parent. A value names its families' data shape: Zipf θ over
+# `keys` distinct values (distinct counts), or the Pareto tail index
+# (quantiles). The runner reads the shape, the groups and their shares
+# (group_coverage()); the rest (latency scaling, the anomaly, the burst's
+# sources) describes the data and is not modeled. Rates are the classic set's 2e6 samples/s,
+# doubled for flows so its finest grouping (1e6 groups) holds the curves'
+# first N (1e3 items) in a 5m window.
+SCHEMAS = {
+    "http": {
+        "labels": [
+            {"name": "region", "cardinality": 4, "skew": 0.5},
+            {"name": "service", "cardinality": 25, "skew": 1.1},
+            {"name": "endpoint", "cardinality": 25, "child_of": "service", "skew": 1.1},
+            {"name": "status", "cardinality": 4, "skew": 2.0},
+        ],
+        "rate": SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
+        "values": {
+            "user_id": {"zipf": 0.8, "keys": 1_000_000},
+            # Each service's latencies scaled by its own factor; one endpoint
+            # is 10x slower (the anomaly). Scaling keeps the tail index.
+            "latency": {"pareto": SYNTHETIC_ALPHA, "scaled_by": "service",
+                        "anomaly": {"label": "endpoint", "factor": 10}},
+        },
+    },
+    "flows": {
+        "labels": [
+            {"name": "dst_subnet", "cardinality": 1000, "skew": 1.1},
+            {"name": "dst_port", "cardinality": 1000, "skew": 1.2},
+            {"name": "proto", "cardinality": 3, "skew": 0.0},
+        ],
+        "rate": 2 * SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
+        "values": {
+            # Uniform background sources, plus a DDoS burst: a tail subnet
+            # (the least popular, value 999) gets 5% of the traffic from 1e4
+            # distinct sources, which makes it a group of share >= 5%.
+            "src_ip": {"zipf": 0.0, "keys": 1_000_000,
+                       "burst": {"label": "dst_subnet", "value": 999, "share": 0.05,
+                                 "keys": 10_000}},
+        },
+    },
+}
+SCHEMA_WINDOWS = "5m,15m"
+SCHEMA_MIN_COVERED_N = 1e3
+
+
+def all_subsets(metric):
+    """Every non-empty subset of `metric`'s labels, in schema order."""
+    names = [label["name"] for label in SCHEMAS[metric]["labels"]]
+    return [list(c) for n in range(1, len(names) + 1) for c in itertools.combinations(names, n)]
+
+
+# (template, query, metric, value, capability, groupings, covers_share): one
+# RQE per grouping and window. `covers_share` is the accuracy target's scope:
+# only groups holding at least that share of the items (None: every group).
+SCHEMA_TEMPLATES = [
+    (11, "distinct_src", "flows", "src_ip", "cardinality", [["dst_subnet"]], 0.05),
+    (12, "distinct_src", "flows", "src_ip", "cardinality",
+     [["dst_port"], ["dst_subnet", "proto"], ["dst_port", "proto"]], 0.05),
+    (14, "distinct_users", "http", "user_id", "cardinality",
+     [["region"], ["service"], ["region", "service"], ["service", "endpoint"]], 0.01),
+    (15, "distinct_users", "http", "user_id", "cardinality", all_subsets("http"), 0.05),
+    (16, "p99_latency", "http", "latency", "quantile",
+     [["service"], ["region", "service"], ["service", "status"]], None),
+    # Negative control: every group, the smallest included.
+    (17, "distinct_users", "http", "user_id", "cardinality", [["service", "endpoint"]], None),
+]
+
+
+def closed_labels(metric, grouping):
+    """`grouping`'s labels with every child's ancestors (a child value names
+    its parent), in schema order."""
+    labels = {label["name"]: label for label in SCHEMAS[metric]["labels"]}
+    closed, todo = set(), list(grouping)
+    while todo:
+        name = todo.pop()
+        if name not in closed:
+            closed.add(name)
+            todo += [labels[name]["child_of"]] if "child_of" in labels[name] else []
+    return [labels[name] for name in labels if name in closed]
+
+
+def grouping_cardinality(metric, grouping):
+    """Groups of `grouping` on `metric`: the product of its labels' fan-outs,
+    with every child's ancestors included."""
+    return math.prod(label["cardinality"] for label in closed_labels(metric, grouping))
+
+
+def label_shares(metric, label):
+    """Each value's share of `metric`'s records (a child's: given its parent):
+    Zipf(`skew`), mixed with a value's burst."""
+    weights = [(i + 1) ** -label["skew"] for i in range(label["cardinality"])]
+    shares = [w / sum(weights) for w in weights]
+    for value in SCHEMAS[metric]["values"].values():
+        burst = value.get("burst")
+        if burst and burst["label"] == label["name"]:
+            shares = [(1 - burst["share"]) * p for p in shares]
+            shares[burst["value"]] += burst["share"]
+    return shares
+
+
+def group_coverage(metric, grouping, covers_share):
+    """(covered groups, smallest and largest covered group's share of the
+    records) of an RQE at `grouping` covering groups of share >=
+    `covers_share`, plus always the largest group (None: every group). A group's share is the product of
+    its labels' shares: labels are drawn independently given their parents."""
+    marginals = [sorted(label_shares(metric, label), reverse=True)
+                 for label in closed_labels(metric, grouping)]
+    largest = math.prod(m[0] for m in marginals)
+    if covers_share is None:
+        return (grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals),
+                largest)
+    # Enumerate the groups of share >= covers_share, largest values first;
+    # a prefix whose best completion falls short ends its loop.
+    best_rest = [math.prod(m[0] for m in marginals[i:]) for i in range(len(marginals) + 1)]
+    covered = []
+
+    def walk(i, share):
+        if i == len(marginals):
+            covered.append(share)
+            return
+        for p in marginals[i]:
+            if share * p * best_rest[i + 1] < covers_share:
+                break
+            walk(i + 1, share * p)
+
+    walk(0, 1.0)
+    covered = covered or [largest]
+    return len(covered), min(covered), largest
 
 
 def synthetic_plan():
-    """The default point and every dimension varied alone, each a full dict."""
-    points = [dict(SYNTHETIC_DEFAULT)]
-    for dim, values in SYNTHETIC_GRID.items():
-        points += [{**SYNTHETIC_DEFAULT, dim: v} for v in values]
+    """Per template set, the default point and every dimension varied alone,
+    each a full dict."""
+    points = []
+    for templates in SYNTHETIC_TEMPLATE_SETS:
+        default = {**SYNTHETIC_DEFAULT, "templates": templates}
+        points.append(default)
+        for dim, values in SYNTHETIC_GRID.items():
+            points += [{**default, dim: v} for v in values]
     unique = []
     for p in points:
         if p not in unique:
@@ -272,7 +416,8 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     (S = T = 1 s); temporal ones repeat every `interval` seconds over each
     lookback in `windows`. RQEs that repeat another's query and range (template
     10, D5) are kept once. With `metric`, every stream and query id names it,
-    so the queries share nothing with another metric's.
+    so the queries share nothing with another metric's. `all` adds
+    schema_queries() to the `classic` set.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
     dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
@@ -321,6 +466,7 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                 add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
                     interval, C)
         return out
+    assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
     add("sum_by_job", "job/value", "sum", "1s", 1, 1, J)
     for q in quantiles:
@@ -338,6 +484,57 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         add("topk32_sum_by_label0_rate", "label_0/increment", "topk", lbl, s, interval, 1, C)
         for q in ["0.9", "0.5"]:  # template 10, the same RQEs as template 5's
             add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
+    if templates == "all":
+        out += schema_queries(interval, dataset, range_with_interval, seen, metric)
+    return out
+
+
+def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
+    """SCHEMA_TEMPLATES as synthetic_queries' query-ranges, over
+    SCHEMA_WINDOWS, repeating every `interval` seconds. A metric's values are
+    its streams (`http/user_id`); each RQE names its `grouping` and
+    `covers_share`, and carries its metric's schema. With `metric`, the
+    schema metrics are named under it (`data_1/http`)."""
+    out = []
+    for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
+        schema = SCHEMAS[name]
+        shape = schema["values"][value]
+        full = f"{metric}/{name}" if metric else name
+        for grouping in groupings:
+            groups = grouping_cardinality(name, grouping)
+            query_id = f"t{n}_{what}_by_{','.join(grouping)}"
+            if metric:
+                query_id = f"{query_id}_{metric}"
+            for w in SCHEMA_WINDOWS.split(","):
+                s = WINDOW_SECS[w]
+                rng = f"{w}@{interval}s" if range_with_interval else w
+                if (query_id, rng) in seen:
+                    continue
+                seen.add((query_id, rng))
+                n_items = schema["rate"] * s / groups
+                covered, min_share, max_share = group_coverage(name, grouping, covers)
+                covered_min_n = schema["rate"] * s * min_share
+                # Accuracy is read at the smallest covered group: keep it on
+                # the curves (their first N is 1e3).
+                assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
+                out.append({
+                    "dataset": dataset, "query_id": query_id,
+                    "kind": "values" if capability == "quantile" else "keys",
+                    "range": rng, "range_s": s, "step_s": interval,
+                    "theta": shape.get("zipf"), "K": shape.get("keys"),
+                    "min_N": n_items, "max_N": n_items,
+                    "alpha_rank": shape.get("pareto"), "alpha_memory": shape.get("pareto"),
+                    "tail_class": "",
+                    "families": SYNTHETIC_FAMILIES[capability], "capability": capability,
+                    "stream": f"{full}/{value}", "metric": full, "groups": groups,
+                    "arrival_rate": schema["rate"],
+                    "grouping": grouping, "covers_share": covers, "schema": schema,
+                    "covered_groups": covered, "min_covered_share": min_share,
+                    "covered_min_N": covered_min_n, "max_covered_share": max_share,
+                    "covered_max_N": schema["rate"] * s * max_share,
+                    "assumptions": [],
+                    **DEFAULT_TARGETS,
+                })
     return out
 
 
@@ -372,21 +569,23 @@ def metric_queries(point):
 def synthetic_entry(q):
     """The table entry for one `synthetic` query-range: the workload only.
     Each family names its sketch, target and data shape (θ and K, or the
-    Pareto a for quantiles); exact accumulators need no shape."""
+    Pareto a for quantiles); exact accumulators need no shape. A
+    schema_queries() RQE also names its `grouping`, `covers_share` and its
+    coverage (group_coverage())."""
     families = []
     for family in q["families"]:
         if family in EXACT_SKETCH:
             families.append({"family": family, "sketch": EXACT_SKETCH[family],
                              "target": 0.0, "grid_param": None, "grid_K": None})
             continue
-        sketch, target_col, _ = FAMILIES[family]
+        sketch, target_col, _ = SYNTHETIC_SKETCHES[family]
         quantile = q["capability"] == "quantile"
         families.append({
             "family": family, "sketch": sketch, "target": q[target_col],
-            "grid_param": SYNTHETIC_ALPHA if quantile else SYNTHETIC_THETA,
+            "grid_param": q["alpha_rank"] if quantile else q["theta"],
             "grid_K": None if quantile else q["K"],
         })
-    return {
+    entry = {
         "id": f"{q['dataset']}/{q['query_id']}/{q['kind']}/{q['range']}",
         "dataset": q["dataset"], "query_id": q["query_id"], "kind": q["kind"],
         "range": q["range"], "instant": False,
@@ -394,11 +593,21 @@ def synthetic_entry(q):
         "min_N": q["min_N"], "max_N": q["max_N"],
         "queries_per_instance": queries_per_instance(q),
         "stream": q["stream"], "metric": q["metric"], "capability": q["capability"],
+        # keys_per_window: the value's universe K (the families' grid_K), not
+        # the distinct keys one group sees in a window.
         "label_set": {"groups": q["groups"], "arrival_rate_per_sec": q["arrival_rate"],
                       "keys_per_window": q["K"]},
         "assumptions": q["assumptions"],
         "families": families,
     }
+    if "grouping" in q:
+        # max_N is the mean group's items per window; covered_min_N and
+        # covered_max_N the smallest and largest covered group's
+        # (min_covered_share and max_covered_share of the stream's).
+        entry.update({k: q[k] for k in ["grouping", "covers_share", "covered_groups",
+                                        "min_covered_share", "covered_min_N",
+                                        "max_covered_share", "covered_max_N"]})
+    return entry
 
 
 def queries_per_instance(q):
@@ -432,13 +641,17 @@ def build_synthetic(args):
             else:
                 qs = synthetic_queries(templates=point["templates"],
                                        dataset="synthetic/" + point_id(point))
+            workload = {"dataset": qs[0]["dataset"], "rqes": [synthetic_entry(q) for q in qs]}
+            # Each schema metric's label schema, for the runner's facts.
+            schemas = {q["metric"]: q["schema"] for q in qs if "schema" in q}
+            if schemas:
+                workload["schemas"] = schemas
             out[name] = {
                 "schema_version": 1,
                 "plan": "ProjectASAP/ASAPQuery#777",
                 "inputs": {},
                 "sketch_bench_revision": args.revision,
-                "workloads": [{"dataset": qs[0]["dataset"],
-                               "rqes": [synthetic_entry(q) for q in qs]}],
+                "workloads": [workload],
             }
         result = name[:-len(".json")] + f"-t{point['target']}.json"
         plan.append((name, point["target"], result))

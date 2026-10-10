@@ -21,10 +21,10 @@
 //! versions, in one output file:
 //!
 //! - **Version 1, no latency constraint** (`results`): each method's cheapest
-//!   plan, its latency reported, and ASAP's and PerQuery's cost–latency
-//!   frontiers (`bound_ms`).
+//!   plan, its latency reported, and ASAP's (with and without roll-ups) and
+//!   PerQuery's cost–latency frontiers (`bound_ms`).
 //! - **Version 2, a batch latency SLA** (`sla_results`): at each SLA of the
-//!   grid, ASAP's and PerQuery's cheapest plan whose batch latency is at most
+//!   grid, ASAP's (both) and PerQuery's cheapest plan whose batch latency is at most
 //!   the SLA (`milp::minimize_usage_cost` with `latency_bound_ms`, exact).
 //!   An SLA below a method's tightest feasible bound has no plan
 //!   (`infeasible`). AutoSketch ignores the SLA; its plan is recorded at
@@ -38,6 +38,10 @@
 //!   weights and is priced under each.
 //! - **PerQuery-CostAware:** `milp::minimize_usage_cost` over each RQE's own
 //!   candidates (separate copies, so no sharing).
+//! - **ASAP (no roll-ups)** (`asap-norollup`), an ablation: ASAP's MILP and
+//!   candidates, with each RQE allowed only deployments at its own grouping
+//!   or Hydra grids (not a roll-up). Every result counts `rolled_up_rqes`,
+//!   the RQEs served from a strictly finer non-Hydra deployment.
 //!
 //! `traces` reads `data/autosketch-eval/table.json` (alibaba_v2022 and
 //! google_2011 are evaluated; boom is left out for now); `synthetic` reads one
@@ -45,7 +49,15 @@
 //! gives the workload: RQEs, and each stream's groups, rate and data shape
 //! (the family's `grid_param`/`grid_K`, the worst case rounded to the grid).
 //! Each stream (`traces`: dataset, query and kind; `synthetic`: the table's
-//! `stream`) is one metric, which is where sharing comes from.
+//! `stream`) is one metric, which is where sharing comes from. A stream of a
+//! metric with a label schema (the table's `schemas`) has the schema's labels,
+//! and its RQEs name their `grouping`, so one stream carries several
+//! groupings and a fine deployment can serve a coarse RQE (a roll-up).
+//! Accuracy is read at the mean group's items per window, or, for an RQE with
+//! a `covers_share` (`null`: every group), at its smallest and its largest
+//! covered group's (`min_covered_share` and `max_covered_share` of the
+//! stream's), the worse of the two: a per-group sketch's error need not fall
+//! as N grows (sketch-bench#189), so either may be the hardest group.
 //!
 //! Costs and accuracy come from `--saturation-dir`, the same inputs the
 //! planner reads (#174): the cost table `optimizer_cost/rqe_atomic_costs.json`
@@ -54,6 +66,16 @@
 //! lookback's items; KLL and top-k merged from `L/x` shards read the merge
 //! curve, #158); AutoSketch reads `autosketch_accuracy` (one unmerged sketch
 //! per query window, no saturation requirement).
+//!
+//! Hydra: ASAP and PerQuery plan with undeployable families allowed, so a
+//! Hydra grid over a schema metric's full schema competes with per-group
+//! sketches (sketch-bench `docs/rqe_optimizer_hydra.md`). Its cost rows and
+//! accuracy (`hydra_saturation.csv` under the saturation dir) are measured
+//! on the dataset shaped like the stream's metric ([`hydra_dataset`]), at
+//! that full schema; without them no Hydra deployment is eligible. Hydra is
+//! held to the worst case (max over covered groups, worst over N and seeds),
+//! per-group sketches to seed-mean curves. AutoSketch allows undeployable
+//! families too but skips Hydra itself (#159).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
@@ -62,11 +84,11 @@ use rqe_optimizer::analytical_cost_model::chain_ms;
 use rqe_optimizer::autosketch;
 use rqe_optimizer::candidates::{build_all_candidates, eligible_deployments_for, is_eligible};
 use rqe_optimizer::milp::minimize_usage_cost;
-use rqe_optimizer::saturation::{DataShape, SaturationCurves, COST_TABLE};
+use rqe_optimizer::saturation::{AccuracySource, DataShape, SaturationCurves, COST_TABLE};
 use rqe_optimizer::usage::{usage_cost, PlanLoad};
 use rqe_optimizer::{
-    validate_facts, AtomicCostEntry, AtomicCostTable, Capability, Deployment, LabelSet, Mapping,
-    MetricFacts, Millis, Raqe, WorkloadFacts,
+    accuracy_key, validate_facts, AccuracyDirection, AtomicCostEntry, AtomicCostTable, Capability,
+    Deployment, LabelSet, Mapping, MetricFacts, Millis, Raqe, WorkloadFacts,
 };
 use serde_json::{json, Value};
 
@@ -101,19 +123,64 @@ struct Workload {
     metric_of: BTreeMap<String, String>,
     /// RQEs of streams with more keys than samples/s, left out.
     excluded_high_cardinality: Vec<String>,
+    /// The table's `covers_share` by RQE id, for RQEs that name one (`None`:
+    /// every group).
+    covers_share: BTreeMap<String, Option<f64>>,
+    /// Facts for reading an RQE's accuracy at its smallest covered group, by
+    /// RQE id, for RQEs with a `covers_share` (`null` too): its stream's,
+    /// with the series scaled so the mean group gets that group's items.
+    covered_facts: BTreeMap<String, WorkloadFacts>,
+    /// The same, at its largest covered group.
+    largest_facts: BTreeMap<String, WorkloadFacts>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
 
 impl Workload {
-    /// ASAP's accuracy: the planner's own lookup.
+    /// The facts `r`'s accuracy is read with.
+    fn accuracy_facts(&self, r: &Raqe) -> &WorkloadFacts {
+        self.covered_facts.get(&r.id).unwrap_or(&self.facts)
+    }
+
+    /// `read` at `r`'s accuracy facts, and for an RQE with a largest covered
+    /// group also at its, the worse in `sketch`'s direction; unknown if
+    /// either is.
+    fn worse_read<T>(
+        &self,
+        r: &Raqe,
+        sketch: &str,
+        read: impl Fn(&WorkloadFacts) -> Option<(f64, T)>,
+    ) -> Option<(f64, T)> {
+        let smallest = read(self.accuracy_facts(r))?;
+        let Some(facts) = self.largest_facts.get(&r.id) else {
+            return Some(smallest);
+        };
+        let largest = read(facts)?;
+        let largest_worse = match accuracy_key(sketch).1 {
+            AccuracyDirection::LowerIsBetter => largest.0 > smallest.0,
+            AccuracyDirection::HigherIsBetter => largest.0 < smallest.0,
+        };
+        Some(if largest_worse { largest } else { smallest })
+    }
+
+    /// ASAP's accuracy: the planner's own lookup, and where it came from.
+    fn accuracy_with_source(&self, r: &Raqe, d: &Deployment) -> Option<(f64, AccuracySource)> {
+        self.worse_read(r, &d.config.sketch, |facts| {
+            self.curves.accuracy_with_source(r, d, facts)
+        })
+    }
+
+    /// ASAP's accuracy.
     fn asap_accuracy(&self, r: &Raqe, d: &Deployment) -> Option<f64> {
-        self.curves.accuracy(r, d, &self.facts)
+        self.accuracy_with_source(r, d).map(|(value, _)| value)
     }
 
     /// AutoSketch's: one unmerged sketch per query window.
     fn autosketch_accuracy(&self, r: &Raqe, c: &AtomicCostEntry) -> Option<f64> {
-        self.curves.autosketch_accuracy(r, c, &self.facts)
+        self.worse_read(r, &c.sketch, |facts| {
+            Some((self.curves.autosketch_accuracy(r, c, facts)?, ()))
+        })
+        .map(|(value, _)| value)
     }
 }
 
@@ -199,6 +266,7 @@ fn capability_of(r: &Value) -> Capability {
         // `topk(k, sum by (...) (...))`: ranked by summed value.
         (Some("topk"), _) => Capability::TopKByValue,
         (Some("quantile"), _) | (None, "values") => Capability::Quantile,
+        (Some("cardinality"), _) => Capability::Cardinality,
         other => panic!("unknown capability {other:?}"),
     }
 }
@@ -237,6 +305,20 @@ fn groups_of(r: &Value, capability: Capability) -> u64 {
     } else {
         groups
     }
+}
+
+/// The `hydra_saturation.csv` dataset measured with a schema metric's
+/// labels, shares and values (`configs/datagen/hydra_*.yaml`): `http`'s
+/// latency for quantiles, its user ids otherwise, and `flows`' sources.
+/// `None` for any other metric, which no Hydra deployment serves.
+fn hydra_dataset(metric: &str, capability: Capability) -> Option<String> {
+    let dataset = match (metric.rsplit('/').next()?, capability) {
+        ("http", Capability::Quantile) => "hydra_http_latency",
+        ("http", _) => "hydra_http",
+        ("flows", _) => "hydra_flows",
+        _ => return None,
+    };
+    Some(dataset.to_string())
 }
 
 fn label_set(names: &[&str]) -> LabelSet {
@@ -279,6 +361,9 @@ fn from_table(
     let mut metric_of = BTreeMap::new();
     let mut skipped_families = 0;
     let mut stream_series: BTreeMap<String, u64> = BTreeMap::new();
+    let mut covers_share = BTreeMap::new();
+    let mut min_covered_share = BTreeMap::new();
+    let mut max_covered_share = BTreeMap::new();
     for r in workload["rqes"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap().to_string();
         let metric = r["metric"].as_str().unwrap_or(dataset);
@@ -295,37 +380,75 @@ fn from_table(
         let capability = capability_of(r);
         let rate = r["label_set"]["arrival_rate_per_sec"].as_f64().unwrap();
         let groups = groups_of(r, capability);
-        let grouping = if groups > 1 {
-            label_set(&["g"])
-        } else {
-            LabelSet::new()
+        // A schema metric's RQE names its grouping (its `groups` are that
+        // grouping's); otherwise the stream has one label `g`, the grouping.
+        let schema = &workload["schemas"][metric];
+        let grouping: LabelSet = match r["grouping"].as_array() {
+            Some(labels) => labels
+                .iter()
+                .map(|l| l.as_str().unwrap().to_string())
+                .collect(),
+            None if groups > 1 => label_set(&["g"]),
+            None => LabelSet::new(),
         };
-        // One metric per stream, labels {g, x}: `g` is the grouping (card =
-        // groups), and with one scrape a second `{g, x}` has one series per
-        // sample/s. A stream's RQEs differ only in range, so take the
-        // largest per-RQE rate (conservative). Rates below `groups`
+        // `null` covers every group, so its smallest is read too.
+        if let Some(share) = r.get("covers_share") {
+            covers_share.insert(id.clone(), share.as_f64());
+            min_covered_share.insert(id.clone(), r["min_covered_share"].as_f64().unwrap());
+            max_covered_share.insert(id.clone(), r["max_covered_share"].as_f64().unwrap());
+        }
+        // One metric per stream, labels {g, x} (or the schema's and x), and
+        // with one scrape a second the full label set has one series per
+        // sample/s. A stream's RQEs differ only in range and grouping, so
+        // take the largest per-RQE rate (conservative). Rates below `groups`
         // samples/s are rounded up so every group has a series.
         let series = (rate * SCRAPE_MS as f64 / 1000.0).round() as u64;
         let most = stream_series.entry(stream.clone()).or_default();
         *most = (*most).max(series);
-        let metric = facts.entry(stream.clone()).or_insert_with(|| MetricFacts {
-            labels: label_set(&["g", "x"]),
-            scrape_interval_ms: SCRAPE_MS,
-            cardinality: [
-                (label_set(&["g", "x"]), 0),
-                (label_set(&["g"]), groups),
-                (LabelSet::new(), 1),
-            ]
-            .into(),
-            value_range: None,
-            data_shape: BTreeMap::new(),
+        let most = *most;
+        // A schema metric's full schema (its labels without `x`) and its
+        // groups: the product of every label's fan-out, as the generator's
+        // grouping_cardinality (the full set holds every child's parent).
+        let full_schema: Option<(LabelSet, u64)> = schema["labels"].as_array().map(|labels| {
+            let names = labels
+                .iter()
+                .map(|l| l["name"].as_str().unwrap().to_string())
+                .collect();
+            let groups = labels
+                .iter()
+                .map(|l| l["cardinality"].as_u64().unwrap())
+                .product();
+            (names, groups)
+        });
+        let metric = facts.entry(stream.clone()).or_insert_with(|| {
+            let mut labels = full_schema
+                .as_ref()
+                .map_or_else(|| label_set(&["g"]), |(names, _)| names.clone());
+            labels.insert("x".to_string());
+            MetricFacts {
+                cardinality: [(labels.clone(), 0), (LabelSet::new(), 1)].into(),
+                labels,
+                scrape_interval_ms: SCRAPE_MS,
+                value_range: None,
+                data_shape: BTreeMap::new(),
+                // A stream is one value of its metric, so one capability.
+                hydra_dataset: full_schema.as_ref().and_then(|(names, _)| {
+                    Some((hydra_dataset(metric, capability)?, names.clone()))
+                }),
+            }
         });
         // A stream's RQEs may see different group counts (keys per window
         // grow with the range): take the largest (conservative).
-        let card = metric.cardinality.get_mut(&label_set(&["g"])).unwrap();
+        let card = metric.cardinality.entry(grouping.clone()).or_default();
         *card = (*card).max(groups);
-        let total = metric.cardinality.get_mut(&label_set(&["g", "x"])).unwrap();
+        let total = metric.cardinality.get_mut(&metric.labels).unwrap();
         *total = (*total).max(series).max(groups);
+        // The full schema (a Hydra grid's, and its tracker's keys), capped at
+        // the stream's series so it doesn't make the stream high-cardinality.
+        if let Some((names, groups)) = full_schema {
+            let card = metric.cardinality.entry(names).or_default();
+            *card = (*card).max(groups.min(most));
+        }
         // Queries one evaluation issues per instance (the table's q_r); tables
         // written before it existed charge one query phase per evaluation.
         let queries = r["queries_per_instance"].as_f64().unwrap_or(1.0);
@@ -374,6 +497,7 @@ fn from_table(
             accuracy_sla: rqe_target.unwrap_or(0.0),
             latency_sla_ms: None,
             topk_k: topk_k_of(r, capability),
+            accuracy_covers_share: r.get("covers_share").and_then(Value::as_f64),
         });
     }
     // Every stream may use every row; one evaluation runs q_r queries per
@@ -397,7 +521,11 @@ fn from_table(
     // Such streams are left out, and their RQEs listed.
     let high_cardinality: BTreeSet<String> = facts
         .iter()
-        .filter(|(stream, m)| m.cardinality[&label_set(&["g"])] > stream_series[*stream])
+        .filter(|(stream, m)| {
+            m.cardinality
+                .iter()
+                .any(|(labels, &card)| labels != &m.labels && card > stream_series[*stream])
+        })
         .map(|(stream, _)| stream.clone())
         .collect();
     let excluded_high_cardinality: Vec<String> = raqes
@@ -407,6 +535,23 @@ fn from_table(
         .collect();
     raqes.retain(|r| !high_cardinality.contains(&r.metric));
     facts.retain(|stream, _| !high_cardinality.contains(stream));
+    // Only the items per group read the series count: scaled by share·groups,
+    // the mean group gets the smallest (largest) covered group's items.
+    let scaled = |shares: &BTreeMap<String, f64>| {
+        raqes
+            .iter()
+            .filter_map(|r| {
+                let share = shares.get(&r.id)?;
+                let mut m = facts[&r.metric].clone();
+                let groups = m.cardinality[&r.grouping_labels] as f64;
+                let series = m.cardinality.get_mut(&m.labels).unwrap();
+                *series = (*series as f64 * share * groups).round() as u64;
+                Some((r.id.clone(), [(r.metric.clone(), m)].into()))
+            })
+            .collect()
+    };
+    let covered_facts = scaled(&min_covered_share);
+    let largest_facts = scaled(&max_covered_share);
     let name = if dataset.starts_with("synthetic") {
         format!("{dataset}/t{}", target.as_deref().unwrap_or("p95"))
     } else {
@@ -419,6 +564,9 @@ fn from_table(
         costs,
         metric_of,
         excluded_high_cardinality,
+        covers_share,
+        covered_facts,
+        largest_facts,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
@@ -468,15 +616,14 @@ fn group_by_stream(raqes: &[Raqe]) -> BTreeMap<&str, Vec<Raqe>> {
     out
 }
 
-/// ASAP candidates, built per stream from that stream's entries.
+/// ASAP candidates, built per stream from that stream's entries, with
+/// undeployable families (Hydra) allowed.
 fn candidates(w: &Workload, raqes: &[Raqe]) -> Vec<Deployment> {
     group_by_stream(raqes)
         .into_iter()
         .flat_map(|(stream, group)| {
             let costs = w.costs.get(stream).map_or(&[][..], Vec::as_slice);
-            build_all_candidates(&group, costs, &w.facts, false, &|r, d| {
-                w.asap_accuracy(r, d)
-            })
+            build_all_candidates(&group, costs, &w.facts, true, &|r, d| w.asap_accuracy(r, d))
         })
         .collect()
 }
@@ -493,7 +640,9 @@ fn autosketch_plan(
     for (stream, group) in group_by_stream(raqes) {
         let costs = w.costs.get(stream).map_or(&[][..], Vec::as_slice);
         let oracle = |r: &Raqe, c: &AtomicCostEntry| w.autosketch_accuracy(r, c);
-        match autosketch::plan(&group, costs, SEED, false, oracle) {
+        // Undeployable families allowed, as for ASAP: AutoSketch skips
+        // Hydra itself (#159), so every method sees the same other families.
+        match autosketch::plan(&group, costs, SEED, true, oracle) {
             Ok(plan) => {
                 deployments.extend(plan.deployments);
                 searches.extend(plan.searches);
@@ -517,6 +666,13 @@ fn autosketch_plan(
         mapping,
         searches,
     })
+}
+
+/// Whether `d` serves `r` as a roll-up: a non-Hydra deployment at another
+/// grouping (one that serves `r` is strictly finer). A Hydra grid answers any
+/// subgrouping directly.
+fn is_rollup(r: &Raqe, d: &Deployment) -> bool {
+    !d.properties().answers_any_subgrouping && d.grouping_labels != r.grouping_labels
 }
 
 /// A plan priced by use (`usage::usage_cost`): its cost, CPU and memory by
@@ -558,13 +714,22 @@ fn summarize(
         .sum();
     let latencies: Vec<f64> = load.queries.iter().map(|q| q.chain_ms).collect();
     let active: BTreeSet<usize> = mapping.iter().copied().collect();
+    let hydra_rqes = mapping
+        .iter()
+        .filter(|&&d| deployments[d].properties().answers_any_subgrouping)
+        .count();
+    let rolled_up_rqes = raqes
+        .iter()
+        .zip(mapping)
+        .filter(|(r, &d)| is_rollup(r, &deployments[d]))
+        .count();
     let chosen: Vec<Value> = raqes
         .iter()
         .zip(mapping)
         .zip(&latencies)
         .map(|((r, &di), &latency)| {
             let d = &deployments[di];
-            json!({
+            let mut choice = json!({
                 "rqe": r.id,
                 "sketch": d.config.sketch,
                 "params": d.config.sketch_config["params"],
@@ -576,13 +741,21 @@ fn summarize(
                 "deployment": di,
                 "asap_accuracy": w.asap_accuracy(r, d),
                 "accuracy_source": w
-                    .curves
-                    .accuracy_with_source(r, d, &w.facts)
+                    .accuracy_with_source(r, d)
                     .map(|(_, source)| format!("{source:?}")),
-            })
+            });
+            // A roll-up or a Hydra grid: the deployment is grouped finer than
+            // the RQE.
+            if d.grouping_labels != r.grouping_labels {
+                choice["deployment_grouping"] = json!(d.grouping_labels);
+            }
+            if let Some(share) = w.covers_share.get(&r.id) {
+                choice["covers_share"] = json!(share);
+            }
+            choice
         })
         .collect();
-    json!({
+    let mut v = json!({
         "objective": cost.value,
         "cpu": cost.cpu,
         "gib": gib(cost.bytes),
@@ -596,8 +769,14 @@ fn summarize(
         "latency_ms": cost.latency_ms,
         "median_latency_ms": (!latencies.is_empty()).then(|| median(latencies.clone())),
         "active_deployments": active.len(),
+        "rolled_up_rqes": rolled_up_rqes,
         "chosen": chosen,
-    })
+    });
+    // Only workloads Hydra may serve report it, so others read as before.
+    if w.facts.values().any(|m| m.hydra_dataset.is_some()) {
+        v["hydra_rqes"] = json!(hydra_rqes);
+    }
+    v
 }
 
 /// `--slas-ms`: comma-separated SLAs in ms, each positive and finite.
@@ -706,6 +885,15 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
     if let Err(problems) = validate_facts(&raqes, &w.facts) {
         panic!("invalid facts: {problems:?}");
     }
+    for (r, facts) in raqes.iter().flat_map(|r| {
+        [&w.covered_facts, &w.largest_facts]
+            .into_iter()
+            .filter_map(move |f| Some((r, f.get(&r.id)?)))
+    }) {
+        if let Err(problems) = validate_facts(std::slice::from_ref(r), facts) {
+            panic!("invalid covered facts: {problems:?}");
+        }
+    }
 
     // AutoSketch: one plan, independent of the weights.
     let mut search_secs = Vec::new();
@@ -766,6 +954,16 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         perquery_candidates.extend(own);
     }
     let perquery_build_secs = started.elapsed().as_secs_f64();
+    // ASAP without roll-ups: ASAP's candidates, each RQE kept off any finer
+    // non-Hydra deployment.
+    let norollup_allowed: Vec<Vec<usize>> = raqes
+        .iter()
+        .map(|r| {
+            (0..asap_candidates.len())
+                .filter(|&d| !is_rollup(r, &asap_candidates[d]))
+                .collect()
+        })
+        .collect();
 
     // AutoSketch's plan ignores the weights and latency: one point.
     let auto_latency_ms = usage_cost(
@@ -776,6 +974,7 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
     .latency_ms;
     let asap_tightest = tightest_bound_ms(w, &raqes, &asap_candidates, None);
     let perquery_tightest = tightest_bound_ms(w, &raqes, &perquery_candidates, Some(&allowed));
+    let norollup_tightest = tightest_bound_ms(w, &raqes, &asap_candidates, Some(&norollup_allowed));
 
     let mut results = Vec::new();
     let mut sla_results = Vec::new();
@@ -815,6 +1014,17 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             }
             Err(e) => json!({"error": e.to_string()}),
         };
+        let (norollup, norollup_solve_secs) =
+            solve(&asap_candidates, Some(&norollup_allowed), None);
+        let norollup = match norollup {
+            Ok(s) => {
+                let mut v = summarize(w, &raqes, &asap_candidates, &s.mapping, w_cpu, w_mem);
+                v["planning_secs"] = json!(median(build_secs.clone()) + norollup_solve_secs);
+                v["candidates"] = json!(asap_candidates.len());
+                v
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        };
         let (perquery, perquery_solve_secs) = solve(&perquery_candidates, Some(&allowed), None);
         let mut perq = match perquery {
             Ok(s) => summarize(w, &raqes, &perquery_candidates, &s.mapping, w_cpu, w_mem),
@@ -826,13 +1036,32 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         auto["probes"] = json!(probes);
         auto["benchmark_secs_paper_rate"] = json!(paper_secs);
 
-        // ASAP costs no more than PerQuery, nor than AutoSketch when every
-        // AutoSketch choice is one ASAP could make.
+        // ASAP costs no more than without roll-ups, which costs no more than
+        // PerQuery (whose own candidates are at each RQE's grouping or
+        // Hydra), nor than AutoSketch when every AutoSketch choice is one ASAP
+        // could make.
         let cost = |v: &Value| v["objective"].as_f64();
-        if let (Some(a), Some(b)) = (cost(&asap), cost(&perq)) {
-            if a > b * (1.0 + 1e-6) {
-                sanity.push(json!({"check": "asap <= perquery", "weights": weight_name, "asap": a, "perquery": b}));
+        // `sanity` gets a violation of `cheaper <= dearer`, both solved.
+        let ordered = |sanity: &mut Vec<Value>,
+                       at: Value,
+                       cheaper: (&str, &Value),
+                       dearer: (&str, &Value)| {
+            if let (Some(a), Some(b)) = (cost(cheaper.1), cost(dearer.1)) {
+                if a > b * (1.0 + 1e-6) {
+                    let mut v = json!({"check": format!("{} <= {}", cheaper.0, dearer.0), "weights": weight_name, (cheaper.0): a, (dearer.0): b});
+                    v.as_object_mut()
+                        .unwrap()
+                        .extend(at.as_object().unwrap().clone());
+                    sanity.push(v);
+                }
             }
+        };
+        for (cheaper, dearer) in [
+            (("asap", &asap), ("asap-norollup", &norollup)),
+            (("asap-norollup", &norollup), ("perquery", &perq)),
+            (("asap", &asap), ("perquery", &perq)),
+        ] {
+            ordered(&mut sanity, json!({}), cheaper, dearer);
         }
         if let (Some(a), Some(b)) = (cost(&asap), cost(&auto)) {
             let not_eligible: Vec<&str> = raqes
@@ -845,8 +1074,11 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
                 sanity.push(json!({"check": "asap <= autosketch", "weights": weight_name, "asap": a, "autosketch": b}));
             }
         }
-        if asap.get("error").is_some() || perq.get("error").is_some() {
-            sanity.push(json!({"check": "every method solves", "weights": weight_name, "asap": asap.get("error"), "perquery": perq.get("error")}));
+        if [&asap, &norollup, &perq]
+            .iter()
+            .any(|v| v.get("error").is_some())
+        {
+            sanity.push(json!({"check": "every method solves", "weights": weight_name, "asap": asap.get("error"), "asap-norollup": norollup.get("error"), "perquery": perq.get("error")}));
         }
 
         // The frontiers: the cheapest plan at most `L` slow, for a sweep of
@@ -854,6 +1086,13 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
         // at AutoSketch's latency.
         for (method, candidates, allowed, tightest, unbounded) in [
             ("asap", &asap_candidates, None, asap_tightest, &asap),
+            (
+                "asap-norollup",
+                &asap_candidates,
+                Some(&norollup_allowed[..]),
+                norollup_tightest,
+                &norollup,
+            ),
             (
                 "perquery",
                 &perquery_candidates,
@@ -894,6 +1133,12 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             for (method, candidates, allowed, tightest) in [
                 ("asap", &asap_candidates, None, asap_tightest),
                 (
+                    "asap-norollup",
+                    &asap_candidates,
+                    Some(&norollup_allowed[..]),
+                    norollup_tightest,
+                ),
+                (
                     "perquery",
                     &perquery_candidates,
                     Some(&allowed[..]),
@@ -920,10 +1165,13 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
                 v["method"] = json!(method);
                 at_sla.push(v);
             }
-            if let (Some(a), Some(b)) = (cost(&at_sla[0]), cost(&at_sla[1])) {
-                if a > b * (1.0 + 1e-6) {
-                    sanity.push(json!({"check": "asap <= perquery at the SLA", "weights": weight_name, "sla_ms": sla, "asap": a, "perquery": b}));
-                }
+            for (i, j) in [(0, 1), (1, 2), (0, 2)] {
+                ordered(
+                    &mut sanity,
+                    json!({"sla_ms": sla}),
+                    (at_sla[i]["method"].as_str().unwrap(), &at_sla[i]),
+                    (at_sla[j]["method"].as_str().unwrap(), &at_sla[j]),
+                );
             }
             let mut v = auto.clone();
             v["meets_sla"] = json!(meets_sla(auto_latency_ms, sla));
@@ -937,7 +1185,12 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             }
         }
 
-        for (method, value) in [("asap", asap), ("autosketch", auto), ("perquery", perq)] {
+        for (method, value) in [
+            ("asap", asap),
+            ("asap-norollup", norollup),
+            ("autosketch", auto),
+            ("perquery", perq),
+        ] {
             let mut v = value;
             v["method"] = json!(method);
             v["weights"] = json!(weight_name);
@@ -962,6 +1215,7 @@ fn evaluate(w: &Workload, runs: usize, weights: &[(&str, f64, f64)], slas: &[f64
             "points": FRONTIER_POINTS,
             "asap_tightest_bound_ms": asap_tightest,
             "perquery_tightest_bound_ms": perquery_tightest,
+            "asap_norollup_tightest_bound_ms": norollup_tightest,
             "autosketch_latency_ms": auto_latency_ms,
         },
         "autosketch": {
@@ -1020,6 +1274,408 @@ mod tests {
         // Float residue in summing µs-scale work is not a miss.
         assert!(meets_sla(100.0 * (1.0 + 1e-12), 100.0));
         assert!(!meets_sla(100.1, 100.0));
+    }
+
+    /// A saturation dir with the committed cost table and inline HLL curves
+    /// (each lg_k, uniform over 1e6 keys), so the test runs without the
+    /// study's (gitignored) curves. `tag` keeps parallel tests' dirs apart.
+    fn hll_saturation_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hll-saturation-{tag}-{}", std::process::id()));
+        let costs = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/results/autosketch-vs-asap-inputs/saturation/optimizer_cost/rqe_atomic_costs.json"
+        );
+        std::fs::create_dir_all(dir.join("optimizer_cost")).unwrap();
+        std::fs::copy(costs, dir.join(COST_TABLE)).unwrap();
+        for run in ["out_grid_1e7_cost", "out_1e9"] {
+            let mut summary = "family,sketch,config,dist,param,cardinality,n_sat,final_error,\
+                               error_metric,insert_cpu_secs,merge_cpu_secs,query_cpu_secs,memory_bytes\n"
+                .to_string();
+            let mut curve =
+                "family,sketch,config,dist,param,cardinality,n,seed_mean_error,seed_se\n"
+                    .to_string();
+            for lg_k in [12, 14, 16].iter().filter(|_| run == "out_grid_1e7_cost") {
+                let point = format!("cardinality,hll,lg_k={lg_k},zipf,0.0,1000000");
+                summary += &format!("{point},1000,0.01,relative_error,,,,\n");
+                for n in ["1000", "100000", "10000000"] {
+                    curve += &format!("{point},{n},0.01,0.0\n");
+                }
+            }
+            std::fs::create_dir_all(dir.join(run)).unwrap();
+            std::fs::write(dir.join(run).join("saturation.csv"), summary).unwrap();
+            std::fs::write(dir.join(run).join("saturation_curve.csv"), curve).unwrap();
+        }
+        dir
+    }
+
+    /// An HLL RQE on `http`'s user ids, grouped by `grouping`.
+    fn http_rqe(grouping: &[&str], groups: u64, covers: Option<f64>, smallest: f64) -> Value {
+        json!({
+            "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
+            "capability": "cardinality", "metric": "http", "stream": "http/user_id",
+            "grouping": grouping, "covers_share": covers, "min_covered_share": smallest,
+            "max_covered_share": 0.5,
+            "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
+            "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
+            "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
+                          "grid_param": 0.0, "grid_K": 1e6}],
+        })
+    }
+
+    /// A workload of `rqes` on the `http` schema, on [`hll_saturation_dir`].
+    fn http_workload(tag: &str, rqes: Vec<Value>) -> Workload {
+        let table = json!({"workloads": [{
+            "dataset": "synthetic/test",
+            "schemas": {"http": http_schema()},
+            "rqes": rqes,
+        }]});
+        let inputs = hll_saturation_dir(tag);
+        let path = inputs.join("table.json");
+        std::fs::write(&path, table.to_string()).unwrap();
+        let w = from_table(
+            path.to_str().unwrap(),
+            None,
+            Some("p95".into()),
+            inputs.to_str().unwrap(),
+        );
+        std::fs::remove_dir_all(&inputs).unwrap();
+        w
+    }
+
+    /// The unbounded plan of `method` at the first weight setting.
+    fn unbounded<'a>(result: &'a Value, method: &str) -> &'a Value {
+        result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["method"] == method && r["bound_ms"].is_null())
+            .unwrap()
+    }
+
+    #[test]
+    fn a_schema_stream_carries_every_grouping_and_rolls_up() {
+        let w = http_workload(
+            "schema",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["region", "service"], 100, None, 0.001),
+            ],
+        );
+        let facts = &w.facts["synthetic/test/http/user_id"];
+        assert_eq!(
+            facts.labels,
+            label_set(&["region", "service", "endpoint", "status", "x"])
+        );
+        assert_eq!(facts.cardinality[&label_set(&["region"])], 4);
+        assert_eq!(facts.cardinality[&label_set(&["region", "service"])], 100);
+        assert_eq!(facts.cardinality[&facts.labels], 2_000_000);
+        // Hydra reads `http`'s user ids over its full schema, at each RQE's
+        // coverage.
+        let (dataset, schema) = facts.hydra_dataset.as_ref().unwrap();
+        assert_eq!(dataset, "hydra_http");
+        assert_eq!(
+            schema,
+            &label_set(&["region", "service", "endpoint", "status"])
+        );
+        assert_eq!(facts.cardinality[schema], 4 * 25 * 25 * 4);
+        let covers: Vec<_> = w.raqes.iter().map(|r| r.accuracy_covers_share).collect();
+        assert_eq!(covers, [Some(0.05), None]);
+        // Accuracy is read at the smallest covered group's items: 5% of the
+        // stream's, so 4 · 5% of the series for {region}'s mean group.
+        let covered = &w.covered_facts["t/region"]["synthetic/test/http/user_id"];
+        assert_eq!(covered.cardinality[&covered.labels], 400_000);
+        // `null` covers every group: 100 · 0.1% of the series.
+        let every = &w.covered_facts["t/region,service"]["synthetic/test/http/user_id"];
+        assert_eq!(every.cardinality[&every.labels], 200_000);
+        // One {region, service} deployment serves both RQEs.
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        let asap = unbounded(&result, "asap");
+        assert_eq!(asap["active_deployments"], 1);
+        let coarse = &asap["chosen"][0];
+        assert_eq!(coarse["rqe"], "t/region");
+        assert_eq!(coarse["deployment_grouping"], json!(["region", "service"]));
+        assert_eq!(coarse["covers_share"], 0.05);
+        // No hydra_saturation.csv: Hydra serves nothing, and says so.
+        assert_eq!(asap["hydra_rqes"], 0);
+    }
+
+    /// Without roll-ups, the coarse RQE needs its own deployment, which costs
+    /// more than reading the fine one; every method counts its roll-ups.
+    #[test]
+    fn forbidding_roll_ups_costs_more_only_where_one_applies() {
+        let cost = |v: &Value| v["objective"].as_f64().unwrap();
+        let w = http_workload(
+            "rollup",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["region", "service"], 100, None, 0.001),
+            ],
+        );
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        assert_eq!(result["sanity_violations"], json!([]));
+        let [asap, norollup, perquery] =
+            ["asap", "asap-norollup", "perquery"].map(|m| unbounded(&result, m));
+        assert_eq!(asap["rolled_up_rqes"], 1);
+        assert_eq!(norollup["rolled_up_rqes"], 0);
+        assert_eq!(perquery["rolled_up_rqes"], 0);
+        assert_eq!(norollup["active_deployments"], 2);
+        assert!(cost(asap) < cost(norollup), "{asap} vs {norollup}");
+        assert!(cost(norollup) <= cost(perquery) * (1.0 + 1e-6));
+        // The ablation has a frontier and a plan at each SLA, like ASAP.
+        let norollup_rows = |key: &str| {
+            result[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["method"] == "asap-norollup")
+                .count()
+        };
+        assert!(norollup_rows("results") > 1);
+        assert_eq!(norollup_rows("sla_results"), 1);
+
+        // {region} and {service}: neither serves the other, so the two agree.
+        let w = http_workload(
+            "no-rollup",
+            vec![
+                http_rqe(&["region"], 4, Some(0.05), 0.05),
+                http_rqe(&["service"], 25, Some(0.05), 0.01),
+            ],
+        );
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        assert_eq!(result["sanity_violations"], json!([]));
+        let [asap, norollup] = ["asap", "asap-norollup"].map(|m| unbounded(&result, m));
+        assert_eq!(asap["rolled_up_rqes"], 0);
+        assert_eq!(cost(asap), cost(norollup));
+    }
+
+    /// The generator's `http` schema: endpoint fans out under service.
+    fn http_schema() -> Value {
+        json!({"labels": [
+            {"name": "region", "cardinality": 4},
+            {"name": "service", "cardinality": 25},
+            {"name": "endpoint", "cardinality": 25, "child_of": "service"},
+            {"name": "status", "cardinality": 4},
+        ]})
+    }
+
+    /// `flows`' distinct sources and `http`'s p99 latency each get a Hydra
+    /// grid over their full schema, from the cost rows measured on their own
+    /// dataset. `flows`' 3e6 schema groups exceed its 1e6 series, so its
+    /// cardinality is capped there and the stream kept.
+    #[test]
+    fn flows_and_http_latency_get_a_full_schema_hydra_grid() {
+        use rqe_optimizer::candidates::build_all_candidates_unpruned;
+        let rqe = |id: &str,
+                   metric: &str,
+                   value: &str,
+                   capability: &str,
+                   grouping: &[&str],
+                   groups: u64,
+                   rate: f64| {
+            let (sketch, target) = if capability == "quantile" {
+                ("kll-percall", 0.05)
+            } else {
+                ("hll", 0.02)
+            };
+            json!({
+                "id": id, "query_id": "q", "kind": "keys", "capability": capability,
+                "metric": metric, "stream": format!("{metric}/{value}"), "grouping": grouping,
+                "covers_share": null, "min_covered_share": 0.01, "max_covered_share": 0.5,
+                "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
+                "label_set": {"groups": groups, "arrival_rate_per_sec": rate},
+                "families": [{"sketch": sketch, "target": target}],
+            })
+        };
+        let flows = json!({"labels": [
+            {"name": "dst_subnet", "cardinality": 1000},
+            {"name": "dst_port", "cardinality": 1000},
+            {"name": "proto", "cardinality": 3},
+        ]});
+        let table = json!({"workloads": [{
+            "dataset": "synthetic/test",
+            "schemas": {"flows": flows, "http": http_schema()},
+            "rqes": [
+                rqe("t11", "flows", "src_ip", "cardinality", &["dst_subnet"], 1000, 1e6),
+                rqe("t16", "http", "latency", "quantile", &["service"], 25, 2e6),
+            ],
+        }]});
+        let path = std::env::temp_dir().join(format!("hydra-table-{}.json", std::process::id()));
+        std::fs::write(&path, table.to_string()).unwrap();
+        // The committed cost table plus a Hydra row per (variant, dataset),
+        // one measured on `http`'s user ids, which `flows` must not use.
+        let inputs = hll_saturation_dir("hydra");
+        let mut costs: AtomicCostTable =
+            serde_json::from_str(&std::fs::read_to_string(inputs.join(COST_TABLE)).unwrap())
+                .unwrap();
+        let hydra = |from: &str, sketch: &str, dataset: &str| {
+            let mut row = costs.iter().find(|c| c.sketch == from).unwrap().clone();
+            row.sketch = sketch.into();
+            row.measured_at.dataset = Some(dataset.into());
+            row
+        };
+        let rows = [
+            hydra("hll", "hydra-hll", "hydra_flows"),
+            hydra("hll", "hydra-univmon-cardinality", "hydra_http"),
+            hydra("kll-percall", "hydra-kll", "hydra_http_latency"),
+        ];
+        costs.extend(rows);
+        std::fs::write(
+            inputs.join(COST_TABLE),
+            serde_json::to_string(&costs).unwrap(),
+        )
+        .unwrap();
+        let w = from_table(path.to_str().unwrap(), None, None, inputs.to_str().unwrap());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir_all(&inputs).unwrap();
+        assert!(w.excluded_high_cardinality.is_empty());
+        let flows_facts = &w.facts["synthetic/test/flows/src_ip"];
+        let full = label_set(&["dst_subnet", "dst_port", "proto"]);
+        assert_eq!(flows_facts.cardinality[&full], 1_000_000);
+        let hydra: Vec<Deployment> = group_by_stream(&w.raqes)
+            .into_iter()
+            .flat_map(|(stream, group)| {
+                build_all_candidates_unpruned(&group, &w.costs[stream], &w.facts, true)
+            })
+            .filter(|d| d.properties().answers_any_subgrouping)
+            .collect();
+        // A grid finer than its RQE is not a roll-up; a per-group sketch there
+        // would be.
+        let t11 = &w.raqes[0];
+        let grid = hydra.iter().find(|d| d.metric == t11.metric).unwrap();
+        assert!(!is_rollup(t11, grid));
+        let mut per_group = grid.clone();
+        per_group.config.sketch = "hll".into();
+        assert!(is_rollup(t11, &per_group));
+        let grids: BTreeSet<(String, LabelSet)> = hydra
+            .into_iter()
+            .map(|d| (d.config.sketch, d.grouping_labels))
+            .collect();
+        assert_eq!(
+            grids,
+            BTreeSet::from([
+                ("hydra-hll".to_string(), full),
+                (
+                    "hydra-kll".to_string(),
+                    label_set(&["region", "service", "endpoint", "status"])
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn hydra_reads_the_dataset_shaped_like_the_metric() {
+        let at = |metric| hydra_dataset(metric, Capability::Cardinality);
+        assert_eq!(at("http").as_deref(), Some("hydra_http"));
+        assert_eq!(at("data_1/http").as_deref(), Some("hydra_http"));
+        assert_eq!(at("flows").as_deref(), Some("hydra_flows"));
+        assert_eq!(
+            hydra_dataset("http", Capability::Quantile).as_deref(),
+            Some("hydra_http_latency")
+        );
+        assert_eq!(at("data"), None);
+    }
+
+    /// `r`'s HLL accuracy (ASAP's, AutoSketch's) and the reads at its
+    /// smallest and largest covered groups, on curves with `errors` at N =
+    /// 1e3 .. 1e7; `r` covers groups of 1% and 50% of a 1000 samples/s
+    /// stream (3e3 and 1.5e5 items per 5m window, read at the worse of the
+    /// bracketing N). A classic RQE on another
+    /// stream reads the mean group alone.
+    fn covered_reads(errors: [f64; 5]) -> [Option<f64>; 4] {
+        let inputs = hll_saturation_dir(&format!("{errors:?}"));
+        let mut curve =
+            "family,sketch,config,dist,param,cardinality,n,seed_mean_error,seed_se\n".to_string();
+        for lg_k in [12, 14, 16] {
+            for (n, error) in ["1e3", "1e4", "1e5", "1e6", "1e7"].iter().zip(errors) {
+                curve += &format!("cardinality,hll,lg_k={lg_k},zipf,0.0,1000000,{n},{error},0.0\n");
+            }
+        }
+        let curves = inputs
+            .join("out_grid_1e7_cost")
+            .join("saturation_curve.csv");
+        std::fs::write(curves, curve).unwrap();
+        let rqe = |id: &str, stream: &str, extra: Value| {
+            let mut r = json!({
+                "id": id, "query_id": "q", "kind": "keys", "capability": "cardinality",
+                "stream": stream, "lookback_secs": 300, "interval_secs": 60,
+                "queries_per_instance": 1,
+                "label_set": {"groups": 4, "arrival_rate_per_sec": 1000.0},
+                "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
+                              "grid_param": 0.0, "grid_K": 1e6}],
+            });
+            r.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            r
+        };
+        let table = json!({"workloads": [{
+            "dataset": "synthetic/test",
+            "schemas": {"http": {"labels": [{"name": "region", "cardinality": 4}]}},
+            "rqes": [
+                rqe("covered", "http/user_id", json!({
+                    "metric": "http", "grouping": ["region"], "covers_share": 0.01,
+                    "min_covered_share": 0.01, "max_covered_share": 0.5})),
+                rqe("classic", "classic/user_id", json!({})),
+            ],
+        }]});
+        let path = inputs.join("table.json");
+        std::fs::write(&path, table.to_string()).unwrap();
+        let w = from_table(
+            path.to_str().unwrap(),
+            None,
+            Some("p95".into()),
+            inputs.to_str().unwrap(),
+        );
+        std::fs::remove_dir_all(&inputs).unwrap();
+        let [covered, classic] = [&w.raqes[0], &w.raqes[1]];
+        let hll = |r: &Raqe| {
+            let costs = &w.costs[&r.metric];
+            rqe_optimizer::candidates::build_all_candidates_unpruned(
+                std::slice::from_ref(r),
+                costs,
+                &w.facts,
+                false,
+            )
+            .into_iter()
+            .find(|d| d.config.sketch == "hll")
+            .unwrap()
+        };
+        // A classic RQE: the mean group's read, as before.
+        let d = hll(classic);
+        assert!(!w.largest_facts.contains_key(&classic.id));
+        assert_eq!(
+            w.asap_accuracy(classic, &d),
+            w.curves.accuracy(classic, &d, &w.facts)
+        );
+        assert_eq!(
+            w.autosketch_accuracy(classic, &d.config),
+            w.curves.autosketch_accuracy(classic, &d.config, &w.facts)
+        );
+        let d = hll(covered);
+        let autosketch = w.autosketch_accuracy(covered, &d.config);
+        assert_eq!(autosketch, w.asap_accuracy(covered, &d));
+        [
+            w.asap_accuracy(covered, &d),
+            autosketch,
+            w.curves.accuracy(covered, &d, &w.covered_facts["covered"]),
+            w.curves.accuracy(covered, &d, &w.largest_facts["covered"]),
+        ]
+    }
+
+    #[test]
+    fn a_covered_rqe_is_held_to_the_worse_of_its_smallest_and_largest_group() {
+        // Relative error: a 3% target accepts at most 0.03.
+        let at = |target: f64, error: Option<f64>| error.unwrap() <= target;
+        // Error grows with N (#189): the largest group rejects what the
+        // smallest accepts.
+        let [asap, autosketch, smallest, largest] = covered_reads([0.01, 0.01, 0.05, 0.05, 0.05]);
+        assert!(at(0.03, smallest) && !at(0.03, largest));
+        assert_eq!((asap, autosketch), (largest, largest));
+        assert!(!at(0.03, asap));
+        // Error falls with N: the smallest group rejects.
+        let [asap, autosketch, smallest, largest] = covered_reads([0.05, 0.05, 0.01, 0.01, 0.01]);
+        assert!(!at(0.03, smallest) && at(0.03, largest));
+        assert_eq!((asap, autosketch), (smallest, smallest));
     }
 
     #[test]
