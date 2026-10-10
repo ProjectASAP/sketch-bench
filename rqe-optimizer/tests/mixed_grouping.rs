@@ -35,6 +35,7 @@ fn facts() -> WorkloadFacts {
             ]),
             value_range: None,
             data_shape: BTreeMap::new(),
+            hydra_dataset: None,
         },
     )])
 }
@@ -51,6 +52,7 @@ fn raqe(id: &str, capability: Capability, grouping: &[&str], accuracy_sla: f64) 
         accuracy_sla,
         latency_sla_ms: None,
         topk_k: None,
+        accuracy_covers_share: None,
     }
 }
 
@@ -92,6 +94,8 @@ fn cost_row(sketch: &str, params: serde_json::Value) -> AtomicCostEntry {
             value_range: None,
             merge_operand_items: None,
             distribution: None,
+            dataset: None,
+            schema_width: None,
         },
     }
 }

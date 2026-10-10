@@ -17,7 +17,9 @@ snapshot-AUC objective. Candidates and eligibility are in
   query memory is summed as if concurrent, there is no worker fan-out or
   compaction, and latency is serial query work. It is not the evaluation's
   billing model.
-- **Hydra** is future work, not a candidate today.
+- **Hydra** is a Shared + Fixed sketch (below), a candidate only with
+  undeployable families allowed, built over a metric's full schema
+  ([Candidates](rqe_optimizer_candidates.md), roll-ups section).
 
 The two implemented objectives share the same resource primitives and §3's
 table; they differ in how they account for them over time, and in latency
@@ -373,13 +375,13 @@ The model uses `I_d × m`, where `I_d` is instances per window:
   (`groups_per_instance`), making `m` a per-group cost. Their query cost is
   already per group.
 - Shared + Fixed: `I_d = 1`. In code this is the family property
-  `one_fixed_size_sketch_for_all_groups`, true only for HydraKLL. It applies
+  `one_fixed_size_sketch_for_all_groups`, true only for the Hydra families. It applies
   to memory and merge; query stays `card(G_r) × c_qry`, one probe per answered group.
-  A fixed-size sketch degrades as groups grow, so it is eligible only when
-  `card(G_d)` is at most the `subpopulations` its row was measured at. This
-  models a sketch keyed by the joined `G` value alone; the current rows fan
-  out to every label subset (sketch-bench#165), and merging several windows
-  is not yet measured (sketch-bench#166).
+  A fixed-size sketch degrades as groups grow, so Hydra is built only at the
+  full schema its rows and accuracy were measured at (`measured_at.dataset`,
+  `hydra_saturation.csv`), and its accuracy is the worst case: max over the
+  covered groups, worst over N and seeds (per-group sketches read seed-mean
+  curves).
 
 PerGroup + PerKey is deferred until a family needs it: it needs the key labels
 `K`, the metric's labels minus `G`. So for every family in use, nothing scales
@@ -398,8 +400,9 @@ follows from it):
 | key tracker part | none | none | DeltaSet, `I_d = card(G_d)` |
 | rolls up (`G_r ⊂ G_d`) | yes | yes | no |
 
-HydraKLL has `FamilyProperties` but is in no capability's family list, so it
-is never a candidate.
+The Hydra families are in their capabilities' family lists but not in
+`DEPLOYABLE_FAMILIES`, so they are candidates only when undeployable families
+are allowed (the §6.3 eval runner); AutoSketch skips them (#159).
 
 ### Family properties and key tracker
 
