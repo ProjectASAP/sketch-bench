@@ -431,6 +431,28 @@
           "format": "uint64",
           "minimum": 0
         },
+        "scale_by": {
+          "description": "Index of an earlier `string` column whose values scale this one. Each\ndistinct label value gets a fixed factor in `scale_range`, and every\nrow's value is multiplied by its label's factor. `f64` columns only.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "scale_range": {
+          "description": "`[lo, hi]` with `0 < lo <= hi`: the factors are log-uniform in it.\nRequired with `scale_by`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
         "shift": {
           "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",
           "type": [

@@ -171,7 +171,9 @@ HYDRA_CELL_BYTES = {"hydra-cms": 6_500, "hydra-cs": 6_500, "hydra-hll": 17_000,
 HYDRA_UNIVMON_CELL_BYTES = 100_000
 HYDRA_RECORD_BYTES = 250
 # (sweep, datasets as (yaml stem, value dtype, variants), W, N, merge shards,
-# seeds).
+# seeds). hydra_http_latency scales each service's latency by its own factor,
+# log-uniform in [1, 10] and redrawn per seed (hydra_spec offsets the seed);
+# no endpoint anomaly is injected.
 HYDRA_SWEEPS = {
     "eval": ([("hydra_http", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),
               ("hydra_flows", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),

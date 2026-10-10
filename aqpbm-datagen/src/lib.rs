@@ -63,6 +63,8 @@ mod tests {
             string: None,
             child_of: None,
             fan_out: None,
+            scale_by: None,
+            scale_range: None,
         }
     }
 
@@ -660,6 +662,122 @@ mod tests {
             let err = d.generate().unwrap_err().to_string();
             assert!(err.contains(want), "wanted '{want}' in: {err}");
         }
+    }
+
+    // ---------- scale_by ----------
+
+    /// service (25 labels) and a latency scaled by it, next to the same
+    /// latency unscaled.
+    fn scaled_table() -> TableDescription {
+        TableDescription {
+            column_num: 3,
+            column_label: vec!["service".into(), "plain".into(), "scaled".into()],
+            column_spec: vec![
+                column(zipf(25, 1.1, 1), "string"),
+                column(pareto(2.0, 1000.0, 5), "f64"),
+                ColumnSpec {
+                    scale_by: Some(0),
+                    scale_range: Some([1.0, 10.0]),
+                    ..column(pareto(2.0, 1000.0, 5), "f64")
+                },
+            ],
+            column_connected: Vec::new(),
+            row_num: 20_000,
+        }
+    }
+
+    /// Every row is its unscaled draw times one factor per label, the factors
+    /// stay in the range and spread across it.
+    #[test]
+    fn each_label_scales_its_rows_by_one_factor_in_the_range() {
+        let d = scaled_table();
+        let t = d.generate().unwrap();
+        assert_eq!(t, d.generate().unwrap());
+        let service = t.data[0].as_string().unwrap();
+        let plain = t.data[1].as_f64().unwrap();
+        let scaled = t.data[2].as_f64().unwrap();
+        let mut factors: std::collections::HashMap<&str, f64> = Default::default();
+        for ((s, p), v) in service.iter().zip(plain).zip(scaled) {
+            let f = *factors
+                .entry(s)
+                .or_insert_with(|| d.column_spec[2].scale_factor(s));
+            assert_eq!(*v, p * f, "'{s}'");
+        }
+        assert_eq!(factors.len(), 25);
+        let (min, max) = factors
+            .values()
+            .fold((f64::MAX, f64::MIN), |(a, b), &f| (a.min(f), b.max(f)));
+        assert!(min >= 1.0 && max <= 10.0, "{min}..{max}");
+        // 25 log-uniform factors over a decade span most of it.
+        assert!(min < 2.0 && max > 5.0, "{min}..{max}");
+    }
+
+    /// The factor depends on the label and the seed only.
+    #[test]
+    fn the_scale_factor_is_fixed_by_label_and_seed() {
+        let spec = scaled_table().column_spec[2].clone();
+        assert_eq!(spec.scale_factor("abcd"), spec.scale_factor("abcd"));
+        assert_ne!(spec.scale_factor("abcd"), spec.scale_factor("abce"));
+        let reseeded = ColumnSpec {
+            distribution: pareto(2.0, 1000.0, 6),
+            ..spec.clone()
+        };
+        assert_ne!(spec.scale_factor("abcd"), reseeded.scale_factor("abcd"));
+        let flat = ColumnSpec {
+            scale_range: Some([3.0, 3.0]),
+            ..spec
+        };
+        assert_eq!(flat.scale_factor("abcd"), 3.0);
+    }
+
+    #[test]
+    fn bad_scaled_columns_are_refused_by_name() {
+        type Edit = fn(&mut TableDescription);
+        let cases: Vec<(&str, Edit)> = vec![
+            ("earlier column", |d| d.column_spec[2].scale_by = Some(2)),
+            ("earlier column", |d| d.column_spec[2].scale_by = Some(9)),
+            ("'plain', which is not a string", |d| {
+                d.column_spec[2].scale_by = Some(1)
+            }),
+            ("needs scale_range", |d| d.column_spec[2].scale_range = None),
+            ("only to a scale_by", |d| d.column_spec[2].scale_by = None),
+            ("has to be `f64`, not 'i64'", |d| {
+                d.column_spec[2].data_type = "i64".into()
+            }),
+            ("has to be `f64`, not 'u64'", |d| {
+                d.column_spec[2].data_type = "u64".into()
+            }),
+            ("0 < lo <= hi", |d| {
+                d.column_spec[2].scale_range = Some([0.0, 10.0])
+            }),
+            ("0 < lo <= hi", |d| {
+                d.column_spec[2].scale_range = Some([5.0, 2.0])
+            }),
+        ];
+        for (want, edit) in cases {
+            let mut d = scaled_table();
+            edit(&mut d);
+            let err = d.generate().unwrap_err().to_string();
+            assert!(err.contains(want), "wanted '{want}' in: {err}");
+        }
+    }
+
+    /// The eval's latency spec scales by service and leaves the labels alone.
+    #[test]
+    fn hydra_http_latency_scales_by_service() {
+        let path = std::path::Path::new("../configs/datagen/hydra_http_latency.yaml");
+        let d = TableDescription::from_path(path).unwrap();
+        assert_eq!(d.column_label[1], "service");
+        assert_eq!(d.column_spec[4].scale_by, Some(1));
+        let mut plain = d.clone();
+        plain.column_spec[4].scale_by = None;
+        plain.column_spec[4].scale_range = None;
+        plain.row_num = 1000;
+        let mut scaled = d;
+        scaled.row_num = 1000;
+        let (a, b) = (plain.generate().unwrap(), scaled.generate().unwrap());
+        assert_eq!(a.data[..4], b.data[..4]);
+        assert_ne!(a.data[4], b.data[4]);
     }
 
     // ---------- serde ----------

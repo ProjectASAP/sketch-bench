@@ -37,6 +37,8 @@ pub struct ColumnSpec {
     pub string: Option<StringOpts>, // if this column is about string data, description about how string looks like
     pub child_of: Option<usize>, // index of an earlier string column this one nests under; see child_of below
     pub fan_out: Option<u64>, // children per parent value; required with child_of
+    pub scale_by: Option<usize>, // index of an earlier string column whose values scale this f64 column; see scale_by below
+    pub scale_range: Option<[f64; 2]>, // [lo, hi] the per-label factors are log-uniform in; required with scale_by
 }
 
 enum DataDistribution {
@@ -109,6 +111,31 @@ Each of the following is a description error:
 - `cardinality` or a `string:` block on a child column (its distinct count is the parent's times `fan_out`, and it is not rendered from a rank)
 
 `configs/datagen/hydra_hier.yaml` uses it for a region → service → endpoint hierarchy.
+
+### scale_by
+
+A value column drawn independently of the labels gives every group the same distribution.
+A `data_type: f64` column with `scale_by: <index>` and `scale_range: [lo, hi]` multiplies each row's value
+by a factor fixed per distinct value of the earlier string column at that index.
+The factor is `lo·(hi/lo)^u`, log-uniform in `[lo, hi]`, with `u ∈ [0, 1)` a hash of the label value and the column's seed:
+the same label always gets the same factor, whatever the row count, and a new seed gives new factors.
+The draws themselves are unchanged, so a Pareto column keeps its tail index and each group's scale moves.
+
+```yaml
+- data_type: f64
+  scale_by: 1        # each service's latencies × its own factor in [1, 10]
+  scale_range: [1.0, 10.0]
+  distribution: {kind: pareto, alpha: 2.0, scale: 1000.0, seed: 5}
+```
+
+Each of the following is a description error:
+
+- `scale_by` without `scale_range`, or `scale_range` without `scale_by`
+- `scale_by` naming the column itself, a later column, or no column, or a column that is not `data_type: string`
+- a scaled column that is not `f64` (an integer column would round the scaled value)
+- a `scale_range` without `0 < lo <= hi`
+
+`configs/datagen/hydra_http_latency.yaml` scales latency by service.
 
 ## Output
 

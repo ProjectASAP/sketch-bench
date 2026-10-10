@@ -260,6 +260,8 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
             },
             child_of: None,
             fan_out: None,
+            scale_by: None,
+            scale_range: None,
         },
         args.size.expect("clap requires --size") as u64,
     )))

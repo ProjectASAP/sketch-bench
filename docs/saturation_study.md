@@ -274,7 +274,10 @@ data with the §6.3 eval's own schemas rather than on the Zipf grid above
 - `eval`: `hydra-hll` and `hydra-univmon-cardinality` on
   `configs/datagen/hydra_http.yaml` and `hydra_flows.yaml`, `hydra-kll` on
   `hydra_http_latency.yaml` (the specs follow `export_autosketch_eval_table.py`'s
-  `SCHEMAS`; their headers say what is not modelled). Grid `R = 3`,
+  `SCHEMAS`; their headers say what is not modelled). Latency is Pareto(a = 2,
+  scale 1000) times a fixed per-service factor, log-uniform in `[1, 10]`
+  (`scale_by`, docs/aqpbm-datagen.md; the factors follow the study seed); no
+  endpoint anomaly is injected. Grid `R = 3`,
   `W ∈ {1024, 4096, 16384}`, every non-empty label subset (15 for http, 7 for
   flows), `N ∈ {1e5, 1e6, 1e7}`, merged from `{1, 4, 16}` interleaved shards,
   seeds 1..3.
