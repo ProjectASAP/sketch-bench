@@ -486,8 +486,14 @@ FAKE_COST_APPROXBENCH = textwrap.dedent("""\
                 v = c[c.index("--variant") + 1]
                 cfg = c[c.index("--config") + 1] if "--config" in c else ""
                 params = {k: float(x) for k, x in (kv.split("=") for kv in cfg.split())}
+                # The reducer reads a Hydra row's width off its scores.
+                at = {}
+                if v.startswith("hydra-"):
+                    labels = open(c[c.index("--spec") + 1]).read().split("column_label: [")[1]
+                    at = {"schema_width": labels.split("]")[0].count(",")}
                 rows.append({"sketch": v, "sketch_config": {"params": params},
-                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v]})
+                             "query_accuracy": {metrics[v]: 0.5}, "accuracy_metric": metrics[v],
+                             "measured_at": at})
         json.dump(rows, open(value("--output"), "w"))
         kept = int(os.environ["FAKE_KEPT"])
         sys.stderr.write(f"approxbench atomic-costs: {kept} row(s), 0 skipped\\n")
@@ -500,7 +506,7 @@ FAKE_COST_APPROXBENCH = textwrap.dedent("""\
 
 
 class OptimizerCostTest(unittest.TestCase):
-    def run_phase(self, d, kept):
+    def run_phase(self, d, kept, families="topk,quantile"):
         binary = os.path.join(d, "approxbench")
         with open(binary, "w") as f:
             f.write("#!" + sys.executable + "\n" + FAKE_COST_APPROXBENCH)
@@ -508,7 +514,7 @@ class OptimizerCostTest(unittest.TestCase):
         log = os.path.join(d, "log.jsonl")
         result = subprocess.run([
             sys.executable, SCRIPT, "--binary", binary, "--out", os.path.join(d, "out"),
-            "--phase", "optimizer-cost", "--families", "topk,quantile", "--one-config",
+            "--phase", "optimizer-cost", "--families", families, "--one-config",
             "--seeds", "3",
         ], capture_output=True, env={**os.environ, "FAKE_LOG": log, "FAKE_KEPT": str(kept)})
         with open(log) as f:
@@ -559,6 +565,34 @@ class OptimizerCostTest(unittest.TestCase):
         for row in rows:
             if row["sketch"].startswith("exact-"):
                 self.assertEqual(row["query_accuracy"][row["accuracy_metric"]], 0.5)
+
+    def test_hydra_rows_on_the_eval_datasets_name_their_dataset(self):
+        with tempfile.TemporaryDirectory() as d:
+            # hydra-hll and hydra-univmon-cardinality on http and flows,
+            # hydra-kll on http_latency, at the first W; plus 5 exact.
+            result, calls = self.run_phase(d, 10, families="hydra")
+            with open(os.path.join(d, "out", "rqe_atomic_costs.json")) as f:
+                rows = json.load(f)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = lambda c, flag: c[c.index(flag) + 1]
+        hydra = [c for c in calls if c[0] == "sketchbench" and "--report" in c
+                 and value(c, "--variant").startswith("hydra-")]
+        self.assertEqual(len(hydra), 10)
+        cost = hydra[0]
+        self.assertEqual((value(cost, "--runs"), value(cost, "--warmup-runs"),
+                          value(cost, "--merge-shards")), ("3", "1", "16"))
+        self.assertEqual(value(cost, "--config"), "rows=3 cols=1024")
+        self.assertTrue(value(cost, "--spec").endswith("hydra_http_n1000000.yaml"))
+        self.assertNotIn("--comparator", hydra[1])
+        # No seed runs: Hydra accuracy comes from hydra_saturation.csv.
+        self.assertFalse([c for c in calls if c[0] == "sketchbench" and "--report" not in c])
+        at = {(r["sketch"], r["measured_at"]["schema_width"]): r["measured_at"]["dataset"]
+              for r in rows if r["sketch"].startswith("hydra-")}
+        self.assertEqual(at, {
+            ("hydra-hll", 4): "hydra_http", ("hydra-hll", 3): "hydra_flows",
+            ("hydra-univmon-cardinality", 4): "hydra_http",
+            ("hydra-univmon-cardinality", 3): "hydra_flows",
+            ("hydra-kll", 4): "hydra_http_latency"})
 
     def test_a_skipped_row_fails(self):
         with tempfile.TemporaryDirectory() as d:

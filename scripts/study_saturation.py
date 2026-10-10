@@ -180,7 +180,8 @@ HYDRA_SWEEPS = {
                  for stem in ("hydra_hier_d2", "hydra_hier_d3", "hydra_hier")],
                 (1024, 4096), (1_000_000,), (1, 4), 2),
 }
-HYDRA_DATAGEN = "configs/datagen"
+HYDRA_DATAGEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs",
+                             "datagen")
 HYDRA_TABLE = "hydra_saturation.csv"
 # Coverage thresholds τ: err_max_cov_τ is the worst error over the groups of
 # share >= τ plus the largest group (the eval's covers_share rule).
@@ -197,6 +198,9 @@ HYDRA_KEY = ["variant", "config", "dataset", "group_columns", "records", "merge_
 # at each eval W. Their accuracy column is the default grouping's err_max; the
 # optimizer reads Hydra accuracy from hydra_saturation.csv.
 HYDRA_COST_METRIC = "err_max"
+# Fewer passes than COST_RUNS: one pass inserts COST_N records into up to
+# 2^4 - 1 subsets each, and a UnivMon grid's merge pass rebuilds 16 of them.
+HYDRA_COST_RUNS = (3, 1)
 
 SUMMARY_COLUMNS = [
     "family", "sketch", "config", "dist", "param", "cardinality", "n_sat",
@@ -445,10 +449,12 @@ def optimizer_cost(args, families):
     for variant, library, config, comparator, data in rows:
         print(f"  {variant} {' '.join(config[1:])}", file=sys.stderr)
         # Cost first: flatten keeps the first pass's query timings.
+        runs, warmup = HYDRA_COST_RUNS if variant.startswith("hydra-") else \
+            (COST_RUNS, COST_WARMUP)
         sketchbench(variant, library, config, data, [
             "--operations", "insert,query,merge", "--metrics", "throughput,cpu,memory",
-            "--merge-shards", str(MERGE_SHARDS), "--runs", str(COST_RUNS),
-            "--warmup-runs", str(COST_WARMUP)])
+            "--merge-shards", str(MERGE_SHARDS), "--runs", str(runs),
+            "--warmup-runs", str(warmup)])
         sketchbench(variant, library, config, data, [
             "--operations", "query", "--metrics", "accuracy", "--runs", "1",
             "--warmup-runs", "0"] + (["--comparator", comparator] if comparator else []))
