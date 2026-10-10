@@ -4,7 +4,7 @@
 # before it are labels.
 #
 #   approxbench sketchbench --variant hydra-cms --library lib \
-#     --spec configs/datagen/hydra_hier.yaml \
+#     --spec configs/datagen/hydra_hier.yaml --dtype i64 \
 #     --config "rows=3 cols=1024 cell_rows=3 cell_cols=1024" \
 #     --operations query --metrics accuracy
 #
