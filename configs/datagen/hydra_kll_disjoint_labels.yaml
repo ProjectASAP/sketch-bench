@@ -1,8 +1,9 @@
 # `hydra_columns_f64.yaml` with a separate alphabet per label column, so a key1
-# value can never render the same as a key2 value (#74). On the shared alphabet
-# a key1 query also picks up the matching key2 group, and that collision shows
-# up as rank error; here the `polars` baseline scores zero and any rank error
-# is the sketch's. `export_rqe_optimizer_costs.sh` priced `hydra-kll` on it
+# value can never render the same as a key2 value (#74). The sketch keys each
+# subset by column (asap_sketchlib 0.3.0), so it doesn't need this; the
+# `polars` baseline still builds untagged subset keys, and on the shared
+# alphabet it merges a key1 group with the matching key2 group. Here the
+# baseline scores zero and any rank error is the sketch's. `export_rqe_optimizer_costs.sh` priced `hydra-kll` on it
 # until #174; HydraKLL has no saturation curve, so nothing measures it now.
 
 column_num: 3
