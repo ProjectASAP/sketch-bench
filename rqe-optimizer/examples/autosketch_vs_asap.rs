@@ -45,7 +45,10 @@
 //! gives the workload: RQEs, and each stream's groups, rate and data shape
 //! (the family's `grid_param`/`grid_K`, the worst case rounded to the grid).
 //! Each stream (`traces`: dataset, query and kind; `synthetic`: the table's
-//! `stream`) is one metric, which is where sharing comes from.
+//! `stream`) is one metric, which is where sharing comes from. A stream of a
+//! metric with a label schema (the table's `schemas`) has the schema's labels,
+//! and its RQEs name their `grouping`, so one stream carries several
+//! groupings and a fine deployment can serve a coarse RQE (a roll-up).
 //!
 //! Costs and accuracy come from `--saturation-dir`, the same inputs the
 //! planner reads (#174): the cost table `optimizer_cost/rqe_atomic_costs.json`
@@ -101,6 +104,9 @@ struct Workload {
     metric_of: BTreeMap<String, String>,
     /// RQEs of streams with more keys than samples/s, left out.
     excluded_high_cardinality: Vec<String>,
+    /// The table's `covers_share` by RQE id, for RQEs that name one (`None`:
+    /// every group). Reported only: the planner reads every group's accuracy.
+    covers_share: BTreeMap<String, Option<f64>>,
     curves: SaturationCurves,
     notes: Vec<String>,
 }
@@ -199,6 +205,7 @@ fn capability_of(r: &Value) -> Capability {
         // `topk(k, sum by (...) (...))`: ranked by summed value.
         (Some("topk"), _) => Capability::TopKByValue,
         (Some("quantile"), _) | (None, "values") => Capability::Quantile,
+        (Some("cardinality"), _) => Capability::Cardinality,
         other => panic!("unknown capability {other:?}"),
     }
 }
@@ -279,6 +286,7 @@ fn from_table(
     let mut metric_of = BTreeMap::new();
     let mut skipped_families = 0;
     let mut stream_series: BTreeMap<String, u64> = BTreeMap::new();
+    let mut covers_share = BTreeMap::new();
     for r in workload["rqes"].as_array().unwrap() {
         let id = r["id"].as_str().unwrap().to_string();
         let metric = r["metric"].as_str().unwrap_or(dataset);
@@ -295,36 +303,50 @@ fn from_table(
         let capability = capability_of(r);
         let rate = r["label_set"]["arrival_rate_per_sec"].as_f64().unwrap();
         let groups = groups_of(r, capability);
-        let grouping = if groups > 1 {
-            label_set(&["g"])
-        } else {
-            LabelSet::new()
+        // A schema metric's RQE names its grouping (its `groups` are that
+        // grouping's); otherwise the stream has one label `g`, the grouping.
+        let schema = &workload["schemas"][metric];
+        let grouping: LabelSet = match r["grouping"].as_array() {
+            Some(labels) => labels
+                .iter()
+                .map(|l| l.as_str().unwrap().to_string())
+                .collect(),
+            None if groups > 1 => label_set(&["g"]),
+            None => LabelSet::new(),
         };
-        // One metric per stream, labels {g, x}: `g` is the grouping (card =
-        // groups), and with one scrape a second `{g, x}` has one series per
-        // sample/s. A stream's RQEs differ only in range, so take the
-        // largest per-RQE rate (conservative). Rates below `groups`
+        if let Some(share) = r.get("covers_share") {
+            covers_share.insert(id.clone(), share.as_f64());
+        }
+        // One metric per stream, labels {g, x} (or the schema's and x), and
+        // with one scrape a second the full label set has one series per
+        // sample/s. A stream's RQEs differ only in range and grouping, so
+        // take the largest per-RQE rate (conservative). Rates below `groups`
         // samples/s are rounded up so every group has a series.
         let series = (rate * SCRAPE_MS as f64 / 1000.0).round() as u64;
         let most = stream_series.entry(stream.clone()).or_default();
         *most = (*most).max(series);
-        let metric = facts.entry(stream.clone()).or_insert_with(|| MetricFacts {
-            labels: label_set(&["g", "x"]),
-            scrape_interval_ms: SCRAPE_MS,
-            cardinality: [
-                (label_set(&["g", "x"]), 0),
-                (label_set(&["g"]), groups),
-                (LabelSet::new(), 1),
-            ]
-            .into(),
-            value_range: None,
-            data_shape: BTreeMap::new(),
+        let metric = facts.entry(stream.clone()).or_insert_with(|| {
+            let mut labels: LabelSet = match schema["labels"].as_array() {
+                Some(labels) => labels
+                    .iter()
+                    .map(|l| l["name"].as_str().unwrap().to_string())
+                    .collect(),
+                None => label_set(&["g"]),
+            };
+            labels.insert("x".to_string());
+            MetricFacts {
+                cardinality: [(labels.clone(), 0), (LabelSet::new(), 1)].into(),
+                labels,
+                scrape_interval_ms: SCRAPE_MS,
+                value_range: None,
+                data_shape: BTreeMap::new(),
+            }
         });
         // A stream's RQEs may see different group counts (keys per window
         // grow with the range): take the largest (conservative).
-        let card = metric.cardinality.get_mut(&label_set(&["g"])).unwrap();
+        let card = metric.cardinality.entry(grouping.clone()).or_default();
         *card = (*card).max(groups);
-        let total = metric.cardinality.get_mut(&label_set(&["g", "x"])).unwrap();
+        let total = metric.cardinality.get_mut(&metric.labels).unwrap();
         *total = (*total).max(series).max(groups);
         // Queries one evaluation issues per instance (the table's q_r); tables
         // written before it existed charge one query phase per evaluation.
@@ -397,7 +419,11 @@ fn from_table(
     // Such streams are left out, and their RQEs listed.
     let high_cardinality: BTreeSet<String> = facts
         .iter()
-        .filter(|(stream, m)| m.cardinality[&label_set(&["g"])] > stream_series[*stream])
+        .filter(|(stream, m)| {
+            m.cardinality
+                .iter()
+                .any(|(labels, &card)| labels != &m.labels && card > stream_series[*stream])
+        })
         .map(|(stream, _)| stream.clone())
         .collect();
     let excluded_high_cardinality: Vec<String> = raqes
@@ -419,6 +445,7 @@ fn from_table(
         costs,
         metric_of,
         excluded_high_cardinality,
+        covers_share,
         curves,
         notes: vec![
             format!("{skipped_families} families skipped: they serve another capability"),
@@ -564,7 +591,7 @@ fn summarize(
         .zip(&latencies)
         .map(|((r, &di), &latency)| {
             let d = &deployments[di];
-            json!({
+            let mut choice = json!({
                 "rqe": r.id,
                 "sketch": d.config.sketch,
                 "params": d.config.sketch_config["params"],
@@ -579,7 +606,15 @@ fn summarize(
                     .curves
                     .accuracy_with_source(r, d, &w.facts)
                     .map(|(_, source)| format!("{source:?}")),
-            })
+            });
+            // A roll-up: the deployment is grouped finer than the RQE.
+            if d.grouping_labels != r.grouping_labels {
+                choice["deployment_grouping"] = json!(d.grouping_labels);
+            }
+            if let Some(share) = w.covers_share.get(&r.id) {
+                choice["covers_share"] = json!(share);
+            }
+            choice
         })
         .collect();
     json!({
@@ -1020,6 +1055,57 @@ mod tests {
         // Float residue in summing µs-scale work is not a miss.
         assert!(meets_sla(100.0 * (1.0 + 1e-12), 100.0));
         assert!(!meets_sla(100.1, 100.0));
+    }
+
+    /// Runs on the committed eval inputs, whose curves are #194's.
+    #[test]
+    fn a_schema_stream_carries_every_grouping_and_rolls_up() {
+        let rqe = |grouping: &[&str], groups: u64| {
+            json!({
+                "id": format!("t/{}", grouping.join(",")), "query_id": "q", "kind": "keys",
+                "capability": "cardinality", "metric": "http", "stream": "http/user_id",
+                "grouping": grouping, "covers_share": 0.05,
+                "lookback_secs": 300, "interval_secs": 60, "queries_per_instance": 1,
+                "label_set": {"groups": groups, "arrival_rate_per_sec": 2e6},
+                "families": [{"family": "hll", "sketch": "hll", "target": 0.02,
+                              "grid_param": 0.8, "grid_K": 1e6}],
+            })
+        };
+        let names = ["region", "service", "endpoint", "status"];
+        let table = json!({"workloads": [{
+            "dataset": "synthetic/test",
+            "schemas": {"http": {"labels": names.map(|n| json!({"name": n}))}},
+            "rqes": [rqe(&["region"], 4), rqe(&["region", "service"], 100)],
+        }]});
+        let path = std::env::temp_dir().join(format!("schema-table-{}.json", std::process::id()));
+        std::fs::write(&path, table.to_string()).unwrap();
+        let inputs = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/results/autosketch-vs-asap-inputs/saturation"
+        );
+        let w = from_table(path.to_str().unwrap(), None, Some("p95".into()), inputs);
+        std::fs::remove_file(&path).unwrap();
+        let facts = &w.facts["synthetic/test/http/user_id"];
+        assert_eq!(
+            facts.labels,
+            label_set(&["region", "service", "endpoint", "status", "x"])
+        );
+        assert_eq!(facts.cardinality[&label_set(&["region"])], 4);
+        assert_eq!(facts.cardinality[&label_set(&["region", "service"])], 100);
+        assert_eq!(facts.cardinality[&facts.labels], 2_000_000);
+        // One {region, service} deployment serves both RQEs.
+        let result = evaluate(&w, 1, &WEIGHTS[..1], &[1e4]);
+        let asap = result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["method"] == "asap" && r["bound_ms"].is_null())
+            .unwrap();
+        assert_eq!(asap["active_deployments"], 1);
+        let coarse = &asap["chosen"][0];
+        assert_eq!(coarse["rqe"], "t/region");
+        assert_eq!(coarse["deployment_grouping"], json!(["region", "service"]));
+        assert_eq!(coarse["covers_share"], 0.05);
     }
 
     #[test]

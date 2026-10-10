@@ -66,6 +66,52 @@ benchmark; the paper's 60 s per probe is a reference only):
 | 400 | 6.82 s | 5.55 s | 0.0153 s | 1.7e+03 s | 4.8e+03 s |
 | 800 | 14.7 s | 11.7 s | 0.031 s | 3.39e+03 s | 9.6e+03 s |
 
+## Template sets
+
+The results above are the 10-template mixed set, now named `classic`
+(`--synthetic` writes it as `synthetic-templatesclassic-*.json`; the
+committed `templatesall` tables and results predate the rename and hold
+exactly today's `classic` tables). `all` is `classic` plus six
+multi-grouping templates on two metrics with an ordered label schema. Each
+metric value is one stream read at several groupings, so a fine deployment
+can serve a coarse RQE (a roll-up) and one Hydra grid can serve them all.
+Every RQE of these templates names its `grouping` and `covers_share` (the
+accuracy target covers only groups holding at least that share of the items;
+`null`: every group); the table's `schemas` gives each metric's labels.
+
+| Metric | Labels (values, Zipf skew) | Rate | Values |
+|---|---|---|---|
+| `http` | region 4, service 25, endpoint 25 per service (625), status 4; uniform; 1e4 label combinations | 2e6 samples/s (as `classic`) | `user_id`: Zipf 0.8 over 1e6; `latency`: Pareto a = 2, scaled per service, one endpoint 10x slower |
+| `flows` | dst_subnet 1e3 (1.1), dst_port 1e3 (1.2), proto 3 (uniform) | 4e6 samples/s | `src_ip`: uniform over 1e6, plus a DDoS burst: one subnet gets 5% of the traffic from 1e4 sources |
+
+`flows` runs at twice the rate so its finest grouping, {dst_subnet,
+dst_port} (1e6 groups), holds 1,200 items per group in 5m, above the
+curves' first N (1e3).
+
+| # | Query | Groupings | Covers | Groups (items per group in 5m) |
+|---|---|---|---|---|
+| 11 | distinct src_ip | {dst_subnet} | share ≥ 5% | 1e3 (1.2e6) |
+| 12 | distinct src_ip | {dst_port}, {dst_subnet, dst_port}, {dst_port, proto} | share ≥ 5% | 1e3, 1e6, 3e3 (1.2e6, 1.2e3, 4e5) |
+| 14 | distinct user_id | {region}, {service}, {region, service}, {service, endpoint} | share ≥ 1% | 4, 25, 100, 625 (1.5e8 to 9.6e5) |
+| 15 | distinct user_id | all 15 non-empty subsets of http's labels | share ≥ 5% | 4 to 1e4 (1.5e8 to 6e4) |
+| 16 | p99 latency | {service}, {region, service}, {service, status} | all groups | 25, 100, 100 (2.4e7, 6e6, 6e6) |
+| 17 | distinct user_id | {region, service, endpoint, status} (negative control) | all groups | 1e4 (6e4) |
+
+Each repeats every minute over 5m and 15m windows: 54 RQEs, so `all` has
+104 (shared replicas repeat them at their own interval; each of the `m`
+metrics has its own `data_i/http` and `data_i/flows`). Distinct counts are
+HLL (Zipf θ and K of the value), the p99 KLL and DDSketch (Pareto a = 2),
+at the p95 level. The planner reads every group's accuracy for now;
+`covers_share` is carried through to each choice in the runner's output.
+
+On the committed inputs (`all`, r = 1, CPU weights, `--runs 1`), no RQE is
+dropped and no sanity check fails; ASAP serves 38 of the 54 new RQEs from a
+finer deployment: every RQE of templates 14 and 15 from an HLL at
+{region, service, status} or at the full label set (bar the RQEs at those
+two groupings), {dst_port} from {dst_port, proto}, and the p99 by
+{service} from DDSketch at {service, status}. 15 active deployments in
+all, 5.06 vCPU; PerQuery-CostAware 11.8 vCPU; AutoSketch 3.42e+03 vCPU.
+
 ## Inputs
 
 Costs and accuracy come from one saturation-study directory `DIR`, the same

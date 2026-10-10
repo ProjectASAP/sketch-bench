@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
 from export_autosketch_eval_table import (  # noqa: E402
-    SYNTHETIC_DEFAULT, SYNTHETIC_GRID, boom_query, main, metric_queries, queries_per_instance,
-    shared_queries,
-    synthetic_plan, synthetic_queries)
+    SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
+    all_subsets, boom_query, grouping_cardinality, main, metric_queries, queries_per_instance,
+    shared_queries, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
 SUMMARY_HEADER = [
@@ -149,7 +149,7 @@ class BoomTest(unittest.TestCase):
 
 class SyntheticQueriesTest(unittest.TestCase):
     def test_ten_templates_give_50_distinct_rqes(self):
-        qs = synthetic_queries(templates="all")
+        qs = synthetic_queries(templates="classic")
         # 1 + 5 spatial; per window 1 + 1 + 5 + 1 + 1 + 1 + 1 temporal, and
         # template 10's operands repeat template 5's.
         self.assertEqual(len(qs), 6 + 11 * 4)
@@ -161,7 +161,7 @@ class SyntheticQueriesTest(unittest.TestCase):
             ("label_0/value", "topk", 1), ("label_0/increment", "topk", 1)})
 
     def test_items_per_instance_follow_the_data_model(self):
-        qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="all")}
+        qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="classic")}
         # 1e4 series x 200 samples/s = 2e6 samples/s.
         self.assertEqual(qs[("quantile_by_job_p0.5", "1s")]["max_N"], 2e5)
         self.assertEqual(qs[("quantile_over_time_p0.5", "15m")]["max_N"], 200 * 900)
@@ -173,14 +173,114 @@ class SyntheticQueriesTest(unittest.TestCase):
                          {1})
 
 
+COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                "rqe-optimizer", "results", "autosketch-vs-asap-inputs",
+                                "tables")
+
+
+class SchemaTemplatesTest(unittest.TestCase):
+    def test_classic_tables_are_main_s_all_tables_byte_for_byte(self):
+        # The committed tables are the 10-template set's, from before "all"
+        # grew: renamed, today's "classic" tables match them byte for byte.
+        with tempfile.TemporaryDirectory() as out:
+            main(["--synthetic", "--revision", "test", "--out", out])
+            classic = [n for n in sorted(os.listdir(out)) if "templatesclassic" in n]
+            self.assertEqual(len(classic), 4)
+            for name in classic:
+                with open(os.path.join(out, name)) as f:
+                    ours = json.loads(f.read().replace("templates=classic", "templates=all"))
+                with open(os.path.join(COMMITTED_TABLES,
+                                       name.replace("templatesclassic", "templatesall"))) as f:
+                    committed = json.load(f)
+                del ours["sketch_bench_revision"], committed["sketch_bench_revision"]
+                self.assertEqual(json.dumps(ours, sort_keys=True),
+                                 json.dumps(committed, sort_keys=True), name)
+
+    def test_all_is_classic_plus_the_schema_templates(self):
+        classic = synthetic_queries(templates="classic", dataset="d")
+        every = synthetic_queries(templates="all", dataset="d")
+        self.assertEqual(every[:len(classic)], classic)
+        new = every[len(classic):]
+        # Per window (5m, 15m): 1 + 3 + 4 + 15 + 3 + 1 groupings.
+        self.assertEqual(len(new), 2 * 27)
+        self.assertEqual({q["stream"] for q in new},
+                         {"flows/src_ip", "http/user_id", "http/latency"})
+        self.assertEqual({q["range"] for q in new}, {"5m", "15m"})
+        self.assertTrue(all("grouping" not in q for q in classic))
+
+    def test_schema_cardinalities_count_a_child_with_its_parent(self):
+        self.assertEqual(grouping_cardinality("http", ["region"]), 4)
+        # An endpoint value names its service: 25 per service, 625 in all.
+        self.assertEqual(grouping_cardinality("http", ["endpoint"]), 625)
+        self.assertEqual(grouping_cardinality("http", ["service", "endpoint"]), 625)
+        self.assertEqual(grouping_cardinality("http", all_subsets("http")[-1]), 10_000)
+        self.assertEqual(grouping_cardinality("flows", ["dst_subnet", "dst_port"]), 10**6)
+
+    def test_dropping_labels_never_adds_groups_and_rates_cover_every_group(self):
+        for metric, schema in SCHEMAS.items():
+            subsets = all_subsets(metric)
+            for fine in subsets:
+                for coarse in subsets:
+                    if set(coarse) < set(fine):
+                        self.assertLessEqual(grouping_cardinality(metric, coarse),
+                                             grouping_cardinality(metric, fine))
+        # Every grouping a template reads has a series per group (the
+        # runner's full label set) and the curves' first N in a 5m window.
+        for q in synthetic_queries(templates="all"):
+            if "grouping" in q:
+                self.assertLessEqual(q["groups"], q["arrival_rate"])
+                self.assertGreaterEqual(q["max_N"], 1000)
+
+    def test_template_groupings_are_ordered_subsets_of_the_schema(self):
+        for n, _, metric, value, _, groupings, _ in SCHEMA_TEMPLATES:
+            names = [label["name"] for label in SCHEMAS[metric]["labels"]]
+            self.assertIn(value, SCHEMAS[metric]["values"])
+            for g in groupings:
+                self.assertTrue(g, n)
+                self.assertEqual(g, [x for x in names if x in g], n)
+            self.assertEqual(len(groupings), len({tuple(g) for g in groupings}), n)
+        groupings = {n: g for n, *_, g, _ in SCHEMA_TEMPLATES}
+        self.assertEqual(len(groupings[15]), 15)
+        self.assertEqual(groupings[17], [["region", "service", "endpoint", "status"]])
+
+    def test_rqe_entries_name_grouping_coverage_and_shape(self):
+        with tempfile.TemporaryDirectory() as out:
+            main(["--synthetic", "--revision", "test", "--out", out])
+            with open(os.path.join(out, "synthetic-templatesall-shared1.json")) as f:
+                workload = json.load(f)["workloads"][0]
+        self.assertEqual(set(workload["schemas"]), {"http", "flows"})
+        rqes = {r["query_id"] + "/" + r["range"]: r for r in workload["rqes"]}
+        r = rqes["t14_distinct_users_by_region,service/5m"]
+        self.assertEqual((r["grouping"], r["covers_share"], r["label_set"]["groups"]),
+                         (["region", "service"], 0.01, 100))
+        self.assertEqual(r["families"][0]["sketch"], "hll")
+        self.assertEqual((r["families"][0]["grid_param"], r["families"][0]["grid_K"]),
+                         (0.8, 1_000_000))
+        self.assertIsNone(rqes["t17_distinct_users_by_region,service,endpoint,status/15m"]
+                          ["covers_share"])
+        kll, dd = rqes["t16_p99_latency_by_service,status/5m"]["families"]
+        self.assertEqual((kll["grid_param"], kll["grid_K"]), (COST_PARETO_ALPHA, None))
+        self.assertEqual(rqes["t11_distinct_src_by_dst_subnet/5m"]["covers_share"], 0.05)
+
+    def test_metric_copies_name_their_schema_metrics(self):
+        qs = metric_queries({**SYNTHETIC_DEFAULT, "metrics": 2})
+        ids = [(q["query_id"], q["range"]) for q in qs]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual({q["metric"] for q in qs if "grouping" in q},
+                         {"data_0/http", "data_0/flows", "data_1/http", "data_1/flows"})
+
+
 class SyntheticPlanTest(unittest.TestCase):
     def test_plan_is_the_default_and_each_dimension_alone(self):
         plan = synthetic_plan()
         self.assertEqual(plan[0], SYNTHETIC_DEFAULT)
-        for dim, values in SYNTHETIC_GRID.items():
-            for v in values:
-                self.assertIn({**SYNTHETIC_DEFAULT, dim: v}, plan)
-        self.assertEqual(len(plan), 1 + sum(len(v) - 1 for v in SYNTHETIC_GRID.values()))
+        for templates in SYNTHETIC_TEMPLATE_SETS:
+            default = {**SYNTHETIC_DEFAULT, "templates": templates}
+            for dim, values in SYNTHETIC_GRID.items():
+                for v in values:
+                    self.assertIn({**default, dim: v}, plan)
+        self.assertEqual(len(plan), len(SYNTHETIC_TEMPLATE_SETS)
+                         * (1 + sum(len(v) - 1 for v in SYNTHETIC_GRID.values())))
 
 
 class DashboardAndSharedTest(unittest.TestCase):
@@ -207,7 +307,7 @@ class DashboardAndSharedTest(unittest.TestCase):
         self.assertLess(sizes[0], sizes[1])
 
     def test_metric_copies_share_nothing_and_grow_linearly(self):
-        point = {**SYNTHETIC_DEFAULT, "metrics": 8}
+        point = {**SYNTHETIC_DEFAULT, "templates": "classic", "metrics": 8}
         qs = metric_queries(point)
         self.assertEqual(len(qs), 8 * 50)
         self.assertEqual(len({(q["query_id"], q["range"]) for q in qs}), len(qs))
