@@ -1,6 +1,6 @@
-# `hydra_columns.yaml` with an `f64` value column, for the record-ingesting row
-# whose item is a float: `hydra-kll`, which orders its values rather than
-# counting them.
+# `hydra_columns.yaml` with an `f64` value column, for the record-ingesting rows
+# whose item is a float: `hydra-kll` and `hydra-kll-cdf`, which order their
+# values rather than count them.
 #
 #   approxbench sketchbench --variant hydra-kll --library lib \
 #     --spec configs/datagen/hydra_columns_f64.yaml \

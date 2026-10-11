@@ -259,6 +259,38 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     )
 }
 
+/// A row answering **subpopulation CDF**: the share of a group at or below a
+/// value, scored in absolute CDF error.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(super) fn subpop_cdf_row<V: ColumnItem + 'static>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<(String, V)>,
+    insert_step: InsertStepBody<(String, V)>,
+    query: QueryBody<(String, V), (GroupKey, f64), f64>,
+    merge: Option<Folds<(String, V), (GroupKey, f64), f64>>,
+    prepare: Option<PrepareBody<(String, V)>>,
+) -> Result<Measurements, RunError> {
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        SubpopCdfErrorGT {
+            group_columns: group_columns(req, description)?,
+            value_column: value_column(description),
+        },
+        peel_labeled::<V>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        prepare,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn keyed_row<K: ColumnItem, G>(
     req: &Requirement,

@@ -44,8 +44,20 @@ pub(crate) fn new_hydra(
 /// Records one `;`-joined record, one value per key column in place. The
 /// build already refused a stream of mixed widths; this is the backstop.
 pub(crate) fn update(h: &mut Hydra, key: &str, value: &DataInput, variant: &str) {
+    update_counted(h, key, value, None, variant)
+}
+
+/// [`update`], the value counted `count` times in each cell it reaches
+/// (`None` is once): the library's integer weight.
+pub(crate) fn update_counted(
+    h: &mut Hydra,
+    key: &str,
+    value: &DataInput,
+    count: Option<i32>,
+    variant: &str,
+) {
     let parts: Vec<&str> = key.split(';').collect();
-    if let Err(e) = h.update(&parts, value, None) {
+    if let Err(e) = h.update(&parts, value, count) {
         panic!(
             "{variant}: record {key:?} has {} label(s), the grid {}: {e}",
             parts.len(),
