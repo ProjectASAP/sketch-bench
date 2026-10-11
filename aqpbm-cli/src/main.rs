@@ -258,6 +258,8 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
                 };
                 (opts != StringOpts::default()).then_some(opts)
             },
+            child_of: None,
+            fan_out: None,
         },
         args.size.expect("clap requires --size") as u64,
     )))

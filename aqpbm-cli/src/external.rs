@@ -269,6 +269,8 @@ fn shape_column(data_type: &str) -> ColumnSpec {
         special_rule: RULE_NONE,
         data_type: data_type.to_string(),
         string: None,
+        child_of: None,
+        fan_out: None,
     }
 }
 

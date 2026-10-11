@@ -61,6 +61,8 @@ mod tests {
             special_rule: RULE_NONE,
             data_type: data_type.into(),
             string: None,
+            child_of: None,
+            fan_out: None,
         }
     }
 
@@ -500,6 +502,164 @@ mod tests {
         d.column_connected = Vec::new();
         let err = d.generate().unwrap_err().to_string();
         assert!(err.contains("used twice"), "{err}");
+    }
+
+    // ---------- child_of ----------
+
+    fn child(parent: usize, fan_out: u64, distribution: DataDistribution) -> ColumnSpec {
+        ColumnSpec {
+            child_of: Some(parent),
+            fan_out: Some(fan_out),
+            ..column(distribution, "string")
+        }
+    }
+
+    /// region (4) → service (fan-out 25, Zipf) → endpoint (fan-out 5), then a value.
+    fn hier_table() -> TableDescription {
+        TableDescription {
+            column_num: 4,
+            column_label: vec![
+                "region".into(),
+                "service".into(),
+                "endpoint".into(),
+                "value".into(),
+            ],
+            column_spec: vec![
+                column(uniform(0.0, 4.0, 1), "string"),
+                child(0, 25, zipf(25, 1.2, 2)),
+                child(1, 5, uniform(0.0, 5.0, 3)),
+                column(zipf(1000, 1.1, 4), "i64"),
+            ],
+            column_connected: Vec::new(),
+            row_num: 20_000,
+        }
+    }
+
+    /// Each child splits into its parent, a `.`, and an index below `fan_out`;
+    /// returns the distinct children seen under each parent.
+    fn children_by_parent(
+        parents: &[String],
+        children: &[String],
+        fan_out: u64,
+    ) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+        let mut by_parent: std::collections::HashMap<_, std::collections::HashSet<_>> =
+            Default::default();
+        for (parent, child) in parents.iter().zip(children) {
+            let (head, index) = child.rsplit_once('.').expect("a child has a `.`");
+            assert_eq!(head, parent, "'{child}' does not start with its parent");
+            assert!(index.parse::<u64>().unwrap() < fan_out, "'{child}'");
+            by_parent
+                .entry(parent.clone())
+                .or_default()
+                .insert(child.clone());
+        }
+        by_parent
+    }
+
+    #[test]
+    fn a_child_table_is_deterministic() {
+        let d = hier_table();
+        assert_eq!(d.generate().unwrap(), d.generate().unwrap());
+    }
+
+    #[test]
+    fn every_child_extends_its_parent_within_its_fan_out() {
+        let t = hier_table().generate().unwrap();
+        let region = t.data[0].as_string().unwrap();
+        let service = t.data[1].as_string().unwrap();
+        let endpoint = t.data[2].as_string().unwrap();
+
+        let services = children_by_parent(region, service, 25);
+        assert_eq!(services.len(), 4);
+        // 20k draws over 25 Zipf(1.2) ranks reach every service under every region.
+        assert!(services.values().all(|s| s.len() == 25), "{services:?}");
+
+        let endpoints = children_by_parent(service, endpoint, 5);
+        assert_eq!(endpoints.len(), 100);
+        assert!(endpoints.values().all(|e| e.len() <= 5));
+    }
+
+    /// The child index is the column's own draw, ranked: the distribution is
+    /// what picks it, and the parent plays no part.
+    #[test]
+    fn the_child_index_follows_the_columns_distribution() {
+        let d = hier_table();
+        let draws = d.column_spec[1].draw(d.row_num as usize).unwrap();
+        let t = d.generate().unwrap();
+        let service = t.data[1].as_string().unwrap();
+        let mut counts = [0u64; 25];
+        for (draw, s) in draws.iter().zip(service) {
+            let index: u64 = s.rsplit_once('.').unwrap().1.parse().unwrap();
+            assert_eq!(index, (draw - 1.0) as u64);
+            counts[index as usize] += 1;
+        }
+        // Zipf(1.2) over 25 ranks gives rank 1 about 30% of the mass.
+        let head = counts[0] as f64 / d.row_num as f64;
+        assert!((0.25..0.35).contains(&head), "{head}");
+        assert!(counts[0] > counts[1] && counts[1] > counts[24]);
+    }
+
+    #[test]
+    fn hydra_hier_yaml_generates_its_hierarchy() {
+        let d =
+            TableDescription::from_path(std::path::Path::new("../configs/datagen/hydra_hier.yaml"))
+                .unwrap();
+        let t = d.generate().unwrap();
+        let col = |i: usize| t.data[i].as_string().unwrap();
+        assert_eq!(children_by_parent(col(0), col(1), 25).len(), 4);
+        assert_eq!(children_by_parent(col(1), col(2), 25).len(), 100);
+    }
+
+    /// The schema-width cuts keep the first labels and the value column.
+    #[test]
+    fn hydra_hier_cuts_keep_their_leading_labels() {
+        for (file, labels) in [("hydra_hier_d2.yaml", 2), ("hydra_hier_d3.yaml", 3)] {
+            let path = format!("../configs/datagen/{file}");
+            let d = TableDescription::from_path(std::path::Path::new(&path)).unwrap();
+            assert_eq!(d.column_num, labels + 1, "{file}");
+            let t = d.generate().unwrap();
+            let col = |i: usize| t.data[i].as_string().unwrap();
+            assert_eq!(children_by_parent(col(0), col(1), 25).len(), 4, "{file}");
+        }
+    }
+
+    #[test]
+    fn bad_child_columns_are_refused_by_name() {
+        type Edit = fn(&mut TableDescription);
+        let cases: Vec<(&str, Edit)> = vec![
+            ("earlier column", |d| d.column_spec[1].child_of = Some(1)),
+            ("earlier column", |d| d.column_spec[1].child_of = Some(9)),
+            ("not a string column", |d| {
+                d.column_spec[0].data_type = "i64".into()
+            }),
+            ("needs fan_out", |d| d.column_spec[1].fan_out = None),
+            ("only to a child_of", |d| d.column_spec[1].child_of = None),
+            ("fan_out must be > 0", |d| {
+                d.column_spec[1].fan_out = Some(0)
+            }),
+            ("fan_out 24 disagrees", |d| {
+                d.column_spec[1].fan_out = Some(24)
+            }),
+            ("bounded domain", |d| {
+                d.column_spec[1].distribution = normal(0.0, 1.0, 2)
+            }),
+            ("has to be `string`", |d| {
+                d.column_spec[1].data_type = "u64".into()
+            }),
+            ("whole numbers", |d| {
+                d.column_spec[2].distribution = uniform(0.0, 5.9, 3)
+            }),
+            ("cardinality", |d| d.column_spec[1].cardinality = Some(25)),
+            ("`string:` block", |d| {
+                d.column_spec[1].string = Some(StringOpts::default())
+            }),
+        ];
+        for (want, edit) in cases {
+            let mut d = hier_table();
+            edit(&mut d);
+            let err = d.generate().unwrap_err().to_string();
+            assert!(err.contains(want), "wanted '{want}' in: {err}");
+        }
     }
 
     // ---------- serde ----------
