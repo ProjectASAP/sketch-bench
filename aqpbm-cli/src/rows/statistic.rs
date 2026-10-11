@@ -109,6 +109,28 @@ pub(super) fn topk_row<T: CountedValue>(
     )
 }
 
+/// The label columns a grouped row asks and scores: `--group-columns`, which
+/// must name at least one column, and only columns before the value column,
+/// since those are the grid's key columns.
+pub(super) fn group_columns(
+    req: &Requirement,
+    description: &TableDescription,
+) -> Result<Vec<usize>, RunError> {
+    let labels = value_column(description);
+    if req.group_columns.is_empty() {
+        return Err(RunError::Sketch(
+            "--group-columns names no column; a group is taken over at least one".into(),
+        ));
+    }
+    if let Some(&column) = req.group_columns.iter().find(|&&c| c >= labels) {
+        return Err(RunError::Sketch(format!(
+            "--group-columns {column}: the label columns are 0..{labels}, the ones \
+             before the value column"
+        )));
+    }
+    Ok(req.group_columns.clone())
+}
+
 /// A row answering **subpopulation frequency**: how often a value occurs inside
 /// a group.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -119,8 +141,8 @@ pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
-    query: QueryBody<(String, V), (Vec<String>, V), f64>,
-    merge: Option<Folds<(String, V), (Vec<String>, V), f64>>,
+    query: QueryBody<(String, V), (GroupKey, V), f64>,
+    merge: Option<Folds<(String, V), (GroupKey, V), f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -128,7 +150,10 @@ pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
         description,
         table,
         want,
-        SubpopFrequencyGT::<V>::over_columns(vec![SCORED_LABEL_COLUMN], value_column(description)),
+        SubpopFrequencyGT::<V>::over_columns(
+            group_columns(req, description)?,
+            value_column(description),
+        ),
         peel_labeled::<V>,
         insert,
         insert_step,
@@ -148,8 +173,8 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
-    query: QueryBody<(String, V), Vec<String>, f64>,
-    merge: Option<Folds<(String, V), Vec<String>, f64>>,
+    query: QueryBody<(String, V), GroupKey, f64>,
+    merge: Option<Folds<(String, V), GroupKey, f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -158,7 +183,7 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
         table,
         want,
         SubpopCardinalityGT {
-            group_columns: vec![SCORED_LABEL_COLUMN],
+            group_columns: group_columns(req, description)?,
             value_column: value_column(description),
         },
         peel_labeled::<V>,
@@ -181,12 +206,12 @@ pub(super) fn subpop_vector_row<V: ColumnItem + 'static, G>(
     ground_truth: G,
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
-    query: QueryBody<(String, V), Vec<String>, f64>,
-    merge: Option<Folds<(String, V), Vec<String>, f64>>,
+    query: QueryBody<(String, V), GroupKey, f64>,
+    merge: Option<Folds<(String, V), GroupKey, f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError>
 where
-    G: GroundTruth<Probe = Vec<String>, Answer = f64> + 'static,
+    G: GroundTruth<Probe = GroupKey, Answer = f64> + 'static,
     G::Truth: 'static,
 {
     scored_row(
@@ -212,8 +237,8 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
     insert_step: InsertStepBody<(String, V)>,
-    query: QueryBody<(String, V), (Vec<String>, f64), f64>,
-    merge: Option<Folds<(String, V), (Vec<String>, f64), f64>>,
+    query: QueryBody<(String, V), (GroupKey, f64), f64>,
+    merge: Option<Folds<(String, V), (GroupKey, f64), f64>>,
     prepare: Option<PrepareBody<(String, V)>>,
 ) -> Result<Measurements, RunError> {
     scored_row(
@@ -222,7 +247,7 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
         table,
         want,
         SubpopRankErrorGT {
-            group_columns: vec![SCORED_LABEL_COLUMN],
+            group_columns: group_columns(req, description)?,
             value_column: value_column(description),
         },
         peel_labeled::<V>,
@@ -348,7 +373,11 @@ where
     G::Probe: 'static,
     G::Answer: 'static,
 {
-    let (probes, score) = questions(ground_truth, &table)?;
+    let (probes, score, per_group) = questions(ground_truth, &table)?;
+    let score = match &req.per_group_out {
+        Some(path) => per_group_written(score, per_group, path)?,
+        None => score,
+    };
     let items = materialise(description, table)?;
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {
@@ -397,6 +426,37 @@ where
         bodies.push(((operation, metric), body));
     }
     Ok(bodies)
+}
+
+/// The scorer, also writing every group to `path` as `group_key,n_q,error`
+/// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
+/// each rewrites the same rows. The file is created here, so a path that
+/// cannot be written fails before anything is measured.
+fn per_group_written<A: 'static>(
+    score: Score<A>,
+    per_group: PerGroup<A>,
+    path: &std::path::Path,
+) -> Result<Score<A>, RunError> {
+    let fail =
+        |e: std::io::Error| RunError::Sketch(format!("--per-group-out {}: {e}", path.display()));
+    std::fs::File::create(path).map_err(fail)?;
+    let path = path.to_path_buf();
+    Ok(Rc::new(move |answers: &[A]| {
+        let mut csv = String::from("group_key,n_q,error\n");
+        for g in per_group(answers) {
+            // A label may hold a comma or a quote; CSV quotes the field then.
+            let key = if g.group.contains([',', '"', '\n']) {
+                format!("\"{}\"", g.group.replace('"', "\"\""))
+            } else {
+                g.group
+            };
+            let error = g.error.map_or(String::new(), |e| e.to_string());
+            csv.push_str(&format!("{key},{},{error}\n", g.n_q));
+        }
+        std::fs::write(&path, csv)
+            .unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));
+        score(answers)
+    }))
 }
 
 /// A row that answers **nothing**: measured but not scored. The parallel-insert

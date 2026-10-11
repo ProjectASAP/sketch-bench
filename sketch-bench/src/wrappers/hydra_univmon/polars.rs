@@ -39,7 +39,7 @@ impl<T: CardinalityValue> Default for PolarsSubpopCardinalityUnivmon<T> {
 }
 
 impl<T: CardinalityValue> PolarsSubpopCardinalityUnivmon<T> {
-    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[Option<&str>]) -> f64 {
         self.0.query(labels)
     }
 }
@@ -59,7 +59,7 @@ fn build_polars_subpop_vector<T: CardinalityValue>(
 }
 
 impl<T: CardinalityValue> PolarsSubpopUnivmon<T> {
-    pub fn estimate_subpop_statistic(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_statistic(&self, labels: &[Option<&str>]) -> f64 {
         self.0.query(labels)
     }
 }
@@ -116,7 +116,7 @@ pub fn insert_step_polars_subpop_cardinality_univmon<T: CardinalityValue>(
 pub fn query_polars_subpop_cardinality_univmon<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
@@ -209,7 +209,7 @@ fn insert_step_polars_subpop_vector<T: CardinalityValue>(
 fn query_polars_subpop_vector<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
     fold: fn(&[u64]) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
@@ -274,7 +274,7 @@ pub fn insert_step_polars_subpop_l1_norm<T: CardinalityValue>(
 pub fn query_polars_subpop_l1_norm<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     query_polars_subpop_vector(params, items, probes, passes, l1_norm)
@@ -307,7 +307,7 @@ pub fn insert_step_polars_subpop_l2_norm<T: CardinalityValue>(
 pub fn query_polars_subpop_l2_norm<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     query_polars_subpop_vector(params, items, probes, passes, l2_norm)
@@ -340,7 +340,7 @@ pub fn insert_step_polars_subpop_entropy<T: CardinalityValue>(
 pub fn query_polars_subpop_entropy<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     query_polars_subpop_vector(params, items, probes, passes, entropy)

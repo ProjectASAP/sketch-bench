@@ -64,7 +64,7 @@ mod tests {
         for _ in 0..500 {
             fed_kll(&mut h, &frecord("b;x", 10_000.0));
         }
-        let median = h.estimate_subpop_quantile(&["a"], 0.5);
+        let median = h.estimate_subpop_quantile(&[Some("a")], 0.5);
         assert!(
             (1.0..=101.0).contains(&median),
             "group `a` spans 1..=101, median estimated {median}"
@@ -80,8 +80,8 @@ mod tests {
         for v in 1..=101 {
             fed_kll(&mut h, &frecord("a;x", v as f64));
         }
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 0.0), 1.0);
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);
+        assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 0.0), 1.0);
+        assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 1.0), 101.0);
     }
 
     /// The library allocates a cell's retained slots once, so the footprint is

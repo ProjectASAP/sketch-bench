@@ -449,6 +449,14 @@ The file can be found [under configs directory](./configs/datagen/hydra_columns.
 
 **`--flat`**: flatten record such that output data of multiple experiments is flatten into one json file.
 
+**`--group-columns`** (Hydra rows only): which label columns the subpopulation is taken over, as comma-separated indices into the columns before the value column, e.g. `1` or `0,1`; default `0`.
+Any non-empty subset works, since the grid stores every subset of a record's labels; it picks the one the `hydra-*` row (`lib` and `polars`) asks and scores.
+With `--metrics accuracy`, the record also summarises each scored group's error in the row's own metric (relative error; mean rank error for `hydra-kll`): `err_mean`, `err_p50`, `err_p90`, `err_max`, `groups_scored`, plus `schema_width` (`d`), `records` (`N`) and `fanned_mass` (`N·(2^d − 1)`).
+
+**`--per-group-out PATH`** (Hydra rows only): write those per-group errors as a CSV, `group_key,n_q,error`, one row per group (`n_q` is its record count, `group_key` its tagged labels such as `label0:a;label1:x`, with `\`, `:` and `;` in a label escaped by `\`).
+Every group is listed, so the `n_q` sum to the stream's records; a group that cannot be scored (its true statistic is zero, e.g. zero entropy) has an empty `error` and is left out of the `err_*` summary.
+It takes exactly one accuracy measurement (query or merge).
+
 #### General Explanation
 
 Most of the input and output is shared between this hydra example and the previous hll example.

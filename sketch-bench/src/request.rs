@@ -118,6 +118,10 @@ pub struct Requirement {
     pub workers: usize,
     /// How many shards a merge measurement folds
     pub merge_shards: usize,
+    /// The label columns a grouped (`hydra-*`) row asks and scores, ascending
+    pub group_columns: Vec<usize>,
+    /// Where a grouped row writes each scored group's error, if anywhere
+    pub per_group_out: Option<std::path::PathBuf>,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
     /// Measured runs, and the warm-ups run and discarded before them

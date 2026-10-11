@@ -5,9 +5,9 @@ use std::collections::HashMap;
 
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
-use super::{group_labels, owned, Group};
+use super::{group_errors, group_labels, owned, write_groups, GroupKey};
 use crate::accuracy::quantile::rank_err;
-use crate::accuracy::{curve, f64_values, GroundTruth};
+use crate::accuracy::{curve, f64_values, GroundTruth, GroupError};
 
 /// Number of quantiles probed per group — the same grid the ungrouped
 /// comparator uses, named once in [`super::quantile`].
@@ -24,17 +24,18 @@ pub struct SubpopRankErrorGT {
 
 /// The ordered statistic inside each group, plus the groups worth probing.
 pub struct SubpopRankTruth {
-    per_group: HashMap<Group, Vec<f64>>,
+    per_group: HashMap<GroupKey, Vec<f64>>,
     /// Every group, shuffled: probe order must not hand the baseline the
     /// locality the encounter order would.
-    probed: Vec<Group>,
+    probed: Vec<GroupKey>,
     items: usize,
+    schema_width: usize,
 }
 
 impl GroundTruth for SubpopRankErrorGT {
     type Truth = SubpopRankTruth;
     /// One (group, fraction) question.
-    type Probe = (Group, f64);
+    type Probe = (GroupKey, f64);
     type Answer = f64;
 
     fn truth(&self, table: &GeneratedTable) -> Result<SubpopRankTruth, DataGenError> {
@@ -53,13 +54,13 @@ impl GroundTruth for SubpopRankErrorGT {
                 }
             }
         }
-        let mut per_group: HashMap<Group, Vec<f64>> = HashMap::with_capacity(borrowed.len());
+        let mut per_group: HashMap<GroupKey, Vec<f64>> = HashMap::with_capacity(borrowed.len());
         for (group, mut held) in borrowed {
             held.sort_by(f64::total_cmp);
-            per_group.insert(owned(&group), held);
+            per_group.insert(owned(&group, &self.group_columns), held);
         }
 
-        let mut by_size: Vec<(Group, u64)> = per_group
+        let mut by_size: Vec<(GroupKey, u64)> = per_group
             .iter()
             .map(|(g, v)| (g.clone(), v.len() as u64))
             .collect();
@@ -69,10 +70,11 @@ impl GroundTruth for SubpopRankErrorGT {
             per_group,
             probed,
             items: table.row_num as usize,
+            schema_width: self.value_column,
         })
     }
 
-    fn probes(&self, truth: &SubpopRankTruth) -> Vec<(Group, f64)> {
+    fn probes(&self, truth: &SubpopRankTruth) -> Vec<(GroupKey, f64)> {
         let mut out = Vec::with_capacity(truth.probed.len() * GROUP_GRID_POINTS);
         for group in &truth.probed {
             match truth.per_group.get(group) {
@@ -89,41 +91,16 @@ impl GroundTruth for SubpopRankErrorGT {
     fn score(
         &self,
         truth: &SubpopRankTruth,
-        probes: &[(Group, f64)],
+        probes: &[(GroupKey, f64)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let mut sum_mean = 0.0f64;
-        let mut max_err = 0.0f64;
-        let mut scored_groups = 0usize;
-
-        // The probe set is one contiguous grid per group, in order.
-        for (chunk_p, chunk_a) in probes
-            .chunks(GROUP_GRID_POINTS)
-            .zip(answers.chunks(GROUP_GRID_POINTS))
-        {
-            let Some((group, _)) = chunk_p.first() else {
-                continue;
-            };
-            let Some(sorted) = truth.per_group.get(group) else {
-                continue;
-            };
-            let mut group_sum = 0.0f64;
-            for ((_, q), est) in chunk_p.iter().zip(chunk_a) {
-                let err = rank_err(sorted, *est, *q);
-                group_sum += err;
-                if err > max_err {
-                    max_err = err;
-                }
-            }
-            sum_mean += group_sum / GROUP_GRID_POINTS as f64;
-            scored_groups += 1;
-        }
-
+        let (groups, max_err) = rank_errors(truth, probes, answers);
+        let scored_groups = groups.len();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         metrics.insert(
             "mean_rank_err".into(),
             if scored_groups > 0 {
-                sum_mean / scored_groups as f64
+                groups.iter().filter_map(|g| g.error).sum::<f64>() / scored_groups as f64
             } else {
                 0.0
             },
@@ -134,8 +111,63 @@ impl GroundTruth for SubpopRankErrorGT {
         metrics.insert("probes".into(), scored_groups as f64);
         metrics.insert("subpopulations".into(), truth.per_group.len() as f64);
         metrics.insert("group_columns".into(), self.group_columns.len() as f64);
+        write_groups(
+            &groups,
+            truth.items as u64,
+            truth.schema_width,
+            &mut metrics,
+        );
         metrics
     }
+
+    /// A group's error is its mean rank error over the grid, the number
+    /// `mean_rank_err` averages over groups.
+    fn per_group(
+        &self,
+        truth: &SubpopRankTruth,
+        probes: &[(GroupKey, f64)],
+        answers: &[f64],
+    ) -> Vec<GroupError> {
+        rank_errors(truth, probes, answers).0
+    }
+}
+
+/// Each group's mean rank error over its grid, plus the largest rank error any
+/// single probe saw.
+fn rank_errors(
+    truth: &SubpopRankTruth,
+    probes: &[(GroupKey, f64)],
+    answers: &[f64],
+) -> (Vec<GroupError>, f64) {
+    let mut max_err = 0.0f64;
+    let mut groups = Vec::new();
+
+    // The probe set is one contiguous grid per group, in order.
+    for (chunk_p, chunk_a) in probes
+        .chunks(GROUP_GRID_POINTS)
+        .zip(answers.chunks(GROUP_GRID_POINTS))
+    {
+        let Some((group, _)) = chunk_p.first() else {
+            continue;
+        };
+        let Some(sorted) = truth.per_group.get(group) else {
+            continue;
+        };
+        let mut group_sum = 0.0f64;
+        for ((_, q), est) in chunk_p.iter().zip(chunk_a) {
+            let err = rank_err(sorted, *est, *q);
+            group_sum += err;
+            if err > max_err {
+                max_err = err;
+            }
+        }
+        groups.push((
+            group.clone(),
+            sorted.len() as u64,
+            Some(group_sum / GROUP_GRID_POINTS as f64),
+        ));
+    }
+    (group_errors(groups.into_iter()), max_err)
 }
 
 #[cfg(test)]
@@ -154,11 +186,11 @@ mod tests {
             .expect("the table has the named columns");
         assert_eq!(truth.items, 6);
         assert_eq!(
-            truth.per_group[&vec!["a".to_string()]],
+            truth.per_group[&vec![Some("a".to_string())]],
             vec![10.0, 10.0, 20.0]
         );
         assert_eq!(
-            truth.per_group[&vec!["b".to_string()]],
+            truth.per_group[&vec![Some("b".to_string())]],
             vec![30.0, 30.0, 30.0]
         );
     }
