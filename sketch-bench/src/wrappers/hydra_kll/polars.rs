@@ -47,7 +47,7 @@ impl<T: QuantileValue + PolarsColumnItem> PolarsSubpopQuantile<T> {
     /// rank interval contains `phi * n`, which is what the rank-error
     /// comparator scores against, so an exact answer scores zero.
     pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        let Some(values) = self.sorted.get(&labels.join(";")) else {
+        let Some(values) = self.sorted.get(&prefix_key(labels)) else {
             return f64::NAN;
         };
         if values.is_empty() {

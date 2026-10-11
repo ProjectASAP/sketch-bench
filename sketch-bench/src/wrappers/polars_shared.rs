@@ -5,6 +5,7 @@
 use crate::wrappers::hll::CardinalityValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
@@ -262,10 +263,11 @@ impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     }
 }
 
-/// The `;`-joined key of one label subset, in column order: the subset key
-/// asap_sketchlib 0.2.2's `Hydra::update` built, so the baseline matches a
-/// value in any label column. 0.3.0's Hydra keys a subset by column, so the
-/// two differ when label columns share a value domain.
+/// The key of the label subset `mask` picks out of `parts`, in column order,
+/// each value tagged with its column (`label0:a;label2:c`, with `\`, `:` and `;`
+/// escaped): asap_sketchlib 0.3.0's subkey over the `label{i}` schema
+/// `hydra_shared` declares. So a value in one column never matches the same
+/// value in another (#74), in the baseline as in the sketch.
 pub fn subset_key(parts: &[&str], mask: usize) -> String {
     let mut out = String::new();
     for (j, part) in parts.iter().enumerate() {
@@ -273,17 +275,27 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
             if !out.is_empty() {
                 out.push(';');
             }
-            out.push_str(part);
+            let _ = write!(out, "label{j}:");
+            for ch in part.chars() {
+                if matches!(ch, '\\' | ':' | ';') {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
         }
     }
     out
 }
 
+/// The key a probe of the leading label columns `labels` reads.
+pub fn prefix_key(labels: &[&str]) -> String {
+    subset_key(labels, (1 << labels.len()) - 1)
+}
+
 /// Expand one record into `(subset_key, value)` rows, one per non-empty subset
-/// of its labels. Empty label parts are dropped, as asap_sketchlib 0.2.2's
-/// Hydra did (0.3.0's keeps them in their column).
+/// of its labels. An empty label keeps its column, as 0.3.0's Hydra does.
 pub fn fan_out<V: Clone>(key: &str, value: &V, keys: &mut Vec<String>, values: &mut Vec<V>) {
-    let parts: Vec<&str> = key.split(';').filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = key.split(';').collect();
     for mask in 1..(1usize << parts.len()) {
         keys.push(subset_key(&parts, mask));
         values.push(value.clone());
@@ -350,7 +362,7 @@ impl<T: PolarsFrequencyItem> PolarsSubpopFrequencyCore<T> {
 
     pub fn query(&self, labels: &[&str], value: &T) -> f64 {
         self.counts
-            .get(&(labels.join(";"), value.count_key()))
+            .get(&(prefix_key(labels), value.count_key()))
             .copied()
             .unwrap_or(0) as f64
     }
@@ -415,7 +427,7 @@ impl<T: CardinalityValue> PolarsSubpopCardinalityCore<T> {
     }
 
     pub fn query(&self, labels: &[&str]) -> f64 {
-        self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
+        self.distinct.get(&prefix_key(labels)).copied().unwrap_or(0) as f64
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -484,7 +496,7 @@ impl<T: CardinalityValue> PolarsSubpopVectorCore<T> {
     }
 
     pub fn query(&self, labels: &[&str]) -> f64 {
-        self.exact.get(&labels.join(";")).copied().unwrap_or(0.0)
+        self.exact.get(&prefix_key(labels)).copied().unwrap_or(0.0)
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -520,4 +532,29 @@ fn grouped_values<T: CardinalityValue>(
             .collect()
             .expect("polars group_by collect"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subset_keys_tag_each_value_with_its_column() {
+        assert_eq!(subset_key(&["a", "b", "c"], 0b101), "label0:a;label2:c");
+        assert_eq!(subset_key(&["x:y;z", ""], 0b11), r"label0:x\:y\;z;label1:");
+        assert_eq!(prefix_key(&["a", "b"]), "label0:a;label1:b");
+    }
+
+    /// #74: the column-0 group `a` holds 2 records (`a;a`, `a;b`). The old
+    /// untagged key counted 3: `a;a`'s `a` once per column.
+    #[test]
+    fn a_value_shared_by_two_columns_is_counted_once() {
+        let mut core = PolarsSubpopFrequencyCore::<i64>::default();
+        core.update(&("a;a".to_string(), 7));
+        core.update(&("a;b".to_string(), 7));
+        core.finalize();
+        assert_eq!(core.query(&["a"], &7), 2.0);
+        assert_eq!(core.query(&["a", "a"], &7), 1.0);
+        assert_eq!(core.query(&["b"], &7), 0.0);
+    }
 }
