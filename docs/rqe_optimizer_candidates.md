@@ -3,7 +3,8 @@
 This document is the canonical design for candidate construction, eligibility
 (accuracy included), finer-to-coarser roll-ups and dominance pruning. What a
 candidate costs, and the MILP that maps RAQEs to candidates, are in
-[Cost models](rqe_optimizer_cost_model.md).
+[Cost models](rqe_optimizer_cost_model.md); Hydra is in
+[Hydra](rqe_optimizer_hydra.md).
 
 ## Candidate deployments
 
@@ -232,6 +233,7 @@ univmon-cardinality, KLL and DDSketch. These don't, and serve only
   (`measured_at.dataset`). Its accuracy is held to the worst case: the max
   error over the covered groups, worst over the measured N and seeds
   (`hydra_saturation.csv`), while per-group sketches read seed-mean curves.
+  The design is in [Hydra](rqe_optimizer_hydra.md).
 
 - **Cost**: ingest, compaction and storage stay at `G_d`; the query job merges
   `I_d · n − I_r` times and answers `card(G_r)` groups

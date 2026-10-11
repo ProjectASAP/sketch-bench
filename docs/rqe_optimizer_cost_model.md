@@ -3,7 +3,8 @@
 This document is the one home for what a candidate costs (§3's table), the
 canonical cost-by-use model with its MILP, and the still-supported
 snapshot-AUC objective. Candidates and eligibility are in
-[Candidate generation and eligibility](rqe_optimizer_candidates.md).
+[Candidate generation and eligibility](rqe_optimizer_candidates.md); Hydra
+is in [Hydra](rqe_optimizer_hydra.md).
 
 ## Model status and relationship
 
@@ -391,14 +392,17 @@ many endpoints it counts.
 Side by side, what each family puts into §3's table (every phase then
 follows from it):
 
-| | KLL (per group) | exact-sum (per-group normalized) | HydraKLL (shared, fixed) |
-|---|---|---|---|
-| `m`, `c_mrg` in the row | one group's | whole ÷ groups | whole sketch |
-| `I_d` (instances per window) | `card(G_d)` | `card(G_d)` | 1 |
-| `I_r` (states a query ends with) | `card(G_r)` | `card(G_r)` | 1 |
-| probes per query (`c_qry`) | `card(G_r)` | `card(G_r)` | `card(G_r)` |
-| key tracker part | none | none | DeltaSet, `I_d = card(G_d)` |
-| rolls up (`G_r ⊂ G_d`) | yes | yes | no |
+| | KLL (per group) | exact-sum (per-group normalized) |
+|---|---|---|
+| `m`, `c_mrg` in the row | one group's | whole ÷ groups |
+| `I_d` (instances per window) | `card(G_d)` | `card(G_d)` |
+| `I_r` (states a query ends with) | `card(G_r)` | `card(G_r)` |
+| probes per query (`c_qry`) | `card(G_r)` | `card(G_r)` |
+| key tracker part | none | none |
+| rolls up (`G_r ⊂ G_d`) | yes | yes |
+
+A Hydra grid is the Shared + Fixed case, `I_d = I_r = 1`; its row, probes
+and key tracker are in [Hydra](rqe_optimizer_hydra.md) §3.
 
 The Hydra families are in their capabilities' family lists but not in
 `DEPLOYABLE_FAMILIES`, so they are candidates only when undeployable families
@@ -421,7 +425,8 @@ Each family has properties, hardcoded by variant in `family_properties`
   and is dropped if the cost table has none; a deployment without its tracker
   is never eligible. The cost table may hold at most one DeltaSet row.
 
-The tracker is priced as an exact accumulator on the same `x`, `y` and `G`,
+The tracker is priced as an exact accumulator on the same `x`, `y` and `G`
+(Hydra's tracker grouping is open: [Hydra](rqe_optimizer_hydra.md) §6.1),
 in every phase: ingest, merge (union of the `n_i` windows' key sets), query
 (enumerate keys) and storage. Its `m` is per key, so it adds `card(G_d) × m_ds`
 per window. The AutoSketch baseline skips shared fixed-size families for now
