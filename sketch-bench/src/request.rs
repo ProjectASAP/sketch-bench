@@ -122,6 +122,8 @@ pub struct Requirement {
     pub workers: usize,
     /// How many shards a merge measurement folds
     pub merge_shards: usize,
+    /// How a merge measurement splits the stream into those shards
+    pub merge_split: crate::wrappers::MergeSplit,
     /// The label columns a grouped (`hydra-*`) row asks and scores, ascending
     pub group_columns: Vec<usize>,
     /// Where a grouped row writes each scored group's error, if anywhere

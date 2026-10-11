@@ -374,6 +374,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         width,
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
+        merge_split: args.merge_split,
         group_columns,
         per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
         comparator: args.comparator.clone(),
@@ -458,6 +459,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // and a record states what ran rather than what was asked for.
         if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+            report.bench.merge_split = Some(args.merge_split);
         }
         reports.push(report);
     }
