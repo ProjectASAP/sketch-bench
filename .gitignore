@@ -10,6 +10,9 @@
 
 # data
 *.csv
+# The AutoSketch-vs-ASAP eval's accuracy curves are inputs, committed so it
+# reruns from the repo alone.
+!rqe-optimizer/results/autosketch-vs-asap-inputs/saturation/**/*.csv
 *.pcap
 
 # Rust target directories
