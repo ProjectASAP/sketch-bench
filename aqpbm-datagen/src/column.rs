@@ -45,6 +45,15 @@ pub struct ColumnSpec {
     /// checked against the distribution's domain like `cardinality` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fan_out: Option<u64>,
+    /// Index of an earlier `string` column whose values scale this one. Each
+    /// distinct label value gets a fixed factor in `scale_range`, and every
+    /// row's value is multiplied by its label's factor. `f64` columns only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_by: Option<usize>,
+    /// `[lo, hi]` with `0 < lo <= hi`: the factors are log-uniform in it.
+    /// Required with `scale_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_range: Option<[f64; 2]>,
 }
 
 impl ColumnSpec {
@@ -75,6 +84,35 @@ impl ColumnSpec {
                 ))
             }
             (Some(_), Some(fan_out)) => self.validate_child(fan_out)?,
+        }
+
+        match (self.scale_by, self.scale_range) {
+            (None, None) => {}
+            (Some(_), None) => {
+                return Err(DataGenError::BadParam(
+                    "scale_by: needs scale_range, the [lo, hi] the factors are drawn from".into(),
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(DataGenError::BadParam(
+                    "scale_range: applies only to a scale_by column".into(),
+                ))
+            }
+            (Some(_), Some([lo, hi])) => {
+                // An integer column would round the scaled value back down.
+                if self.data_type != "f64" {
+                    return Err(DataGenError::BadParam(format!(
+                        "scale_by: a scaled value is fractional, so data_type has to be \
+                         `f64`, not '{}'",
+                        self.data_type
+                    )));
+                }
+                if !(lo > 0.0 && hi >= lo && hi.is_finite()) {
+                    return Err(DataGenError::BadParam(format!(
+                        "scale_range [{lo}, {hi}] needs 0 < lo <= hi"
+                    )));
+                }
+            }
         }
 
         // `cardinality` restates the domain. Silently preferring one over the
@@ -244,6 +282,19 @@ impl ColumnSpec {
                 "data_type: unknown type '{other}'"
             ))),
         }
+    }
+
+    /// The fixed factor of one `scale_by` label value: a SplitMix64 hash of
+    /// the value's FNV-1a and this column's seed, as `u` in `[0, 1)`, mapped to
+    /// `lo·(hi/lo)^u`.
+    pub(crate) fn scale_factor(&self, label: &str) -> f64 {
+        let [lo, hi] = self.scale_range.expect("scale_range was validated above");
+        let fnv = label.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
+        });
+        let x = crate::table::mix_connected_bits(fnv ^ self.distribution.seed());
+        let u = (x >> 11) as f64 / (1u64 << 53) as f64;
+        lo * (hi / lo).powf(u)
     }
 
     /// Render a `child_of` column: each row's parent value, a `.`, and the

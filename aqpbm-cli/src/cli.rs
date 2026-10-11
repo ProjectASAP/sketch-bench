@@ -236,6 +236,17 @@ pub struct SketchbenchArgs {
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,
+    /// Which label columns the `hydra-*` rows group by, comma-separated
+    /// indices into the columns before the value column: any non-empty subset
+    /// (`0`, `1`, `0,1`). The grid stores every subset, so this picks the one
+    /// asked and scored. Every other target ignores it.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "0",
+        help_heading = "Measurement content"
+    )]
+    pub group_columns: Vec<usize>,
     /// How the merge operation splits the stream into its shards: `contiguous`
     /// cuts it into stretches, `interleaved` deals it round-robin by record, so
     /// each shard is a sample of the whole stream. The shard sizes are the same
@@ -248,17 +259,6 @@ pub struct SketchbenchArgs {
         help_heading = "Measurement content"
     )]
     pub merge_split: MergeSplit,
-    /// Which label columns the `hydra-*` rows group by, comma-separated
-    /// indices into the columns before the value column: any non-empty subset
-    /// (`0`, `1`, `0,1`). The grid stores every subset, so this picks the one
-    /// asked and scored. Every other target ignores it.
-    #[arg(
-        long,
-        value_delimiter = ',',
-        default_value = "0",
-        help_heading = "Measurement content"
-    )]
-    pub group_columns: Vec<usize>,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]

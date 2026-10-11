@@ -271,6 +271,8 @@ fn shape_column(data_type: &str) -> ColumnSpec {
         string: None,
         child_of: None,
         fan_out: None,
+        scale_by: None,
+        scale_range: None,
     }
 }
 

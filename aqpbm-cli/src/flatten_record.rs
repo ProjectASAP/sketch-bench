@@ -259,6 +259,8 @@ mod tests {
                 string: None,
                 child_of: None,
                 fan_out: None,
+                scale_by: None,
+                scale_range: None,
             },
             1000,
         );
