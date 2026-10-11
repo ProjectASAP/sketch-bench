@@ -6,6 +6,7 @@ Run: python3 scripts/test_export_autosketch_eval_table.py
 
 import csv
 import json
+import math
 import os
 import sys
 import tempfile
@@ -18,7 +19,7 @@ from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
     all_subsets, boom_query, group_coverage, grouping_cardinality, label_shares, main, metric_queries, queries_per_instance,
-    shared_queries, synthetic_plan, synthetic_queries)
+    shared_queries, synthetic_entry, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
 SUMMARY_HEADER = [
@@ -134,6 +135,20 @@ class ExportTest(unittest.TestCase):
         self.assertEqual((kll["sketch"], kll["grid_param"], kll["grid_K"]),
                          ("kll-percall", COST_PARETO_ALPHA, None))
         self.assertEqual(dd["sketch"], "dd")
+        # Only classic tables carry the e2e block (multi-grouping has no PromQL yet).
+        with open(os.path.join(out, default)) as f:
+            self.assertNotIn("e2e", json.load(f)["workloads"][0])
+        with open(os.path.join(out, "synthetic-templatesclassic-shared1.json")) as f:
+            metrics = json.load(f)["workloads"][0]["e2e"]["metrics"]
+        self.assertEqual({m: metrics[m]["type"] for m in metrics},
+                         {"data": "gauge", "data_total": "counter"})
+        self.assertEqual(grouping_cardinality_of(metrics["data"]["labels"]), 10_000)
+
+
+def grouping_cardinality_of(labels):
+    """Series of a label list in SCHEMAS' format: a `child_of` label's
+    cardinality is per parent value, so the full set is the product."""
+    return math.prod(label["cardinality"] for label in labels)
 
 
 class BoomTest(unittest.TestCase):
@@ -173,6 +188,23 @@ class SyntheticQueriesTest(unittest.TestCase):
         self.assertEqual({queries_per_instance(q) for q in synthetic_queries(templates="all")},
                          {1})
 
+    def test_classic_promql_reads_every_rqe_and_leaves_the_rqes_unchanged(self):
+        e2e = []
+        qs = synthetic_queries(templates="classic", e2e=e2e)
+        self.assertEqual(qs, synthetic_queries(templates="classic"))
+        ids = {synthetic_entry(q)["id"] for q in qs}
+        read = {rqe for query in e2e for rqe in query["rqes"]}
+        self.assertEqual(read, ids)
+        # 6 spatial + 12 per window: template 5's five quantiles, 6 others
+        # and template 10's ratio, which reads two RQEs.
+        self.assertEqual(len(e2e), 6 + 12 * 4)
+        by_text = {query["promql"]: query for query in e2e}
+        ratio = by_text["quantile_over_time(0.9, data[1h]) / quantile_over_time(0.5, data[1h])"]
+        self.assertEqual([r.split("/")[-3] for r in ratio["rqes"]],
+                         ["quantile_over_time_p0.9", "quantile_over_time_p0.5"])
+        self.assertEqual(by_text["rate(data_total[15m])"]["interval_secs"], 60)
+        self.assertEqual(by_text["sum by (job) (data)"]["interval_secs"], 1)
+
 
 COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                 "rqe-optimizer", "results", "autosketch-vs-asap-inputs",
@@ -182,7 +214,8 @@ COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 class SchemaTemplatesTest(unittest.TestCase):
     def test_classic_tables_are_main_s_all_tables_byte_for_byte(self):
         # The committed tables are the 10-template set's, from before "all"
-        # grew: renamed, today's "classic" tables match them byte for byte.
+        # grew: renamed, today's "classic" tables match them byte for byte,
+        # apart from the `e2e` block, which the runner does not read.
         with tempfile.TemporaryDirectory() as out:
             main(["--synthetic", "--revision", "test", "--out", out])
             classic = [n for n in sorted(os.listdir(out)) if "templatesclassic" in n]
@@ -194,6 +227,7 @@ class SchemaTemplatesTest(unittest.TestCase):
                                        name.replace("templatesclassic", "templatesall"))) as f:
                     committed = json.load(f)
                 del ours["sketch_bench_revision"], committed["sketch_bench_revision"]
+                del ours["workloads"][0]["e2e"]
                 self.assertEqual(json.dumps(ours, sort_keys=True),
                                  json.dumps(committed, sort_keys=True), name)
 

@@ -409,7 +409,7 @@ def point_id(point):
 
 def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                       templates="dashboard", quantiles=None, dataset=None,
-                      range_with_interval=False, seen=None, metric=None):
+                      range_with_interval=False, seen=None, metric=None, e2e=None):
     """The `synthetic` queries as read_summary-shaped query-ranges, one per RQE.
 
     Streams: `series/*` hold one instance per series (C groups), `job/*` one per
@@ -421,6 +421,10 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     10, D5) are kept once. With `metric`, every stream and query id names it,
     so the queries share nothing with another metric's. `all` adds
     schema_queries() to the `classic` set.
+
+    With `e2e` (a list), the `classic` templates append their PromQL to it,
+    one {promql, interval_secs, rqes} per query (e2e_block()). Values are read
+    from the gauge `data`, increments from the counter `data_total`.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
     dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
@@ -431,15 +435,19 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     def label(rng):
         return f"{rng}@{interval}s" if range_with_interval else rng
 
-    def add(query_id, stream, capability, rng, s, t, groups, keys=None):
+    def add(query_id, stream, capability, rng, s, t, groups, keys=None, promql=None):
+        """Adds the RQE (once) and its query `promql`; returns the RQE's id."""
         if metric:
             query_id, stream = f"{query_id}_{metric}", f"{metric}/{stream}"
+        kind = "values" if capability == "quantile" else "keys"
+        rqe = f"{dataset}/{query_id}/{kind}/{rng}"
+        if promql and e2e is not None:
+            e2e.append({"promql": promql, "interval_secs": t, "rqes": [rqe]})
         if (query_id, rng) in seen:
-            return
+            return rqe
         seen.add((query_id, rng))
         out.append({
-            "dataset": dataset, "query_id": query_id,
-            "kind": "values" if capability == "quantile" else "keys",
+            "dataset": dataset, "query_id": query_id, "kind": kind,
             "range": rng, "range_s": s, "step_s": t, "theta": SYNTHETIC_THETA, "K": keys,
             "min_N": rate * s / groups, "max_N": rate * s / groups,
             "alpha_rank": SYNTHETIC_ALPHA, "alpha_memory": SYNTHETIC_ALPHA, "tail_class": "",
@@ -449,8 +457,11 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
             "assumptions": [],
             **DEFAULT_TARGETS,
         })
+        return rqe
 
     C, J = SYNTHETIC_SERIES, SYNTHETIC_JOBS
+    gauge = metric or "data"
+    counter = f"{gauge}_total"
     if templates == "dashboard":
         quantiles = quantiles or DASHBOARD_QUANTILES
         for rng, s in ranges:
@@ -473,22 +484,34 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         return schema_queries(interval, dataset, range_with_interval, seen, metric)
     assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
-    add("sum_by_job", "job/value", "sum", "1s", 1, 1, J)
+    add("sum_by_job", "job/value", "sum", "1s", 1, 1, J, promql=f"sum by (job) ({gauge})")
     for q in quantiles:
-        add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", 1, 1, J)
+        add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", 1, 1, J,
+            promql=f"quantile by (job) ({q}, {gauge})")
     for rng, s in ranges:
         lbl = label(rng)
         add("topk32_sum_by_label0_sum_over_time", "label_0/value", "topk", lbl, s, interval,
-            1, C)
-        add("sum_over_time", "series/value", "sum", lbl, s, interval, C)
+            1, C, promql=f"topk(32, sum by (label_0) (sum_over_time({gauge}[{rng}])))")
+        add("sum_over_time", "series/value", "sum", lbl, s, interval, C,
+            promql=f"sum_over_time({gauge}[{rng}])")
         for q in quantiles:
-            add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
-        add("rate", "series/increment", "rate", lbl, s, interval, C)
-        add("sum_by_job_rate", "job/increment", "rate", lbl, s, interval, J)
-        add("sum_by_job_sum_over_time", "job/value", "sum", lbl, s, interval, J)
-        add("topk32_sum_by_label0_rate", "label_0/increment", "topk", lbl, s, interval, 1, C)
-        for q in ["0.9", "0.5"]:  # template 10, the same RQEs as template 5's
-            add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
+            add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C,
+                promql=f"quantile_over_time({q}, {gauge}[{rng}])")
+        add("rate", "series/increment", "rate", lbl, s, interval, C,
+            promql=f"rate({counter}[{rng}])")
+        add("sum_by_job_rate", "job/increment", "rate", lbl, s, interval, J,
+            promql=f"sum by (job) (rate({counter}[{rng}]))")
+        add("sum_by_job_sum_over_time", "job/value", "sum", lbl, s, interval, J,
+            promql=f"sum by (job) (sum_over_time({gauge}[{rng}]))")
+        add("topk32_sum_by_label0_rate", "label_0/increment", "topk", lbl, s, interval, 1, C,
+            promql=f"topk(32, sum by (label_0) (rate({counter}[{rng}])))")
+        # Template 10, the same RQEs as template 5's: one query reads both.
+        rqes = [add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
+                for q in ["0.9", "0.5"]]
+        if e2e is not None:
+            e2e.append({"promql": f"quantile_over_time(0.9, {gauge}[{rng}]) / "
+                                  f"quantile_over_time(0.5, {gauge}[{rng}])",
+                        "interval_secs": interval, "rqes": rqes})
     if templates == "all":
         out += schema_queries(interval, dataset, range_with_interval, seen, metric)
     return out
@@ -543,7 +566,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
     return out
 
 
-def shared_queries(point):
+def shared_queries(point, e2e=None):
     """`point["shared"]` replicas of the point's template set on the same streams.
     Replica i draws SHARED_WINDOWS of the windows, SHARED_QUANTILES of the
     set's quantiles and an interval from SHARED_INTERVALS (seeded); identical
@@ -558,17 +581,17 @@ def shared_queries(point):
         quantiles = sorted(rng.sample(pool, min(SHARED_QUANTILES, len(pool))), key=float)
         interval = rng.choice(SHARED_INTERVALS)
         out += synthetic_queries(",".join(sorted(picked, key=WINDOW_SECS.get)), interval,
-                                 point["templates"], quantiles, dataset, True, seen)
+                                 point["templates"], quantiles, dataset, True, seen, e2e=e2e)
     return out
 
 
-def metric_queries(point):
+def metric_queries(point, e2e=None):
     """`point["metrics"]` copies of the point's template set, copy i on its own
     metric `data_i`: nothing is shared across copies."""
     dataset = "synthetic/" + point_id(point)
     return [q for i in range(point["metrics"])
             for q in synthetic_queries(templates=point["templates"], dataset=dataset,
-                                       metric=f"data_{i}")]
+                                       metric=f"data_{i}", e2e=e2e)]
 
 
 def synthetic_entry(q):
@@ -615,6 +638,31 @@ def synthetic_entry(q):
     return entry
 
 
+def e2e_block(qs, queries):
+    """What an end-to-end run of a `classic` table needs and the runner does
+    not read: the PromQL `queries` (one entry per distinct query and interval,
+    with the RQEs it reads; a binary query reads two) and the `metrics` to
+    generate. Each metric is a gauge (`value` and `dist` streams) and a
+    counter `<metric>_total` (`increment` streams), with labels in SCHEMAS'
+    format: `label_0` has SYNTHETIC_SERIES / SYNTHETIC_JOBS values under each
+    `job` (`child_of`), so there are SYNTHETIC_SERIES series."""
+    unique = {}
+    for q in queries:
+        unique.setdefault((q["promql"], q["interval_secs"]), q)
+    labels = [{"name": "job", "cardinality": SYNTHETIC_JOBS},
+              {"name": "label_0", "cardinality": SYNTHETIC_SERIES // SYNTHETIC_JOBS,
+               "child_of": "job"}]
+    keys = {"zipf": SYNTHETIC_THETA, "keys": SYNTHETIC_SERIES}
+    metrics = {}
+    for gauge in dict.fromkeys(q["metric"] for q in qs):
+        common = {"labels": labels, "samples_per_sec_per_series": SYNTHETIC_SAMPLES_PER_SEC}
+        metrics[gauge] = {"type": "gauge", **common,
+                          "values": {"value": keys, "dist": {"pareto": SYNTHETIC_ALPHA}}}
+        metrics[f"{gauge}_total"] = {"type": "counter", **common,
+                                     "values": {"increment": keys}}
+    return {"queries": list(unique.values()), "metrics": metrics}
+
+
 def queries_per_instance(q):
     """Queries one evaluation issues per instance: a `traces` key query reads
     every key (K point queries); an exact group value, a top-k list and a
@@ -639,14 +687,18 @@ def build_synthetic(args):
     for point in synthetic_plan():
         name = "synthetic-" + point_id(point).replace("/", "-").replace("=", "") + ".json"
         if name not in out:
+            queries = []
             if point["shared"] > 1:
-                qs = shared_queries(point)
+                qs = shared_queries(point, queries)
             elif point["metrics"] > 1:
-                qs = metric_queries(point)
+                qs = metric_queries(point, queries)
             else:
                 qs = synthetic_queries(templates=point["templates"],
-                                       dataset="synthetic/" + point_id(point))
+                                       dataset="synthetic/" + point_id(point), e2e=queries)
             workload = {"dataset": qs[0]["dataset"], "rqes": [synthetic_entry(q) for q in qs]}
+            # Classic only: the multi-grouping templates have no PromQL yet (#204).
+            if point["templates"] == "classic":
+                workload["e2e"] = e2e_block(qs, queries)
             # Each schema metric's label schema, for the runner's facts.
             schemas = {q["metric"]: q["schema"] for q in qs if "schema" in q}
             if schemas:
