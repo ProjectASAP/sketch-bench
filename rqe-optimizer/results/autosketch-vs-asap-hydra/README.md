@@ -125,6 +125,32 @@ ruled out by accuracy; cardinality's Hydra candidate is hydra-hll.
 - `fig_rollup_ablation.png`: ASAP vs. ASAP without roll-ups, cheapest plan per
   workload (CPU only, log scale).
 
+## Plans
+
+`plans/<table>.plans.json.gz`: each workload's chosen plans, from a rerun with
+the plans kept (`--runs 1`, without `--no-chosen`; costs are deterministic, so
+they match the results above). `plans` lists, for each method and weight
+setting, the cheapest plan (`kind: "cheapest"`) and the plan at each feasible
+SLA (`kind: "sla"`, `sla_ms`), with its cost, latency and deployments.
+`chosen` has one entry per RQE:
+
+| Field | Meaning |
+|---|---|
+| `rqe` | the RQE's id (table, query, kind, range) |
+| `sketch`, `params` | the deployment's sketch and config |
+| `window_secs`, `slide_secs` | the deployment's window and slide |
+| `merged_shards` | windows the query merges (lookback / window) |
+| `deployment` | the deployment's index; RQEs with one index share it |
+| `deployment_grouping` | present for a roll-up or Hydra grid: the deployment's (finer) grouping |
+| `ingest_workers`, `latency_ms` | ingest workers and the RQE's chain latency |
+| `asap_accuracy`, `accuracy_source` | estimated error and where it was read |
+| `covers_share` | the RQE's coverage rule, if any |
+
+```sh
+zcat plans/synthetic-templatesmultigroup-shared1.plans.json.gz | jq '.plans[]
+  | select(.kind == "cheapest" and .method == "asap" and .weights == "cpu") | .chosen'
+```
+
 ## Inputs
 
 - `inputs/saturation/optimizer_cost/rqe_atomic_costs.json`: the cost table,
