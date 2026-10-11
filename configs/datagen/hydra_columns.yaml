@@ -29,12 +29,13 @@
 # Reported throughput is records per second, which is the denominator that stays
 # comparable as `d` changes.
 #
-# The columns here share the default alphabet, so their value domains overlap: a
-# query for label `"abc"` cannot distinguish the key1 group from the key2 group,
-# and the estimate absorbs both. This is #74, and it is the reason the `polars`
-# rows do not score zero on this file. Give each column its own
-# `string.alphabet` to make the domains disjoint, and the baselines drop to
-# exactly zero.
+# The columns here share the default alphabet, so their value domains overlap.
+# The sketch is not affected: asap_sketchlib 0.3.0 keys each subset by column
+# (`key1:abc`), so a key1 value never collides with the same key2 value. The
+# `polars` exact baselines still build untagged subset keys (the 0.2.2
+# encoding, `polars_shared.rs`), so on this file they merge the key1 and key2
+# groups and do not score zero (#74; docs/rqe_optimizer_hydra.md §5.2). Give
+# each column its own `string.alphabet` and the baselines drop to exactly zero.
 
 column_num: 3
 column_label: [key1, key2, value]
