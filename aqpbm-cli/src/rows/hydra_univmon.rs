@@ -77,7 +77,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_lib(
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -114,7 +114,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_polars(
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_l1_norm::<$t>,
@@ -147,7 +147,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_lib(
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -184,7 +184,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_polars(
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_l2_norm::<$t>,
@@ -217,7 +217,7 @@ pub(crate) fn row_hydra_univmon_entropy_lib(
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hus::insert_hydra_univmon::<$t>,
@@ -254,7 +254,7 @@ pub(crate) fn row_hydra_univmon_entropy_polars(
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: vec![SCORED_LABEL_COLUMN],
+                    group_columns: group_columns(req, description)?,
                     value_column: value_column(description),
                 },
                 hup::insert_polars_subpop_entropy::<$t>,
@@ -270,5 +270,85 @@ pub(crate) fn row_hydra_univmon_entropy_polars(
         Dtype::U64 => at!(u64),
         Dtype::F64 => at!(f64),
         Dtype::Str => at!(String),
+    }
+}
+
+/// The sum rows insert each value as its own integer count, so they build at
+/// the integer widths only.
+fn no_sum_at(req: &Requirement, got: Dtype) -> RunError {
+    RunError::Sketch(format!(
+        "{}/{} counts each value by itself, an integer weight, so builds at i64 or u64; \
+         --dtype {} is not an integer",
+        req.variant,
+        req.library,
+        got.name(),
+    ))
+}
+
+pub(crate) fn row_hydra_univmon_sum_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            subpop_vector_row::<$t, _>(
+                req,
+                description,
+                table,
+                want,
+                SubpopSumGT {
+                    group_columns: group_columns(req, description)?,
+                    value_column: value_column(description),
+                },
+                hus::insert_hydra_univmon_sum::<$t>,
+                hus::insert_step_hydra_univmon_sum::<$t>,
+                hus::query_hydra_univmon_sum::<$t>,
+                Some((
+                    hus::merge_hydra_univmon_sum::<$t>,
+                    hus::merge_step_hydra_univmon_sum::<$t>,
+                    hus::merge_query_hydra_univmon_sum::<$t>,
+                )),
+                None,
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        other => Err(no_sum_at(req, other)),
+    }
+}
+
+pub(crate) fn row_hydra_univmon_sum_polars(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            subpop_vector_row::<$t, _>(
+                req,
+                description,
+                table,
+                want,
+                SubpopSumGT {
+                    group_columns: group_columns(req, description)?,
+                    value_column: value_column(description),
+                },
+                hup::insert_polars_subpop_sum::<$t>,
+                hup::insert_step_polars_subpop_sum::<$t>,
+                hup::query_polars_subpop_sum::<$t>,
+                None,
+                Some(hup::prepare_polars_subpop_sum::<$t>),
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        other => Err(no_sum_at(req, other)),
     }
 }

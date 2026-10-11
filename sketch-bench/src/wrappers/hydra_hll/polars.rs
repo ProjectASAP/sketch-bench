@@ -34,7 +34,7 @@ pub fn build_polars_subpop_cardinality<T: CardinalityValue>(
 }
 
 impl<T: CardinalityValue> PolarsSubpopCardinality<T> {
-    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[Option<&str>]) -> f64 {
         self.0.query(labels)
     }
 }
@@ -92,7 +92,7 @@ pub fn insert_step_polars_subpop_cardinality<T: CardinalityValue>(
 pub fn query_polars_subpop_cardinality<T: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, T)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);

@@ -58,9 +58,11 @@ heavy-hitter        heavy items and how heavy
 subpop-cardinality  cardinality, within the records carrying a set of labels
 subpop-frequency    frequency, within the records carrying a set of labels
 subpop-quantile     quantile, within the records carrying a set of labels
+subpop-cdf          share at or below a value, within the records carrying a set of labels
 subpop-l1-norm      L1-norm of values, within the records carrying a set of labels
 subpop-l2-norm      L2-norm of values, within the records carrying a set of labels
 subpop-entropy      entropy of values, within the records carrying a set of labels
+subpop-sum          sum of values, within the records carrying a set of labels
 keyed-cardinality   how many distinct items for a specific key
 keyed-entropy       entropy of values for a specific key
 keyed-l1-norm       L1-norm of values for a specific key

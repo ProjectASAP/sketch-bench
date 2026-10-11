@@ -100,7 +100,7 @@
       "minimum": 0
     },
     "merge_accuracy": {
-      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` contiguous\nshards. A linear sketch should match `query_accuracy` exactly."
+      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` shards split\nas `merge_split` says. A linear sketch should match `query_accuracy`\nexactly under either split."
     },
     "merge_cpu_time_ms": {
       "anyOf": [
@@ -146,6 +146,18 @@
       ],
       "format": "uint",
       "minimum": 0
+    },
+    "merge_split": {
+      "description": "How the stream was split into the `merge_shards` shards.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MergeSplit"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "merge_supported": {
       "type": [
@@ -322,6 +334,7 @@
     "merge_heap_allocated_kb",
     "merge_rss_peak_kb",
     "merge_shards",
+    "merge_split",
     "merge_supported",
     "merge_timestamp",
     "merge_wall_time_ms",
@@ -393,12 +406,52 @@
           "format": "uint64",
           "minimum": 0
         },
+        "child_of": {
+          "description": "Index of an earlier `string` column this one nests under, for\nhierarchical labels. A value is the parent row's value, a `.`, and a\nchild index in `[0, fan_out)` drawn from this column's distribution.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
         "data_type": {
           "description": "Which [`ColumnData`] variant this column renders into.",
           "type": "string"
         },
         "distribution": {
           "$ref": "#/$defs/DataDistribution"
+        },
+        "fan_out": {
+          "description": "How many children each parent value has. Required with `child_of`, and\nchecked against the distribution's domain like `cardinality` is.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "scale_by": {
+          "description": "Index of an earlier `string` column whose values scale this one. Each\ndistinct label value gets a fixed factor in `scale_range`, and every\nrow's value is multiplied by its label's factor. `f64` columns only.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "scale_range": {
+          "description": "`[lo, hi]` with `0 < lo <= hi`: the factors are log-uniform in it.\nRequired with `scale_by`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
         },
         "shift": {
           "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",
@@ -692,6 +745,21 @@
         "p999",
         "max",
         "count"
+      ]
+    },
+    "MergeSplit": {
+      "description": "How a merge run split the stream into its shards.",
+      "oneOf": [
+        {
+          "description": "Each shard a consecutive stretch of the stream.",
+          "type": "string",
+          "const": "contiguous"
+        },
+        {
+          "description": "Round-robin by record over the contiguous split's shard sizes, so each\nshard is a sample of the whole stream.",
+          "type": "string",
+          "const": "interleaved"
+        }
       ]
     },
     "Mode": {

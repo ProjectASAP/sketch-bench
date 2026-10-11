@@ -35,7 +35,7 @@ pub fn build_hydra_hll(config: &ParamSet, label_columns: usize) -> Result<HydraH
 
 impl HydraHll {
     #[inline]
-    pub fn estimate_subpop_cardinality(&self, labels: &[&str]) -> f64 {
+    pub fn estimate_subpop_cardinality(&self, labels: &[Option<&str>]) -> f64 {
         query(&self.inner, labels, &HydraQuery::Cardinality, "hydra-hll")
     }
 }
@@ -96,7 +96,7 @@ pub fn insert_step_hydra_hll<V: CardinalityValue>(
 pub fn query_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     merge_query_hydra_hll(params, items, probes, 1, passes)
@@ -107,7 +107,7 @@ pub fn query_hydra_hll<V: CardinalityValue>(
 pub fn merge_query_hydra_hll<V: CardinalityValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<Vec<String>>>,
+    probes: Rc<Vec<Vec<Option<String>>>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {

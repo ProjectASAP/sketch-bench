@@ -11,7 +11,7 @@ pub use bench_report::BenchReport;
 pub use fold::MemoryMaxima;
 pub use schema::{
     BenchSection, CpuTime, ExternalWorkload, InsertMetrics, Language, LatencySummary, MergeMetrics,
-    MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
+    MergeSplit, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
     WorkloadDescription, SCHEMA_VERSION,
 };
 pub use welford::Welford;

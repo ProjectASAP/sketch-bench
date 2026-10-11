@@ -258,6 +258,10 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
                 };
                 (opts != StringOpts::default()).then_some(opts)
             },
+            child_of: None,
+            fan_out: None,
+            scale_by: None,
+            scale_range: None,
         },
         args.size.expect("clap requires --size") as u64,
     )))
@@ -350,6 +354,21 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&variant),
     };
 
+    let mut group_columns = args.group_columns.clone();
+    group_columns.sort_unstable();
+    group_columns.dedup();
+    if args.per_group_out.is_some() {
+        if !variant.starts_with("hydra-") {
+            bail!("--per-group-out: only the hydra-* rows score groups, and {variant} is not one");
+        }
+        match want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() {
+            0 => bail!("--per-group-out writes an accuracy measurement, and none was asked for"),
+            1 => {}
+            _ => bail!(
+                "--per-group-out writes one accuracy measurement; ask for query or merge, not both"
+            ),
+        }
+    }
     let req = Requirement {
         variant: variant.clone(),
         library: library.clone(),
@@ -357,6 +376,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         width,
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
+        group_columns,
+        per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
+        merge_split: args.merge_split,
         comparator: args.comparator.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
@@ -439,6 +461,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // and a record states what ran rather than what was asked for.
         if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+            report.bench.merge_split = Some(args.merge_split);
         }
         reports.push(report);
     }

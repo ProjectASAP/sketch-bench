@@ -129,6 +129,30 @@ pub enum Source {
     CppBench,
 }
 
+/// How a merge run split the stream into its shards.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeSplit {
+    /// Each shard a consecutive stretch of the stream.
+    #[default]
+    Contiguous,
+    /// Round-robin by record over the contiguous split's shard sizes, so each
+    /// shard is a sample of the whole stream.
+    Interleaved,
+}
+
+impl std::str::FromStr for MergeSplit {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "contiguous" => Ok(Self::Contiguous),
+            "interleaved" => Ok(Self::Interleaved),
+            other => Err(format!("unknown merge split '{other}'")),
+        }
+    }
+}
+
 /// MACRO (benchmark) section of a record. Every sub-field is
 /// `Option`al so N/A metrics don't pollute the JSON with zero
 /// placeholders.
@@ -179,6 +203,11 @@ pub struct BenchSection {
     /// if the implementation turned out not to support merging.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_shards: Option<usize>,
+    /// How the stream was split into those shards. Present whenever merge was
+    /// measured; absent on records written before the field existed, which
+    /// all split contiguously.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_split: Option<MergeSplit>,
     /// Present, and `true`, whenever a merge was measured. Never `false`: a row
     /// that provides no merge is refused where the closures are built, before anything
     /// is timed, so the gap shows up as an error naming the row rather than as a
@@ -323,10 +352,14 @@ pub struct MergeMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_folds_per_sec: Option<RunStats>,
     pub merge_shards: Option<usize>,
+    /// How the stream was split into the `merge_shards` shards.
+    #[serde(default)]
+    pub merge_split: Option<MergeSplit>,
     pub merge_supported: Option<bool>,
     /// The same comparator as `query_accuracy`, against the same whole-stream
-    /// truth, scoring the sketch left by folding `merge_shards` contiguous
-    /// shards. A linear sketch should match `query_accuracy` exactly.
+    /// truth, scoring the sketch left by folding `merge_shards` shards split
+    /// as `merge_split` says. A linear sketch should match `query_accuracy`
+    /// exactly under either split.
     #[serde(rename = "merge_accuracy")]
     pub accuracy: Option<serde_json::Value>,
     #[serde(rename = "merge_cpu_time_ms")]
@@ -490,6 +523,10 @@ mod tests {
                 special_rule: aqpbm_datagen::RULE_NONE,
                 data_type: "i64".into(),
                 string: None,
+                child_of: None,
+                fan_out: None,
+                scale_by: None,
+                scale_range: None,
             },
             1_000_000,
         )

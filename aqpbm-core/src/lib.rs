@@ -25,8 +25,8 @@ pub use atomic_costs::{
 };
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
-    MergeMetrics, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
-    WorkloadDescription, SCHEMA_VERSION,
+    MergeMetrics, MergeSplit, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats,
+    Source, WorkloadDescription, SCHEMA_VERSION,
 };
 pub use erp::{
     erp_artifact, erp_record, ErpArtifact, ErpRecord, ErpResourceProfile, ERP_SCHEMA_VERSION,
