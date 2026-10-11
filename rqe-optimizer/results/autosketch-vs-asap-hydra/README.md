@@ -8,8 +8,10 @@ everything added since #138:
 - **Hydra** grids (hydra-hll, hydra-univmon-cardinality, hydra-kll) are
   candidates for ASAP and PerQuery, with accuracy measured on the eval's own
   data (#193 design; #195–#202 measurement and optimizer);
-- a **multi-grouping** template set (`http` and `flows`, templates 11–17, #196)
-  next to the classic mixed set;
+- **multi-grouping** templates (`http` and `flows`, templates 11–17, #196),
+  among them p99 latency `GROUP BY CUBE(region, service, endpoint)`
+  (template 16, all 7 groupings), evaluated alone (**multi-grouping**) and
+  added to the classic mixed set (**mixed + multi-grouping**);
 - the KLL footprint is asap_sketchlib's real allocation (#192), and the cost
   table is re-measured.
 
@@ -36,18 +38,24 @@ Cost of each method's cheapest plan (no latency bound), absolute:
 
 | Workload | RQEs | Weights | ASAP | ASAP (no roll-ups) | PerQuery | AutoSketch | RQEs rolled up | Deployments (with / without roll-ups) |
 |---|---|---|---|---|---|---|---|---|
-| mixed (classic) | 50 | CPU (vCPU) | 3.54 | 3.54 | 10.5 | 3.72e3 | 0 | 8 / 8 |
+| mixed (classic) | 50 | CPU (vCPU) | 3.54 | 3.54 | 10.5 | 3,716 | 0 | 8 / 8 |
 | mixed (classic) | 50 | Fargate ($/h) | 0.230 | 0.230 | 0.752 | 176 | 0 | 8 / 8 |
-| mixed, r = 8 | 92 | CPU | 3.66 | 3.66 | 18.5 | 4.46e3 | 0 | 8 / 8 |
-| mixed, m = 8 | 400 | CPU | 28.3 | 28.3 | 84.1 | 2.97e4 | 0 | 64 / 64 |
-| mixed, m = 16 | 800 | CPU | 56.6 | 56.6 | 168 | 5.95e4 | 0 | 128 / 128 |
-| mixed, m = 16 | 800 | Fargate | 3.68 | 3.68 | 12.0 | 2.81e3 | 0 | 128 / 128 |
-| mixed + multi-grouping | 104 | CPU | 3.79 | 3.94 | 11.3 | 3.72e3 | 42 | 14 / 30 |
-| mixed + multi-grouping | 104 | Fargate | 0.245 | 0.257 | 0.799 | 176 | 42 | 14 / 30 |
-| mixed + multi-grouping, r = 8 | 200 | CPU | 3.94 | 4.08 | 19.9 | 4.46e3 | 84 | 14 / 30 |
-| mixed + multi-grouping, m = 8 | 832 | CPU | 30.4 | 31.5 | 90.3 | 2.98e4 | 336 | 112 / 240 |
-| mixed + multi-grouping, m = 16 | 1664 | CPU | 60.7 | 63.0 | 181 | 5.96e4 | 672 | 224 / 480 |
-| mixed + multi-grouping, m = 16 | 1664 | Fargate | 3.91 | 4.11 | 12.8 | 2.81e3 | 672 | 224 / 480 |
+| mixed, r = 8 | 92 | CPU | 3.66 | 3.66 | 18.5 | 4,456 | 0 | 8 / 8 |
+| mixed, m = 8 | 400 | CPU | 28.3 | 28.3 | 84.1 | 29,726 | 0 | 64 / 64 |
+| mixed, m = 16 | 800 | CPU | 56.6 | 56.6 | 168 | 59,452 | 0 | 128 / 128 |
+| mixed, m = 16 | 800 | Fargate | 3.68 | 3.68 | 12.0 | 2,808 | 0 | 128 / 128 |
+| multi-grouping | 62 | CPU | 0.221 | 0.551 | 1.07 | 10.2 | 52 | 5 / 26 |
+| multi-grouping | 62 | Fargate | 0.0137 | 0.0339 | 0.0597 | 0.430 | 52 | 5 / 26 |
+| multi-grouping, r = 8 | 124 | CPU | 0.242 | 0.573 | 2.04 | 12.3 | 104 | 5 / 26 |
+| multi-grouping, m = 8 | 496 | CPU | 1.77 | 4.41 | 8.55 | 81.7 | 416 | 40 / 208 |
+| multi-grouping, m = 16 | 992 | CPU | 3.53 | 8.81 | 17.1 | 163 | 832 | 80 / 416 |
+| multi-grouping, m = 16 | 992 | Fargate | 0.218 | 0.542 | 0.955 | 6.87 | 832 | 80 / 416 |
+| mixed + multi-grouping | 112 | CPU | 3.76 | 4.09 | 11.6 | 3,726 | 52 | 13 / 34 |
+| mixed + multi-grouping | 112 | Fargate | 0.243 | 0.264 | 0.812 | 176 | 52 | 13 / 34 |
+| mixed + multi-grouping, r = 8 | 216 | CPU | 3.90 | 4.23 | 20.5 | 4,468 | 104 | 13 / 34 |
+| mixed + multi-grouping, m = 8 | 896 | CPU | 30.1 | 32.7 | 92.7 | 29,808 | 416 | 104 / 272 |
+| mixed + multi-grouping, m = 16 | 1792 | CPU | 60.2 | 65.4 | 185 | 59,615 | 832 | 208 / 544 |
+| mixed + multi-grouping, m = 16 | 1792 | Fargate | 3.89 | 4.22 | 13.0 | 2,815 | 832 | 208 / 544 |
 
 Every workload: 0 RQEs dropped, 0 sanity violations (ASAP ≤ ASAP without
 roll-ups ≤ PerQuery, and ASAP ≤ AutoSketch). `summary_synthetic.md` has
@@ -58,24 +66,30 @@ plus its measured benchmark, approxbench accuracy runs at 1e8 items):
 
 | Workload | RQEs | ASAP | PerQuery | AutoSketch |
 |---|---|---|---|---|
-| mixed (classic) | 50 | 0.72 s | 0.64 s | 212 s |
-| mixed, m = 16 | 800 | 13.7 s | 11.4 s | 3,394 s |
-| mixed + multi-grouping | 104 | 1.05 s | 0.83 s | 481 s |
-| mixed + multi-grouping, m = 16 | 1664 | 18.1 s | 13.9 s | 7,702 s |
+| mixed (classic) | 50 | 0.72 s | 0.64 s | 0.002 s + 212 s |
+| mixed, m = 16 | 800 | 13.7 s | 11.4 s | 0.035 s + 3,394 s |
+| multi-grouping | 62 | 0.41 s | 0.22 s | 0.002 s + 269 s |
+| multi-grouping, m = 16 | 992 | 7.0 s | 4.1 s | 0.037 s + 4,309 s |
+| mixed + multi-grouping | 112 | 1.12 s | 0.88 s | 0.004 s + 481 s |
+| mixed + multi-grouping, m = 16 | 1792 | 22.5 s | 16.7 s | 0.079 s + 7,702 s |
 
 ### Roll-ups
 
-On the multi-grouping set, ASAP serves 40% of RQEs (42 of 104, and the same
-share at r = 8, m = 8, m = 16) from a finer deployment. That halves its
-deployments (30 → 14; 480 → 224 at m = 16) but saves only **3.3–3.6% of cost
-under CPU weights and 4.4–4.8% under Fargate**, at every point of the
-cost–latency frontier (`fig_frontier.png`, `fig_rollup_ablation.png`). The
-deployments roll-ups remove are small (HLL and DDSketch at coarse groupings,
-a few KB per group); the cost is dominated by ingest and storage at the finest
-groupings, which every plan needs. ASAP's ~3× advantage over PerQuery comes
-from sharing deployments across RQEs at the same grouping, not from roll-ups.
-On the classic set every stream has one grouping, so roll-ups never apply and
-the two ASAP lines coincide.
+On the **multi-grouping** set, ASAP serves 52 of 62 RQEs from a finer
+deployment, cutting its deployments from 26 to 5 and its cost by **60%**
+(0.551 → 0.221 vCPU; 0.0339 → 0.0137 $/h), and by the same share at r = 8,
+m = 8 and m = 16. The cube (template 16) is the clearest case: one KLL
+deployment at (region, service, endpoint) answers all 14 p99 RQEs. Every
+deployment ingests the whole stream, so cost grows with the number of
+groupings kept. A KLL or DDSketch merge summarizes the pooled data of the
+merged groups, so a roll-up answers a coarse group's p99, not a quantile of
+quantiles (KLL reads its measured merge curve).
+
+On **mixed + multi-grouping**, roll-ups save 8% (4.09 → 3.76 vCPU, 34 → 13
+deployments): the classic templates, whose streams have one grouping each,
+are most of the cost. On classic alone, roll-ups never apply and the two ASAP
+lines coincide. ASAP's ~3× advantage over PerQuery on classic comes from
+sharing deployments across RQEs at the same grouping.
 
 ### Hydra
 
@@ -104,11 +118,12 @@ ruled out by accuracy; cardinality's Hydra candidate is hydra-hll.
   roll-ups, PerQuery as lines; AutoSketch, which ignores latency, as a point).
 - `fig_cost_vs_sla.png`: version 2, each method's cost at batch-latency SLAs
   {100, 300, 1000, 3000, 10000} ms (AutoSketch: ● meets the SLA, × misses).
-  On the multi-grouping set the tightest feasible bound is 490 ms (the
-  per-(service, endpoint) queries), so the 100 and 300 ms SLAs have no plan.
+  With the multi-grouping templates the tightest feasible bound is 490 ms
+  (the per-(service, endpoint) queries), so the 100 and 300 ms SLAs have no
+  plan.
 - `fig_planning_time.png`: planning time vs. RQEs (multi-grouping set).
 - `fig_rollup_ablation.png`: ASAP vs. ASAP without roll-ups, cheapest plan per
-  workload, CPU and Fargate.
+  workload (CPU only, log scale).
 
 ## Inputs
 
@@ -123,7 +138,7 @@ ruled out by accuracy; cardinality's Hydra candidate is hydra-hll.
 - The accuracy curves (`out_grid_1e7_cost/`, `out_1e9/`) are the committed
   #138 study's, in `../autosketch-vs-asap-inputs/saturation/` (#194).
 - `inputs/tables/`: the workloads, `export_autosketch_eval_table.py
-  --synthetic` (classic and all × r ∈ {1, 8} × m ∈ {1, 8, 16}).
+  --synthetic` (classic, multigroup and all × r ∈ {1, 8} × m ∈ {1, 8, 16}).
 
 ## Reproduce
 
@@ -143,9 +158,11 @@ python3 scripts/plot_autosketch_vs_asap_synthetic.py $DIR
 python3 scripts/plot_autosketch_vs_asap_sla.py $DIR $DIR/synthetic-*-tp95.json
 ```
 
-Runs: one large table per CloudLab node (clnode109, 155, 178, 167; the small
-ones serially on clnode138), Xeon E5-2683 v3, 56 cores, 2026-10-10, `--runs 3`,
-sketch-bench `hydra/eval-integration` at 44ac160.
+Runs: Xeon E5-2683 v3, 56 cores, `--runs 3`, runner from sketch-bench
+`hydra/eval-integration` at 44ac160. Classic: one large table per CloudLab node
+(clnode178, 167; the small ones serially on clnode138), 2026-10-10.
+Multigroup and all (with the cube template): serially on one idle node,
+2026-10-11.
 
 ## Caveats
 

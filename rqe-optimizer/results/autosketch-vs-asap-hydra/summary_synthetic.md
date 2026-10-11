@@ -4,127 +4,127 @@ Cost by use: `w_cpu · AUC(CPU) + w_mem · AUC(memory)` (CPU only, in vCPU; Farg
 
 ## mixed + multi-grouping
 
-104 RQEs on 11 streams; dropped: 0; sanity violations: 0. AutoSketch: 292 probes, 19 distinct (metric, config); measured benchmark 481 s at N = 1e+08 (paper rate 1.14e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
+112 RQEs on 11 streams; dropped: 0; sanity violations: 0. AutoSketch: 332 probes, 19 distinct (metric, config); measured benchmark 481 s at N = 1e+08 (paper rate 1.14e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
 
 | weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
 |---|---|---|---|---|---|---|---|---|
-| cpu | ASAP | 3.79 | 3.79 | 29.9 | 1.34e+04 | 62 | 1.05 | 5.93 |
-| cpu | ASAP (no roll-ups) | 3.94 | 3.94 | 31.4 | 1.34e+04 | 51.1 | 1.01 | 6.07 |
-| cpu | PerQuery-CostAware | 11.3 | 11.3 | 80.5 | 3.33e+03 | 59.9 | 0.832 | 14.2 |
-| cpu | AutoSketch-Adapted | 3.72e+03 | 3.72e+03 | 5.63e+03 | 1.01e+03 | 10.3 | 481 | 3.72e+03 |
-| fargate | ASAP | 0.245 | 3.85 | 19.9 | 2.68e+03 | 51.1 | 1.26 | 0.322 |
-| fargate | ASAP (no roll-ups) | 0.257 | 4 | 21.3 | 2.68e+03 | 51.1 | 1.18 | 0.334 |
-| fargate | PerQuery-CostAware | 0.799 | 11.5 | 74.4 | 3.26e+03 | 59.9 | 0.842 | 0.91 |
-| fargate | AutoSketch-Adapted | 176 | 3.72e+03 | 5.63e+03 | 1.01e+03 | 10.3 | 481 | 176 |
+| cpu | ASAP | 3.76 | 3.76 | 30 | 1.34e+04 | 51.1 | 1.12 | 5.9 |
+| cpu | ASAP (no roll-ups) | 4.09 | 4.09 | 31.5 | 1.34e+04 | 39 | 1.09 | 6.23 |
+| cpu | PerQuery-CostAware | 11.6 | 11.6 | 80.7 | 3.33e+03 | 39 | 0.875 | 14.5 |
+| cpu | AutoSketch-Adapted | 3.73e+03 | 3.73e+03 | 5.63e+03 | 1.01e+03 | 4.9 | 481 | 3.73e+03 |
+| fargate | ASAP | 0.243 | 3.82 | 19.9 | 2.68e+03 | 51.1 | 1.23 | 0.321 |
+| fargate | ASAP (no roll-ups) | 0.264 | 4.16 | 21.4 | 2.68e+03 | 39 | 1.17 | 0.341 |
+| fargate | PerQuery-CostAware | 0.812 | 11.9 | 74.6 | 3.26e+03 | 39 | 0.886 | 0.923 |
+| fargate | AutoSketch-Adapted | 176 | 3.73e+03 | 5.63e+03 | 1.01e+03 | 4.9 | 481 | 176 |
 
 Frontier points (latency ms, cost), by weights:
 
-- cpu, ASAP: (490, 9.03), (649, 7.46), (813, 6.69), (980, 5.93), (1.08e+03, 5.87), (1.48e+03, 5.27), (2.68e+03, 3.85), (1.34e+04, 3.79)
-- cpu, ASAP (no roll-ups): (490, 9.34), (649, 7.64), (813, 6.87), (980, 6.07), (1.08e+03, 6.01), (1.48e+03, 5.41), (2.68e+03, 4), (1.34e+04, 3.94)
-- cpu, PerQuery-CostAware: (490, 19.7), (575, 17.5), (673, 16.2), (813, 15.3), (980, 14.2), (1.14e+03, 13.6), (1.34e+03, 13.1), (1.63e+03, 12.5), (1.96e+03, 12.4), (2.29e+03, 12), (2.68e+03, 11.6), (3.33e+03, 11.3)
-- fargate, ASAP: (490, 0.444), (557, 0.385), (649, 0.382), (765, 0.353), (896, 0.322), (1.08e+03, 0.318), (1.3e+03, 0.315), (1.48e+03, 0.302), (2.29e+03, 0.274), (2.68e+03, 0.245)
-- fargate, ASAP (no roll-ups): (490, 0.464), (557, 0.399), (649, 0.396), (765, 0.367), (896, 0.336), (959, 0.334), (1.08e+03, 0.33), (1.3e+03, 0.327), (1.48e+03, 0.314), (2.29e+03, 0.286), (2.68e+03, 0.257)
-- fargate, PerQuery-CostAware: (490, 1.12), (575, 1.03), (673, 0.981), (813, 0.943), (959, 0.91), (1.14e+03, 0.88), (1.34e+03, 0.857), (1.63e+03, 0.839), (2.29e+03, 0.818), (2.68e+03, 0.803), (3.26e+03, 0.799)
+- cpu, ASAP: (490, 8.99), (649, 7.43), (813, 6.66), (980, 5.9), (1.08e+03, 5.83), (1.48e+03, 5.24), (2.68e+03, 3.82), (1.34e+04, 3.76)
+- cpu, ASAP (no roll-ups): (490, 9.49), (649, 7.79), (813, 7.02), (980, 6.23), (1.08e+03, 6.16), (1.48e+03, 5.57), (2.68e+03, 4.15), (1.34e+04, 4.09)
+- cpu, PerQuery-CostAware: (490, 20), (575, 17.8), (673, 16.5), (813, 15.6), (980, 14.5), (1.14e+03, 13.9), (1.34e+03, 13.4), (1.63e+03, 12.8), (1.96e+03, 12.7), (2.29e+03, 12.3), (2.68e+03, 11.9), (3.33e+03, 11.6)
+- fargate, ASAP: (490, 0.443), (557, 0.384), (649, 0.381), (765, 0.352), (896, 0.321), (1.08e+03, 0.317), (1.3e+03, 0.314), (1.48e+03, 0.301), (2.29e+03, 0.272), (2.68e+03, 0.243)
+- fargate, ASAP (no roll-ups): (490, 0.471), (557, 0.406), (649, 0.403), (765, 0.374), (896, 0.343), (959, 0.341), (1.08e+03, 0.337), (1.3e+03, 0.334), (1.48e+03, 0.321), (2.29e+03, 0.293), (2.68e+03, 0.264)
+- fargate, PerQuery-CostAware: (490, 1.14), (575, 1.04), (673, 0.994), (813, 0.956), (959, 0.923), (1.14e+03, 0.893), (1.34e+03, 0.87), (1.63e+03, 0.852), (2.29e+03, 0.831), (2.68e+03, 0.817), (3.26e+03, 0.812)
 
 Roll-up ablation (ASAP vs. ASAP without roll-ups):
 
 | weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
 |---|---|---|---|---|---|---|
-| cpu | 42 | 14 | 30 | 3.79 | 3.94 | 3.6% |
-| fargate | 42 | 14 | 30 | 0.245 | 0.257 | 4.8% |
+| cpu | 52 | 13 | 34 | 3.76 | 4.09 | 8.1% |
+| fargate | 52 | 13 | 34 | 0.243 | 0.264 | 7.7% |
 
 ## mixed + multi-grouping, m = 8
 
-832 RQEs on 88 streams; dropped: 0; sanity violations: 0. AutoSketch: 2336 probes, 152 distinct (metric, config); measured benchmark 3.85e+03 s at N = 1e+08 (paper rate 9.12e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
+896 RQEs on 88 streams; dropped: 0; sanity violations: 0. AutoSketch: 2656 probes, 152 distinct (metric, config); measured benchmark 3.85e+03 s at N = 1e+08 (paper rate 9.12e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
 
 | weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
 |---|---|---|---|---|---|---|---|---|
-| cpu | ASAP | 30.4 | 30.4 | 239 | 1.34e+04 | 62 | 9.77 | 47.4 |
-| cpu | ASAP (no roll-ups) | 31.5 | 31.5 | 251 | 1.34e+04 | 51.1 | 9.3 | 48.6 |
-| cpu | PerQuery-CostAware | 90.3 | 90.3 | 644 | 3.33e+03 | 59.9 | 7.45 | 114 |
-| cpu | AutoSketch-Adapted | 2.98e+04 | 2.98e+04 | 4.5e+04 | 1.01e+03 | 10.3 | 3.85e+03 | 2.98e+04 |
-| fargate | ASAP | 1.96 | 30.8 | 159 | 2.68e+03 | 51.1 | 12 | 2.58 |
-| fargate | ASAP (no roll-ups) | 2.05 | 32 | 170 | 2.68e+03 | 51.1 | 11.1 | 2.67 |
-| fargate | PerQuery-CostAware | 6.39 | 92.3 | 595 | 3.26e+03 | 59.9 | 7.55 | 7.28 |
-| fargate | AutoSketch-Adapted | 1.41e+03 | 2.98e+04 | 4.5e+04 | 1.01e+03 | 10.3 | 3.85e+03 | 1.41e+03 |
+| cpu | ASAP | 30.1 | 30.1 | 240 | 1.34e+04 | 51.1 | 10.4 | 47.2 |
+| cpu | ASAP (no roll-ups) | 32.7 | 32.7 | 252 | 1.34e+04 | 39 | 9.73 | 49.8 |
+| cpu | PerQuery-CostAware | 92.7 | 92.7 | 646 | 3.33e+03 | 39 | 7.84 | 116 |
+| cpu | AutoSketch-Adapted | 2.98e+04 | 2.98e+04 | 4.5e+04 | 1.01e+03 | 4.9 | 3.85e+03 | 2.98e+04 |
+| fargate | ASAP | 1.95 | 30.6 | 159 | 2.68e+03 | 51.1 | 13.2 | 2.57 |
+| fargate | ASAP (no roll-ups) | 2.11 | 33.3 | 171 | 2.68e+03 | 39 | 10.7 | 2.73 |
+| fargate | PerQuery-CostAware | 6.49 | 94.8 | 596 | 3.26e+03 | 39 | 7.93 | 7.39 |
+| fargate | AutoSketch-Adapted | 1.41e+03 | 2.98e+04 | 4.5e+04 | 1.01e+03 | 4.9 | 3.85e+03 | 1.41e+03 |
 
 Frontier points (latency ms, cost), by weights:
 
-- cpu, ASAP: (490, 72.2), (649, 59.7), (813, 53.6), (980, 47.4), (1.08e+03, 46.9), (1.48e+03, 42.2), (2.68e+03, 30.8), (1.34e+04, 30.4)
-- cpu, ASAP (no roll-ups): (490, 74.7), (649, 61.1), (813, 55), (980, 48.6), (1.08e+03, 48.1), (1.48e+03, 43.3), (2.68e+03, 32), (1.34e+04, 31.5)
-- cpu, PerQuery-CostAware: (490, 158), (575, 140), (673, 130), (813, 123), (980, 114), (1.14e+03, 109), (1.34e+03, 104), (1.63e+03, 99.9), (1.96e+03, 99.5), (2.29e+03, 95.9), (2.68e+03, 92.8), (3.33e+03, 90.3)
-- fargate, ASAP: (490, 3.55), (557, 3.08), (649, 3.06), (765, 2.82), (896, 2.58), (1.08e+03, 2.54), (1.3e+03, 2.52), (1.48e+03, 2.42), (2.29e+03, 2.19), (2.68e+03, 1.96)
-- fargate, ASAP (no roll-ups): (490, 3.71), (557, 3.19), (649, 3.17), (765, 2.94), (896, 2.69), (959, 2.67), (1.08e+03, 2.64), (1.3e+03, 2.62), (1.48e+03, 2.51), (2.29e+03, 2.29), (2.68e+03, 2.05)
-- fargate, PerQuery-CostAware: (490, 9), (575, 8.25), (673, 7.85), (813, 7.54), (959, 7.28), (1.14e+03, 7.04), (1.34e+03, 6.85), (1.63e+03, 6.71), (2.29e+03, 6.54), (2.68e+03, 6.43), (3.26e+03, 6.39)
+- cpu, ASAP: (490, 71.9), (649, 59.4), (813, 53.3), (980, 47.2), (1.08e+03, 46.7), (1.48e+03, 41.9), (2.68e+03, 30.6), (1.34e+04, 30.1)
+- cpu, ASAP (no roll-ups): (490, 75.9), (649, 62.3), (813, 56.2), (980, 49.8), (1.08e+03, 49.3), (1.48e+03, 44.5), (2.68e+03, 33.2), (1.34e+04, 32.7)
+- cpu, PerQuery-CostAware: (490, 160), (575, 143), (673, 132), (813, 125), (980, 116), (1.14e+03, 111), (1.34e+03, 107), (1.63e+03, 102), (1.96e+03, 102), (2.29e+03, 98.3), (2.68e+03, 95.2), (3.33e+03, 92.7)
+- fargate, ASAP: (490, 3.54), (557, 3.07), (649, 3.05), (765, 2.81), (896, 2.57), (1.08e+03, 2.53), (1.3e+03, 2.51), (1.48e+03, 2.41), (2.29e+03, 2.18), (2.68e+03, 1.95)
+- fargate, ASAP (no roll-ups): (490, 3.77), (557, 3.25), (649, 3.22), (765, 2.99), (896, 2.74), (959, 2.73), (1.08e+03, 2.69), (1.3e+03, 2.67), (1.48e+03, 2.57), (2.29e+03, 2.34), (2.68e+03, 2.11)
+- fargate, PerQuery-CostAware: (490, 9.1), (575, 8.36), (673, 7.96), (813, 7.65), (959, 7.39), (1.14e+03, 7.14), (1.34e+03, 6.96), (1.63e+03, 6.81), (2.29e+03, 6.65), (2.68e+03, 6.53), (3.26e+03, 6.49)
 
 Roll-up ablation (ASAP vs. ASAP without roll-ups):
 
 | weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
 |---|---|---|---|---|---|---|
-| cpu | 336 | 112 | 240 | 30.4 | 31.5 | 3.6% |
-| fargate | 336 | 112 | 240 | 1.96 | 2.05 | 4.8% |
+| cpu | 416 | 104 | 272 | 30.1 | 32.7 | 8.1% |
+| fargate | 416 | 104 | 272 | 1.95 | 2.11 | 7.7% |
 
 ## mixed + multi-grouping, m = 16
 
-1664 RQEs on 176 streams; dropped: 0; sanity violations: 0. AutoSketch: 4672 probes, 304 distinct (metric, config); measured benchmark 7.7e+03 s at N = 1e+08 (paper rate 1.82e+04 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
+1792 RQEs on 176 streams; dropped: 0; sanity violations: 0. AutoSketch: 5312 probes, 304 distinct (metric, config); measured benchmark 7.7e+03 s at N = 1e+08 (paper rate 1.82e+04 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
 
 | weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
 |---|---|---|---|---|---|---|---|---|
-| cpu | ASAP | 60.7 | 60.7 | 479 | 1.34e+04 | 62 | 18.1 | 94.9 |
-| cpu | ASAP (no roll-ups) | 63 | 63 | 502 | 1.34e+04 | 51.1 | 17.1 | 97.2 |
-| cpu | PerQuery-CostAware | 181 | 181 | 1.29e+03 | 3.33e+03 | 59.9 | 13.9 | 228 |
-| cpu | AutoSketch-Adapted | 5.96e+04 | 5.96e+04 | 9e+04 | 1.01e+03 | 10.3 | 7.7e+03 | 5.96e+04 |
-| fargate | ASAP | 3.91 | 61.7 | 318 | 2.68e+03 | 51.1 | 26.4 | 5.15 |
-| fargate | ASAP (no roll-ups) | 4.11 | 64 | 341 | 2.68e+03 | 51.1 | 22.4 | 5.35 |
-| fargate | PerQuery-CostAware | 12.8 | 185 | 1.19e+03 | 3.26e+03 | 59.9 | 14.4 | 14.6 |
-| fargate | AutoSketch-Adapted | 2.81e+03 | 5.96e+04 | 9e+04 | 1.01e+03 | 10.3 | 7.7e+03 | 2.81e+03 |
+| cpu | ASAP | 60.2 | 60.2 | 480 | 1.34e+04 | 51.1 | 22.5 | 94.3 |
+| cpu | ASAP (no roll-ups) | 65.4 | 65.4 | 504 | 1.34e+04 | 39 | 21.1 | 99.6 |
+| cpu | PerQuery-CostAware | 185 | 185 | 1.29e+03 | 3.33e+03 | 39 | 16.7 | 232 |
+| cpu | AutoSketch-Adapted | 5.96e+04 | 5.96e+04 | 9e+04 | 1.01e+03 | 4.9 | 7.7e+03 | 5.96e+04 |
+| fargate | ASAP | 3.89 | 61.2 | 318 | 2.68e+03 | 51.1 | 31.3 | 5.13 |
+| fargate | ASAP (no roll-ups) | 4.22 | 66.5 | 342 | 2.68e+03 | 39 | 26.9 | 5.46 |
+| fargate | PerQuery-CostAware | 13 | 190 | 1.19e+03 | 3.26e+03 | 39 | 17.2 | 14.8 |
+| fargate | AutoSketch-Adapted | 2.81e+03 | 5.96e+04 | 9e+04 | 1.01e+03 | 4.9 | 7.7e+03 | 2.81e+03 |
 
 Frontier points (latency ms, cost), by weights:
 
-- cpu, ASAP: (490, 144), (649, 119), (813, 107), (980, 94.9), (1.08e+03, 93.9), (1.48e+03, 84.3), (2.68e+03, 61.7), (1.34e+04, 60.7)
-- cpu, ASAP (no roll-ups): (490, 149), (649, 122), (813, 110), (980, 97.2), (1.08e+03, 96.2), (1.48e+03, 86.6), (2.68e+03, 64), (1.34e+04, 63)
-- cpu, PerQuery-CostAware: (490, 315), (575, 280), (673, 260), (813, 245), (980, 228), (1.14e+03, 218), (1.34e+03, 209), (1.63e+03, 200), (1.96e+03, 199), (2.29e+03, 192), (2.68e+03, 186), (3.33e+03, 181)
-- fargate, ASAP: (490, 7.1), (557, 6.16), (649, 6.12), (765, 5.65), (896, 5.15), (1.08e+03, 5.08), (1.3e+03, 5.04), (1.48e+03, 4.83), (2.29e+03, 4.38), (2.68e+03, 3.91)
-- fargate, ASAP (no roll-ups): (490, 7.43), (557, 6.39), (649, 6.34), (765, 5.87), (896, 5.38), (959, 5.35), (1.08e+03, 5.28), (1.3e+03, 5.23), (1.48e+03, 5.03), (2.29e+03, 4.57), (2.68e+03, 4.11)
-- fargate, PerQuery-CostAware: (490, 18), (575, 16.5), (673, 15.7), (813, 15.1), (959, 14.6), (1.14e+03, 14.1), (1.34e+03, 13.7), (1.63e+03, 13.4), (2.29e+03, 13.1), (2.68e+03, 12.9), (3.26e+03, 12.8)
+- cpu, ASAP: (490, 144), (649, 119), (813, 107), (980, 94.3), (1.08e+03, 93.3), (1.48e+03, 83.8), (2.68e+03, 61.1), (1.34e+04, 60.2)
+- cpu, ASAP (no roll-ups): (490, 152), (649, 125), (813, 112), (980, 99.6), (1.08e+03, 98.6), (1.48e+03, 89.1), (2.68e+03, 66.4), (1.34e+04, 65.4)
+- cpu, PerQuery-CostAware: (490, 320), (575, 285), (673, 265), (813, 250), (980, 232), (1.14e+03, 223), (1.34e+03, 214), (1.63e+03, 205), (1.96e+03, 204), (2.29e+03, 197), (2.68e+03, 190), (3.33e+03, 185)
+- fargate, ASAP: (490, 7.09), (557, 6.14), (649, 6.1), (765, 5.63), (896, 5.13), (1.08e+03, 5.07), (1.3e+03, 5.02), (1.48e+03, 4.81), (2.29e+03, 4.36), (2.68e+03, 3.89)
+- fargate, ASAP (no roll-ups): (490, 7.54), (557, 6.5), (649, 6.45), (765, 5.98), (896, 5.48), (959, 5.46), (1.08e+03, 5.39), (1.3e+03, 5.34), (1.48e+03, 5.14), (2.29e+03, 4.68), (2.68e+03, 4.22)
+- fargate, PerQuery-CostAware: (490, 18.2), (575, 16.7), (673, 15.9), (813, 15.3), (959, 14.8), (1.14e+03, 14.3), (1.34e+03, 13.9), (1.63e+03, 13.6), (2.29e+03, 13.3), (2.68e+03, 13.1), (3.26e+03, 13)
 
 Roll-up ablation (ASAP vs. ASAP without roll-ups):
 
 | weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
 |---|---|---|---|---|---|---|
-| cpu | 672 | 224 | 480 | 60.7 | 63 | 3.6% |
-| fargate | 672 | 224 | 480 | 3.91 | 4.11 | 4.8% |
+| cpu | 832 | 208 | 544 | 60.2 | 65.4 | 8.1% |
+| fargate | 832 | 208 | 544 | 3.89 | 4.22 | 7.7% |
 
 ## mixed + multi-grouping, r = 8
 
-200 RQEs on 11 streams; dropped: 0; sanity violations: 0. AutoSketch: 548 probes, 19 distinct (metric, config); measured benchmark 481 s at N = 1e+08 (paper rate 1.14e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
+216 RQEs on 11 streams; dropped: 0; sanity violations: 0. AutoSketch: 628 probes, 19 distinct (metric, config); measured benchmark 481 s at N = 1e+08 (paper rate 1.14e+03 s). AutoSketch latency 1.01e+03 ms; tightest feasible bound 490 ms.
 
 | weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
 |---|---|---|---|---|---|---|---|---|
-| cpu | ASAP | 3.94 | 3.94 | 19.9 | 2.68e+03 | 58.6 | 2.44 | 5.98 |
-| cpu | ASAP (no roll-ups) | 4.08 | 4.08 | 21.3 | 2.68e+03 | 51.1 | 2.36 | 6.13 |
-| cpu | PerQuery-CostAware | 19.9 | 19.9 | 112 | 3.33e+03 | 34.8 | 1.62 | 23.1 |
-| cpu | AutoSketch-Adapted | 4.46e+03 | 4.46e+03 | 5.86e+03 | 1.01e+03 | 5.33 | 481 | 4.46e+03 |
-| fargate | ASAP | 0.248 | 3.94 | 19.9 | 2.68e+03 | 58.6 | 3.1 | 0.324 |
-| fargate | ASAP (no roll-ups) | 0.26 | 4.08 | 21.3 | 2.68e+03 | 51.1 | 2.78 | 0.336 |
-| fargate | PerQuery-CostAware | 1.22 | 20.3 | 88.7 | 3.26e+03 | 34.8 | 1.64 | 1.33 |
-| fargate | AutoSketch-Adapted | 207 | 4.46e+03 | 5.86e+03 | 1.01e+03 | 5.33 | 481 | 207 |
+| cpu | ASAP | 3.9 | 3.9 | 19.9 | 2.68e+03 | 51.1 | 2.68 | 5.95 |
+| cpu | ASAP (no roll-ups) | 4.23 | 4.23 | 21.5 | 2.68e+03 | 39 | 2.57 | 6.28 |
+| cpu | PerQuery-CostAware | 20.5 | 20.5 | 112 | 3.33e+03 | 30.6 | 1.73 | 23.7 |
+| cpu | AutoSketch-Adapted | 4.47e+03 | 4.47e+03 | 5.86e+03 | 1.01e+03 | 4.9 | 481 | 4.47e+03 |
+| fargate | ASAP | 0.247 | 3.91 | 19.9 | 2.68e+03 | 51.1 | 3.3 | 0.323 |
+| fargate | ASAP (no roll-ups) | 0.267 | 4.24 | 21.4 | 2.68e+03 | 39 | 3.1 | 0.343 |
+| fargate | PerQuery-CostAware | 1.24 | 20.9 | 88.8 | 3.26e+03 | 30.6 | 1.74 | 1.36 |
+| fargate | AutoSketch-Adapted | 207 | 4.47e+03 | 5.86e+03 | 1.01e+03 | 4.9 | 481 | 207 |
 
 Frontier points (latency ms, cost), by weights:
 
-- cpu, ASAP: (490, 9.06), (557, 7.58), (649, 7.51), (765, 6.77), (896, 5.99), (980, 5.98), (1.08e+03, 5.92), (1.3e+03, 5.87), (1.48e+03, 5.34), (2.29e+03, 4.65), (2.68e+03, 3.94)
-- cpu, ASAP (no roll-ups): (490, 9.37), (557, 7.76), (649, 7.68), (765, 6.95), (896, 6.17), (980, 6.13), (1.08e+03, 6.07), (1.3e+03, 6.01), (1.48e+03, 5.48), (2.29e+03, 4.79), (2.68e+03, 4.08)
-- cpu, PerQuery-CostAware: (490, 29.5), (575, 26.5), (673, 25.1), (813, 24.2), (980, 23.1), (1.14e+03, 22.4), (1.34e+03, 21.7), (1.63e+03, 21.1), (1.96e+03, 21.1), (2.29e+03, 20.6), (2.68e+03, 20.3), (3.33e+03, 19.9)
-- fargate, ASAP: (490, 0.445), (557, 0.387), (649, 0.384), (765, 0.355), (896, 0.324), (1.08e+03, 0.32), (1.3e+03, 0.317), (1.48e+03, 0.305), (2.29e+03, 0.277), (2.68e+03, 0.248)
-- fargate, ASAP (no roll-ups): (490, 0.466), (557, 0.401), (649, 0.398), (765, 0.369), (896, 0.338), (959, 0.336), (1.08e+03, 0.332), (1.3e+03, 0.329), (1.48e+03, 0.317), (2.29e+03, 0.289), (2.68e+03, 0.26)
-- fargate, PerQuery-CostAware: (490, 1.58), (575, 1.46), (673, 1.41), (813, 1.37), (959, 1.33), (1.14e+03, 1.3), (1.34e+03, 1.27), (1.63e+03, 1.26), (2.29e+03, 1.23), (2.68e+03, 1.22), (3.26e+03, 1.22)
+- cpu, ASAP: (490, 9.03), (557, 7.54), (649, 7.47), (765, 6.74), (896, 5.96), (980, 5.95), (1.08e+03, 5.89), (1.3e+03, 5.83), (1.48e+03, 5.31), (2.29e+03, 4.61), (2.68e+03, 3.9)
+- cpu, ASAP (no roll-ups): (490, 9.53), (557, 7.91), (649, 7.84), (765, 7.1), (896, 6.32), (980, 6.28), (1.08e+03, 6.22), (1.3e+03, 6.16), (1.48e+03, 5.64), (2.29e+03, 4.94), (2.68e+03, 4.23)
+- cpu, PerQuery-CostAware: (490, 30.1), (575, 27.1), (673, 25.7), (813, 24.8), (980, 23.7), (1.14e+03, 23), (1.34e+03, 22.3), (1.63e+03, 21.8), (1.96e+03, 21.7), (2.29e+03, 21.2), (2.68e+03, 20.9), (3.33e+03, 20.5)
+- fargate, ASAP: (490, 0.444), (557, 0.386), (649, 0.383), (765, 0.354), (896, 0.323), (1.08e+03, 0.319), (1.3e+03, 0.316), (1.48e+03, 0.304), (2.29e+03, 0.276), (2.68e+03, 0.247)
+- fargate, ASAP (no roll-ups): (490, 0.472), (557, 0.408), (649, 0.405), (765, 0.376), (896, 0.345), (959, 0.343), (1.08e+03, 0.339), (1.3e+03, 0.336), (1.48e+03, 0.324), (2.29e+03, 0.296), (2.68e+03, 0.267)
+- fargate, PerQuery-CostAware: (490, 1.61), (575, 1.49), (673, 1.43), (813, 1.39), (959, 1.36), (1.14e+03, 1.33), (1.34e+03, 1.3), (1.63e+03, 1.28), (2.29e+03, 1.26), (2.68e+03, 1.25), (3.26e+03, 1.24)
 
 Roll-up ablation (ASAP vs. ASAP without roll-ups):
 
 | weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
 |---|---|---|---|---|---|---|
-| cpu | 84 | 14 | 30 | 3.94 | 4.08 | 3.5% |
-| fargate | 84 | 14 | 30 | 0.248 | 0.26 | 4.7% |
+| cpu | 104 | 13 | 34 | 3.9 | 4.23 | 7.8% |
+| fargate | 104 | 13 | 34 | 0.247 | 0.267 | 7.6% |
 
 ## mixed
 
@@ -249,3 +249,127 @@ Roll-up ablation (ASAP vs. ASAP without roll-ups):
 |---|---|---|---|---|---|---|
 | cpu | 0 | 8 | 8 | 3.66 | 3.66 | 0.0% |
 | fargate | 0 | 8 | 8 | 0.232 | 0.232 | 0.0% |
+
+## multi-grouping
+
+62 RQEs on 3 streams; dropped: 0; sanity violations: 0. AutoSketch: 166 probes, 9 distinct (metric, config); measured benchmark 269 s at N = 1e+08 (paper rate 540 s). AutoSketch latency 490 ms; tightest feasible bound 490 ms.
+
+| weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
+|---|---|---|---|---|---|---|---|---|
+| cpu | ASAP | 0.221 | 0.221 | 1.06 | 557 | 24.6 | 0.412 | 0.324 |
+| cpu | ASAP (no roll-ups) | 0.551 | 0.551 | 2.6 | 959 | 19.5 | 0.381 | 0.823 |
+| cpu | PerQuery-CostAware | 1.07 | 1.07 | 3.69 | 959 | 19.5 | 0.224 | 1.33 |
+| cpu | AutoSketch-Adapted | 10.2 | 10.2 | 3.55 | 490 | 4.9 | 269 | 10.2 |
+| fargate | ASAP | 0.0137 | 0.224 | 1.03 | 557 | 24.6 | 0.436 | 0.0187 |
+| fargate | ASAP (no roll-ups) | 0.0339 | 0.559 | 2.52 | 959 | 16.2 | 0.386 | 0.0469 |
+| fargate | PerQuery-CostAware | 0.0597 | 1.08 | 3.61 | 959 | 16.2 | 0.225 | 0.0701 |
+| fargate | AutoSketch-Adapted | 0.43 | 10.2 | 3.55 | 490 | 4.9 | 269 | 0.43 |
+
+Frontier points (latency ms, cost), by weights:
+
+- cpu, ASAP: (490, 0.324), (557, 0.221)
+- cpu, ASAP (no roll-ups): (490, 0.823), (557, 0.594), (624, 0.586), (959, 0.551)
+- cpu, PerQuery-CostAware: (490, 1.33), (557, 1.17), (624, 1.09), (959, 1.07)
+- fargate, ASAP: (490, 0.0187), (557, 0.0137)
+- fargate, ASAP (no roll-ups): (490, 0.0469), (557, 0.0356), (959, 0.0339)
+- fargate, PerQuery-CostAware: (490, 0.0701), (557, 0.0639), (624, 0.0605), (959, 0.0597)
+
+Roll-up ablation (ASAP vs. ASAP without roll-ups):
+
+| weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
+|---|---|---|---|---|---|---|
+| cpu | 52 | 5 | 26 | 0.221 | 0.551 | 59.9% |
+| fargate | 52 | 5 | 26 | 0.0137 | 0.0339 | 59.7% |
+
+## multi-grouping, m = 8
+
+496 RQEs on 24 streams; dropped: 0; sanity violations: 0. AutoSketch: 1328 probes, 72 distinct (metric, config); measured benchmark 2.15e+03 s at N = 1e+08 (paper rate 4.32e+03 s). AutoSketch latency 490 ms; tightest feasible bound 490 ms.
+
+| weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
+|---|---|---|---|---|---|---|---|---|
+| cpu | ASAP | 1.77 | 1.77 | 8.52 | 557 | 24.6 | 3.4 | 2.59 |
+| cpu | ASAP (no roll-ups) | 4.41 | 4.41 | 20.8 | 959 | 19.5 | 3.1 | 6.58 |
+| cpu | PerQuery-CostAware | 8.55 | 8.55 | 29.5 | 959 | 19.5 | 1.93 | 10.6 |
+| cpu | AutoSketch-Adapted | 81.7 | 81.7 | 28.4 | 490 | 4.9 | 2.15e+03 | 81.7 |
+| fargate | ASAP | 0.109 | 1.79 | 8.22 | 557 | 24.6 | 3.63 | 0.15 |
+| fargate | ASAP (no roll-ups) | 0.271 | 4.47 | 20.2 | 959 | 16.2 | 3.21 | 0.375 |
+| fargate | PerQuery-CostAware | 0.477 | 8.61 | 28.9 | 959 | 16.2 | 1.93 | 0.56 |
+| fargate | AutoSketch-Adapted | 3.44 | 81.7 | 28.4 | 490 | 4.9 | 2.15e+03 | 3.44 |
+
+Frontier points (latency ms, cost), by weights:
+
+- cpu, ASAP: (490, 2.59), (557, 1.77)
+- cpu, ASAP (no roll-ups): (490, 6.58), (557, 4.76), (624, 4.69), (959, 4.41)
+- cpu, PerQuery-CostAware: (490, 10.6), (557, 9.39), (624, 8.71), (959, 8.55)
+- fargate, ASAP: (490, 0.15), (557, 0.109)
+- fargate, ASAP (no roll-ups): (490, 0.375), (557, 0.285), (959, 0.271)
+- fargate, PerQuery-CostAware: (490, 0.56), (557, 0.511), (624, 0.484), (959, 0.477)
+
+Roll-up ablation (ASAP vs. ASAP without roll-ups):
+
+| weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
+|---|---|---|---|---|---|---|
+| cpu | 416 | 40 | 208 | 1.77 | 4.41 | 59.9% |
+| fargate | 416 | 40 | 208 | 0.109 | 0.271 | 59.7% |
+
+## multi-grouping, m = 16
+
+992 RQEs on 48 streams; dropped: 0; sanity violations: 0. AutoSketch: 2656 probes, 144 distinct (metric, config); measured benchmark 4.31e+03 s at N = 1e+08 (paper rate 8.64e+03 s). AutoSketch latency 490 ms; tightest feasible bound 490 ms.
+
+| weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
+|---|---|---|---|---|---|---|---|---|
+| cpu | ASAP | 3.53 | 3.53 | 17 | 557 | 24.6 | 7.01 | 5.18 |
+| cpu | ASAP (no roll-ups) | 8.81 | 8.81 | 41.5 | 959 | 19.5 | 6.3 | 13.2 |
+| cpu | PerQuery-CostAware | 17.1 | 17.1 | 59 | 959 | 19.5 | 4.09 | 21.2 |
+| cpu | AutoSketch-Adapted | 163 | 163 | 56.8 | 490 | 4.9 | 4.31e+03 | 163 |
+| fargate | ASAP | 0.218 | 3.59 | 16.4 | 557 | 24.6 | 9.83 | 0.3 |
+| fargate | ASAP (no roll-ups) | 0.542 | 8.94 | 40.4 | 959 | 16.2 | 6.48 | 0.75 |
+| fargate | PerQuery-CostAware | 0.955 | 17.2 | 57.8 | 959 | 16.2 | 4.07 | 1.12 |
+| fargate | AutoSketch-Adapted | 6.87 | 163 | 56.8 | 490 | 4.9 | 4.31e+03 | 6.87 |
+
+Frontier points (latency ms, cost), by weights:
+
+- cpu, ASAP: (490, 5.18), (557, 3.53)
+- cpu, ASAP (no roll-ups): (490, 13.2), (557, 9.51), (624, 9.37), (959, 8.81)
+- cpu, PerQuery-CostAware: (490, 21.2), (557, 18.8), (624, 17.4), (959, 17.1)
+- fargate, ASAP: (490, 0.3), (557, 0.218)
+- fargate, ASAP (no roll-ups): (490, 0.75), (557, 0.57), (959, 0.542)
+- fargate, PerQuery-CostAware: (490, 1.12), (557, 1.02), (624, 0.967), (959, 0.955)
+
+Roll-up ablation (ASAP vs. ASAP without roll-ups):
+
+| weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
+|---|---|---|---|---|---|---|
+| cpu | 832 | 80 | 416 | 3.53 | 8.81 | 59.9% |
+| fargate | 832 | 80 | 416 | 0.218 | 0.542 | 59.7% |
+
+## multi-grouping, r = 8
+
+124 RQEs on 3 streams; dropped: 0; sanity violations: 0. AutoSketch: 332 probes, 9 distinct (metric, config); measured benchmark 269 s at N = 1e+08 (paper rate 540 s). AutoSketch latency 490 ms; tightest feasible bound 490 ms.
+
+| weights | method | cost (unbounded) | CPU (vCPU) | GiB | latency (ms) | median latency (ms) | planning (s) | cost at AutoSketch's latency |
+|---|---|---|---|---|---|---|---|---|
+| cpu | ASAP | 0.242 | 0.242 | 1.06 | 557 | 24.6 | 0.917 | 0.344 |
+| cpu | ASAP (no roll-ups) | 0.573 | 0.573 | 2.6 | 959 | 19.5 | 0.851 | 0.841 |
+| cpu | PerQuery-CostAware | 2.04 | 2.04 | 4.69 | 959 | 19.5 | 0.453 | 2.33 |
+| cpu | AutoSketch-Adapted | 12.3 | 12.3 | 4.52 | 490 | 4.9 | 269 | 12.3 |
+| fargate | ASAP | 0.0145 | 0.245 | 1.03 | 557 | 24.6 | 1.02 | 0.0196 |
+| fargate | ASAP (no roll-ups) | 0.0347 | 0.581 | 2.52 | 959 | 16.2 | 0.875 | 0.0476 |
+| fargate | PerQuery-CostAware | 0.104 | 2.05 | 4.62 | 959 | 16.2 | 0.456 | 0.115 |
+| fargate | AutoSketch-Adapted | 0.517 | 12.3 | 4.52 | 490 | 4.9 | 269 | 0.517 |
+
+Frontier points (latency ms, cost), by weights:
+
+- cpu, ASAP: (490, 0.344), (557, 0.242)
+- cpu, ASAP (no roll-ups): (490, 0.841), (557, 0.613), (624, 0.606), (959, 0.573)
+- cpu, PerQuery-CostAware: (490, 2.33), (557, 2.15), (624, 2.06), (959, 2.04)
+- fargate, ASAP: (490, 0.0196), (557, 0.0145)
+- fargate, ASAP (no roll-ups): (490, 0.0476), (557, 0.0364), (959, 0.0347)
+- fargate, PerQuery-CostAware: (490, 0.115), (557, 0.108), (624, 0.104), (959, 0.104)
+
+Roll-up ablation (ASAP vs. ASAP without roll-ups):
+
+| weights | RQEs rolled up | deployments with | deployments without | cost with | cost without | saving |
+|---|---|---|---|---|---|---|
+| cpu | 104 | 5 | 26 | 0.242 | 0.573 | 57.8% |
+| fargate | 104 | 5 | 26 | 0.0145 | 0.0347 | 58.2% |
