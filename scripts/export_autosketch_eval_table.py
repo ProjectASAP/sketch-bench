@@ -230,8 +230,8 @@ SHARED_QUANTILES = 3
 SHARED_INTERVALS = [10, 60, 300]
 SHARED_SEED = 7
 # "classic" is the 10-template mixed set; "all" adds the multi-grouping
-# templates below.
-TEMPLATE_SETS = ["dashboard", "classic", "all"]
+# templates below; "multigroup" is the multi-grouping templates alone.
+TEMPLATE_SETS = ["dashboard", "classic", "all", "multigroup"]
 # Workload grid (#777 section 6): for each of SYNTHETIC_TEMPLATE_SETS, the
 # default point, then each scaling dimension alone. One accuracy level, 95% in each family's metric
 # (the runner's p95). `shared` replicas read one metric (the sharing benefit);
@@ -242,7 +242,7 @@ SYNTHETIC_GRID = {
     "shared": [1, 8],
     "metrics": [1, 8, 16],
 }
-SYNTHETIC_TEMPLATE_SETS = ["all", "classic"]
+SYNTHETIC_TEMPLATE_SETS = ["all", "classic", "multigroup"]
 
 # Multi-grouping templates (sketch-bench docs/rqe_optimizer_hydra.md): two
 # metrics with an ordered label schema, each value read at several groupings
@@ -295,9 +295,10 @@ SCHEMA_WINDOWS = "5m,15m"
 SCHEMA_MIN_COVERED_N = 1e3
 
 
-def all_subsets(metric):
-    """Every non-empty subset of `metric`'s labels, in schema order."""
-    names = [label["name"] for label in SCHEMAS[metric]["labels"]]
+def all_subsets(metric, names=None):
+    """Every non-empty subset of `names` (default: all of `metric`'s labels),
+    in schema order."""
+    names = names or [label["name"] for label in SCHEMAS[metric]["labels"]]
     return [list(c) for n in range(1, len(names) + 1) for c in itertools.combinations(names, n)]
 
 
@@ -311,8 +312,10 @@ SCHEMA_TEMPLATES = [
     (14, "distinct_users", "http", "user_id", "cardinality",
      [["region"], ["service"], ["region", "service"], ["service", "endpoint"]], 0.01),
     (15, "distinct_users", "http", "user_id", "cardinality", all_subsets("http"), 0.05),
+    # p99 latency GROUP BY CUBE(region, service, endpoint): every grouping of
+    # three labels, which one deployment at the finest serves by roll-ups.
     (16, "p99_latency", "http", "latency", "quantile",
-     [["service"], ["region", "service"], ["service", "status"]], None),
+     all_subsets("http", ["region", "service", "endpoint"]), None),
     # Negative control: every group, the smallest included.
     (17, "distinct_users", "http", "user_id", "cardinality", [["service", "endpoint"]], None),
 ]
@@ -466,6 +469,8 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                 add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
                     interval, C)
         return out
+    if templates == "multigroup":
+        return schema_queries(interval, dataset, range_with_interval, seen, metric)
     assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
     add("sum_by_job", "job/value", "sum", "1s", 1, 1, J)

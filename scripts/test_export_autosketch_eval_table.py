@@ -202,12 +202,14 @@ class SchemaTemplatesTest(unittest.TestCase):
         every = synthetic_queries(templates="all", dataset="d")
         self.assertEqual(every[:len(classic)], classic)
         new = every[len(classic):]
-        # Per window (5m, 15m): 1 + 3 + 4 + 15 + 3 + 1 groupings.
-        self.assertEqual(len(new), 2 * 27)
+        # Per window (5m, 15m): 1 + 3 + 4 + 15 + 7 + 1 groupings.
+        self.assertEqual(len(new), 2 * 31)
         self.assertEqual({q["stream"] for q in new},
                          {"flows/src_ip", "http/user_id", "http/latency"})
         self.assertEqual({q["range"] for q in new}, {"5m", "15m"})
         self.assertTrue(all("grouping" not in q for q in classic))
+        # "multigroup" is the schema templates alone.
+        self.assertEqual(synthetic_queries(templates="multigroup", dataset="d"), new)
 
     def test_schema_cardinalities_count_a_child_with_its_parent(self):
         self.assertEqual(grouping_cardinality("http", ["region"]), 4)
@@ -243,6 +245,8 @@ class SchemaTemplatesTest(unittest.TestCase):
         groupings = {n: g for n, *_, g, _ in SCHEMA_TEMPLATES}
         self.assertEqual(len(groupings[15]), 15)
         self.assertEqual(groupings[17], [["service", "endpoint"]])
+        # Template 16 is CUBE(region, service, endpoint).
+        self.assertEqual(len(groupings[16]), 7)
 
     def test_rqe_entries_name_grouping_coverage_and_shape(self):
         with tempfile.TemporaryDirectory() as out:
@@ -259,7 +263,7 @@ class SchemaTemplatesTest(unittest.TestCase):
                          (0.8, 1_000_000))
         self.assertIsNone(rqes["t17_distinct_users_by_service,endpoint/15m"]
                           ["covers_share"])
-        kll, dd = rqes["t16_p99_latency_by_service,status/5m"]["families"]
+        kll, dd = rqes["t16_p99_latency_by_region,service,endpoint/5m"]["families"]
         self.assertEqual((kll["grid_param"], kll["grid_K"]), (COST_PARETO_ALPHA, None))
         self.assertEqual(rqes["t11_distinct_src_by_dst_subnet/5m"]["covers_share"], 0.05)
         self.assertEqual((r["covered_groups"], r["min_covered_share"], r["max_covered_share"],
