@@ -2303,6 +2303,7 @@ name = "rqe-optimizer"
 version = "0.1.0"
 dependencies = [
  "aqpbm-core",
+ "csv",
  "good_lp",
  "serde_json",
 ]

@@ -765,5 +765,15 @@ mod tests {
             json,
             r#"{"sketch":"cms","sketch_config":{"algorithm":"cms","params":{"cols":1024,"rows":3}},"mem_bytes_per_instance":12288.0,"insert_cpu_secs":5e-7,"merge_cpu_secs":0.01,"query_cpu_secs":4e-6,"query_accuracy":{"relative_error_mean":0.01},"accuracy_metric":"relative_error_mean","measured_at":{"items_per_instance":1000000,"keys_per_instance":10000,"value_range":null,"merge_operand_items":null,"distribution":null}}"#
         );
+        // A Hydra row also names its dataset and schema width; other rows
+        // leave both out, and rows written before them still load.
+        let hydra = MeasuredAt {
+            dataset: Some("hydra_http".into()),
+            schema_width: Some(4),
+            ..entry.measured_at.clone()
+        };
+        let json = serde_json::to_string(&hydra).unwrap();
+        assert!(json.ends_with(r#""distribution":null,"dataset":"hydra_http","schema_width":4}"#));
+        assert_eq!(serde_json::from_str::<MeasuredAt>(&json).unwrap(), hydra);
     }
 }
