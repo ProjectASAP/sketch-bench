@@ -6,8 +6,8 @@ use crate::wrappers::BuildError;
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{DataInput, Hydra};
 
-pub(crate) fn labels(group: &[String]) -> Vec<&str> {
-    group.iter().map(String::as_str).collect()
+pub(crate) fn labels(group: &[Option<String>]) -> Vec<Option<&str>> {
+    group.iter().map(Option::as_deref).collect()
 }
 
 /// The label columns of a `;`-joined record stream, which every record must
@@ -44,8 +44,20 @@ pub(crate) fn new_hydra(
 /// Records one `;`-joined record, one value per key column in place. The
 /// build already refused a stream of mixed widths; this is the backstop.
 pub(crate) fn update(h: &mut Hydra, key: &str, value: &DataInput, variant: &str) {
+    update_counted(h, key, value, None, variant)
+}
+
+/// [`update`], the value counted `count` times in each cell it reaches
+/// (`None` is once): the library's integer weight.
+pub(crate) fn update_counted(
+    h: &mut Hydra,
+    key: &str,
+    value: &DataInput,
+    count: Option<i32>,
+    variant: &str,
+) {
     let parts: Vec<&str> = key.split(';').collect();
-    if let Err(e) = h.update(&parts, value, None) {
+    if let Err(e) = h.update(&parts, value, count) {
         panic!(
             "{variant}: record {key:?} has {} label(s), the grid {}: {e}",
             parts.len(),
@@ -54,10 +66,11 @@ pub(crate) fn update(h: &mut Hydra, key: &str, value: &DataInput, variant: &str)
     }
 }
 
-/// Asks `query` of the subpopulation `group` constrains: its values are the
-/// leading key columns' (the scored subpopulations group by column 0), the
-/// rest unconstrained. A probe wider than the grid is refused.
-pub(crate) fn query(h: &Hydra, group: &[&str], query: &HydraQuery, variant: &str) -> f64 {
+/// Asks `query` of the subpopulation `group` constrains: a value at each
+/// grouped column, `None` (unconstrained) at the rest and past its end, so any
+/// non-empty subset of the key columns can be asked. A probe wider than the
+/// grid is refused.
+pub(crate) fn query(h: &Hydra, group: &[Option<&str>], query: &HydraQuery, variant: &str) -> f64 {
     let width = h.schema().len();
     if group.len() > width {
         panic!(
@@ -65,7 +78,9 @@ pub(crate) fn query(h: &Hydra, group: &[&str], query: &HydraQuery, variant: &str
             group.len()
         );
     }
-    let key: Vec<Option<&str>> = (0..width).map(|i| group.get(i).copied()).collect();
+    let key: Vec<Option<&str>> = (0..width)
+        .map(|i| group.get(i).copied().flatten())
+        .collect();
     h.query_key(&key, query)
         .unwrap_or_else(|e| panic!("{variant}: probe {group:?}: {e}"))
 }
@@ -121,10 +136,10 @@ mod tests {
 
     /// Every subpopulation the grid answers for: each first label alone and
     /// each pair, as the query names them (leading columns).
-    fn groups(items: &[(String, i64)]) -> Vec<Vec<String>> {
-        let mut out: Vec<Vec<String>> = Vec::new();
+    fn groups(items: &[(String, i64)]) -> Vec<Vec<Option<String>>> {
+        let mut out: Vec<Vec<Option<String>>> = Vec::new();
         for (key, _) in items {
-            let parts: Vec<String> = key.split(';').map(str::to_string).collect();
+            let parts: Vec<Option<String>> = key.split(';').map(|p| Some(p.to_string())).collect();
             for g in [parts[..1].to_vec(), parts] {
                 if !out.contains(&g) {
                     out.push(g);
@@ -134,12 +149,14 @@ mod tests {
         out
     }
 
-    fn in_group(key: &str, group: &[String]) -> bool {
-        key.split(';').zip(group).all(|(a, b)| a == b)
+    fn in_group(key: &str, group: &[Option<String>]) -> bool {
+        key.split(';')
+            .zip(group)
+            .all(|(a, b)| b.as_deref().is_none_or(|b| a == b))
     }
 
     /// Every (group, value) pair that occurs, the frequency probes.
-    fn pairs(items: &[(String, i64)]) -> Vec<(Vec<String>, i64)> {
+    fn pairs(items: &[(String, i64)]) -> Vec<(Vec<Option<String>>, i64)> {
         let mut seen = HashSet::new();
         for g in groups(items) {
             for (key, v) in items {
@@ -252,7 +269,7 @@ mod tests {
     }
 
     /// Group `g`'s value frequencies `f_q(v)`.
-    fn frequencies(items: &[(String, i64)], g: &[String]) -> HashMap<i64, f64> {
+    fn frequencies(items: &[(String, i64)], g: &[Option<String>]) -> HashMap<i64, f64> {
         let mut f = HashMap::new();
         for (_, v) in items.iter().filter(|(key, _)| in_group(key, g)) {
             *f.entry(*v).or_insert(0.0) += 1.0;
@@ -360,7 +377,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let distinct = |g: &[String]| frequencies(&items, g).len() as f64;
+        let distinct = |g: &[Option<String>]| frequencies(&items, g).len() as f64;
         // `ΣD`: every subkey's distinct count, the first label, the second and
         // the pair.
         let mut by_subkey: HashMap<String, HashSet<i64>> = HashMap::new();

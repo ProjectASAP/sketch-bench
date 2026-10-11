@@ -119,6 +119,27 @@ impl TableDescription {
             })?;
         }
 
+        // A child is generated after its parent, which an earlier index
+        // guarantees and which also rules out a column nesting under itself.
+        for (i, spec) in self.column_spec.iter().enumerate() {
+            let Some(parent) = spec.child_of else {
+                continue;
+            };
+            let label = &self.column_label[i];
+            if parent >= i {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': child_of {parent} has to name an earlier column, \
+                     one of 0..{i}"
+                )));
+            }
+            if self.column_spec[parent].data_type != "string" {
+                return Err(DataGenError::BadParam(format!(
+                    "column '{label}': child_of names '{}', which is not a string column",
+                    self.column_label[parent]
+                )));
+            }
+        }
+
         let mut claimed: HashMap<&str, usize> = HashMap::new();
         for (g, group) in self.column_connected.iter().enumerate() {
             if group.len() < 2 {
@@ -217,7 +238,7 @@ impl TableDescription {
             group_bits.insert(g, bits);
         }
 
-        let mut data = Vec::with_capacity(self.column_spec.len());
+        let mut data: Vec<ColumnData> = Vec::with_capacity(self.column_spec.len());
         for (i, spec) in self.column_spec.iter().enumerate() {
             // Only one of these buffers is initialized. Either one lives just
             // long enough for this column's render pass.
@@ -244,7 +265,11 @@ impl TableDescription {
                     &own_draw
                 }
             };
-            data.push(spec.render(raw).map_err(|e| {
+            let rendered = match spec.child_of {
+                Some(parent) => spec.render_child(raw, data[parent].as_string()?),
+                None => spec.render(raw),
+            };
+            data.push(rendered.map_err(|e| {
                 DataGenError::BadParam(format!("column '{}': {e}", self.column_label[i]))
             })?);
         }

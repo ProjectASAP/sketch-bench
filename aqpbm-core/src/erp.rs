@@ -181,6 +181,8 @@ mod tests {
                     special_rule: 0,
                     data_type: "u64".into(),
                     string: None,
+                    child_of: None,
+                    fan_out: None,
                 },
                 100_000,
             ),
