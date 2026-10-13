@@ -94,6 +94,8 @@ EXACT = {
 CROSSOVER_FACTORS = (10, 100)
 
 MERGE_SHARDS = 16
+# Hydra cost rows wider than 16384 merge this many shards (see optimizer_cost).
+HYDRA_WIDE_MERGE_SHARDS = 4
 
 # --phase optimizer-cost: the one data shape every sketch's cost is measured
 # at, the synthetic evaluation's dataset (ProjectASAP/ASAPQuery#777):
@@ -473,9 +475,14 @@ def optimizer_cost(args, families):
         # Cost first: flatten keeps the first pass's query timings.
         runs, warmup = HYDRA_COST_RUNS if variant.startswith("hydra-") else \
             (COST_RUNS, COST_WARMUP)
+        # A Hydra grid past 3 x 16384 holds GBs; 16 of them in one merge do
+        # not fit, so it merges 4 (merge CPU is per merge either way).
+        wide = variant.startswith("hydra-") and \
+            int(re.search(r"cols=(\d+)", config[1]).group(1)) > 16384
         sketchbench(variant, library, config, data, [
             "--operations", "insert,query,merge", "--metrics", "throughput,cpu,memory",
-            "--merge-shards", str(MERGE_SHARDS), "--runs", str(runs),
+            "--merge-shards", str(HYDRA_WIDE_MERGE_SHARDS if wide else MERGE_SHARDS),
+            "--runs", str(runs),
             "--warmup-runs", str(warmup)])
         sketchbench(variant, library, config, data, [
             "--operations", "query", "--metrics", "accuracy", "--runs", "1",
