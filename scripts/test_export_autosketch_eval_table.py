@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E402
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
-    all_subsets, boom_query, group_coverage, grouping_cardinality, label_shares, main, metric_queries, queries_per_instance,
+    all_subsets, boom_query, e2e_block, group_coverage, grouping_cardinality, label_shares, main,
+    metric_queries, queries_per_instance,
     shared_queries, synthetic_entry, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -135,9 +136,12 @@ class ExportTest(unittest.TestCase):
         self.assertEqual((kll["sketch"], kll["grid_param"], kll["grid_K"]),
                          ("kll-percall", COST_PARETO_ALPHA, None))
         self.assertEqual(dd["sketch"], "dd")
-        # Only classic tables carry the e2e block (multi-grouping has no PromQL yet).
+        # Every table carries the e2e block; `all` has classic and schema metrics.
         with open(os.path.join(out, default)) as f:
-            self.assertNotIn("e2e", json.load(f)["workloads"][0])
+            self.assertEqual({m: v["type"] for m, v in
+                              json.load(f)["workloads"][0]["e2e"]["metrics"].items()},
+                             {"data": "gauge", "data_total": "counter",
+                              "http": "records", "flows": "records"})
         with open(os.path.join(out, "synthetic-templatesclassic-shared1.json")) as f:
             metrics = json.load(f)["workloads"][0]["e2e"]["metrics"]
         self.assertEqual({m: metrics[m]["type"] for m in metrics},
@@ -204,6 +208,41 @@ class SyntheticQueriesTest(unittest.TestCase):
                          ["quantile_over_time_p0.9", "quantile_over_time_p0.5"])
         self.assertEqual(by_text["rate(data_total[15m])"]["interval_secs"], 60)
         self.assertEqual(by_text["sum by (job) (data)"]["interval_secs"], 1)
+
+    def test_schema_queries_read_every_rqe_with_their_fields(self):
+        e2e = []
+        qs = synthetic_queries(templates="multigroup", dataset="d", e2e=e2e)
+        self.assertEqual(qs, synthetic_queries(templates="multigroup", dataset="d"))
+        self.assertEqual([r for query in e2e for r in query["rqes"]],
+                         [synthetic_entry(q)["id"] for q in qs])
+        self.assertTrue(all("promql" not in query for query in e2e))
+        # Template 16, p99 latency GROUP BY CUBE(region, service, endpoint):
+        # 7 groupings per window.
+        cube = [query for query in e2e if query["rqes"][0].startswith("d/t16_")]
+        self.assertEqual(len(cube), 2 * 7)
+        self.assertEqual(sorted(tuple(q["grouping"]) for q in cube if q["window_secs"] == 300),
+                         sorted(tuple(g) for g in all_subsets(
+                             "http", ["region", "service", "endpoint"])))
+        self.assertEqual(cube[0], {
+            "table": "http", "value": "latency", "capability": "quantile",
+            "grouping": ["region"], "quantile": 0.99, "window_secs": 300,
+            "interval_secs": 60, "rqes": ["d/t16_p99_latency_by_region/values/5m"]})
+        distinct = next(q for q in e2e if q["capability"] == "cardinality")
+        self.assertNotIn("quantile", distinct)
+
+    def test_schema_metrics_are_records_tables_named_by_metric(self):
+        e2e = []
+        qs = metric_queries({**SYNTHETIC_DEFAULT, "templates": "multigroup", "metrics": 2},
+                            e2e)
+        block = e2e_block(qs, e2e)
+        self.assertEqual(sorted(block["metrics"]),
+                         ["data_0_flows", "data_0_http", "data_1_flows", "data_1_http"])
+        http = block["metrics"]["data_1_http"]
+        self.assertEqual(http, {"type": "records", "labels": SCHEMAS["http"]["labels"],
+                                "records_per_sec": SCHEMAS["http"]["rate"],
+                                "values": SCHEMAS["http"]["values"]})
+        self.assertEqual({q["table"] for q in block["queries"]}, set(block["metrics"]))
+        self.assertEqual(len(block["queries"]), len(qs))
 
 
 COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
