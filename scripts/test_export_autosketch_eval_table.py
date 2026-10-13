@@ -234,9 +234,14 @@ class SyntheticQueriesTest(unittest.TestCase):
         self.assertEqual(cube[0], {
             "table": "http", "value": "latency", "capability": "quantile",
             "grouping": ["region"], "quantile": 0.99, "window_secs": 300,
-            "interval_secs": 60, "rqes": ["d/t16_p99_latency_by_region/values/5m"]})
+            "interval_secs": 60, "rqes": ["d/t16_p99_latency_by_region/values/5m"],
+            "sql": "SELECT region, QUANTILE(0.99, latency) FROM http WHERE ts BETWEEN "
+                   "DATEADD(s, -300, NOW()) AND NOW() GROUP BY region"})
         distinct = next(q for q in e2e if q["capability"] == "cardinality")
         self.assertNotIn("quantile", distinct)
+        self.assertEqual(distinct["sql"],
+                         "SELECT dst_subnet, COUNT(DISTINCT src_ip) FROM flows WHERE ts "
+                         "BETWEEN DATEADD(s, -300, NOW()) AND NOW() GROUP BY dst_subnet")
 
     def test_schema_metrics_are_records_tables_named_by_metric(self):
         e2e = []

@@ -526,8 +526,8 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
     `covers_share`, and carries its metric's schema. With `metric`, the
     schema metrics are named under it (`data_1/http`).
 
-    With `e2e` (a list), each RQE appends its query's fields, from which
-    SQL is rendered downstream (there is no PromQL): {table, value,
+    With `e2e` (a list), each RQE appends its query's fields and canonical
+    ASAPQuery SQL (there is no PromQL): {sql, table, value,
     capability, grouping, quantile (quantiles only), window_secs,
     interval_secs, rqes}. `table` is the metric with `/` as `_`
     (`data_1_http`)."""
@@ -553,6 +553,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                              "capability": capability, "grouping": grouping}
                     if capability == "quantile":  # p99_latency -> 0.99
                         query["quantile"] = int(what[1:what.index("_")]) / 100
+                    query["sql"] = asapquery_sql(query, s)
                     e2e.append({**query, "window_secs": s, "interval_secs": interval,
                                 "rqes": [f"{dataset}/{query_id}/{kind}/{rng}"]})
                 n_items = schema["rate"] * s / groups
@@ -579,6 +580,22 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                     **DEFAULT_TARGETS,
                 })
     return out
+
+
+def asapquery_sql(query, window_secs):
+    """Canonical ASAPQuery SQL for a structured schema query.
+
+    The end-to-end planner replaces NOW() with its floored evaluation time,
+    leaving this exporter as the single renderer for these queries.
+    """
+    group = ", ".join(query["grouping"])
+    if query["capability"] == "cardinality":
+        aggregate = f"COUNT(DISTINCT {query['value']})"
+    else:
+        assert query["capability"] == "quantile", query["capability"]
+        aggregate = f"QUANTILE({query['quantile']}, {query['value']})"
+    return (f"SELECT {group}, {aggregate} FROM {query['table']} WHERE ts BETWEEN "
+            f"DATEADD(s, -{window_secs}, NOW()) AND NOW() GROUP BY {group}")
 
 
 def shared_queries(point, e2e=None):
