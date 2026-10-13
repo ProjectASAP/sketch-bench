@@ -17,7 +17,7 @@ ProjectASAP/ASAPQuery#777 (`docs/evaluation/autosketch-vs-planner.md`).
 | `examples/autosketch_vs_asap.rs` | the §6.3 runner: one workload in, one result JSON out | |
 | `examples/workload_scenarios.rs` | how the optimal plan moves as one knob of a workload changes (types, groupings, windows, SLAs) | |
 | `examples/small_problem.rs` | a toy instance solved end to end (brute force or MILP) | |
-| `results/autosketch-vs-asap-hydra/` | **the current §6.3 results** (2026-10-11): roll-ups, the roll-up ablation, Hydra candidates, the classic, multi-grouping and mixed + multi-grouping workloads, and each plan | current |
+| `results/autosketch-vs-asap-hydra/` | **the current §6.3 results** (2026-10-11; classic and all rerun 2026-10-13 without templates 7 and 9): roll-ups, the roll-up ablation, Hydra candidates, the classic, multi-grouping and mixed + multi-grouping workloads, and each plan | current |
 | `results/autosketch-vs-asap-inputs/` | the accuracy curves every run reads (#138's study), and #138's tables and raw records | current (shared input) |
 | `results/autosketch-vs-asap-synthetic/`, `results/autosketch-vs-asap-synthetic-sla/` | the 2026-10-08 results (#138): before roll-ups and the KLL footprint fix | superseded by `-hydra` |
 | `data/autosketch-eval/table.json` | the trace workloads (Alibaba 2022, Google 2011, BOOM) | not yet rerun on cost by use |
