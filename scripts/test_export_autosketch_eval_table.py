@@ -432,6 +432,28 @@ class SchemaTemplatesTest(unittest.TestCase):
                          {"data_0/http", "data_0/flows", "data_1/http", "data_1/flows"})
 
 
+    def test_samples_per_sec_scales_rates_and_leaves_out_rqes_below_the_curves(self):
+        with tempfile.TemporaryDirectory() as out, mock.patch("sys.stderr"):
+            main(["--synthetic", "--samples-per-sec", "10", "--revision", "test",
+                  "--out", out])
+            with open(os.path.join(out, "synthetic-templatesmultigroup-shared1.json")) as f:
+                workload = json.load(f)["workloads"][0]
+        # At 10 samples/s the smallest (region, endpoint) group holds 403
+        # items in 5m, below the curves' first N: those RQEs and their
+        # queries are left out, the 15m ones kept.
+        left_out = {f"t16_p99_latency_by_{g}/values/5m"
+                    for g in ["region,endpoint", "region,service,endpoint"]}
+        ids = {r["id"].split("/", 3)[3] for r in workload["rqes"]}
+        e2e_ids = {r.split("/", 3)[3] for q in workload["e2e"]["queries"] for r in q["rqes"]}
+        self.assertEqual(len(ids), 60)
+        self.assertFalse(left_out & (ids | e2e_ids))
+        self.assertIn("t16_p99_latency_by_region,endpoint/values/15m", ids)
+        self.assertEqual(workload["e2e"]["metrics"]["http"]["records_per_sec"], 100_000)
+        self.assertEqual(workload["e2e"]["metrics"]["flows"]["records_per_sec"], 200_000)
+        # The default rate is restored for the rest of the process.
+        self.assertEqual(SCHEMAS["http"]["rate"], 2_000_000)
+
+
 class SyntheticPlanTest(unittest.TestCase):
     def test_plan_is_the_default_and_each_dimension_alone(self):
         plan = synthetic_plan()

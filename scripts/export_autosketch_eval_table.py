@@ -294,6 +294,19 @@ SCHEMAS = {
 }
 SCHEMA_WINDOWS = "5m,15m"
 SCHEMA_MIN_COVERED_N = 1e3
+# Set by --samples-per-sec: a schema RQE whose smallest covered group falls
+# below SCHEMA_MIN_COVERED_N is left out (logged) instead of failing.
+SKIP_BELOW_CURVES = False
+
+
+def set_samples_per_sec(rate, skip_below_curves):
+    """Scrapes each series `rate` times a second (SYNTHETIC_SAMPLES_PER_SEC)
+    and scales the schema metrics' rates with it; with `skip_below_curves`,
+    schema RQEs below the curves' first N are left out."""
+    global SYNTHETIC_SAMPLES_PER_SEC, SKIP_BELOW_CURVES
+    for schema in SCHEMAS.values():
+        schema["rate"] = schema["rate"] // SYNTHETIC_SAMPLES_PER_SEC * rate
+    SYNTHETIC_SAMPLES_PER_SEC, SKIP_BELOW_CURVES = rate, skip_below_curves
 
 
 def all_subsets(metric, names=None):
@@ -548,6 +561,19 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                     continue
                 seen.add((query_id, rng))
                 kind = "values" if capability == "quantile" else "keys"
+                n_items = schema["rate"] * s / groups
+                covered, min_share, max_share = group_coverage(name, grouping, covers)
+                covered_min_n = schema["rate"] * s * min_share
+                # Accuracy is read at the smallest covered group: keep it on
+                # the curves (their first N is 1e3). Below them the runner
+                # can't serve the RQE, so a lower --samples-per-sec leaves it
+                # (and its e2e query) out.
+                if SKIP_BELOW_CURVES and covered_min_n < SCHEMA_MIN_COVERED_N:
+                    print(f"left out {dataset}/{query_id}/{kind}/{rng}: smallest covered "
+                          f"group holds {covered_min_n:.0f} items, below the curves' first N",
+                          file=sys.stderr)
+                    continue
+                assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
                 if e2e is not None:
                     query = {"table": full.replace("/", "_"), "value": value,
                              "capability": capability, "grouping": grouping}
@@ -556,12 +582,6 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                     query["sql"] = asapquery_sql(query, s)
                     e2e.append({**query, "window_secs": s, "interval_secs": interval,
                                 "rqes": [f"{dataset}/{query_id}/{kind}/{rng}"]})
-                n_items = schema["rate"] * s / groups
-                covered, min_share, max_share = group_coverage(name, grouping, covers)
-                covered_min_n = schema["rate"] * s * min_share
-                # Accuracy is read at the smallest covered group: keep it on
-                # the curves (their first N is 1e3).
-                assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
                 out.append({
                     "dataset": dataset, "query_id": query_id, "kind": kind,
                     "range": rng, "range_s": s, "step_s": interval,
@@ -807,8 +827,23 @@ def main(argv=None):
     parser.add_argument("--saturation-big")
     parser.add_argument("--merge-curves", nargs="*", help="saturation_merge_curve.csv files")
     parser.add_argument("--revision", help="sketch-bench commit of the curves (default: HEAD)")
+    parser.add_argument("--samples-per-sec", type=int,
+                        help=f"--synthetic: samples/s per series (default "
+                             f"{SYNTHETIC_SAMPLES_PER_SEC}); the schema metrics' rates scale "
+                             "with it, and schema RQEs below the curves' first N are left out")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.samples_per_sec is not None:
+        default = SYNTHETIC_SAMPLES_PER_SEC
+        set_samples_per_sec(args.samples_per_sec, True)
+        try:
+            return run(args, parser)
+        finally:
+            set_samples_per_sec(default, False)
+    return run(args, parser)
+
+
+def run(args, parser):
     if args.revision is None:
         args.revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                                        text=True, check=False).stdout.strip()
