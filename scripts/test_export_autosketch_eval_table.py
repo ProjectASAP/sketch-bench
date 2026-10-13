@@ -242,7 +242,20 @@ class SyntheticQueriesTest(unittest.TestCase):
                                 "records_per_sec": SCHEMAS["http"]["rate"],
                                 "values": SCHEMAS["http"]["values"]})
         self.assertEqual({q["table"] for q in block["queries"]}, set(block["metrics"]))
-        self.assertEqual(len(block["queries"]), len(qs))
+        # Each distinct query appears once and reads every RQE asking it:
+        # templates 14, 15 and 17 share some groupings.
+        read = [r for q in block["queries"] for r in q["rqes"]]
+        self.assertEqual(sorted(read), sorted(synthetic_entry(q)["id"] for q in qs))
+        fields = [json.dumps({k: v for k, v in q.items() if k != "rqes"}, sort_keys=True)
+                  for q in block["queries"]]
+        self.assertEqual(len(fields), len(set(fields)))
+        self.assertTrue(all(q["rqes"] == sorted(q["rqes"]) for q in block["queries"]))
+        by_service = [q for q in block["queries"] if q["table"] == "data_0_http"
+                      and q["capability"] == "cardinality" and q["grouping"] == ["service"]
+                      and q["window_secs"] == 300]
+        self.assertEqual([[r.split("/")[-3] for r in q["rqes"]] for q in by_service],
+                         [["t14_distinct_users_by_service_data_0",
+                           "t15_distinct_users_by_service_data_0"]])
 
 
 COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",

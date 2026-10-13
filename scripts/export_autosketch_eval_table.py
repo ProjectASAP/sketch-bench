@@ -661,13 +661,21 @@ def e2e_block(qs, queries):
     labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
     SYNTHETIC_JOBS values under each `job` (`child_of`), so there are
     SYNTHETIC_SERIES series. Schema queries are schema_queries()' fields, one
-    per RQE; each schema metric is a `records` table (`http`, or
+    per distinct query (with every RQE it reads, sorted); each schema metric is a `records` table (`http`, or
     `data_1_http` under metric `data_1`) with SCHEMAS' labels, `rate` as
     `records_per_sec`, and its `values`."""
     unique = {}
     for q in queries:
-        key = (q["promql"], q["interval_secs"]) if "promql" in q else json.dumps(q)
-        unique.setdefault(key, q)
+        if "promql" in q:
+            unique.setdefault((q["promql"], q["interval_secs"]), q)
+            continue
+        # Schema queries identical but for their RQEs (templates 14, 15, 17
+        # share groupings) are one query reading them all.
+        key = json.dumps({k: v for k, v in q.items() if k != "rqes"}, sort_keys=True)
+        if key in unique:
+            unique[key] = {**unique[key], "rqes": sorted(unique[key]["rqes"] + q["rqes"])}
+        else:
+            unique[key] = q
     labels = [{"name": "job", "cardinality": SYNTHETIC_JOBS},
               {"name": "label_0", "cardinality": SYNTHETIC_SERIES // SYNTHETIC_JOBS,
                "child_of": "job"}]
