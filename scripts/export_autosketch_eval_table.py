@@ -661,9 +661,9 @@ def e2e_block(qs, queries):
     labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
     SYNTHETIC_JOBS values under each `job` (`child_of`), so there are
     SYNTHETIC_SERIES series. Schema queries are schema_queries()' fields, one
-    per distinct query (with every RQE it reads, sorted); each schema metric is a `records` table (`http`, or
-    `data_1_http` under metric `data_1`) with SCHEMAS' labels, `rate` as
-    `records_per_sec`, and its `values`."""
+    per distinct query (with every RQE it reads, sorted); each schema metric
+    is a `records` table (`http`, or `data_1_http` under metric `data_1`)
+    with SCHEMAS' labels, `rate` as `records_per_sec`, and its `values`."""
     unique = {}
     for q in queries:
         if "promql" in q:
