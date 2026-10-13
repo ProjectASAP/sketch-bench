@@ -18,8 +18,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from study_saturation import (  # noqa: E402
-    HYDRA_COLUMNS, checkpoints, covered_max, hydra_groupings, hydra_labels, hydra_spec,
-    n_saturation, n_star, read_curve, read_per_group)
+    HYDRA_COLUMNS, HYDRA_DATAGEN, HYDRA_SWEEPS, checkpoints, covered_max, hydra_groupings,
+    hydra_jobs, hydra_labels, hydra_spec, n_saturation, n_star, read_curve, read_per_group)
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_saturation.py")
 
@@ -822,6 +822,20 @@ class HydraPhaseTest(unittest.TestCase):
         # Those 2 rerun, and the 2 failures again.
         self.assertEqual(len(calls), 4)
         self.assertEqual(len(rows), 10)
+
+
+class HydraWidthTest(unittest.TestCase):
+    def test_univmon_stops_at_16384_and_the_others_reach_65536(self):
+        specs = {}
+        for stem, _, _ in HYDRA_SWEEPS["eval"][0]:
+            with open(os.path.join(HYDRA_DATAGEN, f"{stem}.yaml")) as f:
+                specs[stem] = f.read()
+        widths = {}
+        for job in hydra_jobs(["eval"], specs):
+            widths.setdefault(job[2], set()).add(job[4])
+        self.assertEqual(max(widths["hydra-univmon-cardinality"]), 16384)
+        self.assertEqual(max(widths["hydra-hll"]), 65536)
+        self.assertEqual(max(widths["hydra-kll"]), 65536)
 
 
 if __name__ == "__main__":

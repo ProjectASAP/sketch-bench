@@ -68,15 +68,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 FREQ_CONFIGS = [f"rows={r} cols={c}" for r in (3, 5) for c in (256, 1024, 4096, 16384)]
 
 # (family, variant, configs, comparator, error metric). The error metric is
-# also the cost table's accuracy_metric; configs step 4x in the size knob
-# (asap HLL is compiled at lg_k 12, 14, 16 only, so it has no lg_k 10).
+# also the cost table's accuracy_metric. HLL steps 4x in registers (asap HLL
+# is compiled at lg_k 12, 14, 16 only); KLL steps 2x in k and DDSketch adds
+# alpha 0.1, so a looser accuracy target has a cheaper config to move to.
 SKETCHES = [
     ("frequency", "cms-fastpath-vector2d", FREQ_CONFIGS, "frequency", "are_top100"),
     ("frequency", "countsketch-fastpath-vector2d", FREQ_CONFIGS, "frequency", "are_top100"),
     ("topk", "cms-heap-topk-fastpath-vector2d", FREQ_CONFIGS, "topk", "precision_at_k"),
     ("cardinality", "hll", ["lg_k=12", "lg_k=14", "lg_k=16"], "cardinality", "relative_error"),
-    ("quantile", "kll-percall", ["k=50", "k=200", "k=800"], "rank-error", "mean_rank_err"),
-    ("quantile", "dd", ["alpha=0.005", "alpha=0.01", "alpha=0.02", "alpha=0.05"],
+    ("quantile", "kll-percall", ["k=25", "k=50", "k=100", "k=200", "k=400", "k=800"],
+     "rank-error", "mean_rank_err"),
+    ("quantile", "dd", ["alpha=0.005", "alpha=0.01", "alpha=0.02", "alpha=0.05", "alpha=0.1"],
      # Mean over probes, like KLL: both answer the same quantile query.
      "relative-value-error", "mean_relative_value_error"),
 ]
@@ -178,11 +180,15 @@ HYDRA_SWEEPS = {
     "eval": ([("hydra_http", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),
               ("hydra_flows", "i64", ["hydra-hll", "hydra-univmon-cardinality"]),
               ("hydra_http_latency", "f64", ["hydra-kll"])],
-             (1024, 4096, 16384), (100_000, 1_000_000, 10_000_000), (1, 4, 16), 3),
+             (1024, 4096, 16384, 65536), (100_000, 1_000_000, 10_000_000), (1, 4, 16), 3),
     "generic": ([(stem, "i64", list(HYDRA_CELLS))
                  for stem in ("hydra_hier_d2", "hydra_hier_d3", "hydra_hier")],
                 (1024, 4096), (1_000_000,), (1, 4), 2),
 }
+# The widest W a variant runs at: a UnivMon grid at 3 x 65536 is ~20 GB, 16
+# of them in a merge more than a machine holds, and its error has saturated
+# by 16384 anyway.
+HYDRA_MAX_W = {"hydra-univmon-cardinality": 16384}
 HYDRA_DATAGEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs",
                              "datagen")
 HYDRA_TABLE = "hydra_saturation.csv"
@@ -407,13 +413,18 @@ def optimizer_cost(args, families):
     for family, variant, configs, comparator, metric in SKETCHES:
         if family not in families or family not in OPTIMIZER_FAMILIES:
             continue
+        if args.sketches and variant not in args.sketches.split(","):
+            continue
         metrics[variant] = metric
+        if args.configs:
+            configs = [c for c in configs if c in args.configs.split(",")]
         for config in configs[:1] if args.one_config else configs:
             heaps = [f" heap={h}" for h in TOPK_HEAPS] if family == "topk" else [""]
             for heap in heaps:
                 rows.append((variant, "lib", ["--config", config + heap], comparator,
                              cost_dataset(family)))
-    for variant, comparator, spec in EXACT_COST_ROWS:
+    # --sketches adds rows to an existing table, which has the exact ones.
+    for variant, comparator, spec in [] if args.sketches else EXACT_COST_ROWS:
         metrics[variant] = EXACT_METRIC
         rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
     # Hydra: each eval variant on its datasets at the full schema, at each
@@ -438,7 +449,7 @@ def optimizer_cost(args, families):
                 metrics[variant] = HYDRA_COST_METRIC
                 hydra_ws = {int(x) for x in args.hydra_ws.split(",")} if args.hydra_ws else None
                 for w in ws[:1] if args.one_config else ws:
-                    if hydra_ws and w not in hydra_ws:
+                    if (hydra_ws and w not in hydra_ws) or w > HYDRA_MAX_W.get(variant, w):
                         continue
                     config = hydra_config(variant, w)
                     rows.append((variant, "lib", ["--config", config], None,
@@ -573,6 +584,8 @@ def hydra_jobs(sweeps, specs, records=None):
             groupings = hydra_groupings(hydra_labels(specs[stem]))
             for variant, w, grouping, n, m, seed in itertools.product(
                     variants, ws, groupings, ns, shards, range(1, seeds + 1)):
+                if w > HYDRA_MAX_W.get(variant, w):
+                    continue
                 jobs.append((stem, dtype, variant, hydra_config(variant, w), w, grouping, n,
                              m, seed))
     return jobs
@@ -793,6 +806,11 @@ def main():
                         help="hydra: --phase optimizer-cost's Hydra rows")
     parser.add_argument("--one-config", action="store_true",
                         help="only the first config of each sketch")
+    parser.add_argument("--sketches",
+                        help="only these variants of --families (e.g. kll-percall)")
+    parser.add_argument("--configs",
+                        help="only these configs of them (e.g. k=25,k=100), to add new "
+                             "configs to an existing study")
     parser.add_argument("--thetas", default="0,0.5,0.8,1.0,1.2,1.5,2.0")
     parser.add_argument("--cardinalities", default="1000,100000,10000000")
     parser.add_argument("--alphas", default="1.1,1.5,2,3")
@@ -875,6 +893,10 @@ def main():
     for family, variant, configs, comparator, metric in SKETCHES:
         if family not in families:
             continue
+        if args.sketches and variant not in args.sketches.split(","):
+            continue
+        if args.configs:
+            configs = [c for c in configs if c in args.configs.split(",")]
         configs = configs[:1] if args.one_config else configs
         if family == "topk":
             configs = [c + ("" if k == TOPK_K else f" topk_k={k}")
