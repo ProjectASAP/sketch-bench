@@ -211,6 +211,10 @@ class SyntheticQueriesTest(unittest.TestCase):
         self.assertEqual([r.split("/")[-3] for r in ratio["rqes"]],
                          ["quantile_over_time_p0.9", "quantile_over_time_p0.5"])
         self.assertEqual(by_text["rate(data_total[15m])"]["interval_secs"], 60)
+        # Template 2 ranks series: label_0 names one, so no `sum by (label_0)`.
+        top = by_text["topk(32, sum_over_time(data[15m]))"]
+        self.assertEqual([r.split("/")[-3] for r in top["rqes"]],
+                         ["topk32_sum_by_label0_sum_over_time"])
         self.assertEqual(by_text["sum by (job) (data)"]["interval_secs"], 1)
 
     def test_schema_queries_read_every_rqe_with_their_fields(self):

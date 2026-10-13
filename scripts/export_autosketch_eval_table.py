@@ -492,8 +492,12 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
             promql=f"quantile by (job) ({q}, {gauge})")
     for rng, s in ranges:
         lbl = label(rng)
+        # Template 2's PromQL omits `sum by (label_0)`: label_0 names one
+        # series (child_of job, unique values), so it only drops `job`, and
+        # the ranking and values are the same. ASAPQuery's planner supports
+        # this two-level shape, not the three-level one (#744, #772).
         add("topk32_sum_by_label0_sum_over_time", "label_0/value", "topk", lbl, s, interval,
-            1, C, promql=f"topk(32, sum by (label_0) (sum_over_time({gauge}[{rng}])))")
+            1, C, promql=f"topk(32, sum_over_time({gauge}[{rng}]))")
         add("sum_over_time", "series/value", "sum", lbl, s, interval, C,
             promql=f"sum_over_time({gauge}[{rng}])")
         for q in quantiles:
