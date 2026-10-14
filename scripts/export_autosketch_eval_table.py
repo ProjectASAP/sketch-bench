@@ -423,8 +423,9 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     schema_queries() to the `classic` set.
 
     With `e2e` (a list), the `classic` templates append their PromQL to it,
-    one {promql, interval_secs, rqes} per query (e2e_block()). Values are read
-    from the gauge `data`, increments from the counter `data_total`.
+    one {promql, interval_secs, rqes} per query (e2e_block()), and the schema
+    templates their query fields (schema_queries()). Values are read from the
+    gauge `data`, increments from the counter `data_total`.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
     dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
@@ -481,7 +482,7 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                     interval, C)
         return out
     if templates == "multigroup":
-        return schema_queries(interval, dataset, range_with_interval, seen, metric)
+        return schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
     assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
     add("sum_by_job", "job/value", "sum", "1s", 1, 1, J, promql=f"sum by (job) ({gauge})")
@@ -513,16 +514,22 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                                   f"quantile_over_time(0.5, {gauge}[{rng}])",
                         "interval_secs": interval, "rqes": rqes})
     if templates == "all":
-        out += schema_queries(interval, dataset, range_with_interval, seen, metric)
+        out += schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
     return out
 
 
-def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
+def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2e=None):
     """SCHEMA_TEMPLATES as synthetic_queries' query-ranges, over
     SCHEMA_WINDOWS, repeating every `interval` seconds. A metric's values are
     its streams (`http/user_id`); each RQE names its `grouping` and
     `covers_share`, and carries its metric's schema. With `metric`, the
-    schema metrics are named under it (`data_1/http`)."""
+    schema metrics are named under it (`data_1/http`).
+
+    With `e2e` (a list), each RQE appends its query's fields and canonical
+    ASAPQuery SQL (there is no PromQL): {sql, table, value,
+    capability, grouping, quantile (quantiles only), window_secs,
+    interval_secs, rqes}. `table` is the metric with `/` as `_`
+    (`data_1_http`)."""
     out = []
     for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
         schema = SCHEMAS[name]
@@ -539,6 +546,15 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                 if (query_id, rng) in seen:
                     continue
                 seen.add((query_id, rng))
+                kind = "values" if capability == "quantile" else "keys"
+                if e2e is not None:
+                    query = {"table": full.replace("/", "_"), "value": value,
+                             "capability": capability, "grouping": grouping}
+                    if capability == "quantile":  # p99_latency -> 0.99
+                        query["quantile"] = int(what[1:what.index("_")]) / 100
+                    query["sql"] = asapquery_sql(query, s)
+                    e2e.append({**query, "window_secs": s, "interval_secs": interval,
+                                "rqes": [f"{dataset}/{query_id}/{kind}/{rng}"]})
                 n_items = schema["rate"] * s / groups
                 covered, min_share, max_share = group_coverage(name, grouping, covers)
                 covered_min_n = schema["rate"] * s * min_share
@@ -546,8 +562,7 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                 # the curves (their first N is 1e3).
                 assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
                 out.append({
-                    "dataset": dataset, "query_id": query_id,
-                    "kind": "values" if capability == "quantile" else "keys",
+                    "dataset": dataset, "query_id": query_id, "kind": kind,
                     "range": rng, "range_s": s, "step_s": interval,
                     "theta": shape.get("zipf"), "K": shape.get("keys"),
                     "min_N": n_items, "max_N": n_items,
@@ -564,6 +579,22 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None):
                     **DEFAULT_TARGETS,
                 })
     return out
+
+
+def asapquery_sql(query, window_secs):
+    """Canonical ASAPQuery SQL for a structured schema query.
+
+    The end-to-end planner replaces NOW() with its floored evaluation time,
+    leaving this exporter as the single renderer for these queries.
+    """
+    group = ", ".join(query["grouping"])
+    if query["capability"] == "cardinality":
+        aggregate = f"COUNT(DISTINCT {query['value']})"
+    else:
+        assert query["capability"] == "quantile", query["capability"]
+        aggregate = f"QUANTILE({query['quantile']}, {query['value']})"
+    return (f"SELECT {group}, {aggregate} FROM {query['table']} WHERE ts BETWEEN "
+            f"DATEADD(s, -{window_secs}, NOW()) AND NOW() GROUP BY {group}")
 
 
 def shared_queries(point, e2e=None):
@@ -639,27 +670,46 @@ def synthetic_entry(q):
 
 
 def e2e_block(qs, queries):
-    """What an end-to-end run of a `classic` table needs and the runner does
-    not read: the PromQL `queries` (one entry per distinct query and interval,
-    with the RQEs it reads; a binary query reads two) and the `metrics` to
-    generate. Each metric is a gauge (`value` and `dist` streams) and a
-    counter `<metric>_total` (`increment` streams), with labels in SCHEMAS'
-    format: `label_0` has SYNTHETIC_SERIES / SYNTHETIC_JOBS values under each
-    `job` (`child_of`), so there are SYNTHETIC_SERIES series."""
+    """What an end-to-end run of a table needs and the runner does not read:
+    the `queries` (one entry per distinct query and interval, with the RQEs
+    it reads; a binary query reads two) and the `metrics` to generate.
+    Classic queries are PromQL; each classic metric is a gauge (`value` and
+    `dist` streams) and a counter `<metric>_total` (`increment` streams), with
+    labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
+    SYNTHETIC_JOBS values under each `job` (`child_of`), so there are
+    SYNTHETIC_SERIES series. Schema queries are schema_queries()' fields, one
+    per distinct query (with every RQE it reads, sorted); each schema metric
+    is a `records` table (`http`, or `data_1_http` under metric `data_1`)
+    with SCHEMAS' labels, `rate` as `records_per_sec`, and its `values`."""
     unique = {}
     for q in queries:
-        unique.setdefault((q["promql"], q["interval_secs"]), q)
+        if "promql" in q:
+            unique.setdefault((q["promql"], q["interval_secs"]), q)
+            continue
+        # Schema queries identical but for their RQEs (templates 14, 15, 17
+        # share groupings) are one query reading them all.
+        key = json.dumps({k: v for k, v in q.items() if k != "rqes"}, sort_keys=True)
+        if key in unique:
+            unique[key] = {**unique[key], "rqes": sorted(unique[key]["rqes"] + q["rqes"])}
+        else:
+            unique[key] = q
     labels = [{"name": "job", "cardinality": SYNTHETIC_JOBS},
               {"name": "label_0", "cardinality": SYNTHETIC_SERIES // SYNTHETIC_JOBS,
                "child_of": "job"}]
     keys = {"zipf": SYNTHETIC_THETA, "keys": SYNTHETIC_SERIES}
     metrics = {}
-    for gauge in dict.fromkeys(q["metric"] for q in qs):
+    for gauge in dict.fromkeys(q["metric"] for q in qs if "schema" not in q):
         common = {"labels": labels, "samples_per_sec_per_series": SYNTHETIC_SAMPLES_PER_SEC}
         metrics[gauge] = {"type": "gauge", **common,
                           "values": {"value": keys, "dist": {"pareto": SYNTHETIC_ALPHA}}}
         metrics[f"{gauge}_total"] = {"type": "counter", **common,
                                      "values": {"increment": keys}}
+    for q in qs:
+        if "schema" in q:
+            schema = q["schema"]
+            metrics[q["metric"].replace("/", "_")] = {
+                "type": "records", "labels": schema["labels"],
+                "records_per_sec": schema["rate"], "values": schema["values"]}
     return {"queries": list(unique.values()), "metrics": metrics}
 
 
@@ -696,9 +746,7 @@ def build_synthetic(args):
                 qs = synthetic_queries(templates=point["templates"],
                                        dataset="synthetic/" + point_id(point), e2e=queries)
             workload = {"dataset": qs[0]["dataset"], "rqes": [synthetic_entry(q) for q in qs]}
-            # Classic only: the multi-grouping templates have no PromQL yet (#204).
-            if point["templates"] == "classic":
-                workload["e2e"] = e2e_block(qs, queries)
+            workload["e2e"] = e2e_block(qs, queries)
             # Each schema metric's label schema, for the runner's facts.
             schemas = {q["metric"]: q["schema"] for q in qs if "schema" in q}
             if schemas:
