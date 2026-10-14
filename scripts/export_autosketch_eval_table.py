@@ -429,8 +429,9 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     Streams: `series/*` hold one instance per series (C groups), `job/*` one per
     job (J groups), and `label_0/*` one top-k sketch over all C series as keys.
     `*/dist` streams feed quantile sketches, `*/value` sums, `*/increment`
-    increases. Spatial templates repeat every 1 s and read the last second
-    (S = T = 1 s); temporal ones repeat every `interval` seconds over each
+    increases. Spatial templates repeat every 1 s and, like a PromQL instant
+    query, read one sample per series: one scrape interval (S = 1 /
+    SYNTHETIC_SAMPLES_PER_SEC s, T = 1 s); temporal ones repeat every `interval` seconds over each
     lookback in `windows`. RQEs that repeat another's query and range (template
     10, D5) are kept once. Templates 7, `sum by (job) (rate(data_total[w]))`,
     and 9, `topk(32, sum by (label_0) (rate(data_total[w])))`, are dropped
@@ -445,6 +446,7 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     gauge `data`, increments from the counter `data_total`.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
+    scrape = 1 / SYNTHETIC_SAMPLES_PER_SEC  # an instant query's lookback, in s
     dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
     ranges = [(w, WINDOW_SECS[w]) for w in windows.split(",")]
     seen = set() if seen is None else seen
@@ -487,7 +489,7 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                 add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
                     interval, C)
         for q in quantiles:
-            add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", 1, 1, J)
+            add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", scrape, 1, J)
         for rng, s in [(w, WINDOW_SECS[w]) for w in DASHBOARD_FIXED_WINDOWS]:
             if (rng, s) not in ranges:
                 continue
@@ -499,9 +501,9 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         return schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
     assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
-    add("sum_by_job", "job/value", "sum", "1s", 1, 1, J, promql=f"sum by (job) ({gauge})")
+    add("sum_by_job", "job/value", "sum", "1s", scrape, 1, J, promql=f"sum by (job) ({gauge})")
     for q in quantiles:
-        add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", 1, 1, J,
+        add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", scrape, 1, J,
             promql=f"quantile by (job) ({q}, {gauge})")
     for rng, s in ranges:
         lbl = label(rng)
@@ -691,9 +693,10 @@ def synthetic_entry(q):
 
 
 def e2e_block(qs, queries):
-    """What an end-to-end run of a table needs and the runner does not read:
-    the `queries` (one entry per distinct query and interval, with the RQEs
-    it reads; a binary query reads two) and the `metrics` to generate.
+    """What an end-to-end run of a table needs: the `queries` (one entry per
+    distinct query and interval, with the RQEs it reads; a binary query reads
+    two) and the `metrics` to generate. The runner reads only a metric's
+    `samples_per_sec_per_series`, as its scrape rate.
     Classic queries are PromQL; each classic metric is a gauge (`value` and
     `dist` streams) and a counter `<metric>_total` (`increment` streams), with
     labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
@@ -833,6 +836,11 @@ def main(argv=None):
                              "with it, and schema RQEs below the curves' first N are left out")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
+    # in whole ms.
+    rate = args.samples_per_sec
+    if rate is not None and (rate <= 0 or 1000 % rate):
+        parser.error("--samples-per-sec must divide 1000")
     if args.samples_per_sec is not None:
         default = SYNTHETIC_SAMPLES_PER_SEC
         set_samples_per_sec(args.samples_per_sec, True)
