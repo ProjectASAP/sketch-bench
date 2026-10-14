@@ -30,11 +30,12 @@ Every accuracy run is `study_saturation.py --phase accuracy --seeds 3` plus:
 Run times are each file's first-to-last record timestamps; the refills ran
 about 40 minutes after their grids and are counted separately.
 
-## The denser grid (#213, 2026-10-14)
+## The denser grid (#213, measured 2026-10-13/14 UTC)
 
 Only the new configs, with the same arguments as the rows above plus
-`--sketches`/`--configs`; accuracy runs on clnode130, cost rows serially on
-idle clnode138.
+`--sketches`/`--configs`; accuracy runs on clnode130 (the same Xeon
+E5-2683 v3 node type), cost rows serially on idle clnode138, where the
+existing cost rows were measured.
 
 | File | Arguments | Feeds |
 |---|---|---|

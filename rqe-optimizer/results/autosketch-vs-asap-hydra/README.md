@@ -135,7 +135,7 @@ than the grid at the W that needs.
 W = 65536 (#213) widens what Hydra is accurate for: on groups holding ≥ 1% of
 the records, the worst error at 1e7 records drops from 0.283 to 0.039
 (hydra-hll, `http`), 0.074 to 0.021 (hydra-hll, `flows`) and 0.054 to 0.017
-(hydra-kll). But it is the most expensive grid on every axis (3.3 GB per
+(hydra-kll, unmerged; 0.056 to 0.017 over every merge count). But it is the most expensive grid on every axis (3.3 GB per
 hydra-hll grid, 6.2 µs per insert on `http`), and it is never chosen either.
 
 hydra-univmon-cardinality reads ≈ 100% error at N ≥ 1e6 at every W
@@ -217,8 +217,8 @@ python3 scripts/plot_autosketch_vs_asap_synthetic.py $DIR
 python3 scripts/plot_autosketch_vs_asap_sla.py $DIR $DIR/synthetic-*-tp95.json
 ```
 
-Runs: Xeon E5-2683 v3, 56 cores, `--runs 3`, runner from sketch-bench
-`hydra/eval-integration` at 44ac160. Classic: one large table per CloudLab node
+Runs: Xeon E5-2683 v3, 56 cores, `--runs 3`. First run (superseded by the
+reruns below): runner from sketch-bench `hydra/eval-integration` at 44ac160. Classic: one large table per CloudLab node
 (clnode178, 167; the small ones serially on clnode138), 2026-10-10.
 Multigroup and all (with the cube template): serially on one idle node,
 2026-10-11.
@@ -232,6 +232,14 @@ multigroup-shared1 reproduces its costs and plans exactly). AutoSketch's
 benchmark times are reused: the dropped RQEs used exact accumulators or a
 top-k config already probed on the same metric, so every probe was already
 measured and each workload's benchmark time is unchanged.
+
+Denser grid (2026-10-14, #213, runner at sketch-bench eval/dense-grid):
+multi-grouping on the 4 CloudLab nodes clnode109/155/167/178, then classic and
+all on #210's tables on the same 4 nodes, each node running its share
+serially. Plans: `--runs 1`, without `--no-chosen`, extracted with
+`scripts/extract_autosketch_plans.py`.
+
+The JSONs, figures and plans here are from that last rerun.
 
 ## Caveats
 
@@ -247,9 +255,3 @@ measured and each workload's benchmark time is unchanged.
 - Template 12 groups by (dst_subnet, proto) rather than (dst_subnet,
   dst_port): answering 1e6 groups every minute took ~49 s and set every
   plan's batch latency above the largest SLA.
-
-Denser grid (2026-10-14, #213, runner at sketch-bench eval/dense-grid):
-multi-grouping on the 4 CloudLab nodes clnode109/155/167/178, then classic and
-all on #210's tables on the same 4 nodes, each node running its share
-serially. Plans: `--runs 1`, without `--no-chosen`, extracted with
-`scripts/extract_autosketch_plans.py`.

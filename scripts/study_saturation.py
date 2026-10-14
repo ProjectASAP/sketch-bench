@@ -191,6 +191,30 @@ HYDRA_SWEEPS = {
 # of them in a merge more than a machine holds, and its error has saturated
 # by 16384 anyway.
 HYDRA_MAX_W = {"hydra-univmon-cardinality": 16384}
+
+
+def filtered_configs(args, variant, configs):
+    """`configs` narrowed by --sketches/--configs (adding configs to an
+    existing study), or None when --sketches leaves `variant` out."""
+    if args.sketches and variant not in args.sketches.split(","):
+        return None
+    if args.configs:
+        configs = [c for c in configs if c in args.configs.split(",")]
+    return configs
+
+
+def check_filters(args):
+    """Exit on a --sketches or --configs name that matches nothing, so a typo
+    does not silently measure nothing."""
+    variants = {v for _, v, _, _, _ in SKETCHES} | set(HYDRA_CELLS)
+    configs = {c for _, _, cs, _, _ in SKETCHES for c in cs}
+    for name, known, flag in [(args.sketches, variants, "--sketches"),
+                              (args.configs, configs, "--configs")]:
+        unknown = sorted(set((name or "").split(",")) - known - {""})
+        if unknown:
+            sys.exit(f"{flag}: no such {unknown}")
+
+
 HYDRA_DATAGEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs",
                              "datagen")
 HYDRA_TABLE = "hydra_saturation.csv"
@@ -415,18 +439,19 @@ def optimizer_cost(args, families):
     for family, variant, configs, comparator, metric in SKETCHES:
         if family not in families or family not in OPTIMIZER_FAMILIES:
             continue
-        if args.sketches and variant not in args.sketches.split(","):
+        configs = filtered_configs(args, variant, configs)
+        if configs is None:
             continue
         metrics[variant] = metric
-        if args.configs:
-            configs = [c for c in configs if c in args.configs.split(",")]
         for config in configs[:1] if args.one_config else configs:
             heaps = [f" heap={h}" for h in TOPK_HEAPS] if family == "topk" else [""]
             for heap in heaps:
                 rows.append((variant, "lib", ["--config", config + heap], comparator,
                              cost_dataset(family)))
-    # --sketches adds rows to an existing table, which has the exact ones.
-    for variant, comparator, spec in [] if args.sketches else EXACT_COST_ROWS:
+    # --sketches/--configs add rows to an existing table, which has the exact
+    # ones.
+    narrowed = args.sketches or args.configs
+    for variant, comparator, spec in [] if narrowed else EXACT_COST_ROWS:
         metrics[variant] = EXACT_METRIC
         rows.append((variant, "exact", [], comparator, ["--spec", spec, "--dtype", "i64"]))
     # Hydra: each eval variant on its datasets at the full schema, at each
@@ -476,7 +501,8 @@ def optimizer_cost(args, families):
         runs, warmup = HYDRA_COST_RUNS if variant.startswith("hydra-") else \
             (COST_RUNS, COST_WARMUP)
         # A Hydra grid past 3 x 16384 holds GBs; 16 of them in one merge do
-        # not fit, so it merges 4 (merge CPU is per merge either way).
+        # not fit, so it merges 4. Merge CPU is per fold either way, though
+        # each fold's operand holds 4x the items (a quarter of COST_N).
         wide = variant.startswith("hydra-") and \
             int(re.search(r"cols=(\d+)", config[1]).group(1)) > 16384
         sketchbench(variant, library, config, data, [
@@ -875,6 +901,7 @@ def main():
                         help="hydra: only these groupings, ';'-separated, labels by name "
                              "joined by ',' in schema order")
     args = parser.parse_args()
+    check_filters(args)
     if args.phase == "hydra":
         return hydra(args)
 
@@ -900,10 +927,9 @@ def main():
     for family, variant, configs, comparator, metric in SKETCHES:
         if family not in families:
             continue
-        if args.sketches and variant not in args.sketches.split(","):
+        configs = filtered_configs(args, variant, configs)
+        if configs is None:
             continue
-        if args.configs:
-            configs = [c for c in configs if c in args.configs.split(",")]
         configs = configs[:1] if args.one_config else configs
         if family == "topk":
             configs = [c + ("" if k == TOPK_K else f" topk_k={k}")
