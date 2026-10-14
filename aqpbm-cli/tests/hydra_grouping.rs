@@ -5,13 +5,19 @@
 //! as error.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Numbers each spec file: the tests run in parallel in one process, so a
+/// shared name lets one test read another's half-written spec.
+static NEXT_SPEC: AtomicUsize = AtomicUsize::new(0);
 
 /// Two overlapping label columns (both render ranks over one alphabet, so
 /// `b` is a value of each) over few values, and a value column at `dtype`.
 fn spec(dtype: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "hydra_grouping_{}_{dtype}.yaml",
-        std::process::id()
+        "hydra_grouping_{}_{}_{dtype}.yaml",
+        std::process::id(),
+        NEXT_SPEC.fetch_add(1, Ordering::Relaxed)
     ));
     let yaml = format!(
         "column_num: 3
