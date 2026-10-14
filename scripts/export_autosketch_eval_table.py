@@ -776,6 +776,98 @@ def e2e_block(qs, queries):
     return {"queries": list(unique.values()), "metrics": metrics}
 
 
+# --random-manifest: the five-system queries of an ASAPQuery random workload
+# (asap-tools random_workloads.py), and the streams their capabilities read.
+RANDOM_SUPPORT = "common-promql"
+RANDOM_STREAMS = {"sum": "value", "quantile": "dist", "topk_by_value": "value"}
+# The fewest distinct keys the top-k curves measure; a heap over fewer keys
+# is read there, which overstates its error.
+TOPK_MIN_CURVE_KEYS = 1_000
+
+
+def random_groups(labels, grouping):
+    """Groups of `grouping` on a manifest's labels: the product of its
+    labels' fan-outs, every child's parent included."""
+    by_name = {label["name"]: label for label in labels}
+    for name in grouping:
+        parent = by_name[name].get("child_of")
+        assert parent is None or parent in grouping, (grouping, name)
+    return math.prod(by_name[name]["cardinality"] for name in grouping)
+
+
+def random_manifest_table(manifest, revision, inputs):
+    """The eval table of `manifest`'s RANDOM_SUPPORT queries: one RQE each
+    on the schema metric `data`, its labels the manifest's. Every series is
+    scraped at the same rate, so a grouping's groups hold equal shares. A
+    sum or top-k RQE is at its query's grouping, on one stream, so a fine
+    sum can serve a coarse one; a quantile is `avg by` of per-series
+    quantiles, so its RQE is per series. The e2e block holds the PromQL."""
+    labels = manifest["labels"]
+    names = [label["name"] for label in labels]
+    series = random_groups(labels, names)
+    per_sec = manifest["samples_per_sec_per_series"]
+    rate = series * per_sec
+    facts = manifest["data_facts"]
+    theta = facts["series"]["ranking"]["exponent"]
+    alpha = facts["metrics"]["data"]["pareto_shape"]
+    dataset = f"random/seed={manifest['seed']}/{manifest['id']}"
+    qs, e2e = [], []
+    for query in manifest["queries"]:
+        if query["support"] != RANDOM_SUPPORT:
+            continue
+        [rqe] = query["rqes"]
+        capability = rqe["capability"]
+        grouping = names if capability == "quantile" else rqe["grouping_labels"]
+        groups = random_groups(labels, grouping)
+        s, t = rqe["lookback_ms"] / 1000, rqe["interval_ms"] / 1000
+        assert t == int(t), f"{query['id']}: interval {t} s is not whole seconds"
+        n_items = rate * s / groups
+        query_id, keys, assumptions = query["id"], None, []
+        if capability == "topk_by_value":
+            query_id = f"topk{rqe['k']}_{query_id}"
+            keys = series // groups
+            if keys < TOPK_MIN_CURVE_KEYS:
+                assumptions.append(f"{keys} keys per heap read at the curves' "
+                                   f"{TOPK_MIN_CURVE_KEYS}")
+                keys = TOPK_MIN_CURVE_KEYS
+        kind = "values" if capability == "quantile" else "keys"
+        q = {
+            "dataset": dataset, "query_id": query_id, "kind": kind,
+            "range": f"{s:g}s", "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
+            "min_N": n_items, "max_N": n_items,
+            "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
+            "families": SYNTHETIC_FAMILIES["topk" if keys else capability],
+            "capability": "topk" if keys else capability,
+            "stream": f"data/{RANDOM_STREAMS[capability]}", "metric": "data",
+            "groups": groups, "arrival_rate": rate,
+            "grouping": grouping, "covers_share": None,
+            "covered_groups": groups, "min_covered_share": 1 / groups,
+            "covered_min_N": n_items, "max_covered_share": 1 / groups,
+            "covered_max_N": n_items,
+            "assumptions": assumptions,
+            **DEFAULT_TARGETS,
+        }
+        qs.append(q)
+        e2e.append({"promql": query["promql"], "interval_secs": int(t),
+                    "rqes": [synthetic_entry(q)["id"]]})
+    metrics = {"data": {
+        "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
+        "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},
+    }}
+    return {
+        "schema_version": 1,
+        "plan": "ProjectASAP/ASAPQuery#879",
+        "inputs": inputs,
+        "sketch_bench_revision": revision,
+        "workloads": [{
+            "dataset": dataset,
+            "rqes": [synthetic_entry(q) for q in qs],
+            "e2e": {"queries": e2e, "metrics": metrics},
+            "schemas": {"data": {"labels": labels}},
+        }],
+    }
+
+
 def queries_per_instance(q):
     """Queries one evaluation issues per instance: a `traces` key query reads
     every key (K point queries); an exact group value, a top-k list and a
@@ -879,6 +971,10 @@ def main(argv=None):
                         help="--synthetic: an RQE for every template asking a query, not "
                              "just the strictest (the section 6.3 tables). Without it, a strictest "
                              "copy below the curves' first N fails the export")
+    parser.add_argument("--random-manifest",
+                        help="write the eval table of an ASAPQuery random workload manifest "
+                             f"(asap-tools random_workloads.py), its {RANDOM_SUPPORT} queries, "
+                             "to --out instead")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
@@ -917,6 +1013,17 @@ def run(args, parser):
                 f.write(f"{name}\t{target}\t{result}\n")
         print(f"Done. {len(tables)} `synthetic` tables and {len(plan)} planned runs in "
               f"{args.out}", file=sys.stderr)
+        return 0
+    if args.random_manifest:
+        with open(args.random_manifest) as f:
+            manifest = json.load(f)
+        inputs = {os.path.basename(args.random_manifest): sha256(args.random_manifest)}
+        table = random_manifest_table(manifest, args.revision, inputs)
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        with open(args.out, "w") as f:
+            json.dump(table, f, indent=1, sort_keys=True)
+            f.write("\n")
+        print(f"Done. {len(table['workloads'][0]['rqes'])} RQEs in {args.out}", file=sys.stderr)
         return 0
     if not (args.summary and args.curves and args.saturation):
         parser.error("--summary, --curves and --saturation are required without --synthetic")

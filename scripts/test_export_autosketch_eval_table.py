@@ -19,7 +19,7 @@ from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
     all_subsets, boom_query, e2e_block, group_coverage, grouping_cardinality, label_shares, main,
-    metric_queries, queries_per_instance,
+    metric_queries, queries_per_instance, random_manifest_table,
     shared_queries, synthetic_entry, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -554,6 +554,56 @@ class DashboardAndSharedTest(unittest.TestCase):
         # The top-k k stays readable from the query id.
         self.assertTrue(all(q["query_id"].startswith("topk32_")
                             for q in qs if q["capability"] == "topk"))
+
+
+class RandomManifestTest(unittest.TestCase):
+    """--random-manifest on a two-label manifest: 2 jobs x 500 series, 10/s."""
+
+    def manifest(self):
+        def query(qid, capability, grouping, lookback_ms, interval_ms, support, **params):
+            return {"id": qid, "support": support, "promql": f"promql {qid}",
+                    "rqes": [{"capability": capability, "grouping_labels": grouping,
+                              "lookback_ms": lookback_ms, "interval_ms": interval_ms,
+                              **params}]}
+        return {
+            "id": "workload-01", "seed": 7, "samples_per_sec_per_series": 10,
+            "labels": [{"name": "job", "cardinality": 2},
+                       {"name": "label_0", "cardinality": 500, "child_of": "job"}],
+            "data_facts": {"series": {"ranking": {"exponent": 1.1}},
+                           "metrics": {"data": {"pareto_shape": 2.0}}},
+            "queries": [
+                query("q1", "sum", ["job", "label_0"], 600_000, 20_000, "common-promql"),
+                query("q2", "sum", ["job"], 600_000, 20_000, "common-promql"),
+                query("q3", "quantile", ["job"], 100_000, 1_000, "common-promql"),
+                query("q4", "topk_by_value", ["job"], 60_000, 1_000, "common-promql", k=4),
+                query("q5", "cardinality", ["job"], 60_000, 1_000, "sql-only"),
+            ],
+        }
+
+    def test_rqes_share_streams_by_capability_and_name_their_grouping(self):
+        workload = random_manifest_table(self.manifest(), "test", {})["workloads"][0]
+        rqes = {r["query_id"]: r for r in workload["rqes"]}
+
+        self.assertEqual(set(rqes), {"q1", "q2", "q3", "topk4_q4"})  # no sql-only
+        # Both sums on one stream, each at its own grouping: a fine one can
+        # serve the coarse one.
+        self.assertEqual(rqes["q1"]["stream"], rqes["q2"]["stream"])
+        self.assertEqual(rqes["q2"]["grouping"], ["job"])
+        self.assertEqual(rqes["q2"]["min_N"], 1_000 * 10 * 600 / 2)
+        # A quantile is avg of per-series quantiles: per series, 1,000 samples.
+        self.assertEqual(rqes["q3"]["grouping"], ["job", "label_0"])
+        self.assertEqual(rqes["q3"]["label_set"]["groups"], 1_000)
+        self.assertEqual(rqes["q3"]["min_N"], 1_000)
+        # 500 keys per heap fall below the top-k curves: read at 1,000, noted.
+        topk = rqes["topk4_q4"]
+        self.assertEqual(topk["label_set"]["keys_per_window"], 1_000)
+        self.assertEqual(len(topk["assumptions"]), 1)
+        self.assertEqual(workload["schemas"]["data"]["labels"], self.manifest()["labels"])
+        self.assertEqual(
+            [(q["promql"], q["interval_secs"]) for q in workload["e2e"]["queries"]],
+            [("promql q1", 20), ("promql q2", 20), ("promql q3", 1), ("promql q4", 1)])
+        self.assertEqual([q["rqes"] for q in workload["e2e"]["queries"]],
+                         [[r["id"]] for r in workload["rqes"]])
 
 
 if __name__ == "__main__":
