@@ -402,7 +402,13 @@ fn from_table(
         // sample per series. Record metrics (http, flows) keep SCRAPE_MS.
         let scrape_ms = workload["e2e"]["metrics"][metric]["samples_per_sec_per_series"]
             .as_u64()
-            .map_or(SCRAPE_MS, |per_sec| 1_000 / per_sec);
+            .map_or(SCRAPE_MS, |per_sec| {
+                assert!(
+                    per_sec > 0 && 1_000 % per_sec == 0,
+                    "{metric}: samples_per_sec_per_series {per_sec} must divide 1000"
+                );
+                1_000 / per_sec
+            });
         let groups = groups_of(r, capability);
         // A schema metric's RQE names its grouping (its `groups` are that
         // grouping's); otherwise the stream has one label `g`, the grouping.

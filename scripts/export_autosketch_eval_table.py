@@ -835,6 +835,11 @@ def main(argv=None):
                              "with it, and schema RQEs below the curves' first N are left out")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
+    # in whole ms.
+    rate = args.samples_per_sec
+    if rate is not None and (rate <= 0 or 1000 % rate):
+        parser.error("--samples-per-sec must divide 1000")
     if args.samples_per_sec is not None:
         default = SYNTHETIC_SAMPLES_PER_SEC
         set_samples_per_sec(args.samples_per_sec, True)

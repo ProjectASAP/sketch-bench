@@ -458,6 +458,12 @@ class SchemaTemplatesTest(unittest.TestCase):
         # The default rate is restored for the rest of the process.
         self.assertEqual(SCHEMAS["http"]["rate"], 2_000_000)
 
+    def test_samples_per_sec_must_divide_1000(self):
+        # An instant RQE's one-scrape lookback, 1000 / rate ms, must be whole.
+        for rate in ["3", "0", "2000"]:
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                main(["--synthetic", "--samples-per-sec", rate, "--out", "unused"])
+
 
 class SyntheticPlanTest(unittest.TestCase):
     def test_plan_is_the_default_and_each_dimension_alone(self):
