@@ -18,8 +18,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from study_saturation import (  # noqa: E402
-    HYDRA_COLUMNS, checkpoints, covered_max, hydra_groupings, hydra_labels, hydra_spec,
-    n_saturation, n_star, read_curve, read_per_group)
+    HYDRA_COLUMNS, HYDRA_DATAGEN, HYDRA_SWEEPS, check_filters, checkpoints, covered_max,
+    filtered_configs, hydra_groupings,
+    hydra_jobs, hydra_labels, hydra_spec, n_saturation, n_star, read_curve, read_per_group)
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_saturation.py")
 
@@ -822,6 +823,39 @@ class HydraPhaseTest(unittest.TestCase):
         # Those 2 rerun, and the 2 failures again.
         self.assertEqual(len(calls), 4)
         self.assertEqual(len(rows), 10)
+
+
+class HydraWidthTest(unittest.TestCase):
+    def test_univmon_stops_at_16384_and_the_others_reach_65536(self):
+        specs = {}
+        for stem, _, _ in HYDRA_SWEEPS["eval"][0]:
+            with open(os.path.join(HYDRA_DATAGEN, f"{stem}.yaml")) as f:
+                specs[stem] = f.read()
+        widths = {}
+        for job in hydra_jobs(["eval"], specs):
+            widths.setdefault(job[2], set()).add(job[4])
+        self.assertEqual(max(widths["hydra-univmon-cardinality"]), 16384)
+        self.assertEqual(max(widths["hydra-hll"]), 65536)
+        self.assertEqual(max(widths["hydra-kll"]), 65536)
+
+
+class FilterTest(unittest.TestCase):
+    def args(self, sketches=None, configs=None):
+        return type("Args", (), {"sketches": sketches, "configs": configs})()
+
+    def test_sketches_and_configs_narrow_a_study_to_new_configs(self):
+        a = self.args("kll-percall", "k=25,k=100")
+        self.assertEqual(filtered_configs(a, "kll-percall", ["k=25", "k=50", "k=100"]),
+                         ["k=25", "k=100"])
+        self.assertIsNone(filtered_configs(a, "dd", ["alpha=0.1"]))
+        self.assertEqual(filtered_configs(self.args(), "dd", ["alpha=0.1"]), ["alpha=0.1"])
+
+    def test_a_misspelled_sketch_or_config_exits(self):
+        check_filters(self.args("kll-percall,hydra-hll", "k=25,alpha=0.1"))
+        with self.assertRaises(SystemExit):
+            check_filters(self.args("kll"))
+        with self.assertRaises(SystemExit):
+            check_filters(self.args(None, "k=26"))
 
 
 if __name__ == "__main__":
