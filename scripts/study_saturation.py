@@ -840,7 +840,8 @@ def main():
     parser.add_argument("--one-config", action="store_true",
                         help="only the first config of each sketch")
     parser.add_argument("--sketches",
-                        help="only these variants of --families (e.g. kll-percall)")
+                        help="only these variants of --families (e.g. kll-percall); Hydra "
+                             "cost rows are narrowed by --hydra-variants/--hydra-ws instead")
     parser.add_argument("--configs",
                         help="only these configs of them (e.g. k=25,k=100), to add new "
                              "configs to an existing study")

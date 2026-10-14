@@ -84,10 +84,12 @@ plus its measured benchmark, approxbench accuracy runs at 1e8 items):
 | mixed + multi-grouping, m = 16 | 1664 | 16.1 s | 17.1 s | 0.064 s + 6,335 s |
 
 The denser grid gives ASAP and PerQuery more candidates (6 KLL and 5 DDSketch
-configs instead of 3 and 4), so their MILPs are larger than before
-(mixed + multi-grouping: 0.94 → 2.1 s). AutoSketch reaches a feasible config
-sooner (15 probes instead of 19 on mixed + multi-grouping), so its measured
-benchmark is shorter (481 → 396 s).
+configs instead of 3 and 4), so their MILPs are larger than before (mixed +
+multi-grouping: 0.94 → 2.1 s). The reruns also spread over 4 nodes and ran
+beside each other's shares, so planning times are not comparable across reruns
+to better than about 2×; within one rerun they are. AutoSketch reaches a
+feasible config sooner (15 probes instead of 19 on mixed + multi-grouping), so
+its measured benchmark is shorter (481 → 396 s).
 
 **What the denser grid changed** (95%, cheapest plans): CPU cost falls 0–1.4%
 (mixed 2.38 → 2.35 vCPU, mixed + multi-grouping 2.60 → 2.57), since insert
@@ -135,8 +137,9 @@ than the grid at the W that needs.
 W = 65536 (#213) widens what Hydra is accurate for: on groups holding ≥ 1% of
 the records, the worst error at 1e7 records drops from 0.283 to 0.039
 (hydra-hll, `http`), 0.074 to 0.021 (hydra-hll, `flows`) and 0.054 to 0.017
-(hydra-kll, unmerged; 0.056 to 0.017 over every merge count). But it is the most expensive grid on every axis (3.3 GB per
-hydra-hll grid, 6.2 µs per insert on `http`), and it is never chosen either.
+(hydra-kll, unmerged; 0.056 to 0.017 over every merge count). But it is the
+most expensive grid on every axis (3.3 GB per hydra-hll grid, 6.2 µs per
+insert on `http`), and it is never chosen either.
 
 hydra-univmon-cardinality reads ≈ 100% error at N ≥ 1e6 at every W
 (8 layers × a small heap saturate at ~1e6 distinct values per cell), so it is
@@ -184,15 +187,16 @@ zcat plans/synthetic-templatesmultigroup-shared1.plans.json.gz | jq '.plans[]
 
 ## Inputs
 
-- `inputs/saturation/optimizer_cost/rqe_atomic_costs.json`: the cost table,
-  63 rows (56, plus #213's KLL `k` 25/100/400, DDSketch α 0.1 and Hydra
-  W = 65536 rows), measured serially on idle clnode138 (`study_saturation.py --phase
+- `inputs/saturation/optimizer_cost/rqe_atomic_costs.json`: the cost table, 63
+  rows (56, plus #213's KLL `k` 25/100/400, DDSketch α 0.1 and Hydra W = 65536
+  rows), measured serially on idle clnode138 (`study_saturation.py --phase
   optimizer-cost --seeds 3 --hydra-variants hydra-hll,hydra-kll`), including
   Hydra rows per dataset (`measured_at.dataset`) and #192's KLL footprint.
 - `inputs/saturation/hydra_saturation.csv`: the Hydra study (`--phase hydra`,
-  #202), 7,778 runs on 4 CloudLab nodes (#213 added 999 at W = 65536); hydra-kll on `hydra_http_latency`
-  rerun with per-service latency scales (×1–10 log-uniform), so groups differ
-  in distribution as they do in practice.
+  #202), 7,778 runs on 4 CloudLab nodes (#213 added 999 at W = 65536);
+  hydra-kll on `hydra_http_latency` rerun with per-service latency scales
+  (×1–10 log-uniform), so groups differ in distribution as they do in
+  practice.
 - The accuracy curves (`out_grid_1e7_cost/`, `out_1e9/`) are the committed
   #138 study's, in `../autosketch-vs-asap-inputs/saturation/` (#194), with
   #213's new KLL and DDSketch configs appended.
@@ -218,10 +222,10 @@ python3 scripts/plot_autosketch_vs_asap_sla.py $DIR $DIR/synthetic-*-tp95.json
 ```
 
 Runs: Xeon E5-2683 v3, 56 cores, `--runs 3`. First run (superseded by the
-reruns below): runner from sketch-bench `hydra/eval-integration` at 44ac160. Classic: one large table per CloudLab node
-(clnode178, 167; the small ones serially on clnode138), 2026-10-10.
-Multigroup and all (with the cube template): serially on one idle node,
-2026-10-11.
+reruns below): runner from sketch-bench `hydra/eval-integration` at 44ac160.
+Classic: one large table per CloudLab node (clnode178, 167; the small ones
+serially on clnode138), 2026-10-10. Multigroup and all (with the cube
+template): serially on one idle node, 2026-10-11.
 
 Rerun without templates 7 and 9 (2026-10-13), runner at sketch-bench
 eval/drop-group-rate-templates: all serially on idle clnode109; classic
