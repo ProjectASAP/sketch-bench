@@ -130,7 +130,7 @@ class ExportTest(unittest.TestCase):
                          ("exact-sum", 0.0, None))
         self.assertNotIn("configs", family)
         self.assertEqual(rqes["sum_by_job/1s"]["label_set"]["groups"], 10)
-        top = rqes["topk32_sum_by_label0_rate/15m"]["families"][0]
+        top = rqes["topk32_sum_by_label0_sum_over_time/15m"]["families"][0]
         self.assertEqual((top["grid_param"], top["grid_K"]), (COST_THETA, COST_KEYS))
         kll, dd = rqes["quantile_over_time_p0.5/15m"]["families"]
         self.assertEqual((kll["sketch"], kll["grid_param"], kll["grid_K"]),
@@ -168,24 +168,26 @@ class BoomTest(unittest.TestCase):
 
 
 class SyntheticQueriesTest(unittest.TestCase):
-    def test_ten_templates_give_50_distinct_rqes(self):
+    def test_classic_templates_give_42_distinct_rqes(self):
         qs = synthetic_queries(templates="classic")
-        # 1 + 5 spatial; per window 1 + 1 + 5 + 1 + 1 + 1 + 1 temporal, and
-        # template 10's operands repeat template 5's.
-        self.assertEqual(len(qs), 6 + 11 * 4)
+        # 1 + 5 spatial; per window 1 + 1 + 5 + 1 + 1 temporal (templates 2,
+        # 4, 5, 6, 8), and template 10's operands repeat template 5's.
+        # Templates 7 and 9 (rates by job, top-k by rate) are dropped.
+        self.assertEqual(len(qs), 6 + 9 * 4)
         streams = {(q["stream"], q["capability"], q["groups"]) for q in qs}
         self.assertEqual(streams, {
-            ("job/value", "sum", 10), ("job/increment", "rate", 10),
-            ("job/dist", "quantile", 10), ("series/value", "sum", 10_000),
-            ("series/increment", "rate", 10_000), ("series/dist", "quantile", 10_000),
-            ("label_0/value", "topk", 1), ("label_0/increment", "topk", 1)})
+            ("job/value", "sum", 10), ("job/dist", "quantile", 10),
+            ("series/value", "sum", 10_000), ("series/increment", "rate", 10_000),
+            ("series/dist", "quantile", 10_000), ("label_0/value", "topk", 1)})
+        self.assertFalse({"sum_by_job_rate", "topk32_sum_by_label0_rate"}
+                         & {q["query_id"] for q in qs})
 
     def test_items_per_instance_follow_the_data_model(self):
         qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="classic")}
         # 1e4 series x 200 samples/s = 2e6 samples/s.
         self.assertEqual(qs[("quantile_by_job_p0.5", "1s")]["max_N"], 2e5)
         self.assertEqual(qs[("quantile_over_time_p0.5", "15m")]["max_N"], 200 * 900)
-        top = qs[("topk32_sum_by_label0_rate", "24h")]
+        top = qs[("topk32_sum_by_label0_sum_over_time", "24h")]
         self.assertEqual((top["K"], top["groups"], top["max_N"]), (10_000, 1, 2e6 * 86400))
 
     def test_every_template_issues_one_query_per_instance(self):
@@ -199,14 +201,20 @@ class SyntheticQueriesTest(unittest.TestCase):
         ids = {synthetic_entry(q)["id"] for q in qs}
         read = {rqe for query in e2e for rqe in query["rqes"]}
         self.assertEqual(read, ids)
-        # 6 spatial + 12 per window: template 5's five quantiles, 6 others
+        # 6 spatial + 10 per window: template 5's five quantiles, 4 others
         # and template 10's ratio, which reads two RQEs.
-        self.assertEqual(len(e2e), 6 + 12 * 4)
+        self.assertEqual(len(e2e), 6 + 10 * 4)
+        self.assertFalse([q for q in e2e if "sum by (job) (rate(" in q["promql"]
+                          or "(rate(" in q["promql"] and "topk" in q["promql"]])
         by_text = {query["promql"]: query for query in e2e}
         ratio = by_text["quantile_over_time(0.9, data[1h]) / quantile_over_time(0.5, data[1h])"]
         self.assertEqual([r.split("/")[-3] for r in ratio["rqes"]],
                          ["quantile_over_time_p0.9", "quantile_over_time_p0.5"])
         self.assertEqual(by_text["rate(data_total[15m])"]["interval_secs"], 60)
+        # Template 2 ranks series: label_0 names one, so no `sum by (label_0)`.
+        top = by_text["topk(32, sum_over_time(data[15m]))"]
+        self.assertEqual([r.split("/")[-3] for r in top["rqes"]],
+                         ["topk32_sum_by_label0_sum_over_time"])
         self.assertEqual(by_text["sum by (job) (data)"]["interval_secs"], 1)
 
     def test_schema_queries_read_every_rqe_with_their_fields(self):
@@ -268,11 +276,16 @@ COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
                                 "tables")
 
 
+# Classic templates 7 and 9, dropped since the committed tables.
+DROPPED = ("sum_by_job_rate", "topk32_sum_by_label0_rate")
+
+
 class SchemaTemplatesTest(unittest.TestCase):
     def test_classic_tables_are_main_s_all_tables_byte_for_byte(self):
         # The committed tables are the 10-template set's, from before "all"
-        # grew: renamed, today's "classic" tables match them byte for byte,
-        # apart from the `e2e` block, which the runner does not read.
+        # grew: renamed, today's "classic" tables match them byte for byte
+        # without templates 7 and 9's RQEs, apart from the `e2e` block, which
+        # the runner does not read.
         with tempfile.TemporaryDirectory() as out:
             main(["--synthetic", "--revision", "test", "--out", out])
             classic = [n for n in sorted(os.listdir(out)) if "templatesclassic" in n]
@@ -283,6 +296,8 @@ class SchemaTemplatesTest(unittest.TestCase):
                 with open(os.path.join(COMMITTED_TABLES,
                                        name.replace("templatesclassic", "templatesall"))) as f:
                     committed = json.load(f)
+                rqes = committed["workloads"][0]["rqes"]
+                rqes[:] = [r for r in rqes if not r["query_id"].startswith(DROPPED)]
                 del ours["sketch_bench_revision"], committed["sketch_bench_revision"]
                 del ours["workloads"][0]["e2e"]
                 self.assertEqual(json.dumps(ours, sort_keys=True),
@@ -431,15 +446,15 @@ class SyntheticPlanTest(unittest.TestCase):
 
 
 class DashboardAndSharedTest(unittest.TestCase):
-    def test_dashboard_has_21_distinct_rqes(self):
+    def test_dashboard_has_15_distinct_rqes(self):
         qs = synthetic_queries(templates="dashboard")
         count = {}
         for q in qs:
             name = q["query_id"].split("_p")[0]
             count[name] = count.get(name, 0) + 1
-        # D1 3 q x 4 windows, D2 3, D3 4, D4 2; D5 repeats D1.
-        self.assertEqual(count, {"quantile_over_time": 12, "quantile_by_job": 3,
-                                 "sum_by_job_rate": 4, "topk32_sum_by_label0_rate": 2})
+        # D1 3 q x 4 windows, D2 3; D5 repeats D1. D3 and D4 (rates by job,
+        # top-k by rate) are dropped with classic templates 7 and 9.
+        self.assertEqual(count, {"quantile_over_time": 12, "quantile_by_job": 3})
         self.assertTrue(all(q["step_s"] == 60 for q in qs if q["range"] != "1s"))
 
     def test_shared_replicas_read_one_stream_and_dedupe(self):
@@ -456,7 +471,7 @@ class DashboardAndSharedTest(unittest.TestCase):
     def test_metric_copies_share_nothing_and_grow_linearly(self):
         point = {**SYNTHETIC_DEFAULT, "templates": "classic", "metrics": 8}
         qs = metric_queries(point)
-        self.assertEqual(len(qs), 8 * 50)
+        self.assertEqual(len(qs), 8 * 42)
         self.assertEqual(len({(q["query_id"], q["range"]) for q in qs}), len(qs))
         streams = {q["stream"].split("/")[0] for q in qs}
         self.assertEqual(streams, {f"data_{i}" for i in range(8)})

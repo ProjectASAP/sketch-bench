@@ -223,20 +223,21 @@ EXACT_SKETCH = {"exact-sum": "exact-sum", "exact-increase": "exact-increase"}
 WINDOW_SECS = {"1m": 60, "5m": 300, "10m": 600, "15m": 900, "1h": 3600, "6h": 21600,
                "24h": 86400}
 DASHBOARD_QUANTILES = ["0.5", "0.9", "0.99"]
-DASHBOARD_FIXED_WINDOWS = ["15m", "1h"]  # D4 and D5
+DASHBOARD_FIXED_WINDOWS = ["15m", "1h"]  # D5
 # Shared replicas: each replica draws windows, quantiles and an interval.
 SHARED_WINDOWS = 3
 SHARED_QUANTILES = 3
 SHARED_INTERVALS = [10, 60, 300]
 SHARED_SEED = 7
-# "classic" is the 10-template mixed set; "all" adds the multi-grouping
+# "classic" is the mixed set (templates 1-6, 8 and 10; 7 and 9 are dropped,
+# see synthetic_queries()); "all" adds the multi-grouping
 # templates below; "multigroup" is the multi-grouping templates alone.
 TEMPLATE_SETS = ["dashboard", "classic", "all", "multigroup"]
 # Workload grid (#777 section 6): for each of SYNTHETIC_TEMPLATE_SETS, the
 # default point, then each scaling dimension alone. One accuracy level, 95% in each family's metric
 # (the runner's p95). `shared` replicas read one metric (the sharing benefit);
 # `metrics` copies of the template set each read their own metric, so RQEs
-# grow as 50 · m (planning time vs. RQEs).
+# grow as m times the set's (planning time vs. RQEs).
 SYNTHETIC_DEFAULT = {"templates": "all", "shared": 1, "metrics": 1, "target": "p95"}
 SYNTHETIC_GRID = {
     "shared": [1, 8],
@@ -418,7 +419,10 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     increases. Spatial templates repeat every 1 s and read the last second
     (S = T = 1 s); temporal ones repeat every `interval` seconds over each
     lookback in `windows`. RQEs that repeat another's query and range (template
-    10, D5) are kept once. With `metric`, every stream and query id names it,
+    10, D5) are kept once. Templates 7, `sum by (job) (rate(data_total[w]))`,
+    and 9, `topk(32, sum by (label_0) (rate(data_total[w])))`, are dropped
+    (and the dashboard's rates by job and top-k by rate with them): ASAPQuery
+    would need per-series counter deltas to serve them. With `metric`, every stream and query id names it,
     so the queries share nothing with another metric's. `all` adds
     schema_queries() to the `classic` set.
 
@@ -469,14 +473,11 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
             for q in quantiles:
                 add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
                     interval, C)
-            add("sum_by_job_rate", "job/increment", "rate", label(rng), s, interval, J)
         for q in quantiles:
             add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", 1, 1, J)
         for rng, s in [(w, WINDOW_SECS[w]) for w in DASHBOARD_FIXED_WINDOWS]:
             if (rng, s) not in ranges:
                 continue
-            add("topk32_sum_by_label0_rate", "label_0/increment", "topk", label(rng), s,
-                interval, 1, C)
             for q in ["0.99", "0.5"]:  # D5, the same RQEs as D1's
                 add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
                     interval, C)
@@ -491,8 +492,12 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
             promql=f"quantile by (job) ({q}, {gauge})")
     for rng, s in ranges:
         lbl = label(rng)
+        # Template 2's PromQL omits `sum by (label_0)`: label_0 names one
+        # series (child_of job, unique values), so it only drops `job`, and
+        # the ranking and values are the same. ASAPQuery's planner supports
+        # this two-level shape, not the three-level one (#744, #772).
         add("topk32_sum_by_label0_sum_over_time", "label_0/value", "topk", lbl, s, interval,
-            1, C, promql=f"topk(32, sum by (label_0) (sum_over_time({gauge}[{rng}])))")
+            1, C, promql=f"topk(32, sum_over_time({gauge}[{rng}]))")
         add("sum_over_time", "series/value", "sum", lbl, s, interval, C,
             promql=f"sum_over_time({gauge}[{rng}])")
         for q in quantiles:
@@ -500,12 +505,8 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                 promql=f"quantile_over_time({q}, {gauge}[{rng}])")
         add("rate", "series/increment", "rate", lbl, s, interval, C,
             promql=f"rate({counter}[{rng}])")
-        add("sum_by_job_rate", "job/increment", "rate", lbl, s, interval, J,
-            promql=f"sum by (job) (rate({counter}[{rng}]))")
         add("sum_by_job_sum_over_time", "job/value", "sum", lbl, s, interval, J,
             promql=f"sum by (job) (sum_over_time({gauge}[{rng}]))")
-        add("topk32_sum_by_label0_rate", "label_0/increment", "topk", lbl, s, interval, 1, C,
-            promql=f"topk(32, sum by (label_0) (rate({counter}[{rng}])))")
         # Template 10, the same RQEs as template 5's: one query reads both.
         rqes = [add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
                 for q in ["0.9", "0.5"]]
