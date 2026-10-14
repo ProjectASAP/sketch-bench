@@ -287,7 +287,8 @@ class SchemaTemplatesTest(unittest.TestCase):
         # The committed tables are the 10-template set's, from before "all"
         # grew: renamed, today's "classic" tables match them byte for byte
         # without templates 7 and 9's RQEs and with instant RQEs reading one
-        # scrape, apart from the `e2e` block, which the runner does not read.
+        # scrape, apart from the `e2e` block. Of that block the runner reads
+        # only each RQE metric's samples_per_sec_per_series, its scrape rate.
         with tempfile.TemporaryDirectory() as out:
             main(["--synthetic", "--revision", "test", "--out", out])
             classic = [n for n in sorted(os.listdir(out)) if "templatesclassic" in n]
@@ -304,7 +305,10 @@ class SchemaTemplatesTest(unittest.TestCase):
                     if r["range"] == "1s":
                         r.update(lookback_secs=0.005, min_N=1e3, max_N=1e3)
                 del ours["sketch_bench_revision"], committed["sketch_bench_revision"]
-                del ours["workloads"][0]["e2e"]
+                workload = ours["workloads"][0]
+                metrics = workload.pop("e2e")["metrics"]
+                for metric in {r["metric"] for r in workload["rqes"]}:
+                    self.assertEqual(metrics[metric]["samples_per_sec_per_series"], 200, name)
                 self.assertEqual(json.dumps(ours, sort_keys=True),
                                  json.dumps(committed, sort_keys=True), name)
 

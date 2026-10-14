@@ -693,9 +693,10 @@ def synthetic_entry(q):
 
 
 def e2e_block(qs, queries):
-    """What an end-to-end run of a table needs and the runner does not read:
-    the `queries` (one entry per distinct query and interval, with the RQEs
-    it reads; a binary query reads two) and the `metrics` to generate.
+    """What an end-to-end run of a table needs: the `queries` (one entry per
+    distinct query and interval, with the RQEs it reads; a binary query reads
+    two) and the `metrics` to generate. The runner reads only a metric's
+    `samples_per_sec_per_series`, as its scrape rate.
     Classic queries are PromQL; each classic metric is a gauge (`value` and
     `dist` streams) and a counter `<metric>_total` (`increment` streams), with
     labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /

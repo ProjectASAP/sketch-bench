@@ -513,11 +513,20 @@ fn from_table(
                     .or_insert(shape);
             }
         }
+        let lookback_ms = (r["lookback_secs"].as_f64().unwrap() * 1000.0).round() as Millis;
+        let interval_ms = (r["interval_secs"].as_f64().unwrap() * 1000.0).round() as Millis;
+        // Otherwise no candidate window fits, and the RQE would be dropped as
+        // unservable rather than reported as a table error.
+        assert!(
+            lookback_ms.is_multiple_of(scrape_ms) && interval_ms.is_multiple_of(scrape_ms),
+            "{id}: lookback {lookback_ms} ms and interval {interval_ms} ms must be \
+             multiples of {stream}'s {scrape_ms} ms scrape"
+        );
         raqes.push(Raqe {
             id: id.clone(),
             capability,
-            lookback_ms: (r["lookback_secs"].as_f64().unwrap() * 1000.0) as Millis,
-            interval_ms: (r["interval_secs"].as_f64().unwrap() * 1000.0) as Millis,
+            lookback_ms,
+            interval_ms,
             metric: stream,
             spatial_filter: String::new(),
             grouping_labels: grouping,
