@@ -33,8 +33,8 @@ Each workload is one file, `synthetic-templates<set>-shared<r>[-metrics<m>]-tp95
 | Name part | Meaning |
 |---|---|
 | `templatesclassic` | the mixed set: 8 PromQL templates on one metric (42 RQEs); templates 7 and 9 (`sum by (job) (rate(...))`, `topk(32, sum by (label_0) (rate(...)))`) are dropped, as ASAPQuery would need per-series counter deltas to serve them |
-| `templatesmultigroup` | the multi-grouping templates alone: distinct counts and p99s over several groupings of `http` and `flows`, including p99 `GROUP BY CUBE(region, service, endpoint)` (62 RQEs) |
-| `templatesall` | classic + multi-grouping (104 RQEs) |
+| `templatesmultigroup` | the multi-grouping templates alone: distinct counts and p99s over several groupings of `http` and `flows`, including p99 `GROUP BY CUBE(region, service, endpoint)` (62 RQEs, exported with `--keep-duplicate-queries`; 52 without) |
+| `templatesall` | classic + multi-grouping (104 RQEs, exported with `--keep-duplicate-queries`; 94 without) |
 | `shared8` | 8 users query the same streams with their own windows, quantiles and repeat intervals |
 | `metrics8`, `metrics16` | 8 or 16 independent copies of the workload, each on its own metric |
 | `tp95` | every RQE must meet 95% accuracy in its sketch's own metric |

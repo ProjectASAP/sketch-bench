@@ -872,10 +872,13 @@ def main(argv=None):
     parser.add_argument("--samples-per-sec", type=int,
                         help=f"--synthetic: samples/s per series (default "
                              f"{SYNTHETIC_SAMPLES_PER_SEC}); the schema metrics' rates scale "
-                             "with it, and schema RQEs below the curves' first N are left out")
+                             "with it, and schema RQEs below the curves' first N are left out; "
+                             "without --keep-duplicate-queries, the export fails instead if "
+                             "one is the strictest copy of a query several templates ask")
     parser.add_argument("--keep-duplicate-queries", action="store_true",
                         help="--synthetic: an RQE for every template asking a query, not "
-                             "just the strictest (the section 6.3 tables)")
+                             "just the strictest (the section 6.3 tables). Without it, a strictest "
+                             "copy below the curves' first N fails the export")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
