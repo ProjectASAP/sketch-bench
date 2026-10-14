@@ -146,7 +146,7 @@ Every table also has `workloads[0].e2e`, for running a plan end to end
 
 | Field | Meaning |
 |---|---|
-| `e2e.queries` | classic: one entry per PromQL query and repeat interval: `promql`, `interval_secs`, and the `rqes` it reads (template 10's ratio reads two). Multi-grouping (no PromQL): one entry per distinct query and interval: canonical ASAPQuery `sql` over `NOW()` (the planner floors and replaces it), plus `table`, `value`, `capability`, `grouping`, `quantile` (p99: 0.99), `window_secs`, `interval_secs`, and the `rqes` it reads (sorted; templates 14, 15 and 17 share some groupings) |
+| `e2e.queries` | classic: one entry per PromQL query and repeat interval: `promql`, `interval_secs`, and the `rqes` it reads (template 10's ratio reads two). Multi-grouping (no PromQL): one entry per distinct query and interval: canonical ASAPQuery `sql` over `NOW()` (the planner floors and replaces it), plus `table`, `value`, `capability`, `grouping`, `quantile` (p99: 0.99), `window_secs`, `interval_secs`, and the `rqes` it reads: only the strictest of templates 14, 15 and 17 where they share a grouping, or every one, sorted, with `--keep-duplicate-queries` |
 | `e2e.metrics` | the metrics to generate. Classic: gauge `data` (sums, quantiles, top-k by sum) and counter `data_total` (rates), with `labels` in the `schemas` format (`label_0` is `child_of: job`, 1,000 per job, so 1e4 series), samples/s per series, and each stream's value shape. Multi-grouping: `type: "records"` tables `http` and `flows` (`data_1_http` for metric `data_1/http` in `metrics=m` tables) with the schema's `labels`, `records_per_sec` and `values` (shape, `scaled_by`, `anomaly`, `burst`) |
 
 ### Accuracy and cost
