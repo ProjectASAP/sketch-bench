@@ -297,6 +297,10 @@ SCHEMA_MIN_COVERED_N = 1e3
 # Set by --samples-per-sec: a schema RQE whose smallest covered group falls
 # below SCHEMA_MIN_COVERED_N is left out (logged) instead of failing.
 SKIP_BELOW_CURVES = False
+# Set by --keep-duplicate-queries: every template's copy of a query is an
+# RQE. Otherwise only the strictest copy is, since the engine answers one
+# query string from one aggregation.
+KEEP_DUPLICATE_QUERIES = False
 
 
 def set_samples_per_sec(rate, skip_below_curves):
@@ -534,6 +538,28 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     return out
 
 
+def schema_query(name, value, capability, what, grouping):
+    """A schema template's query on `grouping`: the fields that make it
+    one query string."""
+    query = {"table": name, "value": value, "capability": capability, "grouping": grouping}
+    if capability == "quantile":  # p99_latency -> 0.99
+        query["quantile"] = int(what[1:what.index("_")]) / 100
+    return query
+
+
+def strictest_templates():
+    """{query: (number of templates asking it, the strictest one's number)}
+    over SCHEMA_TEMPLATES. Stricter covers more groups: every group (None),
+    then the smallest `covers_share`."""
+    copies = {}
+    for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
+        for grouping in groupings:
+            key = json.dumps(schema_query(name, value, capability, what, grouping),
+                             sort_keys=True)
+            copies.setdefault(key, []).append((covers is not None, covers or 0, n))
+    return {key: (len(c), min(c)[2]) for key, c in copies.items()}
+
+
 def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2e=None):
     """SCHEMA_TEMPLATES as synthetic_queries' query-ranges, over
     SCHEMA_WINDOWS, repeating every `interval` seconds. A metric's values are
@@ -545,13 +571,21 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
     ASAPQuery SQL (there is no PromQL): {sql, table, value,
     capability, grouping, quantile (quantiles only), window_secs,
     interval_secs, rqes}. `table` is the metric with `/` as `_`
-    (`data_1_http`)."""
+    (`data_1_http`).
+
+    A query several templates ask (14, 15 and 17 share groupings) is only
+    its strictest template's RQE, unless KEEP_DUPLICATE_QUERIES."""
     out = []
+    strictest = strictest_templates()
     for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
         schema = SCHEMAS[name]
         shape = schema["values"][value]
         full = f"{metric}/{name}" if metric else name
         for grouping in groupings:
+            copies, keep = strictest[json.dumps(
+                schema_query(name, value, capability, what, grouping), sort_keys=True)]
+            if not KEEP_DUPLICATE_QUERIES and keep != n:
+                continue
             groups = grouping_cardinality(name, grouping)
             query_id = f"t{n}_{what}_by_{','.join(grouping)}"
             if metric:
@@ -571,16 +605,21 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                 # can't serve the RQE, so a lower --samples-per-sec leaves it
                 # (and its e2e query) out.
                 if SKIP_BELOW_CURVES and covered_min_n < SCHEMA_MIN_COVERED_N:
+                    # A weaker template's copy might fit, but serving the
+                    # query at a weaker target would change the workload.
+                    if not KEEP_DUPLICATE_QUERIES and copies > 1:
+                        raise ValueError(
+                            f"{dataset}/{query_id}/{kind}/{rng}, the strictest of {copies} "
+                            f"templates asking its query, has a covered group of "
+                            f"{covered_min_n:.0f} items, below the curves' first N")
                     print(f"left out {dataset}/{query_id}/{kind}/{rng}: smallest covered "
                           f"group holds {covered_min_n:.0f} items, below the curves' first N",
                           file=sys.stderr)
                     continue
                 assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
                 if e2e is not None:
-                    query = {"table": full.replace("/", "_"), "value": value,
-                             "capability": capability, "grouping": grouping}
-                    if capability == "quantile":  # p99_latency -> 0.99
-                        query["quantile"] = int(what[1:what.index("_")]) / 100
+                    query = schema_query(full.replace("/", "_"), value, capability, what,
+                                         grouping)
                     query["sql"] = asapquery_sql(query, s)
                     e2e.append({**query, "window_secs": s, "interval_secs": interval,
                                 "rqes": [f"{dataset}/{query_id}/{kind}/{rng}"]})
@@ -833,7 +872,13 @@ def main(argv=None):
     parser.add_argument("--samples-per-sec", type=int,
                         help=f"--synthetic: samples/s per series (default "
                              f"{SYNTHETIC_SAMPLES_PER_SEC}); the schema metrics' rates scale "
-                             "with it, and schema RQEs below the curves' first N are left out")
+                             "with it, and schema RQEs below the curves' first N are left out; "
+                             "without --keep-duplicate-queries, the export fails instead if "
+                             "one is the strictest copy of a query several templates ask")
+    parser.add_argument("--keep-duplicate-queries", action="store_true",
+                        help="--synthetic: an RQE for every template asking a query, not "
+                             "just the strictest (the section 6.3 tables). Without it, a strictest "
+                             "copy below the curves' first N fails the export")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
@@ -841,14 +886,19 @@ def main(argv=None):
     rate = args.samples_per_sec
     if rate is not None and (rate <= 0 or 1000 % rate):
         parser.error("--samples-per-sec must divide 1000")
-    if args.samples_per_sec is not None:
-        default = SYNTHETIC_SAMPLES_PER_SEC
-        set_samples_per_sec(args.samples_per_sec, True)
-        try:
-            return run(args, parser)
-        finally:
-            set_samples_per_sec(default, False)
-    return run(args, parser)
+    global KEEP_DUPLICATE_QUERIES
+    KEEP_DUPLICATE_QUERIES = args.keep_duplicate_queries
+    try:
+        if args.samples_per_sec is not None:
+            default = SYNTHETIC_SAMPLES_PER_SEC
+            set_samples_per_sec(args.samples_per_sec, True)
+            try:
+                return run(args, parser)
+            finally:
+                set_samples_per_sec(default, False)
+        return run(args, parser)
+    finally:
+        KEEP_DUPLICATE_QUERIES = False
 
 
 def run(args, parser):

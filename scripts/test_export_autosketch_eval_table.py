@@ -245,6 +245,7 @@ class SyntheticQueriesTest(unittest.TestCase):
                          "SELECT dst_subnet, COUNT(DISTINCT src_ip) FROM flows WHERE ts "
                          "BETWEEN DATEADD(s, -300, NOW()) AND NOW() GROUP BY dst_subnet")
 
+    @mock.patch("export_autosketch_eval_table.KEEP_DUPLICATE_QUERIES", True)
     def test_schema_metrics_are_records_tables_named_by_metric(self):
         e2e = []
         qs = metric_queries({**SYNTHETIC_DEFAULT, "templates": "multigroup", "metrics": 2},
@@ -271,6 +272,38 @@ class SyntheticQueriesTest(unittest.TestCase):
         self.assertEqual([[r.split("/")[-3] for r in q["rqes"]] for q in by_service],
                          [["t14_distinct_users_by_service_data_0",
                            "t15_distinct_users_by_service_data_0"]])
+
+    def test_each_query_is_only_its_strictest_templates_rqe(self):
+        # One query string can be served by one aggregation, so a query
+        # templates 14, 15 and 17 share keeps the template covering the most
+        # groups: 17 (every group), then 14 (1%), then 15 (5%).
+        e2e = []
+        synthetic_queries(templates="multigroup", dataset="d", e2e=e2e)
+        block = e2e_block([], e2e)
+        self.assertTrue(all(len(q["rqes"]) == 1 for q in block["queries"]))
+        users = {(tuple(q["grouping"]), q["window_secs"]): q["rqes"][0].split("/")[1]
+                 for q in block["queries"] if q["value"] == "user_id"}
+        for window in [300, 900]:
+            self.assertTrue(users[(("service", "endpoint"), window)].startswith("t17_"))
+            for grouping in [("region",), ("service",), ("region", "service")]:
+                self.assertTrue(users[(grouping, window)].startswith("t14_"))
+            self.assertTrue(users[(("endpoint",), window)].startswith("t15_"))
+
+    def test_a_strictest_copy_below_the_curves_fails_loudly(self):
+        # Every group of the full label set: the smallest has ~350 items in 5m
+        # (left out) and ~1060 in 15m.
+        grouping = [all_subsets("http")[-1]]
+        every = (17, "distinct_users", "http", "user_id", "cardinality", grouping, None)
+        some = (15, "distinct_users", "http", "user_id", "cardinality", grouping, 0.05)
+        with mock.patch("export_autosketch_eval_table.SKIP_BELOW_CURVES", True), \
+                mock.patch("sys.stderr"):
+            with mock.patch("export_autosketch_eval_table.SCHEMA_TEMPLATES", [every]):
+                self.assertEqual([q["range"] for q in synthetic_queries(templates="multigroup")],
+                                 ["15m"])
+            # A weaker copy would fit, but would weaken the workload's target.
+            with mock.patch("export_autosketch_eval_table.SCHEMA_TEMPLATES", [some, every]):
+                with self.assertRaisesRegex(ValueError, "strictest of 2 templates"):
+                    synthetic_queries(templates="multigroup")
 
 
 COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
@@ -317,8 +350,12 @@ class SchemaTemplatesTest(unittest.TestCase):
         every = synthetic_queries(templates="all", dataset="d")
         self.assertEqual(every[:len(classic)], classic)
         new = every[len(classic):]
-        # Per window (5m, 15m): 1 + 3 + 4 + 15 + 7 + 1 groupings.
-        self.assertEqual(len(new), 2 * 31)
+        # Per window (5m, 15m): 1 + 3 + 4 + 15 + 7 + 1 groupings, of which 5
+        # repeat another template's query.
+        self.assertEqual(len(new), 2 * 26)
+        with mock.patch("export_autosketch_eval_table.KEEP_DUPLICATE_QUERIES", True):
+            self.assertEqual(len(synthetic_queries(templates="multigroup", dataset="d")),
+                             2 * 31)
         self.assertEqual({q["stream"] for q in new},
                          {"flows/src_ip", "http/user_id", "http/latency"})
         self.assertEqual({q["range"] for q in new}, {"5m", "15m"})
@@ -454,7 +491,8 @@ class SchemaTemplatesTest(unittest.TestCase):
                     for g in ["region,endpoint", "region,service,endpoint"]}
         ids = {r["id"].split("/", 3)[3] for r in workload["rqes"]}
         e2e_ids = {r.split("/", 3)[3] for q in workload["e2e"]["queries"] for r in q["rqes"]}
-        self.assertEqual(len(ids), 60)
+        # 62 RQEs, less 10 duplicate queries and the 2 left out.
+        self.assertEqual(len(ids), 50)
         self.assertFalse(left_out & (ids | e2e_ids))
         self.assertIn("t16_p99_latency_by_region,endpoint/values/15m", ids)
         self.assertEqual(workload["e2e"]["metrics"]["http"]["records_per_sec"], 100_000)
