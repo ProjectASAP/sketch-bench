@@ -177,6 +177,11 @@ ruled out by accuracy; cardinality's Hydra candidate is hydra-hll.
   (the per-(service, endpoint) queries), so the 100 and 300 ms SLAs have no
   plan.
 - `fig_planning_time.png`: planning time vs. RQEs (multi-grouping set).
+- `paper/`: the paper's §6.3 figures, from `scripts/plot_sec63_paper.py
+  rqe-optimizer/results/autosketch-vs-asap-hydra
+  rqe-optimizer/results/autosketch-vs-asap-hydra/paper`: `sec63_cost_bars`
+  (each method's cost at AutoSketch's latency, with each baseline's multiple
+  of ASAP's), `sec63_frontier` and `sec63_rollups`, as PDF and PNG.
 - `fig_rollup_ablation.png`: ASAP vs. ASAP without roll-ups, cheapest plan per
   workload (CPU only, log scale).
 
