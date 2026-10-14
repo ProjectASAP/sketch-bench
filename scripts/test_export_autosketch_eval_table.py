@@ -184,8 +184,10 @@ class SyntheticQueriesTest(unittest.TestCase):
 
     def test_items_per_instance_follow_the_data_model(self):
         qs = {(q["query_id"], q["range"]): q for q in synthetic_queries(templates="classic")}
-        # 1e4 series x 200 samples/s = 2e6 samples/s.
-        self.assertEqual(qs[("quantile_by_job_p0.5", "1s")]["max_N"], 2e5)
+        # 1e4 series x 200 samples/s = 2e6 samples/s; an instant query reads
+        # one scrape, one sample from each of a job's 1e3 series.
+        q = qs[("quantile_by_job_p0.5", "1s")]
+        self.assertEqual((q["range_s"], q["max_N"]), (0.005, 1e3))
         self.assertEqual(qs[("quantile_over_time_p0.5", "15m")]["max_N"], 200 * 900)
         top = qs[("topk32_sum_by_label0_sum_over_time", "24h")]
         self.assertEqual((top["K"], top["groups"], top["max_N"]), (10_000, 1, 2e6 * 86400))
@@ -284,8 +286,8 @@ class SchemaTemplatesTest(unittest.TestCase):
     def test_classic_tables_are_main_s_all_tables_byte_for_byte(self):
         # The committed tables are the 10-template set's, from before "all"
         # grew: renamed, today's "classic" tables match them byte for byte
-        # without templates 7 and 9's RQEs, apart from the `e2e` block, which
-        # the runner does not read.
+        # without templates 7 and 9's RQEs and with instant RQEs reading one
+        # scrape, apart from the `e2e` block, which the runner does not read.
         with tempfile.TemporaryDirectory() as out:
             main(["--synthetic", "--revision", "test", "--out", out])
             classic = [n for n in sorted(os.listdir(out)) if "templatesclassic" in n]
@@ -298,6 +300,9 @@ class SchemaTemplatesTest(unittest.TestCase):
                     committed = json.load(f)
                 rqes = committed["workloads"][0]["rqes"]
                 rqes[:] = [r for r in rqes if not r["query_id"].startswith(DROPPED)]
+                for r in rqes:  # instant RQEs now read one scrape (5 ms)
+                    if r["range"] == "1s":
+                        r.update(lookback_secs=0.005, min_N=1e3, max_N=1e3)
                 del ours["sketch_bench_revision"], committed["sketch_bench_revision"]
                 del ours["workloads"][0]["e2e"]
                 self.assertEqual(json.dumps(ours, sort_keys=True),
