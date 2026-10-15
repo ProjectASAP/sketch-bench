@@ -54,9 +54,11 @@ def cheapest(data, method, weights="cpu", max_latency_ms=None):
                key=lambda r: r["objective"])["objective"]
 
 
-def save(fig, out, name):
-    fig.savefig(os.path.join(out, f"{name}.pdf"))
-    fig.savefig(os.path.join(out, f"{name}.png"), dpi=150)
+def save(fig, out, name, tight=False):
+    """PDF and PNG; `tight` trims the page to the drawing (2 pt margin)."""
+    extra = {"bbox_inches": "tight", "pad_inches": 0.02} if tight else {}
+    fig.savefig(os.path.join(out, f"{name}.pdf"), **extra)
+    fig.savefig(os.path.join(out, f"{name}.png"), dpi=150, **extra)
     plt.close(fig)
 
 
@@ -65,6 +67,76 @@ def short(cost):
     if cost >= 1000:
         return f"{cost / 1000:.3g}k"
     return f"{cost:.3g}" if cost >= 1 else f"{cost:.2g}"
+
+
+# Darker shades than matplotlib's defaults, so white labels inside the bars
+# read clearly.
+WIDE_COLORS = {"autosketch": "#2e7d32", "perquery": "#d35400", "asap": "#1f5fa8"}
+
+
+def cost_bars_wide(results, out):
+    """The figure* version (7.1 in, drawn at print size). ASAP's cost sits
+    right on top of its bar; each baseline's multiple of it sits inside the
+    baseline's bar in white, or just above the bar when the bar is too short
+    to hold it. The page is trimmed to the drawing."""
+    sizes = {"font.size": 9.5, "axes.titlesize": 11, "axes.labelsize": 10.5,
+             "xtick.labelsize": 9.5, "ytick.labelsize": 9.5, "legend.fontsize": 10.5}
+    label_pt = 8.5
+    with plt.rc_context(sizes):
+        fig, axes = plt.subplots(1, len(WORKLOADS), figsize=(7.1, 3.0))
+        width, gap = 0.3, 1.15
+        labels_to_place = []
+        for ax, (templates, title) in zip(axes, WORKLOADS):
+            ticks = []
+            for i, (variant, name) in enumerate(VARIANTS):
+                data = load(results, f"{templates}-{variant}")
+                limit = data["frontier"]["autosketch_latency_ms"]
+                cost = {m: cheapest(data, m, max_latency_ms=limit) for m, _, _ in METHODS}
+                for k, (method, label, _) in enumerate(METHODS):
+                    x = i * gap + (k - 1) * width
+                    ax.bar(x, cost[method], width * 0.95, color=WIDE_COLORS[method],
+                           label=label if i == 0 else None)
+                    if method == "asap":
+                        # Vertical, so it stays within its bar's width.
+                        ax.text(x, cost[method] * 1.08, short(cost[method]), ha="center",
+                                va="bottom", rotation=90, fontsize=label_pt, weight="bold",
+                                color=WIDE_COLORS["asap"])
+                    else:
+                        ratio = cost[method] / cost["asap"]
+                        text = f"{ratio:.0f}×" if ratio >= 10 else f"{ratio:.1f}×"
+                        labels_to_place.append((ax, x, cost[method], text,
+                                                WIDE_COLORS[method]))
+                ticks.append(f"{name}\n{data['rqes']:,}")
+            ax.set_yscale("log")
+            ax.set_xticks([i * gap for i in range(len(VARIANTS))])
+            ax.set_xticklabels(ticks, fontsize=8.5, linespacing=1.0)
+            ax.set_xlim(-0.6, (len(VARIANTS) - 1) * gap + 0.6)
+            ax.set_ylim(top=ax.get_ylim()[1] * 4)
+            ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(numticks=4))
+            ax.grid(axis="y", alpha=0.3, lw=0.4)
+            ax.tick_params(axis="x", length=0)
+            ax.set_title(title)
+            ax.set_xlabel("workload scale (# RQEs)")
+        axes[0].set_ylabel("cost (vCPU)")
+        handles, names = axes[0].get_legend_handles_labels()
+        fig.legend(handles, names, loc="upper center", ncol=len(METHODS), frameon=False,
+                   handlelength=1.2, columnspacing=1.2, bbox_to_anchor=(0.5, 1.02))
+        fig.tight_layout(rect=(0, 0, 1, 0.9), w_pad=0.3)
+        # With the axes final: a label goes inside its bar, written
+        # vertically in white, if the bar is tall enough (in points) to hold
+        # it; else vertically just above the bar, in the bar's colour.
+        fig.canvas.draw()
+        for ax, x, top, text, color in labels_to_place:
+            bottom = ax.get_ylim()[0]
+            to_pt = ax.transData.transform
+            height_pt = (to_pt((x, top))[1] - to_pt((x, bottom))[1]) * 72 / fig.dpi
+            if height_pt > label_pt * 0.62 * len(text) + 6:
+                ax.text(x, top / 1.12, text, ha="center", va="top", rotation=90,
+                        fontsize=label_pt, weight="bold", color="white")
+            else:
+                ax.text(x, top * 1.08, text, ha="center", va="bottom", rotation=90,
+                        fontsize=label_pt, weight="bold", color=color)
+        save(fig, out, "sec63_cost_bars", tight=True)
 
 
 def cost_bars(results, out, layout):
@@ -199,7 +271,7 @@ def rollups(results, out):
 def main():
     results, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    cost_bars(results, out, "wide")
+    cost_bars_wide(results, out)
     cost_bars(results, out, "column")
     frontier(results, out)
     rollups(results, out)
