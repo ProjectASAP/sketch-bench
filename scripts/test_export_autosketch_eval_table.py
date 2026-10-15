@@ -637,7 +637,7 @@ class RandomManifestTest(unittest.TestCase):
         return {"id": qid, "support": support, "promql": promql, "sql": sql,
                 "rqes": [{"capability": capability, "grouping_labels": grouping,
                           "lookback_ms": lookback_ms, "interval_ms": interval_ms,
-                          "metric": metric, **params}]}
+                          "metric": metric, "accuracy_sla": 0.95, **params}]}
 
     def manifest(self):
         def query(qid, *args, **params):
@@ -761,6 +761,48 @@ class RandomManifestTest(unittest.TestCase):
     def test_by_labels_other_than_the_grouping_fail_loudly(self):
         with self.assertRaises(AssertionError):
             self.expr("sum", ["job"], promql="sum by (label_0) (sum_over_time(data[1m]))")
+
+
+    def table_with(self, **rqe):
+        """The table of the manifest's q1 with `rqe`'s fields changed."""
+        manifest = self.manifest()
+        manifest["queries"] = manifest["queries"][:1]
+        manifest["queries"][0]["rqes"][0].update(rqe)
+        return random_manifest_table(manifest, "test", {})["workloads"][0]["rqes"]
+
+    def test_a_child_only_grouping_counts_its_parents_groups(self):
+        # label_0 is a child of job: grouping by it alone keeps 2 x 500 groups.
+        [rqe] = self.table_with(grouping_labels=["label_0"])
+        self.assertEqual(rqe["label_set"]["groups"], 1_000)
+
+    def test_ranges_in_rqe_ids_are_exact(self):
+        [rqe] = self.table_with(lookback_ms=1_234_567, interval_ms=1_000)
+        self.assertEqual(rqe["range"], "1234567ms")
+
+    def test_other_capabilities_are_left_out(self):
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"][0]["capability"] = "rate"
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q1", {r["query_id"] for r in workload["rqes"]})
+
+    def test_unexported_inputs_are_refused(self):
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = "quantile by (job) (0.9, data)"
+        with self.assertRaisesRegex(ValueError, "per-series"):
+            random_manifest_table(manifest, "test", {})
+        with self.assertRaisesRegex(ValueError, "accuracy_sla"):
+            self.table_with(accuracy_sla=0.99)
+        for rate in (3, 10.0):
+            manifest = self.manifest()
+            manifest["samples_per_sec_per_series"] = rate
+            with self.assertRaisesRegex(ValueError, "dividing 1000"):
+                random_manifest_table(manifest, "test", {})
+
+    def test_cli_refuses_flags_the_manifest_overrides(self):
+        for flags in (["--synthetic"], ["--samples-per-sec", "10"]):
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                main(["--random-manifest", "m.json", "--out", "t.json", *flags])
 
 
 if __name__ == "__main__":
