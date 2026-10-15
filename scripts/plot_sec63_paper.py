@@ -5,7 +5,9 @@ Writes into OUT (PDF and PNG each):
   sec63_cost_bars     each method's cost at AutoSketch-Adapted's batch latency
                       (CPU only, log scale), per workload (panels) at base,
                       8 users and 16 metrics; a baseline's bar also names how
-                      many times ASAP's cost it is
+                      many times ASAP's cost it is. Drawn at a figure*'s
+                      7 in; sec63_cost_bars_column stacks the panels at one
+                      column's 3.4 in
   sec63_frontier      cost vs. batch latency (ASAP and PerQuery swept over
                       latency bounds; AutoSketch one point), CPU and Fargate
   sec63_rollups       the roll-up ablation: ASAP's cheapest plan with and
@@ -58,35 +60,57 @@ def save(fig, out, name):
     plt.close(fig)
 
 
-def cost_bars(results, out):
-    fig, axes = plt.subplots(1, len(WORKLOADS), figsize=(7, 2.4))
-    width = 0.27
-    for ax, (templates, title) in zip(axes, WORKLOADS):
-        labels = []
-        for i, (variant, name) in enumerate(VARIANTS):
-            data = load(results, f"{templates}-{variant}")
-            limit = data["frontier"]["autosketch_latency_ms"]
-            cost = {m: cheapest(data, m, max_latency_ms=limit) for m, _, _ in METHODS}
-            for k, (method, label, color) in enumerate(METHODS):
-                x = i + (k - 1) * width
-                ax.bar(x, cost[method], width, color=color, label=label if i == 0 else None)
-                text = f"{cost[method]:,.0f}" if cost[method] >= 100 else f"{cost[method]:.2g}"
-                if method != "asap":
-                    ratio = cost[method] / cost["asap"]
-                    text += f"\n{ratio:,.0f}×" if ratio >= 10 else f"\n{ratio:.1f}×"
-                ax.text(x, cost[method] * 1.15, text, ha="center", va="bottom", fontsize=5.5)
-            labels.append(f"{name}\n({data['rqes']} RQEs)")
-        ax.set_yscale("log")
-        ax.set_xticks(range(len(VARIANTS)))
-        ax.set_xticklabels(labels, fontsize=6.5)
-        ax.set_title(title, fontsize=8)
-        ax.set_ylim(top=ax.get_ylim()[1] * 30)
-        ax.grid(axis="y", alpha=0.3, lw=0.3)
-    axes[0].set_ylabel("cost (vCPU, log)")
-    handles, names = axes[0].get_legend_handles_labels()
-    fig.legend(handles, names, loc="upper center", ncol=len(METHODS), fontsize=7, frameon=False)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    save(fig, out, "sec63_cost_bars")
+def short(cost):
+    """2.7k, 161, 4.5, 0.32: three significant figures at most."""
+    if cost >= 1000:
+        return f"{cost / 1000:.3g}k"
+    return f"{cost:.3g}" if cost >= 1 else f"{cost:.2g}"
+
+
+def cost_bars(results, out, layout):
+    """`wide`: three panels side by side at a two-column figure*'s width
+    (7 in). `column`: stacked, at one column's width (3.4 in). Both are drawn
+    at their printed size, so fonts are what the paper shows."""
+    wide = layout == "wide"
+    with plt.rc_context({"font.size": 8, "axes.titlesize": 9, "axes.labelsize": 8.5,
+                         "xtick.labelsize": 8, "ytick.labelsize": 8, "legend.fontsize": 8.5}):
+        fig, axes = (plt.subplots(1, len(WORKLOADS), figsize=(7, 2.6)) if wide else
+                     plt.subplots(len(WORKLOADS), 1, figsize=(3.4, 5.8)))
+        width = 0.28
+        for ax, (templates, title) in zip(axes, WORKLOADS):
+            labels = []
+            for i, (variant, name) in enumerate(VARIANTS):
+                data = load(results, f"{templates}-{variant}")
+                limit = data["frontier"]["autosketch_latency_ms"]
+                cost = {m: cheapest(data, m, max_latency_ms=limit) for m, _, _ in METHODS}
+                for k, (method, label, color) in enumerate(METHODS):
+                    x = i + (k - 1) * width
+                    ax.bar(x, cost[method], width * 0.95, color=color,
+                           label=label if i == 0 else None)
+                    text = short(cost[method])
+                    if method != "asap":
+                        ratio = cost[method] / cost["asap"]
+                        text += f"\n{ratio:.0f}×" if ratio >= 10 else f"\n{ratio:.1f}×"
+                    ax.text(x, cost[method] * 1.2, text, ha="center", va="bottom",
+                            fontsize=6.5, linespacing=0.95)
+                labels.append(f"{name}\n{data['rqes']:,} RQEs")
+            ax.set_yscale("log")
+            ax.set_xticks(range(len(VARIANTS)))
+            ax.set_xticklabels(labels, fontsize=7.5 if wide else 8, linespacing=1.0)
+            ax.set_title(title)
+            ax.set_ylim(top=ax.get_ylim()[1] * 25)
+            ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(numticks=4))
+            ax.grid(axis="y", alpha=0.3, lw=0.4)
+            ax.tick_params(axis="x", length=0)
+            if wide or ax is axes[len(WORKLOADS) // 2]:
+                ax.set_ylabel("cost (vCPU)")
+            if wide and ax is not axes[0]:
+                ax.set_ylabel("")
+        handles, names = axes[0].get_legend_handles_labels()
+        fig.legend(handles, names, loc="upper center", ncol=len(METHODS), frameon=False,
+                   handlelength=1.2, columnspacing=1.2)
+        fig.tight_layout(rect=(0, 0, 1, 0.9 if wide else 0.95), h_pad=1.4, w_pad=0.8)
+        save(fig, out, "sec63_cost_bars" + ("" if wide else "_column"))
 
 
 def frontier(results, out):
@@ -155,7 +179,8 @@ def rollups(results, out):
 def main():
     results, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    cost_bars(results, out)
+    cost_bars(results, out, "wide")
+    cost_bars(results, out, "column")
     frontier(results, out)
     rollups(results, out)
 
