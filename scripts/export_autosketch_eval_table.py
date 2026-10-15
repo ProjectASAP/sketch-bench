@@ -844,6 +844,9 @@ RANDOM_ACCURACY_SLA = 0.95
 # quantiles, grouped by the RQE's grouping_labels.
 AVG_OF_SERIES_QUANTILES = re.compile(
     r"^avg by \(([\w, ]+)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
+# A pooled quantile's PromQL stand-in: the quantile of per-series quantiles.
+QUANTILE_OF_SERIES_QUANTILES = re.compile(
+    r"^quantile by \(([\w, ]+)\) \([\d.]+, quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
 
 
 def random_expr(rqe, rqe_id, series_labels):
@@ -852,16 +855,24 @@ def random_expr(rqe, rqe_id, series_labels):
     asap-tools' rqe_query() renders them, or None for another capability. A leaf's
     grouping is its output labels; G is the RQE's grouping_labels:
     - quantile, `avg by (G) (quantile_over_time(phi, data[W]))`: avg by G of
-      a per-series quantile leaf;
+      a per-series quantile leaf; pooled, one quantile leaf over each G
+      group's samples (the PromQL, `quantile by (G) (phi, quantile_over_time(
+      phi, data[W]))`, is then a stand-in);
     - sum, `sum by (G) (sum_over_time(data[W]))`: a leaf grouped by G;
     - topk_by_value, `topk [by (G)] (k, sum_over_time(data[W]))`: a
       per-series top-k leaf ranked within each G (`topk_by`, left out for a
-      global top-k)."""
+      global top-k); pooled, `topk(k, sum by (G) (sum_over_time(data[W])))`:
+      a global top-k leaf over G's groups."""
     capability, grouping = rqe["capability"], rqe["grouping_labels"]
+    pooled = rqe.get("pooled", False)
 
     def leaf(capability, grouping, **extra):
         return rqe_leaf(rqe_id, "data", capability, rqe["lookback_ms"] / 1000, grouping, **extra)
 
+    if capability == "quantile" and pooled:
+        return leaf("quantile", grouping, phi=rqe["phi"])
+    if capability == "topk_by_value" and pooled:
+        return leaf("topk", grouping, k=rqe["k"])
     if capability == "quantile":
         return {"agg": "avg", "by": grouping,
                 "of": leaf("quantile", series_labels, phi=rqe["phi"])}
@@ -874,9 +885,15 @@ def random_expr(rqe, rqe_id, series_labels):
 
 def e2e_query(query, rqe, t, rqe_id, series_labels):
     """The e2e entry of manifest `query` (its RQE `rqe`) reading the table's
-    `rqe_id`, possibly shared with other queries, with its tree when it has one."""
-    entry = {"promql": query["promql"], "interval_secs": t, "rqes": [rqe_id]}
+    `rqe_id`, possibly shared with other queries, with its tree when it has one.
+    A pooled query is its tree alone, which ASAPQuery's planner plans without
+    text; its PromQL, which the other systems run (for a pooled quantile, an
+    avg-of-series stand-in), is `client_promql`."""
     expr = random_expr(rqe, rqe_id, series_labels)
+    if rqe.get("pooled"):
+        return {"client_promql": query["promql"], "interval_secs": t,
+                "rqes": [rqe_id], "expr": expr}
+    entry = {"promql": query["promql"], "interval_secs": t, "rqes": [rqe_id]}
     return {**entry, "expr": expr} if expr else entry
 
 
@@ -886,7 +903,9 @@ def random_manifest_table(manifest, revision, inputs):
     scraped at the same rate, so a grouping's groups hold equal shares. A
     sum RQE is at its query's grouping, and a top-k's heaps at its `topk by`
     grouping, on one stream, so a fine sum can serve a coarse one; a
-    quantile is `avg by` of per-series quantiles, so its RQE is per series.
+    quantile is `avg by` of per-series quantiles, so its RQE is per series,
+    unless the manifest marks it pooled: then it is one quantile per group. A
+    pooled top-k is one global heap over its grouping's groups.
     Queries of other capabilities are left out (logged). The e2e block holds
     the PromQL and the query's RQE expression tree (random_expr())."""
     labels = manifest["labels"]
@@ -919,13 +938,18 @@ def random_manifest_table(manifest, revision, inputs):
             raise ValueError(f"{query['id']}: accuracy_sla {rqe['accuracy_sla']}; only "
                              f"{RANDOM_ACCURACY_SLA} (DEFAULT_TARGETS) is exported")
         grouping = rqe["grouping_labels"]
+        pooled = rqe.get("pooled", False)
         if capability == "quantile":
-            m = AVG_OF_SERIES_QUANTILES.match(query["promql"])
+            # Pooled, the PromQL is the other systems' stand-in.
+            shape = QUANTILE_OF_SERIES_QUANTILES if pooled else AVG_OF_SERIES_QUANTILES
+            m = shape.match(query["promql"])
             if not m or m[1].split(", ") != grouping:
-                raise ValueError(f"{query['id']}: a quantile must be avg by "
+                raise ValueError(f"{query['id']}: a quantile must be "
+                                 f"{'quantile' if pooled else 'avg'} by "
                                  f"({', '.join(grouping)}) of per-series quantiles: "
                                  f"{query['promql']!r}")
-            grouping = names
+            if not pooled:
+                grouping = names
         ms, interval_ms = rqe["lookback_ms"], rqe["interval_ms"]
         if interval_ms <= 0 or interval_ms % 1000:
             raise ValueError(f"{query['id']}: interval {interval_ms} ms is not whole "
@@ -937,13 +961,15 @@ def random_manifest_table(manifest, revision, inputs):
         t = interval_ms // 1000
         # Queries reading one RQE (per-series quantiles that differ only in
         # their avg's grouping) share its id.
-        key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"))
+        key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"), pooled)
         if key in shared:
             if (query["promql"], t) not in e2e_keys:
                 e2e_keys.add((query["promql"], t))
                 e2e.append(e2e_query(query, rqe, t, shared[key], names))
             continue
-        groups = labels_cardinality(labels, grouping)
+        # A pooled top-k is one heap over all of grouping's groups.
+        heap_grouping = [] if capability == "topk_by_value" and pooled else grouping
+        groups = labels_cardinality(labels, heap_grouping)
         s = ms / 1000
         n_items = rate * s / groups
         families = SYNTHETIC_FAMILIES["topk" if capability == "topk_by_value" else capability]
@@ -957,7 +983,7 @@ def random_manifest_table(manifest, revision, inputs):
         query_id, keys, assumptions = query["id"], None, []
         if capability == "topk_by_value":
             query_id = f"topk{rqe['k']}_{query_id}"
-            keys = series // groups
+            keys = labels_cardinality(labels, grouping) if pooled else series // groups
             if keys < TOPK_MIN_CURVE_KEYS:
                 assumptions.append(f"{keys} keys per heap read at the curves' "
                                    f"{TOPK_MIN_CURVE_KEYS}")
@@ -974,7 +1000,7 @@ def random_manifest_table(manifest, revision, inputs):
             "capability": "topk" if keys else capability,
             "stream": f"data/{RANDOM_STREAMS[capability]}", "metric": "data",
             "groups": groups, "arrival_rate": rate,
-            "grouping": grouping, "covers_share": None,
+            "grouping": heap_grouping, "covers_share": None,
             "covered_groups": groups, "min_covered_share": 1 / groups,
             "covered_min_N": n_items, "max_covered_share": 1 / groups,
             "covered_max_N": n_items,
