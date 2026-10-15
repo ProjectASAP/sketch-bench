@@ -741,6 +741,8 @@ class RandomManifestTest(unittest.TestCase):
     def test_pooled_rqes_are_per_group_and_one_global_heap(self):
         manifest = self.manifest()
         manifest["queries"][2]["rqes"][0]["pooled"] = True
+        manifest["queries"][2]["promql"] = (
+            "quantile by (job) (0.99, quantile_over_time(0.99, data[100s]))")
         manifest["queries"][3]["rqes"][0]["pooled"] = True
         manifest["queries"][3]["promql"] = "topk(4, sum by (job) (sum_over_time(data[1m])))"
         workload = random_manifest_table(manifest, "test", {})["workloads"][0]
@@ -757,7 +759,7 @@ class RandomManifestTest(unittest.TestCase):
         [q3, q4] = workload["e2e"]["queries"][2:]
         # Planned from the tree alone; the other systems run client_promql.
         self.assertNotIn("promql", q3)
-        self.assertEqual(q3["client_promql"], self.PROMQL["q3"])
+        self.assertEqual(q3["client_promql"], manifest["queries"][2]["promql"])
         self.assertEqual(q3["expr"]["rqe"]["grouping"], ["job"])
         self.assertEqual(q4["expr"]["rqe"]["grouping"], ["job"])
         self.assertNotIn("topk_by", q4["expr"]["rqe"])
@@ -767,6 +769,7 @@ class RandomManifestTest(unittest.TestCase):
         pooled = json.loads(json.dumps(manifest["queries"][2]))
         pooled["id"] = "q6"
         pooled["rqes"][0]["pooled"] = True
+        pooled["promql"] = "quantile by (job) (0.99, quantile_over_time(0.99, data[100s]))"
         manifest["queries"].append(pooled)
         workload = random_manifest_table(manifest, "test", {})["workloads"][0]
         self.assertIn("q6", {r["query_id"] for r in workload["rqes"]})

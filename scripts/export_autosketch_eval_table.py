@@ -844,6 +844,9 @@ RANDOM_ACCURACY_SLA = 0.95
 # quantiles, grouped by the RQE's grouping_labels.
 AVG_OF_SERIES_QUANTILES = re.compile(
     r"^avg by \(([\w, ]+)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
+# A pooled quantile's PromQL stand-in: the quantile of per-series quantiles.
+QUANTILE_OF_SERIES_QUANTILES = re.compile(
+    r"^quantile by \(([\w, ]+)\) \([\d.]+, quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
 
 
 def random_expr(rqe, rqe_id, series_labels):
@@ -853,7 +856,8 @@ def random_expr(rqe, rqe_id, series_labels):
     grouping is its output labels; G is the RQE's grouping_labels:
     - quantile, `avg by (G) (quantile_over_time(phi, data[W]))`: avg by G of
       a per-series quantile leaf; pooled, one quantile leaf over each G
-      group's samples (the PromQL is then an avg-of-series stand-in);
+      group's samples (the PromQL, `quantile by (G) (phi, quantile_over_time(
+      phi, data[W]))`, is then a stand-in);
     - sum, `sum by (G) (sum_over_time(data[W]))`: a leaf grouped by G;
     - topk_by_value, `topk [by (G)] (k, sum_over_time(data[W]))`: a
       per-series top-k leaf ranked within each G (`topk_by`, left out for a
@@ -936,10 +940,12 @@ def random_manifest_table(manifest, revision, inputs):
         grouping = rqe["grouping_labels"]
         pooled = rqe.get("pooled", False)
         if capability == "quantile":
-            # Pooled, the avg-of-series PromQL is the other systems' stand-in.
-            m = AVG_OF_SERIES_QUANTILES.match(query["promql"])
+            # Pooled, the PromQL is the other systems' stand-in.
+            shape = QUANTILE_OF_SERIES_QUANTILES if pooled else AVG_OF_SERIES_QUANTILES
+            m = shape.match(query["promql"])
             if not m or m[1].split(", ") != grouping:
-                raise ValueError(f"{query['id']}: a quantile must be avg by "
+                raise ValueError(f"{query['id']}: a quantile must be "
+                                 f"{'quantile' if pooled else 'avg'} by "
                                  f"({', '.join(grouping)}) of per-series quantiles: "
                                  f"{query['promql']!r}")
             if not pooled:
