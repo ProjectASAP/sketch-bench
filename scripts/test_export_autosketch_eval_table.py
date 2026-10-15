@@ -19,7 +19,7 @@ from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
     all_subsets, boom_query, e2e_block, group_coverage, grouping_cardinality, label_shares, main,
-    metric_queries, queries_per_instance,
+    metric_queries, queries_per_instance, random_expr, random_manifest_table,
     shared_queries, synthetic_entry, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -619,6 +619,277 @@ class DashboardAndSharedTest(unittest.TestCase):
         # The top-k k stays readable from the query id.
         self.assertTrue(all(q["query_id"].startswith("topk32_")
                             for q in qs if q["capability"] == "topk"))
+
+
+class RandomManifestTest(unittest.TestCase):
+    """--random-manifest on a two-label manifest: 2 jobs x 500 series, 10/s."""
+
+    PROMQL = {
+        "q1": "sum by (job, label_0) (sum_over_time(data[10m]))",
+        "q2": "sum by (job) (sum_over_time(data[10m]))",
+        "q3": "avg by (job) (quantile_over_time(0.99, data[100s]))",
+        "q4": "topk by (job) (4, sum_over_time(data[1m]))",
+    }
+
+    @staticmethod
+    def query(qid, capability, grouping, lookback_ms, interval_ms, support, promql=None,
+              sql=None, metric="data", **params):
+        return {"id": qid, "support": support, "promql": promql, "sql": sql,
+                "rqes": [{"capability": capability, "grouping_labels": grouping,
+                          "lookback_ms": lookback_ms, "interval_ms": interval_ms,
+                          "metric": metric, "accuracy_sla": 0.95, **params}]}
+
+    def manifest(self):
+        def query(qid, *args, **params):
+            return self.query(qid, *args, promql=self.PROMQL.get(qid), **params)
+        return {
+            "id": "workload-01", "seed": 7, "samples_per_sec_per_series": 10,
+            "labels": [{"name": "job", "cardinality": 2},
+                       {"name": "label_0", "cardinality": 500, "child_of": "job"}],
+            "data_facts": {"series": {"ranking": {"exponent": 1.1}},
+                           "metrics": {"data": {"pareto_shape": 2.0}}},
+            "queries": [
+                query("q1", "sum", ["job", "label_0"], 600_000, 20_000, "common-promql"),
+                query("q2", "sum", ["job"], 600_000, 20_000, "common-promql"),
+                query("q3", "quantile", ["job"], 100_000, 1_000, "common-promql", phi=0.99),
+                query("q4", "topk_by_value", ["job"], 60_000, 1_000, "common-promql", k=4),
+                query("q5", "cardinality", ["job"], 60_000, 1_000, "sql-only",
+                      sql="SELECT job, COUNT(DISTINCT user_id) FROM events GROUP BY job",
+                      metric="events", value="user_id"),
+            ],
+        }
+
+    def test_rqes_share_streams_by_capability_and_name_their_grouping(self):
+        workload = random_manifest_table(self.manifest(), "test", {})["workloads"][0]
+        rqes = {r["query_id"]: r for r in workload["rqes"]}
+
+        self.assertEqual(set(rqes), {"q1", "q2", "q3", "topk4_q4"})  # no sql-only
+        # Both sums on one stream, each at its own grouping: a fine one can
+        # serve the coarse one.
+        self.assertEqual(rqes["q1"]["stream"], rqes["q2"]["stream"])
+        self.assertEqual(rqes["q2"]["grouping"], ["job"])
+        self.assertEqual(rqes["q2"]["min_N"], 1_000 * 10 * 600 / 2)
+        # A quantile is avg of per-series quantiles: per series, 1,000 samples.
+        self.assertEqual(rqes["q3"]["grouping"], ["job", "label_0"])
+        self.assertEqual(rqes["q3"]["label_set"]["groups"], 1_000)
+        self.assertEqual(rqes["q3"]["min_N"], 1_000)
+        # 500 keys per heap fall below the top-k curves: read at 1,000, noted.
+        topk = rqes["topk4_q4"]
+        self.assertEqual(topk["label_set"]["keys_per_window"], 1_000)
+        self.assertEqual(len(topk["assumptions"]), 1)
+        self.assertEqual(workload["schemas"]["data"]["labels"], self.manifest()["labels"])
+        self.assertEqual(
+            [(q["promql"], q["interval_secs"]) for q in workload["e2e"]["queries"]],
+            [(self.PROMQL[q], t) for q, t in [("q1", 20), ("q2", 20), ("q3", 1), ("q4", 1)]])
+        self.assertEqual([q["rqes"] for q in workload["e2e"]["queries"]],
+                         [[r["id"]] for r in workload["rqes"]])
+
+    def test_e2e_queries_carry_trees_reading_their_table_rqes(self):
+        workload = random_manifest_table(self.manifest(), "test", {})["workloads"][0]
+        ids = {r["query_id"]: r["id"] for r in workload["rqes"]}
+        exprs = [q["expr"] for q in workload["e2e"]["queries"]]
+        series = ["job", "label_0"]
+        self.assertEqual(exprs, [
+            {"rqe": {"id": ids["q1"], "metric": "data", "capability": "sum",
+                     "lookback_ms": 600_000, "grouping": series}},
+            {"rqe": {"id": ids["q2"], "metric": "data", "capability": "sum",
+                     "lookback_ms": 600_000, "grouping": ["job"]}},
+            {"agg": "avg", "by": ["job"],
+             "of": {"rqe": {"id": ids["q3"], "metric": "data", "capability": "quantile",
+                            "lookback_ms": 100_000, "grouping": series, "phi": 0.99}}},
+            {"rqe": {"id": ids["topk4_q4"], "metric": "data", "capability": "topk_by_value",
+                     "lookback_ms": 60_000, "grouping": series, "k": 4, "topk_by": ["job"]}},
+        ])
+
+    def expr(self, capability, grouping, **params):
+        rqe = self.query("q", capability, grouping, 60_000, 1_000, "s", **params)["rqes"][0]
+        return random_expr(rqe, "rqe", ["job", "label_0"])
+
+    def test_quantile_is_an_avg_by_its_grouping_over_a_per_series_leaf(self):
+        self.assertEqual(
+            self.expr("quantile", ["job"], phi=0.5),
+            {"agg": "avg", "by": ["job"],
+             "of": {"rqe": {"id": "rqe", "metric": "data", "capability": "quantile",
+                            "lookback_ms": 60_000, "grouping": ["job", "label_0"],
+                            "phi": 0.5}}})
+
+    def test_sum_is_a_leaf_at_its_grouping(self):
+        self.assertEqual(
+            self.expr("sum", ["job"]),
+            {"rqe": {"id": "rqe", "metric": "data", "capability": "sum",
+                     "lookback_ms": 60_000, "grouping": ["job"]}})
+
+    def test_topk_ranks_series_within_its_grouping_or_globally(self):
+        leaf = {"id": "rqe", "metric": "data", "capability": "topk_by_value",
+                "lookback_ms": 60_000, "grouping": ["job", "label_0"], "k": 4}
+        self.assertEqual(self.expr("topk_by_value", ["job"], k=4),
+                         {"rqe": {**leaf, "topk_by": ["job"]}})
+        self.assertEqual(self.expr("topk_by_value", [], k=4), {"rqe": leaf})
+
+    def test_other_capabilities_have_no_tree(self):
+        for capability in ["topk_by_count", "rate", "cardinality"]:
+            with self.subTest(capability=capability):
+                self.assertIsNone(self.expr(capability, ["job"], k=4, value="user_id"))
+
+    def test_seed_862_workload_01_trees_read_its_rqes(self):
+        """asap-tools' seed-862 workload-01 manifest (its labels and RQEs):
+        each of its seven common-promql queries gets a tree whose one leaf
+        is the query's table RQE."""
+        coarse, fine = ["region", "service"], ["region", "service", "job"]
+        manifest = self.manifest()
+        manifest["labels"] = [
+            {"name": "region", "cardinality": 4},
+            {"name": "service", "cardinality": 5, "child_of": "region"},
+            {"name": "job", "cardinality": 10, "child_of": "service"},
+            {"name": "label_0", "cardinality": 50, "child_of": "job"}]
+        common, gated = "common-promql", "counter-gated-promql"
+        manifest["queries"] = [self.query(*q[:6], promql=promql, **q[6]) for q, promql in [
+            (("q01", "sum", fine, 600_000, 20_000, common, {}),
+             "sum by (region, service, job) (sum_over_time(data[10m]))"),
+            (("q02", "sum", coarse, 600_000, 20_000, common, {}),
+             "sum by (region, service) (sum_over_time(data[10m]))"),
+            (("q03", "quantile", fine, 100_000, 1_000, common, {"phi": 0.99}),
+             "avg by (region, service, job) (quantile_over_time(0.99, data[100s]))"),
+            (("q04", "quantile", ["region"], 100_000, 1_000, common, {"phi": 0.95}),
+             "avg by (region) (quantile_over_time(0.95, data[100s]))"),
+            (("q05", "quantile", fine, 100_000, 1_000, common, {"phi": 0.75}),
+             "avg by (region, service, job) (quantile_over_time(0.75, data[100s]))"),
+            (("q06", "topk_by_value", coarse, 60_000, 1_000, common, {"k": 4}),
+             "topk by (region, service) (4, sum_over_time(data[1m]))"),
+            (("q07", "topk_by_value", coarse, 1_200_000, 30_000, common, {"k": 4}),
+             "topk by (region, service) (4, sum_over_time(data[20m]))"),
+            (("q08", "topk_by_count", coarse, 600_000, 20_000, gated, {"k": 8}),
+             "topk by (region, service) (8, increase(data_total[10m]))"),
+            (("q09", "rate", ["region"], 1_200_000, 30_000, gated, {"k": 4}),
+             "topk by (region) (4, rate(data_total[20m]))"),
+            (("q10", "cardinality", coarse, 600_000, 20_000, "sql-only",
+              {"metric": "events", "value": "user_id"}), None)]]
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+
+        def leaves(expr):
+            return [expr["rqe"]] if "rqe" in expr else leaves(expr["of"])
+
+        queries = workload["e2e"]["queries"]
+        self.assertEqual(len(queries), 7)
+        self.assertEqual([[leaf["id"] for leaf in leaves(q["expr"])] for q in queries],
+                         [q["rqes"] for q in queries])
+        self.assertEqual({r["id"] for r in workload["rqes"]},
+                         {rqe for q in queries for rqe in q["rqes"]})
+
+    def table_with(self, **rqe):
+        """The table of the manifest's q1 with `rqe`'s fields changed."""
+        manifest = self.manifest()
+        manifest["queries"] = manifest["queries"][:1]
+        manifest["queries"][0]["rqes"][0].update(rqe)
+        return random_manifest_table(manifest, "test", {})["workloads"][0]["rqes"]
+
+    def test_a_child_only_grouping_counts_its_parents_groups(self):
+        # label_0 is a child of job: grouping by it alone keeps 2 x 500 groups.
+        [rqe] = self.table_with(grouping_labels=["label_0"])
+        self.assertEqual(rqe["label_set"]["groups"], 1_000)
+
+    def test_quantiles_differing_only_in_their_avg_grouping_share_an_rqe(self):
+        # Both read the per-series p90 over 100 s; ASAPQuery's converter
+        # refuses one leaf naming two RQEs.
+        def with_q6(phi):
+            manifest = self.manifest()
+            manifest["queries"][2]["rqes"][0]["phi"] = 0.9
+            q6 = json.loads(json.dumps(manifest["queries"][2]))
+            q6["id"] = "q6"
+            q6["promql"] = f"avg by (job, label_0) (quantile_over_time({phi}, data[100s]))"
+            q6["rqes"][0].update(grouping_labels=["job", "label_0"], phi=phi)
+            manifest["queries"].append(q6)
+            return random_manifest_table(manifest, "test", {})["workloads"][0]
+
+        workload = with_q6(0.9)
+        [q3] = [r for r in workload["rqes"] if r["query_id"] == "q3"]
+        self.assertNotIn("q6", {r["query_id"] for r in workload["rqes"]})
+        self.assertEqual(workload["e2e"]["queries"][-1]["rqes"], [q3["id"]])
+        # Another phi is another RQE.
+        self.assertIn("q6", {r["query_id"] for r in with_q6(0.5)["rqes"]})
+
+    def test_ranges_in_rqe_ids_are_exact(self):
+        [rqe] = self.table_with(lookback_ms=1_234_500, interval_ms=1_000)
+        self.assertEqual(rqe["range"], "1234500ms")
+
+    def test_exact_sums_need_no_curve(self):
+        # 60 s per series at 10/s is 600 items, under the curves' first N,
+        # but an exact sum reads no curve.
+        [rqe] = self.table_with(lookback_ms=60_000)
+        self.assertEqual(rqe["min_N"], 600)
+
+    def test_malformed_rqes_are_refused(self):
+        # The optimizer's windows are whole 100 ms scrapes at 10/s.
+        with self.assertRaisesRegex(ValueError, "scrape"):
+            self.table_with(lookback_ms=150)
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"].append(manifest["queries"][0]["rqes"][0])
+        with self.assertRaisesRegex(ValueError, "q1: reads 2 RQEs"):
+            random_manifest_table(manifest, "test", {})
+
+    def test_other_capabilities_are_left_out(self):
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"][0]["capability"] = "rate"
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q1", {r["query_id"] for r in workload["rqes"]})
+
+    def test_unexported_inputs_are_refused(self):
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = "quantile by (job) (0.9, data)"
+        with self.assertRaisesRegex(ValueError, "per-series"):
+            random_manifest_table(manifest, "test", {})
+        with self.assertRaisesRegex(ValueError, "accuracy_sla"):
+            self.table_with(accuracy_sla=0.99)
+        for rate in (3, 10.0, True):
+            manifest = self.manifest()
+            manifest["samples_per_sec_per_series"] = rate
+            with self.assertRaisesRegex(ValueError, "dividing 1000"):
+                random_manifest_table(manifest, "test", {})
+        # 500 ms would round to a 0 s query interval.
+        with self.assertRaisesRegex(ValueError, "whole seconds"):
+            self.table_with(interval_ms=500)
+
+    def test_rqes_below_the_curves_are_left_out(self):
+        # A per-series quantile over 10 s at 10/s holds 100 samples.
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = (
+            "avg by (job) (quantile_over_time(0.90, data[10s]))")
+        manifest["queries"][2]["rqes"][0]["lookback_ms"] = 10_000
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q3", {r["query_id"] for r in workload["rqes"]})
+        self.assertNotIn(manifest["queries"][2]["promql"],
+                         [q["promql"] for q in workload["e2e"]["queries"]])
+
+    def test_a_repeated_query_is_one_e2e_entry(self):
+        manifest = self.manifest()
+        manifest["queries"].append(json.loads(json.dumps(manifest["queries"][0])))
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        promql = manifest["queries"][0]["promql"]
+        self.assertEqual([q["promql"] for q in workload["e2e"]["queries"]].count(promql), 1)
+
+    def test_queries_sharing_an_rqe_each_get_their_tree(self):
+        # Per-series quantiles differing only in the avg's grouping read one RQE.
+        manifest = self.manifest()
+        other = json.loads(json.dumps(manifest["queries"][2]))
+        other["id"] = "q3-series"
+        other["promql"] = other["promql"].replace("avg by (job)", "avg by (job, label_0)")
+        other["rqes"][0]["grouping_labels"] = ["job", "label_0"]
+        manifest["queries"].append(other)
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        by_text = {q["promql"]: q for q in workload["e2e"]["queries"]}
+        first, shared = by_text[manifest["queries"][2]["promql"]], by_text[other["promql"]]
+        self.assertEqual(first["rqes"], shared["rqes"])
+        self.assertEqual(first["expr"]["by"], ["job"])
+        self.assertEqual(shared["expr"]["by"], ["job", "label_0"])
+        self.assertEqual(first["expr"]["of"], shared["expr"]["of"])
+
+    def test_cli_refuses_flags_the_manifest_overrides(self):
+        for flags in (["--synthetic"], ["--samples-per-sec", "10"], ["--curves", "c.csv"],
+                      ["--merge-curves", "m.csv"]):
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                main(["--random-manifest", "m.json", "--out", "t.json", *flags])
 
 
 if __name__ == "__main__":
