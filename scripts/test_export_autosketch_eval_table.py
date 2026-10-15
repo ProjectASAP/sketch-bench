@@ -238,12 +238,73 @@ class SyntheticQueriesTest(unittest.TestCase):
             "grouping": ["region"], "quantile": 0.99, "window_secs": 300,
             "interval_secs": 60, "rqes": ["d/t16_p99_latency_by_region/values/5m"],
             "sql": "SELECT region, QUANTILE(0.99, latency) FROM http WHERE ts BETWEEN "
-                   "DATEADD(s, -300, NOW()) AND NOW() GROUP BY region"})
+                   "DATEADD(s, -300, NOW()) AND NOW() GROUP BY region",
+            "expr": {"rqe": {"id": "d/t16_p99_latency_by_region/values/5m", "metric": "http",
+                             "capability": "quantile", "lookback_ms": 300_000,
+                             "grouping": ["region"], "phi": 0.99, "value": "latency"}}})
         distinct = next(q for q in e2e if q["capability"] == "cardinality")
         self.assertNotIn("quantile", distinct)
+        self.assertEqual(distinct["expr"], {"rqe": {
+            "id": distinct["rqes"][0], "metric": "flows", "capability": "cardinality",
+            "lookback_ms": 300_000, "grouping": ["dst_subnet"], "value": "src_ip"}})
         self.assertEqual(distinct["sql"],
                          "SELECT dst_subnet, COUNT(DISTINCT src_ip) FROM flows WHERE ts "
                          "BETWEEN DATEADD(s, -300, NOW()) AND NOW() GROUP BY dst_subnet")
+
+    def test_classic_queries_carry_their_rqe_expression_trees(self):
+        e2e = []
+        synthetic_queries(templates="classic", dataset="d", e2e=e2e)
+        by_text = {query["promql"]: query for query in e2e}
+
+        def leaf(query_id, capability, lookback_ms, grouping, **extra):
+            return {"rqe": {"id": f"d/{query_id}", "metric": "data", "capability": capability,
+                            "lookback_ms": lookback_ms, "grouping": grouping, **extra}}
+
+        series = ["job", "label_0"]
+        # Instant RQEs read one scrape: 5 ms at 200 samples/s.
+        self.assertEqual(by_text["sum by (job) (data)"]["expr"],
+                         leaf("sum_by_job/keys/1s", "sum", 5, ["job"]))
+        self.assertEqual(by_text["quantile by (job) (0.75, data)"]["expr"],
+                         leaf("quantile_by_job_p0.75/values/1s", "quantile", 5, ["job"],
+                              phi=0.75))
+        self.assertEqual(by_text["topk(32, sum_over_time(data[15m]))"]["expr"],
+                         leaf("topk32_sum_by_label0_sum_over_time/keys/15m", "topk_by_value",
+                              900_000, series, k=32))
+        self.assertEqual(by_text["sum_over_time(data[1h])"]["expr"],
+                         leaf("sum_over_time/keys/1h", "sum", 3_600_000, series))
+        self.assertEqual(by_text["quantile_over_time(0.99, data[6h])"]["expr"],
+                         leaf("quantile_over_time_p0.99/values/6h", "quantile", 21_600_000,
+                              series, phi=0.99))
+        self.assertEqual(by_text["sum by (job) (sum_over_time(data[24h]))"]["expr"],
+                         leaf("sum_by_job_sum_over_time/keys/24h", "sum", 86_400_000, ["job"]))
+        ratio = by_text["quantile_over_time(0.9, data[1h]) / quantile_over_time(0.5, data[1h])"]
+        self.assertEqual(ratio["expr"], {
+            "op": "/",
+            "lhs": leaf("quantile_over_time_p0.9/values/1h", "quantile", 3_600_000, series,
+                        phi=0.9),
+            "rhs": leaf("quantile_over_time_p0.5/values/1h", "quantile", 3_600_000, series,
+                        phi=0.5)})
+        # A rate leaf has no capability on the RQE route.
+        self.assertNotIn("expr", by_text["rate(data_total[15m])"])
+        self.assertEqual([q["promql"] for q in e2e if "expr" not in q],
+                         [f"rate(data_total[{w}])" for w in ["15m", "1h", "6h", "24h"]])
+
+        def leaves(node):
+            return [node["rqe"]] if "rqe" in node else leaves(node["lhs"]) + leaves(node["rhs"])
+
+        # Every leaf names the query's RQEs, in order.
+        for query in e2e:
+            if "expr" in query:
+                self.assertEqual([x["id"] for x in leaves(query["expr"])], query["rqes"])
+
+    def test_metric_copies_name_their_metric_in_each_leaf(self):
+        e2e = []
+        metric_queries({**SYNTHETIC_DEFAULT, "templates": "all", "metrics": 2}, e2e)
+        leaf = next(q for q in e2e if q.get("promql") == "sum_over_time(data_1[1h])")["expr"]
+        self.assertEqual(leaf["rqe"]["metric"], "data_1")
+        self.assertTrue(leaf["rqe"]["id"].endswith("/sum_over_time_data_1/keys/1h"))
+        sql = next(q for q in e2e if q.get("table") == "data_1_http")["expr"]
+        self.assertEqual(sql["rqe"]["metric"], "data_1_http")
 
     @mock.patch("export_autosketch_eval_table.KEEP_DUPLICATE_QUERIES", True)
     def test_schema_metrics_are_records_tables_named_by_metric(self):
@@ -262,9 +323,12 @@ class SyntheticQueriesTest(unittest.TestCase):
         # templates 14, 15 and 17 share some groupings.
         read = [r for q in block["queries"] for r in q["rqes"]]
         self.assertEqual(sorted(read), sorted(synthetic_entry(q)["id"] for q in qs))
-        fields = [json.dumps({k: v for k, v in q.items() if k != "rqes"}, sort_keys=True)
+        fields = [json.dumps({k: v for k, v in q.items() if k not in ("rqes", "expr")},
+                             sort_keys=True)
                   for q in block["queries"]]
         self.assertEqual(len(fields), len(set(fields)))
+        # A query reading several RQEs has no single leaf.
+        self.assertTrue(all(("expr" in q) == (len(q["rqes"]) == 1) for q in block["queries"]))
         self.assertTrue(all(q["rqes"] == sorted(q["rqes"]) for q in block["queries"]))
         by_service = [q for q in block["queries"] if q["table"] == "data_0_http"
                       and q["capability"] == "cardinality" and q["grouping"] == ["service"]
@@ -281,6 +345,7 @@ class SyntheticQueriesTest(unittest.TestCase):
         synthetic_queries(templates="multigroup", dataset="d", e2e=e2e)
         block = e2e_block([], e2e)
         self.assertTrue(all(len(q["rqes"]) == 1 for q in block["queries"]))
+        self.assertTrue(all(q["expr"]["rqe"]["id"] == q["rqes"][0] for q in block["queries"]))
         users = {(tuple(q["grouping"]), q["window_secs"]): q["rqes"][0].split("/")[1]
                  for q in block["queries"] if q["value"] == "user_id"}
         for window in [300, 900]:
