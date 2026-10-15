@@ -222,6 +222,10 @@ SYNTHETIC_SKETCHES = {**FAMILIES, "hll": ("hll", "target_hll_rel_err", False)}
 EXACT_SKETCH = {"exact-sum": "exact-sum", "exact-increase": "exact-increase"}
 WINDOW_SECS = {"1m": 60, "5m": 300, "10m": 600, "15m": 900, "1h": 3600, "6h": 21600,
                "24h": 86400}
+SERIES_LABELS = ["job", "label_0"]  # a classic metric's labels
+# Capabilities an expression-tree leaf can read (no rate); a topk leaf is
+# named topk_by_value.
+LEAF_CAPABILITIES = {"sum", "quantile", "cardinality", "topk"}
 DASHBOARD_QUANTILES = ["0.5", "0.9", "0.99"]
 DASHBOARD_FIXED_WINDOWS = ["15m", "1h"]  # D5
 # Shared replicas: each replica draws windows, quantiles and an interval.
@@ -425,6 +429,20 @@ def point_id(point):
     return base if metrics == 1 else f"{base}/metrics={metrics}"
 
 
+def rqe_leaf(rqe, metric, capability, lookback_s, grouping, phi=None, k=None, value=None):
+    """An expression-tree leaf reading RQE `rqe`, whose output is grouped by
+    `grouping`; None for a capability no leaf reads (rate)."""
+    if capability not in LEAF_CAPABILITIES:
+        return None
+    if capability == "topk":
+        capability = "topk_by_value"
+    leaf = {"id": rqe, "metric": metric, "capability": capability,
+            "lookback_ms": round(lookback_s * 1000), "grouping": list(grouping)}
+    leaf.update((key, v) for key, v in [("phi", phi), ("k", k), ("value", value)]
+                if v is not None)
+    return {"rqe": leaf}
+
+
 def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
                       templates="dashboard", quantiles=None, dataset=None,
                       range_with_interval=False, seen=None, metric=None, e2e=None):
@@ -445,9 +463,10 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     schema_queries() to the `classic` set.
 
     With `e2e` (a list), the `classic` templates append their PromQL to it,
-    one {promql, interval_secs, rqes} per query (e2e_block()), and the schema
-    templates their query fields (schema_queries()). Values are read from the
-    gauge `data`, increments from the counter `data_total`.
+    one {promql, interval_secs, rqes, expr} per query (e2e_block()), and the
+    schema templates their query fields (schema_queries()). `expr` is the
+    query's RQE expression tree (rqe_leaf()); a rate query has none. Values are
+    read from the gauge `data`, increments from the counter `data_total`.
     """
     rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
     scrape = 1 / SYNTHETIC_SAMPLES_PER_SEC  # an instant query's lookback, in s
@@ -459,14 +478,18 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
     def label(rng):
         return f"{rng}@{interval}s" if range_with_interval else rng
 
-    def add(query_id, stream, capability, rng, s, t, groups, keys=None, promql=None):
-        """Adds the RQE (once) and its query `promql`; returns the RQE's id."""
+    def add(query_id, stream, capability, rng, s, t, groups, keys=None, promql=None,
+            grouping=SERIES_LABELS, **leaf):
+        """Adds the RQE (once) and its query `promql`, grouped by `grouping`,
+        with `leaf`'s rqe_leaf() fields; returns the RQE's id."""
         if metric:
             query_id, stream = f"{query_id}_{metric}", f"{metric}/{stream}"
         kind = "values" if capability == "quantile" else "keys"
         rqe = f"{dataset}/{query_id}/{kind}/{rng}"
         if promql and e2e is not None:
-            e2e.append({"promql": promql, "interval_secs": t, "rqes": [rqe]})
+            query = {"promql": promql, "interval_secs": t, "rqes": [rqe]}
+            expr = rqe_leaf(rqe, gauge, capability, s, grouping, **leaf)
+            e2e.append({**query, "expr": expr} if expr else query)
         if (query_id, rng) in seen:
             return rqe
         seen.add((query_id, rng))
@@ -505,10 +528,11 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         return schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
     assert templates in ("classic", "all"), templates
     quantiles = quantiles or SYNTHETIC_QUANTILES
-    add("sum_by_job", "job/value", "sum", "1s", scrape, 1, J, promql=f"sum by (job) ({gauge})")
+    add("sum_by_job", "job/value", "sum", "1s", scrape, 1, J, promql=f"sum by (job) ({gauge})",
+        grouping=["job"])
     for q in quantiles:
         add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", scrape, 1, J,
-            promql=f"quantile by (job) ({q}, {gauge})")
+            promql=f"quantile by (job) ({q}, {gauge})", grouping=["job"], phi=float(q))
     for rng, s in ranges:
         lbl = label(rng)
         # Template 2's PromQL omits `sum by (label_0)`: label_0 names one
@@ -516,23 +540,26 @@ def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
         # the ranking and values are the same. ASAPQuery's planner supports
         # this two-level shape, not the three-level one (#744, #772).
         add("topk32_sum_by_label0_sum_over_time", "label_0/value", "topk", lbl, s, interval,
-            1, C, promql=f"topk(32, sum_over_time({gauge}[{rng}]))")
+            1, C, promql=f"topk(32, sum_over_time({gauge}[{rng}]))", k=32)
         add("sum_over_time", "series/value", "sum", lbl, s, interval, C,
             promql=f"sum_over_time({gauge}[{rng}])")
         for q in quantiles:
             add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C,
-                promql=f"quantile_over_time({q}, {gauge}[{rng}])")
+                promql=f"quantile_over_time({q}, {gauge}[{rng}])", phi=float(q))
         add("rate", "series/increment", "rate", lbl, s, interval, C,
             promql=f"rate({counter}[{rng}])")
         add("sum_by_job_sum_over_time", "job/value", "sum", lbl, s, interval, J,
-            promql=f"sum by (job) (sum_over_time({gauge}[{rng}]))")
+            promql=f"sum by (job) (sum_over_time({gauge}[{rng}]))", grouping=["job"])
         # Template 10, the same RQEs as template 5's: one query reads both.
         rqes = [add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
                 for q in ["0.9", "0.5"]]
         if e2e is not None:
+            lhs, rhs = (rqe_leaf(rqe, gauge, "quantile", s, SERIES_LABELS, phi=phi)
+                        for rqe, phi in zip(rqes, [0.9, 0.5]))
             e2e.append({"promql": f"quantile_over_time(0.9, {gauge}[{rng}]) / "
                                   f"quantile_over_time(0.5, {gauge}[{rng}])",
-                        "interval_secs": interval, "rqes": rqes})
+                        "interval_secs": interval, "rqes": rqes,
+                        "expr": {"op": "/", "lhs": lhs, "rhs": rhs}})
     if templates == "all":
         out += schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
     return out
@@ -570,8 +597,8 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
     With `e2e` (a list), each RQE appends its query's fields and canonical
     ASAPQuery SQL (there is no PromQL): {sql, table, value,
     capability, grouping, quantile (quantiles only), window_secs,
-    interval_secs, rqes}. `table` is the metric with `/` as `_`
-    (`data_1_http`).
+    interval_secs, rqes, expr}. `table` is the metric with `/` as `_`
+    (`data_1_http`); `expr` is one rqe_leaf() on it.
 
     A query several templates ask (14, 15 and 17 share groupings) is only
     its strictest template's RQE, unless KEEP_DUPLICATE_QUERIES."""
@@ -621,8 +648,11 @@ def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2
                     query = schema_query(full.replace("/", "_"), value, capability, what,
                                          grouping)
                     query["sql"] = asapquery_sql(query, s)
+                    rqe = f"{dataset}/{query_id}/{kind}/{rng}"
                     e2e.append({**query, "window_secs": s, "interval_secs": interval,
-                                "rqes": [f"{dataset}/{query_id}/{kind}/{rng}"]})
+                                "rqes": [rqe],
+                                "expr": rqe_leaf(rqe, query["table"], capability, s, grouping,
+                                                 phi=query.get("quantile"), value=value)})
                 out.append({
                     "dataset": dataset, "query_id": query_id, "kind": kind,
                     "range": rng, "range_s": s, "step_s": interval,
@@ -741,7 +771,8 @@ def e2e_block(qs, queries):
     labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
     SYNTHETIC_JOBS values under each `job` (`child_of`), so there are
     SYNTHETIC_SERIES series. Schema queries are schema_queries()' fields, one
-    per distinct query (with every RQE it reads, sorted); each schema metric
+    per distinct query (with every RQE it reads, sorted; one reading several
+    has no `expr`, as no single leaf names them); each schema metric
     is a `records` table (`http`, or `data_1_http` under metric `data_1`)
     with SCHEMAS' labels, `rate` as `records_per_sec`, and its `values`."""
     unique = {}
@@ -751,9 +782,11 @@ def e2e_block(qs, queries):
             continue
         # Schema queries identical but for their RQEs (templates 14, 15, 17
         # share groupings) are one query reading them all.
-        key = json.dumps({k: v for k, v in q.items() if k != "rqes"}, sort_keys=True)
+        key = json.dumps({k: v for k, v in q.items() if k not in ("rqes", "expr")},
+                         sort_keys=True)
         if key in unique:
-            unique[key] = {**unique[key], "rqes": sorted(unique[key]["rqes"] + q["rqes"])}
+            merged = {k: v for k, v in unique[key].items() if k != "expr"}
+            unique[key] = {**merged, "rqes": sorted(unique[key]["rqes"] + q["rqes"])}
         else:
             unique[key] = q
     labels = [{"name": "job", "cardinality": SYNTHETIC_JOBS},
