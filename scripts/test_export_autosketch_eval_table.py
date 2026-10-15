@@ -641,8 +641,23 @@ class RandomManifestTest(unittest.TestCase):
         self.assertIn("q6", {r["query_id"] for r in with_q6(0.5)["rqes"]})
 
     def test_ranges_in_rqe_ids_are_exact(self):
-        [rqe] = self.table_with(lookback_ms=1_234_567, interval_ms=1_000)
-        self.assertEqual(rqe["range"], "1234567ms")
+        [rqe] = self.table_with(lookback_ms=1_234_500, interval_ms=1_000)
+        self.assertEqual(rqe["range"], "1234500ms")
+
+    def test_exact_sums_need_no_curve(self):
+        # 60 s per series at 10/s is 600 items, under the curves' first N,
+        # but an exact sum reads no curve.
+        [rqe] = self.table_with(lookback_ms=60_000)
+        self.assertEqual(rqe["min_N"], 600)
+
+    def test_malformed_rqes_are_refused(self):
+        # The optimizer's windows are whole 100 ms scrapes at 10/s.
+        with self.assertRaisesRegex(ValueError, "scrape"):
+            self.table_with(lookback_ms=150)
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"].append(manifest["queries"][0]["rqes"][0])
+        with self.assertRaisesRegex(ValueError, "q1: reads 2 RQEs"):
+            random_manifest_table(manifest, "test", {})
 
     def test_other_capabilities_are_left_out(self):
         manifest = self.manifest()

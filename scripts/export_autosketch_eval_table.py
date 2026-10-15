@@ -304,6 +304,13 @@ SKIP_BELOW_CURVES = False
 KEEP_DUPLICATE_QUERIES = False
 
 
+def check_unique_ids(rqes):
+    duplicates = sorted(i for i, n in collections.Counter(r["id"] for r in rqes).items()
+                        if n > 1)
+    if duplicates:
+        raise ValueError(f"duplicate RQE ids: {duplicates}")
+
+
 def divides_1000(rate):
     """Whether series scraped `rate` times a second are scraped every whole
     number of ms, as the runner requires."""
@@ -825,10 +832,14 @@ def random_manifest_table(manifest, revision, inputs):
     theta = facts["series"]["ranking"]["exponent"]
     alpha = facts["metrics"]["data"]["pareto_shape"]
     dataset = f"random/seed={manifest['seed']}/{manifest['id']}"
-    rqes, e2e, shared = [], [], {}
+    scrape_ms = 1000 // per_sec
+    rqes, e2e, shared, e2e_keys = [], [], {}, set()
     for query in manifest["queries"]:
         if query["support"] != RANDOM_SUPPORT:
             continue
+        if len(query["rqes"]) != 1:
+            raise ValueError(f"{query['id']}: reads {len(query['rqes'])} RQEs; only "
+                             "single-RQE queries are exported")
         [rqe] = query["rqes"]
         capability = rqe["capability"]
         if capability not in RANDOM_STREAMS:
@@ -850,20 +861,28 @@ def random_manifest_table(manifest, revision, inputs):
         if interval_ms <= 0 or interval_ms % 1000:
             raise ValueError(f"{query['id']}: interval {interval_ms} ms is not whole "
                              "seconds")
+        # The optimizer's windows are whole scrapes.
+        if ms <= 0 or ms % scrape_ms:
+            raise ValueError(f"{query['id']}: lookback {ms} ms is not a multiple of the "
+                             f"{scrape_ms} ms scrape")
         t = interval_ms // 1000
         # Queries reading one RQE (per-series quantiles that differ only in
         # their avg's grouping) share its id.
         key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"))
         if key in shared:
-            entry = {"promql": query["promql"], "interval_secs": t, "rqes": [shared[key]]}
-            if entry not in e2e:
-                e2e.append(entry)
+            if (query["promql"], t) not in e2e_keys:
+                e2e_keys.add((query["promql"], t))
+                e2e.append({"promql": query["promql"], "interval_secs": t,
+                            "rqes": [shared[key]]})
             continue
         groups = labels_cardinality(labels, grouping)
         s = ms / 1000
         n_items = rate * s / groups
-        # Accuracy is read off the curves, which start at this N.
-        if n_items < SCHEMA_MIN_COVERED_N:
+        families = SYNTHETIC_FAMILIES["topk" if capability == "topk_by_value" else capability]
+        # A sketch's accuracy is read off the curves, which start at this N;
+        # exact accumulators read none.
+        exact = all(family in EXACT_SKETCH for family in families)
+        if not exact and n_items < SCHEMA_MIN_COVERED_N:
             print(f"left out {query['id']}: {n_items:g} items per group per window, "
                   f"below the curves' first N ({SCHEMA_MIN_COVERED_N:g})", file=sys.stderr)
             continue
@@ -883,7 +902,7 @@ def random_manifest_table(manifest, revision, inputs):
             "range_s": s, "step_s": t, "theta": theta, "K": keys,
             "min_N": n_items, "max_N": n_items,
             "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
-            "families": SYNTHETIC_FAMILIES["topk" if keys else capability],
+            "families": families,
             "capability": "topk" if keys else capability,
             "stream": f"data/{RANDOM_STREAMS[capability]}", "metric": "data",
             "groups": groups, "arrival_rate": rate,
@@ -896,11 +915,9 @@ def random_manifest_table(manifest, revision, inputs):
         }
         rqes.append(synthetic_entry(q))
         shared[key] = rqes[-1]["id"]
+        e2e_keys.add((query["promql"], t))
         e2e.append({"promql": query["promql"], "interval_secs": t, "rqes": [shared[key]]})
-    duplicates = sorted(i for i, n in collections.Counter(r["id"] for r in rqes).items()
-                        if n > 1)
-    if duplicates:
-        raise ValueError(f"duplicate RQE ids: {duplicates}")
+    check_unique_ids(rqes)
     metrics = {"data": {
         "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
         "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},
@@ -984,8 +1001,7 @@ def build(args):
             continue
         entry = rqe_entry(q, curves, curves_big, sat, sat_big, merge)
         workloads.setdefault(q["dataset"], []).append(entry)
-    ids = [r["id"] for rqes in workloads.values() for r in rqes]
-    assert len(ids) == len(set(ids)), "RQE ids must be unique"
+    check_unique_ids(r for rqes in workloads.values() for r in rqes)
     inputs = [p for p in [args.summary, args.curves, args.curves_big, args.saturation,
                           args.saturation_big, *(args.merge_curves or [])] if p]
     return {
