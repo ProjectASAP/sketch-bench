@@ -788,9 +788,44 @@ class RandomManifestTest(unittest.TestCase):
         [rqe] = self.table_with(grouping_labels=["label_0"])
         self.assertEqual(rqe["label_set"]["groups"], 1_000)
 
+    def test_quantiles_differing_only_in_their_avg_grouping_share_an_rqe(self):
+        # Both read the per-series p90 over 100 s; ASAPQuery's converter
+        # refuses one leaf naming two RQEs.
+        def with_q6(phi):
+            manifest = self.manifest()
+            manifest["queries"][2]["rqes"][0]["phi"] = 0.9
+            q6 = json.loads(json.dumps(manifest["queries"][2]))
+            q6["id"] = "q6"
+            q6["promql"] = f"avg by (job, label_0) (quantile_over_time({phi}, data[100s]))"
+            q6["rqes"][0].update(grouping_labels=["job", "label_0"], phi=phi)
+            manifest["queries"].append(q6)
+            return random_manifest_table(manifest, "test", {})["workloads"][0]
+
+        workload = with_q6(0.9)
+        [q3] = [r for r in workload["rqes"] if r["query_id"] == "q3"]
+        self.assertNotIn("q6", {r["query_id"] for r in workload["rqes"]})
+        self.assertEqual(workload["e2e"]["queries"][-1]["rqes"], [q3["id"]])
+        # Another phi is another RQE.
+        self.assertIn("q6", {r["query_id"] for r in with_q6(0.5)["rqes"]})
+
     def test_ranges_in_rqe_ids_are_exact(self):
-        [rqe] = self.table_with(lookback_ms=1_234_567, interval_ms=1_000)
-        self.assertEqual(rqe["range"], "1234567ms")
+        [rqe] = self.table_with(lookback_ms=1_234_500, interval_ms=1_000)
+        self.assertEqual(rqe["range"], "1234500ms")
+
+    def test_exact_sums_need_no_curve(self):
+        # 60 s per series at 10/s is 600 items, under the curves' first N,
+        # but an exact sum reads no curve.
+        [rqe] = self.table_with(lookback_ms=60_000)
+        self.assertEqual(rqe["min_N"], 600)
+
+    def test_malformed_rqes_are_refused(self):
+        # The optimizer's windows are whole 100 ms scrapes at 10/s.
+        with self.assertRaisesRegex(ValueError, "scrape"):
+            self.table_with(lookback_ms=150)
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"].append(manifest["queries"][0]["rqes"][0])
+        with self.assertRaisesRegex(ValueError, "q1: reads 2 RQEs"):
+            random_manifest_table(manifest, "test", {})
 
     def test_other_capabilities_are_left_out(self):
         manifest = self.manifest()
@@ -806,14 +841,53 @@ class RandomManifestTest(unittest.TestCase):
             random_manifest_table(manifest, "test", {})
         with self.assertRaisesRegex(ValueError, "accuracy_sla"):
             self.table_with(accuracy_sla=0.99)
-        for rate in (3, 10.0):
+        for rate in (3, 10.0, True):
             manifest = self.manifest()
             manifest["samples_per_sec_per_series"] = rate
             with self.assertRaisesRegex(ValueError, "dividing 1000"):
                 random_manifest_table(manifest, "test", {})
+        # 500 ms would round to a 0 s query interval.
+        with self.assertRaisesRegex(ValueError, "whole seconds"):
+            self.table_with(interval_ms=500)
+
+    def test_rqes_below_the_curves_are_left_out(self):
+        # A per-series quantile over 10 s at 10/s holds 100 samples.
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = (
+            "avg by (job) (quantile_over_time(0.90, data[10s]))")
+        manifest["queries"][2]["rqes"][0]["lookback_ms"] = 10_000
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q3", {r["query_id"] for r in workload["rqes"]})
+        self.assertNotIn(manifest["queries"][2]["promql"],
+                         [q["promql"] for q in workload["e2e"]["queries"]])
+
+    def test_a_repeated_query_is_one_e2e_entry(self):
+        manifest = self.manifest()
+        manifest["queries"].append(json.loads(json.dumps(manifest["queries"][0])))
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        promql = manifest["queries"][0]["promql"]
+        self.assertEqual([q["promql"] for q in workload["e2e"]["queries"]].count(promql), 1)
+
+    def test_queries_sharing_an_rqe_each_get_their_tree(self):
+        # Per-series quantiles differing only in the avg's grouping read one RQE.
+        manifest = self.manifest()
+        other = json.loads(json.dumps(manifest["queries"][2]))
+        other["id"] = "q3-series"
+        other["promql"] = other["promql"].replace("avg by (job)", "avg by (job, label_0)")
+        other["rqes"][0]["grouping_labels"] = ["job", "label_0"]
+        manifest["queries"].append(other)
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        by_text = {q["promql"]: q for q in workload["e2e"]["queries"]}
+        first, shared = by_text[manifest["queries"][2]["promql"]], by_text[other["promql"]]
+        self.assertEqual(first["rqes"], shared["rqes"])
+        self.assertEqual(first["expr"]["by"], ["job"])
+        self.assertEqual(shared["expr"]["by"], ["job", "label_0"])
+        self.assertEqual(first["expr"]["of"], shared["expr"]["of"])
 
     def test_cli_refuses_flags_the_manifest_overrides(self):
-        for flags in (["--synthetic"], ["--samples-per-sec", "10"]):
+        for flags in (["--synthetic"], ["--samples-per-sec", "10"], ["--curves", "c.csv"],
+                      ["--merge-curves", "m.csv"]):
             with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
                 main(["--random-manifest", "m.json", "--out", "t.json", *flags])
 
