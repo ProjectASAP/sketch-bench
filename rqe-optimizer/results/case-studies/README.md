@@ -2,13 +2,13 @@
 
 The two case studies of §6.3.1 (performance monitoring, anomaly detection),
 each swept one knob at a time to find where the planner's plan stops being
-the obvious one. Every table is planned by `autosketch_vs_asap` (ASAP,
-PerQuery, AutoSketch) at 95% accuracy under CPU weights (cost in vCPU), with
-no SLA and at a grid of batch latency SLAs.
+the obvious one. Every table is planned by the ASAP planner (via
+`autosketch_vs_asap`) at 95% accuracy under CPU weights (cost in vCPU), with
+no SLA and at a grid of batch latency SLAs. Only ASAP's plans are reported;
+the result files also hold the runner's baselines.
 
-The base workloads reproduce the paper draft's numbers exactly: performance
-monitoring ASAP 0.105 vCPU (2 MVs), PerQuery 0.306 (8), AutoSketch 4.14;
-anomaly detection ASAP 0.114 (3), PerQuery 0.226 (6), AutoSketch 1.96.
+The base workloads reproduce the paper draft's ASAP plans exactly:
+performance monitoring 0.105 vCPU (2 MVs), anomaly detection 0.114 (3).
 
 ## Findings
 
@@ -22,46 +22,44 @@ MV, so the 24h query merges 5,760 windows per series. Its batch latency is
 23.8 s. As the SLA tightens, the planner adds coarser MVs, each serving only
 the lookbacks long enough to use it:
 
-| Batch SLA | ASAP | PerQuery | Per-series MVs (window/slide → queries) |
-|---|---|---|---|
-| none (23.8 s) | 0.105 (2) | 0.306 (8) | 15s → 1m, 10m, 30m, 6h, 24h |
-| 10 s | 0.122 (3) | 0.306 (8) | 15s → 1m; 60s → 10m, 30m, 6h, 24h |
-| 1 s | 0.126 (3) | 0.306 (8) | 15s → 1m, 10m, 30m; 30m → 6h, 24h |
-| 100 ms | 0.229 (4) | 0.380 (8) | 15s → 1m; 2m/1m → 10m, 30m; 1h/30m → 6h, 24h |
-| 10 ms | 1.24 (5) | 1.55 (8) | one sliding MV per lookback pair, ≤ 3 merges each |
+| Batch SLA | ASAP | Per-series MVs (window/slide → queries) |
+|---|---|---|
+| none (23.8 s) | 0.105 (2) | 15s → 1m, 10m, 30m, 6h, 24h |
+| 10 s | 0.122 (3) | 15s → 1m; 60s → 10m, 30m, 6h, 24h |
+| 1 s | 0.126 (3) | 15s → 1m, 10m, 30m; 30m → 6h, 24h |
+| 100 ms | 0.229 (4) | 15s → 1m; 2m/1m → 10m, 30m; 1h/30m → 6h, 24h |
+| 10 ms | 1.24 (5) | one sliding MV per lookback pair, ≤ 3 merges each |
 
 The plan at 1 s is not "one MV per dashboard": the 30m query joins the 15 s
 MV, and only the 6h and 24h queries get a 30 min tumbling window. A 100×
-tighter SLA (1 s → 10 ms) costs 10× (0.126 → 1.24), still below AutoSketch's
-4.14, which ignores the SLA.
+tighter SLA (1 s → 10 ms) costs 10× (0.126 → 1.24).
 
 ### 2. Performance monitoring: how often the long dashboard refreshes
 
 The 6h/24h dashboard refreshes every `long_interval`:
 
-| long_interval | ASAP | PerQuery | AutoSketch | Per-series MVs |
-|---|---|---|---|---|
-| 30 min | 0.105 (2) | 0.306 (8) | 4.14 | 15s → all six |
-| 5 min | 0.131 (3) | 0.311 (8) | 15.4 | 15s → 1m–30m; 5m → 6h, 24h |
-| 1 min | 0.216 (3) | 0.418 (8) | 69.7 | 15s → 1m; 2m/1m → 10m–24h |
-| 15 s | 0.627 (3) | 0.966 (8) | 273 | 15s → 1m; 2m/15s → 10m–24h |
+| long_interval | ASAP | Per-series MVs |
+|---|---|---|
+| 30 min | 0.105 (2) | 15s → all six |
+| 5 min | 0.131 (3) | 15s → 1m–30m; 5m → 6h, 24h |
+| 1 min | 0.216 (3) | 15s → 1m; 2m/1m → 10m–24h |
+| 15 s | 0.627 (3) | 15s → 1m; 2m/15s → 10m–24h |
 
 Merging 5,760 windows is cheap once every 30 min, not every 15 s, so a
 refresh rate the operator picks in a dashboard decides whether long lookbacks
-get their own coarser MV. AutoSketch's sliding windows scale with
-lookback/interval (24h every 15 s is 5,760 overlapping synopses): 273 vCPU.
+get their own coarser MV.
 
 ### 3. Performance monitoring: less data, more MVs
 
 Samples per second per series (`per_series`; 200 is the base):
 
-| per_series | ASAP | PerQuery | AutoSketch | Per-series MVs |
-|---|---|---|---|---|
-| 20 | 0.0197 (4) | 0.0347 (8) | 0.414 | 15s → 1m; 60s → 10m, 30m; 30m → 6h, 24h |
-| 50 | 0.0368 (3) | 0.0799 (8) | 1.04 | 15s → 1m; 60s → 10m–24h |
-| 100 | 0.0651 (3) | 0.155 (8) | 2.07 | 15s → 1m; 60s → 10m–24h |
-| 200 | 0.105 (2) | 0.306 (8) | 4.14 | 15s → all six |
-| 500, 1000 | 0.218, 0.406 (2) | 0.758, 1.51 (8) | 10.4, 20.7 | 15s → all six |
+| per_series | ASAP | Per-series MVs |
+|---|---|---|
+| 20 | 0.0197 (4) | 15s → 1m; 60s → 10m, 30m; 30m → 6h, 24h |
+| 50 | 0.0368 (3) | 15s → 1m; 60s → 10m–24h |
+| 100 | 0.0651 (3) | 15s → 1m; 60s → 10m–24h |
+| 200 | 0.105 (2) | 15s → all six |
+| 500, 1000 | 0.218, 0.406 (2) | 15s → all six |
 
 Ingest CPU scales with the sample rate; query-time merging scales with
 series × windows and does not. At low rates an extra MV's ingest is cheaper
@@ -77,13 +75,13 @@ drill-down p99 by (region, service, endpoint, status) every 5 min (groups
 holding ≥ 1% of requests), lets one MV at the finest grouping serve all
 seven. Ingest is paid once instead of three times:
 
-| endpoints per service | ASAP, 6 queries | ASAP, + drill-down | PerQuery, + drill-down | Plan with drill-down |
-|---|---|---|---|---|
-| 2 | 0.113 (3) | 0.0388 (1) | 0.264 (7) | finest, 15 s → all 7 |
-| 10 | 0.113 (3) | 0.0435 (1) | 0.264 (7) | finest, 15 s → all 7 |
-| 25 | 0.114 (3) | 0.0522 (1) | 0.264 (7) | finest, 15 s → all 7 |
-| 50 | 0.114 (3) | 0.0668 (1) | 0.264 (7) | finest, 15 s → all 7 |
-| 100 | 0.114 (3) | 0.0776 (2) | 0.264 (7) | (service, region), 15 s → 3 coarse queries every 15 s / 1 min; finest, 60 s → the other 4 |
+| endpoints per service | ASAP, 6 queries | ASAP, + drill-down | Plan with drill-down |
+|---|---|---|---|
+| 2 | 0.113 (3) | 0.0388 (1) | finest, 15 s → all 7 |
+| 10 | 0.113 (3) | 0.0435 (1) | finest, 15 s → all 7 |
+| 25 | 0.114 (3) | 0.0522 (1) | finest, 15 s → all 7 |
+| 50 | 0.114 (3) | 0.0668 (1) | finest, 15 s → all 7 |
+| 100 | 0.114 (3) | 0.0776 (2) | (service, region), 15 s → 3 coarse queries every 15 s / 1 min; finest, 60 s → the other 4 |
 
 The drill-down halves the cost at 25 endpoints (0.114 → 0.052). Rolling up
 gets more expensive as the finest grouping grows (2,000 → 40,000 groups),
@@ -112,12 +110,11 @@ ingest, and the planner splits the frequent coarse queries off to a
 > **Performance monitoring.** [workload as in the draft] Without a latency
 > target, LiteOlly keeps one DDSketch per series in 15 s tumbling windows and
 > answers every lookback, 1 min to 24 h, by merging 4 to 5,760 windows
-> (0.10 vCPU, vs. 0.31 for PerQuery and 4.14 for AutoSketch). Two changes an
+> (0.10 vCPU). Two changes an
 > operator makes without thinking about synopses change that plan. First,
 > refreshing the 24 h dashboard every minute instead of every 30 min makes
 > the merges dominate: LiteOlly adds a 2 min window, sliding every minute,
-> for all lookbacks of 10 min and up (0.22 vCPU); AutoSketch, whose sliding
-> windows multiply with lookback / interval, needs 70 vCPU. Second, a
+> for all lookbacks of 10 min and up (0.22 vCPU). Second, a
 > 1 s latency target on the dashboards gives the 6 h and 24 h queries a
 > 30 min tumbling MV, while the 30 min query stays on the 15 s one. Less
 > obviously, lower sample rates lead to *more* MVs: at 20 samples/s per
@@ -130,8 +127,7 @@ ingest, and the planner splits the frequent coarse queries off to a
 > for four queries; the two endpoint groupings get their own MVs (3 MVs,
 > 0.11 vCPU). When the operator adds a seventh query, a drill-down by all
 > four labels, the plan gets *cheaper*: one MV at the finest grouping now
-> serves all seven queries and ingest is paid once (0.05 vCPU, vs. 0.26 for
-> PerQuery). This sharing has a limit LiteOlly finds on its own: with 100
+> serves all seven queries and ingest is paid once (0.05 vCPU). This sharing has a limit LiteOlly finds on its own: with 100
 > endpoints per service the finest grouping has 40,000 groups, and merging
 > them every 15 s for the per-service and per-region queries costs more than
 > a second MV, so LiteOlly splits those queries off to a (service, region) MV.
@@ -159,7 +155,7 @@ ingest, and the planner splits the frequent coarse queries off to a
 | `inputs/tables/<case>-<knob>-<value>.json` | one table per sweep point (`scripts/case_study_tables.py`); `base-0` is the draft's workload |
 | `inputs/tables/plan.tsv` | each table and its SLA grid (ms) |
 | `<case>-<knob>-<value>-tp95.json` | the runner's result, with each plan's `chosen` |
-| `summary.md` | every table: each method's cost and MVs with no SLA and per SLA, and each distinct ASAP plan (`scripts/summarize_case_studies.py`) |
+| `summary.md` | every table: ASAP's cost, MVs and latency with no SLA and per SLA, and each distinct plan (`scripts/summarize_case_studies.py`) |
 
 ## Reproduce
 
