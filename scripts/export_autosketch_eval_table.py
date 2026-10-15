@@ -223,9 +223,9 @@ EXACT_SKETCH = {"exact-sum": "exact-sum", "exact-increase": "exact-increase"}
 WINDOW_SECS = {"1m": 60, "5m": 300, "10m": 600, "15m": 900, "1h": 3600, "6h": 21600,
                "24h": 86400}
 SERIES_LABELS = ["job", "label_0"]  # a classic metric's labels
-# Capabilities an expression-tree leaf can read (no rate).
-EXPR_CAPABILITY = {"sum": "sum", "quantile": "quantile", "cardinality": "cardinality",
-                   "topk": "topk_by_value"}
+# Capabilities an expression-tree leaf can read (no rate); a topk leaf is
+# named topk_by_value.
+LEAF_CAPABILITIES = {"sum", "quantile", "cardinality", "topk"}
 DASHBOARD_QUANTILES = ["0.5", "0.9", "0.99"]
 DASHBOARD_FIXED_WINDOWS = ["15m", "1h"]  # D5
 # Shared replicas: each replica draws windows, quantiles and an interval.
@@ -432,9 +432,11 @@ def point_id(point):
 def rqe_leaf(rqe, metric, capability, lookback_s, grouping, phi=None, k=None, value=None):
     """An expression-tree leaf reading RQE `rqe`, whose output is grouped by
     `grouping`; None for a capability no leaf reads (rate)."""
-    if capability not in EXPR_CAPABILITY:
+    if capability not in LEAF_CAPABILITIES:
         return None
-    leaf = {"id": rqe, "metric": metric, "capability": EXPR_CAPABILITY[capability],
+    if capability == "topk":
+        capability = "topk_by_value"
+    leaf = {"id": rqe, "metric": metric, "capability": capability,
             "lookback_ms": round(lookback_s * 1000), "grouping": list(grouping)}
     leaf.update((key, v) for key, v in [("phi", phi), ("k", k), ("value", value)]
                 if v is not None)
